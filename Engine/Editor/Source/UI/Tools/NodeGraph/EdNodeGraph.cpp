@@ -37,7 +37,7 @@ namespace Lumina
         void ForgetClipboardNode(CEdGraphNode* Node)
         {
             TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
-            Clipboard.erase(Algo::Remove(Clipboard, Node), Clipboard.end());
+            Clipboard.Remove(Node);
         }
 
         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* FindLink(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links, uint64 LinkID)
@@ -46,12 +46,12 @@ namespace Lumina
             {
                 return nullptr;
             }
-            auto Link = Algo::FindIf(Links, [LinkID](const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>& Pair) { return CEdNodeGraph::MakeLinkID(Pair.first, Pair.second) == LinkID; });
+            auto Link = Algo::FindIf(Links, [LinkID](const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>& Pair) { return CEdNodeGraph::MakeLinkID(Pair.Key, Pair.Value) == LinkID; });
             return Link != Links.end() ? &*Link : nullptr;
         }
 
         // Tied wires are stored as output and input pin id pairs, the same halves a link id packs.
-        uint64 GetTiedLinkID(const SGraphZipTie& Tie, size_t Pair)
+        uint64 GetTiedLinkID(const SGraphZipTie& Tie, int32 Pair)
         {
             return ((uint64)Tie.Links[Pair * 2] << 32) | (uint64)Tie.Links[Pair * 2 + 1];
         }
@@ -60,15 +60,15 @@ namespace Lumina
         bool RetainTiedLinks(SGraphZipTie& Tie, TPredicate Keep)
         {
             TVector<uint32> Kept;
-            for (size_t Pair = 0; Pair < Tie.Links.size() / 2; ++Pair)
+            for (int32 Pair = 0; Pair < Tie.Links.Num() / 2; ++Pair)
             {
                 if (Keep(GetTiedLinkID(Tie, Pair)))
                 {
-                    Kept.push_back(Tie.Links[Pair * 2]);
-                    Kept.push_back(Tie.Links[Pair * 2 + 1]);
+                    Kept.Add(Tie.Links[Pair * 2]);
+                    Kept.Add(Tie.Links[Pair * 2 + 1]);
                 }
             }
-            const bool bChanged = Kept.size() != Tie.Links.size();
+            const bool bChanged = Kept.Num() != Tie.Links.Num();
             Tie.Links = Move(Kept);
             return bChanged;
         }
@@ -145,8 +145,8 @@ namespace Lumina
         
         TVector<TStrongObjectPtr<CEdGraphNode>> SavedNodes = Move(Nodes);
         TVector<uint32> SavedConnections = Move(Connections);
-        Nodes.clear();
-        Connections.clear();
+        Nodes.Reset();
+        Connections.Reset();
 
         // Reconciling before the links are back would drop everything keyed off them.
         bIsPostLoading = true;
@@ -169,7 +169,7 @@ namespace Lumina
 
     void CEdNodeGraph::RelinkFromConnections()
     {
-        for (size_t i = 0; i + 1 < Connections.size(); i += 2)
+        for (int32 i = 0; i + 1 < Connections.Num(); i += 2)
         {
             uint32 InputID = Connections[i];
             uint32 OutputID = Connections[i + 1];
@@ -221,14 +221,14 @@ namespace Lumina
             return;
         }
 
-        auto It = DebugContext.PinValues->find(Pin);
-        if (It == DebugContext.PinValues->end())
+        auto It = DebugContext.PinValues->Find(Pin);
+        if (It == nullptr)
         {
             return;
         }
 
         ImGui::Spring(0);
-        ImGui::TextColored(ImVec4(0.45f, 0.9f, 1.0f, 1.0f), "%s", It->second.c_str());
+        ImGui::TextColored(ImVec4(0.45f, 0.9f, 1.0f, 1.0f), "%s", *(*It));
     }
 
     namespace
@@ -249,44 +249,44 @@ namespace Lumina
         // Breaks at spaces and at the text's own newlines, and splits a word only when it is wider than a whole line.
         void WrapWords(ImFont* Font, float FontSize, const FString& Text, float MaxWidth, TVector<FString>& OutLines)
         {
-            OutLines.clear();
+            OutLines.Reset();
             auto Measure = [Font, FontSize](const FString& Line)
             {
-                return Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Line.c_str(), Line.c_str() + Line.size()).x;
+                return Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, *Line, *Line + Line.Len()).x;
             };
 
-            size_t ParagraphStart = 0;
-            while (ParagraphStart <= Text.size())
+            int32 ParagraphStart = 0;
+            while (ParagraphStart <= Text.Len())
             {
-                size_t ParagraphEnd = Text.find('\n', ParagraphStart);
-                if (ParagraphEnd == FString::npos)
+                int32 ParagraphEnd = Text.Find('\n', ParagraphStart);
+                if (ParagraphEnd == Constants::kIndexNone)
                 {
-                    ParagraphEnd = Text.size();
+                    ParagraphEnd = Text.Len();
                 }
 
                 FString Line;
-                size_t WordStart = ParagraphStart;
+                int32 WordStart = ParagraphStart;
                 while (WordStart < ParagraphEnd)
                 {
-                    size_t WordEnd = Text.find(' ', WordStart);
-                    if (WordEnd == FString::npos || WordEnd > ParagraphEnd)
+                    int32 WordEnd = Text.Find(' ', WordStart);
+                    if (WordEnd == Constants::kIndexNone || WordEnd > ParagraphEnd)
                     {
                         WordEnd = ParagraphEnd;
                     }
-                    const FString Word = Text.substr(WordStart, WordEnd - WordStart);
-                    const FString Candidate = Line.empty() ? Word : Line + " " + Word;
-                    if (Line.empty() || Measure(Candidate) <= MaxWidth)
+                    const FString Word = Text.Mid(WordStart, WordEnd - WordStart);
+                    const FString Candidate = Line.IsEmpty() ? Word : Line + " " + Word;
+                    if (Line.IsEmpty() || Measure(Candidate) <= MaxWidth)
                     {
                         Line = Candidate;
                     }
                     else
                     {
-                        OutLines.push_back(Line);
+                        OutLines.Add(Line);
                         Line = Word;
                     }
                     WordStart = WordEnd + 1;
                 }
-                OutLines.push_back(Line);
+                OutLines.Add(Line);
                 ParagraphStart = ParagraphEnd + 1;
             }
         }
@@ -294,8 +294,8 @@ namespace Lumina
         // Cuts a line that does not fit at a whole character and ends it with an ellipsis.
         void AddTextEllipsized(ImDrawList* DrawList, ImFont* Font, float FontSize, ImVec2 Position, ImU32 Color, const FString& Text, float MaxWidth)
         {
-            const char* Begin = Text.c_str();
-            const char* End   = Begin + Text.size();
+            const char* Begin = *Text;
+            const char* End   = Begin + Text.Len();
             if (Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Begin, End).x <= MaxWidth)
             {
                 DrawList->AddText(Font, FontSize, Position, Color, Begin, End);
@@ -313,9 +313,9 @@ namespace Lumina
                 while (End > Begin && (*End & 0xC0) == 0x80);
             }
 
-            FString Shown(Begin, (size_t)(End - Begin));
+            FString Shown(Begin, IntCastChecked<int32>(End - Begin));
             Shown += Ellipsis;
-            DrawList->AddText(Font, FontSize, Position, Color, Shown.c_str(), Shown.c_str() + Shown.size());
+            DrawList->AddText(Font, FontSize, Position, Color, *Shown, *Shown + Shown.Len());
         }
     }
 
@@ -324,8 +324,8 @@ namespace Lumina
         // The knot itself moves the node, and a lobe either side of it takes or gives a wire.
         constexpr float LobeReach = GRerouteKnotRadius * 2.5f;
 
-        CEdNodeGraphPin* InputPin  = Node->GetInputPins().empty() ? nullptr : Node->GetInputPins()[0].Get();
-        CEdNodeGraphPin* OutputPin = Node->GetOutputPins().empty() ? nullptr : Node->GetOutputPins()[0].Get();
+        CEdNodeGraphPin* InputPin  = Node->GetInputPins().IsEmpty() ? nullptr : Node->GetInputPins()[0].Get();
+        CEdNodeGraphPin* OutputPin = Node->GetOutputPins().IsEmpty() ? nullptr : Node->GetOutputPins()[0].Get();
         const ImU32 Color = OutputPin != nullptr ? GetWireColor(OutputPin) : IM_COL32_WHITE;
 
         FGraphNodeStyle Style;
@@ -385,8 +385,8 @@ namespace Lumina
         const float FontSize  = ImGui::GetFontSize();
         const float Width     = Math::Max(NodeSize.x, kMinWidth);
         const float WrapWidth = Width - kPadding * 2.0f;
-        const float TitleHeight = Font->CalcTextSizeA(FontSize, FLT_MAX, WrapWidth, Title.c_str()).y;
-        const float BodyHeight  = Error.Description.empty() ? 0.0f : Font->CalcTextSizeA(FontSize, FLT_MAX, WrapWidth, Error.Description.c_str()).y + kPadding * 0.5f;
+        const float TitleHeight = Font->CalcTextSizeA(FontSize, FLT_MAX, WrapWidth, *Title).y;
+        const float BodyHeight  = Error.Description.IsEmpty() ? 0.0f : Font->CalcTextSizeA(FontSize, FLT_MAX, WrapWidth, *Error.Description).y + kPadding * 0.5f;
 
         const ImVec2 Min(Position.x, Position.y + NodeSize.y + kGap);
         const ImVec2 Max(Min.x + Width, Min.y + kPadding * 2.0f + TitleHeight + BodyHeight);
@@ -396,10 +396,10 @@ namespace Lumina
         DrawList->AddRect(Min, Max, GNodeErrorHeaderColor, kRounding, 1.5f);
 
         const ImVec2 TextPos = Min + ImVec2(kPadding, kPadding);
-        DrawList->AddText(Font, FontSize, TextPos, GNodeErrorPinColor, Title.c_str(), nullptr, WrapWidth);
-        if (!Error.Description.empty())
+        DrawList->AddText(Font, FontSize, TextPos, GNodeErrorPinColor, *Title, nullptr, WrapWidth);
+        if (!Error.Description.IsEmpty())
         {
-            DrawList->AddText(Font, FontSize, TextPos + ImVec2(0.0f, TitleHeight + kPadding * 0.5f), GNodeErrorTextColor, Error.Description.c_str(), nullptr, WrapWidth);
+            DrawList->AddText(Font, FontSize, TextPos + ImVec2(0.0f, TitleHeight + kPadding * 0.5f), GNodeErrorTextColor, *Error.Description, nullptr, WrapWidth);
         }
     }
 
@@ -422,8 +422,8 @@ namespace Lumina
             return nullptr;
         }
 
-        CEdNodeGraphPin* RerouteIn  = RerouteNode->GetInputPins().empty()  ? nullptr : RerouteNode->GetInputPins()[0].Get();
-        CEdNodeGraphPin* RerouteOut = RerouteNode->GetOutputPins().empty() ? nullptr : RerouteNode->GetOutputPins()[0].Get();
+        CEdNodeGraphPin* RerouteIn  = RerouteNode->GetInputPins().IsEmpty()  ? nullptr : RerouteNode->GetInputPins()[0].Get();
+        CEdNodeGraphPin* RerouteOut = RerouteNode->GetOutputPins().IsEmpty() ? nullptr : RerouteNode->GetOutputPins()[0].Get();
         if (RerouteIn == nullptr || RerouteOut == nullptr)
         {
             return RerouteNode;
@@ -472,8 +472,8 @@ namespace Lumina
         // Walking input pins only visits each link once, so nothing gets connected twice.
         for (CEdGraphNode* Source : SourceOrder)
         {
-            const auto CloneItr = Clones.find(Source);
-            if (CloneItr == Clones.end())
+            const auto CloneItr = Clones.Find(Source);
+            if (CloneItr == nullptr)
             {
                 continue;
             }
@@ -493,14 +493,14 @@ namespace Lumina
                     }
 
                     // A link reaching outside the set would hang the clone off the original's neighbor.
-                    const auto UpstreamItr = Clones.find(Upstream->GetOwningNode());
-                    if (UpstreamItr == Clones.end())
+                    const auto UpstreamItr = Clones.Find(Upstream->GetOwningNode());
+                    if (UpstreamItr == nullptr)
                     {
                         continue;
                     }
 
-                    CEdNodeGraphPin* CloneInput  = FindPinByName(CloneItr->second, SourceInput->GetPinName(), ENodePinDirection::Input);
-                    CEdNodeGraphPin* CloneOutput = FindPinByName(UpstreamItr->second, Upstream->GetPinName(), ENodePinDirection::Output);
+                    CEdNodeGraphPin* CloneInput  = FindPinByName((*CloneItr), SourceInput->GetPinName(), ENodePinDirection::Input);
+                    CEdNodeGraphPin* CloneOutput = FindPinByName((*UpstreamItr), Upstream->GetPinName(), ENodePinDirection::Output);
                     if (CloneInput == nullptr || CloneOutput == nullptr)
                     {
                         continue;
@@ -517,7 +517,7 @@ namespace Lumina
     {
         // Source -> clone, so the link pass can map an original endpoint onto its copy.
         THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
-        Clones.reserve(SourceNodes.size());
+        Clones.Reserve(SourceNodes.Num());
 
         for (CEdGraphNode* Source : SourceNodes)
         {
@@ -534,7 +534,7 @@ namespace Lumina
 
             Source->CopyPropertiesTo(Clone);
             Clone->PostCloneFrom(Source);
-            Clones.emplace(Source, Clone);
+            Clones.TryAdd(Source, Clone);
 
             Clone->SetGridPos(Source->GetNodeX() + Delta.x, Source->GetNodeY() + Delta.y);
             Editor.SelectNode(Clone->GetNodeID(), true);
@@ -558,7 +558,7 @@ namespace Lumina
 
     void CEdNodeGraph::CollectSelectedNodesForClone(TVector<CEdGraphNode*>& OutNodes, ImVec2& OutPivot)
     {
-        OutNodes.clear();
+        OutNodes.Reset();
         OutPivot = ImVec2(0.0f, 0.0f);
 
         ImRect Bounds(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
@@ -570,11 +570,11 @@ namespace Lumina
                 continue;
             }
 
-            OutNodes.push_back(Node);
+            OutNodes.Add(Node);
             Bounds.Add(GetNodeBounds(Node));
         }
 
-        if (!OutNodes.empty())
+        if (!OutNodes.IsEmpty())
         {
             OutPivot = Bounds.GetCenter();
         }
@@ -594,10 +594,10 @@ namespace Lumina
         }
 
         THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
-        Clones.reserve(Source->Nodes.size());
+        Clones.Reserve(Source->Nodes.Num());
 
         TVector<CEdGraphNode*> SourceOrder;
-        SourceOrder.reserve(Source->Nodes.size());
+        SourceOrder.Reserve(Source->Nodes.Num());
 
         for (const TStrongObjectPtr<CEdGraphNode>& SourceNode : Source->Nodes)
         {
@@ -617,8 +617,8 @@ namespace Lumina
 
             // Positions are DuplicateTransient and the copy has no saved editor layout to key off.
             Clone->SetGridPos(SourceNode->GetNodeX(), SourceNode->GetNodeY());
-            Clones.emplace(SourceNode.Get(), Clone);
-            SourceOrder.push_back(SourceNode.Get());
+            Clones.TryAdd(SourceNode.Get(), Clone);
+            SourceOrder.Add(SourceNode.Get());
         }
 
         RelinkClones(SourceOrder, Clones);
@@ -635,7 +635,7 @@ namespace Lumina
 
     uint64 CEdNodeGraph::AccumulateTreeContentVersion(THashSet<const CEdNodeGraph*>& Visited) const
     {
-        if (!Visited.insert(this).second)
+        if (!Visited.TryAdd(this))
         {
             return 0;
         }
@@ -675,13 +675,13 @@ namespace Lumina
                 continue;
             }
 
-            if (!Visited.insert(SubGraph).second)
+            if (!Visited.TryAdd(SubGraph))
             {
                 Node->ReplaceSubGraphWithCopy();
                 ++Repaired;
 
                 SubGraph = Node->GetOwnedSubGraph();
-                if (SubGraph == nullptr || !Visited.insert(SubGraph).second)
+                if (SubGraph == nullptr || !Visited.TryAdd(SubGraph))
                 {
                     continue;
                 }
@@ -709,11 +709,11 @@ namespace Lumina
             CEdGraphNode* Node = NodeRef.Get();
             if (Node != nullptr && !Node->IsCommentNode() && Editor.IsNodeSelected(Node->GetNodeID()))
             {
-                Entries.push_back(FEntry{ Node, ImVec2(Node->GetNodeX(), Node->GetNodeY()), Editor.GetNodeSize(Node->GetNodeID()) });
+                Entries.Emplace(Node, ImVec2(Node->GetNodeX(), Node->GetNodeY()), Editor.GetNodeSize(Node->GetNodeID()));
             }
         }
 
-        const int32 Count        = (int32)Entries.size();
+        const int32 Count        = Entries.Num();
         const bool  bDistributeX = Alignment == ENodeAlignment::DistributeX;
         const bool  bDistributeY = Alignment == ENodeAlignment::DistributeY;
         if (Count < ((bDistributeX || bDistributeY) ? 3 : 2))
@@ -801,13 +801,13 @@ namespace Lumina
 
     void CEdNodeGraph::CollectDeadNodes(TVector<CEdGraphNode*>& OutDead) const
     {
-        OutDead.clear();
+        OutDead.Reset();
 
         THashSet<CEdGraphNode*> Contributing;
         CollectContributingNodes(Contributing);
 
         // With no roots there is no way to tell live from dead, and reporting all of them would be worse.
-        if (Contributing.empty())
+        if (Contributing.IsEmpty())
         {
             return;
         }
@@ -815,9 +815,9 @@ namespace Lumina
         for (const auto& NodeRef : Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            if (Node != nullptr && !Node->IsCommentNode() && Contributing.find(Node) == Contributing.end())
+            if (Node != nullptr && !Node->IsCommentNode() && !Contributing.Contains(Node))
             {
-                OutDead.push_back(Node);
+                OutDead.Add(Node);
             }
         }
     }
@@ -838,7 +838,7 @@ namespace Lumina
     {
         TVector<CEdGraphNode*> Dead;
         CollectDeadNodes(Dead);
-        if (!Dead.empty())
+        if (!Dead.IsEmpty())
         {
             SetPendingEditLabel("Delete Unused Nodes");
             RemoveNodes(Dead);
@@ -853,7 +853,7 @@ namespace Lumina
 
         THashSet<CEdGraphNode*> Contributing;
         CollectContributingNodes(Contributing);
-        if (Contributing.empty())
+        if (Contributing.IsEmpty())
         {
             return;
         }
@@ -871,7 +871,7 @@ namespace Lumina
         {
             Depth[Node] = 0;
         }
-        for (int32 i = (int32)Sorted.size() - 1; i >= 0; --i)
+        for (int32 i = Sorted.Num() - 1; i >= 0; --i)
         {
             CEdGraphNode* Node = Sorted[i];
             for (const auto& InputPinRef : Node->GetInputPins())
@@ -880,7 +880,7 @@ namespace Lumina
                 for (CEdNodeGraphPin* Connected : InputPin->GetConnections())
                 {
                     CEdGraphNode* Producer = Connected->GetOwningNode();
-                    if (Contributing.find(Producer) != Contributing.end())
+                    if (Contributing.Contains(Producer))
                     {
                         Depth[Producer] = Math::Max(Depth[Producer], Depth[Node] + 1);
                     }
@@ -889,20 +889,20 @@ namespace Lumina
         }
 
         int32 MaxDepth = 0;
-        for (const auto& Pair : Depth)
+        for (const auto& [Node, NodeDepth] : Depth)
         {
-            MaxDepth = Math::Max(MaxDepth, Pair.second);
+            MaxDepth = Math::Max(MaxDepth, NodeDepth);
         }
 
         // A single barycentric pass, stable and linear in edges, which removes the obvious tangles.
         TVector<TVector<CEdGraphNode*>> Columns;
-        Columns.resize(MaxDepth + 1);
-        for (const auto& Pair : Depth)
+        Columns.SetNum(MaxDepth + 1);
+        for (const auto& [Node, NodeDepth] : Depth)
         {
-            Columns[Pair.second].push_back(Pair.first);
+            Columns[NodeDepth].Add(Node);
         }
 
-        const CEdGraphNode* Anchor = Sorted.empty() ? Nodes[0].Get() : Sorted.back();
+        const CEdGraphNode* Anchor = Sorted.IsEmpty() ? Nodes[0].Get() : Sorted.Last();
         const ImVec2 Origin(Anchor->GetNodeX(), Anchor->GetNodeY());
 
         THashMap<CEdGraphNode*, float> PlacedY;
@@ -924,10 +924,10 @@ namespace Lumina
                         CEdNodeGraphPin* OutputPin = OutputPinRef.Get();
                         for (CEdNodeGraphPin* Connected : OutputPin->GetConnections())
                         {
-                            auto It = PlacedY.find(Connected->GetOwningNode());
-                            if (It != PlacedY.end())
+                            auto It = PlacedY.Find(Connected->GetOwningNode());
+                            if (It != nullptr)
                             {
-                                Sum += It->second;
+                                Sum += (*It);
                                 ++Count;
                             }
                         }
@@ -959,7 +959,7 @@ namespace Lumina
         // Dead nodes park in their own column, so tidying never buries work-in-progress in the graph.
         TVector<CEdGraphNode*> Dead;
         CollectDeadNodes(Dead);
-        if (!Dead.empty())
+        if (!Dead.IsEmpty())
         {
             float WidestDead = 0.0f;
             for (CEdGraphNode* Node : Dead)
@@ -1057,13 +1057,13 @@ namespace Lumina
     void CEdNodeGraph::DrawPinTooltip(CEdNodeGraphPin* Pin)
     {
         const FString TypeName = Pin->GetPinTypeName();
-        if (!TypeName.empty())
+        if (!TypeName.IsEmpty())
         {
-            ImGui::TextColored(ImVec4(0.60f, 0.80f, 1.00f, 1.0f), "%s", TypeName.c_str());
+            ImGui::TextColored(ImVec4(0.60f, 0.80f, 1.00f, 1.0f), "%s", *TypeName);
             ImGui::SameLine();
         }
 
-        ImGui::TextUnformatted(Pin->GetPinName().c_str());
+        ImGui::TextUnformatted(*Pin->GetPinName());
     }
 
     uint64 CEdNodeGraph::MakeLinkID(const CEdNodeGraphPin* InputPin, const CEdNodeGraphPin* OutputPin)
@@ -1123,7 +1123,7 @@ namespace Lumina
         }
 
         const bool bNodeActive = DebugContext.bEnabled && DebugContext.ActiveNodes != nullptr
-            && DebugContext.ActiveNodes->find(Node) != DebugContext.ActiveNodes->end();
+            && DebugContext.ActiveNodes->Contains(Node);
         uint32 HeaderColor = bNodeActive ? IM_COL32(235, 170, 40, 255) : Node->GetNodeTitleColor();
         if (Node->HasError())
         {
@@ -1149,11 +1149,11 @@ namespace Lumina
         }
 
         ImGui::Spring(1);
-        ImGui::Dummy(ImVec2(Node->GetMinNodeTitleBarSize()));
+        ImGui::Dummy(Node->GetMinNodeTitleBarSize());
         ImGui::Spring(0);
         NodeBuilder.EndHeader();
 
-        if (Node->GetInputPins().empty())
+        if (Node->GetInputPins().IsEmpty())
         {
             ImGui::BeginVertical("inputs", ImVec2(0, 0), 0.0f);
             ImGui::Dummy(ImVec2(0, 0));
@@ -1178,7 +1178,7 @@ namespace Lumina
 
             FGraphNodeBuilder::PinIcon(MakePinIcon(InputPin, PinColor, bDisabled));
             ImGui::Spring(0);
-            ImGui::TextUnformatted(InputPin->GetPinName().c_str());
+            ImGui::TextUnformatted(*InputPin->GetPinName());
 
             // Inline editors for unconnected pins, opt-in per graph through ShouldDrawInlinePinEditors().
             if (ShouldDrawInlinePinEditors() && !InputPin->HasConnection() && InputPin->HasInlineEditor())
@@ -1221,7 +1221,7 @@ namespace Lumina
 
             ImGui::Spring(1, 1);
             DrawPinDebugValue(OutputPin);
-            ImGui::TextUnformatted(OutputPin->GetPinName().c_str());
+            ImGui::TextUnformatted(*OutputPin->GetPinName());
             ImGui::Spring(0);
             FGraphNodeBuilder::PinIcon(MakePinIcon(OutputPin, PinColor, bDisabled));
 
@@ -1290,8 +1290,8 @@ namespace Lumina
 
     void CEdNodeGraph::CollectLinks(TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& OutLinks) const
     {
-        OutLinks.clear();
-        OutLinks.reserve(Nodes.size() * 2);
+        OutLinks.Reset();
+        OutLinks.Reserve(Nodes.Num() * 2);
         for (const auto& NodeRef : Nodes)
         {
             for (const auto& InputPinRef : NodeRef->GetInputPins())
@@ -1299,7 +1299,7 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    OutLinks.emplace_back(InputPin, Connection);
+                    OutLinks.Emplace(InputPin, Connection);
                 }
             }
         }
@@ -1322,7 +1322,7 @@ namespace Lumina
         if (bHasPendingFrame)
         {
             bHasPendingFrame = false;
-            if (!PendingFrameNodes.empty())
+            if (!PendingFrameNodes.IsEmpty())
             {
                 Editor.ClearSelection();
             }
@@ -1331,7 +1331,7 @@ namespace Lumina
             for (const auto& NodeRef : Nodes)
             {
                 const int64 FrameID = NodeRef->GetNodeID();
-                if (!PendingFrameNodes.empty())
+                if (!PendingFrameNodes.IsEmpty())
                 {
                     if (Algo::Find(PendingFrameNodes, FrameID) == PendingFrameNodes.end())
                     {
@@ -1348,10 +1348,10 @@ namespace Lumina
                 Bounds.Expand(60.0f);
                 Editor.NavigateTo(Bounds, 0.0f);
             }
-            PendingFrameNodes.clear();
+            PendingFrameNodes.Reset();
         }
 
-        Editor.Begin(GetName().c_str(), (int32)Nodes.size());
+        Editor.Begin(*GetName(), Nodes.Num());
 
         const FGraphLinkDrag* PinDrag = Editor.GetLinkDrag();
         DragSourcePin   = PinDrag != nullptr ? FindPinByGUID(PinDrag->FromPin) : nullptr;
@@ -1372,7 +1372,7 @@ namespace Lumina
         {
             if (NodeRef->IsCommentNode())
             {
-                Comments.push_back(static_cast<CEdNode_Comment*>(NodeRef.Get()));
+                Comments.Add(static_cast<CEdNode_Comment*>(NodeRef.Get()));
             }
         }
         Algo::StableSort(Comments, [](const CEdNode_Comment* A, const CEdNode_Comment* B) { return A->Width * A->Height > B->Width * B->Height; });
@@ -1390,7 +1390,7 @@ namespace Lumina
             }
 
             // This node reaches no output, so the compiler never emits it, and it costs nothing when connected.
-            const bool bDeadNode = (!ContributingNodes.empty() && !ContributingNodes.contains(Node)) || IsNodeIdle(Node);
+            const bool bDeadNode = (!ContributingNodes.IsEmpty() && !ContributingNodes.Contains(Node)) || IsNodeIdle(Node);
             if (bDeadNode)
             {
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
@@ -1451,8 +1451,8 @@ namespace Lumina
         if (LinkSelectedCallback)
         {
             const TVector<uint64> SelectedLinks = Editor.GetSelectedLinks();
-            const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Selected = SelectedLinks.empty() ? nullptr : FindLink(Links, SelectedLinks[0]);
-            LinkSelectedCallback(Selected != nullptr ? Selected->first : nullptr, Selected != nullptr ? Selected->second : nullptr);
+            const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Selected = SelectedLinks.IsEmpty() ? nullptr : FindLink(Links, SelectedLinks[0]);
+            LinkSelectedCallback(Selected != nullptr ? Selected->Key : nullptr, Selected != nullptr ? Selected->Value : nullptr);
         }
 
         Editor.EndWindow();
@@ -1486,12 +1486,12 @@ namespace Lumina
         }
         else if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* HoveredLink = FindLink(Links, Editor.GetHoveredLink()))
         {
-            DrawLinkTooltip(HoveredLink->first, HoveredLink->second);
+            DrawLinkTooltip(HoveredLink->Key, HoveredLink->Value);
         }
 
-        if (!Editor.GetTooltip().empty())
+        if (!Editor.GetTooltip().IsEmpty())
         {
-            ImGui::SetTooltip("%s", Editor.GetTooltip().c_str());
+            ImGui::SetTooltip("%s", *Editor.GetTooltip());
         }
 
         const FGraphContextRequest& Context = Editor.GetContextRequest();
@@ -1550,7 +1550,7 @@ namespace Lumina
             if (GetRerouteNodeClass() != nullptr)
             {
                 SetPendingEditLabel("Insert Reroute");
-                InsertRerouteOnLink(DoubleClickedLink->second, DoubleClickedLink->first, Editor.ScreenToCanvas(ImGui::GetMousePos()));
+                InsertRerouteOnLink(DoubleClickedLink->Value, DoubleClickedLink->Key, Editor.ScreenToCanvas(ImGui::GetMousePos()));
             }
         }
 
@@ -1690,8 +1690,8 @@ namespace Lumina
             return false;
         }
 
-        OutInput  = FindAutoConnectPin(Node, Link->second);
-        OutOutput = FindAutoConnectPin(Node, Link->first);
+        OutInput  = FindAutoConnectPin(Node, Link->Value);
+        OutOutput = FindAutoConnectPin(Node, Link->Key);
         return OutInput != nullptr && OutOutput != nullptr && !OutInput->HasConnection();
     }
 
@@ -1711,8 +1711,8 @@ namespace Lumina
         }
 
         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Link = FindLink(Links, Drop->LinkID);
-        CEdNodeGraphPin* WireInput  = Link->first;
-        CEdNodeGraphPin* WireOutput = Link->second;
+        CEdNodeGraphPin* WireInput  = Link->Key;
+        CEdNodeGraphPin* WireOutput = Link->Value;
 
         SetPendingEditLabel("Insert Node");
         BreakLink(WireInput, WireOutput);
@@ -1757,9 +1757,9 @@ namespace Lumina
     void CEdNodeGraph::StraightenSelection()
     {
         TVector<int64> Targets = Editor.GetSelectedNodes();
-        if (Targets.empty() && Editor.GetHoveredNode() != 0)
+        if (Targets.IsEmpty() && Editor.GetHoveredNode() != 0)
         {
-            Targets.push_back(Editor.GetHoveredNode());
+            Targets.Add(Editor.GetHoveredNode());
         }
 
         bool bMoved = false;
@@ -1812,8 +1812,8 @@ namespace Lumina
         float  Zoom = 1.0f;
         Editor.GetView(Center, Zoom);
 
-        auto Existing = Algo::FindIf(Bookmarks, [Slot](const SGraphBookmark& Bookmark) { return Bookmark.Slot == Slot; });
-        SGraphBookmark& Bookmark = Existing != Bookmarks.end() ? *Existing : Bookmarks.emplace_back();
+        SGraphBookmark* Existing = Bookmarks.FindByPredicate([Slot](const SGraphBookmark& Bookmark) { return Bookmark.Slot == Slot; });
+        SGraphBookmark& Bookmark = Existing != nullptr ? *Existing : Bookmarks.EmplaceGetRef();
         Bookmark.Slot = Slot;
         Bookmark.X    = Center.x;
         Bookmark.Y    = Center.y;
@@ -1882,18 +1882,18 @@ namespace Lumina
 
             int32 Score = 0;
             FString Title = Node->GetNodeTitleText();
-            if (FindQuery[0] == '\0' || FuzzyMatch(FindQuery, Title.c_str(), Score, Indices))
+            if (FindQuery[0] == '\0' || FuzzyMatch(FindQuery, *Title, Score, Indices))
             {
-                Matches.push_back(FMatch{ Node, Move(Title), Score });
+                Matches.Emplace(Node, Move(Title), Score);
             }
-            else if (FuzzyMatch(FindQuery, FString(Node->GetNodeDisplayName()).c_str(), Score, Indices))
+            else if (FuzzyMatch(FindQuery, *FString(Node->GetNodeDisplayName()), Score, Indices))
             {
-                Matches.push_back(FMatch{ Node, Move(Title), Score - DisplayNamePenalty });
+                Matches.Emplace(Node, Move(Title), Score - DisplayNamePenalty);
             }
         }
         Algo::StableSort(Matches, [](const FMatch& A, const FMatch& B) { return A.Score > B.Score; });
 
-        const int32 Shown = Math::Min((int32)Matches.size(), MaxResults);
+        const int32 Shown = Math::Min(Matches.Num(), MaxResults);
         FindSelection += ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) ? 1 : 0;
         FindSelection -= ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? 1 : 0;
         FindSelection  = Shown > 0 ? Math::Clamp(FindSelection, 0, Shown - 1) : 0;
@@ -1906,7 +1906,7 @@ namespace Lumina
         {
             const FMatch& Match = Matches[Index];
             ImGui::PushID(Match.Node);
-            if (ImGui::Selectable(Match.Title.c_str(), Index == FindSelection))
+            if (ImGui::Selectable(*Match.Title, Index == FindSelection))
             {
                 Chosen = Match.Node;
             }
@@ -1914,7 +1914,7 @@ namespace Lumina
             if (Match.Title != TypeName)
             {
                 ImGui::SameLine();
-                ImGui::TextDisabled("%.*s", (int)TypeName.size(), TypeName.data());
+                ImGui::TextDisabled("%.*s", TypeName.Len(), TypeName.GetData());
             }
             ImGui::PopID();
         }
@@ -1955,11 +1955,11 @@ namespace Lumina
             return;
         }
 
-        ImGui::TextDisabled("%s", Node->GetNodeTitleText().c_str());
+        ImGui::TextDisabled("%s", *Node->GetNodeTitleText());
         ImGui::SameLine();
         if (ImGui::SmallButton(LE_ICON_CONTENT_COPY " Copy"))
         {
-            ImGui::SetClipboardText(Code.c_str());
+            ImGui::SetClipboardText(*Code);
         }
         ImGui::Separator();
 
@@ -1967,7 +1967,7 @@ namespace Lumina
         const float Lines  = (float)(Algo::Count(Code, '\n') + 1);
         const float Height = Math::Min(ImGui::GetTextLineHeightWithSpacing() * Lines, ImGui::GetFontSize() * 24.0f);
         ImGui::BeginChild("##Code", ImVec2(0.0f, Height), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::TextUnformatted(Code.c_str());
+        ImGui::TextUnformatted(*Code);
         ImGui::EndChild();
         ImGuiX::Font::PopFont();
         ImGui::EndPopup();
@@ -1992,8 +1992,8 @@ namespace Lumina
         ImDrawList* DrawList = Editor.GetNodeBackgroundDrawList(Node->GetNodeID());
         DrawList->AddRectFilled(ImVec2(Min.x + Inset, Min.y + Size.y - BarHeight - 2.0f), ImVec2(Min.x + Inset + Width, Min.y + Size.y - 2.0f), Color, BarHeight * 0.5f);
 
-        const ImVec2 TextSize = ImGui::CalcTextSize(Label.c_str());
-        DrawList->AddText(ImVec2(Min.x + Size.x - TextSize.x - Inset, Min.y + Inset * 0.5f), Color, Label.c_str());
+        const ImVec2 TextSize = ImGui::CalcTextSize(*Label);
+        DrawList->AddText(ImVec2(Min.x + Size.x - TextSize.x - Inset, Min.y + Inset * 0.5f), Color, *Label);
     }
 
     void CEdNodeGraph::HandleLinkDrag()
@@ -2101,21 +2101,21 @@ namespace Lumina
         {
             if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Link = FindLink(Links, Hit.LinkID))
             {
-                Crossed.push_back(*Link);
+                Crossed.Add(*Link);
                 Center += Hit.Point;
             }
         }
-        if (Crossed.empty())
+        if (Crossed.IsEmpty())
         {
             return;
         }
-        Center /= (float)Crossed.size();
+        Center /= (float)Crossed.Num();
 
         switch (Stroke)
         {
             case EGraphStroke::Cut:
             {
-                SetPendingEditLabel(Crossed.size() == 1 ? FName("Cut Wire") : FName("Cut Wires"));
+                SetPendingEditLabel(Crossed.Num() == 1 ? FName("Cut Wire") : FName("Cut Wires"));
                 for (const auto& [InputPin, OutputPin] : Crossed)
                 {
                     BreakLink(InputPin, OutputPin);
@@ -2135,7 +2135,7 @@ namespace Lumina
                 {
                     if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Link = FindLink(Links, Hit.LinkID))
                     {
-                        InsertRerouteOnLink(Link->second, Link->first, Hit.Point);
+                        InsertRerouteOnLink(Link->Value, Link->Key, Hit.Point);
                     }
                 }
                 break;
@@ -2159,15 +2159,15 @@ namespace Lumina
             if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Link = FindLink(Links, LinkID))
             {
                 SetPendingEditLabel("Break Link");
-                BreakLink(Link->first, Link->second);
+                BreakLink(Link->Key, Link->Value);
             }
         }
 
         const TVector<uint64> Ties = Editor.GetSelectedZipTies();
-        if (!Ties.empty())
+        if (!Ties.IsEmpty())
         {
             SetPendingEditLabel("Remove Zip Tie");
-            ZipTies.erase(Algo::RemoveIf(ZipTies, [&Ties](const SGraphZipTie& Tie) { return Algo::Contains(Ties, (uint64)Tie.ID); }), ZipTies.end());
+            ZipTies.RemoveAll([&Ties](const SGraphZipTie& Tie) { return Algo::Contains(Ties, (uint64)Tie.ID); });
             NotifyCosmeticChange();
         }
 
@@ -2176,13 +2176,13 @@ namespace Lumina
         {
             if (NodeRef.IsValid() && NodeRef->IsDeletable() && Editor.IsNodeSelected(NodeRef->GetNodeID()))
             {
-                DeletedNodes.push_back(NodeRef.Get());
+                DeletedNodes.Add(NodeRef.Get());
             }
         }
 
-        if (!DeletedNodes.empty())
+        if (!DeletedNodes.IsEmpty())
         {
-            SetPendingEditLabel(DeletedNodes.size() == 1 ? FName("Delete Node") : FName("Delete Nodes"));
+            SetPendingEditLabel(DeletedNodes.Num() == 1 ? FName("Delete Node") : FName("Delete Nodes"));
             RemoveNodes(DeletedNodes);
         }
     }
@@ -2192,7 +2192,7 @@ namespace Lumina
         // The clipboard is shared, so filter to what this graph's registered node classes accept.
         const THashSet<CClass*>& Supported = GetSupportedNodes();
         TVector<CEdGraphNode*> Pastable;
-        Pastable.reserve(GetNodeClipboard().size());
+        Pastable.Reserve(GetNodeClipboard().Num());
         uint32 Rejected = 0;
         for (CEdGraphNode* Copied : GetNodeClipboard())
         {
@@ -2201,9 +2201,9 @@ namespace Lumina
                 continue;
             }
 
-            if (Supported.find(Copied->GetClass()) != Supported.end())
+            if (Supported.Contains(Copied->GetClass()))
             {
-                Pastable.push_back(Copied);
+                Pastable.Add(Copied);
             }
             else
             {
@@ -2246,7 +2246,7 @@ namespace Lumina
         {
             if (CEdNodeGraphPin* Pin = FindPinByGUID(ContextMenuPinID))
             {
-                ImGui::TextDisabled("%s", Pin->GetPinName().empty() ? "Pin" : Pin->GetPinName().c_str());
+                ImGui::TextDisabled("%s", Pin->GetPinName().IsEmpty() ? "Pin" : *Pin->GetPinName());
                 ImGui::Separator();
                 DrawPinContextMenu(Pin);
                 if (ImGui::MenuItem(LE_ICON_LINK_OFF " Break Links", "Alt+Click", false, Pin->HasConnection()))
@@ -2266,13 +2266,13 @@ namespace Lumina
                 if (ImGui::MenuItem(LE_ICON_LINK_OFF " Break Link", "Delete"))
                 {
                     SetPendingEditLabel("Break Link");
-                    BreakLink(Link->first, Link->second);
+                    BreakLink(Link->Key, Link->Value);
                 }
 
                 if (GetRerouteNodeClass() != nullptr && ImGui::MenuItem(LE_ICON_RAY_VERTEX " Insert Reroute", "Double-Click"))
                 {
                     SetPendingEditLabel("Insert Reroute");
-                    InsertRerouteOnLink(Link->second, Link->first, OpenedAt);
+                    InsertRerouteOnLink(Link->Value, Link->Key, OpenedAt);
                 }
 
                 TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>> Selected;
@@ -2280,12 +2280,12 @@ namespace Lumina
                 {
                     if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* SelectedLink = FindLink(Links, LinkID))
                     {
-                        Selected.push_back(*SelectedLink);
+                        Selected.Add(*SelectedLink);
                     }
                 }
-                if (Selected.empty())
+                if (Selected.IsEmpty())
                 {
-                    Selected.push_back(*Link);
+                    Selected.Add(*Link);
                 }
 
                 if (ImGui::MenuItem(LE_ICON_CABLE_DATA " Zip Tie Selected Wires", "Alt+Right-Drag"))
@@ -2302,7 +2302,7 @@ namespace Lumina
             if (ImGui::MenuItem(LE_ICON_CONTENT_CUT " Remove Zip Tie", "Delete"))
             {
                 SetPendingEditLabel("Remove Zip Tie");
-                ZipTies.erase(Algo::RemoveIf(ZipTies, [this](const SGraphZipTie& Tie) { return Tie.ID == ContextMenuTieID; }), ZipTies.end());
+                ZipTies.RemoveAll([this](const SGraphZipTie& Tie) { return Tie.ID == ContextMenuTieID; });
                 NotifyCosmeticChange();
             }
             ImGui::EndPopup();
@@ -2316,10 +2316,10 @@ namespace Lumina
         TVector<uint64> LinkIDs;
         for (SGraphZipTie& Tie : ZipTies)
         {
-            LinkIDs.clear();
-            for (size_t Pair = 0; Pair < Tie.Links.size() / 2; ++Pair)
+            LinkIDs.Reset();
+            for (int32 Pair = 0; Pair < Tie.Links.Num() / 2; ++Pair)
             {
-                LinkIDs.push_back(GetTiedLinkID(Tie, Pair));
+                LinkIDs.Add(GetTiedLinkID(Tie, Pair));
             }
 
             ImVec2 Position(Tie.X, Tie.Y);
@@ -2335,7 +2335,7 @@ namespace Lumina
 
     void CEdNodeGraph::AddZipTie(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links, ImVec2 CanvasPos)
     {
-        if (Links.empty())
+        if (Links.IsEmpty())
         {
             return;
         }
@@ -2346,8 +2346,8 @@ namespace Lumina
 
         for (const auto& [InputPin, OutputPin] : Links)
         {
-            NewTie.Links.push_back(OutputPin->GetPinGUID());
-            NewTie.Links.push_back(InputPin->GetPinGUID());
+            NewTie.Links.Add(OutputPin->GetPinGUID());
+            NewTie.Links.Add(InputPin->GetPinGUID());
         }
 
         // A wire passes through every tie it is in, so the new tie leaves the others as they were.
@@ -2356,13 +2356,13 @@ namespace Lumina
             NewTie.ID = Math::Max(NewTie.ID, Tie.ID);
         }
         ++NewTie.ID;
-        ZipTies.push_back(Move(NewTie));
+        ZipTies.Add(Move(NewTie));
         NotifyCosmeticChange();
     }
 
     void CEdNodeGraph::PruneZipTies()
     {
-        if (ZipTies.empty())
+        if (ZipTies.IsEmpty())
         {
             return;
         }
@@ -2372,18 +2372,18 @@ namespace Lumina
         THashSet<uint64> Live;
         for (const auto& [InputPin, OutputPin] : Links)
         {
-            Live.insert(MakeLinkID(InputPin, OutputPin));
+            Live.Add(MakeLinkID(InputPin, OutputPin));
         }
 
         bool bChanged = false;
         for (SGraphZipTie& Tie : ZipTies)
         {
-            bChanged |= RetainTiedLinks(Tie, [&Live](uint64 LinkID) { return Live.contains(LinkID); });
+            bChanged |= RetainTiedLinks(Tie, [&Live](uint64 LinkID) { return Live.Contains(LinkID); });
         }
 
-        const size_t TieCount = ZipTies.size();
-        ZipTies.erase(Algo::RemoveIf(ZipTies, [](const SGraphZipTie& Tie) { return Tie.Links.empty(); }), ZipTies.end());
-        if (bChanged || TieCount != ZipTies.size())
+        const int32 TieCount = ZipTies.Num();
+        ZipTies.RemoveAll([](const SGraphZipTie& Tie) { return Tie.Links.IsEmpty(); });
+        if (bChanged || TieCount != ZipTies.Num())
         {
             NotifyCosmeticChange();
         }
@@ -2402,7 +2402,7 @@ namespace Lumina
     {
         if (Node != nullptr)
         {
-            ImGui::TextDisabled("%s", FString(Node->GetNodeDisplayName()).c_str());
+            ImGui::TextDisabled("%s", *FString(Node->GetNodeDisplayName()));
             ImGui::Separator();
 
             Node->DrawContextMenu();
@@ -2451,11 +2451,11 @@ namespace Lumina
         CollectDeadNodes(Dead);
 
         // A menu whose entries come and go is harder to learn than one that says there is nothing to do.
-        ImGui::BeginDisabled(Dead.empty());
-        if (ImGui::MenuItem(Dead.empty()
+        ImGui::BeginDisabled(Dead.IsEmpty());
+        if (ImGui::MenuItem(Dead.IsEmpty()
                 ? LE_ICON_SELECTION_OFF " No Unused Nodes"
-                : FormatAs<FFixedString>(LE_ICON_SELECTION " Select {} Unused Node{}",
-                    (int32)Dead.size(), Dead.size() == 1 ? "" : "s").c_str()))
+                : *FormatAs<FFixedString>(LE_ICON_SELECTION " Select {} Unused Node{}",
+                    Dead.Num(), Dead.Num() == 1 ? "" : "s")))
         {
             SelectDeadNodes();
         }
@@ -2482,7 +2482,7 @@ namespace Lumina
             Probe->BuildNode();
             if (FindAutoConnectPin(Probe.Get(), SourcePin) != nullptr)
             {
-                OutClasses.insert(NodeClass);
+                OutClasses.Add(NodeClass);
             }
         }
     }
@@ -2543,7 +2543,7 @@ namespace Lumina
 
     void CEdNodeGraph::OpenChoicePopup(CEdGraphNode* Node, TVector<FString> InChoices, int32 Current, TFunction<void(int32)> OnChosen)
     {
-        if (Node == nullptr || InChoices.empty())
+        if (Node == nullptr || InChoices.IsEmpty())
         {
             return;
         }
@@ -2581,9 +2581,9 @@ namespace Lumina
             return;
         }
 
-        for (int32 Index = 0; Index < (int32)Choices.size(); ++Index)
+        for (int32 Index = 0; Index < Choices.Num(); ++Index)
         {
-            if (ImGui::Selectable(Choices[Index].c_str(), Index == ChoiceCurrent))
+            if (ImGui::Selectable(*Choices[Index], Index == ChoiceCurrent))
             {
                 if (FindNode(ChoiceNodeID) != nullptr && OnChoiceChosen)
                 {
@@ -2608,8 +2608,8 @@ namespace Lumina
         }
 
         RenameNodeID = Node->GetNodeID();
-        const size_t Count = Math::Min(Current.size(), sizeof(RenameBuffer) - 1);
-        Memory::Memcpy(RenameBuffer, Current.data(), Count);
+        const int32 Count = Math::Min(Current.Len(), static_cast<int32>(sizeof(RenameBuffer) - 1));
+        Memory::Memcpy(RenameBuffer, Current.GetData(), Count);
         RenameBuffer[Count] = '\0';
         bOpenRenamePopup = true;
     }
@@ -2689,13 +2689,13 @@ namespace Lumina
         TVector<FString> DescriptionLines;
         float DescriptionLineHeight = 0.0f;
         float HeaderHeight = kCommentHeaderHeight;
-        if (!Comment->Description.empty())
+        if (!Comment->Description.IsEmpty())
         {
             PushFont(EFont::Small);
             DescriptionLineHeight = ImGui::GetTextLineHeight();
             WrapWords(ImGui::GetFont(), ImGui::GetFontSize(), Comment->Description, BodySize.x - kCommentPadding * 2.0f, DescriptionLines);
             PopFont();
-            HeaderHeight += DescriptionLineHeight * (float)DescriptionLines.size() + kCommentPadding * 0.5f;
+            HeaderHeight += DescriptionLineHeight * (float)DescriptionLines.Num() + kCommentPadding * 0.5f;
         }
 
         ImVec2 Position(Comment->GetNodeX(), Comment->GetNodeY());
@@ -2739,14 +2739,14 @@ namespace Lumina
             AddTextEllipsized(DrawList, ImGui::GetFont(), FontSize, ImVec2(TitleX, TextY), TitleColor, Comment->Title, Max.x - kCommentPadding - TitleX);
             PopFont();
 
-            if (!DescriptionLines.empty())
+            if (!DescriptionLines.IsEmpty())
             {
                 PushFont(EFont::Small);
                 const ImU32 DescriptionColor = ScaleCommentAlpha(TitleColor, 0.78f);
                 ImVec2 LinePos(Min.x + kCommentPadding, Min.y + kCommentHeaderHeight - 6.0f);
                 for (const FString& Line : DescriptionLines)
                 {
-                    DrawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), LinePos, DescriptionColor, Line.c_str(), Line.c_str() + Line.size());
+                    DrawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), LinePos, DescriptionColor, *Line, *Line + Line.Len());
                     LinePos.y += DescriptionLineHeight;
                 }
                 PopFont();
@@ -2790,13 +2790,13 @@ namespace Lumina
             DrawList->AddRect(Min, Max, Comment->GetTint(0.9f * Fade), 4.0f, 2.0f);
 
             const FString& Title    = Comment->Title;
-            const ImVec2   TextSize = ImGui::CalcTextSize(Title.c_str(), Title.c_str() + Title.size());
+            const ImVec2   TextSize = ImGui::CalcTextSize(*Title, *Title + Title.Len());
 
             // Laid over the comment's own title bar, so it can never land on a neighboring comment.
             const ImVec2 BarMax(Max.x, Min.y + TextSize.y + 12.0f);
             DrawList->AddRectFilled(Min, BarMax, Comment->GetTint(Fade), 4.0f, ImDrawFlags_RoundCornersTop);
             DrawList->PushClipRect(Min, BarMax, true);
-            DrawList->AddText(ImVec2(Min.x + 12.0f, Min.y + 6.0f), ScaleCommentAlpha(Comment->GetTitleTextColor(), Fade), Title.c_str(), Title.c_str() + Title.size());
+            DrawList->AddText(ImVec2(Min.x + 12.0f, Min.y + 6.0f), ScaleCommentAlpha(Comment->GetTitleTextColor(), Fade), *Title, *Title + Title.Len());
             DrawList->PopClipRect();
         }
         PopFont();
@@ -2826,7 +2826,7 @@ namespace Lumina
 
             // A union, since RegisterGraphNode adds per-instance entries the shared cache knows nothing about.
             const THashSet<CClass*>& Discovered = Registry.GetNodesForGraphClass(GetClass());
-            SupportedNodes.insert(Discovered.begin(), Discovered.end());
+            SupportedNodes.Append(Discovered);
         }
 
         return SupportedNodes;
@@ -2834,9 +2834,9 @@ namespace Lumina
 
     void CEdNodeGraph::RegisterGraphNode(CClass* InClass)
     {
-        if (SupportedNodes.find(InClass) == SupportedNodes.end())
+        if (!SupportedNodes.Contains(InClass))
         {
-            SupportedNodes.emplace(InClass);
+            SupportedNodes.TryAdd(InClass);
         }
     }
 
@@ -2939,7 +2939,7 @@ namespace Lumina
         InNode->NodeID = NodeID;
         InNode->OwningGraph = this;
 
-        Nodes.push_back(InNode);
+        Nodes.Add(InNode);
 
         if (!InNode->bWasBuild)
         {
@@ -3149,7 +3149,7 @@ namespace Lumina
             // The copy buffer holds raw pointers, so a node deleted between copy and paste would be cloned dead.
             ForgetClipboardNode(Node);
 
-            Nodes.erase(Algo::RemoveIf(Nodes, [Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; }), Nodes.end());
+            Nodes.RemoveAll([Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; });
         }
 
         NotifyContentChanged();

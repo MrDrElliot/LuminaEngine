@@ -27,10 +27,10 @@ namespace Lumina
             return false;
         }
 
-        const uint32 LayerCount = (uint32)Array->SourceTextures.size();
+        const uint32 LayerCount = (uint32)Array->SourceTextures.Num();
         if (LayerCount == 0)
         {
-            LOG_ERROR("TextureArrayFactory: '{0}' has no source textures to build from.", Array->GetName().c_str());
+            LOG_ERROR("TextureArrayFactory: '{0}' has no source textures to build from.", *Array->GetName());
             return false;
         }
 
@@ -38,7 +38,7 @@ namespace Lumina
         {
             // maxImageArrayLayers is 2048 everywhere we ship, and a larger request fails with nothing in the log.
             LOG_ERROR("TextureArrayFactory: '{0}' asks for {1} layers; the hardware limit is 2048.",
-                      Array->GetName().c_str(), LayerCount);
+                      *Array->GetName(), LayerCount);
             return false;
         }
 
@@ -54,7 +54,7 @@ namespace Lumina
         };
 
         FTextureResource::FDescription          Contract;
-        TFixedVector<FTextureResource::FMip, 1> AssembledMips;
+        TInlineVector<FTextureResource::FMip, 1> AssembledMips;
         bool                                    bHaveContract = false;
 
         for (uint32 Layer = 0; Layer < LayerCount; ++Layer)
@@ -63,7 +63,7 @@ namespace Lumina
             if (!Source.IsValid())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} has no texture assigned.",
-                          Array->GetName().c_str(), Layer);
+                          *Array->GetName(), Layer);
                 return Rollback();
             }
 
@@ -71,19 +71,19 @@ namespace Lumina
             if (Source->IsA<CTextureArray>())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') is itself a texture array; layers must be plain textures.",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str());
+                          *Array->GetName(), Layer, *Source->GetName());
                 return Rollback();
             }
 
-            if (Source->TextureResource == nullptr || Source->TextureResource->Mips.empty())
+            if (Source->TextureResource == nullptr || Source->TextureResource->Mips.IsEmpty())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') has no cooked pixel data.",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str());
+                          *Array->GetName(), Layer, *Source->GetName());
                 return Rollback();
             }
 
             const FTextureResource::FDescription& SrcDesc = Source->TextureResource->ImageDescription;
-            const uint32 SrcMips = (uint32)Source->TextureResource->Mips.size();
+            const uint32 SrcMips = (uint32)Source->TextureResource->Mips.Num();
 
             if (!bHaveContract)
             {
@@ -107,19 +107,19 @@ namespace Lumina
                     const FTextureResource::FMip& SrcMip = Source->TextureResource->Mips[Mip];
 
                     // An array with a hole survives into the saved asset, so refusing beats rebuilding.
-                    if (SrcMip.Pixels.empty())
+                    if (SrcMip.Pixels.IsEmpty())
                     {
                         LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') mip {3} could not be made "
                                   "resident, so the array would be built with a hole it can never fill. "
                                   "Leaving the previous array in place; see the errors above.",
-                                  Array->GetName().c_str(), Layer, Source->GetName().c_str(), Mip);
+                                  *Array->GetName(), Layer, *Source->GetName(), Mip);
                         return Rollback();
                     }
 
-                    AssembledMips.push_back(SrcMip);
+                    AssembledMips.Add(SrcMip);
 
                     // The copy carries the source's BulkRef, which addresses the wrong package, so clear it here.
-                    AssembledMips.back().BulkRef = FBulkDataRef{};
+                    AssembledMips.Last().BulkRef = FBulkDataRef{};
                 }
                 continue;
             }
@@ -130,18 +130,18 @@ namespace Lumina
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') is {3}x{4} fmt {5} with {6} mips, but layer 0 "
                           "established {7}x{8} fmt {9} with {10} mips. Every layer must match -- resize the source, "
                           "reorder so the intended size is layer 0, or enable 'Resize Layers To First' on the asset.",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str(),
+                          *Array->GetName(), Layer, *Source->GetName(),
                           SrcDesc.Extent.x, SrcDesc.Extent.y, (uint32)SrcDesc.Format, SrcMips,
                           Contract.Extent.x, Contract.Extent.y, (uint32)Contract.Format, (uint32)Contract.NumMips);
                 return Rollback();
             }
 
             // Re-cooked from the ORIGINAL source, since rescaling BCn would stack two generations of artifacts.
-            if (Source->SourcePath.empty())
+            if (Source->SourcePath.IsEmpty())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') needs resizing to {3}x{4}, but it has no source "
                           "file on disk to re-cook from (mesh-embedded textures can't be resized).",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str(),
+                          *Array->GetName(), Layer, *Source->GetName(),
                           Contract.Extent.x, Contract.Extent.y);
                 return Rollback();
             }
@@ -150,12 +150,12 @@ namespace Lumina
             if (!CTextureFactory::CookLayerFromFile(Array, Source->SourcePath, Array->ColorSpace, Contract.Extent))
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') failed to re-cook from '{3}'.",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str(), Source->SourcePath.c_str());
+                          *Array->GetName(), Layer, *Source->GetName(), *Source->SourcePath);
                 return Rollback();
             }
 
             const FTextureResource::FDescription& Recooked = Array->TextureResource->ImageDescription;
-            const uint32 RecookedMips = (uint32)Array->TextureResource->Mips.size();
+            const uint32 RecookedMips = (uint32)Array->TextureResource->Mips.Num();
             if (Recooked.Extent != Contract.Extent
              || Recooked.Format != Contract.Format
              || RecookedMips    != (uint32)Contract.NumMips)
@@ -164,7 +164,7 @@ namespace Lumina
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') still doesn't match after resizing "
                           "({3}x{4} fmt {5} with {6} mips vs {7}x{8} fmt {9} with {10} mips). Layers must share a "
                           "color space so they cook to the same format.",
-                          Array->GetName().c_str(), Layer, Source->GetName().c_str(),
+                          *Array->GetName(), Layer, *Source->GetName(),
                           Recooked.Extent.x, Recooked.Extent.y, (uint32)Recooked.Format, RecookedMips,
                           Contract.Extent.x, Contract.Extent.y, (uint32)Contract.Format, (uint32)Contract.NumMips);
                 return Rollback();
@@ -172,7 +172,7 @@ namespace Lumina
 
             for (uint32 Mip = 0; Mip < RecookedMips; ++Mip)
             {
-                AssembledMips.push_back(Move(Array->TextureResource->Mips[Mip]));
+                AssembledMips.Add(Move(Array->TextureResource->Mips[Mip]));
             }
         }
 
@@ -199,7 +199,7 @@ namespace Lumina
         AssetEvents::BroadcastAssetDataChanged(Array);
 
         LOG_INFO("TextureArrayFactory: rebuilt '{0}' with {1} layers at {2}x{3} ({4} mips).",
-                 Array->GetName().c_str(), LayerCount,
+                 *Array->GetName(), LayerCount,
                  Array->TextureResource->ImageDescription.Extent.x,
                  Array->TextureResource->ImageDescription.Extent.y,
                  (uint32)Array->TextureResource->ImageDescription.NumMips);

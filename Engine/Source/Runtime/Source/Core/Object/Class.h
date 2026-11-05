@@ -68,8 +68,8 @@ namespace Lumina
         RUNTIME_API uint64 GetEnumValueByName(const FName& Name);
         RUNTIME_API FFixedString GetValueOrBitFieldAsString(int64 Value);
         
-        RUNTIME_API FName GetNameAtIndex(int64 Index) const  { return Names[Index].first; }
-        RUNTIME_API uint64 GetValueAtIndex(int64 Index) const { return Names[Index].second; }
+        RUNTIME_API FName GetNameAtIndex(int64 Index) const  { return Names[Index].Key; }
+        RUNTIME_API uint64 GetValueAtIndex(int64 Index) const { return Names[Index].Value; }
         
         void AddEnum(FName Name, uint64 Value);
         void ForEachEnum(const TFunction<void(const TPair<FName, uint64>&)>& Functor);
@@ -147,6 +147,9 @@ namespace Lumina
         RUNTIME_API virtual void InitializeStruct(void* Dest) const;
         RUNTIME_API virtual void DestroyStruct(void* Dest) const;
         RUNTIME_API virtual void CopyStruct(void* Dest, const void* Src) const;
+
+        // Moves a live value into raw memory and ends the source, keeping what a copy would not, such as delegate bindings.
+        RUNTIME_API virtual void RelocateStruct(void* Dest, void* Source) const;
         RUNTIME_API virtual bool CompareStruct(const void* A, const void* B) const;
 
         // Copies every reflected property, the trivial ones a contiguous run at a time.
@@ -154,6 +157,7 @@ namespace Lumina
 
         /** Reflected-property serialization with tags for versioning/skip support. */
         RUNTIME_API void SerializeProperties(FArchive& Ar, void* Data) const;
+        RUNTIME_API static void SkipSerializedProperties(FArchive& Ar);
 
         /** Compact network serialization: walks PROPERTY(Replicated) fields (this struct + supers) in a
          *  fixed, tag-less order, calling each property's NetSerialize. Both peers must share the layout. */
@@ -232,10 +236,10 @@ namespace Lumina
                 return true;
             }
 
-            if (!BaseChain.empty() && !Base->BaseChain.empty())
+            if (!BaseChain.IsEmpty() && !Base->BaseChain.IsEmpty())
             {
-                const SIZE_T ParentIndex = Base->BaseChain.size() - 1;
-                const bool bResult = ParentIndex < BaseChain.size() && BaseChain[ParentIndex] == Base;
+                const int32 ParentIndex = Base->BaseChain.Num() - 1;
+                const bool bResult = ParentIndex < BaseChain.Num() && BaseChain[ParentIndex] == Base;
 
                 // A chain left stale by a re-mint answers wrongly in silence, so prove it in Debug.
                 DEBUG_ASSERT(bResult == IsChildOfByWalk(Base));

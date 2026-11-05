@@ -16,18 +16,18 @@ namespace Lumina
     //
     // It is deliberately decoupled from reflection: any TVector<T> -- a reflected member, a function return, a
     // plain local -- is operated on the same way. The field order/layout MUST match LuminaSharp.VectorOps
-    // (Core/ContainerOps.cs); the C# side reads PushBack/RemoveAt/Clear at fixed offsets. Captureless lambdas
+    // (Core/ContainerOps.cs); the C# side reads Add/RemoveAt/Reset at fixed offsets. Captureless lambdas
     // convert to plain function pointers whose calling convention matches C#'s delegate* unmanaged[Cdecl].
     struct FVectorOps
     {
-        SIZE_T (*Size)(const void* Vector);
-        void*  (*Data)(void* Vector);
-        void   (*PushBack)(void* Vector, const void* Element); // null Element => default-construct (emplace_back)
-        void   (*RemoveAt)(void* Vector, SIZE_T Index);
-        void   (*Clear)(void* Vector);
-        void   (*Resize)(void* Vector, SIZE_T Size);
-        void   (*Reserve)(void* Vector, SIZE_T Size);
-        void   (*Swap)(void* Vector, SIZE_T LHS, SIZE_T RHS);
+        int32  (*Num)(const void* Vector);
+        void*  (*GetData)(void* Vector);
+        void   (*Add)(void* Vector, const void* Element); // null Element => default-construct (Emplace)
+        void   (*RemoveAt)(void* Vector, int32 Index);
+        void   (*Reset)(void* Vector);
+        void   (*SetNum)(void* Vector, int32 NewNum);
+        void   (*Reserve)(void* Vector, int32 Number);
+        void   (*Swap)(void* Vector, int32 A, int32 B);
         uint32 ElementSize;
         // Bring the CONTAINER itself up / tear it down in caller-owned raw memory (as opposed to the element
         // ops above, which all assume a live container). This is what lets FArrayProperty implement
@@ -48,7 +48,7 @@ namespace Lumina
         uint32 CountDivisor;
     };
 
-    // Ops for a specific vector-like CONTAINER type, not just its element type. TFixedVector<T, N> reflects as
+    // Ops for a specific vector-like CONTAINER type, not just its element type. TInlineVector<T, N> reflects as
     // a TVector<T>, but it embeds its buffer and carries a fixed allocator, so the table must construct and
     // grow the real type: operating on one through TVector<T>'s table would free the inline buffer as heap.
     template <typename TContainer>
@@ -58,14 +58,14 @@ namespace Lumina
 
         static const FVectorOps Ops =
         {
-            [](const void* V) -> SIZE_T { return static_cast<const TContainer*>(V)->size(); },
-            [](void* V) -> void* { return static_cast<TContainer*>(V)->data(); },
-            [](void* V, const void* E) { TContainer* Vec = static_cast<TContainer*>(V); if (E) { Vec->push_back(*static_cast<const T*>(E)); } else { Vec->emplace_back(); } },
-            [](void* V, SIZE_T I) { TContainer* Vec = static_cast<TContainer*>(V); Vec->erase(Vec->begin() + I); },
-            [](void* V) { static_cast<TContainer*>(V)->clear(); },
-            [](void* V, SIZE_T N) { static_cast<TContainer*>(V)->resize(N); },
-            [](void* V, SIZE_T N) { static_cast<TContainer*>(V)->reserve(N); },
-            [](void* V, SIZE_T A, SIZE_T B) { TContainer* Vec = static_cast<TContainer*>(V); T Tmp = (*Vec)[A]; (*Vec)[A] = (*Vec)[B]; (*Vec)[B] = Tmp; },
+            [](const void* V) -> int32 { return static_cast<const TContainer*>(V)->Num(); },
+            [](void* V) -> void* { return static_cast<TContainer*>(V)->GetData(); },
+            [](void* V, const void* E) { TContainer* Vec = static_cast<TContainer*>(V); if (E) { Vec->Add(*static_cast<const T*>(E)); } else { Vec->Emplace(); } },
+            [](void* V, int32 I) { static_cast<TContainer*>(V)->RemoveAt(I); },
+            [](void* V) { static_cast<TContainer*>(V)->Reset(); },
+            [](void* V, int32 N) { static_cast<TContainer*>(V)->SetNum(N); },
+            [](void* V, int32 N) { static_cast<TContainer*>(V)->Reserve(N); },
+            [](void* V, int32 A, int32 B) { static_cast<TContainer*>(V)->Swap(A, B); },
             static_cast<uint32>(sizeof(T)),
             [](void* V, const void*) { Memory::ConstructAt(static_cast<TContainer*>(V)); },
             [](void* V, const void*) { Memory::DestroyAt(static_cast<TContainer*>(V)); },
@@ -85,17 +85,17 @@ namespace Lumina
     }
 
     // Type-erased op table for a THashMap<K,V>, the associative analogue of FVectorOps; one static table per
-    // (K,V) via GetMapOps<K,V>(). Not index-addressable, so no Data/GetAt/Swap/Resize. Each captureless lambda
+    // (K,V) via GetMapOps<K,V>(). Not index-addressable, so no GetData/GetAt/Swap/SetNum. Each captureless lambda
     // casts void* back to concrete K/V, so hashing/equality run on the real types.
     struct FMapOps
     {
-        SIZE_T (*Size)(const void* Map);
+        int32  (*Num)(const void* Map);
         // Insert-or-assign; ValuePtr null => value default-constructed. Returns the stored value slot.
-        void*  (*Insert)(void* Map, const void* KeyPtr, const void* ValuePtr);
+        void*  (*Add)(void* Map, const void* KeyPtr, const void* ValuePtr);
         void*  (*Find)(void* Map, const void* KeyPtr);          // stored value for KeyPtr, or null
-        bool   (*RemoveByKey)(void* Map, const void* KeyPtr);
-        void   (*Clear)(void* Map);
-        void   (*Reserve)(void* Map, SIZE_T Count);
+        bool   (*Remove)(void* Map, const void* KeyPtr);
+        void   (*Reset)(void* Map);
+        void   (*Reserve)(void* Map, int32 Number);
         void   (*ForEach)(const void* Map, void (*Visitor)(const void* KeyPtr, void* ValuePtr, void* UserData), void* UserData);
         // Placement construct/destruct a scratch key (deserialize path). Map is passed so a type-erased runtime
         // map can reach its key element description; the compile-time map ignores it.
@@ -103,7 +103,7 @@ namespace Lumina
         void   (*DestructKey)(void* Map, void* Dst);
         // Key/value slot for the pair at iteration index (null out-params if out of range). Iteration order is
         // stable between mutations, so an editor can address entries by index. O(index) here, O(1) for the script map.
-        void   (*At)(void* Map, SIZE_T Index, const void** OutKey, void** OutValue);
+        void   (*At)(void* Map, int32 Index, const void** OutKey, void** OutValue);
         uint32 KeySize;
         uint32 ValueSize;
         // The map counterpart of FVectorOps::Construct/DestructContainer, Context and all: brings the MAP
@@ -114,10 +114,10 @@ namespace Lumina
         const void* ContainerContext;
         uint32 ContainerSize;
         // The next pair from an opaque Cursor that starts at zero, false at the end. O(1) amortized where At is O(index).
-        bool   (*Next)(void* Map, SIZE_T* Cursor, const void** OutKey, void** OutValue);
+        bool   (*Next)(void* Map, int32* Cursor, const void** OutKey, void** OutValue);
     };
 
-    // The map counterpart of GetVectorOpsFor: keyed on the container type so a TFixedHashMap<K, V, N>, which
+    // The map counterpart of GetVectorOpsFor: keyed on the container type so a TInlineHashMap<K, V, N>, which
     // reflects as a THashMap<K, V>, is still constructed and grown as the type it actually is.
     template <typename TContainer>
     const FMapOps* GetMapOpsFor()
@@ -127,48 +127,49 @@ namespace Lumina
         using V = typename MapT::mapped_type;
         static const FMapOps Ops =
         {
-            [](const void* M) -> SIZE_T { return static_cast<const MapT*>(M)->size(); },
+            [](const void* M) -> int32 { return static_cast<const MapT*>(M)->Num(); },
             [](void* M, const void* KP, const void* VP) -> void*
             {
+                // Copied first, since either may live in this map and inserting can rehash it away.
                 MapT* Map = static_cast<MapT*>(M);
-                V& Slot = (*Map)[*static_cast<const K*>(KP)];  // operator[] default-constructs on insert
-                if (VP) { Slot = *static_cast<const V*>(VP); }
-                return &Slot;
+                K Key = *static_cast<const K*>(KP);
+                if (VP == nullptr)
+                {
+                    return &Map->FindOrAdd(Move(Key));
+                }
+                V Value = *static_cast<const V*>(VP);
+                return &Map->Add(Move(Key), Move(Value));
             },
             [](void* M, const void* KP) -> void*
             {
-                MapT* Map = static_cast<MapT*>(M);
-                auto It = Map->find(*static_cast<const K*>(KP));
-                return It != Map->end() ? &It->second : nullptr;
+                return static_cast<MapT*>(M)->Find(*static_cast<const K*>(KP));
             },
             [](void* M, const void* KP) -> bool
             {
-                return static_cast<MapT*>(M)->erase(*static_cast<const K*>(KP)) != 0;
+                return static_cast<MapT*>(M)->Remove(*static_cast<const K*>(KP)) != 0;
             },
-            [](void* M) { static_cast<MapT*>(M)->clear(); },
-            [](void* M, SIZE_T N) { static_cast<MapT*>(M)->reserve(N); },
+            [](void* M) { static_cast<MapT*>(M)->Reset(); },
+            [](void* M, int32 N) { static_cast<MapT*>(M)->Reserve(N); },
             [](const void* M, void (*Visitor)(const void*, void*, void*), void* UserData)
             {
-                // value_type is pair<const K, V>; hand out &first (key) and a mutable &second (value). ForEach is
-                // only used on the read side (serialize-out / copy-out / compare), so the mutable value is never
-                // written through here -- the const_cast just erases the pair's constness for the void* signature.
+                // Only readers walk this, so the const_cast just fits the value to the void* signature.
                 for (const auto& Pair : *static_cast<const MapT*>(M))
                 {
-                    Visitor(&Pair.first, const_cast<V*>(&Pair.second), UserData);
+                    Visitor(&Pair.Key, const_cast<V*>(&Pair.Value), UserData);
                 }
             },
             [](void*, void* Dst) { Memory::ConstructAt(static_cast<K*>(Dst)); },
             [](void*, void* Dst) { Memory::DestroyAt(static_cast<K*>(Dst)); },
-            [](void* M, SIZE_T Index, const void** OutKey, void** OutValue)
+            [](void* M, int32 Index, const void** OutKey, void** OutValue)
             {
                 MapT* Map = static_cast<MapT*>(M);
-                SIZE_T i = 0;
+                int32 i = 0;
                 for (auto& Pair : *Map)
                 {
                     if (i++ == Index)
                     {
-                        if (OutKey)   { *OutKey = &Pair.first; }
-                        if (OutValue) { *OutValue = &Pair.second; }
+                        if (OutKey)   { *OutKey = &Pair.Key; }
+                        if (OutValue) { *OutValue = &Pair.Value; }
                         return;
                     }
                 }
@@ -181,15 +182,15 @@ namespace Lumina
             [](void* M, const void*) { Memory::DestroyAt(static_cast<MapT*>(M)); },
             nullptr,
             static_cast<uint32>(sizeof(MapT)),
-            [](void* M, SIZE_T* Cursor, const void** OutKey, void** OutValue) -> bool
+            [](void* M, int32* Cursor, const void** OutKey, void** OutValue) -> bool
             {
                 auto* Pair = static_cast<MapT*>(M)->FindNextOccupied(*Cursor);
                 if (Pair == nullptr)
                 {
                     return false;
                 }
-                *OutKey = &Pair->first;
-                *OutValue = &Pair->second;
+                *OutKey = &Pair->Key;
+                *OutValue = &Pair->Value;
                 return true;
             },
         };
@@ -204,17 +205,18 @@ namespace Lumina
 
     struct FOptionalOps
     {
-        bool  (*HasValue)(const void* Optional);
+        bool  (*IsSet)(const void* Optional);
         void* (*GetValue)(void* Optional);
 
         // A null value default-constructs the payload.
         void  (*SetValue)(void* Optional, const void* Value);
         void  (*Reset)(void* Optional);
 
-        // Null for a TOptional, which its owner constructs, and set for a script optional that owns heap storage.
+        // Brings the optional itself up in raw memory, which frames and snapshots rely on to construct and destroy it.
         void  (*ConstructContainer)(void* Optional, const void* Context);
         void  (*DestructContainer)(void* Optional, const void* Context);
         const void* ContainerContext;
+        uint32 ContainerSize;
     };
 
     template <typename TContainer>
@@ -223,11 +225,11 @@ namespace Lumina
         using T = typename TContainer::value_type;
         static const FOptionalOps Ops =
         {
-            [](const void* O) { return static_cast<const TContainer*>(O)->has_value(); },
+            [](const void* O) { return static_cast<const TContainer*>(O)->IsSet(); },
             [](void* O) -> void*
             {
                 TContainer* Optional = static_cast<TContainer*>(O);
-                return Optional->has_value() ? &Optional->value() : nullptr;
+                return Optional->IsSet() ? &Optional->GetValue() : nullptr;
             },
             [](void* O, const void* Value)
             {
@@ -238,13 +240,14 @@ namespace Lumina
                 }
                 else
                 {
-                    Optional->emplace();
+                    Optional->Emplace();
                 }
             },
-            [](void* O) { static_cast<TContainer*>(O)->reset(); },
+            [](void* O) { static_cast<TContainer*>(O)->Reset(); },
+            [](void* O, const void*) { Memory::ConstructAt(static_cast<TContainer*>(O)); },
+            [](void* O, const void*) { Memory::DestroyAt(static_cast<TContainer*>(O)); },
             nullptr,
-            nullptr,
-            nullptr,
+            static_cast<uint32>(sizeof(TContainer)),
         };
         return &Ops;
     }

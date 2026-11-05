@@ -62,10 +62,10 @@ namespace Lumina
     void FAudioGraphProgram::Reset()
     {
         Version = kAudioGraphProgramVersion;
-        Nodes.clear();
-        SlotInits.clear();
-        Inputs.clear();
-        Outputs.clear();
+        Nodes.Reset();
+        SlotInits.Reset();
+        Inputs.Reset();
+        Outputs.Reset();
         SlotCounts = FAudioGraphSlotCounts();
         OutputLeftSlot  = kAudioGraphInvalidSlot;
         OutputRightSlot = kAudioGraphInvalidSlot;

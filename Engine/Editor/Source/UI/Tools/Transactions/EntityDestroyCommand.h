@@ -25,7 +25,7 @@ namespace Lumina
         // Prunes the candidates down to the ones the operation actually destroyed.
         void Finalize() override;
 
-        bool IsNoOp() const override { return Entries.empty(); }
+        bool IsNoOp() const override { return Entries.IsEmpty(); }
 
         // The candidates plus their descendants, which is the widest set a delete can reach.
         static void CollectCandidates(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Roots,

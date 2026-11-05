@@ -169,7 +169,153 @@ namespace Lumina::Physics
         bool bAwake = false;
     };
 
-    class IPhysicsScene
+    // What a system may call while others run: queries, body reads, and body changes that queue for the next step.
+    class IPhysicsQueries
+    {
+    public:
+
+        virtual ~IPhysicsQueries() = default;
+
+        virtual void DeactivateBody(ECS::FEntity Entity) = 0;
+
+        virtual void ActivateBody(ECS::FEntity Entity) = 0;
+
+        virtual void ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType) = 0;
+
+        // Whether the body is awake (active) vs asleep (at rest). Default false.
+        virtual bool IsBodyActive(ECS::FEntity Entity) const { return false; }
+
+        virtual EPhysicsBodyStatus GetBodyStatus(ECS::FEntity Entity) const = 0;
+
+        virtual bool TryGetBodyState(ECS::FEntity Entity, FPhysicsBodyState& Out) const = 0;
+
+        virtual bool TryGetTargetState(const SPhysicsBodyTarget& Target, FPhysicsBodyState& Out) const = 0;
+
+        virtual void AddForceAtTarget(const SPhysicsBodyTarget& Target, const FVector3& Force, const FVector3& Point) = 0;
+
+        virtual void AddImpulseAtTarget(const SPhysicsBodyTarget& Target, const FVector3& Impulse, const FVector3& Point) = 0;
+
+        virtual void SetTargetLinearVelocity(const SPhysicsBodyTarget& Target, const FVector3& Velocity) = 0;
+
+        virtual void SetTargetAngularVelocity(const SPhysicsBodyTarget& Target, const FVector3& Velocity) = 0;
+
+        virtual TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) = 0;
+
+        // Every body the ray crosses, near-to-far (penetrating bullets). OutHits is cleared first.
+        virtual void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) = 0;
+
+        // Whether anything blocks the ray, stopping at the first hit rather than finding the nearest.
+        virtual bool CastRayAny(const SRayCastSettings& Settings) = 0;
+
+        // The ray against one entity's body alone, everything else ignored.
+        virtual TOptional<SRayResult> CastRayAgainst(ECS::FEntity Entity, const FVector3& Start, const FVector3& End) = 0;
+
+        // Sweep hits near-to-far; OutHits is cleared first, so reusing one buffer keeps the query alloc-free.
+        virtual void CastShapeAll(const SQueryShape& Shape, const FVector3& Start, const FVector3& End, ECollisionProfiles LayerMask,
+                                  TSpan<const ECS::FEntity> IgnoreEntities, TVector<SRayResult>& OutHits) = 0;
+
+        // Nearest sweep hit; lets the backend shrink the query instead of gathering every hit behind it.
+        virtual TOptional<SRayResult> CastShapeClosest(const SQueryShape& Shape, const FVector3& Start, const FVector3& End,
+                                                       ECollisionProfiles LayerMask, TSpan<const ECS::FEntity> IgnoreEntities) = 0;
+
+        // Distinct entities intersecting the shape; returns the count written, == OutEntities.Num() means possibly more.
+        virtual int32 OverlapShape(const SQueryShape& Shape, const FVector3& Center, ECollisionProfiles LayerMask,
+                                   TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) = 0;
+
+        // False when the entity has no body.
+        virtual bool GetClosestPointOnBody(ECS::FEntity Entity, const FVector3& Point, FVector3& OutPoint) const = 0;
+
+        virtual bool GetBodyBounds(ECS::FEntity Entity, SAABB& OutBounds) const = 0;
+
+        void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits)
+        {
+            CastShapeAll(SQueryShape::Sphere(Settings.Radius), Settings.Start, Settings.End, Settings.LayerMask, Settings.IgnoreEntities, OutHits);
+        }
+
+        TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings)
+        {
+            return CastShapeClosest(SQueryShape::Sphere(Settings.Radius), Settings.Start, Settings.End, Settings.LayerMask, Settings.IgnoreEntities);
+        }
+
+        // Distinct entities whose bodies contain the world point, a zero-radius overlap rather than a sweep.
+        int32 CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        {
+            return OverlapShape(SQueryShape::Sphere(0.0f), Point, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+        }
+
+        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        {
+            return OverlapShape(SQueryShape::Sphere(Radius), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+        }
+
+        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        {
+            return OverlapShape(SQueryShape::Box(HalfExtents, Rotation), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+        }
+
+        // An entity whose ragdoll is simulating takes these as one whole ragdoll, pushes shared out by limb mass.
+        virtual void AddForce(ECS::FEntity Entity, const FVector3& Force) = 0;
+
+        virtual void AddImpulse(ECS::FEntity Entity, const FVector3& Impulse) = 0;
+
+        virtual void AddTorque(ECS::FEntity Entity, const FVector3& Torque) = 0;
+
+        virtual void AddAngularImpulse(ECS::FEntity Entity, const FVector3& AngularImpulse) = 0;
+
+        virtual void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) = 0;
+
+        virtual void AddImpulseAtPosition(ECS::FEntity Entity, const FVector3& Impulse, const FVector3& Position) = 0;
+
+        virtual void SetLinearVelocity(ECS::FEntity Entity, const FVector3& Velocity) = 0;
+
+        virtual void SetAngularVelocity(ECS::FEntity Entity, const FVector3& AngularVelocity) = 0;
+
+        virtual void SetGravityFactor(ECS::FEntity Entity, float Factor) = 0;
+
+        // Shape-accurate buoyancy.
+        virtual void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+            float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) {}
+
+        // Conveyor belt / moving surface: objects resting on this body's surface are dragged at this world-space velocity (linear m/s, angular rad/s). Zero clears it. Default is a no-op.
+        virtual void SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular) {}
+
+        virtual FVector3 GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const = 0;
+
+        virtual FVector3 GetLinearVelocity(ECS::FEntity Entity) const = 0;
+
+        virtual FVector3 GetAngularVelocity(ECS::FEntity Entity) const = 0;
+
+        virtual FVector3 GetCenterOfMass(ECS::FEntity Entity) const= 0;
+
+        // Body mass in kg, or 0 for a body that cannot move (static/kinematic have infinite mass). Default 1 by default; callers scaling a force by it get sane behavior either way.
+        virtual float GetBodyMass(ECS::FEntity Entity) const { return 1.0f; }
+
+        // Actual current body pose, NOT the interpolated render transform (STransformComponent is lagged).
+        virtual FVector3 GetBodyPosition(ECS::FEntity Entity) const = 0;
+
+        virtual FQuat GetBodyRotation(ECS::FEntity Entity) const = 0;
+
+        // Current live body count and the configured ceiling. Lets bulk spawners (fracture) clamp to capacity instead of overflowing the body arrays.
+        virtual uint32 GetBodyCount() = 0;
+
+        virtual uint32 GetMaxBodyCount() = 0;
+
+        // Bodies the solver is simulating this step, the asleep ones left out; one call, where asking each body is one per body.
+        virtual uint32 GetAwakeBodyCount() = 0;
+
+        // Read the simulated body transforms back into component-space GPU skinning matrices (Global*InvBind). OutBoneTransforms is sized to the skeleton; unmapped bones are rebuilt from their parent + bind local.
+        virtual bool IsRagdollReady(const FPhysicsRagdollHandle& Handle) const = 0;
+
+        virtual void ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) = 0;
+
+        // The limb simulating Bone, or its nearest ancestor with a body. Unset until the entity's ragdoll is simulating.
+        virtual SPhysicsBodyTarget GetRagdollBoneTarget(ECS::FEntity Entity, FName Bone) const = 0;
+
+        // World-space transform of the ragdoll's root body (used to drive the owning entity so culling tracks it).
+        virtual void GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) = 0;
+    };
+
+    class IPhysicsScene : public IPhysicsQueries
     {
     public:
 
@@ -207,110 +353,6 @@ namespace Lumina::Physics
         // Game-thread send of what the step recorded into the world's event queues. Pair with Update.
         virtual void DispatchPendingEvents() {}
         
-        virtual void DeactivateBody(ECS::FEntity Entity) = 0;
-        virtual void ActivateBody(ECS::FEntity Entity) = 0;
-        virtual void ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType) = 0;
-
-        // Whether the body is awake (active) vs asleep (at rest). Default false.
-        virtual bool IsBodyActive(ECS::FEntity Entity) const { return false; }
-        
-        virtual EPhysicsBodyStatus GetBodyStatus(ECS::FEntity Entity) const = 0;
-        virtual bool TryGetBodyState(ECS::FEntity Entity, FPhysicsBodyState& Out) const = 0;
-        virtual bool TryGetTargetState(const SPhysicsBodyTarget& Target, FPhysicsBodyState& Out) const = 0;
-        virtual void AddForceAtTarget(const SPhysicsBodyTarget& Target, const FVector3& Force, const FVector3& Point) = 0;
-        virtual void AddImpulseAtTarget(const SPhysicsBodyTarget& Target, const FVector3& Impulse, const FVector3& Point) = 0;
-        virtual void SetTargetLinearVelocity(const SPhysicsBodyTarget& Target, const FVector3& Velocity) = 0;
-        virtual void SetTargetAngularVelocity(const SPhysicsBodyTarget& Target, const FVector3& Velocity) = 0;
-        
-        virtual TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) = 0;
-
-        // Every body the ray crosses, near-to-far (penetrating bullets). OutHits is cleared first.
-        virtual void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) = 0;
-
-        // Whether anything blocks the ray, stopping at the first hit rather than finding the nearest.
-        virtual bool CastRayAny(const SRayCastSettings& Settings) = 0;
-
-        // The ray against one entity's body alone, everything else ignored.
-        virtual TOptional<SRayResult> CastRayAgainst(ECS::FEntity Entity, const FVector3& Start, const FVector3& End) = 0;
-
-        // Sweep hits near-to-far; OutHits is cleared first, so reusing one buffer keeps the query alloc-free.
-        virtual void CastShapeAll(const SQueryShape& Shape, const FVector3& Start, const FVector3& End, ECollisionProfiles LayerMask,
-                                  TSpan<const ECS::FEntity> IgnoreEntities, TVector<SRayResult>& OutHits) = 0;
-
-        // Nearest sweep hit; lets the backend shrink the query instead of gathering every hit behind it.
-        virtual TOptional<SRayResult> CastShapeClosest(const SQueryShape& Shape, const FVector3& Start, const FVector3& End,
-                                                       ECollisionProfiles LayerMask, TSpan<const ECS::FEntity> IgnoreEntities) = 0;
-
-        // Distinct entities intersecting the shape; returns the count written, == size() means possibly more.
-        virtual int32 OverlapShape(const SQueryShape& Shape, const FVector3& Center, ECollisionProfiles LayerMask,
-                                   TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) = 0;
-
-        // False when the entity has no body.
-        virtual bool GetClosestPointOnBody(ECS::FEntity Entity, const FVector3& Point, FVector3& OutPoint) const = 0;
-        virtual bool GetBodyBounds(ECS::FEntity Entity, SAABB& OutBounds) const = 0;
-
-        void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits)
-        {
-            CastShapeAll(SQueryShape::Sphere(Settings.Radius), Settings.Start, Settings.End, Settings.LayerMask, Settings.IgnoreEntities, OutHits);
-        }
-
-        TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings)
-        {
-            return CastShapeClosest(SQueryShape::Sphere(Settings.Radius), Settings.Start, Settings.End, Settings.LayerMask, Settings.IgnoreEntities);
-        }
-
-        // Distinct entities whose bodies contain the world point, a zero-radius overlap rather than a sweep.
-        int32 CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
-        {
-            return OverlapShape(SQueryShape::Sphere(0.0f), Point, ECollisionProfiles::All, IgnoreEntities, OutEntities);
-        }
-
-        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
-        {
-            return OverlapShape(SQueryShape::Sphere(Radius), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
-        }
-
-        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
-        {
-            return OverlapShape(SQueryShape::Box(HalfExtents, Rotation), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
-        }
-
-        // An entity whose ragdoll is simulating takes these as one whole ragdoll, pushes shared out by limb mass.
-        virtual void AddForce(ECS::FEntity Entity, const FVector3& Force) = 0;
-        virtual void AddImpulse(ECS::FEntity Entity, const FVector3& Impulse) = 0;
-        virtual void AddTorque(ECS::FEntity Entity, const FVector3& Torque) = 0;
-        virtual void AddAngularImpulse(ECS::FEntity Entity, const FVector3& AngularImpulse) = 0;
-        virtual void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) = 0;
-        virtual void AddImpulseAtPosition(ECS::FEntity Entity, const FVector3& Impulse, const FVector3& Position) = 0;
-        virtual void SetLinearVelocity(ECS::FEntity Entity, const FVector3& Velocity) = 0;
-        virtual void SetAngularVelocity(ECS::FEntity Entity, const FVector3& AngularVelocity) = 0;
-        virtual void SetGravityFactor(ECS::FEntity Entity, float Factor) = 0;
-
-        // Shape-accurate buoyancy.
-        virtual void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
-            float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) {}
-
-        // Conveyor belt / moving surface: objects resting on this body's surface are dragged at this
-        // world-space velocity (linear m/s, angular rad/s). Zero clears it. Default is a no-op.
-        virtual void SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular) {}
-
-        virtual FVector3 GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const = 0;
-        virtual FVector3 GetLinearVelocity(ECS::FEntity Entity) const = 0;
-        virtual FVector3 GetAngularVelocity(ECS::FEntity Entity) const = 0;
-        virtual FVector3 GetCenterOfMass(ECS::FEntity Entity) const= 0;
-
-        /** Body mass in kg, or 0 for a body that cannot move (static/kinematic have infinite mass). Default
-         *  1 by default; callers scaling a force by it get sane behavior either way. */
-        virtual float GetBodyMass(ECS::FEntity Entity) const { return 1.0f; }
-
-        // Actual current body pose, NOT the interpolated render transform (STransformComponent is lagged).
-        virtual FVector3 GetBodyPosition(ECS::FEntity Entity) const = 0;
-        virtual FQuat GetBodyRotation(ECS::FEntity Entity) const = 0;
-
-        /** Current live body count and the configured ceiling. Lets bulk spawners (fracture) clamp to capacity instead of overflowing the body arrays. */
-        virtual uint32 GetBodyCount() = 0;
-        virtual uint32 GetMaxBodyCount() = 0;
-
         // Static bodies for instanced geometry (foliage), merged per material and cell into compound bodies; hits report Owner. 0 = nothing built.
         virtual uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
         virtual void DestroyStaticBodyGroup(uint32 GroupID) {}
@@ -319,19 +361,8 @@ namespace Lumina::Physics
         // caller stores; null on failure. Must be called outside the physics step (PrePhysics is fine).
         virtual TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) = 0;
 
-        // Read the simulated body transforms back into component-space GPU skinning matrices (Global*InvBind).
-        // OutBoneTransforms is sized to the skeleton; unmapped bones are rebuilt from their parent + bind local.
-        virtual bool IsRagdollReady(const FPhysicsRagdollHandle& Handle) const = 0;
-        virtual void ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) = 0;
-
         // Remove a ragdoll's bodies + constraints from the scene. Safe with a null/empty handle.
         virtual void DestroyRagdoll(const TSharedPtr<FPhysicsRagdollHandle>& Handle) = 0;
-
-        // The limb simulating Bone, or its nearest ancestor with a body. Unset until the entity's ragdoll is simulating.
-        virtual SPhysicsBodyTarget GetRagdollBoneTarget(ECS::FEntity Entity, FName Bone) const = 0;
-
-        // World-space transform of the ragdoll's root body (used to drive the owning entity so culling tracks it).
-        virtual void GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) = 0;
 
         // Monotonic unique id for the next ragdoll's self-collision group.
         virtual uint32 AllocateRagdollGroupID() = 0;

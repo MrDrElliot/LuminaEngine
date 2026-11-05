@@ -194,7 +194,7 @@ namespace LuminaFormatTests
     TEST(Format, FormatsEngineValueTypes)
     {
         const FName Name("SomeName");
-        EXPECT_EQ(Format("{}", Name), FString(Name.c_str()));
+        EXPECT_EQ(Format("{}", Name), FString(*Name));
 
         const Lumina::FGuid Guid = Lumina::FGuid::New();
         EXPECT_EQ(Format("{}", Guid), Guid.ToString());
@@ -217,13 +217,13 @@ namespace LuminaFormatTests
     TEST(Format, FormatsIntoACallerOwnedArray)
     {
         char Small[8] = {};
-        const size_t Written = Lumina::FormatToBuffer(Small, sizeof(Small), "{}", 1234567890);
+        const int32 Written = Lumina::FormatToBuffer(Small, sizeof(Small), "{}", 1234567890);
 
-        EXPECT_EQ(Written, 8u);
+        EXPECT_EQ(Written, 8);
         EXPECT_EQ(FStringView(Small, Written), "12345678");
 
         char Roomy[32] = {};
-        const size_t Fits = Lumina::FormatToBuffer(Roomy, sizeof(Roomy), "{}-{}", 1, 2);
+        const int32 Fits = Lumina::FormatToBuffer(Roomy, sizeof(Roomy), "{}-{}", 1, 2);
         EXPECT_EQ(FStringView(Roomy, Fits), "1-2");
     }
 
@@ -232,7 +232,7 @@ namespace LuminaFormatTests
         const FString Long(600, 'x');
         const FString Result = Format("{}{}", Long, Long);
 
-        EXPECT_EQ(Result.size(), 1200u);
+        EXPECT_EQ(Result.Len(), 1200);
         EXPECT_EQ(Result[0], 'x');
         EXPECT_EQ(Result[1199], 'x');
     }
@@ -258,11 +258,11 @@ namespace LuminaFormatTests
         Builder.Append('!');
 
         EXPECT_EQ(Builder.View(), "start key:42!");
-        EXPECT_EQ(Builder.size(), 13u);
-        EXPECT_STREQ(Builder.c_str(), "start key:42!");
+        EXPECT_EQ(Builder.Len(), 13);
+        EXPECT_STREQ(*Builder, "start key:42!");
 
         Builder.Reset();
-        EXPECT_TRUE(Builder.empty());
+        EXPECT_TRUE(Builder.IsEmpty());
     }
 
     TEST(StringBuilder, KeepsWorkingPastItsInlineCapacity)
@@ -273,7 +273,7 @@ namespace LuminaFormatTests
             Builder.AppendFormat("{},", Index);
         }
 
-        EXPECT_GT(Builder.size(), 16u);
-        EXPECT_EQ(Builder.View().substr(0, 6), "0,1,2,");
+        EXPECT_GT(Builder.Len(), 16);
+        EXPECT_EQ(Builder.View().Mid(0, 6), "0,1,2,");
     }
 }

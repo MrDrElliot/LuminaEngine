@@ -104,7 +104,7 @@ namespace LuminaNumericLimitsTests
         const FString Text = Lumina::Math::ToString(FVector2(1e-8f, 1.0f));
 
         EXPECT_NE(Text, "(0.000000, 1.000000)");
-        EXPECT_NE(Text.find("e-08"), FString::npos);
+        EXPECT_NE(Text.Find("e-08"), Lumina::Constants::kIndexNone);
     }
 
     TEST(MathToString, RendersAQuaternionWithItsWFirst)

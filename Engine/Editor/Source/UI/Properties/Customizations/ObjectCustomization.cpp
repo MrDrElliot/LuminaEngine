@@ -42,7 +42,7 @@ namespace Lumina
 
             TStrongObjectPtr<CObject> HardObject = Object.Lock();
 
-            const char* Label = HardObject.IsValid() ? Object.Get()->GetName().c_str() : "<None>";
+            const char* Label = HardObject.IsValid() ? *Object.Get()->GetName() : "<None>";
             ImGui::BeginDisabled(Object == nullptr);
 
             TOptional<ImTextureRef> ButtonTexture;
@@ -54,12 +54,12 @@ namespace Lumina
                 }
             }
 
-            if (!ButtonTexture.has_value())
+            if (!ButtonTexture.IsSet())
             {
                 ButtonTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/File.png");
             }
             
-            ImGui::ImageButton(Label, ButtonTexture.value(), ImVec2(64, 64));
+            ImGui::ImageButton(Label, ButtonTexture.GetValue(), ImVec2(64, 64));
             ImGui::EndDisabled();
 
             // Any dragged asset whose class is-a the property's declared class binds to it.
@@ -93,7 +93,7 @@ namespace Lumina
             
             const bool bHasObject = Object != nullptr;
 
-            FFixedString PathString = bHasObject ? Object.Get()->GetName().c_str() : "<None>";
+            FFixedString PathString = bHasObject ? *Object.Get()->GetName() : "<None>";
         
             ImGui::PushStyleColor(ImGuiCol_Text, bHasObject ? ImVec4(0.6f, 0.6f, 0.6f, 1.0f) : ImVec4(1.0f, 0.19f, 0.19f, 1.0f));
         
@@ -149,7 +149,7 @@ namespace Lumina
                         
                         for (const FAssetData* Asset : Assets)
                         {
-                            if (!ImGuiX::PassSearchFilter(SearchFilter, Asset->AssetName.c_str()))
+                            if (!ImGuiX::PassSearchFilter(SearchFilter, *Asset->AssetName))
                             {
                                 continue;
                             }
@@ -180,7 +180,7 @@ namespace Lumina
                             }
                             
                             ImGui::TableSetColumnIndex(1);
-                            ImGui::TextUnformatted(Asset->AssetName.c_str());
+                            ImGui::TextUnformatted(*Asset->AssetName);
 
                             if (bSelected)
                             {
@@ -237,7 +237,7 @@ namespace Lumina
                 if (HardObject && HardObject->GetPackage() && EditorUI != nullptr)
                 {
                     const FString PackageName = HardObject->GetPackage()->GetName().ToString();
-                    EditorUI->BrowseToAsset(FStringView(PackageName.c_str(), PackageName.size()));
+                    EditorUI->BrowseToAsset(FStringView(*PackageName, PackageName.Len()));
                 }
             }
             ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");
@@ -246,7 +246,7 @@ namespace Lumina
 
             if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", AssetPickerFilter::kButtonSize))
             {
-                ImGui::SetClipboardText(HardObject->GetName().c_str());
+                ImGui::SetClipboardText(*HardObject->GetName());
             }
 
             ImGui::SameLine();

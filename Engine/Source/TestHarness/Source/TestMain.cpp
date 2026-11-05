@@ -14,14 +14,14 @@ public:
 
         Lumina::Threading::Initialize("Main Thread");
         Lumina::Logging::Init();
-        Lumina::Task::Initialize();
+        Lumina::Jobs::Initialize();
 
         Lumina::InitializeCObjectSystem();
     }
 
     void TearDown() override
     {
-        Lumina::Task::Shutdown();
+        Lumina::Jobs::Shutdown();
         Lumina::Logging::Shutdown();
         Lumina::Threading::Shutdown();
         Lumina::ShutdownCObjectSystem();

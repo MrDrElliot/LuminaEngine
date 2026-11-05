@@ -23,22 +23,22 @@ namespace Lumina
         TSpan<const uint8> ReadEntry(FStringView VirtualPath) const;
 
         bool   HasEntry(FStringView VirtualPath) const;
-        size_t EntrySize(FStringView VirtualPath) const;
-        size_t NumEntries() const { return Entries.size(); }
+        int64 EntrySize(FStringView VirtualPath) const;
+        int32 NumEntries() const { return Entries.Num(); }
 
         /** Unique top-level components (e.g. "/Engine", "/Game") for VFS mount setup. */
         TVector<FString> GetTopLevelAliases() const;
 
-        void ForEachEntry(const TFunction<void(FStringView, size_t)>& Func) const;
+        void ForEachEntry(const TFunction<void(FStringView, int64)>& Func) const;
 
         /** Walks entries under Prefix + '/' (or equal to Prefix). */
-        void ForEachEntryUnder(FStringView Prefix, const TFunction<void(FStringView, size_t)>& Func) const;
+        void ForEachEntryUnder(FStringView Prefix, const TFunction<void(FStringView, int64)>& Func) const;
 
     private:
 
         FPakArchive() = default;
 
-        TVector<uint8>                          RawData;
+        TVector64<uint8>                        RawData;
         THashMap<FFixedString, FPakEntry>       Entries;
     };
 }

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <source_location>
 #include <type_traits>
 
+#include "Core/Assertions/CheckFailure.h"
 #include "Platform/GenericPlatform.h"
 #include "Core/Templates/NumericLimits.h"
 
@@ -36,7 +38,7 @@ namespace Lumina
         using TUnsignedOf = typename TUnsignedBySize<sizeof(T)>::Type;
     }
 
-    // Integer comparison by value, where a plain Index < Container.size() would let a negative index through.
+    // Integer comparison by value, where a plain Index < Container.Num() would let a negative index through.
     namespace Cmp
     {
         template <ValueComparableInteger TLeft, ValueComparableInteger TRight>
@@ -107,6 +109,17 @@ namespace Lumina
         }
     }
 
+    /** Converts Value to TTarget and fails when it would not keep its meaning, as Unreal's IntCastChecked. */
+    template <ValueComparableInteger TTarget, ValueComparableInteger TValue>
+    NODISCARD FORCEINLINE constexpr TTarget IntCastChecked(TValue Value, const std::source_location& Location = std::source_location::current())
+    {
+        if (!Cmp::InRange<TTarget>(Value)) [[unlikely]]
+        {
+            ::Lumina::Assert::Detail::HandleBoundsFailure("Value", static_cast<uint64>(Value), "<=", "TargetMax", static_cast<uint64>(TNumericLimits<TTarget>::Max()), Location);
+        }
+        return static_cast<TTarget>(Value);
+    }
+
     namespace CmpDetail
     {
         // Checked by the compiler in every translation unit, since a sign mistake here is silent at runtime.
@@ -114,7 +127,7 @@ namespace Lumina
         static_assert(!Cmp::Equal(-1, TNumericLimits<uint64>::Max()));
         static_assert(Cmp::Equal(0, 0u));
         static_assert(Cmp::Equal(255, uint8(255)));
-        static_assert(!Cmp::Equal(int64(-1), uint32(0xFFFFFFFFu)));
+        static_assert(!Cmp::Equal(int64(-1), 0xFFFFFFFFu));
 
         static_assert(Cmp::Less(-1, 1u));
         static_assert(Cmp::Less(TNumericLimits<int64>::Lowest(), 0u));

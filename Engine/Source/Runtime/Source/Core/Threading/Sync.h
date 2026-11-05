@@ -1,17 +1,11 @@
 #pragma once
 
 #include "Core/Threading/Atomic.h"
-#include "TaskSystem/FiberSync.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
-#if !defined(LE_PLATFORM_WINDOWS)
-    #include <pthread.h>
-#endif
-
 namespace Lumina
 {
-    /** Non-recursive mutex: one pointer over SRWLOCK on Windows, a pthread mutex elsewhere. */
     class RUNTIME_API FMutex
     {
     public:
@@ -39,11 +33,10 @@ namespace Lumina
     #if defined(LE_PLATFORM_WINDOWS)
         void* Handle = nullptr;
     #else
-        pthread_mutex_t Handle = PTHREAD_MUTEX_INITIALIZER;
+        alignas(void*) TAtomic<uint32> State{ 0 };
     #endif
     };
 
-    /** Readers share, writers exclude: SRWLOCK on Windows, a pthread rwlock elsewhere. */
     class RUNTIME_API FSharedMutex
     {
     public:
@@ -74,11 +67,13 @@ namespace Lumina
     #if defined(LE_PLATFORM_WINDOWS)
         void* Handle = nullptr;
     #else
-        pthread_rwlock_t Handle = PTHREAD_RWLOCK_INITIALIZER;
+        void WakeWriterOrReaders(uint32 Value) noexcept;
+
+        TAtomic<uint32> State{ 0 };
+        TAtomic<uint32> WriterNotify{ 0 };
     #endif
     };
 
-    /** Re-entrant for the thread that already holds it; counted on top of FMutex rather than the OS type. */
     class RUNTIME_API FRecursiveMutex
     {
     public:
@@ -91,9 +86,8 @@ namespace Lumina
         FRecursiveMutex(FRecursiveMutex&&) = delete;
         FRecursiveMutex& operator=(FRecursiveMutex&&) = delete;
 
-        // Out of line so whole-program optimization cannot reuse a caller's TLS address from before a park.
-        FORCENOINLINE void Lock() noexcept;
-        FORCENOINLINE NODISCARD bool TryLock() noexcept;
+        void Lock() noexcept;
+        NODISCARD bool TryLock() noexcept;
         void Unlock() noexcept;
 
         FORCEINLINE void lock() noexcept { Lock(); }
@@ -102,8 +96,7 @@ namespace Lumina
 
     private:
 
-        // Owned by a fiber rather than a thread, and parks rather than blocking, since a holder may park mid-section.
-        FFiberMutex     Inner;
+        FMutex          Inner;
         TAtomic<uint64> Owner{ 0 };
         uint32          Depth = 0;
     };
@@ -172,7 +165,6 @@ namespace Lumina
 
     inline constexpr FDeferLock DeferLock{};
 
-    /** A lock that can be released and retaken, which is what a condition variable wait needs. */
     class FUniqueLock
     {
     public:
@@ -219,7 +211,7 @@ namespace Lumina
 
         void Wait(FUniqueLock& Lock) noexcept;
 
-        /** False when the wait timed out; a spurious wake returns true, so re-check the predicate. */
+        // False on timeout; a spurious wake returns true, so re-check the predicate.
         NODISCARD bool WaitFor(FUniqueLock& Lock, double Seconds) noexcept;
 
         void NotifyOne() noexcept;
@@ -253,11 +245,33 @@ namespace Lumina
     #if defined(LE_PLATFORM_WINDOWS)
         void* Handle = nullptr;
     #else
-        pthread_cond_t Handle = PTHREAD_COND_INITIALIZER;
+        TAtomic<uint32> Sequence{ 0 };
     #endif
     };
 
-    /** One-time initialization; the threads that lose the race block until the winner is done. */
+    class RUNTIME_API FSemaphore
+    {
+    public:
+
+        explicit FSemaphore(uint32 InitialCount = 0) noexcept : Permits(InitialCount) {}
+
+        ~FSemaphore() = default;
+        FSemaphore(const FSemaphore&) = delete;
+        FSemaphore& operator=(const FSemaphore&) = delete;
+        FSemaphore(FSemaphore&&) = delete;
+        FSemaphore& operator=(FSemaphore&&) = delete;
+
+        void Acquire() noexcept;
+        NODISCARD bool TryAcquire() noexcept;
+        void Release(uint32 Count = 1) noexcept;
+
+    private:
+
+        FMutex             Mutex;
+        FConditionVariable Available;
+        uint32             Permits = 0;
+    };
+
     class RUNTIME_API FOnceFlag
     {
     public:
@@ -272,7 +286,7 @@ namespace Lumina
 
         NODISCARD bool IsDone() const noexcept { return State.load(std::memory_order_acquire) == 2; }
 
-        /** True for the single caller that should run the initializer; it must then call EndOnce. */
+        // True for the one caller that runs the initializer, which must then call EndOnce.
         NODISCARD bool BeginOnce() noexcept;
         void EndOnce() noexcept;
 

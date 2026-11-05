@@ -9,7 +9,7 @@ namespace Lumina
     static const char* DataAssetWindowName = "Properties";
 
     FDataAssetEditorTool::FDataAssetEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -27,6 +27,6 @@ namespace Lumina
     void FDataAssetEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& /*InDockspaceSize*/) const
     {
         ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(DataAssetWindowName).c_str(), InDockspaceID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(DataAssetWindowName), InDockspaceID);
     }
 }

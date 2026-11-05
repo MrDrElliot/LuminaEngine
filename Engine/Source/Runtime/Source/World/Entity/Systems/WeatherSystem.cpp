@@ -1,14 +1,12 @@
 #include "RuntimePCH.h"
-#include "World/ECS/Registry.h"
 #include "WeatherSystem.h"
 
-#include "World/World.h"
 #include "World/Entity/Components/WeatherComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 
 namespace Lumina
 {
-    namespace
+    namespace WeatherSystemInternal
     {
         constexpr float kMaxStepSeconds = 0.25f;
         constexpr float kSnowingThreshold = 0.01f;
@@ -31,37 +29,16 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
-        Reads<SWeatherComponent>();
-    }
-
-    void SWeatherSystem::OnStartup(const SSystemContext& Context)
-    {
-        GetWorld()->GetOrEmplaceSingleton<FWeatherState>();
-    }
-
-    bool SWeatherSystem::HasWork(const SSystemContext& Context)
-    {
-        CWorld* World = GetWorld();
-        const ECS::TComponentStorage<SWeatherComponent> Weather = World != nullptr
-            ? World->GetEntityRegistry().FindStorage<SWeatherComponent>()
-            : ECS::TComponentStorage<SWeatherComponent>();
-        return Weather && !Weather.IsEmpty();
     }
 
     void SWeatherSystem::OnUpdate(const SSystemContext& Context)
     {
-        LUMINA_PROFILE_SCOPE();
+        using namespace WeatherSystemInternal;
 
-        CWorld* World = Context.GetWorld();
-        FWeatherState* State = World != nullptr ? World->TryGetSingleton<FWeatherState>() : nullptr;
-        if (State == nullptr)
-        {
-            return;
-        }
+        FWeatherState* State = &WeatherState.Get();
 
         const SWeatherComponent* Weather = nullptr;
-        auto View = Context.CreateView<SWeatherComponent>(ECS::TExclude<SDisabledTag>{});
-        View.ForEach([&Weather] (const SWeatherComponent& Component)
+        Weathers.ForEach([&Weather](const SWeatherComponent& Component)
         {
             if (Weather == nullptr && Component.bEnabled)
             {
@@ -76,7 +53,7 @@ namespace Lumina
             return;
         }
 
-        const float DeltaTime = Math::Min((float)World->GetRealDeltaTime(), kMaxStepSeconds);
+        const float DeltaTime = Math::Min(Context.GetRealDeltaTime(), kMaxStepSeconds);
 
         const CWeatherPreset* Preset = Weather->Preset.Get();
         if (Preset != nullptr && Preset->HasAnyFlag(OF_NeedsLoad))

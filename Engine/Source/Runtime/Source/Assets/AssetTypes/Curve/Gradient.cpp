@@ -7,26 +7,26 @@ namespace Lumina
 {
     FVector4 SGradient::Evaluate(float InTime) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             return FVector4(1.0f, 1.0f, 1.0f, 1.0f);
         }
-        if (Keys.size() == 1)
+        if (Keys.Num() == 1)
         {
             return Keys[0].Color;
         }
 
         // Extrapolating color leaves gamut almost immediately, so there is no per-side mode here.
-        if (InTime <= Keys.front().Time)
+        if (InTime <= Keys[0].Time)
         {
-            return Keys.front().Color;
+            return Keys[0].Color;
         }
-        if (InTime >= Keys.back().Time)
+        if (InTime >= Keys.Last().Time)
         {
-            return Keys.back().Color;
+            return Keys.Last().Color;
         }
 
-        for (SIZE_T i = 1; i < Keys.size(); ++i)
+        for (int32 i = 1; i < Keys.Num(); ++i)
         {
             const SGradientKey& Hi = Keys[i];
             if (InTime > Hi.Time)
@@ -51,7 +51,7 @@ namespace Lumina
                 Lo.Color.w + (Hi.Color.w - Lo.Color.w) * Alpha);
         }
 
-        return Keys.back().Color;
+        return Keys.Last().Color;
     }
 
     int32 SGradient::AddKey(float InTime, const FVector4& InColor)
@@ -61,20 +61,20 @@ namespace Lumina
         Key.Color = InColor;
 
         // Evaluate relies on the ordering, so a caller that forgot to sort would read a wrong ramp.
-        SIZE_T Index = 0;
-        while (Index < Keys.size() && Keys[Index].Time <= InTime)
+        int32 Index = 0;
+        while (Index < Keys.Num() && Keys[Index].Time <= InTime)
         {
             ++Index;
         }
-        Keys.insert(Keys.begin() + Index, Key);
+        Keys.Insert(Key, Index);
         return (int32)Index;
     }
 
     void SGradient::RemoveKey(int32 Index)
     {
-        if (Index >= 0 && Index < (int32)Keys.size())
+        if (Index >= 0 && Index < Keys.Num())
         {
-            Keys.erase(Keys.begin() + Index);
+            Keys.RemoveAt(Index);
         }
     }
 
@@ -88,13 +88,13 @@ namespace Lumina
 
     void SGradient::GetTimeRange(float& OutMin, float& OutMax) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             OutMin = 0.0f;
             OutMax = 1.0f;
             return;
         }
-        OutMin = Keys.front().Time;
-        OutMax = Keys.back().Time;
+        OutMin = Keys[0].Time;
+        OutMax = Keys.Last().Time;
     }
 }

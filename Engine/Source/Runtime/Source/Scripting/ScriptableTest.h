@@ -10,6 +10,7 @@
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
+#include "World/Entity/Systems/ExclusiveSystem.h"
 #include "World/Subsystems/WorldSubsystem.h"
 #include "ScriptableTest.generated.h"
 
@@ -41,7 +42,7 @@ namespace Lumina
 
         // A reflected container, so the frame marshaller has a real vector slot to bind a C# view to.
         FUNCTION()
-        virtual void OnAppendSum(TVector<float>& Values) { Values.push_back(0.0f); }
+        virtual void OnAppendSum(TVector<float>& Values) { Values.Add(0.0f); }
 
         // A native inspector button, so the generated function table has metadata to carry.
         FUNCTION(Button = "Reset Value", ToolTip = "Puts NativeValue back to its default")
@@ -69,7 +70,7 @@ namespace Lumina
         {
             if (EventLog != nullptr)
             {
-                EventLog->push_back(FString(1, Phase) + ":" + Label);
+                EventLog->Add(FString(1, Phase) + ":" + Label);
             }
         }
 
@@ -162,8 +163,8 @@ namespace Lumina
             }
         }
 
-        // Static, since the count has to outlive the object it counts.
-        static inline int32 DestroyCount = 0;
+        // Defined in the .cpp so the runtime and the test binary share one count.
+        static int32 DestroyCount;
 
         bool bReenterOnDestroy = false;
     };
@@ -182,7 +183,8 @@ namespace Lumina
         void OnUpdate(float Dt) override { ++UpdateCount; AccumulatedTime += Dt; }
         void OnTeardown() override    { ++TeardownCount; }
 
-        static inline bool bAllowCreation = false;
+        // Defined in the library, since an inline one would be a separate copy in each binary on Linux.
+        static bool bAllowCreation;
 
         int32 InitializeCount = 0;
         int32 ReadyCount = 0;
@@ -202,6 +204,38 @@ namespace Lumina
         bool ShouldCreate() override { return false; }
     };
 
+    struct FSystemParamTestEvent
+    {
+        int32 Value = 0;
+    };
+
+    struct FSystemParamTestState : ECS::FResource
+    {
+        int32 Value = 0;
+    };
+
+    struct FSystemParamTestMarker
+    {
+        int32 Value = 0;
+    };
+
+    // Holds one of each system member, so a test can see them declare themselves without any Configure call.
+    REFLECT()
+    class RUNTIME_API CSystemParamTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return false; }
+
+        ECS::TQuery<ECS::Write<STransformComponent>, ECS::Read<SNameComponent>> Movers;
+        ECS::TQuery<ECS::Read<STransformComponent>, ECS::Changed<STransformComponent>> Moved;
+        ECS::TEventWriter<FSystemParamTestEvent>                                Sent;
+        ECS::TEventReader<FSystemParamTestEvent>                                Received;
+        TResMut<FSystemParamTestState>                                          State;
+        ECS::TQuery<ECS::Read<SNameComponent>, ECS::With<FSystemParamTestMarker>> Marked;
+    };
+
     // Throwaway entity system, gated off so discovery never puts one in a real world.
     REFLECT()
     class RUNTIME_API CEntitySystemTest : public CEntitySystem
@@ -209,7 +243,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        static inline bool bAllowCreation = false;
+        // Defined in the library, since an inline one would be a separate copy in each binary on Linux.
+        static bool bAllowCreation;
 
         bool ShouldCreate() override { return bAllowCreation; }
 
@@ -218,13 +253,15 @@ namespace Lumina
             ++ConfigureCount;
             RequireUpdate(EUpdateStage::PrePhysics);
             RequireUpdate(EUpdateStage::FrameEnd);
-            Writes<STransformComponent>();
+            DeclareWrite("STransformComponent");
             DeclareRead("SStaticMeshComponent");
         }
 
-        void OnStartup(const SSystemContext& Context) override  { ++StartupCount; }
+        void OnStartup(const SExclusiveContext& Context) override  { ++StartupCount; }
         void OnUpdate(const SSystemContext& Context) override   { ++UpdateCount; }
-        void OnTeardown(const SSystemContext& Context) override { ++TeardownCount; }
+        void OnTeardown(const SExclusiveContext& Context) override { ++TeardownCount; }
+
+        CWorld* GetOwningWorldForTest() const { return GetOwningWorld(); }
 
         int32 ConfigureCount = 0;
         int32 StartupCount = 0;
@@ -232,9 +269,9 @@ namespace Lumina
         int32 TeardownCount = 0;
     };
 
-    // Declares no access, so a test can prove the driver falls back to running it alone.
+    // Exclusive by class, so a test can prove the driver runs it alone.
     REFLECT()
-    class RUNTIME_API CEntitySystemExclusiveTest : public CEntitySystem
+    class RUNTIME_API CEntitySystemExclusiveTest : public CExclusiveSystem
     {
         GENERATED_BODY()
     public:
@@ -257,6 +294,22 @@ namespace Lumina
         {
             RequireUpdate(EUpdateStage::PrePhysics);
             DeclareRead("SStaticMeshComponent");
+        }
+    };
+
+    // Reads what CEntitySystemTest writes and declares no order, so only the data conflict sequences the two.
+    REFLECT()
+    class RUNTIME_API CEntitySystemTransformReaderTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics);
+            DeclareRead("STransformComponent");
         }
     };
 
@@ -342,8 +395,8 @@ namespace Lumina
             : OwnDefault(bAskForOwnDefault ? StaticClass()->GetDefaultObject() : nullptr)
         {}
 
-        // Off by default, so the startup default object build does not log the guard every run.
-        static inline bool bAskForOwnDefault = false;
+        // Off by default so startup does not log the guard; defined in the library so tests share its copy.
+        static bool bAskForOwnDefault;
 
         CObject* OwnDefault;
     };

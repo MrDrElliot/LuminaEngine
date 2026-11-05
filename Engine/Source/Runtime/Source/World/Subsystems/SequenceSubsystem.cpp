@@ -13,7 +13,7 @@ namespace Lumina
         struct FSequenceEventCursor
         {
             TVector<SSequenceFiredEvent> Pending;
-            size_t                       Next = 0;
+            int32                        Next = 0;
             SSequenceFiredEvent          Current;
         };
 
@@ -53,7 +53,7 @@ namespace Lumina
             return;
         }
 
-        if (SSequencePlayerComponent* Component = World->TryGetComponent<SSequencePlayerComponent>(Player))
+        if (SSequencePlayerComponent* Component = World->TryGetComponent<ECS::Write<SSequencePlayerComponent>>(Player))
         {
             Component->Instance.Release(World, Component->FinishAction == ESequenceFinishAction::Restore);
             Component->bPlaying = false;
@@ -69,7 +69,7 @@ namespace Lumina
             return false;
         }
 
-        const SSequencePlayerComponent* Component = World->TryGetComponent<SSequencePlayerComponent>(Player);
+        const SSequencePlayerComponent* Component = World->TryGetComponent<ECS::Read<SSequencePlayerComponent>>(Player);
         return Component != nullptr && Component->bPlaying;
     }
 
@@ -81,15 +81,15 @@ namespace Lumina
             return;
         }
 
-        auto View = World->View<SSequencePlayerComponent>();
+        auto View = World->View<ECS::Write<SSequencePlayerComponent>>();
         for (ECS::FEntity Entity : View)
         {
-            TVector<SSequenceFiredEvent>& Fired = View.Get<SSequencePlayerComponent>(Entity).Instance.FiredEvents;
+            TVector<SSequenceFiredEvent>& Fired = View.Get<ECS::Write<SSequencePlayerComponent>>(Entity).Instance.FiredEvents;
             for (SSequenceFiredEvent& Event : Fired)
             {
-                OutEvents.push_back(Move(Event));
+                OutEvents.Add(Move(Event));
             }
-            Fired.clear();
+            Fired.Reset();
         }
     }
 
@@ -102,13 +102,13 @@ namespace Lumina
         }
 
         FSequenceEventCursor& Cursor = EventCursor(World);
-        if (Cursor.Next >= Cursor.Pending.size())
+        if (Cursor.Next >= Cursor.Pending.Num())
         {
-            Cursor.Pending.clear();
+            Cursor.Pending.Reset();
             Cursor.Next = 0;
             ConsumeEvents(Cursor.Pending);
         }
-        if (Cursor.Next >= Cursor.Pending.size())
+        if (Cursor.Next >= Cursor.Pending.Num())
         {
             Cursor.Current = SSequenceFiredEvent();
             return false;
@@ -121,7 +121,7 @@ namespace Lumina
     FString CSequenceSubsystem::GetEventName()
     {
         CWorld* World = GetWorld();
-        return World != nullptr ? FString(EventCursor(World).Current.Name.ToString().c_str()) : FString();
+        return World != nullptr ? FString(*EventCursor(World).Current.Name.ToString()) : FString();
     }
 
     FString CSequenceSubsystem::GetEventPayload()
@@ -150,10 +150,10 @@ namespace Lumina
             return false;
         }
 
-        auto View = World->View<SSequencePlayerComponent>();
+        auto View = World->View<ECS::Read<SSequencePlayerComponent>>();
         for (ECS::FEntity Entity : View)
         {
-            if (View.Get<SSequencePlayerComponent>(Entity).bPlaying)
+            if (View.Get<ECS::Read<SSequencePlayerComponent>>(Entity).bPlaying)
             {
                 return true;
             }

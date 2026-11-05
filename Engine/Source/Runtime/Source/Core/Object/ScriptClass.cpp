@@ -34,7 +34,7 @@ namespace Lumina
         const CObject* Defaults = GetDefaultObjectIfCreated();
         ForEachScriptClassInChain(this, [&](const CScriptClass& Class)
         {
-            bAny |= !Class.ScriptProperties.empty();
+            bAny |= !Class.ScriptProperties.IsEmpty();
             for (FProperty* Property : Class.ScriptLifecycleProperties)
             {
                 Property->ConstructValue(Base + Property->Offset);
@@ -70,7 +70,7 @@ namespace Lumina
 {
     const FFunction* CScriptClass::FindScriptOverride(const FName& Name) const
     {
-        const auto It = ScriptOverrideFunctions.find(Name);
-        return It != ScriptOverrideFunctions.end() ? It->second : nullptr;
+        const auto It = ScriptOverrideFunctions.Find(Name);
+        return It != nullptr ? (*It) : nullptr;
     }
 }

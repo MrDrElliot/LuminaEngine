@@ -27,22 +27,22 @@ namespace Lumina
         void ApplyCommandLineConsoleVariables()
         {
             const TOptional<FFixedString> List = GCommandLine != nullptr ? GCommandLine->Get("cvars") : NullOpt;
-            if (!List.has_value())
+            if (!List.IsSet())
             {
                 return;
             }
 
-            FStringView Remaining(List->c_str(), List->size());
-            while (!Remaining.empty())
+            FStringView Remaining(*(*List), List->Len());
+            while (!Remaining.IsEmpty())
             {
-                const SIZE_T Comma = Remaining.find(',');
-                const FStringView Entry = Remaining.substr(0, Comma);
-                Remaining = Comma == FStringView::npos ? FStringView() : Remaining.substr(Comma + 1);
+                const int32 Comma = Remaining.Find(',');
+                const FStringView Entry = Comma == Constants::kIndexNone ? Remaining : Remaining.Left(Comma);
+                Remaining = Comma == Constants::kIndexNone ? FStringView() : Remaining.Mid(Comma + 1);
 
-                const SIZE_T Equals = Entry.find('=');
-                const FStringView Name  = Entry.substr(0, Equals);
-                const FStringView Value = Equals == FStringView::npos ? FStringView() : Entry.substr(Equals + 1);
-                if (Equals != FStringView::npos && FConsoleRegistry::Get().SetValueFromString(Name, Value))
+                const int32 Equals = Entry.Find('=');
+                const FStringView Name  = Entry.Mid(0, Equals);
+                const FStringView Value = Equals == Constants::kIndexNone ? FStringView() : Entry.Mid(Equals + 1);
+                if (Equals != Constants::kIndexNone && FConsoleRegistry::Get().SetValueFromString(Name, Value))
                 {
                     LOG_DISPLAY("Console variable {} set to {} from the command line.", Name, Value);
                 }

@@ -12,11 +12,11 @@ TEST(AgentEntityToken, AMintedTokenResolvesBackToItsEntity)
     const ECS::FEntity Entity = Registry.Create();
 
     const FString Token = FEntityTokens::Mint(Registry, Entity);
-    ASSERT_FALSE(Token.empty());
+    ASSERT_FALSE(Token.IsEmpty());
 
     ECS::FEntity Resolved = ECS::NullEntity;
     FString Error;
-    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << Error.c_str();
+    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << *Error;
     EXPECT_EQ(Resolved, Entity);
 }
 
@@ -27,7 +27,7 @@ TEST(AgentEntityToken, ATokenIsNotJustTheRawHandle)
     const ECS::FEntity Entity = Registry.Create();
 
     const FString Token = FEntityTokens::Mint(Registry, Entity);
-    EXPECT_NE(Token.find("ent_"), FString::npos);
+    EXPECT_NE(Token.Find("ent_"), Constants::kIndexNone);
     EXPECT_EQ(Token, FEntityTokens::Mint(Registry, Entity));
 }
 
@@ -44,7 +44,7 @@ TEST(AgentEntityToken, DifferentEntitiesGetDifferentTokens)
 TEST(AgentEntityToken, AnInvalidEntityMintsNothing)
 {
     ECS::FRegistry Registry;
-    EXPECT_TRUE(FEntityTokens::Mint(Registry, ECS::NullEntity).empty());
+    EXPECT_TRUE(FEntityTokens::Mint(Registry, ECS::NullEntity).IsEmpty());
 }
 
 TEST(AgentEntityToken, GarbageIsRefused)
@@ -59,7 +59,7 @@ TEST(AgentEntityToken, GarbageIsRefused)
     EXPECT_FALSE(FEntityTokens::Resolve(Registry, "ent_", Resolved, Error));
     EXPECT_FALSE(FEntityTokens::Resolve(Registry, "ent_zz_zz", Resolved, Error));
     EXPECT_FALSE(FEntityTokens::Resolve(Registry, "notatoken", Resolved, Error));
-    EXPECT_FALSE(Error.empty());
+    EXPECT_FALSE(Error.IsEmpty());
 }
 
 TEST(AgentEntityToken, ADestroyedEntityIsRefused)
@@ -75,7 +75,7 @@ TEST(AgentEntityToken, ADestroyedEntityIsRefused)
 
     EXPECT_FALSE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error));
     EXPECT_FALSE(Registry.IsValid(Resolved));
-    EXPECT_FALSE(Error.empty());
+    EXPECT_FALSE(Error.IsEmpty());
 }
 
 // This is the whole reason tokens exist. A recycled slot must not answer to the old occupant's name.
@@ -113,7 +113,7 @@ TEST(AgentEntityToken, TheRecycledEntityGetsAWorkingTokenOfItsOwn)
     ECS::FEntity Resolved = ECS::NullEntity;
     FString Error;
 
-    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << Error.c_str();
+    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << *Error;
     EXPECT_EQ(Resolved, Recycled);
 }
 
@@ -131,7 +131,7 @@ TEST(AgentEntityToken, InvalidatingRetiresOutstandingTokens)
     FString Error;
 
     EXPECT_FALSE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error));
-    EXPECT_FALSE(Error.empty());
+    EXPECT_FALSE(Error.IsEmpty());
 }
 
 TEST(AgentEntityToken, TokensMintedAfterInvalidationStillWork)
@@ -146,7 +146,7 @@ TEST(AgentEntityToken, TokensMintedAfterInvalidationStillWork)
     ECS::FEntity Resolved = ECS::NullEntity;
     FString Error;
 
-    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << Error.c_str();
+    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << *Error;
     EXPECT_EQ(Resolved, Entity);
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
+#include "World/ECS/Query.h"
 #include "World/ECS/EventQueue.h"
 #include "World/ECS/CommandBus.h"
 
@@ -8,6 +9,7 @@
 #include "Physics/PhysicsTypes.h"
 #include "Physics/Ray/RayCast.h"
 #include "Renderer/PrimitiveDrawInterface.h"
+#include "Scripting/ScriptCallback.h"
 #include "SystemAccess.h"
 #include "SystemResources.h"
 #include "TaskSystem/TaskSystem.h"
@@ -26,231 +28,50 @@ namespace Lumina
     namespace Physics
     {
         class IPhysicsScene;
+        class IPhysicsQueries;
     }
 
-    // What a system's OnUpdate and HasWork receive for the running stage, the same value C# reads through a handle.
+    struct SExclusiveContext;
+
+    // What a system's OnUpdate and HasWork receive: only what is safe beside every other system, the same value C# reads through a handle.
     REFLECT()
     struct SSystemContext
     {
         GENERATED_BODY()
 
+    protected:
+
+        friend class CWorld;
+
+        // First, because the C# SSystemContext reads the world from offset zero.
+        CWorld*             World = nullptr;
+        ECS::FRegistry*     Registry = nullptr;
+        ECS::FEventQueues*  Events = nullptr;
+        ECS::FCommandBus*   CommandBus = nullptr;
+
+    public:
+
         SSystemContext() = default;
-        explicit SSystemContext(CWorld* InWorld);
+        RUNTIME_API explicit SSystemContext(CWorld* InWorld);
 
-        RUNTIME_API FORCEINLINE double GetDeltaTime() const { return DeltaTime; }
+        //~ Time.
 
-        // For systems that drive world-level state rather than just components (the sequencer switching
-        // the active camera, spawning a binding's prefab).
-        RUNTIME_API FORCEINLINE CWorld* GetWorld() const { return World; }
-        RUNTIME_API FORCEINLINE double GetTime() const { return Time; }
-        RUNTIME_API FORCEINLINE EUpdateStage GetUpdateStage() const { return UpdateStage; }
-        
-        RUNTIME_API void SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const;
+        NODISCARD FORCEINLINE float GetDeltaTime() const { return static_cast<float>(DeltaTime); }
 
+        // Unscaled and running while paused, for effects that ignore time dilation.
+        NODISCARD FORCEINLINE float GetRealDeltaTime() const { return static_cast<float>(RealDeltaTime); }
+        NODISCARD FORCEINLINE double GetTime() const { return Time; }
+        NODISCARD FORCEINLINE EUpdateStage GetUpdateStage() const { return UpdateStage; }
+        NODISCARD RUNTIME_API EWorldType GetWorldType() const;
 
-        // Readable after this batch's sync point, so any system or worker may send, given SendsEvent<T> was declared.
-        template<typename T>
-        void SendEvent(const T& Event) const
-        {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "SendsEvent<T>");
-            ECS::SendEvent(*Events, Event);
-        }
+        //~ Structure. A parallel system's changes land at its segment's flush, an exclusive system's at once.
 
-        template<typename T>
-        void SendEvents(TSpan<const T> InEvents) const
-        {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "SendsEvent<T>");
-            ECS::SendEvents(*Events, InEvents);
-        }
-
-        // Every T sent since Reader last read, oldest first, for a Reader that ReadsEvent<T> handed out.
-        template<typename T>
-        NODISCARD ECS::TEventRange<T> ReadEvents(ECS::TEventReader<T>& Reader) const
-        {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), false, "ReadsEvent<T>");
-            return ECS::ReadEvents(*Events, Reader);
-        }
-
-        // For HasWork, so a system that only answers events stays out of a frame that sent none.
-        template<typename T>
-        NODISCARD bool HasUnreadEvents(const ECS::TEventReader<T>& Reader) const
-        {
-            return ECS::HasUnreadEvents(*Events, Reader);
-        }
-
-        NODISCARD ECS::FEventQueues& GetEvents() const
-        {
-            return *Events;
-        }
-
-        // Deferred adds, removes and patches, applied at the next sync point in record order.
-        NODISCARD ECS::FCommandBus& GetCommandBus() const
-        {
-            return *CommandBus;
-        }
-        
-        template<typename... Ts, typename... TArgs>
-        NODISCARD auto CreateView(TArgs&&... Args) const -> decltype(std::declval<ECS::FRegistry>().View<Ts...>(std::forward<TArgs>(Args)...))
-        {
-            return Registry->View<Ts...>(std::forward<TArgs>(Args)...);
-        }
-        
-        template<typename... Ts, typename TFunc, typename... TArgs>
-        void ForEach(TFunc&& Function, TArgs&&... Args) const
-        {
-            auto View = Registry->View<Ts...>(std::forward<TArgs>(Args)...);
-            View.ForEach(Forward<TFunc>(Function));
-        }
-
-        template<typename... Ts, typename TFunc, typename... TArgs>
-        void ParallelForEach(TFunc&& Function, TArgs&&... Args) const
-        {
-            ParallelForEachView(Registry->View<Ts...>(std::forward<TArgs>(Args)...), Forward<TFunc>(Function));
-        }
-
-        // Fans an already built view out over the workers, running it inline when it is too small to be worth splitting.
-        template<typename TView, typename TFunc>
-        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64, uint32 MinSlotsToSplit = 0) const
-        {
-            const uint32 Num = static_cast<uint32>(View.NumDenseSlots());
-
-            // ForEach keeps the single-pool direct scan, which a range walk gives up.
-            if (Num < Math::Max(MinRange + 1, MinSlotsToSplit))
-            {
-                View.ForEach(Function);
-                return;
-            }
-
-            // Chunked, and the range walk reuses the driver's dense index rather than probing twice.
-            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
-            {
-                View.ForEachInRange(Range.Start, Range.End, Function);
-            }, MinRange);
-        }
-
-        NODISCARD auto& GetRegistryContext() const
-        {
-            return Registry->Ctx();
-        }
-
-        // The parent links, which a system walking them declares as SystemResource::Hierarchy.
-        NODISCARD RUNTIME_API const ECS::FHierarchy& GetHierarchy() const;
-
-        NODISCARD ECS::FRegistry& GetRegistry() const
-        {
-            return *Registry;
-        }
-        
-        template<typename... Ts, typename ... TArgs>
-        NODISCARD auto CreateGroup(TArgs&&... Args) const
-        {
-            return Registry->View<Ts...>(std::forward<TArgs>(Args)...);
-        }
-
-        template<typename... Ts>
-        NODISCARD decltype(auto) Get(ECS::FEntity entity) const
-        {
-            return Registry->Get<Ts...>(entity);
-        }
-
-        template<typename... Ts>
-        NODISCARD decltype(auto) TryGet(ECS::FEntity entity) const
-        {
-            return Registry->TryGet<Ts...>(entity);
-        }
-        
-        template<typename... Ts>
-        void Clear() const
-        {
-            (ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<Ts>()), true, "Write<> of the cleared component"), ...);
-            Registry->ClearComponent<Ts...>();
-        }
-
-        template<typename... Ts>
-        NODISCARD bool HasAnyOf(ECS::FEntity EntityID) const
-        {
-            return Registry->HasAny<Ts...>(EntityID);
-        }
-
-        template<typename ... Ts>
-        NODISCARD bool HasAllOf(ECS::FEntity EntityID) const
-        {
-            return Registry->HasAll<Ts...>(EntityID);
-        }
-
-        template<typename T, typename ... TArgs>
-        T& Emplace(ECS::FEntity entity, TArgs&& ... Args)
-        {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "Write<> of the emplaced component");
-            return Registry->Emplace<T>(entity, std::forward<TArgs>(Args)...);
-        }
-
-        template<typename T, typename ... TArgs>
-        T& EmplaceOrReplace(ECS::FEntity entity, TArgs&& ... Args) const
-        {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "Write<> of the emplaced component");
-            return Registry->EmplaceOrReplace<T>(entity, std::forward<TArgs>(Args)...);
-        }
-        
-        template<typename T>
-        decltype(auto) GetStorage() const
-        {
-            return Registry->GetStorage<T>();
-        }
-        
-        /** The world's physics scene, or null when the world has none. */
-        RUNTIME_API Physics::IPhysicsScene* GetPhysicsScene() const;
-
-        RUNTIME_API void ActivateBody(ECS::FEntity Entity);
-        RUNTIME_API void DeactivateBody(ECS::FEntity Entity);
-        RUNTIME_API void ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType);
-
-        /** Physics body id for an entity, or ~0u when it has no body / no physics scene. */
-
-        /** Live physics-body pose (NOT the lagged STransformComponent) and velocity, for physics-stage systems. */
-        RUNTIME_API FVector3 GetBodyPosition(ECS::FEntity Entity) const;
-        RUNTIME_API FQuat    GetBodyRotation(ECS::FEntity Entity) const;
-        RUNTIME_API FVector3 GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const;
-
-        /** Apply a world-space force at a world-space point (adds torque too). Safe from PrePhysics. */
-        RUNTIME_API void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) const;
-
-        /** Shape-accurate buoyancy for one frame: pass the fluid surface point + normal (e.g. sampled wave
-            surface). Buoyancy 1 = neutral density, >1 floats. Submersion is derived from the body bounds. */
-        RUNTIME_API void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
-            float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float InDeltaTime) const;
-
-        /** Sweep hits near-to-far; OutHits is cleared first, so one reused buffer keeps the sweep alloc-free. */
-        RUNTIME_API void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) const;
-
-        /** Nearest sweep hit only; cheaper than CastSphere because the backend stops at the blocking hit. */
-        RUNTIME_API TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) const;
-
-        RUNTIME_API STransformComponent& GetEntityTransform(ECS::FEntity Entity) const;
-        
-        RUNTIME_API FVector3 TranslateEntity(ECS::FEntity Entity, const FVector3& Translation);
-        RUNTIME_API void SetEntityLocation(ECS::FEntity Entity, const FVector3& Location);
-        RUNTIME_API void SetEntityRotation(ECS::FEntity Entity, const FQuat& Rotation);
-        RUNTIME_API void SetEntityScale(ECS::FEntity Entity, const FVector3& Scale);
-        
-        //~ Begin Debug Drawing
-        RUNTIME_API void DrawDebugLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
-        RUNTIME_API void DrawDebugBox(const FVector3& Center, const FVector3& Extents, const FQuat& Rotation, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
-        RUNTIME_API void DrawDebugSphere(const FVector3& Center, float Radius, const FVector4& Color, uint8 Segments = 16, float Thickness = 1.0f, float Duration = 1.0f) const;
-        RUNTIME_API void DrawDebugCone(const FVector3& Apex, const FVector3& Direction, float AngleRadians, float Length, const FVector4& Color, uint8 Segments = 16, uint8 Stacks = 4, float Thickness = 1.0f, float Duration = 1.0f) const;
-        RUNTIME_API void DrawFrustum(const FMatrix4& Matrix, float zNear, float zFar, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
-        RUNTIME_API void DrawDebugArrow(const FVector3& Start, const FVector3& Direction, float Length, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f, float HeadSize = 0.2f) const;
-        RUNTIME_API void DrawDebugSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = 1.0f) const;
-        //~ End Debug Drawing
-        
+        // The handle is valid at once either way; from a parallel system it gets its components at the flush.
         RUNTIME_API ECS::FEntity Create(const FTransform& Transform, FName EntityName = "Entity") const;
         RUNTIME_API ECS::FEntity Create(FVector3 Location, FName EntityName = "Entity") const;
         RUNTIME_API ECS::FEntity Create(FName EntityName = "Entity") const;
 
-        // Usable as a command target at once, and live with its name and transform at the next sync point.
-        RUNTIME_API ECS::FEntity CreateDeferred(const FTransform& Transform = FTransform(), FName EntityName = "Entity") const;
-
-        // A parallel system or worker thread destroys at the next sync point instead of under other readers.
+        FUNCTION()
         void Destroy(ECS::FEntity Entity) const
         {
             if (ECS::FCommandBus::ShouldDefer())
@@ -258,20 +79,112 @@ namespace Lumina
                 CommandBus->Destroy(Entity);
                 return;
             }
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
             Registry->Destroy(Entity);
         }
 
-        RUNTIME_API size_t GetNumEntities() const;
-        RUNTIME_API bool IsValidEntity(ECS::FEntity Entity) const;
-        
-        RUNTIME_API EWorldType GetWorldType() const;
-    
-        // First, because the C# SSystemContext reads the world from offset zero.
-        CWorld*             World = nullptr;
-        ECS::FRegistry*     Registry = nullptr;
-        ECS::FEventQueues*  Events = nullptr;
-        ECS::FCommandBus*   CommandBus = nullptr;
+        // Adds the component, or replaces the one the entity has.
+        template<ECS::CComponent T, typename... TArgs>
+        void Emplace(ECS::FEntity Entity, TArgs&&... Args) const
+        {
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                CommandBus->Emplace<T>(Entity, std::forward<TArgs>(Args)...);
+                return;
+            }
+            Registry->EmplaceOrReplace<T>(Entity, std::forward<TArgs>(Args)...);
+        }
+
+        // Edits the component in place once it exists, so a spawn can be filled in after its Emplace either way.
+        template<ECS::CDataComponent T, typename TFunc>
+        void Patch(ECS::FEntity Entity, TFunc&& Mutator) const
+        {
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                CommandBus->Patch<T>(Entity, std::forward<TFunc>(Mutator));
+                return;
+            }
+            if (Registry->TryGet<T>(Entity) != nullptr)
+            {
+                Registry->Patch<T>(Entity, Mutator);
+            }
+        }
+
+        template<ECS::CComponent T>
+        void Remove(ECS::FEntity Entity) const
+        {
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                CommandBus->Remove<T>(Entity);
+                return;
+            }
+            Registry->Remove<T>(Entity);
+        }
+
+        FUNCTION()
+        RUNTIME_API void SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const;
+
+        FUNCTION()
+        NODISCARD RUNTIME_API bool IsValidEntity(ECS::FEntity Entity) const;
+
+        // The parent links, settled at every flush, so any system may walk them.
+        NODISCARD RUNTIME_API const ECS::FHierarchy& GetHierarchy() const;
+
+        //~ Physics.
+
+        // Raycasts, sweeps, overlaps, body reads and body forces, all safe beside other systems; null without a physics scene.
+        NODISCARD RUNTIME_API Physics::IPhysicsQueries* GetPhysics() const;
+
+        //~ Deferred work.
+
+        // Runs Func at the next flush on the main thread with the whole world in reach, for work a system cannot do beside others.
+        template<typename TFunc>
+        void Defer(TFunc&& Func) const;
+
+        //~ Debug drawing.
+
+        FUNCTION()
+        RUNTIME_API void DrawDebugLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
+
+        FUNCTION()
+        RUNTIME_API void DrawDebugBox(const FVector3& Center, const FVector3& Extents, const FQuat& Rotation, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
+
+        FUNCTION()
+        RUNTIME_API void DrawDebugSphere(const FVector3& Center, float Radius, const FVector4& Color, uint8 Segments = 16, float Thickness = 1.0f, float Duration = 1.0f) const;
+
+        FUNCTION()
+        RUNTIME_API void DrawDebugCone(const FVector3& Apex, const FVector3& Direction, float AngleRadians, float Length, const FVector4& Color, uint8 Segments = 16, uint8 Stacks = 4, float Thickness = 1.0f, float Duration = 1.0f) const;
+
+        FUNCTION()
+        RUNTIME_API void DrawFrustum(const FMatrix4& Matrix, float zNear, float zFar, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
+
+        FUNCTION()
+        RUNTIME_API void DrawDebugArrow(const FVector3& Start, const FVector3& Direction, float Length, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f, float HeadSize = 0.2f) const;
+
+        RUNTIME_API void DrawDebugSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = 1.0f) const;
+
+        //~ C# entry points, which name a component by its FComponentOps token and defer exactly as the templates do.
+
+        FUNCTION(ScriptInternal)
+        RUNTIME_API ECS::FEntity ScriptCreate(const FTransform& Transform, FName EntityName) const;
+
+        // The value to fill in place: the live component from an exclusive system, or a staged copy that lands at the flush. Null for a tag.
+        FUNCTION(ScriptInternal)
+        RUNTIME_API void* ScriptEmplace(ECS::FEntity Entity, void* Ops) const;
+
+        // Copies Source at the call, so it may be a component in the pool the emplace grows.
+        FUNCTION(ScriptInternal)
+        RUNTIME_API void ScriptEmplaceCopy(ECS::FEntity Entity, void* Ops, void* Source) const;
+
+        FUNCTION(ScriptInternal)
+        RUNTIME_API void ScriptRemove(ECS::FEntity Entity, void* Ops) const;
+
+        // Runs the callback once at the next flush with the SExclusiveContext's address, and releases it unrun if the commands are discarded.
+        FUNCTION(ScriptInternal)
+        RUNTIME_API void ScriptDefer(SScriptCallback Callback) const;
+
+        // False inside a parallel system, so a C# exclusive context forged from a shared one cannot hand out the world.
+        FUNCTION(ScriptInternal)
+        NODISCARD static RUNTIME_API bool CanReachWorld();
 
         PROPERTY(Hidden)
         double DeltaTime = 0.0;
@@ -280,8 +193,36 @@ namespace Lumina
         double Time = 0.0;
 
         PROPERTY(Hidden)
+        double RealDeltaTime = 0.0;
+
+        PROPERTY(Hidden)
         EUpdateStage UpdateStage = EUpdateStage::FrameStart;
     };
-    
-    
+
+    // What a system running alone on the main thread receives, with the world and its registry in reach.
+    REFLECT()
+    struct SExclusiveContext : public SSystemContext
+    {
+        GENERATED_BODY()
+
+        SExclusiveContext() = default;
+        explicit SExclusiveContext(const SSystemContext& Shared) : SSystemContext(Shared) {}
+
+        NODISCARD CWorld* GetWorld() const { return World; }
+        NODISCARD ECS::FRegistry& GetRegistry() const { return *Registry; }
+        NODISCARD ECS::FEventQueues& GetEvents() const { return *Events; }
+        NODISCARD ECS::FCommandBus& GetCommandBus() const { return *CommandBus; }
+        NODISCARD RUNTIME_API Physics::IPhysicsScene* GetPhysicsScene() const;
+    };
+
+    template<typename TFunc>
+    void SSystemContext::Defer(TFunc&& Func) const
+    {
+        CommandBus->Enqueue([Shared = *this, Func = std::forward<TFunc>(Func)]() mutable
+        {
+            const SExclusiveContext Exclusive(Shared);
+            Func(Exclusive);
+        });
+    }
+
 }

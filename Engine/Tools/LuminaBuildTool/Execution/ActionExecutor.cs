@@ -305,7 +305,8 @@ public sealed class ActionExecutor
                 Action.Arguments,
                 Action.WorkingDirectory,
                 Action.EnvironmentOverrides,
-                Cancellation).ConfigureAwait(false);
+                Cancellation,
+                Action.StandardInput).ConfigureAwait(false);
 
             string Output = FilterToolOutput(Action, Process.Output);
 

@@ -26,7 +26,7 @@ namespace Lumina
         {
             if (TOptional<FFixedString> Value = GCommandLine->Get(Name))
             {
-                return std::strtof(Value->c_str(), nullptr);
+                return std::strtof(*(*Value), nullptr);
             }
             return Default;
         }
@@ -59,21 +59,21 @@ namespace Lumina
     void FNetLoadBotSwarm::StartFromCommandLine()
     {
         TOptional<int> Count = GCommandLine->GetInt("netbots");
-        if (!Count.has_value() || Count.value() <= 0)
+        if (!Count.IsSet() || Count.GetValue() <= 0)
         {
             return;
         }
 
         FConfig Config;
-        Config.Count = static_cast<uint32>(Count.value());
+        Config.Count = static_cast<uint32>(Count.GetValue());
         if (TOptional<FFixedString> Connect = GCommandLine->Get("connect"))
         {
-            const FString Address(Connect->c_str());
-            const size_t Colon = Address.find_last_of(':');
-            Config.Host = Colon == FString::npos ? Address : Address.substr(0, Colon);
-            if (Colon != FString::npos)
+            const FString Address(*(*Connect));
+            const int32 Colon = Address.FindLastOf(':');
+            Config.Host = Colon == Constants::kIndexNone ? Address : Address.Mid(0, Colon);
+            if (Colon != Constants::kIndexNone)
             {
-                Config.Port = static_cast<uint16>(std::strtoul(Address.c_str() + Colon + 1, nullptr, 10));
+                Config.Port = static_cast<uint16>(std::strtoul(*Address + Colon + 1, nullptr, 10));
             }
         }
         Config.JoinsPerSecond = CommandLineFloat("botjoinrate", Config.JoinsPerSecond);
@@ -84,7 +84,7 @@ namespace Lumina
         Config.StatsSeconds   = CommandLineFloat("netstats", Config.StatsSeconds);
         if (TOptional<FFixedString> RpcClass = GCommandLine->Get("botrpcclass"))
         {
-            Config.RpcClass = FString(RpcClass->c_str());
+            Config.RpcClass = FString(*(*RpcClass));
         }
 
         GSwarm = MakeUnique<FNetLoadBotSwarm>();
@@ -112,9 +112,9 @@ namespace Lumina
         StartTime    = PlatformTime::Seconds();
         LastTick     = StartTime;
         LastStats    = StartTime;
-        Bots.resize(Config.Count);
+        Bots.SetNum(Config.Count);
         LOG_DISPLAY("[NetBots] {} bots joining {}:{} at {:.0f} per second, wander radius {:.0f} m, chat every {:.1f} s, attack every {:.1f} s",
-            Config.Count, Config.Host.c_str(), Config.Port, Config.JoinsPerSecond, Config.WanderRadius, Config.ChatSeconds, Config.AttackSeconds);
+            Config.Count, *Config.Host, Config.Port, Config.JoinsPerSecond, Config.WanderRadius, Config.ChatSeconds, Config.AttackSeconds);
     }
 
     void FNetLoadBotSwarm::TickAll()
@@ -147,7 +147,7 @@ namespace Lumina
             ++Launched;
         }
 
-        Task::ParallelFor(Launched, [this, Now, DeltaTime](uint32 Index)
+        Jobs::ParallelFor(Launched, [this, Now, DeltaTime](uint32 Index)
         {
             TickBot(Bots[Index], Now, DeltaTime);
         });
@@ -170,7 +170,7 @@ namespace Lumina
             return;
         }
 
-        Bot.Events.clear();
+        Bot.Events.Reset();
         Bot.Transport->Service(Bot.Events);
         for (const FNetworkEvent& Event : Bot.Events)
         {
@@ -183,8 +183,8 @@ namespace Lumina
                     Bot.bLost = true;
                     return;
                 case ENetworkEventType::Data:
-                    Bot.BytesIn += Event.Data.size();
-                    Receive(Bot, Now, Event.Data.data(), Event.Data.size());
+                    Bot.BytesIn += Event.Data.Num();
+                    Receive(Bot, Now, Event.Data.GetData(), Event.Data.Num());
                     break;
             }
         }
@@ -200,8 +200,8 @@ namespace Lumina
                 const FString Text = Lines[NextRandom(Bot.Rng) % 5];
                 TVector<uint8> Payload;
                 FNetArchive Writer(Payload);
-                WriteVarUInt(Writer, static_cast<uint32>(Text.size()));
-                Writer.Serialize(const_cast<char*>(Text.data()), static_cast<int64>(Text.size()));
+                WriteVarUInt(Writer, static_cast<uint32>(Text.Len()));
+                Writer.Serialize(const_cast<char*>(Text.GetData()), static_cast<int64>(Text.Len()));
                 SendRpc(Bot, ChatRpcId, static_cast<uint8>(ERpcTarget::Broadcast), static_cast<uint8>(ENetFlags::Unreliable), Payload);
             }
 
@@ -255,8 +255,8 @@ namespace Lumina
                         uint32 ReadyProtocol = ProtocolHash;
                         Writer << ReadyType;
                         Writer << ReadyProtocol;
-                        Net::SendFramed(*Bot.Transport, Bot.Server, Ready.data(), static_cast<SIZE_T>(Ready.size()), 0, ESendMode::Reliable);
-                        Bot.BytesOut += Ready.size() + 2;
+                        Net::SendFramed(*Bot.Transport, Bot.Server, Ready.GetData(), static_cast<SIZE_T>(Ready.Num()), 0, ESendMode::Reliable);
+                        Bot.BytesOut += Ready.Num() + 2;
                     }
                     break;
                 }
@@ -350,28 +350,28 @@ namespace Lumina
         const FVector3 Move(std::sin(YawRadians), 0.0f, std::cos(YawRadians));
         for (uint32 Step = 0; Step < Math::Min(Owed, 8u); ++Step)
         {
-            if (Bot.Recent.size() >= MovesPerUpload)
+            if (static_cast<uint32>(Bot.Recent.Num()) >= MovesPerUpload)
             {
-                Bot.Recent.erase(Bot.Recent.begin());
+                Bot.Recent.RemoveAt(0);
             }
-            Bot.Recent.push_back(NetPrediction::MakeMoveCommand(Bot.NextSeq++, Move, Bot.Yaw, 0));
+            Bot.Recent.Add(NetPrediction::MakeMoveCommand(Bot.NextSeq++, Move, Bot.Yaw, 0));
         }
 
         TVector<uint8> Upload;
-        NetPrediction::WriteMoveCommands(Upload, Bot.PawnGuid, Bot.Recent.data(), static_cast<uint32>(Bot.Recent.size()));
-        Net::SendFramed(*Bot.Transport, Bot.Server, Upload.data(), static_cast<SIZE_T>(Upload.size()), 1, ESendMode::UnreliableSequenced);
-        Bot.BytesOut += Upload.size() + 2;
+        NetPrediction::WriteMoveCommands(Upload, Bot.PawnGuid, Bot.Recent.GetData(), static_cast<uint32>(Bot.Recent.Num()));
+        Net::SendFramed(*Bot.Transport, Bot.Server, Upload.GetData(), static_cast<SIZE_T>(Upload.Num()), 1, ESendMode::UnreliableSequenced);
+        Bot.BytesOut += Upload.Num() + 2;
     }
 
     void FNetLoadBotSwarm::SendRpc(FBot& Bot, uint32 RpcId, uint8 Target, uint8 Flags, const TVector<uint8>& Payload)
     {
         TVector<uint8> Batch;
         Net::AppendScriptRpc(Batch, Bot.PawnGuid, 0, RpcId, static_cast<ERpcTarget>(Target), Flags, Bot.PeerId,
-            Payload.data(), static_cast<uint32>(Payload.size()));
+            Payload.GetData(), static_cast<uint32>(Payload.Num()));
         const bool bReliable = (Flags & static_cast<uint8>(ENetFlags::Unreliable)) == 0;
-        Bot.Transport->Send(Bot.Server, Batch.data(), static_cast<SIZE_T>(Batch.size()), bReliable ? 0 : 1,
+        Bot.Transport->Send(Bot.Server, Batch.GetData(), static_cast<SIZE_T>(Batch.Num()), bReliable ? 0 : 1,
             bReliable ? ESendMode::Reliable : ESendMode::UnreliableSequenced);
-        Bot.BytesOut += Batch.size();
+        Bot.BytesOut += Batch.Num();
     }
 
     void FNetLoadBotSwarm::LogStats(double Now)
@@ -418,7 +418,7 @@ namespace Lumina
                 Bot.BytesInByType[Type] = 0;
             }
 
-            Peer.clear();
+            Peer.Reset();
             Bot.Transport->GetConnectionStats(Peer);
             for (const FConnectionStats& Stats : Peer)
             {
@@ -450,10 +450,10 @@ namespace Lumina
         {
             if (ByType[Type] > 0)
             {
-                Breakdown += Format("  {} {:.1f}", Names[Type], ByType[Type] / 1024.0 / Seconds).c_str();
+                Breakdown += *Format("  {} {:.1f}", Names[Type], ByType[Type] / 1024.0 / Seconds);
             }
         }
-        LOG_DISPLAY("[NetBots][Stats] in KB/s by type{}", Breakdown.c_str());
+        LOG_DISPLAY("[NetBots][Stats] in KB/s by type{}", *Breakdown);
 
         TickMsSum = 0.0;
         TickMsMax = 0.0;

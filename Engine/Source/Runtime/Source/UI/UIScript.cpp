@@ -59,7 +59,7 @@ namespace Lumina::UIBinding
     {
         FString MetaInChain(const CClass* Class, FStringView Key)
         {
-            const FName KeyName(FString(Key.data(), Key.size()).c_str());
+            const FName KeyName(*FString(Key.GetData(), Key.Len()));
             for (const CClass* Current = Class; Current != nullptr; Current = Current->GetSuperClass())
             {
                 if (Current->HasMeta(KeyName))
@@ -74,13 +74,13 @@ namespace Lumina::UIBinding
         {
             TVector<FBoundValue> Values;
             GetBoundValues(Class, Values);
-            if (!Values.empty())
+            if (!Values.IsEmpty())
             {
                 return true;
             }
             TVector<FBoundFunction> Functions;
             GetBoundFunctions(Class, Functions);
-            return !Functions.empty();
+            return !Functions.IsEmpty();
         }
 
         template<typename TVisitor>
@@ -91,7 +91,7 @@ namespace Lumina::UIBinding
             {
                 if (Object != nullptr && Object->IsA<CClass>())
                 {
-                    Classes.push_back(static_cast<CClass*>(Object));
+                    Classes.Add(static_cast<CClass*>(Object));
                 }
             });
             for (CClass* Class : Classes)
@@ -120,7 +120,7 @@ namespace Lumina::UIBinding
 
     void GetBoundValues(const CStruct* Type, TVector<FBoundValue>& Out)
     {
-        Out.clear();
+        Out.Reset();
         if (Type == nullptr)
         {
             return;
@@ -132,15 +132,15 @@ namespace Lumina::UIBinding
                 continue;
             }
             const FCStringView Renamed = Property->GetMetadata("Bind");
-            FBoundValue& Value = Out.emplace_back();
-            Value.Name = Renamed.empty() ? FString(Property->GetPropertyName().c_str()) : FString(Renamed.data(), Renamed.size());
+            FBoundValue& Value = Out.EmplaceGetRef();
+            Value.Name = Renamed.IsEmpty() ? FString(*Property->GetPropertyName()) : FString(Renamed.GetData(), Renamed.Len());
             Value.Property = Property;
         }
     }
 
     void GetBoundFunctions(const CClass* Class, TVector<FBoundFunction>& Out)
     {
-        Out.clear();
+        Out.Reset();
         if (Class == nullptr)
         {
             return;
@@ -153,10 +153,10 @@ namespace Lumina::UIBinding
             }
 
             // A C# get-only property arrives as its getter, which RML names by the property.
-            FString Name(Function->GetFunctionName().c_str());
-            if (Name.rfind("get_", 0) == 0)
+            FString Name(*Function->GetFunctionName());
+            if (Name.FindLast("get_", 0) == 0)
             {
-                Name = Name.substr(4);
+                Name = Name.Mid(4);
             }
             const bool bTaken = std::any_of(Out.begin(), Out.end(), [&Name](const FBoundFunction& Existing) { return Existing.Name == Name; });
             if (bTaken)
@@ -164,10 +164,10 @@ namespace Lumina::UIBinding
                 continue;
             }
 
-            FBoundFunction& Bound = Out.emplace_back();
+            FBoundFunction& Bound = Out.EmplaceGetRef();
             Bound.Name = Name;
             Bound.Function = Function;
-            Bound.bComputed = Function->GetArguments().empty() && Function->GetReturnParam() != nullptr;
+            Bound.bComputed = Function->GetArguments().IsEmpty() && Function->GetReturnParam() != nullptr;
         }
     }
 
@@ -178,20 +178,20 @@ namespace Lumina::UIBinding
             return FString();
         }
         FString Declared = MetaInChain(Class, "DataModel");
-        if (!Declared.empty())
+        if (!Declared.IsEmpty())
         {
             return Declared;
         }
 
-        FString Name(Class->GetName().c_str());
-        const size_t Dot = Name.rfind('.');
-        if (Dot != FString::npos)
+        FString Name(*Class->GetName());
+        const int32 Dot = Name.FindLast('.');
+        if (Dot != Constants::kIndexNone)
         {
-            return Name.substr(Dot + 1);
+            return Name.Mid(Dot + 1);
         }
-        if (Name.size() > 1 && Name[0] == 'C' && std::isupper((unsigned char)Name[1]))
+        if (Name.Len() > 1 && Name[0] == 'C' && std::isupper((unsigned char)Name[1]))
         {
-            return Name.substr(1);
+            return Name.Mid(1);
         }
         return Name;
     }
@@ -201,7 +201,7 @@ namespace Lumina::UIBinding
         CClass* Found = nullptr;
         ForEachClass([&](CClass* Class)
         {
-            if (Found == nullptr && FStringView(ModelName(Class).c_str()) == Name && BindsAnything(Class))
+            if (Found == nullptr && FStringView(*ModelName(Class)) == Name && BindsAnything(Class))
             {
                 Found = Class;
             }
@@ -211,16 +211,16 @@ namespace Lumina::UIBinding
 
     void EnumerateModelClasses(TVector<FUIModelInfo>& Out)
     {
-        Out.clear();
+        Out.Reset();
         ForEachClass([&Out](CClass* Class)
         {
             if (!BindsAnything(Class))
             {
                 return;
             }
-            FUIModelInfo& Info = Out.emplace_back();
+            FUIModelInfo& Info = Out.EmplaceGetRef();
             Info.Name = ModelName(Class);
-            Info.TypeName = FString(Class->GetName().c_str());
+            Info.TypeName = FString(*Class->GetName());
             Info.DocumentPath = MetaInChain(Class, "UIDocument");
             Info.bScript = UIScripts::IsUIScript(Class);
         });
@@ -229,45 +229,45 @@ namespace Lumina::UIBinding
     const FProperty* ResolvePath(CObject* Object, FStringView Path, void*& OutContainer)
     {
         OutContainer = nullptr;
-        if (Object == nullptr || Path.empty())
+        if (Object == nullptr || Path.IsEmpty())
         {
             return nullptr;
         }
 
-        const size_t RootEnd = Path.find('.');
-        const FStringView Root = Path.substr(0, RootEnd);
+        const int32 RootEnd = Path.Find('.');
+        const FStringView Root = RootEnd == Constants::kIndexNone ? Path : Path.Left(RootEnd);
         TVector<FBoundValue> Values;
         GetBoundValues(Object->GetClass(), Values);
         const FProperty* Property = nullptr;
         for (const FBoundValue& Value : Values)
         {
-            if (FStringView(Value.Name.c_str(), Value.Name.size()) == Root)
+            if (FStringView(*Value.Name, Value.Name.Len()) == Root)
             {
                 Property = Value.Property;
             }
         }
         void* Container = Object;
 
-        FStringView Rest = RootEnd == FStringView::npos ? FStringView() : Path.substr(RootEnd + 1);
-        while (Property != nullptr && !Rest.empty())
+        FStringView Rest = RootEnd == Constants::kIndexNone ? FStringView() : Path.Mid(RootEnd + 1);
+        while (Property != nullptr && !Rest.IsEmpty())
         {
             if (Property->GetType() != EPropertyTypeFlags::Struct)
             {
                 return nullptr;
             }
             Container = const_cast<FProperty*>(Property)->GetValuePtr<void>(Container);
-            const size_t SegmentEnd = Rest.find('.');
-            const FStringView Segment = Rest.substr(0, SegmentEnd);
+            const int32 SegmentEnd = Rest.Find('.');
+            const FStringView Segment = SegmentEnd == Constants::kIndexNone ? Rest : Rest.Left(SegmentEnd);
             const FProperty* Member = nullptr;
             for (const FProperty* Candidate : static_cast<const FStructProperty*>(Property)->GetStruct()->GetProperties())
             {
-                if (FStringView(Candidate->GetPropertyName().c_str()) == Segment)
+                if (FStringView(*Candidate->GetPropertyName()) == Segment)
                 {
                     Member = Candidate;
                 }
             }
             Property = Member;
-            Rest = SegmentEnd == FStringView::npos ? FStringView() : Rest.substr(SegmentEnd + 1);
+            Rest = SegmentEnd == Constants::kIndexNone ? FStringView() : Rest.Mid(SegmentEnd + 1);
         }
 
         OutContainer = Property != nullptr ? Container : nullptr;
@@ -283,7 +283,7 @@ namespace Lumina::UIBinding
         }
         const CClass* Class = Object->GetClass();
         Out.Name = ModelName(Class);
-        Out.SourceType = FString(Class->GetName().c_str());
+        Out.SourceType = FString(*Class->GetName());
         Out.DocumentPath = MetaInChain(Class, "UIDocument");
         Out.bFromScript = UIScripts::IsUIScript(Class);
 
@@ -295,7 +295,7 @@ namespace Lumina::UIBinding
             {
                 const FArrayProperty* Array = static_cast<const FArrayProperty*>(Value.Property);
                 const FProperty* Inner = Array->GetInternalProperty();
-                FUIDesignList& List = Out.Lists.emplace_back();
+                FUIDesignList& List = Out.Lists.EmplaceGetRef();
                 List.Name = Value.Name;
 
                 const CStruct* ItemType = Inner->GetType() == EPropertyTypeFlags::Struct ? static_cast<const FStructProperty*>(Inner)->GetStruct() : nullptr;
@@ -303,26 +303,26 @@ namespace Lumina::UIBinding
                 {
                     for (const FProperty* Member : ItemType->GetProperties())
                     {
-                        List.Members.push_back(FString(Member->GetPropertyName().c_str()));
+                        List.Members.Emplace(*Member->GetPropertyName());
                     }
                 }
 
                 void* Items = const_cast<FProperty*>(Value.Property)->GetValuePtr<void>(const_cast<CObject*>(Object));
-                const size_t Count = std::min<size_t>(Array->GetNum(Items), 64);
-                for (size_t Row = 0; Row < Count; ++Row)
+                const int32 Count = Math::Min(Array->Num(Items), 64);
+                for (int32 Row = 0; Row < Count; ++Row)
                 {
                     const void* Item = Array->GetAt(Items, Row);
-                    TVector<FString>& Cells = List.Rows.emplace_back();
+                    TVector<FString>& Cells = List.Rows.EmplaceGetRef();
                     if (ItemType != nullptr)
                     {
                         for (const FProperty* Member : ItemType->GetProperties())
                         {
-                            Cells.push_back(Reflection::ToText(Member, Item));
+                            Cells.Add(Reflection::ToText(Member, Item));
                         }
                     }
                     else
                     {
-                        Cells.push_back(Reflection::ToText(Inner, Item));
+                        Cells.Add(Reflection::ToText(Inner, Item));
                     }
                 }
                 continue;
@@ -335,8 +335,8 @@ namespace Lumina::UIBinding
                 {
                     if (Reflection::IsTextConvertible(Member))
                     {
-                        FUIDesignScalar& Scalar = Out.Scalars.emplace_back();
-                        Scalar.Name = Value.Name + "." + Member->GetPropertyName().c_str();
+                        FUIDesignScalar& Scalar = Out.Scalars.EmplaceGetRef();
+                        Scalar.Name = Value.Name + "." + *Member->GetPropertyName();
                         Scalar.Type = DesignTypeOf(Member);
                         Scalar.Value = Reflection::ToText(Member, Fields);
                         Scalar.bWritable = true;
@@ -345,7 +345,7 @@ namespace Lumina::UIBinding
                 continue;
             }
 
-            FUIDesignScalar& Scalar = Out.Scalars.emplace_back();
+            FUIDesignScalar& Scalar = Out.Scalars.EmplaceGetRef();
             Scalar.Name = Value.Name;
             Scalar.Type = DesignTypeOf(Value.Property);
             Scalar.Value = Reflection::ToText(Value.Property, Object);
@@ -358,17 +358,17 @@ namespace Lumina::UIBinding
         {
             if (Bound.bComputed)
             {
-                FUIDesignScalar& Scalar = Out.Scalars.emplace_back();
+                FUIDesignScalar& Scalar = Out.Scalars.EmplaceGetRef();
                 Scalar.Name = Bound.Name;
                 Scalar.Type = DesignTypeOf(Bound.Function->GetReturnParam());
                 Scalar.Value = Bound.Name;
                 continue;
             }
-            FUIDesignCommand& Command = Out.Commands.emplace_back();
+            FUIDesignCommand& Command = Out.Commands.EmplaceGetRef();
             Command.Name = Bound.Name;
             for (const FProperty* Param : Bound.Function->GetArguments())
             {
-                Command.Params.push_back(FString(Param->GetPropertyName().c_str()));
+                Command.Params.Emplace(*Param->GetPropertyName());
             }
         }
     }
@@ -422,9 +422,9 @@ namespace Lumina::UIScripts
             if (const CUIScript* UIScript = Cast<CUIScript>(Script))
             {
                 const FStringView Path = UIScript->Document.ResolvePath();
-                if (!Path.empty())
+                if (!Path.IsEmpty())
                 {
-                    return FString(Path.data(), Path.size());
+                    return FString(Path.GetData(), Path.Len());
                 }
             }
 
@@ -448,12 +448,12 @@ namespace Lumina::UIScripts
                     continue;
                 }
                 const FCStringView Declared = Property->GetMetadata("Element");
-                const FString Id = Declared.empty() ? FString(Property->GetPropertyName().c_str()) : FString(Declared.data(), Declared.size());
-                void* Element = RmlUi::DocumentGetElementById(Open.Document, FStringView(Id.c_str(), Id.size()));
+                const FString Id = Declared.IsEmpty() ? FString(*Property->GetPropertyName()) : FString(Declared.GetData(), Declared.Len());
+                void* Element = RmlUi::DocumentGetElementById(Open.Document, FStringView(*Id, Id.Len()));
                 if (Element == nullptr)
                 {
-                    LOG_WARN("[UI] {}.{} found no element with id '{}' in '{}'.", Open.Script->GetClass()->GetName().c_str(),
-                        Property->GetPropertyName().c_str(), Id.c_str(), Open.Path.c_str());
+                    LOG_WARN("[UI] {}.{} found no element with id '{}' in '{}'.", *Open.Script->GetClass()->GetName(),
+                        *Property->GetPropertyName(), *Id, *Open.Path);
                 }
                 Property->GetValuePtr<SUIElement>(Open.Script)->Handle = reinterpret_cast<uint64>(Element);
             }
@@ -472,17 +472,17 @@ namespace Lumina::UIScripts
 
         bool LoadDocument(FOpenUI& Open)
         {
-            if (Open.Path.empty())
+            if (Open.Path.IsEmpty())
             {
-                LOG_WARN("[UI] {} has no document. Set Document on the entity, or give the class a UIDocument.", Open.Script->GetClass()->GetName().c_str());
+                LOG_WARN("[UI] {} has no document. Set Document on the entity, or give the class a UIDocument.", *Open.Script->GetClass()->GetName());
                 return false;
             }
             const FString Declared = UIBinding::ModelName(Open.Script->GetClass());
-            Open.Document = RmlUi::LoadScreenDocumentWithModel(Open.World, FStringView(Open.Path.c_str(), Open.Path.size()),
-                FStringView(Declared.c_str(), Declared.size()), FStringView(Open.ModelName.c_str(), Open.ModelName.size()));
+            Open.Document = RmlUi::LoadScreenDocumentWithModel(Open.World, FStringView(*Open.Path, Open.Path.Len()),
+                FStringView(*Declared, Declared.Len()), FStringView(*Open.ModelName, Open.ModelName.Len()));
             if (Open.Document == nullptr)
             {
-                LOG_ERROR("[UI] {} could not load '{}'.", Open.Script->GetClass()->GetName().c_str(), Open.Path.c_str());
+                LOG_ERROR("[UI] {} could not load '{}'.", *Open.Script->GetClass()->GetName(), *Open.Path);
                 return false;
             }
             return true;
@@ -495,7 +495,7 @@ namespace Lumina::UIScripts
 
             // A second instance of the class binds under its own name, and its copy of the markup is renamed to match.
             Open.ModelName = Declared;
-            for (int32 Suffix = 2; Context != nullptr && RmlUi::HasDataModel(Context, FStringView(Open.ModelName.c_str(), Open.ModelName.size())); ++Suffix)
+            for (int32 Suffix = 2; Context != nullptr && RmlUi::HasDataModel(Context, FStringView(*Open.ModelName, Open.ModelName.Len())); ++Suffix)
             {
                 Open.ModelName = Declared + "_" + std::to_string(Suffix).c_str();
             }
@@ -504,8 +504,8 @@ namespace Lumina::UIScripts
             TVector<UIBinding::FBoundFunction> Functions;
             UIBinding::GetBoundValues(Open.Script->GetClass(), Values);
             UIBinding::GetBoundFunctions(Open.Script->GetClass(), Functions);
-            Open.Model = (Context != nullptr && (!Values.empty() || !Functions.empty()))
-                ? RmlUi::CreateObjectModel(Context, FStringView(Open.ModelName.c_str(), Open.ModelName.size()), Open.Script, false) : nullptr;
+            Open.Model = (Context != nullptr && (!Values.IsEmpty() || !Functions.IsEmpty()))
+                ? RmlUi::CreateObjectModel(Context, FStringView(*Open.ModelName, Open.ModelName.Len()), Open.Script, false) : nullptr;
             Open.Generation = CurrentGeneration();
         }
 
@@ -586,7 +586,7 @@ namespace Lumina::UIScripts
         // The model exists before the load, since RmlUi resolves bindings while it parses.
         CreateModel(Open);
         const bool bLoaded = LoadDocument(Open);
-        OpenUIs().push_back(Open);
+        OpenUIs().Add(Open);
         if (bLoaded)
         {
             Present(*Find(Script));
@@ -597,7 +597,7 @@ namespace Lumina::UIScripts
     void Close(CEntityScript* Script)
     {
         TVector<FOpenUI>& UIs = OpenUIs();
-        for (size_t Index = 0; Index < UIs.size(); ++Index)
+        for (int32 Index = 0; Index < UIs.Num(); ++Index)
         {
             FOpenUI& Open = UIs[Index];
             if (Open.Script != Script)
@@ -607,7 +607,7 @@ namespace Lumina::UIScripts
             ReleaseHeldCursor(Open);
             RmlUi::UnloadScreenDocument(Open.World, Open.Document);
             RmlUi::DestroyObjectModel(Open.Model);
-            UIs.erase(UIs.begin() + (int64)Index);
+            UIs.RemoveAt((int64)Index);
             return;
         }
     }
@@ -672,7 +672,7 @@ namespace Lumina::UIScripts
     void Tick(CWorld* World)
     {
         const int32 Generation = CurrentGeneration();
-        for (size_t Index = 0; Index < OpenUIs().size(); ++Index)
+        for (int32 Index = 0; Index < OpenUIs().Num(); ++Index)
         {
             // A script reload remints the class and its properties, so the model would point at freed ones.
             FOpenUI& Open = OpenUIs()[Index];
@@ -697,10 +697,10 @@ namespace Lumina::UIScripts
 
     void DocumentChanged(FStringView Path)
     {
-        for (size_t Index = 0; Index < OpenUIs().size(); ++Index)
+        for (int32 Index = 0; Index < OpenUIs().Num(); ++Index)
         {
             FOpenUI& Open = OpenUIs()[Index];
-            if (Open.Path.size() == Path.size() && std::equal(Path.begin(), Path.end(), Open.Path.begin(),
+            if (Open.Path.Len() == Path.Len() && std::equal(Path.begin(), Path.end(), Open.Path.begin(),
                 [](char A, char B) { return std::tolower((unsigned char)A) == std::tolower((unsigned char)B); }))
             {
                 Reopen(Open, false);
@@ -711,6 +711,6 @@ namespace Lumina::UIScripts
     void ForgetWorld(CWorld* World)
     {
         TVector<FOpenUI>& UIs = OpenUIs();
-        UIs.erase(std::remove_if(UIs.begin(), UIs.end(), [World](const FOpenUI& Open) { return Open.World == World; }), UIs.end());
+        UIs.RemoveAll([World](const FOpenUI& Open) { return Open.World == World; });
     }
 }

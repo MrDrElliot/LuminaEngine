@@ -49,17 +49,18 @@ namespace
             Wader = R.Create();
             R.Emplace<STransformComponent>(Wader);
             SWeatherInteractorComponent& Interactor = R.Emplace<SWeatherInteractorComponent>(Wader);
-            FWeatherContactPoint& Contact = Interactor.Contacts.emplace_back();
+            FWeatherContactPoint& Contact = Interactor.Contacts.EmplaceGetRef();
             Contact.Radius = 0.2f;
 
             System = NewObject<SWeatherInteractionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             System->SetOwningWorld(World);
-            System->OnStartup(FWorldTestAccess::SystemContext(*World));
+            System->ConfigureSystem();
+            System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
         }
 
         ~FPondWorld()
         {
-            System->OnTeardown(FWorldTestAccess::SystemContext(*World));
+            System->OnTeardown(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
             System->SetOwningWorld(nullptr);
             WorldOwner.Reset();
         }
@@ -79,10 +80,10 @@ TEST(WeatherInteraction, AContactOverWaterReadsTheWaterSurface)
 {
     FPondWorld Pond;
     const FWeatherInteractionState& State = Pond.Step(FVector3(1.0f, 0.5f, 2.0f));
-    ASSERT_EQ(State.Contacts.size(), 1u);
+    ASSERT_EQ(State.Contacts.Num(), 1);
     EXPECT_EQ(State.Contacts[0].Surface, EWeatherSurface::Water);
     EXPECT_NEAR(State.Contacts[0].SurfaceY, 0.0f, 1e-4f);
-    EXPECT_TRUE(State.Impacts.empty());
+    EXPECT_TRUE(State.Impacts.IsEmpty());
 }
 
 TEST(WeatherInteraction, FallingIntoWaterSplashesOnce)
@@ -90,13 +91,13 @@ TEST(WeatherInteraction, FallingIntoWaterSplashesOnce)
     FPondWorld Pond;
     Pond.Step(FVector3(0.0f, 1.0f, 0.0f));
     const FWeatherInteractionState& Entering = Pond.Step(FVector3(0.0f, 0.0f, 0.0f));
-    ASSERT_EQ(Entering.Impacts.size(), 1u);
+    ASSERT_EQ(Entering.Impacts.Num(), 1);
     EXPECT_EQ(Entering.Impacts[0].Surface, EWeatherSurface::Water);
     EXPECT_NEAR(Entering.Impacts[0].Speed, 10.0f, 1e-3f);
     EXPECT_EQ(Entering.Impacts[0].Entity, Pond.Wader.Value);
 
     const FWeatherInteractionState& Resting = Pond.Step(FVector3(0.0f, 0.0f, 0.0f));
-    EXPECT_TRUE(Resting.Impacts.empty());
+    EXPECT_TRUE(Resting.Impacts.IsEmpty());
 }
 
 TEST(WeatherInteraction, ATeleportDoesNotSplash)
@@ -104,21 +105,21 @@ TEST(WeatherInteraction, ATeleportDoesNotSplash)
     FPondWorld Pond;
     Pond.Step(FVector3(0.0f, 5.0f, 0.0f));
     const FWeatherInteractionState& State = Pond.Step(FVector3(0.0f, 0.0f, 0.0f));
-    EXPECT_TRUE(State.Impacts.empty());
+    EXPECT_TRUE(State.Impacts.IsEmpty());
 }
 
 TEST(WeatherInteraction, WadingLeavesAWaterlineThatDriesOff)
 {
     FPondWorld Pond;
     const FWeatherInteractionState& Wading = Pond.Step(FVector3(0.0f, -0.6f, 0.0f));
-    ASSERT_EQ(Wading.Interactors.size(), 1u);
+    ASSERT_EQ(Wading.Interactors.Num(), 1);
     EXPECT_EQ(Wading.Interactors[0].EntityID, Pond.Wader.Value);
     EXPECT_NEAR(Wading.Interactors[0].WaterlineHeight, 0.6f, 1e-4f);
     EXPECT_FLOAT_EQ(Wading.Interactors[0].WaterlineWetness, 1.0f);
 
     // Out of the pond the water line stays wet but starts to fade.
     const FWeatherInteractionState& Out = Pond.Step(FVector3(30.0f, 0.0f, 0.0f));
-    ASSERT_EQ(Out.Interactors.size(), 1u);
+    ASSERT_EQ(Out.Interactors.Num(), 1);
     EXPECT_LT(Out.Interactors[0].WaterlineWetness, 1.0f);
     EXPECT_GT(Out.Interactors[0].WaterlineWetness, 0.9f);
 }
@@ -128,6 +129,6 @@ TEST(WeatherInteraction, AWaterBodyCanOptOut)
     FPondWorld Pond;
     Pond.Registry().Get<SWaterComponent>(Pond.Pond).bInteractive = false;
     const FWeatherInteractionState& State = Pond.Step(FVector3(0.0f, 0.0f, 0.0f));
-    EXPECT_TRUE(State.Contacts.empty());
-    EXPECT_TRUE(State.Interactors.empty());
+    EXPECT_TRUE(State.Contacts.IsEmpty());
+    EXPECT_TRUE(State.Interactors.IsEmpty());
 }

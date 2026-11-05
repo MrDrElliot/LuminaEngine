@@ -14,9 +14,10 @@ namespace Lumina
         FObjectPackageIndex Index;
         FArchive& Ar = *this;
         Ar << Index;
-        
-        Value = Package->IndexToObject(Index);
-        
+
+        FLoadRequest Standalone;
+        Value = Package->IndexToObject(Index, Request != nullptr ? *Request : Standalone);
+
         return Ar;
     }
 
@@ -28,32 +29,32 @@ namespace Lumina
         }
 
         const bool bNameSlots = Names != nullptr && Cut.FileVersion >= (int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE;
-        const int32 NumImports = (int32)Package->ImportTable.size();
-        const int32 NumExports = (int32)Package->ExportTable.size();
+        const int32 NumImports = Package->ImportTable.Num();
+        const int32 NumExports = Package->ExportTable.Num();
 
         THashSet<uint32> SeenNames;
         THashSet<int32> SeenObjects;
-        for (size_t Offset = 0; Offset + sizeof(uint32) <= Cut.Bytes.size(); ++Offset)
+        for (size_t Offset = 0; Offset + sizeof(uint32) <= static_cast<size_t>(Cut.Bytes.Num()); ++Offset)
         {
             uint32 Word = 0;
-            Memory::Memcpy(&Word, Cut.Bytes.data() + Offset, sizeof(uint32));
+            Memory::Memcpy(&Word, Cut.Bytes.GetData() + Offset, sizeof(uint32));
 
             const uint32 Slot = Word & kPackageNameSlotMask;
-            if (bNameSlots && Slot < Names->Num() && SeenNames.insert(Slot).second)
+            if (bNameSlots && Slot < static_cast<uint32>(Names->Num()) && SeenNames.TryAdd(Slot))
             {
-                Cut.Names.push_back({ Slot, Names->Resolve(Slot, false, 0) });
+                Cut.Names.Emplace(Slot, Names->Resolve(Slot, false, 0));
             }
 
             const FObjectPackageIndex Index((int32)Word);
             const int64 Raw = Index.GetRaw();
-            if (Raw == 0 || Raw < -(int64)NumImports || Raw > (int64)NumExports || !SeenObjects.insert(Index.GetRaw()).second)
+            if (Raw == 0 || Raw < -(int64)NumImports || Raw > (int64)NumExports || !SeenObjects.TryAdd(Index.GetRaw()))
             {
                 continue;
             }
             const FGuid& Object = Index.IsImport()
                 ? Package->ImportTable[Index.GetArrayIndex()].ObjectGUID
                 : Package->ExportTable[Index.GetArrayIndex()].ObjectGUID;
-            Cut.Objects.push_back({ Index.GetRaw(), Object });
+            Cut.Objects.Emplace(Index.GetRaw(), Object);
         }
         return true;
     }
@@ -75,10 +76,12 @@ namespace Lumina
         FArchive& Ar = *this;
         Ar << Index;
 
-        CObject* Object = Package->IndexToObject(Index);
+        FLoadRequest  Standalone;
+        FLoadRequest& Active = Request != nullptr ? *Request : Standalone;
+        CObject* Object = Package->IndexToObject(Index, Active);
         Value = Object::Internal::GetHandleByObject(Object);
-        Package->LoadObject(Object);
-        
-        return Ar;    
+        Package->LoadObject(Object, Active);
+
+        return Ar;
     }
 }

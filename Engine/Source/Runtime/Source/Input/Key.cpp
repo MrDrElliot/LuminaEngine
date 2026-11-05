@@ -98,7 +98,7 @@ namespace Lumina
         case EKeyDevice::None:     break;
         }
 
-        if (Name.empty())
+        if (Name.IsEmpty())
         {
             return "None";
         }

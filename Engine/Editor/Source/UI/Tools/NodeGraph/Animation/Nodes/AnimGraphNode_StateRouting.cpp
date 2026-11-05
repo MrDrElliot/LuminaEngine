@@ -15,17 +15,17 @@ namespace Lumina
 
     FString CAnimGraphNode_StateAlias::GetNodeTitleText() const
     {
-        if (SourceStates.empty())
+        if (SourceStates.IsEmpty())
         {
             return FString("Alias (empty)");
         }
 
-        if (SourceStates.size() == 1)
+        if (SourceStates.Num() == 1)
         {
-            return FString(SourceStates[0].c_str());
+            return FString(*SourceStates[0]);
         }
 
-        return Format("{} +{}", SourceStates[0].c_str(), (int32)SourceStates.size() - 1);
+        return Format("{} +{}", *SourceStates[0], SourceStates.Num() - 1);
     }
 
     CClass* CAnimGraphNode_StateConduit::GetSupportedGraphClass() const
@@ -44,6 +44,6 @@ namespace Lumina
 
     FString CAnimGraphNode_StateConduit::GetNodeTitleText() const
     {
-        return ConduitName.IsNone() ? FString("Conduit") : FString(ConduitName.c_str());
+        return ConduitName.IsNone() ? FString("Conduit") : FString(*ConduitName);
     }
 }

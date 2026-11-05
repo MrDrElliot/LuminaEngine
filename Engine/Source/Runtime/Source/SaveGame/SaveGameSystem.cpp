@@ -11,28 +11,19 @@ namespace Lumina
         // Paused too, since a pause menu is where a player usually saves and loads.
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
-        Requests = ReadsEvent<SSaveGameRequestEvent>();
-        SendsEvent<SSaveGameCompletedEvent>();
     }
 
-    bool SSaveGameSystem::HasWork(const SSystemContext& Context)
-    {
-        return Context.HasUnreadEvents(Requests);
-    }
-
-    void SSaveGameSystem::OnUpdate(const SSystemContext& Context)
+    void SSaveGameSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
         // A restore spawns and destroys, but nothing commits until this update returns, so the range holds still.
-        for (const SSaveGameRequestEvent& Request : Context.ReadEvents(Requests))
+        for (const SSaveGameRequestEvent& Request : Requests.Read())
         {
-            Run(Context, Request);
+            Run(Context.GetWorld(), Request);
         }
     }
 
-    void SSaveGameSystem::Run(const SSystemContext& Context, const SSaveGameRequestEvent& Request)
+    void SSaveGameSystem::Run(CWorld* World, const SSaveGameRequestEvent& Request) const
     {
-        CWorld* World = GetWorld();
-
         SSaveGameCompletedEvent Done;
         Done.Action    = Request.Action;
         Done.SlotName  = Request.SlotName;
@@ -43,7 +34,7 @@ namespace Lumina
             Done.SaveGame = Request.SaveGame;
             if (Request.SaveGame.Get() == nullptr)
             {
-                LOG_WARN("A save request for slot '{}' carried no save game.", Request.SlotName.c_str());
+                LOG_WARN("A save request for slot '{}' carried no save game.", *Request.SlotName);
             }
             else
             {
@@ -57,6 +48,6 @@ namespace Lumina
             Done.bSucceeded = !Loaded->HasWorldState(World) || Loaded->RestoreWorld(World);
         }
 
-        Context.SendEvent(Done);
+        Completions.Send(Done);
     }
 }

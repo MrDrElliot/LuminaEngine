@@ -15,7 +15,7 @@ namespace Lumina
 
     void CMaterialFunctionGraph::CompileForValidation(FMaterialCompiler& Compiler)
     {
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return;
         }
@@ -47,7 +47,7 @@ namespace Lumina
 
         // Functions only ever contribute to the pixel stage during validation; WPO is a material concept.
         Compiler.SetStage(EMaterialCompileStage::Pixel);
-        for (size_t i = 0; i < SortedNodes.size(); ++i)
+        for (int32 i = 0; i < SortedNodes.Num(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];
             Node->SetDebugExecutionOrder((uint32)i);

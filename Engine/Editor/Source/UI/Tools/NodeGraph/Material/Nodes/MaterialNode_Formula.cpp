@@ -88,7 +88,7 @@ namespace Lumina
         }
         if (Width > Target)
         {
-            return "(" + Expr + ")." + FString("xyzw").substr(0, Target);
+            return "(" + Expr + ")." + FString("xyzw").Mid(0, Target);
         }
 
         FString Padded = FormulaVectorType(Target) + "(" + Expr;
@@ -122,12 +122,12 @@ namespace Lumina
             }
 
             bool bReplaced = false;
-            for (size_t Index = 0; Index < Inputs.size() && Index < Formula.Inputs.size() && !Name.empty(); ++Index)
+            for (int32 Index = 0; Index < Inputs.Num() && Index < Formula.Inputs.Num() && !Name.empty(); ++Index)
             {
                 if (Name == Formula.Inputs[Index].Name)
                 {
                     const int32 Target = Formula.Inputs[Index].Width == 0 ? SharedWidth : Formula.Inputs[Index].Width;
-                    Expanded += ReadFormulaInput(Inputs[Index].first, Inputs[Index].second, Target);
+                    Expanded += ReadFormulaInput(Inputs[Index].Key, Inputs[Index].Value, Target);
                     Cursor    = Close;
                     bReplaced = true;
                     break;
@@ -150,7 +150,7 @@ namespace Lumina
     void CMaterialExpression_Formula::BuildNode()
     {
         const FMaterialFormula& Formula = GetFormula();
-        if (Formula.Outputs.empty())
+        if (Formula.Outputs.IsEmpty())
         {
             Super::BuildNode();
             Output->SetInputType(TypeForWidth(Formula.Width));
@@ -161,9 +161,9 @@ namespace Lumina
         }
 
         // Loaded nodes rebuild their pins after their saved values arrive, so only missing values take defaults.
-        const size_t Saved = Values.size();
-        Values.resize(Formula.Inputs.size());
-        for (size_t Index = 0; Index < Formula.Inputs.size(); ++Index)
+        const int32 Saved = Values.Num();
+        Values.SetNum(Formula.Inputs.Num());
+        for (int32 Index = 0; Index < Formula.Inputs.Num(); ++Index)
         {
             const FMaterialFormulaPin& Pin = Formula.Inputs[Index];
             CMaterialInput* Input = MakeIn(this, Pin.Name, Pin.Fallback != nullptr ? TypeForWidth(Pin.Width) : EMaterialInputType::Float);

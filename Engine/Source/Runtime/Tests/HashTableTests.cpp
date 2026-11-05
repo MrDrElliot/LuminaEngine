@@ -71,7 +71,7 @@ namespace LuminaHashTableTests
     {
         const Lumina::uint64 Hash = 0xDEADBEEFCAFEF00Dull;
         EXPECT_EQ(Internal::H2(Hash), static_cast<Internal::FCtrl>(Hash & 0x7F));
-        EXPECT_EQ(Internal::H1(Hash), static_cast<size_t>(Hash >> 7));
+        EXPECT_EQ(Internal::H1(Hash), Hash >> 7);
         EXPECT_TRUE(Internal::IsFull(Internal::H2(Hash)));
     }
 
@@ -147,38 +147,38 @@ namespace LuminaHashTableTests
     TEST(HashSetBasics, EmptySetNeverAllocatesAndNeverMatches)
     {
         const TSet<int> Set;
-        EXPECT_TRUE(Set.empty());
-        EXPECT_EQ(Set.size(), 0u);
-        EXPECT_EQ(Set.capacity(), 0u);
-        EXPECT_EQ(Set.GetAllocatedBytes(), 0u);
-        EXPECT_FALSE(Set.contains(0));
-        EXPECT_FALSE(Set.contains(12345));
+        EXPECT_TRUE(Set.IsEmpty());
+        EXPECT_EQ(Set.Num(), 0);
+        EXPECT_EQ(Set.Max(), 0);
+        EXPECT_EQ(Set.GetAllocatedSize(), 0u);
+        EXPECT_FALSE(Set.Contains(0));
+        EXPECT_FALSE(Set.Contains(12345));
         EXPECT_EQ(Set.begin(), Set.end());
     }
 
     TEST(HashSetBasics, InsertFindEraseRoundTrip)
     {
         TSet<int> Set;
-        EXPECT_TRUE(Set.insert(7).second);
-        EXPECT_FALSE(Set.insert(7).second);
-        EXPECT_EQ(Set.size(), 1u);
-        EXPECT_TRUE(Set.contains(7));
-        EXPECT_EQ(Set.count(7), 1u);
-        EXPECT_EQ(Set.count(8), 0u);
+        EXPECT_TRUE(Set.TryAdd(7));
+        EXPECT_FALSE(Set.TryAdd(7));
+        EXPECT_EQ(Set.Num(), 1);
+        EXPECT_TRUE(Set.Contains(7));
+        EXPECT_EQ(Set.Contains(7), 1u);
+        EXPECT_EQ(Set.Contains(8), 0u);
 
-        EXPECT_EQ(Set.erase(8), 0u);
-        EXPECT_EQ(Set.erase(7), 1u);
-        EXPECT_TRUE(Set.empty());
-        EXPECT_FALSE(Set.contains(7));
+        EXPECT_EQ(Set.Remove(8), 0);
+        EXPECT_EQ(Set.Remove(7), 1);
+        EXPECT_TRUE(Set.IsEmpty());
+        EXPECT_FALSE(Set.Contains(7));
     }
 
     TEST(HashSetBasics, InitializerListDeduplicates)
     {
         const TSet<int> Set{ 1, 2, 2, 3, 3, 3 };
-        EXPECT_EQ(Set.size(), 3u);
-        EXPECT_TRUE(Set.contains(1));
-        EXPECT_TRUE(Set.contains(2));
-        EXPECT_TRUE(Set.contains(3));
+        EXPECT_EQ(Set.Num(), 3);
+        EXPECT_TRUE(Set.Contains(1));
+        EXPECT_TRUE(Set.Contains(2));
+        EXPECT_TRUE(Set.Contains(3));
     }
 
     TEST(HashSetGrowth, HoldsEveryKeyAcrossManyRehashes)
@@ -187,17 +187,17 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < kCount; ++i)
         {
-            EXPECT_TRUE(Set.insert(i).second);
+            EXPECT_TRUE(Set.TryAdd(i));
         }
 
-        EXPECT_EQ(Set.size(), static_cast<size_t>(kCount));
+        EXPECT_EQ(Set.Num(), kCount);
         for (int i = 0; i < kCount; ++i)
         {
-            EXPECT_TRUE(Set.contains(i)) << "missing " << i;
+            EXPECT_TRUE(Set.Contains(i)) << "missing " << i;
         }
         for (int i = kCount; i < kCount * 2; ++i)
         {
-            EXPECT_FALSE(Set.contains(i)) << "phantom " << i;
+            EXPECT_FALSE(Set.Contains(i)) << "phantom " << i;
         }
     }
 
@@ -206,23 +206,23 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 5000; ++i)
         {
-            Set.insert(i * 7);
-            EXPECT_LE(Set.size(), Internal::CapacityToGrowth(Set.capacity()));
+            Set.Add(i * 7);
+            EXPECT_LE(Set.Num(), Internal::CapacityToGrowth(Set.Max()));
         }
     }
 
     TEST(HashSetGrowth, ReserveAvoidsFurtherRehashing)
     {
         TSet<int> Set;
-        Set.reserve(1000);
-        const size_t Reserved = Set.capacity();
+        Set.Reserve(1000);
+        const size_t Reserved = Set.Max();
         EXPECT_GE(Internal::CapacityToGrowth(Reserved), 1000u);
 
         for (int i = 0; i < 1000; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
-        EXPECT_EQ(Set.capacity(), Reserved);
+        EXPECT_EQ(Set.Max(), Reserved);
     }
 
     TEST(HashSetIteration, VisitsEveryElementExactlyOnce)
@@ -230,7 +230,7 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 500; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
 
         std::set<int> Seen;
@@ -246,29 +246,29 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 2000; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
         for (int i = 0; i < 2000; i += 2)
         {
-            EXPECT_EQ(Set.erase(i), 1u);
+            EXPECT_EQ(Set.Remove(i), 1);
         }
         for (int i = 2000; i < 3000; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
 
-        EXPECT_EQ(Set.size(), 1000u + 1000u);
+        EXPECT_EQ(Set.Num(), 1000 + 1000);
         for (int i = 1; i < 2000; i += 2)
         {
-            EXPECT_TRUE(Set.contains(i));
+            EXPECT_TRUE(Set.Contains(i));
         }
         for (int i = 0; i < 2000; i += 2)
         {
-            EXPECT_FALSE(Set.contains(i));
+            EXPECT_FALSE(Set.Contains(i));
         }
         for (int i = 2000; i < 3000; ++i)
         {
-            EXPECT_TRUE(Set.contains(i));
+            EXPECT_TRUE(Set.Contains(i));
         }
     }
 
@@ -278,24 +278,24 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 1000; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
-        const size_t SettledCapacity = Set.capacity();
+        const size_t SettledCapacity = Set.Max();
 
         for (int Round = 0; Round < 50; ++Round)
         {
             for (int i = 0; i < 1000; ++i)
             {
-                Set.erase(Round * 1000 + i);
-                Set.insert((Round + 1) * 1000 + i);
+                Set.Remove(Round * 1000 + i);
+                Set.Add((Round + 1) * 1000 + i);
             }
-            EXPECT_EQ(Set.size(), 1000u);
+            EXPECT_EQ(Set.Num(), 1000);
         }
 
-        EXPECT_LE(Set.capacity(), SettledCapacity * 4);
+        EXPECT_LE(Set.Max(), SettledCapacity * 4);
         for (int i = 0; i < 1000; ++i)
         {
-            EXPECT_TRUE(Set.contains(50 * 1000 + i));
+            EXPECT_TRUE(Set.Contains(50 * 1000 + i));
         }
     }
 
@@ -304,14 +304,14 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 200; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
 
         for (auto It = Set.begin(); It != Set.end();)
         {
             if (*It % 2 == 0)
             {
-                It = Set.erase(It);
+                It = Set.Remove(It);
             }
             else
             {
@@ -319,7 +319,7 @@ namespace LuminaHashTableTests
             }
         }
 
-        EXPECT_EQ(Set.size(), 100u);
+        EXPECT_EQ(Set.Num(), 100);
         for (int Value : Set)
         {
             EXPECT_EQ(Value % 2, 1);
@@ -333,14 +333,14 @@ namespace LuminaHashTableTests
             TSet<FTracked> Set;
             for (int i = 0; i < 500; ++i)
             {
-                Set.emplace(i);
+                Set.TryAdd(i);
             }
-            EXPECT_EQ(Set.size(), 500u);
+            EXPECT_EQ(Set.Num(), 500);
             EXPECT_EQ(FTracked::Live, 500);
 
             for (int i = 0; i < 250; ++i)
             {
-                Set.erase(FTracked(i));
+                Set.Remove(FTracked(i));
             }
             EXPECT_EQ(FTracked::Live, 250);
         }
@@ -353,15 +353,15 @@ namespace LuminaHashTableTests
         TSet<FTracked> Set;
         for (int i = 0; i < 100; ++i)
         {
-            Set.emplace(i);
+            Set.TryAdd(i);
         }
-        const size_t Capacity = Set.capacity();
+        const size_t Capacity = Set.Max();
 
-        Set.clear();
+        Set.Reset();
         EXPECT_EQ(FTracked::Live, 0);
-        EXPECT_EQ(Set.size(), 0u);
-        EXPECT_EQ(Set.capacity(), Capacity);
-        EXPECT_FALSE(Set.contains(FTracked(5)));
+        EXPECT_EQ(Set.Num(), 0);
+        EXPECT_EQ(Set.Max(), Capacity);
+        EXPECT_FALSE(Set.Contains(FTracked(5)));
     }
 
     TEST(HashSetCopyMove, CopyIsIndependent)
@@ -369,11 +369,11 @@ namespace LuminaHashTableTests
         TSet<int> Source{ 1, 2, 3 };
         TSet<int> Copy = Source;
 
-        EXPECT_EQ(Copy.size(), 3u);
-        Copy.insert(4);
-        EXPECT_TRUE(Copy.contains(4));
-        EXPECT_FALSE(Source.contains(4));
-        EXPECT_EQ(Source.size(), 3u);
+        EXPECT_EQ(Copy.Num(), 3);
+        Copy.Add(4);
+        EXPECT_TRUE(Copy.Contains(4));
+        EXPECT_FALSE(Source.Contains(4));
+        EXPECT_EQ(Source.Num(), 3);
     }
 
     TEST(HashSetCopyMove, MoveLeavesTheSourceEmptyAndUsable)
@@ -381,59 +381,59 @@ namespace LuminaHashTableTests
         TSet<int> Source{ 1, 2, 3 };
         TSet<int> Moved = std::move(Source);
 
-        EXPECT_EQ(Moved.size(), 3u);
-        EXPECT_TRUE(Source.empty());
-        EXPECT_EQ(Source.capacity(), 0u);
+        EXPECT_EQ(Moved.Num(), 3);
+        EXPECT_TRUE(Source.IsEmpty());
+        EXPECT_EQ(Source.Max(), 0);
 
-        Source.insert(9);
-        EXPECT_EQ(Source.size(), 1u);
-        EXPECT_TRUE(Source.contains(9));
+        Source.Add(9);
+        EXPECT_EQ(Source.Num(), 1);
+        EXPECT_TRUE(Source.Contains(9));
     }
 
     TEST(HashSetCopyMove, SwapExchangesContents)
     {
         TSet<int> Left{ 1, 2 };
         TSet<int> Right{ 8, 9, 10 };
-        Left.swap(Right);
+        swap(Left, Right);
 
-        EXPECT_EQ(Left.size(), 3u);
-        EXPECT_EQ(Right.size(), 2u);
-        EXPECT_TRUE(Left.contains(9));
-        EXPECT_TRUE(Right.contains(1));
+        EXPECT_EQ(Left.Num(), 3);
+        EXPECT_EQ(Right.Num(), 2);
+        EXPECT_TRUE(Left.Contains(9));
+        EXPECT_TRUE(Right.Contains(1));
     }
 
     TEST(HashMapBasics, InsertLookupAndOverwrite)
     {
         TMap<int, int> Map;
-        EXPECT_TRUE(Map.try_emplace(1, 10).second);
-        EXPECT_FALSE(Map.try_emplace(1, 99).second);
-        EXPECT_EQ(Map.at(1), 10);
+        EXPECT_TRUE(Map.TryAdd(1, 10));
+        EXPECT_FALSE(Map.TryAdd(1, 99));
+        EXPECT_EQ(Map.FindChecked(1), 10);
 
-        Map.insert_or_assign(1, 99);
-        EXPECT_EQ(Map.at(1), 99);
-        EXPECT_EQ(Map.size(), 1u);
+        Map.Add(1, 99);
+        EXPECT_EQ(Map.FindChecked(1), 99);
+        EXPECT_EQ(Map.Num(), 1);
     }
 
     TEST(HashMapBasics, SubscriptDefaultConstructsOnMiss)
     {
         TMap<int, int> Map;
         EXPECT_EQ(Map[5], 0);
-        EXPECT_EQ(Map.size(), 1u);
+        EXPECT_EQ(Map.Num(), 1);
 
         Map[5] = 42;
         EXPECT_EQ(Map[5], 42);
-        EXPECT_EQ(Map.size(), 1u);
+        EXPECT_EQ(Map.Num(), 1);
     }
 
     TEST(HashMapBasics, FindExposesAMutableValue)
     {
         TMap<int, int> Map{ { 1, 1 }, { 2, 2 } };
-        const auto It = Map.find(2);
-        ASSERT_NE(It, Map.end());
-        EXPECT_EQ(It->first, 2);
+        int32* const Found = Map.Find(2);
+        ASSERT_NE(Found, nullptr);
+        EXPECT_EQ(*Found, 2);
 
-        It->second = 20;
-        EXPECT_EQ(Map.at(2), 20);
+        *Found = 20;
+        EXPECT_EQ(Map.FindChecked(2), 20);
     }
 
     TEST(HashMapBasics, EraseRemovesOnlyTheNamedKey)
@@ -444,13 +444,13 @@ namespace LuminaHashTableTests
             Map[i] = i * 2;
         }
 
-        EXPECT_EQ(Map.erase(50), 1u);
-        EXPECT_EQ(Map.erase(50), 0u);
-        EXPECT_EQ(Map.size(), 99u);
+        EXPECT_EQ(Map.Remove(50), 1);
+        EXPECT_EQ(Map.Remove(50), 0);
+        EXPECT_EQ(Map.Num(), 99);
 
         for (int i = 0; i < 100; ++i)
         {
-            EXPECT_EQ(Map.contains(i), i != 50);
+            EXPECT_EQ(Map.Contains(i), i != 50);
         }
     }
 
@@ -463,12 +463,12 @@ namespace LuminaHashTableTests
             Map[i] = Lumina::Format("value-{}", i);
         }
 
-        EXPECT_EQ(Map.size(), static_cast<size_t>(kCount));
+        EXPECT_EQ(Map.Num(), kCount);
         for (int i = 0; i < kCount; ++i)
         {
-            const auto It = Map.find(i);
-            ASSERT_NE(It, Map.end()) << "missing " << i;
-            EXPECT_EQ(It->second, Lumina::Format("value-{}", i));
+            const auto* Found = Map.Find(i);
+            ASSERT_NE(Found, nullptr) << "missing " << i;
+            EXPECT_EQ(*Found, Lumina::Format("value-{}", i));
         }
     }
 
@@ -483,8 +483,8 @@ namespace LuminaHashTableTests
         std::set<int> Seen;
         for (const auto& Pair : Map)
         {
-            EXPECT_EQ(Pair.second, Pair.first * 3);
-            EXPECT_TRUE(Seen.insert(Pair.first).second);
+            EXPECT_EQ(Pair.Value, Pair.Key * 3);
+            EXPECT_TRUE(Seen.insert(Pair.Key).second);
         }
         EXPECT_EQ(Seen.size(), 400u);
     }
@@ -492,16 +492,16 @@ namespace LuminaHashTableTests
     TEST(HashMapLifetime, MovedOnlyValuesWork)
     {
         TMap<int, std::unique_ptr<int>> Map;
-        Map.try_emplace(1, std::make_unique<int>(11));
-        Map.try_emplace(2, std::make_unique<int>(22));
+        Map.FindOrAdd(1, std::make_unique<int>(11));
+        Map.FindOrAdd(2, std::make_unique<int>(22));
 
-        ASSERT_NE(Map.find(1), Map.end());
-        EXPECT_EQ(*Map.at(1), 11);
-        EXPECT_EQ(*Map.at(2), 22);
+        ASSERT_NE(Map.Find(1), nullptr);
+        EXPECT_EQ(*Map.FindChecked(1), 11);
+        EXPECT_EQ(*Map.FindChecked(2), 22);
 
-        Map.erase(1);
-        EXPECT_EQ(Map.size(), 1u);
-        EXPECT_FALSE(Map.contains(1));
+        Map.Remove(1);
+        EXPECT_EQ(Map.Num(), 1);
+        EXPECT_FALSE(Map.Contains(1));
     }
 
     TEST(HashMapEquality, ComparesByContentNotOrder)
@@ -529,18 +529,18 @@ namespace LuminaHashTableTests
         Names[Lumina::FName("Beta")] = 2;
         Names[Lumina::FName("Alpha")] = 3;
 
-        EXPECT_EQ(Names.size(), 2u);
-        EXPECT_EQ(Names.at(Lumina::FName("Alpha")), 3);
+        EXPECT_EQ(Names.Num(), 2);
+        EXPECT_EQ(Names.FindChecked(Lumina::FName("Alpha")), 3);
 
         int Storage[4] = {};
         TSet<int*> Pointers{ &Storage[0], &Storage[1] };
-        EXPECT_TRUE(Pointers.contains(&Storage[0]));
-        EXPECT_FALSE(Pointers.contains(&Storage[2]));
+        EXPECT_TRUE(Pointers.Contains(&Storage[0]));
+        EXPECT_FALSE(Pointers.Contains(&Storage[2]));
 
         enum class EKind : Lumina::uint8 { A, B };
         TSet<EKind> Kinds{ EKind::A };
-        EXPECT_TRUE(Kinds.contains(EKind::A));
-        EXPECT_FALSE(Kinds.contains(EKind::B));
+        EXPECT_TRUE(Kinds.Contains(EKind::A));
+        EXPECT_FALSE(Kinds.Contains(EKind::B));
     }
 
     // Looking a string-keyed map up by view is the whole point of the transparent hasher.
@@ -550,12 +550,12 @@ namespace LuminaHashTableTests
         Map[Lumina::FString("content/meshes/rock")] = 1;
 
         const Lumina::FStringView View("content/meshes/rock");
-        const auto It = Map.find(View);
-        ASSERT_NE(It, Map.end());
-        EXPECT_EQ(It->second, 1);
+        const auto* Found = Map.Find(View);
+        ASSERT_NE(Found, nullptr);
+        EXPECT_EQ(*Found, 1);
 
-        EXPECT_TRUE(Map.contains(Lumina::FCStringView("content/meshes/rock")));
-        EXPECT_FALSE(Map.contains(Lumina::FStringView("content/meshes/tree")));
+        EXPECT_TRUE(Map.Contains(Lumina::FCStringView("content/meshes/rock")));
+        EXPECT_FALSE(Map.Contains(Lumina::FStringView("content/meshes/tree")));
     }
 
     TEST(HashKeys, StringHashersAgreeAcrossTheStringTypes)
@@ -579,10 +579,10 @@ namespace LuminaHashTableTests
             Map[i] = i;
         }
 
-        EXPECT_EQ(Map.size(), 500u);
+        EXPECT_EQ(Map.Num(), 500);
         for (int i = 0; i < 500; ++i)
         {
-            EXPECT_EQ(Map.at(i), i);
+            EXPECT_EQ(Map.FindChecked(i), i);
         }
     }
 
@@ -600,23 +600,23 @@ namespace LuminaHashTableTests
         Lumina::Containers::THashSet<int, FTerribleHash> Set;
         for (int i = 0; i < 400; ++i)
         {
-            EXPECT_TRUE(Set.insert(i).second);
+            EXPECT_TRUE(Set.TryAdd(i));
         }
-        EXPECT_EQ(Set.size(), 400u);
+        EXPECT_EQ(Set.Num(), 400);
 
         for (int i = 0; i < 400; ++i)
         {
-            EXPECT_TRUE(Set.contains(i));
+            EXPECT_TRUE(Set.Contains(i));
         }
-        EXPECT_FALSE(Set.contains(400));
+        EXPECT_FALSE(Set.Contains(400));
 
         for (int i = 0; i < 400; i += 3)
         {
-            EXPECT_EQ(Set.erase(i), 1u);
+            EXPECT_EQ(Set.Remove(i), 1);
         }
         for (int i = 0; i < 400; ++i)
         {
-            EXPECT_EQ(Set.contains(i), i % 3 != 0);
+            EXPECT_EQ(Set.Contains(i), i % 3 != 0);
         }
     }
 
@@ -625,17 +625,17 @@ namespace LuminaHashTableTests
         TSet<int> Set;
         for (int i = 0; i < 1000; ++i)
         {
-            Set.insert(i);
+            Set.Add(i);
         }
-        EXPECT_GT(Set.GetAllocatedBytes(), 0u);
+        EXPECT_GT(Set.GetAllocatedSize(), 0u);
 
-        Set.clear();
-        Set.shrink_to_fit();
-        EXPECT_EQ(Set.capacity(), 0u);
-        EXPECT_EQ(Set.GetAllocatedBytes(), 0u);
-        EXPECT_FALSE(Set.contains(1));
+        Set.Reset();
+        Set.Shrink();
+        EXPECT_EQ(Set.Max(), 0);
+        EXPECT_EQ(Set.GetAllocatedSize(), 0u);
+        EXPECT_FALSE(Set.Contains(1));
 
-        Set.insert(1);
-        EXPECT_TRUE(Set.contains(1));
+        Set.Add(1);
+        EXPECT_TRUE(Set.Contains(1));
     }
 }

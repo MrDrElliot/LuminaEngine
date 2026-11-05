@@ -398,16 +398,16 @@ namespace Lumina::DefaultScene
             const float  Stride = kRangeTerrainSize / (float)(kRangeTerrainRes - 1);
             const float  MinX   = -kRangeTerrainSize * 0.5f;
             const float  MinZ   = kRangeTerrainZ - kRangeTerrainSize * 0.5f;
-            Terrain.Heightmap.resize(Count);
+            Terrain.Heightmap.SetNum(Count);
             for (int32 Row = 0; Row < kRangeTerrainRes; ++Row)
             {
                 for (int32 Col = 0; Col < kRangeTerrainRes; ++Col)
                 {
                     const float Height = RangeHeight(MinX + (float)Col * Stride, MinZ + (float)Row * Stride);
-                    Terrain.Heightmap[(size_t)Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
+                    Terrain.Heightmap[Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
                 }
             }
-            Terrain.LayerWeights.assign(Count * Terrain.Layers.size(), uint8(0));
+            Terrain.LayerWeights.Init(uint8(0), Count * Terrain.Layers.Num());
             Terrain.MarkHeightmapReplaced();
         }
 
@@ -453,7 +453,7 @@ namespace Lumina::DefaultScene
 
                 const FString Text = Lumina::Format("{:.0f} m", Distance);
                 const float   Size = 3.0f + Distance * 0.02f;
-                SpawnLabel(World, Text.c_str(), FVector3(0.0f, RangeHeight(0.0f, Z) + Size * 0.6f, Z), Size);
+                SpawnLabel(World, *Text, FVector3(0.0f, RangeHeight(0.0f, Z) + Size * 0.6f, Z), Size);
             }
         }
 

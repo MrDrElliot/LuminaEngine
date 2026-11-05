@@ -97,6 +97,9 @@ namespace Lumina::Reflection
         // Reflected through a REFLECT'd `using`, so nothing declares the name and it has no injected body.
         bool                                                    bIsAlias = false;
 
+        // Derives from ECS::FResource, so it registers as a world resource and C# reaches it in place.
+        bool                                                    bIsResource = false;
+
         // The compiled layout as clang computes it for the build target, or -1 when the type was incomplete.
         int64_t                                                 NativeSize = -1;
         int64_t                                                 NativeAlign = -1;

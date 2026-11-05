@@ -23,6 +23,8 @@ namespace Lumina::VFS
         bool IsReadOnly() const override { return bReadOnly; }
 
         // IFileSystem
+        using IFileSystem::ReadFile;
+
         bool ReadFile(TVector<uint8>& Result, FStringView Path) override;
         bool ReadFile(FString& OutString, FStringView Path) override;
 
@@ -32,7 +34,7 @@ namespace Lumina::VFS
         bool Exists(FStringView Path) const override;
         bool IsDirectory(FStringView Path) const override;
         bool IsEmpty(FStringView Path) const override;
-        size_t Size(FStringView Path) const override;
+        int64 Size(FStringView Path) const override;
 
         bool CreateDir(FStringView Path) override;
         bool Remove(FStringView Path) override;

@@ -25,6 +25,9 @@ namespace Lumina::Fmt
 
         constexpr size_t kMaxDigits = 66;
 
+        // A runtime format string is not validated, so its width and precision stop growing here instead of overflowing.
+        constexpr int32 kSaturatedField = 99'999'999;
+
         /** Writes Value backwards ending at End and returns how many characters it took. */
         uint32 WriteDecimalBackwards(char* End, uint64 Value) noexcept
         {
@@ -73,25 +76,25 @@ namespace Lumina::Fmt
         {
             const uint32 SignLength = SignChar != '\0' ? 1u : 0u;
             const uint32 Total = SignLength + PrefixLength + BodyLength;
-            const size_t Padding = (Spec.Width > 0 && static_cast<uint32>(Spec.Width) > Total)
-                                 ? static_cast<size_t>(Spec.Width) - Total
-                                 : 0;
+            const int32 Padding = (Spec.Width > 0 && static_cast<uint32>(Spec.Width) > Total)
+                                ? Spec.Width - static_cast<int32>(Total)
+                                : 0;
 
             if (Spec.bZeroPad && Spec.Align == EFormatAlign::Default)
             {
                 if (SignChar != '\0')
                 {
-                    Out.Push(SignChar);
+                    Out.AppendChar(SignChar);
                 }
 
-                Out.Append(Prefix, PrefixLength);
+                Out.Append(Prefix, static_cast<int32>(PrefixLength));
                 Out.AppendFill('0', Padding);
-                Out.Append(Body, BodyLength);
+                Out.Append(Body, static_cast<int32>(BodyLength));
                 return;
             }
 
-            size_t Before = 0;
-            size_t After = 0;
+            int32 Before = 0;
+            int32 After = 0;
 
             switch (Spec.Align)
             {
@@ -104,11 +107,11 @@ namespace Lumina::Fmt
 
             if (SignChar != '\0')
             {
-                Out.Push(SignChar);
+                Out.AppendChar(SignChar);
             }
 
-            Out.Append(Prefix, PrefixLength);
-            Out.Append(Body, BodyLength);
+            Out.Append(Prefix, static_cast<int32>(PrefixLength));
+            Out.Append(Body, static_cast<int32>(BodyLength));
             Out.AppendFill(Spec.Fill, After);
         }
 
@@ -155,26 +158,15 @@ namespace Lumina::Fmt
             char* const End = Digits + kMaxDigits;
 
             const bool bUpper = Spec.Type == 'P';
-            const uint64 Address = static_cast<uint64>(reinterpret_cast<uintptr_t>(Value));
+            const uint64 Address = reinterpret_cast<uintptr_t>(Value);
             const uint32 Length = WritePowerOfTwoBackwards(End, Address, 4, bUpper ? kUpperDigits : kLowerDigits);
 
             WritePadded(Out, '\0', bUpper ? "0X" : "0x", 2, End - Length, Length, Spec);
         }
 
-        NODISCARD size_t StringLength(const char* Text) noexcept
+        NODISCARD int32 StringLength(const char* Text) noexcept
         {
-            if (Text == nullptr)
-            {
-                return 0;
-            }
-
-            const char* Scan = Text;
-            while (*Scan != '\0')
-            {
-                ++Scan;
-            }
-
-            return static_cast<size_t>(Scan - Text);
+            return Text != nullptr ? IntCastChecked<int32>(std::char_traits<char>::length(Text)) : 0;
         }
 
         NODISCARD bool IsDigitChar(char Character) noexcept
@@ -230,7 +222,7 @@ namespace Lumina::Fmt
                 WriteAligned(Out, FStringView(Arg.CStringValue, StringLength(Arg.CStringValue)), Spec);
                 break;
             case EFormatArgType::String:
-                WriteAligned(Out, FStringView(Arg.StringValue.Data, Arg.StringValue.Size), Spec);
+                WriteAligned(Out, FStringView(Arg.StringValue.Data, Arg.StringValue.Len), Spec);
                 break;
             case EFormatArgType::Pointer:
                 WritePointer(Out, Arg.PointerValue, Spec);
@@ -257,18 +249,16 @@ namespace Lumina::Fmt
 
     void WriteAligned(FFormatBuffer& Out, FStringView Text, const FFormatSpec& Spec)
     {
-        size_t Length = Text.size();
-        if (Spec.Precision >= 0 && static_cast<size_t>(Spec.Precision) < Length)
+        int32 Length = Text.Len();
+        if (Spec.Precision >= 0 && Spec.Precision < Length)
         {
-            Length = static_cast<size_t>(Spec.Precision);
+            Length = Spec.Precision;
         }
 
-        const size_t Padding = (Spec.Width > 0 && static_cast<size_t>(Spec.Width) > Length)
-                             ? static_cast<size_t>(Spec.Width) - Length
-                             : 0;
+        const int32 Padding = Spec.Width > Length ? Spec.Width - Length : 0;
 
-        size_t Before = 0;
-        size_t After = 0;
+        int32 Before = 0;
+        int32 After = 0;
 
         switch (Spec.Align)
         {
@@ -278,7 +268,7 @@ namespace Lumina::Fmt
         }
 
         Out.AppendFill(Spec.Fill, Before);
-        Out.Append(Text.data(), Length);
+        Out.Append(Text.GetData(), Length);
         Out.AppendFill(Spec.Fill, After);
     }
 
@@ -440,11 +430,11 @@ namespace Lumina::Fmt
 
     void VFormatTo(FFormatBuffer& Out, FStringView Fmt, FFormatArgs Args)
     {
-        const char* const Begin = Fmt.data();
-        const size_t Count = Fmt.size();
+        const char* const Begin = Fmt.GetData();
+        const int32 Count = Fmt.Len();
 
-        size_t Index = 0;
-        size_t Literal = 0;
+        int32 Index = 0;
+        int32 Literal = 0;
         uint32 NextAutomatic = 0;
 
         const auto ReadArgIndex = [&]() -> uint32
@@ -478,7 +468,7 @@ namespace Lumina::Fmt
 
             if (Index + 1 < Count && Begin[Index + 1] == Character)
             {
-                Out.Push(Character);
+                Out.AppendChar(Character);
                 Index += 2;
                 Literal = Index;
                 continue;
@@ -557,7 +547,7 @@ namespace Lumina::Fmt
                     bool bHasWidth = false;
                     while (Index < Count && IsDigitChar(Begin[Index]))
                     {
-                        Width = Width * 10 + (Begin[Index] - '0');
+                        Width = Width < kSaturatedField ? Width * 10 + (Begin[Index] - '0') : Width;
                         bHasWidth = true;
                         ++Index;
                     }
@@ -590,7 +580,7 @@ namespace Lumina::Fmt
                         int32 Precision = 0;
                         while (Index < Count && IsDigitChar(Begin[Index]))
                         {
-                            Precision = Precision * 10 + (Begin[Index] - '0');
+                            Precision = Precision < kSaturatedField ? Precision * 10 + (Begin[Index] - '0') : Precision;
                             ++Index;
                         }
 

@@ -106,7 +106,7 @@ namespace Lumina::Platform
                 return false;
             }
 
-            const FString Shell = Params.Shell.empty() ? GetDefaultShell() : Params.Shell;
+            const FString Shell = Params.Shell.IsEmpty() ? GetDefaultShell() : Params.Shell;
 
             // Copied before the fork, because the child cannot safely touch engine containers.
             FString SlaveNameCopy(SlaveName);
@@ -124,7 +124,7 @@ namespace Lumina::Platform
             if (ChildPid == 0)
             {
                 close(Master);
-                RunChild(SlaveNameCopy.c_str(), Shell.c_str(), Params.WorkingDirectory.c_str());
+                RunChild(*SlaveNameCopy, *Shell, *Params.WorkingDirectory);
             }
 
             if (fcntl(Master, F_SETFL, fcntl(Master, F_GETFL, 0) | O_NONBLOCK) != 0)
@@ -170,17 +170,17 @@ namespace Lumina::Platform
                     ? static_cast<size_t>(MaxBytes - Total)
                     : 4096u;
 
-                const size_t Offset = OutBytes.size();
-                OutBytes.resize(Offset + Wanted);
+                const int32 Offset = OutBytes.Num();
+                OutBytes.SetNum(IntCastChecked<int32>(Offset + Wanted));
 
-                const ssize_t Got = read(Master, OutBytes.data() + Offset, Wanted);
+                const ssize_t Got = read(Master, OutBytes.GetData() + Offset, Wanted);
                 if (Got <= 0)
                 {
-                    OutBytes.resize(Offset);
+                    OutBytes.SetNum(Offset);
                     break;
                 }
 
-                OutBytes.resize(Offset + static_cast<size_t>(Got));
+                OutBytes.SetNum(IntCastChecked<int32>(Offset + static_cast<size_t>(Got)));
                 Total += static_cast<int32>(Got);
             }
 
@@ -259,7 +259,7 @@ namespace Lumina::Platform
     FString GetDefaultShell()
     {
         const FString Preferred = GetEnvVariable("SHELL");
-        return Preferred.empty() ? FString("/bin/bash") : Preferred;
+        return Preferred.IsEmpty() ? FString("/bin/bash") : Preferred;
     }
 
     FPtySessionPtr CreatePtySession(const FPtyLaunchParams& Params)

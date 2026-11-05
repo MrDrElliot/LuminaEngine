@@ -56,7 +56,7 @@ namespace Lumina
         FName                                 Name;
         TVector<TUniquePtr<IUndoableCommand>> Commands;
 
-        bool IsEmpty() const { return Commands.empty(); }
+        bool IsEmpty() const { return Commands.IsEmpty(); }
 
         void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
         {
@@ -98,7 +98,7 @@ namespace Lumina
         {
             if (bOpen && Command != nullptr)
             {
-                Open.Commands.push_back(Move(Command));
+                Open.Commands.Add(Move(Command));
             }
         }
 
@@ -125,10 +125,10 @@ namespace Lumina
         void Undo();
         void Redo();
 
-        bool  CanUndo() const { return !UndoStack.empty(); }
-        bool  CanRedo() const { return !RedoStack.empty(); }
-        FName PeekUndoName() const { return UndoStack.empty() ? FName() : UndoStack.back().Name; }
-        FName PeekRedoName() const { return RedoStack.empty() ? FName() : RedoStack.back().Name; }
+        bool  CanUndo() const { return !UndoStack.IsEmpty(); }
+        bool  CanRedo() const { return !RedoStack.IsEmpty(); }
+        FName PeekUndoName() const { return UndoStack.IsEmpty() ? FName() : UndoStack.Last().Name; }
+        FName PeekRedoName() const { return RedoStack.IsEmpty() ? FName() : RedoStack.Last().Name; }
 
         void Clear();
 

@@ -41,12 +41,12 @@ namespace Lumina
         Version = Graph->GetContentVersion();
         Job     = MakeUnique<FJob>();
         Job->Compiler.SetPreviewOutput(Pin);
-        if (BeginMaterialGraphCompile(Material.Get(), Graph, Job->Compiler, Job->Result, {}, ETaskPriority::Low))
+        if (BeginMaterialGraphCompile(Material.Get(), Graph, Job->Compiler, Job->Result, {}, Jobs::EJobPriority::Low))
         {
             return true;
         }
 
-        Error  = Job->Result.Errors.empty() ? FString("That pin has nothing to compile.") : Job->Result.Errors[0].Description;
+        Error  = Job->Result.Errors.IsEmpty() ? FString("That pin has nothing to compile.") : Job->Result.Errors[0].Description;
         bReady = false;
         Job.reset();
         return false;
@@ -61,7 +61,7 @@ namespace Lumina
 
         FinishMaterialGraphCompile(Material.Get(), Job->Compiler, Job->Result);
         bReady = Job->Result.bSuccess;
-        Error  = bReady || Job->Result.Errors.empty() ? FString() : Job->Result.Errors[0].Description;
+        Error  = bReady || Job->Result.Errors.IsEmpty() ? FString() : Job->Result.Errors[0].Description;
         Job.reset();
         return true;
     }
@@ -144,9 +144,9 @@ namespace Lumina
 
     void FMaterialNodePreviews::Tick(CMaterialNodeGraph* Graph)
     {
-        erase_if(Previews, [Graph](const auto& Pair)
+        Previews.RemoveAll([Graph](const auto& Pair)
         {
-            const CMaterialGraphNode* Node = Cast<CMaterialGraphNode>(Graph->FindNode(Pair.first));
+            const CMaterialGraphNode* Node = Cast<CMaterialGraphNode>(Graph->FindNode(Pair.Key));
             return Node == nullptr || !Node->bShowPreview;
         });
 
@@ -154,9 +154,9 @@ namespace Lumina
         for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : Graph->Nodes)
         {
             const CMaterialGraphNode* Node = Cast<CMaterialGraphNode>(NodeRef.Get());
-            if (Node != nullptr && Node->bShowPreview && !Node->GetOutputPins().empty() && !Previews.contains(Node->GetNodeID()))
+            if (Node != nullptr && Node->bShowPreview && !Node->GetOutputPins().IsEmpty() && !Previews.Contains(Node->GetNodeID()))
             {
-                Previews.emplace(Node->GetNodeID(), MakeUnique<FNodePreview>());
+                Previews.TryAdd(Node->GetNodeID(), MakeUnique<FNodePreview>());
             }
         }
 
@@ -180,7 +180,7 @@ namespace Lumina
             }
 
             const CEdGraphNode* Node = Graph->FindNode(NodeID);
-            if (Node == nullptr || Node->GetOutputPins().empty())
+            if (Node == nullptr || Node->GetOutputPins().IsEmpty())
             {
                 continue;
             }
@@ -229,37 +229,37 @@ namespace Lumina
 
         FPackageThumbnail Captured;
         const bool bCaptured = Scene->FinishCapture(Captured);
-        auto Found = Previews.find(CapturingNode);
+        auto Found = Previews.Find(CapturingNode);
         CapturingNode = 0;
-        if (!bCaptured || Found == Previews.end())
+        if (!bCaptured || Found == nullptr)
         {
             return;
         }
 
-        if (Found->second->Texture.IsValid())
+        if ((*Found)->Texture.IsValid())
         {
-            RHI::Textures::Release(Found->second->Texture);
+            RHI::Textures::Release((*Found)->Texture);
         }
-        Found->second->Texture = CThumbnailManager::CreateThumbnailTexture(Captured, "MaterialNodePreview");
+        (*Found)->Texture = CThumbnailManager::CreateThumbnailTexture(Captured, "MaterialNodePreview");
     }
 
     bool FMaterialNodePreviews::GetTexture(int64 NodeID, ImTextureRef& OutTexture, const char*& OutStatus) const
     {
-        auto Found = Previews.find(NodeID);
-        if (Found == Previews.end())
+        auto Found = Previews.Find(NodeID);
+        if (Found == nullptr)
         {
             OutStatus = "Compiling";
             return false;
         }
 
-        const FNodePreview& Preview = *Found->second;
+        const FNodePreview& Preview = *(*Found);
         if (Preview.Texture.IsValid())
         {
             OutTexture = ImGuiX::ToImTextureRef(Preview.Texture);
             return true;
         }
 
-        OutStatus = !Preview.Material.IsCompiling() && !Preview.Material.GetError().empty() ? "No preview" : "Compiling";
+        OutStatus = !Preview.Material.IsCompiling() && !Preview.Material.GetError().IsEmpty() ? "No preview" : "Compiling";
         return false;
     }
 }

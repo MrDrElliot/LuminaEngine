@@ -7,39 +7,82 @@ namespace Lumina::Filesystem
 {
     namespace
     {
-        constexpr uint64 kSpliceChunkBytes = 1ull << 20;
+        constexpr int64 kSpliceChunkBytes = 1ll << 20;
 
-        size_t FindRootEnd(FStringView Path)
+        // A size the destination cannot count is refused rather than truncated, which would leave the read overrunning it.
+        bool FitsDestination(int64 Size, int64 MaxCount, FStringView Path)
         {
-            if (Path.size() >= 2 && Path[1] == ':')
+            if (Size <= MaxCount)
+            {
+                return true;
+            }
+            LOG_WARN("'{}' is {} bytes, more than one buffer of this kind can hold ({}).", Path, Size, MaxCount);
+            return false;
+        }
+
+        template <typename TBytes>
+        bool ReadAllBytes(TBytes& OutData, FStringView Path)
+        {
+            OutData.Reset();
+
+            FFileHandle Handle = Open(Path, EAccess::Read, ECreateMode::OpenExisting, EShare::All, EHint::Sequential);
+            if (!Handle.IsValid())
+            {
+                return false;
+            }
+
+            const int64 Size = Handle.Size();
+            if (Size <= 0)
+            {
+                return true;
+            }
+            if (!FitsDestination(Size, static_cast<int64>(TBytes::MaxElements), Path))
+            {
+                return false;
+            }
+
+            OutData.SetNum(static_cast<typename TBytes::SizeType>(Size));
+
+            if (Handle.Read(OutData.GetData(), Size) != Size)
+            {
+                OutData.Reset();
+                return false;
+            }
+
+            return true;
+        }
+
+        int32 FindRootEnd(FStringView Path)
+        {
+            if (Path.Len() >= 2 && Path[1] == ':')
             {
                 return 2;
             }
 
-            if (Path.size() >= 2 && Path[0] == '/' && Path[1] == '/')
+            if (Path.Len() >= 2 && Path[0] == '/' && Path[1] == '/')
             {
-                const size_t Server = Path.find('/', 2);
-                if (Server == FStringView::npos)
+                const int32 Server = Path.Find('/', 2);
+                if (Server == Constants::kIndexNone)
                 {
-                    return Path.size();
+                    return Path.Len();
                 }
 
-                const size_t Share = Path.find('/', Server + 1);
-                return Share == FStringView::npos ? Path.size() : Share;
+                const int32 Share = Path.Find('/', Server + 1);
+                return Share == Constants::kIndexNone ? Path.Len() : Share;
             }
 
             return 0;
         }
 
-        size_t FindLastSeparator(FStringView Path)
+        int32 FindLastSeparator(FStringView Path)
         {
-            return Path.find_last_of("/\\");
+            return Path.FindLastOf("/\\");
         }
 
         FString MakeTempSibling(FStringView Path)
         {
-            FString Result(Path.data(), Path.size());
-            Result.append(".tmp");
+            FString Result(Path.GetData(), Path.Len());
+            Result.Append(".tmp");
             return Result;
         }
 
@@ -76,7 +119,7 @@ namespace Lumina::Filesystem
 
     bool MakeDirectoryTree(FStringView Path)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return false;
         }
@@ -86,7 +129,7 @@ namespace Lumina::Filesystem
             return true;
         }
 
-        FString Buffer(Path.data(), Path.size());
+        FString Buffer(Path.GetData(), Path.Len());
 
         for (char& Character : Buffer)
         {
@@ -96,22 +139,22 @@ namespace Lumina::Filesystem
             }
         }
 
-        while (Buffer.size() > 1 && Buffer.back() == '/')
+        while (Buffer.Len() > 1 && Buffer.Last() == '/')
         {
-            Buffer.pop_back();
+            Buffer.LeftChopInline(1);
         }
 
-        const size_t RootEnd = FindRootEnd(FStringView(Buffer.data(), Buffer.size()));
+        const int32 RootEnd = FindRootEnd(FStringView(Buffer.GetData(), Buffer.Len()));
 
-        for (size_t Index = RootEnd + 1; Index <= Buffer.size(); ++Index)
+        for (int32 Index = RootEnd + 1; Index <= Buffer.Len(); ++Index)
         {
-            if (Index != Buffer.size() && Buffer[Index] != '/')
+            if (Index != Buffer.Len() && Buffer[Index] != '/')
             {
                 continue;
             }
 
-            const FStringView Prefix(Buffer.data(), Index);
-            if (Prefix.size() <= RootEnd || IsDirectory(Prefix))
+            const FStringView Prefix(Buffer.GetData(), Index);
+            if (Prefix.Len() <= RootEnd || IsDirectory(Prefix))
             {
                 continue;
             }
@@ -127,13 +170,13 @@ namespace Lumina::Filesystem
 
     bool MakeParentDirectoryTree(FStringView Path)
     {
-        const size_t Separator = FindLastSeparator(Path);
-        if (Separator == FStringView::npos || Separator == 0)
+        const int32 Separator = FindLastSeparator(Path);
+        if (Separator == Constants::kIndexNone || Separator == 0)
         {
             return true;
         }
 
-        return MakeDirectoryTree(Path.substr(0, Separator));
+        return MakeDirectoryTree(Path.Mid(0, Separator));
     }
 
     bool RemoveTree(FStringView Path)
@@ -155,7 +198,7 @@ namespace Lumina::Filesystem
         {
             if (Entry.IsDirectory())
             {
-                Directories.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                Directories.Emplace(Entry.FullPath.GetData(), Entry.FullPath.Len());
             }
             else if (!RemoveFile(Entry.FullPath))
             {
@@ -187,11 +230,11 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        const size_t SourceLength = From.size();
-        FString Target(To.data(), To.size());
-        while (Target.size() > 1 && (Target.back() == '/' || Target.back() == '\\'))
+        const int32 SourceLength = From.Len();
+        FString Target(To.GetData(), To.Len());
+        while (Target.Len() > 1 && (Target.Last() == '/' || Target.Last() == '\\'))
         {
-            Target.pop_back();
+            Target.LeftChopInline(1);
         }
 
         bool bSuccess = true;
@@ -199,10 +242,10 @@ namespace Lumina::Filesystem
 
         IterateDirectoryRecursive(From, [&](const FDirectoryEntry& Entry)
         {
-            const FStringView Relative = Entry.FullPath.substr(SourceLength);
+            const FStringView Relative = Entry.FullPath.Mid(SourceLength);
 
             FString Destination = Target;
-            Destination.append(Relative.data(), Relative.size());
+            Destination.Append(Relative.GetData(), Relative.Len());
 
             if (Entry.IsDirectory())
             {
@@ -230,34 +273,17 @@ namespace Lumina::Filesystem
 
     bool ReadFile(TVector<uint8>& OutData, FStringView Path)
     {
-        OutData.clear();
+        return ReadAllBytes(OutData, Path);
+    }
 
-        FFileHandle Handle = Open(Path, EAccess::Read, ECreateMode::OpenExisting, EShare::All, EHint::Sequential);
-        if (!Handle.IsValid())
-        {
-            return false;
-        }
-
-        const uint64 Size = Handle.Size();
-        if (Size == 0)
-        {
-            return true;
-        }
-
-        OutData.resize(static_cast<size_t>(Size));
-
-        if (Handle.Read(OutData.data(), Size) != Size)
-        {
-            OutData.clear();
-            return false;
-        }
-
-        return true;
+    bool ReadFile(TVector64<uint8>& OutData, FStringView Path)
+    {
+        return ReadAllBytes(OutData, Path);
     }
 
     bool ReadFile(FString& OutText, FStringView Path)
     {
-        OutText.clear();
+        OutText.Reset();
 
         FFileHandle Handle = Open(Path, EAccess::Read, ECreateMode::OpenExisting, EShare::All, EHint::Sequential);
         if (!Handle.IsValid())
@@ -265,30 +291,34 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        const uint64 Size = Handle.Size();
-        if (Size == 0)
+        const int64 Size = Handle.Size();
+        if (Size <= 0)
         {
             return true;
         }
-
-        OutText.resize(static_cast<size_t>(Size));
-
-        if (Handle.Read(OutText.data(), Size) != Size)
+        if (!FitsDestination(Size, TNumericLimits<int32>::Max(), Path))
         {
-            OutText.clear();
+            return false;
+        }
+
+        OutText.SetLen(static_cast<int32>(Size));
+
+        if (Handle.Read(OutText.GetData(), Size) != Size)
+        {
+            OutText.Reset();
             return false;
         }
 
         return true;
     }
 
-    bool ReadFileRange(TVector<uint8>& OutData, FStringView Path, uint64 Offset, uint64 Size)
+    bool ReadFileRange(TVector<uint8>& OutData, FStringView Path, int64 Offset, int64 Size)
     {
-        OutData.clear();
+        OutData.Reset();
 
-        if (Size == 0)
+        if (Size <= 0 || Offset < 0)
         {
-            return true;
+            return Size == 0;
         }
 
         FFileHandle Handle = Open(Path, EAccess::Read, ECreateMode::OpenExisting, EShare::All, EHint::Random);
@@ -297,28 +327,32 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        const uint64 FileLength = Handle.Size();
+        const int64 FileLength = Handle.Size();
         if (Offset >= FileLength)
         {
             return true;
         }
 
-        const uint64 Available = FileLength - Offset;
-        const uint64 ToRead    = Size < Available ? Size : Available;
+        const int64 Available = FileLength - Offset;
+        const int64 ToRead    = Size < Available ? Size : Available;
+        if (!FitsDestination(ToRead, TVector<uint8>::MaxElements, Path))
+        {
+            return false;
+        }
 
-        OutData.resize(static_cast<size_t>(ToRead));
+        OutData.SetNum(static_cast<int32>(ToRead));
 
-        const uint64 Got = Handle.ReadAt(OutData.data(), ToRead, Offset);
+        const int64 Got = Handle.ReadAt(OutData.GetData(), ToRead, Offset);
         if (Got != ToRead)
         {
-            OutData.clear();
+            OutData.Reset();
             return false;
         }
 
         return true;
     }
 
-    bool WriteFile(FStringView Path, TSpan<const uint8> Data)
+    bool WriteFile(FStringView Path, TSpan64<const uint8> Data)
     {
         MakeParentDirectoryTree(Path);
 
@@ -328,15 +362,15 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        if (Data.empty())
+        if (Data.IsEmpty())
         {
             return true;
         }
 
-        return Handle.Write(Data.data(), Data.size()) == Data.size();
+        return Handle.Write(Data.GetData(), Data.Num()) == Data.Num();
     }
 
-    bool AppendFile(FStringView Path, TSpan<const uint8> Data)
+    bool AppendFile(FStringView Path, TSpan64<const uint8> Data)
     {
         MakeParentDirectoryTree(Path);
 
@@ -346,17 +380,17 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        if (Data.empty())
+        if (Data.IsEmpty())
         {
             return true;
         }
 
-        return Handle.Write(Data.data(), Data.size()) == Data.size();
+        return Handle.Write(Data.GetData(), Data.Num()) == Data.Num();
     }
 
-    bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data)
+    bool AtomicWriteFile(FStringView Path, TSpan64<const uint8> Data)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return false;
         }
@@ -379,7 +413,7 @@ namespace Lumina::Filesystem
                 return false;
             }
 
-            if (!Data.empty() && Handle.Write(Data.data(), Data.size()) != Data.size())
+            if (!Data.IsEmpty() && Handle.Write(Data.GetData(), Data.Num()) != Data.Num())
             {
                 Handle.Close();
                 RemoveFile(TempPath);
@@ -398,10 +432,10 @@ namespace Lumina::Filesystem
     }
 
     bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                 TSpan<const uint8> Suffix)
     {
-        if (Path.empty() || SrcPath.empty())
+        if (Path.IsEmpty() || SrcPath.IsEmpty())
         {
             return false;
         }
@@ -433,28 +467,28 @@ namespace Lumina::Filesystem
                 Failure = "could not open the temporary output";
             }
 
-            if (Failure == nullptr && !Prefix.empty() && Target.Write(Prefix.data(), Prefix.size()) != Prefix.size())
+            if (Failure == nullptr && !Prefix.IsEmpty() && Target.Write(Prefix.GetData(), Prefix.Num()) != Prefix.Num())
             {
                 Failure = "write failed on the prefix";
             }
 
             TVector<uint8> Chunk;
-            Chunk.resize(static_cast<size_t>(kSpliceChunkBytes));
+            Chunk.SetNum(static_cast<int32>(kSpliceChunkBytes));
 
-            uint64 Remaining = SrcSize;
-            uint64 Cursor    = SrcOffset;
+            int64 Remaining = SrcSize;
+            int64 Cursor    = SrcOffset;
 
             while (Failure == nullptr && Remaining > 0)
             {
-                const uint64 Want = Remaining < kSpliceChunkBytes ? Remaining : kSpliceChunkBytes;
+                const int64 Want = Remaining < kSpliceChunkBytes ? Remaining : kSpliceChunkBytes;
 
-                if (Source.ReadAt(Chunk.data(), Want, Cursor) != Want)
+                if (Source.ReadAt(Chunk.GetData(), Want, Cursor) != Want)
                 {
                     Failure = "source ended early; the bulk region is shorter than its trailer claims";
                     break;
                 }
 
-                if (Target.Write(Chunk.data(), Want) != Want)
+                if (Target.Write(Chunk.GetData(), Want) != Want)
                 {
                     Failure = "write failed while splicing";
                     break;
@@ -464,7 +498,7 @@ namespace Lumina::Filesystem
                 Remaining -= Want;
             }
 
-            if (Failure == nullptr && !Suffix.empty() && Target.Write(Suffix.data(), Suffix.size()) != Suffix.size())
+            if (Failure == nullptr && !Suffix.IsEmpty() && Target.Write(Suffix.GetData(), Suffix.Num()) != Suffix.Num())
             {
                 Failure = "write failed on the suffix";
             }

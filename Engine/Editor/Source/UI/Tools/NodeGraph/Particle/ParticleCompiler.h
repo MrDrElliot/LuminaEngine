@@ -158,7 +158,7 @@ namespace Lumina
         FString GridChannel(const FName& Name);
 
         // Zero when nothing declared a channel, which means the emitter has no grid.
-        uint32 GetGridChannelCount() const { return (uint32)GridChannels.size(); }
+        uint32 GetGridChannelCount() const { return (uint32)GridChannels.Num(); }
         const TVector<FString>& GetGridChannelNames() const { return GridChannels; }
 
         // Declares an array a script fills with SParticleSystemComponent::SetArray, and returns its index constant.
@@ -196,8 +196,8 @@ namespace Lumina
         void SetContext(EParticleContext Context) { CurrentContext = Context; }
         EParticleContext GetContext() const       { return CurrentContext; }
 
-        bool HasErrors() const                                          { return !Errors.empty(); }
-        void AddError(const EdNodeGraph::FError& Error)                 { Errors.push_back(Error); }
+        bool HasErrors() const                                          { return !Errors.IsEmpty(); }
+        void AddError(const EdNodeGraph::FError& Error)                 { Errors.Add(Error); }
         const TVector<EdNodeGraph::FError>& GetErrors() const           { return Errors; }
 
     private:

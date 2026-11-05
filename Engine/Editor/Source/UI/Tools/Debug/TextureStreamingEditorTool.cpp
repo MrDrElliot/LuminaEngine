@@ -107,7 +107,7 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::Checkbox("Pinned only", &bPinnedOnly);
 
-        if (!Pending.empty())
+        if (!Pending.IsEmpty())
         {
             DrawPendingTable();
         }
@@ -140,9 +140,9 @@ namespace Lumina
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.85f, 0.35f, 0.3f, 1.0f));
             }
             ImGui::ProgressBar(Fraction > 1.0f ? 1.0f : Fraction, ImVec2(260.0f, 0.0f),
-                Format("{} / {}",
+                *Format("{} / {}",
                     ImGuiX::FormatSize(Stats.ResidentBytes),
-                    ImGuiX::FormatSize(Stats.BudgetBytes)).c_str());
+                    ImGuiX::FormatSize(Stats.BudgetBytes)));
             if (bOver)
             {
                 ImGui::PopStyleColor();
@@ -162,11 +162,11 @@ namespace Lumina
 
             ImGui::Text("Fully resident would cost: ");
             ImGui::SameLine();
-            ImGui::TextUnformatted(ImGuiX::FormatSize(Stats.FullyResidentBytes).c_str());
+            ImGui::TextUnformatted(*ImGuiX::FormatSize(Stats.FullyResidentBytes));
             ImGui::SameLine();
             ImGui::TextDisabled("->");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s saved", ImGuiX::FormatSize(Saved).c_str());
+            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s saved", *ImGuiX::FormatSize(Saved));
 
             ImGui::TableSetColumnIndex(1);
 
@@ -190,7 +190,7 @@ namespace Lumina
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            ImGui::Text("%s read", ImGuiX::FormatSize(Stats.TotalBytesRead).c_str());
+            ImGui::Text("%s read", *ImGuiX::FormatSize(Stats.TotalBytesRead));
 
             // Loud, since a failed load means a bulk ref did not resolve rather than a policy outcome.
             if (Stats.TotalFailedLoads > 0)
@@ -237,7 +237,7 @@ namespace Lumina
                 ImGui::TableNextRow();
 
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(Row.Name.IsNone() ? "<destroyed>" : Row.Name.c_str());
+                ImGui::TextUnformatted(Row.Name.IsNone() ? "<destroyed>" : *Row.Name);
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%u", Row.SourceFirstMip);
@@ -246,7 +246,7 @@ namespace Lumina
                 ImGui::Text("%u", Row.TargetFirstMip);
 
                 ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(ImGuiX::FormatSize(Row.Bytes).c_str());
+                ImGui::TextUnformatted(*ImGuiX::FormatSize(Row.Bytes));
 
                 ImGui::TableSetColumnIndex(4);
                 if (Row.bComplete)
@@ -291,7 +291,7 @@ namespace Lumina
 
         // The question this answers most often is what is eating the pool, which is the top of the list.
         TVector<const FTextureStreamingManager::FTextureSnapshot*> Rows;
-        Rows.reserve(Snapshot.size());
+        Rows.Reserve(Snapshot.Num());
 
         for (const FTextureStreamingManager::FTextureSnapshot& Row : Snapshot)
         {
@@ -303,15 +303,15 @@ namespace Lumina
             {
                 continue;
             }
-            if (!FilterView.empty())
+            if (!FilterView.IsEmpty())
             {
                 const FString Name = Row.Name.ToString();
-                if (Name.find(Filter) == FString::npos && Row.PackagePath.find(Filter) == FString::npos)
+                if (Name.Find(Filter) == Constants::kIndexNone && Row.PackagePath.Find(Filter) == Constants::kIndexNone)
                 {
                     continue;
                 }
             }
-            Rows.push_back(&Row);
+            Rows.Add(&Row);
         }
 
         Algo::Sort(Rows,
@@ -325,10 +325,10 @@ namespace Lumina
             ImGui::TableNextRow();
 
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(Row->Name.c_str());
-            if (ImGui::IsItemHovered() && !Row->PackagePath.empty())
+            ImGui::TextUnformatted(*Row->Name);
+            if (ImGui::IsItemHovered() && !Row->PackagePath.IsEmpty())
             {
-                ImGui::SetTooltip("%s\nbindless slot %d", Row->PackagePath.c_str(), Row->ResourceID);
+                ImGui::SetTooltip("%s\nbindless slot %d", *Row->PackagePath, Row->ResourceID);
             }
 
             ImGui::TableSetColumnIndex(1);
@@ -359,21 +359,21 @@ namespace Lumina
             ImGui::ProgressBar(ResidentFraction(*Row), ImVec2(-1.0f, 0.0f), "");
 
             ImGui::TableSetColumnIndex(5);
-            ImGui::TextUnformatted(ImGuiX::FormatSize(Row->ResidentBytes).c_str());
+            ImGui::TextUnformatted(*ImGuiX::FormatSize(Row->ResidentBytes));
 
             ImGui::TableSetColumnIndex(6);
-            ImGui::TextDisabled("%s", ImGuiX::FormatSize(Row->FullBytes).c_str());
+            ImGui::TextDisabled("%s", *ImGuiX::FormatSize(Row->FullBytes));
 
             ImGui::TableSetColumnIndex(7);
             // CPU bytes far above resident means the streamer freed the image but kept its mip pixels.
             const bool bCpuHeavy = Row->CpuBytes > Row->ResidentBytes + (Row->ResidentBytes / 2);
             if (bCpuHeavy)
             {
-                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f), "%s", ImGuiX::FormatSize(Row->CpuBytes).c_str());
+                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f), "%s", *ImGuiX::FormatSize(Row->CpuBytes));
             }
             else
             {
-                ImGui::TextDisabled("%s", ImGuiX::FormatSize(Row->CpuBytes).c_str());
+                ImGui::TextDisabled("%s", *ImGuiX::FormatSize(Row->CpuBytes));
             }
 
             ImGui::TableSetColumnIndex(8);

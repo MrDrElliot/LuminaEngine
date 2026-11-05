@@ -20,7 +20,7 @@ namespace Lumina
 
     void FEntityCreationCommand::CaptureLiveEntities(TVector<ECS::FEntity>& Out) const
     {
-        Out.clear();
+        Out.Reset();
 
         CWorld* W = World.Get();
         if (W == nullptr)
@@ -31,8 +31,8 @@ namespace Lumina
         ECS::FRegistry& Registry = W->GetEntityRegistry();
 
         // Excluded for the same reason the registry snapshot excludes them, they are not the document.
-        Out.reserve(Registry.NumEntities());
-        Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Out.push_back(E); });
+        Out.Reserve(Registry.NumEntities());
+        Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Out.Add(E); });
 
         // Sorted so Finalize's diff is a binary search, and handles only with no component data touched.
         Algo::Sort(Out);
@@ -40,8 +40,8 @@ namespace Lumina
 
     void FEntityCreationCommand::Finalize()
     {
-        Created.clear();
-        CreatedData.clear();
+        Created.Reset();
+        CreatedData.Reset();
 
         CWorld* W = World.Get();
         if (W == nullptr)
@@ -58,12 +58,12 @@ namespace Lumina
         {
             if (!Algo::BinarySearch(LiveBefore, E))
             {
-                Created.push_back(E);
+                Created.Add(E);
             }
         }
 
         // Any shortfall means entities went away, and this command has no before-image to restore them.
-        const int64 DestroyedCount = (int64)LiveBefore.size() + (int64)Created.size() - (int64)LiveAfter.size();
+        const int64 DestroyedCount = (int64)LiveBefore.Num() + (int64)Created.Num() - (int64)LiveAfter.Num();
         if (DestroyedCount != 0)
         {
             LOG_ERROR("FEntityCreationCommand: {} entities were destroyed inside a creation-only "
@@ -71,7 +71,7 @@ namespace Lumina
                       DestroyedCount);
         }
 
-        if (Created.empty())
+        if (Created.IsEmpty())
         {
             return;
         }
@@ -80,7 +80,7 @@ namespace Lumina
         FMemoryWriter Writer(CreatedData);
         FObjectProxyArchiver Ar(Writer, false);
 
-        int32 NumCreated = (int32)Created.size();
+        int32 NumCreated = Created.Num();
         Ar << NumCreated;
 
         for (ECS::FEntity E : Created)
@@ -118,7 +118,7 @@ namespace Lumina
     void FEntityCreationCommand::Redo()
     {
         CWorld* W = World.Get();
-        if (W == nullptr || CreatedData.empty())
+        if (W == nullptr || CreatedData.IsEmpty())
         {
             return;
         }

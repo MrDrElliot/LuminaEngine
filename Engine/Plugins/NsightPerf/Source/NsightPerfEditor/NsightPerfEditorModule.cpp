@@ -56,11 +56,11 @@ void FNsightPerfEditorModule::StartupModule()
         RHI::Native::FDeviceCreationRequest Request;
         for (const char* Name : InstanceExts)
         {
-            Request.InstanceExtensions.push_back(Name);
+            Request.InstanceExtensions.Add(Name);
         }
         for (const char* Name : DeviceExts)
         {
-            Request.DeviceExtensions.push_back(Name);
+            Request.DeviceExtensions.Add(Name);
         }
         RHI::Native::RegisterDeviceCreationRequest(Request);
 

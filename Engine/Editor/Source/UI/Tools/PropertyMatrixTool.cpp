@@ -55,7 +55,7 @@ namespace Lumina
 
         void CaptureValue(FProperty* Property, CObject* Object, TVector<uint8>& Out)
         {
-            Out.clear();
+            Out.Reset();
             FMemoryWriter Writer(Out);
             FObjectProxyArchiver Ar(Writer, false);
             Property->Serialize(Ar, Property->GetValuePtr<void>(Object));
@@ -63,7 +63,7 @@ namespace Lumina
 
         CClass* FindCommonClass(const TVector<CObject*>& Objects)
         {
-            CClass* Common = Objects.empty() ? nullptr : Objects.front()->GetClass();
+            CClass* Common = Objects.IsEmpty() ? nullptr : Objects[0]->GetClass();
             for (CObject* Object : Objects)
             {
                 while (Common != nullptr && !Object->GetClass()->IsChildOf(Common))
@@ -86,7 +86,7 @@ namespace Lumina
         {
             for (CObject* Target : Targets)
             {
-                Snapshots.push_back(MakeUnique<FObjectSnapshotCommand>(Target, InName));
+                Snapshots.Add(MakeUnique<FObjectSnapshotCommand>(Target, InName));
             }
         }
 
@@ -153,8 +153,8 @@ namespace Lumina
         {
             if (CObject* Object = CPackage::LoadAssetGraph(Asset))
             {
-                Objects.push_back(Object);
-                Rows.push_back(FRow{ Object });
+                Objects.Add(Object);
+                Rows.Emplace(Object);
             }
         }
 
@@ -165,10 +165,10 @@ namespace Lumina
             {
                 if (Property->IsVisible() && MakeInlinePropertyCustomization(Property) != nullptr)
                 {
-                    ColumnCandidates.push_back(Property);
+                    ColumnCandidates.Add(Property);
                 }
             }
-            ToolName = FName(Format("Property Matrix ({0} {1})", Rows.size(), CommonClass->MakeDisplayName().c_str()).c_str());
+            ToolName = FName(*Format("Property Matrix ({0} {1})", Rows.Num(), *CommonClass->MakeDisplayName()));
         }
 
         Algo::Sort(Rows, [](const FRow& A, const FRow& B) { return A.Object->GetName().ToString() < B.Object->GetName().ToString(); });
@@ -184,9 +184,9 @@ namespace Lumina
         Details.SetEditMultipleValues(true);
         Details.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
         {
-            if (!Selection.empty())
+            if (!Selection.IsEmpty())
             {
-                BeginEdit(Event.PropertyName, Selection, Selection.front(), nullptr);
+                BeginEdit(Event.PropertyName, Selection, Selection[0], nullptr);
             }
         });
         Details.SetPostEditCallback([this](const FPropertyChangedEvent&) { SpreadEdit(); });
@@ -196,7 +196,7 @@ namespace Lumina
         {
             return Algo::AnyOf(Selection, [this, Property](CObject* Object)
             {
-                return !Property->Identical_InContainer(Selection.front(), Object);
+                return !Property->Identical_InContainer(Selection[0], Object);
             });
         });
 
@@ -237,8 +237,8 @@ namespace Lumina
         ImGuiID DetailsDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.32f, &DetailsDockID, &GridDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(GridWindowName).c_str(), GridDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(DetailsWindowName).c_str(), DetailsDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(GridWindowName), GridDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(DetailsWindowName), DetailsDockID);
     }
 
     void FPropertyMatrixTool::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
@@ -258,7 +258,7 @@ namespace Lumina
         TVector<CPackage*> Packages;
         for (const FRow& Row : Rows)
         {
-            Packages.push_back(Row.Object->GetPackage());
+            Packages.Add(Row.Object->GetPackage());
         }
         ToolContext->SavePackages(Move(Packages));
     }
@@ -300,7 +300,7 @@ namespace Lumina
         for (FProperty* Property : ColumnCandidates)
         {
             const bool bPinned = Algo::Contains(Columns, Property);
-            if (ImGui::MenuItem(Property->GetPropertyDisplayName().c_str(), nullptr, bPinned))
+            if (ImGui::MenuItem(*Property->GetPropertyDisplayName(), nullptr, bPinned))
             {
                 TogglePinned(Property);
             }
@@ -318,7 +318,7 @@ namespace Lumina
         {
             for (FRow& Row : Rows)
             {
-                Row.bSelected = NameFilter.PassFilter(Row.Object->GetName().c_str());
+                Row.bSelected = NameFilter.PassFilter(*Row.Object->GetName());
             }
             RefreshSelection();
         }
@@ -333,22 +333,22 @@ namespace Lumina
             RefreshSelection();
         }
         ImGui::SameLine();
-        ImGui::TextColored(EditorColors::TextDim(), "%d of %d selected", (int32)Selection.size(), (int32)Rows.size());
+        ImGui::TextColored(EditorColors::TextDim(), "%d of %d selected", Selection.Num(), Rows.Num());
 
         TVector<int32> Visible;
-        Visible.reserve(Rows.size());
-        for (int32 Index = 0; Index < (int32)Rows.size(); ++Index)
+        Visible.Reserve(Rows.Num());
+        for (int32 Index = 0; Index < Rows.Num(); ++Index)
         {
-            if (NameFilter.PassFilter(Rows[Index].Object->GetName().c_str()))
+            if (NameFilter.PassFilter(*Rows[Index].Object->GetName()))
             {
-                Visible.push_back(Index);
+                Visible.Add(Index);
             }
         }
 
         constexpr ImGuiTableFlags TableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY
             | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit;
 
-        if (!ImGui::BeginTable("##Matrix", 1 + (int32)Columns.size(), TableFlags))
+        if (!ImGui::BeginTable("##Matrix", 1 + Columns.Num(), TableFlags))
         {
             return;
         }
@@ -359,7 +359,7 @@ namespace Lumina
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_DefaultSort);
         for (FProperty* Property : Columns)
         {
-            ImGui::TableSetupColumn(Property->GetPropertyDisplayName().c_str(), ImGuiTableColumnFlags_NoSort, 170.0f * Scale);
+            ImGui::TableSetupColumn(*Property->GetPropertyDisplayName(), ImGuiTableColumnFlags_NoSort, 170.0f * Scale);
         }
         ImGui::TableHeadersRow();
 
@@ -380,7 +380,7 @@ namespace Lumina
 
         ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
         ImGuiListClipper Clipper;
-        Clipper.Begin((int32)Visible.size());
+        Clipper.Begin(Visible.Num());
         while (Clipper.Step())
         {
             for (int32 Position = Clipper.DisplayStart; Position < Clipper.DisplayEnd; ++Position)
@@ -391,7 +391,7 @@ namespace Lumina
 
                 ImGui::TableSetColumnIndex(0);
                 constexpr ImGuiSelectableFlags RowFlags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick;
-                if (ImGui::Selectable(Row.Object->GetName().c_str(), Row.bSelected, RowFlags, ImVec2(0.0f, ImGui::GetFrameHeight())))
+                if (ImGui::Selectable(*Row.Object->GetName(), Row.bSelected, RowFlags, ImVec2(0.0f, ImGui::GetFrameHeight())))
                 {
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
@@ -405,10 +405,10 @@ namespace Lumina
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 {
-                    ImGuiX::TextTooltip("{0}", Row.Object->GetPackage() != nullptr ? Row.Object->GetPackage()->GetName().c_str() : "");
+                    ImGuiX::TextTooltip("{0}", Row.Object->GetPackage() != nullptr ? *Row.Object->GetPackage()->GetName() : "");
                 }
 
-                for (int32 Column = 0; Column < (int32)Columns.size(); ++Column)
+                for (int32 Column = 0; Column < Columns.Num(); ++Column)
                 {
                     ImGui::TableSetColumnIndex(1 + Column);
                     DrawCell(Row, Column);
@@ -438,7 +438,7 @@ namespace Lumina
             return;
         }
 
-        if (!Edit.has_value())
+        if (!Edit.IsSet())
         {
             TVector<CObject*> Targets = Row.bSelected ? Selection : TVector<CObject*>{ Row.Object.Get() };
             BeginEdit(Property->Name, Move(Targets), Row.Object.Get(), Property);
@@ -455,24 +455,24 @@ namespace Lumina
 
     void FPropertyMatrixTool::DrawDetails()
     {
-        if (Selection.empty())
+        if (Selection.IsEmpty())
         {
             ImGui::TextColored(EditorColors::TextDim(), "Select rows to edit them together.");
             return;
         }
 
-        if (Details.GetObject() != Selection.front())
+        if (Details.GetObject() != Selection[0])
         {
-            Details.SetObject(Selection.front(), CommonClass, CommonClass->GetDefaultObject());
+            Details.SetObject(Selection[0], CommonClass, CommonClass->GetDefaultObject());
         }
 
-        if (Selection.size() == 1)
+        if (Selection.Num() == 1)
         {
-            ImGui::TextColored(EditorColors::TextDim(), "Editing %s", Selection.front()->GetName().c_str());
+            ImGui::TextColored(EditorColors::TextDim(), "Editing %s", *Selection[0]->GetName());
         }
         else
         {
-            ImGui::TextColored(EditorColors::TextDim(), "Editing %d assets", (int32)Selection.size());
+            ImGui::TextColored(EditorColors::TextDim(), "Editing %d assets", Selection.Num());
         }
         Details.DrawTree();
     }
@@ -482,22 +482,22 @@ namespace Lumina
         CObject* Defaults = CommonClass != nullptr ? CommonClass->GetDefaultObject() : nullptr;
         for (FRow& Row : Rows)
         {
-            Row.Cells.clear();
+            Row.Cells.Reset();
             for (FProperty* Property : Columns)
             {
-                Row.Cells.push_back(FCell{ MakeShared<FPropertyHandle>(Row.Object.Get(), Defaults, Property), MakeInlinePropertyCustomization(Property) });
+                Row.Cells.Emplace(MakeShared<FPropertyHandle>(Row.Object.Get(), Defaults, Property), MakeInlinePropertyCustomization(Property));
             }
         }
     }
 
     void FPropertyMatrixTool::RefreshSelection()
     {
-        Selection.clear();
+        Selection.Reset();
         for (const FRow& Row : Rows)
         {
             if (Row.bSelected)
             {
-                Selection.push_back(Row.Object.Get());
+                Selection.Add(Row.Object.Get());
             }
         }
     }
@@ -509,17 +509,17 @@ namespace Lumina
         {
             const bool bDiffers = Algo::AnyOf(Rows, [&](const FRow& Row)
             {
-                return !Property->Identical_InContainer(Rows.front().Object.Get(), Row.Object.Get());
+                return !Property->Identical_InContainer(Rows[0].Object.Get(), Row.Object.Get());
             });
-            if (bDiffers && (int32)Columns.size() < kMaxDefaultColumns)
+            if (bDiffers && Columns.Num() < kMaxDefaultColumns)
             {
-                Columns.push_back(Property);
+                Columns.Add(Property);
             }
         }
 
-        for (int32 Index = 0; Columns.empty() && Index < (int32)ColumnCandidates.size() && Index < kFallbackColumns; ++Index)
+        for (int32 Index = 0; Columns.IsEmpty() && Index < ColumnCandidates.Num() && Index < kFallbackColumns; ++Index)
         {
-            Columns.push_back(ColumnCandidates[Index]);
+            Columns.Add(ColumnCandidates[Index]);
         }
         RebuildCells();
     }
@@ -528,11 +528,11 @@ namespace Lumina
     {
         if (Algo::Contains(Columns, Property))
         {
-            Columns.erase(Algo::Remove(Columns, Property), Columns.end());
+            Columns.Remove(Property);
         }
         else
         {
-            Columns.push_back(Property);
+            Columns.Add(Property);
         }
         RebuildCells();
     }
@@ -545,7 +545,7 @@ namespace Lumina
         };
         if (Algo::AnyOf(Rows, IsGone))
         {
-            Rows.erase(Algo::RemoveIf(Rows, IsGone), Rows.end());
+            Rows.RemoveAll(IsGone);
             RefreshSelection();
             Details.SetObject(nullptr, nullptr);
         }
@@ -589,7 +589,7 @@ namespace Lumina
 
     void FPropertyMatrixTool::BeginEdit(FName Label, TVector<CObject*> Targets, CObject* Source, FProperty* Property)
     {
-        FBulkEdit& Open = Edit.emplace();
+        FBulkEdit& Open = Edit.Emplace();
         Open.Targets = Move(Targets);
         Open.Source = Source;
         Open.Property = Property;
@@ -598,7 +598,7 @@ namespace Lumina
         {
             for (FProperty* Candidate : CommonClass->GetProperties())
             {
-                CaptureValue(Candidate, Source, Open.SourceBaseline.emplace_back());
+                CaptureValue(Candidate, Source, Open.SourceBaseline.EmplaceGetRef());
             }
         }
 
@@ -612,7 +612,7 @@ namespace Lumina
 
     void FPropertyMatrixTool::SpreadEdit()
     {
-        if (!Edit.has_value())
+        if (!Edit.IsSet())
         {
             return;
         }
@@ -639,14 +639,14 @@ namespace Lumina
 
     void FPropertyMatrixTool::FinishEdit()
     {
-        if (!Edit.has_value())
+        if (!Edit.IsSet())
         {
             return;
         }
 
         const TVector<CObject*> Targets = Move(Edit->Targets);
         FProperty* Property = Edit->Property;
-        Edit.reset();
+        Edit.Reset();
 
         TransactionManager.CommitTransaction();
         if (Property == nullptr)
@@ -673,7 +673,7 @@ namespace Lumina
     {
         TVector<uint8> Current;
         const TSpan<FProperty* const> Properties = CommonClass->GetProperties();
-        for (int32 Index = 0; Index < (int32)Properties.size(); ++Index)
+        for (int32 Index = 0; Index < Properties.Num(); ++Index)
         {
             CaptureValue(Properties[Index], Edit->Source, Current);
             if (Current != Edit->SourceBaseline[Index])

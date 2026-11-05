@@ -75,7 +75,7 @@ namespace Lumina
         // ImGui draws through the 2D table and would read an array descriptor as 2D, showing an error square.
         if (Texture->IsA<CTextureArray>())
         {
-            ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.64f, 1.0f), "%s (array)", Texture->GetName().c_str());
+            ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.64f, 1.0f), "%s (array)", *Texture->GetName());
             return;
         }
 

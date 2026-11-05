@@ -12,7 +12,6 @@ namespace Lumina
         static_assert(sizeof(void*) == sizeof(SRWLOCK), "FMutex stores an SRWLOCK in its handle slot.");
         static_assert(sizeof(void*) == sizeof(CONDITION_VARIABLE),
                       "FConditionVariable stores a CONDITION_VARIABLE in its handle slot.");
-
     }
 
     void FMutex::Lock() noexcept

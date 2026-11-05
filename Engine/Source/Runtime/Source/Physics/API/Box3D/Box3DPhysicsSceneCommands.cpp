@@ -4,7 +4,7 @@
 #include "Box3DRagdollHandle.h"
 #include "Box3DUtils.h"
 #include "World/Entity/Components/PhysicsComponent.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "World/World.h"
 
 namespace Lumina::Physics
@@ -24,7 +24,7 @@ namespace Lumina::Physics
     SPhysicsBodyTarget FBox3DPhysicsScene::MakeBodyTarget(uint32 Handle) const
     {
         SPhysicsBodyTarget Target;
-        if (Handle < BodyHandles.size() && b3Body_IsValid(BodyHandles[Handle]))
+        if (Handle < static_cast<uint32>(BodyHandles.Num()) && b3Body_IsValid(BodyHandles[Handle]))
         {
             Target.Scene = SceneIdentity;
             Target.Slot = Handle;
@@ -35,7 +35,7 @@ namespace Lumina::Physics
 
     b3BodyId FBox3DPhysicsScene::ResolveTarget(const SPhysicsBodyTarget& Target) const
     {
-        if (Target.Scene != SceneIdentity || Target.Slot >= BodyHandles.size()
+        if (Target.Scene != SceneIdentity || Target.Slot >= static_cast<uint32>(BodyHandles.Num())
             || BodyGenerations[Target.Slot] != Target.Generation)
         {
             return b3_nullBodyId;
@@ -92,35 +92,35 @@ namespace Lumina::Physics
             Command.Revision = Record != nullptr ? Record->Revision : 0;
         }
 
-        const uint32 Slot = Jobs::GetWorkerIndex();
-        if (Slot < (uint32)ThreadBodyCommands.size())
+        const uint32 Slot = Jobs::GetThreadSlot();
+        if (Slot < (uint32)ThreadBodyCommands.Num())
         {
-            ThreadBodyCommands[Slot].push_back(Command);
+            ThreadBodyCommands[Slot].Add(Command);
             return;
         }
         FScopeLock Lock(BodyCommandMutex);
-        OverflowBodyCommands.push_back(Command);
+        OverflowBodyCommands.Add(Command);
     }
 
     void FBox3DPhysicsScene::ApplyBodyCommands()
     {
-        BodyCommandScratch.clear();
+        BodyCommandScratch.Reset();
         // Swapped out first, since a command such as buoyancy can queue more while it applies.
         const auto Drain = [this](TVector<FBodyCommand>& Commands)
         {
-            DrainBodyCommands.clear();
-            DrainBodyCommands.swap(Commands);
+            DrainBodyCommands.Reset();
+            swap(DrainBodyCommands, Commands);
             for (const FBodyCommand& Command : DrainBodyCommands)
             {
                 if (ApplyBodyCommand(Command) == EBodyCommandResult::Waiting)
                 {
-                    BodyCommandScratch.push_back(Command);
+                    BodyCommandScratch.Add(Command);
                 }
             }
-            if (Commands.empty())
+            if (Commands.IsEmpty())
             {
-                DrainBodyCommands.clear();
-                Commands.swap(DrainBodyCommands);
+                DrainBodyCommands.Reset();
+                swap(Commands, DrainBodyCommands);
             }
         };
 
@@ -134,7 +134,7 @@ namespace Lumina::Physics
             FScopeLock Lock(BodyCommandMutex);
             Drain(OverflowBodyCommands);
         }
-        WaitingBodyCommands.swap(BodyCommandScratch);
+        swap(WaitingBodyCommands, BodyCommandScratch);
     }
 
     FBox3DPhysicsScene::EBodyCommandResult FBox3DPhysicsScene::ApplyBodyCommand(const FBodyCommand& Command)

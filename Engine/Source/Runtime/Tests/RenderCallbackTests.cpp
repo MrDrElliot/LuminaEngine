@@ -35,7 +35,7 @@ namespace
 
         FRenderCallbackHandle AddLogger(ERenderStage Stages, const char* Name)
         {
-            return List.Add(Stages, [this, Name](FRenderContext&) { Log.push_back(Name); }, FName(Name));
+            return List.Add(Stages, [this, Name](FRenderContext&) { Log.Add(Name); }, FName(Name));
         }
     };
 }
@@ -49,13 +49,13 @@ TEST(RenderCallbacks, RunOnlyForTheirStagesInRegistrationOrder)
     Rig.AddLogger(ERenderStage::AfterOpaque, "Second");
 
     Rig.Run(ERenderStage::AfterOpaque);
-    ASSERT_EQ(Rig.Log.size(), 2u);
+    ASSERT_EQ(Rig.Log.Num(), 2);
     EXPECT_EQ(Rig.Log[0], "First");
     EXPECT_EQ(Rig.Log[1], "Second");
 
-    Rig.Log.clear();
+    Rig.Log.Reset();
     Rig.Run(ERenderStage::FrameStart);
-    EXPECT_TRUE(Rig.Log.empty());
+    EXPECT_TRUE(Rig.Log.IsEmpty());
 }
 
 // One registration may cover several stages, and the context says which one is running.
@@ -64,7 +64,7 @@ TEST(RenderCallbacks, OneCallbackServesSeveralStages)
     FCallbackRig Rig;
     TVector<ERenderStage> Seen;
     Rig.List.Add(ERenderStage::Depth | ERenderStage::ShadowDepth,
-        [&Seen](FRenderContext& Context) { Seen.push_back(Context.Stage); }, FName("Geometry"));
+        [&Seen](FRenderContext& Context) { Seen.Add(Context.Stage); }, FName("Geometry"));
 
     EXPECT_TRUE(Rig.List.HasAny(ERenderStage::Depth));
     EXPECT_TRUE(Rig.List.HasAny(ERenderStage::ShadowDepth));
@@ -72,7 +72,7 @@ TEST(RenderCallbacks, OneCallbackServesSeveralStages)
 
     Rig.Run(ERenderStage::Depth);
     Rig.Run(ERenderStage::ShadowDepth);
-    ASSERT_EQ(Seen.size(), 2u);
+    ASSERT_EQ(Seen.Num(), 2);
     EXPECT_EQ(Seen[0], ERenderStage::Depth);
     EXPECT_EQ(Seen[1], ERenderStage::ShadowDepth);
 }
@@ -89,7 +89,7 @@ TEST(RenderCallbacks, RemovedCallbacksStopAndReleaseTheirStage)
     EXPECT_FALSE(Rig.List.HasAny(ERenderStage::Overlay));
 
     Rig.Run(ERenderStage::Overlay);
-    EXPECT_TRUE(Rig.Log.empty());
+    EXPECT_TRUE(Rig.Log.IsEmpty());
 }
 
 // A callback may remove itself or a later one mid-invoke, and the later one does not run.
@@ -101,14 +101,14 @@ TEST(RenderCallbacks, RemovalFromInsideACallbackIsSafe)
 
     Self = Rig.List.Add(ERenderStage::AfterOpaque, [&](FRenderContext&)
     {
-        Rig.Log.push_back("Self");
+        Rig.Log.Add("Self");
         Rig.List.Remove(Self);
         Rig.List.Remove(Later);
     }, FName("Self"));
     Later = Rig.AddLogger(ERenderStage::AfterOpaque, "Later");
 
     Rig.Run(ERenderStage::AfterOpaque);
-    ASSERT_EQ(Rig.Log.size(), 1u);
+    ASSERT_EQ(Rig.Log.Num(), 1);
     EXPECT_EQ(Rig.Log[0], "Self");
     EXPECT_FALSE(Rig.List.HasAny(ERenderStage::AfterOpaque));
 }
@@ -120,7 +120,7 @@ TEST(RenderCallbacks, AddFromInsideACallbackRunsNextTime)
     bool bAdded = false;
     Rig.List.Add(ERenderStage::AfterOpaque, [&](FRenderContext&)
     {
-        Rig.Log.push_back("Outer");
+        Rig.Log.Add("Outer");
         if (!bAdded)
         {
             bAdded = true;
@@ -129,11 +129,11 @@ TEST(RenderCallbacks, AddFromInsideACallbackRunsNextTime)
     }, FName("Outer"));
 
     Rig.Run(ERenderStage::AfterOpaque);
-    ASSERT_EQ(Rig.Log.size(), 1u);
+    ASSERT_EQ(Rig.Log.Num(), 1);
 
-    Rig.Log.clear();
+    Rig.Log.Reset();
     Rig.Run(ERenderStage::AfterOpaque);
-    ASSERT_EQ(Rig.Log.size(), 2u);
+    ASSERT_EQ(Rig.Log.Num(), 2);
     EXPECT_EQ(Rig.Log[0], "Outer");
     EXPECT_EQ(Rig.Log[1], "Inner");
 }

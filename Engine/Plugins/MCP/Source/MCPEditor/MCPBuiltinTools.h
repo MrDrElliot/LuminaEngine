@@ -18,22 +18,20 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Name of the loaded project, or empty when the editor has none open. */
+        // Empty when the editor has no project open.
         PROPERTY()
         FString ProjectName;
 
-        /** Directory the loaded project lives in. */
         PROPERTY()
         FString ProjectPath;
 
-        /** Whether a project is open, which most other tools need before they can do anything. */
+        // Most other tools need a project open.
         PROPERTY()
         bool bHasProject = false;
     };
 
     namespace MCP
     {
-        // Registers the tools this plugin owns. Anything else may add its own to the same registry.
         void RegisterBuiltinTools(FStringView Owner);
     }
 }

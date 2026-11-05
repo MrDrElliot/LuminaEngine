@@ -18,35 +18,35 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPTerrainToolsInternal
     {
-        bool IsPowerOfTwoPlusOne(int32 Value)
+        bool IsValidTerrainResolution(int32 Value)
         {
             const int32 Quads = Value - 1;
             return Quads >= 32 && (Quads & (Quads - 1)) == 0;
         }
 
         // Nearest-sampled onto the terrain grid, so any image size works and a matching size is exact.
-        bool ImportLayerWeights(STerrainComponent& Terrain, const TVector<FString>& Paths, FString& OutError)
+        bool ImportTerrainLayerWeights(STerrainComponent& Terrain, const TVector<FString>& Paths, FString& OutError)
         {
-            if (Paths.empty())
+            if (Paths.IsEmpty())
             {
                 return true;
             }
 
-            while (Terrain.Layers.size() < Paths.size())
+            while (Terrain.Layers.Num() < Paths.Num())
             {
-                Terrain.Layers.emplace_back().Name = Lumina::Format("Layer {}", Terrain.Layers.size());
+                Terrain.Layers.EmplaceGetRef().Name = Lumina::Format("Layer {}", Terrain.Layers.Num());
             }
 
             const int32 Res = Terrain.Resolution;
             const size_t Samples = (size_t)Res * (size_t)Res;
-            Terrain.LayerWeights.assign(Samples * Terrain.Layers.size(), uint8(0));
+            Terrain.LayerWeights.Init(uint8(0), IntCastChecked<int32>(Samples * Terrain.Layers.Num()));
 
-            for (size_t Layer = 0; Layer < Paths.size(); ++Layer)
+            for (int32 Layer = 0; Layer < Paths.Num(); ++Layer)
             {
                 TOptional<Import::Textures::FTextureImportResult> Image = Import::Textures::ImportTexture(FStringView(Paths[Layer]), false);
-                if (!Image.has_value() || Image->Dimensions.x == 0 || Image->Dimensions.y == 0)
+                if (!Image.IsSet() || Image->Dimensions.x == 0 || Image->Dimensions.y == 0)
                 {
                     OutError = Lumina::Format("Could not read the weightmap '{}'.", Paths[Layer]);
                     return false;
@@ -54,7 +54,7 @@ namespace Lumina::MCP
 
                 const uint32 Width = Image->Dimensions.x;
                 const uint32 Height = Image->Dimensions.y;
-                const size_t TexelBytes = Image->Pixels.size() / ((size_t)Width * Height);
+                const int64 TexelBytes = Image->Pixels.Num() / (static_cast<int64>(Width) * Height);
                 const bool b16Bit = Image->Format == EFormat::R16_UNORM || Image->Format == EFormat::RG16_UNORM || Image->Format == EFormat::RGBA16_UNORM;
                 if (TexelBytes == 0)
                 {
@@ -63,15 +63,15 @@ namespace Lumina::MCP
                 }
 
                 // Little-endian, so a 16-bit sample's high byte is the second one.
-                const size_t ByteOffset = b16Bit ? 1 : 0;
-                uint8* Out = Terrain.LayerWeights.data() + Layer * Samples;
+                const int64 ByteOffset = b16Bit ? 1 : 0;
+                uint8* Out = Terrain.LayerWeights.GetData() + Layer * Samples;
                 for (int32 Z = 0; Z < Res; ++Z)
                 {
                     const uint32 SrcY = Math::Min((uint32)((uint64)Z * Height / Res), Height - 1);
                     for (int32 X = 0; X < Res; ++X)
                     {
                         const uint32 SrcX = Math::Min((uint32)((uint64)X * Width / Res), Width - 1);
-                        Out[(size_t)Z * Res + X] = Image->Pixels[((size_t)SrcY * Width + SrcX) * TexelBytes + ByteOffset];
+                        Out[Z * Res + X] = Image->Pixels[(static_cast<int64>(SrcY) * Width + SrcX) * TexelBytes + ByteOffset];
                     }
                 }
             }
@@ -80,7 +80,45 @@ namespace Lumina::MCP
             return true;
         }
 
-        void RegisterCreateTerrain(FStringView Owner)
+        // Little-endian stream over a whole file, which reports overruns instead of reading past the end.
+        class FFoliageFileReader
+        {
+        public:
+            explicit FFoliageFileReader(const TVector<uint8>& InData) : Data(InData) {}
+
+            template<typename T>
+            bool Read(T& Out)
+            {
+                if (Offset + sizeof(T) > static_cast<size_t>(Data.Num()))
+                {
+                    return false;
+                }
+                Memory::Memcpy(&Out, Data.GetData() + Offset, sizeof(T));
+                Offset += sizeof(T);
+                return true;
+            }
+
+            bool ReadString(FString& Out, uint16 Length)
+            {
+                if (Offset + Length > static_cast<size_t>(Data.Num()))
+                {
+                    return false;
+                }
+                Out = FStringView(reinterpret_cast<const char*>(Data.GetData()) + Offset, Length);
+                Offset += Length;
+                return true;
+            }
+
+        private:
+            const TVector<uint8>& Data;
+            size_t Offset = 0;
+        };
+
+        constexpr uint32 GFoliageFileMagic   = 0x4C4F464Cu;
+        constexpr uint32 GFoliageFileVersion = 1u;
+        constexpr int32  GFoliageInstanceFloats = 10;
+
+        void RegisterTerrainCreate(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SCreateTerrainParams, SCreateTerrainResult>(
                 Owner, "terrain.create",
@@ -88,7 +126,7 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateTerrainParams& In, SCreateTerrainResult& Out)
                 {
-                    if (!IsPowerOfTwoPlusOne(In.Resolution))
+                    if (!IsValidTerrainResolution(In.Resolution))
                     {
                         return Agent::FToolResult::Error("Resolution must be a power of two plus one, at least 33.");
                     }
@@ -116,9 +154,9 @@ namespace Lumina::MCP
                             return;
                         }
 
-                        if (SNameComponent* Name = World->TryGetComponent<SNameComponent>(Created); Name != nullptr && !In.Name.empty())
+                        if (SNameComponent* Name = World->TryGetComponent<SNameComponent>(Created); Name != nullptr && !In.Name.IsEmpty())
                         {
-                            Name->Name = FName(In.Name.c_str());
+                            Name->Name = FName(*In.Name);
                         }
                         World->SetEntityLocation(Created, FVector3(In.Center.X, In.Center.Y, In.Center.Z));
 
@@ -129,16 +167,16 @@ namespace Lumina::MCP
 
                         // Weights are sized to the grid, and the import only replaces heights.
                         const size_t Samples = (size_t)In.Resolution * (size_t)In.Resolution;
-                        Terrain.LayerWeights.assign(Samples * Terrain.Layers.size(), uint8(0));
+                        Terrain.LayerWeights.Init(uint8(0), IntCastChecked<int32>(Samples * Terrain.Layers.Num()));
                         Terrain.CPUState.bFullWeightsDirty = true;
 
-                        if (!FTerrainEditMode::ImportHeightmap(Terrain, In.HeightmapPath.c_str(), ImportError,
+                        if (!FTerrainEditMode::ImportHeightmap(Terrain, *In.HeightmapPath, ImportError,
                                                                Out.SourceWidth, Out.SourceHeight))
                         {
                             return;
                         }
 
-                        if (!ImportLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
+                        if (!ImportTerrainLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
                         {
                             return;
                         }
@@ -154,9 +192,9 @@ namespace Lumina::MCP
 
                     if (Created == ECS::NullEntity)
                     {
-                        return Agent::FToolResult::Error(SceneError.empty() ? FString("The world refused to create the terrain.") : SceneError);
+                        return Agent::FToolResult::Error(SceneError.IsEmpty() ? FString("The world refused to create the terrain.") : SceneError);
                     }
-                    if (!ImportError.empty())
+                    if (!ImportError.IsEmpty())
                     {
                         World->DestroyEntity(Created);
                         return Agent::FToolResult::Error(ImportError);
@@ -168,48 +206,10 @@ namespace Lumina::MCP
                 });
         }
 
-        // Little-endian stream over a whole file, which reports overruns instead of reading past the end.
-        class FByteReader
-        {
-        public:
-            explicit FByteReader(const TVector<uint8>& InData) : Data(InData) {}
-
-            template<typename T>
-            bool Read(T& Out)
-            {
-                if (Offset + sizeof(T) > Data.size())
-                {
-                    return false;
-                }
-                Memory::Memcpy(&Out, Data.data() + Offset, sizeof(T));
-                Offset += sizeof(T);
-                return true;
-            }
-
-            bool ReadString(FString& Out, uint16 Length)
-            {
-                if (Offset + Length > Data.size())
-                {
-                    return false;
-                }
-                Out.assign(reinterpret_cast<const char*>(Data.data()) + Offset, Length);
-                Offset += Length;
-                return true;
-            }
-
-        private:
-            const TVector<uint8>& Data;
-            size_t Offset = 0;
-        };
-
-        constexpr uint32 GFoliageFileMagic   = 0x4C4F464Cu;
-        constexpr uint32 GFoliageFileVersion = 1u;
-        constexpr int32  GFoliageInstanceFloats = 10;
-
-        void RegisterImportFoliage(FStringView Owner)
+        void RegisterTerrainImportFoliage(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SImportFoliageParams, SImportFoliageResult>(
-                Owner, "foliage.import",
+                Owner, "terrain.import_foliage",
                 "Create a foliage entity from a LFOL file of mesh types and world-space instances.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SImportFoliageParams& In, SImportFoliageResult& Out)
@@ -220,7 +220,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("Could not read '{}'.", In.Path));
                     }
 
-                    FByteReader Reader(Bytes);
+                    FFoliageFileReader Reader(Bytes);
                     uint32 Magic = 0, Version = 0, TypeCount = 0, InstanceCount = 0;
                     if (!Reader.Read(Magic) || !Reader.Read(Version) || !Reader.Read(TypeCount) || !Reader.Read(InstanceCount)
                         || Magic != GFoliageFileMagic || Version != GFoliageFileVersion)
@@ -254,12 +254,12 @@ namespace Lumina::MCP
                         CStaticMesh* Mesh = Agent::ResolveAssetObject(FStringView(MeshPath), Object, Ignored) ? Cast<CStaticMesh>(Object) : nullptr;
                         if (Mesh == nullptr)
                         {
-                            Out.MissingMeshes.push_back(MeshPath);
+                            Out.MissingMeshes.Add(MeshPath);
                             continue;
                         }
 
-                        Remap[t] = (int32)Types.size();
-                        SFoliageType& Type = Types.emplace_back();
+                        Remap[t] = Types.Num();
+                        SFoliageType& Type = Types.EmplaceGetRef();
                         Type.Name           = Mesh->GetName().ToString();
                         Type.Mesh           = Mesh;
                         Type.bCastShadow    = bCastShadow != 0;
@@ -269,7 +269,7 @@ namespace Lumina::MCP
                     }
 
                     TVector<SFoliageInstance> Instances;
-                    Instances.reserve(InstanceCount);
+                    Instances.Reserve(InstanceCount);
                     for (uint32 i = 0; i < InstanceCount; ++i)
                     {
                         float V[GFoliageInstanceFloats];
@@ -290,14 +290,14 @@ namespace Lumina::MCP
                             continue;
                         }
 
-                        SFoliageInstance& Instance = Instances.emplace_back();
+                        SFoliageInstance& Instance = Instances.EmplaceGetRef();
                         Instance.Position  = FVector3(V[0], V[1], V[2]);
                         Instance.Rotation  = FVector4(V[3], V[4], V[5], V[6]);
                         Instance.Scale     = FVector3(V[7], V[8], V[9]);
                         Instance.TypeIndex = Remap[TypeIndex];
                     }
 
-                    const FName EntityName(In.Name.empty() ? "Foliage" : In.Name.c_str());
+                    const FName EntityName(In.Name.IsEmpty() ? "Foliage" : *In.Name);
                     ECS::FEntity Created = ECS::NullEntity;
 
                     // Transacted like any other creation, so the level is marked dirty and the import survives a save.
@@ -309,7 +309,7 @@ namespace Lumina::MCP
                             const SNameComponent* Name = World->TryGetComponent<SNameComponent>(Entity);
                             if (Name != nullptr && Name->Name == EntityName)
                             {
-                                Stale.push_back(Entity);
+                                Stale.Add(Entity);
                             }
                         });
                         for (ECS::FEntity Entity : Stale)
@@ -326,22 +326,24 @@ namespace Lumina::MCP
 
                     if (Created == ECS::NullEntity)
                     {
-                        return Agent::FToolResult::Error(SceneError.empty() ? FString("The world refused to create the foliage.") : SceneError);
+                        return Agent::FToolResult::Error(SceneError.IsEmpty() ? FString("The world refused to create the foliage.") : SceneError);
                     }
 
                     const SFoliageComponent& Foliage = World->GetComponent<SFoliageComponent>(Created);
                     Out.Entity    = Agent::FEntityTokens::Mint(*Registry, Created);
-                    Out.Types     = (int32)Foliage.Types.size();
-                    Out.Instances = (int32)Foliage.Instances.size();
+                    Out.Types     = Foliage.Types.Num();
+                    Out.Instances = Foliage.Instances.Num();
                     return Agent::FToolResult::Ok(Lumina::Format("Imported {} instances of {} meshes into '{}'; {} mesh path(s) did not resolve.",
-                        Out.Instances, Out.Types, In.Name, Out.MissingMeshes.size()));
+                        Out.Instances, Out.Types, In.Name, Out.MissingMeshes.Num()));
                 });
         }
     }
 
+    using namespace MCPTerrainToolsInternal;
+
     void RegisterTerrainTools(FStringView Owner)
     {
-        RegisterCreateTerrain(Owner);
-        RegisterImportFoliage(Owner);
+        RegisterTerrainCreate(Owner);
+        RegisterTerrainImportFoliage(Owner);
     }
 }

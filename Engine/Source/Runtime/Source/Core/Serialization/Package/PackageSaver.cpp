@@ -19,12 +19,12 @@ namespace Lumina
             return false;
         }
 
-        if (!SeenExports.insert(Export).second)
+        if (!SeenExports.TryAdd(Export))
         {
             return false;
         }
 
-        Exports.push_back(Export);
+        Exports.Add(Export);
         return true;
     }
 
@@ -77,21 +77,21 @@ namespace Lumina
         {
             if (Value->GetPackage() == Package)
             {
-                if (SavedExports == nullptr || SavedExports->contains(Value))
+                if (SavedExports == nullptr || SavedExports->Contains(Value))
                 {
                     Index = FObjectPackageIndex((int32)Value->GetLoaderIndex());
                 }
             }
             else
             {
-                if (ObjectToIndexMap.find(Value) != ObjectToIndexMap.end())
+                if (const uint32* Existing = ObjectToIndexMap.Find(Value))
                 {
-                    Index = FObjectPackageIndex::FromImport(ObjectToIndexMap[Value]);
+                    Index = FObjectPackageIndex::FromImport(*Existing);
                 }
                 else
                 {
                     Index = FObjectPackageIndex::FromImport(CurrentImportIndex);
-                    ObjectToIndexMap.emplace(Value, CurrentImportIndex);
+                    ObjectToIndexMap.TryAdd(Value, CurrentImportIndex);
                     CurrentImportIndex++;
                 }
             }
@@ -110,21 +110,21 @@ namespace Lumina
         {
             if (Obj->GetPackage() == Package)
             {
-                if (SavedExports == nullptr || SavedExports->contains(Obj))
+                if (SavedExports == nullptr || SavedExports->Contains(Obj))
                 {
                     Index = FObjectPackageIndex((int32)Obj->GetLoaderIndex());
                 }
             }
             else
             {
-                if (ObjectToIndexMap.find(Obj) != ObjectToIndexMap.end())
+                if (const uint32* Existing = ObjectToIndexMap.Find(Obj))
                 {
-                    Index = FObjectPackageIndex::FromImport(ObjectToIndexMap[Obj]);
+                    Index = FObjectPackageIndex::FromImport(*Existing);
                 }
                 else
                 {
                     Index = FObjectPackageIndex::FromImport(CurrentImportIndex);
-                    ObjectToIndexMap.emplace(Obj, CurrentImportIndex);
+                    ObjectToIndexMap.TryAdd(Obj, CurrentImportIndex);
                     CurrentImportIndex++;
                 }
             }
@@ -141,20 +141,21 @@ namespace Lumina
         {
             return;
         }
-        SoftReferencedGUIDs.insert(AssetGUID);
+        SoftReferencedGUIDs.Add(AssetGUID);
 
-        for (FStringView Rest = CurrentBundles; !Rest.empty();)
+        for (FStringView Rest = CurrentBundles; !Rest.IsEmpty();)
         {
-            const size_t Comma = Rest.find(',');
-            FStringView Name = Rest.substr(0, Comma);
-            Rest = Comma == FStringView::npos ? FStringView() : Rest.substr(Comma + 1);
-            Name.remove_prefix(Math::Min(Name.find_first_not_of(' '), Name.size()));
-            Name.remove_suffix(Name.size() - Math::Min(Name.find_last_not_of(' ') + 1, Name.size()));
-            const FName Bundle = Name.empty() ? FName() : FName(Name);
+            const int32 Comma = Rest.Find(',');
+            FStringView Name = Comma == Constants::kIndexNone ? Rest : Rest.Left(Comma);
+            Rest = Comma == Constants::kIndexNone ? FStringView() : Rest.Mid(Comma + 1);
+            const int32 FirstChar = Name.FindFirstNotOf(" ");
+            Name.RemovePrefix(FirstChar == Constants::kIndexNone ? Name.Len() : FirstChar);
+            Name.RemoveSuffix(Name.Len() - Math::Min(Name.FindLastNotOf(" ") + 1, Name.Len()));
+            const FName Bundle = Name.IsEmpty() ? FName() : FName(Name);
             TVector<FName>& Bundles = SoftReferenceBundles[AssetGUID];
             if (!Bundle.IsNone() && !Algo::Contains(Bundles, Bundle))
             {
-                Bundles.push_back(Bundle);
+                Bundles.Add(Bundle);
             }
         }
     }
@@ -190,11 +191,11 @@ namespace Lumina
             return false;
         }
 
-        OutRef.Offset = (int64)BulkBytes.size();
+        OutRef.Offset = BulkBytes.Num();
         OutRef.Size   = Size;
 
-        BulkBytes.resize(BulkBytes.size() + (size_t)Size);
-        Memory::Memcpy(BulkBytes.data() + (size_t)OutRef.Offset, Data, (size_t)Size);
+        BulkBytes.SetNum(IntCastChecked<int32>(BulkBytes.Num() + (size_t)Size));
+        Memory::Memcpy(BulkBytes.GetData() + (size_t)OutRef.Offset, Data, (size_t)Size);
 
         return true;
     }
@@ -209,39 +210,39 @@ namespace Lumina
 
     void FPackageSaver::PopulateImportTable(TVector<FObjectImport>& Out) const
     {
-        Out.clear();
+        Out.Reset();
 
         // Hard imports keep their write-time slots so FObjectPackageIndex refs stay valid.
-        Out.resize(CurrentImportIndex);
+        Out.SetNum(CurrentImportIndex);
         THashSet<FGuid> HardGUIDs;
-        HardGUIDs.reserve(ObjectToIndexMap.size());
+        HardGUIDs.Reserve(ObjectToIndexMap.Num());
         for (const auto& [Obj, Idx] : ObjectToIndexMap)
         {
             FObjectImport Entry(Obj);
             Entry.Type = EDependencyType::Hard;
-            HardGUIDs.insert(Entry.ObjectGUID);
+            HardGUIDs.Add(Entry.ObjectGUID);
             Out[Idx] = Move(Entry);
         }
 
         // Sorted first, since hash-set order would break determinism.
         TVector<FGuid> SortedSoft;
-        SortedSoft.reserve(SoftReferencedGUIDs.size());
+        SortedSoft.Reserve(SoftReferencedGUIDs.Num());
         for (const FGuid& Guid : SoftReferencedGUIDs)
         {
-            if (HardGUIDs.find(Guid) != HardGUIDs.end()) continue;
-            SortedSoft.push_back(Guid);
+            if (HardGUIDs.Contains(Guid)) continue;
+            SortedSoft.Add(Guid);
         }
         Algo::Sort(SortedSoft);
         for (const FGuid& Guid : SortedSoft)
         {
-            Out.emplace_back(Guid, EDependencyType::Soft);
+            Out.Emplace(Guid, EDependencyType::Soft);
         }
 
         for (FObjectImport& Import : Out)
         {
-            if (auto It = SoftReferenceBundles.find(Import.ObjectGUID); It != SoftReferenceBundles.end())
+            if (auto It = SoftReferenceBundles.Find(Import.ObjectGUID); It != nullptr)
             {
-                Import.Bundles = It->second;
+                Import.Bundles = (*It);
             }
         }
     }

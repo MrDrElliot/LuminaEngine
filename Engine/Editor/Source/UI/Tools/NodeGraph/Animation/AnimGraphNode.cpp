@@ -67,7 +67,7 @@ namespace Lumina
         SAnimGraphPinDefault NewEntry;
         NewEntry.PinName = Key;
         NewEntry.Value   = Value;
-        PinDefaults.push_back(NewEntry);
+        PinDefaults.Add(NewEntry);
     }
 
     void CAnimGraphNode::MarkGraphDirty()
@@ -117,7 +117,7 @@ namespace Lumina
         // The list is drawn by the graph, since a popup window cannot open from inside the zoomed canvas.
         Pin->InlineEditor = [this, Items, Get, Set]()
         {
-            const int Count = (int)Items.size();
+            const int Count = Items.Num();
             if (Count == 0)
             {
                 return;
@@ -140,10 +140,10 @@ namespace Lumina
             if (bClicked && GetOwningGraph() != nullptr)
             {
                 TVector<FString> Choices;
-                Choices.reserve(Count);
+                Choices.Reserve(Count);
                 for (const char* Item : Items)
                 {
-                    Choices.emplace_back(Item);
+                    Choices.Emplace(Item);
                 }
                 GetOwningGraph()->OpenChoicePopup(this, std::move(Choices), Current, [this, Set](int32 Chosen)
                 {
@@ -220,9 +220,9 @@ namespace Lumina
     {
         if (View != nullptr)
         {
-            if (TOptional<float> Live = View->ReadPin(Pin); Live.has_value())
+            if (TOptional<float> Live = View->ReadPin(Pin); Live.IsSet())
             {
-                return Live.value();
+                return Live.GetValue();
             }
         }
         return GetValuePinDefault(Pin);

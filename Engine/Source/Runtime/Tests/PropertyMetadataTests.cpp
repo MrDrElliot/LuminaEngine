@@ -43,9 +43,9 @@ TEST(PropertyMetadata, AnythingButANumberReadsAsUnset)
 {
     const FFloatProperty Property(GClampedDesc);
 
-    EXPECT_FALSE(Property.GetMetadataNumber("Delta").has_value());
-    EXPECT_FALSE(Property.GetMetadataNumber("Units").has_value());
-    EXPECT_FALSE(Property.GetMetadataNumber("Missing").has_value());
+    EXPECT_FALSE(Property.GetMetadataNumber("Delta").IsSet());
+    EXPECT_FALSE(Property.GetMetadataNumber("Units").IsSet());
+    EXPECT_FALSE(Property.GetMetadataNumber("Missing").IsSet());
 }
 
 TEST(PropertyMetadata, EditorFlagsAreBitsRatherThanEntries)

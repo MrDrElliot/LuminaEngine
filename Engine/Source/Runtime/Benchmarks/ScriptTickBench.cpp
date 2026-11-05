@@ -57,12 +57,12 @@ namespace LuminaScriptTickBench
     {
         ECS::FRegistry Registry{};
         TVector<ECS::FEntity> Entities;
-        Entities.reserve(kEntities);
+        Entities.Reserve(kEntities);
         for (uint32 i = 0; i < kEntities; ++i)
         {
             const ECS::FEntity Entity = Registry.Create();
             Registry.Emplace<STransformComponent>(Entity).Bind(Registry, Entity);
-            Entities.push_back(Entity);
+            Entities.Add(Entity);
         }
 
         const uint32 Consumer = bPublish ? ECS::Utils::AddMovedTransformConsumer(Registry) : Constants::kIndexNoneU32;
@@ -86,7 +86,7 @@ namespace LuminaScriptTickBench
             }
             const uint64 YawEnd = PlatformTime::Cycles();
 
-            Drained.clear();
+            Drained.Reset();
             ECS::Utils::DrainMovedTransforms(Registry, Consumer, Drained);
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
             const uint64 DrainEnd = PlatformTime::Cycles();
@@ -96,8 +96,8 @@ namespace LuminaScriptTickBench
             DrainNs    += NanosPerOp(YawEnd, DrainEnd, kEntities);
         }
 
-        std::printf("\n  %u movers (publish %d): SetLocalLocation %6.2f ns   AddYaw %6.2f ns   drain %6.2f ns (drained %zu)\n", kEntities, (int)bPublish,
-            LocationNs / kFrames, YawNs / kFrames, DrainNs / kFrames, Drained.size());
+        std::printf("\n  %u movers (publish %d): SetLocalLocation %6.2f ns   AddYaw %6.2f ns   drain %6.2f ns (drained %d)\n", kEntities, (int)bPublish,
+            LocationNs / kFrames, YawNs / kFrames, DrainNs / kFrames, Drained.Num());
     }
 
     // What the bench's Mover asks of the engine per entity, with and without the render scene's moved channel.

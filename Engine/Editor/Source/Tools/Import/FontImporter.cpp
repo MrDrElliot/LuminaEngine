@@ -27,7 +27,7 @@ namespace Lumina
             }
 
             FT_Face Face = nullptr;
-            if (FT_New_Memory_Face(Library, Font->FontData.data(), (FT_Long)Font->FontData.size(), 0, &Face) == 0)
+            if (FT_New_Memory_Face(Library, Font->FontData.GetData(), (FT_Long)Font->FontData.Num(), 0, &Face) == 0)
             {
                 Font->FamilyName  = Face->family_name ? Face->family_name : "";
                 Font->StyleName   = Face->style_name ? Face->style_name : "";
@@ -43,21 +43,21 @@ namespace Lumina
         bool LoadFontFromFile(CFont* Font, const FFixedString& SourcePath, FString& OutError)
         {
             TVector<uint8> Bytes;
-            if (!FileHelper::LoadFileToArray(Bytes, SourcePath.c_str()) || Bytes.empty())
+            if (!FileHelper::LoadFileToArray(Bytes, *SourcePath) || Bytes.IsEmpty())
             {
-                OutError = FString("Failed to read font file ") + FString(SourcePath.c_str());
+                OutError = FString("Failed to read font file ") + FString(*SourcePath);
                 return false;
             }
 
             Font->FontData   = Move(Bytes);
-            Font->SourcePath = FString(SourcePath.c_str());
+            Font->SourcePath = FString(*SourcePath);
 
             ExtractFontMetadata(Font);
 
             if (!BakeFontAtlas(Font))
             {
                 LOG_WARN("[FontImport] failed to bake MSDF atlas for '{0}'; world-space text won't render with this font",
-                         SourcePath.c_str());
+                         *SourcePath);
             }
             return true;
         }
@@ -76,7 +76,7 @@ namespace Lumina
         CFont* Font = CFactory::CreateNewOf<CFont>(PackagePath);
         if (Font == nullptr)
         {
-            OutResult.Error = FString("A package already exists at ") + FString(PackagePath.c_str());
+            OutResult.Error = FString("A package already exists at ") + FString(*PackagePath);
             return;
         }
 
@@ -94,13 +94,13 @@ namespace Lumina
         CPackage* Package = Font->GetPackage();
         if (!CPackage::SavePackage(Package, Package->GetPackagePath()))
         {
-            OutResult.Error = FString("Could not save ") + FString(Package->GetPackagePath().c_str());
+            OutResult.Error = FString("Could not save ") + FString(*Package->GetPackagePath());
             CFactory::DiscardNew(Font);
             return;
         }
 
         FAssetRegistry::Get().AssetCreated(Font);
-        OutResult.CreatedObjects.push_back(Font);
+        OutResult.CreatedObjects.Add(Font);
     }
 
     bool CFontImporter::CanReimport(const CStruct* AssetClass) const

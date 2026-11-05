@@ -21,7 +21,7 @@ namespace Lumina
             return;
         }
 
-        const SPerceptionComponent* Perception = World->TryGetComponent<SPerceptionComponent>(Perceiver);
+        const SPerceptionComponent* Perception = World->TryGetComponent<ECS::Read<SPerceptionComponent>>(Perceiver);
         if (Perception == nullptr)
         {
             return;
@@ -29,7 +29,7 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Perception->PerceivedCount; ++Index)
         {
-            Out.push_back(Perception->PerceivedTargets[Index].Target);
+            Out.Add(Perception->PerceivedTargets[Index].Target);
         }
     }
 
@@ -41,7 +41,7 @@ namespace Lumina
         {
             return false;
         }
-        const SPerceptionComponent* Comp = World->TryGetComponent<SPerceptionComponent>(Perceiver);
+        const SPerceptionComponent* Comp = World->TryGetComponent<ECS::Read<SPerceptionComponent>>(Perceiver);
         if (Comp == nullptr)
         {
             return false;
@@ -59,7 +59,7 @@ namespace Lumina
         {
             return Result;
         }
-        const SPerceptionComponent* Comp = World->TryGetComponent<SPerceptionComponent>(Perceiver);
+        const SPerceptionComponent* Comp = World->TryGetComponent<ECS::Read<SPerceptionComponent>>(Perceiver);
         if (Comp == nullptr)
         {
             return Result;
@@ -80,7 +80,7 @@ namespace Lumina
         {
             return ECS::NullEntity;
         }
-        const SPerceptionComponent* Comp = World->TryGetComponent<SPerceptionComponent>(Perceiver);
+        const SPerceptionComponent* Comp = World->TryGetComponent<ECS::Read<SPerceptionComponent>>(Perceiver);
         return Comp != nullptr ? Comp->GetClosestPerceivedTarget() : ECS::NullEntity;
     }
 
@@ -94,8 +94,8 @@ namespace Lumina
 
         Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        const STransformComponent* FromXf = Registry.TryGet<STransformComponent>(From);
-        const STransformComponent* ToXf = Registry.TryGet<STransformComponent>(To);
+        const STransformComponent* FromXf = Registry.TryGet<ECS::Read<STransformComponent>>(From);
+        const STransformComponent* ToXf = Registry.TryGet<ECS::Read<STransformComponent>>(To);
         if (Scene == nullptr || FromXf == nullptr || ToXf == nullptr)
         {
             return false;
@@ -103,11 +103,11 @@ namespace Lumina
 
         FVector3 Start = FromXf->GetWorldLocation();
         FVector3 End = ToXf->GetWorldLocation();
-        if (const SPerceptionComponent* Comp = Registry.TryGet<SPerceptionComponent>(From))
+        if (const SPerceptionComponent* Comp = Registry.TryGet<ECS::Read<SPerceptionComponent>>(From))
         {
             Start = Start + Comp->EyeOffset;
         }
-        if (const SAIStimuliSourceComponent* Source = Registry.TryGet<SAIStimuliSourceComponent>(To))
+        if (const SAIStimuliSourceComponent* Source = Registry.TryGet<ECS::Read<SAIStimuliSourceComponent>>(To))
         {
             End = End + Source->SightTargetOffset;
         }
@@ -119,11 +119,11 @@ namespace Lumina
         const ECS::FEntity FromBody = From;
         if (FromBody != ECS::NullEntity)
         {
-            Ray.IgnoreEntities.push_back(FromBody);
+            Ray.IgnoreEntities.Add(FromBody);
         }
 
         const TOptional<SRayResult> Hit = Scene->CastRay(Ray);
-        return !Hit.has_value() || Hit->Entity == To.Value;
+        return !Hit.IsSet() || Hit->Entity == To.Value;
     }
 
     void CPerceptionSubsystem::ReportNoise(FVector3 Location, float Loudness,
@@ -175,7 +175,7 @@ namespace Lumina
         }
         if (!AffiliationTag.IsNone())
         {
-            SGameplayTag Tag;
+            SHierarchicalTag Tag;
             Tag.TagName = AffiliationTag;
             Source.AffiliationTags.AddTag(Tag);
         }
@@ -188,7 +188,7 @@ namespace Lumina
         {
             return;
         }
-        SGameplayTag Detectable;
+        SHierarchicalTag Detectable;
         Detectable.TagName = Tag;
         World->GetOrEmplaceComponent<SPerceptionComponent>(Perceiver).DetectableTags.AddTag(Detectable);
     }

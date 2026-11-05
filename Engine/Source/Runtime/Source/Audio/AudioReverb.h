@@ -58,7 +58,7 @@ namespace Lumina
 				const float Output = Buffer[Index];
 				FilterStore = (Output * Damp2) + (FilterStore * Damp1);
 				Buffer[Index] = Input + (FilterStore * Feedback);
-				if (++Index >= Buffer.size())
+				if (++Index >= static_cast<uint32>(Buffer.Num()))
 				{
 					Index = 0;
 				}
@@ -76,7 +76,7 @@ namespace Lumina
 				const float Buffered = Buffer[Index];
 				const float Output = Buffered - Input;
 				Buffer[Index] = Input + (Buffered * 0.5f);
-				if (++Index >= Buffer.size())
+				if (++Index >= static_cast<uint32>(Buffer.Num()))
 				{
 					Index = 0;
 				}

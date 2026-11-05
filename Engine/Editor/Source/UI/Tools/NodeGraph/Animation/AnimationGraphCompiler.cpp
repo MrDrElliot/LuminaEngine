@@ -10,7 +10,7 @@ namespace Lumina
 {
     uint16 FAnimationGraphCompiler::AddClip(CAnimation* Clip)
     {
-        for (SIZE_T i = 0; i < Clips.size(); ++i)
+        for (int32 i = 0; i < Clips.Num(); ++i)
         {
             if (Clips[i].Get() == Clip)
             {
@@ -18,14 +18,14 @@ namespace Lumina
             }
         }
 
-        Clips.push_back(Clip);
-        ClipCurveMaps.push_back(BuildClipCurveMap(Clip));
-        return (uint16)(Clips.size() - 1);
+        Clips.Add(Clip);
+        ClipCurveMaps.Add(BuildClipCurveMap(Clip));
+        return (uint16)(Clips.Num() - 1);
     }
 
     uint16 FAnimationGraphCompiler::AddBlendSpace(CBlendSpace* BlendSpace)
     {
-        for (SIZE_T i = 0; i < BlendSpaces.size(); ++i)
+        for (int32 i = 0; i < BlendSpaces.Num(); ++i)
         {
             if (BlendSpaces[i].Get() == BlendSpace)
             {
@@ -36,16 +36,16 @@ namespace Lumina
         FAnimGraphBlendSpaceCurveMap CurveMap;
         if (BlendSpace != nullptr)
         {
-            CurveMap.SampleMaps.reserve(BlendSpace->Samples.size());
+            CurveMap.SampleMaps.Reserve(BlendSpace->Samples.Num());
             for (const SBlendSpaceSample& Sample : BlendSpace->Samples)
             {
-                CurveMap.SampleMaps.push_back(BuildClipCurveMap(Sample.Animation.Get()));
+                CurveMap.SampleMaps.Add(BuildClipCurveMap(Sample.Animation.Get()));
             }
         }
 
-        BlendSpaces.push_back(BlendSpace);
-        BlendSpaceCurveMaps.push_back(Move(CurveMap));
-        return (uint16)(BlendSpaces.size() - 1);
+        BlendSpaces.Add(BlendSpace);
+        BlendSpaceCurveMaps.Add(Move(CurveMap));
+        return (uint16)(BlendSpaces.Num() - 1);
     }
 
     int32 FAnimationGraphCompiler::AddCurve(const FName& Name)
@@ -55,14 +55,14 @@ namespace Lumina
             return Constants::kIndexNone;
         }
 
-        auto It = CurveNameToIndex.find(Name);
-        if (It != CurveNameToIndex.end())
+        auto It = CurveNameToIndex.Find(Name);
+        if (It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
-        const int32 Index = (int32)CurveNames.size();
-        CurveNames.push_back(Name);
+        const int32 Index = CurveNames.Num();
+        CurveNames.Add(Name);
         CurveNameToIndex[Name] = Index;
         return Index;
     }
@@ -76,17 +76,17 @@ namespace Lumina
         }
 
         const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
-        Map.Slots.reserve(Curves.size());
+        Map.Slots.Reserve(Curves.Num());
         for (const FAnimationCurve& Curve : Curves)
         {
-            Map.Slots.push_back(AddCurve(Curve.Name));
+            Map.Slots.Add(AddCurve(Curve.Name));
         }
         return Map;
     }
 
     int32 FAnimationGraphCompiler::AddParameter(const FName& Name, EAnimGraphParamType Type, float DefaultValue)
     {
-        for (SIZE_T i = 0; i < Parameters.size(); ++i)
+        for (int32 i = 0; i < Parameters.Num(); ++i)
         {
             if (Parameters[i].Name == Name)
             {
@@ -96,7 +96,7 @@ namespace Lumina
                     Error.Name        = "Parameter Type Mismatch";
                     Error.Description = FString("Parameter '") + Name.ToString() + FString("' is referenced with conflicting types.");
                     Error.Node        = nullptr;
-                    Errors.push_back(Error);
+                    Errors.Add(Error);
                 }
                 return (int32)i;
             }
@@ -106,8 +106,8 @@ namespace Lumina
         Param.Name         = Name;
         Param.Type         = Type;
         Param.DefaultValue = DefaultValue;
-        Parameters.push_back(Param);
-        return (int32)(Parameters.size() - 1);
+        Parameters.Add(Param);
+        return Parameters.Num() - 1;
     }
 
     uint16 FAnimationGraphCompiler::EmitLoadConst(float Value)
@@ -141,7 +141,7 @@ namespace Lumina
 
     int32 FAnimationGraphCompiler::AddObjectParameter(const FName& Name, EAnimObjectParamType Type)
     {
-        for (SIZE_T i = 0; i < ObjectParameters.size(); ++i)
+        for (int32 i = 0; i < ObjectParameters.Num(); ++i)
         {
             if (ObjectParameters[i].Name == Name)
             {
@@ -152,21 +152,21 @@ namespace Lumina
         SAnimGraphObjectParameter Param;
         Param.Name = Name;
         Param.Type = Type;
-        ObjectParameters.push_back(Param);
-        return (int32)(ObjectParameters.size() - 1);
+        ObjectParameters.Add(Param);
+        return ObjectParameters.Num() - 1;
     }
 
     uint16 FAnimationGraphCompiler::AddObjectConstant(CObject* Value)
     {
-        for (SIZE_T i = 0; i < ObjectConstants.size(); ++i)
+        for (int32 i = 0; i < ObjectConstants.Num(); ++i)
         {
             if (ObjectConstants[i].Get() == Value)
             {
                 return (uint16)i;
             }
         }
-        ObjectConstants.push_back(Value);
-        return (uint16)(ObjectConstants.size() - 1);
+        ObjectConstants.Add(Value);
+        return (uint16)(ObjectConstants.Num() - 1);
     }
 
     uint16 FAnimationGraphCompiler::EmitLoadObjectParam(uint16 ObjectParameterIndex)
@@ -217,28 +217,28 @@ namespace Lumina
 
     uint16 FAnimationGraphCompiler::AddSyncGroup(const FName& Name)
     {
-        for (SIZE_T i = 0; i < SyncGroupNames.size(); ++i)
+        for (int32 i = 0; i < SyncGroupNames.Num(); ++i)
         {
             if (SyncGroupNames[i] == Name)
             {
                 return (uint16)i;
             }
         }
-        SyncGroupNames.push_back(Name);
-        return (uint16)(SyncGroupNames.size() - 1);
+        SyncGroupNames.Add(Name);
+        return (uint16)(SyncGroupNames.Num() - 1);
     }
 
     uint16 FAnimationGraphCompiler::AddSlot(const FName& Name)
     {
-        for (SIZE_T i = 0; i < SlotNames.size(); ++i)
+        for (int32 i = 0; i < SlotNames.Num(); ++i)
         {
             if (SlotNames[i] == Name)
             {
                 return (uint16)i;
             }
         }
-        SlotNames.push_back(Name);
-        return (uint16)(SlotNames.size() - 1);
+        SlotNames.Add(Name);
+        return (uint16)(SlotNames.Num() - 1);
     }
 
     uint16 FAnimationGraphCompiler::EmitEvalSlot(uint16 SrcPoseReg, uint16 SlotIndex)
@@ -295,15 +295,15 @@ namespace Lumina
 
     uint16 FAnimationGraphCompiler::AddPoseSnapshot(const FName& Name)
     {
-        for (SIZE_T i = 0; i < PoseSnapshotNames.size(); ++i)
+        for (int32 i = 0; i < PoseSnapshotNames.Num(); ++i)
         {
             if (PoseSnapshotNames[i] == Name)
             {
                 return (uint16)i;
             }
         }
-        PoseSnapshotNames.push_back(Name);
-        return (uint16)(PoseSnapshotNames.size() - 1);
+        PoseSnapshotNames.Add(Name);
+        return (uint16)(PoseSnapshotNames.Num() - 1);
     }
 
     uint16 FAnimationGraphCompiler::EmitSavePoseSnapshot(uint16 SrcPoseReg, uint16 RequestReg, uint16 SnapshotIndex)
@@ -452,7 +452,7 @@ namespace Lumina
             EdNodeGraph::FError Warning;
             Warning.Name        = "Unknown Parameter";
             Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
-                DataStruct->GetName().c_str() + " (renamed or removed?). It will read the default value.";
+                *DataStruct->GetName() + " (renamed or removed?). It will read the default value.";
             Warning.Node        = Node;
             AddWarning(Warning);
             return;
@@ -507,7 +507,7 @@ namespace Lumina
             EdNodeGraph::FError Warning;
             Warning.Name        = "Unknown Parameter";
             Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
-                DataStruct->GetName().c_str() + ". It will read the default asset.";
+                *DataStruct->GetName() + ". It will read the default asset.";
             Warning.Node        = Node;
             AddWarning(Warning);
             return;
@@ -530,7 +530,7 @@ namespace Lumina
         {
             EdNodeGraph::FError Warning;
             Warning.Name        = "Parameter Class";
-            Warning.Description = FString("'") + Name.ToString() + "' holds a " + Declared->GetName().c_str() +
+            Warning.Description = FString("'") + Name.ToString() + "' holds a " + *Declared->GetName() +
                 ", which is not a " + ExpectedClassName + ". This node would fall back to the bind pose.";
             Warning.Node        = Node;
             AddWarning(Warning);
@@ -724,8 +724,8 @@ namespace Lumina
     void FAnimationGraphCompiler::ResolveBoneMasks(const TVector<SAnimGraphBoneMaskDef>& Defs, const FSkeletonResource* InSkeleton)
     {
         Skeleton = InSkeleton;
-        BoneMasks.clear();
-        BoneMaskNameToIndex.clear();
+        BoneMasks.Reset();
+        BoneMaskNameToIndex.Reset();
 
         if (Skeleton == nullptr)
         {
@@ -738,7 +738,7 @@ namespace Lumina
             return;
         }
 
-        BoneMasks.reserve(Defs.size());
+        BoneMasks.Reserve(Defs.Num());
 
         for (const SAnimGraphBoneMaskDef& Def : Defs)
         {
@@ -748,7 +748,7 @@ namespace Lumina
             }
 
             FAnimGraphBoneMask Mask;
-            Mask.Weights.assign(NumBones, 0.0f);
+            Mask.Weights.Init(0.0f, NumBones);
 
             for (const SAnimGraphBoneMaskBone& Entry : Def.Bones)
             {
@@ -759,23 +759,23 @@ namespace Lumina
                 }
             }
 
-            const int32 Index = (int32)BoneMasks.size();
-            BoneMasks.push_back(Move(Mask));
+            const int32 Index = BoneMasks.Num();
+            BoneMasks.Add(Move(Mask));
             BoneMaskNameToIndex[Def.Name] = Index;
         }
     }
 
     int32 FAnimationGraphCompiler::FindBoneMaskIndex(const FName& Name) const
     {
-        auto It = BoneMaskNameToIndex.find(Name);
-        return It == BoneMaskNameToIndex.end() ? Constants::kIndexNone : It->second;
+        auto It = BoneMaskNameToIndex.Find(Name);
+        return It == nullptr ? Constants::kIndexNone : (*It);
     }
 
     uint16 FAnimationGraphCompiler::AddBoneSubtreeMask(int32 RootBoneIndex, bool bInclusive)
     {
         FAnimGraphBoneMask Mask;
         const int32 NumBones = (Skeleton != nullptr) ? Skeleton->GetNumBones() : 0;
-        Mask.Weights.assign(NumBones, 0.0f);
+        Mask.Weights.Init(0.0f, NumBones);
 
         for (int32 i = 0; i < NumBones; ++i)
         {
@@ -800,8 +800,8 @@ namespace Lumina
             Mask.Weights[i] = bAffected ? 1.0f : 0.0f;
         }
 
-        const uint16 Index = (uint16)BoneMasks.size();
-        BoneMasks.push_back(Move(Mask));
+        const uint16 Index = (uint16)BoneMasks.Num();
+        BoneMasks.Add(Move(Mask));
         return Index;
     }
 
@@ -820,7 +820,7 @@ namespace Lumina
 
     uint32 FAnimationGraphCompiler::EmitEnterStateMachine(uint16 NumStates)
     {
-        const uint32 EnterOp = (uint32)Bytecode.size();
+        const uint32 EnterOp = (uint32)Bytecode.Num();
         WriteOp(EAnimOp::EnterStateMachine);
         Write((uint16)0);
         Write(NumStates);
@@ -831,54 +831,54 @@ namespace Lumina
             Write((uint32)0);
         }
 
-        WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.size());
-        EnterStateMachineOps.push_back(EnterOp);
+        WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.Num());
+        EnterStateMachineOps.Add(EnterOp);
         return EnterOp;
     }
 
     void FAnimationGraphCompiler::BeginStateCode(uint32 EnterOp, uint16 StateIndex)
     {
-        StateScopes.push_back(++NextStateScope);
+        StateScopes.Add(++NextStateScope);
         if (StateIndex < ReadAt<uint16>(EnterOp + kEnterNumStatesOffset))
         {
-            WriteAt(StateCodeEntry(EnterOp, StateIndex, false), (uint32)Bytecode.size());
+            WriteAt(StateCodeEntry(EnterOp, StateIndex, false), (uint32)Bytecode.Num());
         }
     }
 
     void FAnimationGraphCompiler::EndStateCode(uint32 EnterOp, uint16 StateIndex)
     {
-        if (!StateScopes.empty())
+        if (!StateScopes.IsEmpty())
         {
-            StateScopes.pop_back();
+            StateScopes.Pop();
         }
 
         if (StateIndex < ReadAt<uint16>(EnterOp + kEnterNumStatesOffset))
         {
-            WriteAt(StateCodeEntry(EnterOp, StateIndex, true), (uint32)Bytecode.size());
-            WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.size());
+            WriteAt(StateCodeEntry(EnterOp, StateIndex, true), (uint32)Bytecode.Num());
+            WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.Num());
         }
     }
 
     void FAnimationGraphCompiler::FinishStateMachineCode(uint32 EnterOp)
     {
-        WriteAt(EnterOp + kEnterSmIdxOffset, (uint16)StateMachines.size());
+        WriteAt(EnterOp + kEnterSmIdxOffset, (uint16)StateMachines.Num());
     }
 
     bool FAnimationGraphCompiler::TryGetCachedPose(const FName& Name, uint16& OutRegister)
     {
-        auto It = CachedPoses.find(Name);
-        if (It == CachedPoses.end())
+        auto It = CachedPoses.Find(Name);
+        if (It == nullptr)
         {
             return false;
         }
-        OutRegister = It->second;
+        OutRegister = (*It);
 
         // A reader outside the writing state would see nothing once that state is skipped.
-        auto ScopeIt = CachedPoseScopes.find(Name);
-        if (ScopeIt != CachedPoseScopes.end())
+        auto ScopeIt = CachedPoseScopes.Find(Name);
+        if (ScopeIt != nullptr)
         {
-            const TVector<uint32>& WriterScopes = ScopeIt->second;
-            const bool bReaderInside = WriterScopes.size() <= StateScopes.size() &&
+            const TVector<uint32>& WriterScopes = (*ScopeIt);
+            const bool bReaderInside = WriterScopes.Num() <= StateScopes.Num() &&
                 std::equal(WriterScopes.begin(), WriterScopes.end(), StateScopes.begin());
             bCachedPoseLeavesItsState |= !bReaderInside;
         }
@@ -887,8 +887,8 @@ namespace Lumina
 
     uint16 FAnimationGraphCompiler::EmitEvalStateMachine(FAnimGraphStateMachine&& StateMachine)
     {
-        const uint16 SmIndex = (uint16)StateMachines.size();
-        StateMachines.push_back(Move(StateMachine));
+        const uint16 SmIndex = (uint16)StateMachines.Num();
+        StateMachines.Add(Move(StateMachine));
 
         const uint16 Dst = AllocPoseReg();
         WriteOp(EAnimOp::EvalStateMachine);
@@ -940,12 +940,12 @@ namespace Lumina
 
     bool FAnimationGraphCompiler::TryGetPinRegister(const CEdNodeGraphPin* Pin, uint16& OutRegister) const
     {
-        auto It = PinRegisters.find(Pin);
-        if (It == PinRegisters.end())
+        auto It = PinRegisters.Find(Pin);
+        if (It == nullptr)
         {
             return false;
         }
-        OutRegister = It->second;
+        OutRegister = (*It);
         return true;
     }
 
@@ -985,7 +985,7 @@ namespace Lumina
         OutGraph->NumScalarRegisters  = NextScalarReg;
         OutGraph->NumPoseRegisters    = NextPoseReg;
         OutGraph->NumStateSlots       = NextStateSlot;
-        OutGraph->NumSyncGroups       = (uint16)SyncGroupNames.size();
+        OutGraph->NumSyncGroups       = (uint16)SyncGroupNames.Num();
         OutGraph->NumInertializerNodes = NextInertializerNode;
         OutGraph->NumDeadBlendNodes    = NextDeadBlendNode;
         OutGraph->SlotNames           = SlotNames;

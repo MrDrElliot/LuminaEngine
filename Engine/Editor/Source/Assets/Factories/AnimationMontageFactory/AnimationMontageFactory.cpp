@@ -66,16 +66,16 @@ namespace Lumina
     {
         Montage.Skeleton = Skeleton;
 
-        SAnimMontageSlotTrack& Track = Montage.SlotTracks.emplace_back();
+        SAnimMontageSlotTrack& Track = Montage.SlotTracks.EmplaceGetRef();
         Track.SlotName = "DefaultSlot";
 
         if (FirstClip != nullptr)
         {
-            SAnimMontageSegment& Segment = Track.Segments.emplace_back();
+            SAnimMontageSegment& Segment = Track.Segments.EmplaceGetRef();
             Segment.Animation = FirstClip;
         }
 
-        SAnimMontageSection& Section = Montage.Sections.emplace_back();
+        SAnimMontageSection& Section = Montage.Sections.EmplaceGetRef();
         Section.Name = "Default";
         Section.StartTime = 0.0f;
 

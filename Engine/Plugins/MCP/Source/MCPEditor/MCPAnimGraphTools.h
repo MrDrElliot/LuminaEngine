@@ -3,7 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
-#include "MCPMaterialTools.h"
+#include "MCPToolTypes.h"
 
 #include "MCPAnimGraphTools.generated.h"
 
@@ -14,12 +14,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID of the animation graph asset, from assets.search. */
+        // GUID or content path of the animation graph.
         PROPERTY()
         FString AnimGraph;
 
-        /** Node ids leading from the root blend tree to the canvas to act on. A State Machine node's id
-         *  enters its state canvas, and a State's id there enters that state's blend tree. Empty is the root. */
+        // Node ids leading to the canvas: a State Machine id enters its states, a State id its blend tree. Empty is root.
         PROPERTY()
         TVector<int64> GraphPath;
     };
@@ -29,7 +28,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Type name to pass to animgraph.add_node. */
+        // Pass this to animgraph.node as NodeType.
         PROPERTY()
         FString Name;
 
@@ -51,11 +50,11 @@ namespace Lumina
         PROPERTY()
         FString AnimGraph;
 
-        /** Canvas whose node types to list, since blend trees and state canvases take different ones. */
+        // Canvas whose node types to list; blend trees and state canvases take different ones.
         PROPERTY()
         TVector<int64> GraphPath;
 
-        /** Only types whose name or category contains this. Empty lists every one of them. */
+        // Substring of the type name or category. Empty lists every type.
         PROPERTY()
         FString Contains;
     };
@@ -74,18 +73,18 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Id to pass to any tool taking a node, and to GraphPath to enter its canvas. */
+        // Id for any tool taking a node, and for GraphPath to enter its canvas.
         PROPERTY()
         int64 Id = 0;
 
         PROPERTY()
         FString Type;
 
-        /** Title shown on the canvas, which carries a state's or machine's name. */
+        // Title shown on the canvas, which carries a state or machine name.
         PROPERTY()
         FString Title;
 
-        /** True when this node owns a canvas already; State Machine and State nodes create one on first write. */
+        // True when the node owns a canvas; State Machine and State nodes create one on first write.
         PROPERTY()
         bool bHasCanvas = false;
 
@@ -98,7 +97,7 @@ namespace Lumina
         PROPERTY()
         TVector<SGraphPinInfo> Pins;
 
-        /** Current values of this node's settable fields, as JSON. */
+        // Current values of this node's settable fields, as JSON.
         PROPERTY()
         FString Values;
     };
@@ -108,14 +107,14 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Source node id: a State, or the Any State node for an edge checked from every state. */
+        // A State, or the Any State node for an edge checked from every state.
         PROPERTY()
         int64 FromNode = 0;
 
         PROPERTY()
         int64 ToNode = 0;
 
-        /** Conditions, blend duration and priority, as JSON. */
+        // Conditions, blend duration and priority, as JSON.
         PROPERTY()
         FString Values;
     };
@@ -128,50 +127,23 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        /** CAnimationGraphNodeGraph for a blend tree, CAnimStateMachineGraph for a state canvas. */
+        // CAnimationGraphNodeGraph for a blend tree, CAnimStateMachineGraph for a state canvas.
         PROPERTY()
         FString CanvasClass;
 
         PROPERTY()
         TVector<SAnimGraphNodeInfo> Nodes;
 
-        /** State-to-state edges, present only on a state machine canvas. */
+        // State-to-state edges, present only on a state machine canvas.
         PROPERTY()
         TVector<SAnimGraphTransitionInfo> Transitions;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddAnimGraphNodeParams
+    enum class EAnimGraphNodeAction : uint8
     {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString AnimGraph;
-
-        PROPERTY()
-        TVector<int64> GraphPath;
-
-        /** Node type name, from animgraph.list_node_types. */
-        PROPERTY()
-        FString NodeType;
-
-        PROPERTY()
-        float X = 0.0f;
-
-        PROPERTY()
-        float Y = 0.0f;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SAddAnimGraphNodeResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        int64 Id = 0;
-
-        PROPERTY()
-        TVector<SGraphPinInfo> Pins;
+        Add,
+        Remove,
     };
 
     REFLECT()
@@ -180,19 +152,58 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
+        EAnimGraphNodeAction Action = EAnimGraphNodeAction::Add;
+
+        PROPERTY()
         FString AnimGraph;
 
         PROPERTY()
         TVector<int64> GraphPath;
 
+        // Add only. Node type name, from animgraph.list_node_types.
+        PROPERTY()
+        FString NodeType;
+
+        // Add only.
+        PROPERTY()
+        float X = 0.0f;
+
+        // Add only.
+        PROPERTY()
+        float Y = 0.0f;
+
+        // Remove only.
         PROPERTY()
         int64 Node = 0;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SConnectAnimGraphParams
+    struct MCPEDITOR_API SAnimGraphNodeResult
     {
         GENERATED_BODY()
+
+        // Add only. Id of the new node.
+        PROPERTY()
+        int64 Id = 0;
+
+        PROPERTY()
+        TVector<SGraphPinInfo> Pins;
+    };
+
+    REFLECT()
+    enum class EAnimGraphLinkAction : uint8
+    {
+        Connect,
+        Disconnect,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAnimGraphLinkParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        EAnimGraphLinkAction Action = EAnimGraphLinkAction::Connect;
 
         PROPERTY()
         FString AnimGraph;
@@ -200,37 +211,27 @@ namespace Lumina
         PROPERTY()
         TVector<int64> GraphPath;
 
-        /** Node the value comes from; on a state canvas, the state a transition leaves. */
+        // Connect only. Node the value comes from; on a state canvas, the state a transition leaves.
         PROPERTY()
         int64 FromNode = 0;
 
-        /** Output pin name on FromNode, as animgraph.describe reports it. */
+        // Connect only. Output pin name on FromNode, as animgraph.describe reports it.
         PROPERTY()
         FString FromPin;
 
+        // Connect only.
         PROPERTY()
         int64 ToNode = 0;
 
-        /** Input pin name on ToNode. */
+        // Connect only. Input pin name on ToNode.
         PROPERTY()
         FString ToPin;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SDisconnectAnimGraphParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString AnimGraph;
-
-        PROPERTY()
-        TVector<int64> GraphPath;
-
+        // Disconnect only.
         PROPERTY()
         int64 Node = 0;
 
-        /** Pin to clear, in either direction. */
+        // Disconnect only. Pin whose links are cleared, in either direction.
         PROPERTY()
         FString Pin;
     };
@@ -249,11 +250,11 @@ namespace Lumina
         PROPERTY()
         int64 Node = 0;
 
-        /** Field path on the node, such as StateName, Animation or PinDefaults. */
+        // Field path on the node, such as StateName, Animation or PinDefaults.
         PROPERTY()
         FString Path;
 
-        /** The new value as JSON, so a bare number, a quoted name, or a braced object. */
+        // New value as JSON: a number, a quoted string or an object.
         PROPERTY(RawJson)
         FString Value;
     };
@@ -266,7 +267,7 @@ namespace Lumina
         PROPERTY()
         FString AnimGraph;
 
-        /** Path to the state machine canvas holding the transition. */
+        // Path to the state machine canvas holding the transition.
         PROPERTY()
         TVector<int64> GraphPath;
 
@@ -276,7 +277,7 @@ namespace Lumina
         PROPERTY()
         int64 ToNode = 0;
 
-        /** Field path on the transition, such as Conditions, BlendDuration or Priority. */
+        // Field path on the transition, such as Conditions, BlendDuration or Priority.
         PROPERTY()
         FString Path;
 
@@ -306,14 +307,14 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAnimGraphEditResult
+    struct MCPEDITOR_API SAnimGraphCompileResult
     {
         GENERATED_BODY()
 
         PROPERTY()
         bool bSucceeded = false;
 
-        /** Each as "[Name] Description (node Id)". Node ids are local to the canvas that raised them. */
+        // Each as "[Name] Description (node Id)". Node ids are local to the canvas that raised them.
         PROPERTY()
         TVector<FString> Errors;
 

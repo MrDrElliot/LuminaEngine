@@ -1,243 +1,121 @@
 #pragma once
 
+#include "TaskSystem/Fork/ForkRuntime.h"
+
 #include <iterator>
-#include "TaskTypes.h"
-#include "Scheduler/JobScheduler.h"
-#include "Core/Profiler/Profile.h"
-#include "Core/Threading/Thread.h"
-#include "Memory/Memory.h"
-#include "Platform/GenericPlatform.h"
-#include "Core/LuminaMacros.h"
 #include <type_traits>
 #include <utility>
 
-namespace Lumina
+namespace Lumina::Jobs
 {
-    RUNTIME_API extern class FTaskSystem* GTaskSystem;
+    // Starts the workers (LUMINA_JOB_WORKERS overrides the count) and gives the calling thread a slot.
+    RUNTIME_API void Initialize();
+    RUNTIME_API void Shutdown();
 
-    namespace Task
+    struct FParallelRange
     {
-        RUNTIME_API void Initialize();
-        RUNTIME_API void Shutdown();
-
-        struct FParallelRange
-        {
-            uint32 Start;
-            uint32 End;
-            uint32 Thread;
-        };
-
-        // Worker-balanced chunk count for splitting [0, Num) with the given grain.
-        RUNTIME_API uint32 ComputeChunkCount(uint32 Num, uint32 MinRange);
-
-        // The function a callable was written in, read out of a template's signature and kept for the process.
-        RUNTIME_API const char* CallSiteName(const char* Signature);
-
-        inline constexpr uint32 kMaxChunks = 256;
-
-        // Runs every ParallelFor on this thread inline while open, for an item of a loop that is already parallel at an outer level.
-        class RUNTIME_API FInlineNestedScope
-        {
-        public:
-            FInlineNestedScope();
-            ~FInlineNestedScope();
-            LE_NO_COPYMOVE(FInlineNestedScope);
-
-            static bool IsOpen();
-        };
-
-        // Cursor-grab size for shared-cursor fan-outs: never finer than the pre-split balance floor.
-        inline uint32 ComputeCursorGrain(uint32 Num, uint32 MinRange)
-        {
-            uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
-            if (MaxChunks == 0)
-            {
-                MaxChunks = 1;
-            }
-            MaxChunks = MaxChunks < kMaxChunks ? MaxChunks : kMaxChunks;
-            const uint32 Balanced = (Num + MaxChunks - 1) / MaxChunks;
-            const uint32 Grain    = MinRange == 0 ? 1u : MinRange;
-            return Grain < Balanced ? Balanced : Grain;
-        }
-    }
-
-    class FTaskSystem
-    {
-    public:
-
-        // Background worker threads.
-        uint32 GetNumWorkers() const { return Jobs::GetNumWorkers(); }
-        // Total addressable thread slots (workers + external). Use this to size per-thread arrays.
-        uint32 GetNumTaskThreads() const { return Jobs::GetNumThreadSlots(); }
-
-        uint32 RegisterExternalThread() { return Jobs::RegisterExternalThread(); }
-        void   UnregisterExternalThread() { Jobs::UnregisterExternalThread(); }
-
-        /** Num iterations split across worker threads; ranges are unordered. Returned handle is auto-cleaned. */
-        RUNTIME_API FTaskHandle ScheduleLambda(uint32 Num, uint32 MinRange, TaskSetFunction&& Function, ETaskPriority Priority = ETaskPriority::Medium);
-
-        template<typename TFunc>
-        void ParallelFor(uint32 Num, TFunc&& Func, uint32 MinRange = 0, ETaskPriority Priority = ETaskPriority::Medium)
-        {
-            if (Num == 0)
-            {
-                return;
-            }
-
-            LUMINA_PROFILE_SECTION("Tasks::ParallelFor");
-
-            using TDecayed = std::decay_t<TFunc>;
-            TDecayed Stored = std::forward<TFunc>(Func);
-
-            auto Thunk = +[](void* Ctx, uint32 Start, uint32 End, uint32 Thread)
-            {
-                TDecayed& F = *static_cast<TDecayed*>(Ctx);
-                if constexpr (std::is_invocable_v<TDecayed, const Task::FParallelRange&>)
-                {
-                    F(Task::FParallelRange{ Start, End, Thread });
-                }
-                else
-                {
-                    for (uint32 i = Start; i < End; ++i)
-                    {
-                        if constexpr (std::is_invocable_v<TDecayed, uint32, uint32>)
-                        {
-                            F(i, Thread);
-                        }
-                        else if constexpr (std::is_invocable_v<TDecayed, uint32>)
-                        {
-                            F(i);
-                        }
-                    }
-                }
-            };
-
-#if defined(TRACY_ENABLE)
-            // The callable's type names the function that wrote it, which is what labels the chunks a worker runs.
-            #if defined(_MSC_VER)
-            static const char* const CallSite = Task::CallSiteName(__FUNCSIG__);
-            #else
-            static const char* const CallSite = Task::CallSiteName(__PRETTY_FUNCTION__);
-            #endif
-#else
-            constexpr const char* CallSite = nullptr;
-#endif
-
-            ParallelForImpl(Num, MinRange, Priority, Thunk, &Stored, CallSite);
-        }
-
-        template<typename TIterator, typename TFunc>
-        void ParallelForEach(TIterator Begin, TIterator End, TFunc&& Func, ETaskPriority Priority = ETaskPriority::Medium)
-        {
-            const uint32 Num = static_cast<uint32>(End - Begin);
-            if (Num == 0)
-            {
-                return;
-            }
-
-            LUMINA_PROFILE_SECTION("Tasks::ParallelForEach");
-
-            using TDecayed = std::decay_t<TFunc>;
-            struct FCtx
-            {
-                TDecayed  Func;
-                TIterator Begin;
-            };
-            FCtx Ctx{ std::forward<TFunc>(Func), Begin };
-
-            auto Thunk = +[](void* Raw, uint32 Start, uint32 End_, uint32 Thread)
-            {
-                FCtx& X = *static_cast<FCtx*>(Raw);
-                if constexpr (std::is_invocable_v<TDecayed, TIterator, TIterator, uint32>)
-                {
-                    X.Func(X.Begin + Start, X.Begin + End_, Thread);
-                    return;
-                }
-                else if constexpr (std::is_invocable_v<TDecayed, TIterator, TIterator>)
-                {
-                    X.Func(X.Begin + Start, X.Begin + End_);
-                    return;
-                }
-                else
-                {
-                    for (uint32 i = Start; i < End_; ++i)
-                    {
-                        TIterator It = X.Begin + i;
-                        if constexpr (std::is_invocable_v<TDecayed, decltype(*It)&, uint32>)
-                        {
-                            X.Func(*It, Thread);
-                        }
-                        else if constexpr (std::is_invocable_v<TDecayed, decltype(*It)&>)
-                        {
-                            X.Func(*It);
-                        }
-                        else if constexpr (std::is_invocable_v<TDecayed, TIterator, uint32>)
-                        {
-                            X.Func(It, Thread);
-                        }
-                        else if constexpr (std::is_invocable_v<TDecayed, TIterator>)
-                        {
-                            X.Func(It);
-                        }
-                    }
-                }
-            };
-
-            ParallelForImpl(Num, 0, Priority, Thunk, &Ctx);
-        }
-
-        /** Block until every job submitted so far has completed. */
-        RUNTIME_API void WaitForAll();
-
-    private:
-
-        using FParallelThunk = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
-
-        // Splits [0, Num) into worker-balanced chunks, runs them, and waits. Single source of the
-        // chunking policy; the templated entry points type-erase their callable into Thunk + Ctx.
-        RUNTIME_API void ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx,
-                                         const char* CallSite = nullptr);
+        uint32 Start;
+        uint32 End;
+        uint32 Thread;
     };
 
-    namespace Task
+    namespace ParallelDetail
     {
-        RUNTIME_API FTaskHandle AsyncTask(uint32 Num, uint32 MinRange, TaskSetFunction&& Function, ETaskPriority Priority = ETaskPriority::Medium);
+        using FRangeThunk = void (*)(void* Context, uint32 Start, uint32 End, uint32 Thread);
+
+        RUNTIME_API uint32      ComputeGrain(uint32 Num, uint32 MinRange);
+        RUNTIME_API const char* CallSiteName(const char* Signature);
+        RUNTIME_API void        Run(uint32 Num, uint32 MinRange, EJobPriority Band, FRangeThunk Thunk, void* Context, const char* CallSite);
+        RUNTIME_API TTask<void> Split(FRangeThunk Thunk, void* Context, uint32 Begin, uint32 End, uint32 Grain, const char* CallSite);
 
         template<typename TFunc>
-        void ParallelFor(uint32 Num, TFunc&& Func, uint32 MinRange = 0, ETaskPriority Priority = ETaskPriority::Medium)
+        FORCEINLINE void InvokeRange(TFunc& Func, uint32 Start, uint32 End, uint32 Thread)
         {
-            GTaskSystem->ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
-        }
-
-        // Inline below MinNumToSplit, where the dispatch would cost more than the work it splits.
-        template<typename TFunc>
-        void ParallelForOrSerial(uint32 Num, uint32 MinNumToSplit, TFunc&& Func, uint32 MinRange = 0, ETaskPriority Priority = ETaskPriority::Medium)
-        {
-            if (Num >= MinNumToSplit)
-            {
-                GTaskSystem->ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
-                return;
-            }
-
             if constexpr (std::is_invocable_v<TFunc&, const FParallelRange&>)
             {
-                Func(FParallelRange{ 0, Num, 0 });
+                Func(FParallelRange{ Start, End, Thread });
             }
             else
             {
-                for (uint32 Index = 0; Index < Num; ++Index)
+                for (uint32 Index = Start; Index < End; ++Index)
                 {
-                    Func(Index);
+                    if constexpr (std::is_invocable_v<TFunc&, uint32, uint32>)
+                    {
+                        Func(Index, Thread);
+                    }
+                    else
+                    {
+                        Func(Index);
+                    }
                 }
             }
         }
 
-        template<typename TIterator, typename TFunc>
-        requires(std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag> ||
-            std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag>)
-        void ParallelForEach(TIterator Begin, TIterator End, TFunc&& Func, ETaskPriority Priority = ETaskPriority::Medium)
+        template<typename TFunc>
+        FRangeThunk MakeThunk()
         {
-            GTaskSystem->ParallelForEach(Begin, End, std::forward<TFunc>(Func), Priority);
+            return +[](void* Context, uint32 Start, uint32 End, uint32 Thread)
+            {
+                InvokeRange(*static_cast<TFunc*>(Context), Start, End, Thread);
+            };
         }
+
+        template<typename TFunc>
+        const char* CallSite()
+        {
+#if defined(TRACY_ENABLE)
+    #if defined(_MSC_VER)
+            static const char* const Name = CallSiteName(__FUNCSIG__);
+    #else
+            static const char* const Name = CallSiteName(__PRETTY_FUNCTION__);
+    #endif
+            return Name;
+#else
+            return nullptr;
+#endif
+        }
+    }
+
+    // Blocks until Func has run over [0, Num). Func takes (Index), (Index, Thread) or (const FParallelRange&).
+    template<typename TFunc>
+    void ParallelFor(uint32 Num, TFunc&& Func, uint32 MinRange = 0, EJobPriority Band = EJobPriority::Normal)
+    {
+        if (Num == 0)
+        {
+            return;
+        }
+        using TDecayed = std::decay_t<TFunc>;
+        TDecayed Stored = std::forward<TFunc>(Func);
+        ParallelDetail::Run(Num, MinRange, Band, ParallelDetail::MakeThunk<TDecayed>(), &Stored, ParallelDetail::CallSite<TDecayed>());
+    }
+
+    template<typename TFunc>
+    void ParallelForOrSerial(uint32 Num, uint32 MinNumToSplit, TFunc&& Func, uint32 MinRange = 0, EJobPriority Band = EJobPriority::Normal)
+    {
+        if (Num >= MinNumToSplit)
+        {
+            ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Band);
+            return;
+        }
+        ParallelDetail::InvokeRange(Func, 0, Num, GetThreadSlot());
+    }
+
+    template<typename TIterator, typename TFunc>
+        requires std::random_access_iterator<TIterator>
+    void ParallelForEach(TIterator Begin, TIterator End, TFunc&& Func, EJobPriority Band = EJobPriority::Normal)
+    {
+        ParallelFor(static_cast<uint32>(End - Begin), [&](uint32 Index) { Func(*(Begin + Index)); }, 0, Band);
+    }
+
+    // The same loop as a task, for code already running inside one: co_await Jobs::Call(Jobs::ForEach(Num, Func)).
+    template<typename TFunc>
+    TTask<void> ForEach(uint32 Num, TFunc Func, uint32 MinRange = 0)
+    {
+        if (Num == 0)
+        {
+            co_return;
+        }
+        co_await Call(ParallelDetail::Split(ParallelDetail::MakeThunk<TFunc>(), &Func, 0, Num,
+                                            ParallelDetail::ComputeGrain(Num, MinRange), ParallelDetail::CallSite<TFunc>()));
     }
 }

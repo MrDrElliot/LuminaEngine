@@ -106,16 +106,16 @@ namespace Lumina
 
     void CAnimationGraph::LinkParameters()
     {
-        ParamBindings.assign(Parameters.size(), FAnimGraphParamBinding());
-        ObjectParamBindings.assign(ObjectParameters.size(), FAnimGraphParamBinding());
+        ParamBindings.Init(FAnimGraphParamBinding(), Parameters.Num());
+        ObjectParamBindings.Init(FAnimGraphParamBinding(), ObjectParameters.Num());
 
         CStruct* Struct = GetParameterStruct();
         if (Struct == nullptr)
         {
-            if (!Parameters.empty() || !ObjectParameters.empty())
+            if (!Parameters.IsEmpty() || !ObjectParameters.IsEmpty())
             {
                 LOG_WARN("Anim graph '{}' reads {} parameter(s) but has no ParameterStruct assigned; none of them will ever receive a value.",
-                         GetName().c_str(), (int32)(Parameters.size() + ObjectParameters.size()));
+                         *GetName(), Parameters.Num() + ObjectParameters.Num());
             }
             return;
         }
@@ -153,11 +153,11 @@ namespace Lumina
             if (!Name.IsNone())
             {
                 LOG_WARN("Anim graph '{}': parameter '{}' does not resolve to a readable field on '{}'; it will hold its default.",
-                         GetName().c_str(), Name.ToString().c_str(), Struct->GetName().c_str());
+                         *GetName(), *Name.ToString(), *Struct->GetName());
             }
         };
 
-        for (SIZE_T i = 0; i < Parameters.size(); ++i)
+        for (int32 i = 0; i < Parameters.Num(); ++i)
         {
             ParamBindings[i] = Bind(Parameters[i].Name, false);
             if (!ParamBindings[i].IsResolved())
@@ -166,7 +166,7 @@ namespace Lumina
             }
         }
 
-        for (SIZE_T i = 0; i < ObjectParameters.size(); ++i)
+        for (int32 i = 0; i < ObjectParameters.Num(); ++i)
         {
             ObjectParamBindings[i] = Bind(ObjectParameters[i].Name, true);
             if (!ObjectParamBindings[i].IsResolved())
@@ -191,22 +191,22 @@ namespace Lumina
             }
 
             // An any-state edge sits in every list at its authored position, so the first passing edge stays the same one.
-            const int32 NumStates = (int32)SM.StatePoseRegisters.size();
-            SM.TransitionsByState.clear();
-            SM.TransitionsByStateStart.assign((SIZE_T)NumStates + 1, 0u);
+            const int32 NumStates = SM.StatePoseRegisters.Num();
+            SM.TransitionsByState.Reset();
+            SM.TransitionsByStateStart.Init(0u, (SIZE_T)NumStates + 1);
             for (int32 StateIndex = 0; StateIndex < NumStates; ++StateIndex)
             {
-                SM.TransitionsByStateStart[StateIndex] = (uint32)SM.TransitionsByState.size();
-                for (SIZE_T TransitionIndex = 0; TransitionIndex < SM.Transitions.size(); ++TransitionIndex)
+                SM.TransitionsByStateStart[StateIndex] = (uint32)SM.TransitionsByState.Num();
+                for (int32 TransitionIndex = 0; TransitionIndex < SM.Transitions.Num(); ++TransitionIndex)
                 {
                     const int32 From = SM.Transitions[TransitionIndex].FromState;
                     if (From == StateIndex || From < 0)
                     {
-                        SM.TransitionsByState.push_back((uint16)TransitionIndex);
+                        SM.TransitionsByState.Add((uint16)TransitionIndex);
                     }
                 }
             }
-            SM.TransitionsByStateStart[NumStates] = (uint32)SM.TransitionsByState.size();
+            SM.TransitionsByStateStart[NumStates] = (uint32)SM.TransitionsByState.Num();
         }
     }
 }

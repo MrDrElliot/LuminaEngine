@@ -66,7 +66,7 @@ namespace Lumina::AnimGraphOps
         {
             if (Transition.IsValid())
             {
-                Transitions.push_back(Transition.Get());
+                Transitions.Add(Transition.Get());
             }
         }
 

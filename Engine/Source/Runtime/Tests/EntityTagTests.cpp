@@ -14,7 +14,7 @@ namespace
     TVector<FName> TagsOf(const ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         TVector<FName> Tags;
-        ECS::Utils::ForEachEntityTag(Registry, Entity, [&](const FName& Tag) { Tags.push_back(Tag); });
+        ECS::Utils::ForEachEntityTag(Registry, Entity, [&](const FName& Tag) { Tags.Add(Tag); });
         return Tags;
     }
 
@@ -39,7 +39,7 @@ TEST(EntityTags, SetTagListsOnce)
     EXPECT_EQ(TagsOf(Registry, Entity), TVector<FName>{ FName("Boss") }) << "setting replaces rather than adds";
 
     ECS::Utils::ClearEntityTag(Registry, Entity);
-    EXPECT_TRUE(TagsOf(Registry, Entity).empty());
+    EXPECT_TRUE(TagsOf(Registry, Entity).IsEmpty());
 }
 
 // A save writes every tag storage and a load reads them back, so the tag must still be found after the round trip.
@@ -60,7 +60,7 @@ TEST(EntityTags, ATagSurvivesSaveAndLoad)
     ECS::Utils::SerializeRegistry(Reader, Loaded);
 
     TVector<FName> Tags = TagsOf(Loaded, Entity);
-    Algo::Sort(Tags, [](const FName& A, const FName& B) { return FStringView(A.c_str()) < FStringView(B.c_str()); });
+    Algo::Sort(Tags, [](const FName& A, const FName& B) { return FStringView(*A) < FStringView(*B); });
     EXPECT_EQ(Tags, (TVector<FName>{ FName("Enemy"), FName("Flying") }));
     EXPECT_FALSE(ECS::Utils::GetEntityTag(Loaded, Entity).IsNone());
 }
@@ -81,5 +81,5 @@ TEST(EntityTags, CopyKeepsEveryTag)
     const ECS::FEntity Copy = Map[Entity];
     EXPECT_TRUE(ECS::Utils::EntityHasTag(FName("Enemy"), Dest, Copy));
     EXPECT_TRUE(ECS::Utils::EntityHasTag(FName("Flying"), Dest, Copy));
-    EXPECT_EQ(TagsOf(Dest, Copy).size(), size_t(2));
+    EXPECT_EQ(TagsOf(Dest, Copy).Num(), 2);
 }

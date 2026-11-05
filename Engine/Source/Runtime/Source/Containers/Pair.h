@@ -15,53 +15,53 @@ namespace Lumina::Containers
         using first_type  = T1;
         using second_type = T2;
 
-        T1 first;
-        T2 second;
+        T1 Key;
+        T2 Value;
 
         constexpr TPair()
             requires (std::is_default_constructible_v<T1> && std::is_default_constructible_v<T2>)
-            : first()
-            , second()
+            : Key()
+            , Value()
         {}
 
         constexpr TPair(const T1& InFirst, const T2& InSecond)
-            : first(InFirst)
-            , second(InSecond)
+            : Key(InFirst)
+            , Value(InSecond)
         {}
 
         template <typename U1, typename U2>
         requires (std::is_constructible_v<T1, U1&&> && std::is_constructible_v<T2, U2&&>)
         constexpr TPair(U1&& InFirst, U2&& InSecond)
-            : first(std::forward<U1>(InFirst))
-            , second(std::forward<U2>(InSecond))
+            : Key(std::forward<U1>(InFirst))
+            , Value(std::forward<U2>(InSecond))
         {}
 
         template <typename U1, typename U2>
         requires (std::is_constructible_v<T1, const U1&> && std::is_constructible_v<T2, const U2&>)
         constexpr TPair(const TPair<U1, U2>& Other)
-            : first(Other.first)
-            , second(Other.second)
+            : Key(Other.Key)
+            , Value(Other.Value)
         {}
 
         template <typename U1, typename U2>
         requires (std::is_constructible_v<T1, U1&&> && std::is_constructible_v<T2, U2&&>)
         constexpr TPair(TPair<U1, U2>&& Other)
-            : first(std::move(Other.first))
-            , second(std::move(Other.second))
+            : Key(std::move(Other.Key))
+            , Value(std::move(Other.Value))
         {}
 
         template <typename U1, typename U2>
         requires (std::is_constructible_v<T1, const U1&> && std::is_constructible_v<T2, const U2&>)
         constexpr TPair(const std::pair<U1, U2>& Other)
-            : first(Other.first)
-            , second(Other.second)
+            : Key(Other.first)
+            , Value(Other.second)
         {}
 
         template <typename U1, typename U2>
         requires (std::is_constructible_v<T1, U1&&> && std::is_constructible_v<T2, U2&&>)
         constexpr TPair(std::pair<U1, U2>&& Other)
-            : first(std::move(Other.first))
-            , second(std::move(Other.second))
+            : Key(std::move(Other.first))
+            , Value(std::move(Other.second))
         {}
 
         /** Builds both members in place from their own argument packs, which is what a map insert needs. */
@@ -76,28 +76,28 @@ namespace Lumina::Containers
         constexpr TPair& operator=(TPair&&) = default;
         ~TPair() = default;
 
-        NODISCARD constexpr operator std::pair<T1, T2>() const { return std::pair<T1, T2>(first, second); }
+        NODISCARD constexpr operator std::pair<T1, T2>() const { return std::pair<T1, T2>(Key, Value); }
 
-        constexpr void swap(TPair& Other)
+        friend constexpr void swap(TPair& Left, TPair& Right)
             noexcept(std::is_nothrow_swappable_v<T1> && std::is_nothrow_swappable_v<T2>)
         {
             using std::swap;
-            swap(first, Other.first);
-            swap(second, Other.second);
+            swap(Left.Key, Right.Key);
+            swap(Left.Value, Right.Value);
         }
 
         NODISCARD friend constexpr bool operator==(const TPair& Left, const TPair& Right)
         {
-            return Left.first == Right.first && Left.second == Right.second;
+            return Left.Key == Right.Key && Left.Value == Right.Value;
         }
 
         NODISCARD friend constexpr auto operator<=>(const TPair& Left, const TPair& Right)
         {
-            if (const auto Order = Left.first <=> Right.first; Order != 0)
+            if (const auto Order = Left.Key <=> Right.Key; Order != 0)
             {
                 return Order;
             }
-            return Left.second <=> Right.second;
+            return Left.Value <=> Right.Value;
         }
 
     private:
@@ -105,8 +105,8 @@ namespace Lumina::Containers
         template <typename TFirstTuple, typename TSecondTuple, size_t... FirstIndices, size_t... SecondIndices>
         constexpr TPair(TFirstTuple& FirstArgs, TSecondTuple& SecondArgs,
                         std::index_sequence<FirstIndices...>, std::index_sequence<SecondIndices...>)
-            : first(Lumina::Get<FirstIndices>(Move(FirstArgs))...)
-            , second(Lumina::Get<SecondIndices>(Move(SecondArgs))...)
+            : Key(Lumina::Get<FirstIndices>(Move(FirstArgs))...)
+            , Value(Lumina::Get<SecondIndices>(Move(SecondArgs))...)
         {}
     };
 
@@ -119,31 +119,29 @@ namespace Lumina::Containers
         return TPair<std::decay_t<T1>, std::decay_t<T2>>(std::forward<T1>(First), std::forward<T2>(Second));
     }
 
-    template <typename T1, typename T2>
-    FORCEINLINE constexpr void swap(TPair<T1, T2>& Left, TPair<T1, T2>& Right) noexcept(noexcept(Left.swap(Right)))
+
+    namespace Private
     {
-        Left.swap(Right);
+        template <typename T>
+        inline constexpr bool bIsPair = false;
+
+        template <typename T1, typename T2>
+        inline constexpr bool bIsPair<TPair<T1, T2>> = true;
     }
 
-    template <size_t Index, typename T1, typename T2>
-    NODISCARD constexpr decltype(auto) get(TPair<T1, T2>& Value) noexcept
+    template <size_t Index, typename TSelf>
+    requires Private::bIsPair<std::remove_cvref_t<TSelf>>
+    NODISCARD constexpr auto&& get(TSelf&& Pair) noexcept
     {
         static_assert(Index < 2, "A pair has exactly two members.");
-        if constexpr (Index == 0) { return (Value.first); } else { return (Value.second); }
-    }
-
-    template <size_t Index, typename T1, typename T2>
-    NODISCARD constexpr decltype(auto) get(const TPair<T1, T2>& Value) noexcept
-    {
-        static_assert(Index < 2, "A pair has exactly two members.");
-        if constexpr (Index == 0) { return (Value.first); } else { return (Value.second); }
-    }
-
-    template <size_t Index, typename T1, typename T2>
-    NODISCARD constexpr decltype(auto) get(TPair<T1, T2>&& Value) noexcept
-    {
-        static_assert(Index < 2, "A pair has exactly two members.");
-        if constexpr (Index == 0) { return std::move(Value.first); } else { return std::move(Value.second); }
+        if constexpr (Index == 0)
+        {
+            return std::forward_like<TSelf>(Pair.Key);
+        }
+        else
+        {
+            return std::forward_like<TSelf>(Pair.Value);
+        }
     }
 }
 
@@ -164,4 +162,10 @@ namespace Lumina
 {
     template <typename K, typename V>
     using TPair = Containers::TPair<K, V>;
+
+    template <typename K, typename V>
+    struct TIsTriviallyRelocatable<Containers::TPair<K, V>>
+    {
+        static constexpr bool Value = TIsTriviallyRelocatable_V<std::remove_cv_t<K>> && TIsTriviallyRelocatable_V<std::remove_cv_t<V>>;
+    };
 }

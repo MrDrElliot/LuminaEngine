@@ -27,10 +27,7 @@ namespace Lumina
         Bottom,
     };
 
-    // Render-thread cache of the shaped (em-space) glyph layout for one text component. ShapeText is the
-    // expensive part of world-text extraction (UTF-8 decode + per-glyph atlas lookups + allocation), and the
-    // layout depends only on the text, font, alignment, and line spacing -- not on color/size/transform --
-    // so the extractor reshapes only when one of those changes. Not serialized; rebuilt on demand.
+    // The renderer's shaped em-space layout of one text component, reshaped only when text, font, alignment or spacing change.
     struct FTextRenderCache
     {
         TVector<FShapedGlyph> Glyphs;
@@ -44,6 +41,7 @@ namespace Lumina
         ETextHorizontalAlign  HAlign      = ETextHorizontalAlign::Center;
         ETextVerticalAlign    VAlign      = ETextVerticalAlign::Middle;
         float                 LineSpacing = 1.0f;
+        uint32                SeenSerial  = 0;
         bool                  bValid      = false;
     };
 
@@ -114,9 +112,5 @@ namespace Lumina
 
         FUNCTION()
         void SetBillboard(bool bInBillboard) { bBillboard = bInBillboard; }
-
-        // Render-thread shaped-glyph cache; not serialized, not edited. Rebuilt by the text extractor when
-        // the text/font/alignment/spacing changes (see FTextRenderCache).
-        FTextRenderCache RenderCache;
     };
 }

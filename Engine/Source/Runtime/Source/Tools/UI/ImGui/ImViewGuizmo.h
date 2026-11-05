@@ -32,6 +32,7 @@
 #include <cmath>
 
 #include "imgui.h"
+#include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 
 namespace ImViewGuizmo

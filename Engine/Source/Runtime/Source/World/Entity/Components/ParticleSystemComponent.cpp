@@ -15,21 +15,21 @@ namespace Lumina
             return nullptr;
         }
 
-        if ((size_t)EmitterIndex < MaterialOverrides.size())
+        if (EmitterIndex < MaterialOverrides.Num())
         {
-            if (CMaterialInterface* Override = MaterialOverrides[(size_t)EmitterIndex].Get())
+            if (CMaterialInterface* Override = MaterialOverrides[EmitterIndex].Get())
             {
                 return Override;
             }
         }
 
         CParticleSystem* System = ParticleSystem.Get();
-        if (System == nullptr || EmitterIndex >= (int32)System->Emitters.size())
+        if (System == nullptr || EmitterIndex >= System->Emitters.Num())
         {
             return nullptr;
         }
 
-        CParticleEmitter* Emitter = System->Emitters[(size_t)EmitterIndex].Get();
+        CParticleEmitter* Emitter = System->Emitters[EmitterIndex].Get();
         return Emitter != nullptr ? Emitter->Material.Get() : nullptr;
     }
 
@@ -41,12 +41,12 @@ namespace Lumina
         }
 
         // Grown to cover the index rather than appended, so the material lands on the emitter asked for.
-        if (MaterialOverrides.size() <= (size_t)EmitterIndex)
+        if (static_cast<size_t>(MaterialOverrides.Num()) <= (size_t)EmitterIndex)
         {
-            MaterialOverrides.resize((size_t)EmitterIndex + 1);
+            MaterialOverrides.SetNum(EmitterIndex + 1);
         }
 
-        MaterialOverrides[(size_t)EmitterIndex] = Material;
+        MaterialOverrides[EmitterIndex] = Material;
     }
 
     CMaterialInstance* SParticleSystemComponent::CreateDynamicMaterialInstance(int32 EmitterIndex)
@@ -117,8 +117,8 @@ namespace Lumina
         SParticleParameter NewOverride;
         NewOverride.Name = Name;
         NewOverride.Type = ExpectedType;
-        ParameterOverrides.push_back(NewOverride);
-        return &ParameterOverrides.back();
+        ParameterOverrides.Add(NewOverride);
+        return &ParameterOverrides.Last();
     }
 
     float SParticleSystemComponent::GetFloat(const FName& Name, float Default) const
@@ -174,25 +174,25 @@ namespace Lumina
         auto Found = Algo::FindIf(ArrayInputs, [&](const FParticleArrayInput& Input) { return Input.Name == Name; });
         if (Found == ArrayInputs.end())
         {
-            Found = ArrayInputs.emplace(ArrayInputs.end(), FParticleArrayInput{ Name, {} });
+            Found = &ArrayInputs.AddGetRef(FParticleArrayInput{ Name, {} });
         }
         Found->Values = Values;
     }
 
     void SParticleSystemComponent::ClearArray(FName Name)
     {
-        ArrayInputs.erase(Algo::RemoveIf(ArrayInputs, [&](const FParticleArrayInput& Input) { return Input.Name == Name; }), ArrayInputs.end());
+        ArrayInputs.RemoveAll([&](const FParticleArrayInput& Input) { return Input.Name == Name; });
     }
 
     void SParticleSystemComponent::EmitParticle(int32 EmitterIndex, FVector3 Position, FVector3 Velocity, FVector4 Color, float Size, int32 Flags)
     {
         constexpr SIZE_T MaxPendingEmits = 4096;
-        if (EmitterIndex < 0 || PendingEmits.size() >= MaxPendingEmits)
+        if (EmitterIndex < 0 || static_cast<size_t>(PendingEmits.Num()) >= MaxPendingEmits)
         {
             return;
         }
 
-        FParticleScriptEmit& Emit = PendingEmits.emplace_back();
+        FParticleScriptEmit& Emit = PendingEmits.EmplaceGetRef();
         Emit.EmitterIndex  = EmitterIndex;
         Emit.PositionSize  = FVector4(Position, Size);
         Emit.VelocityFlags = FVector4(Velocity, std::bit_cast<float>((uint32)Flags | EParticleEmitFlags::Position));
@@ -261,7 +261,7 @@ namespace Lumina
         {
             if (It->Name == Name)
             {
-                ParameterOverrides.erase(It);
+                ParameterOverrides.RemoveAt(static_cast<int32>(It - ParameterOverrides.begin()));
                 return;
             }
         }

@@ -168,16 +168,16 @@ namespace Lumina
         FUNCTION()
         int32 GetCompletedLoops(uint32 Tween);
 
-        void OnInitialize() override;
         void OnTeardown() override;
 
-        FTweenManager& GetTweenManager() { return TweenManager; }
+        // The world's resource, so STweenSystem and this subsystem share one instance.
+        FTweenManager& GetTweenManager() { return *EnsureTweenManager(); }
 
     private:
 
         // Rebuilt per call, since the builder is just the manager plus a generational id.
         FTween Resolve(uint32 Tween);
 
-        FTweenManager TweenManager;
+        FTweenManager* EnsureTweenManager() const;
     };
 }

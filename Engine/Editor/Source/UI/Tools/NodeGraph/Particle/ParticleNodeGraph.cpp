@@ -31,7 +31,7 @@ namespace Lumina
         {
             if (IsSink(Node.Get()))
             {
-                Sinks.push_back(Cast<CParticleGraphNode>(Node.Get()));
+                Sinks.Add(Cast<CParticleGraphNode>(Node.Get()));
             }
         }
         Algo::Sort(Sinks, [](const CParticleGraphNode* A, const CParticleGraphNode* B)
@@ -57,8 +57,8 @@ namespace Lumina
 
     void CParticleNodeGraph::ValidateGraph()
     {
-        Connections.clear();
-        Connections.reserve(16);
+        Connections.Reset();
+        Connections.Reserve(16);
 
         for (const auto& NodeRef : Nodes)
         {
@@ -68,8 +68,8 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    Connections.push_back(InputPin->PinID);
-                    Connections.push_back(Connection->PinID);
+                    Connections.Add(InputPin->PinID);
+                    Connections.Add(Connection->PinID);
                 }
             }
         }

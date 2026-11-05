@@ -64,14 +64,14 @@ namespace
     {
         const int32 Quads = (int32)(Spec.Size / Spec.TerrainStep);
         const float Half = Spec.Size * 0.5f;
-        const uint32 Base = (uint32)In.Vertices.size();
+        const uint32 Base = (uint32)In.Vertices.Num();
         for (int32 Row = 0; Row <= Quads; ++Row)
         {
             for (int32 Col = 0; Col <= Quads; ++Col)
             {
                 const float X = -Half + (float)Col * Spec.TerrainStep;
                 const float Z = -Half + (float)Row * Spec.TerrainStep;
-                In.Vertices.push_back(FVector3(X, TerrainHeight(X, Z), Z));
+                In.Vertices.Emplace(X, TerrainHeight(X, Z), Z);
             }
         }
         const uint32 Stride = (uint32)Quads + 1;
@@ -83,7 +83,7 @@ namespace
                 const uint32 B = A + 1;
                 const uint32 C = A + Stride;
                 const uint32 D = C + 1;
-                In.Indices.insert(In.Indices.end(), { A, C, B, B, C, D });
+                In.Indices.Append({ A, C, B, B, C, D });
             }
         }
     }
@@ -94,13 +94,13 @@ namespace
         const float Y = TerrainHeight(X, Z) + Half.y - 0.5f;
         const float C = std::cos(Yaw);
         const float S = std::sin(Yaw);
-        const uint32 Base = (uint32)In.Vertices.size();
+        const uint32 Base = (uint32)In.Vertices.Num();
         for (int32 Corner = 0; Corner < 8; ++Corner)
         {
             const float LX = (Corner & 1) ? Half.x : -Half.x;
             const float LY = (Corner & 2) ? Half.y : -Half.y;
             const float LZ = (Corner & 4) ? Half.z : -Half.z;
-            In.Vertices.push_back(FVector3(X + LX * C - LZ * S, Y + LY, Z + LX * S + LZ * C));
+            In.Vertices.Emplace(X + LX * C - LZ * S, Y + LY, Z + LX * S + LZ * C);
         }
         constexpr uint32 Faces[12][3] = {
             {2, 6, 7}, {2, 7, 3}, {0, 1, 5}, {0, 5, 4}, {0, 4, 6}, {0, 6, 2},
@@ -108,7 +108,7 @@ namespace
         };
         for (const auto& Face : Faces)
         {
-            In.Indices.insert(In.Indices.end(), { Base + Face[0], Base + Face[1], Base + Face[2] });
+            In.Indices.Append({ Base + Face[0], Base + Face[1], Base + Face[2] });
         }
     }
 
@@ -162,8 +162,8 @@ namespace
     {
         World.Spec = SpecFromEnvironment();
         FNavBuildInput Input = MakeOpenWorld(World.Spec);
-        std::printf("[NavBench] world %.0f m, %zu verts, %zu tris (%d buildings, %d rocks)\n",
-            World.Spec.Size, Input.Vertices.size(), Input.Indices.size() / 3, World.Spec.Buildings, World.Spec.Rocks);
+        std::printf("[NavBench] world %.0f m, %d verts, %d tris (%d buildings, %d rocks)\n",
+            World.Spec.Size, Input.Vertices.Num(), Input.Indices.Num() / 3, World.Spec.Buildings, World.Spec.Rocks);
 
         PlatformTime::FStopwatch BakeWatch;
         FNavBuildOutput Output;
@@ -174,19 +174,19 @@ namespace
         int32 Walkable = 0;
         for (const SNavTileData& Tile : Output.Tiles)
         {
-            Bytes += Tile.Blob.size();
-            Walkable += Tile.Blob.empty() ? 0 : 1;
+            Bytes += Tile.Blob.Num();
+            Walkable += Tile.Blob.IsEmpty() ? 0 : 1;
         }
         std::printf("[NavBench] bake %s in %.0f ms, %d tiles (%d walkable, %dx%d grid, %.1f m each), %.1f MiB\n",
-            bBaked ? "ok" : "FAILED", BakeMs, (int32)Output.Tiles.size(), Walkable, Output.TilesX, Output.TilesY,
+            bBaked ? "ok" : "FAILED", BakeMs, Output.Tiles.Num(), Walkable, Output.TilesX, Output.TilesY,
             Output.TileWorldSize, (double)Bytes / (1024.0 * 1024.0));
 
         World.Layout = Output;
-        World.Layout.Tiles.clear();
+        World.Layout.Tiles.Reset();
 
         PlatformTime::FStopwatch HydrateWatch;
         World.Mesh = MakeUnique<FNavMesh>();
-        World.Mesh->Initialize(Output.Origin, Output.TileWorldSize, Math::Max(1, (int32)Output.Tiles.size()), Output.MaxPolysPerTile, Move(Output.Tiles));
+        World.Mesh->Initialize(Output.Origin, Output.TileWorldSize, Math::Max(1, Output.Tiles.Num()), Output.MaxPolysPerTile, Move(Output.Tiles));
         std::printf("[NavBench] hydrate %.0f ms\n", HydrateWatch.ElapsedMilliseconds());
 
         // Every query starts and ends on the mesh, so a miss means the query failed rather than the sample.
@@ -194,7 +194,7 @@ namespace
         const float Half = World.Spec.Size * 0.5f - 4.0f;
         FNavQueryFilter Filter;
         int32 Attempts = 0;
-        while (World.Points.size() < 4096 && Attempts++ < 100000)
+        while (World.Points.Num() < 4096 && Attempts++ < 100000)
         {
             const float X = Random.Range(-Half, Half);
             const float Z = Random.Range(-Half, Half);
@@ -203,7 +203,7 @@ namespace
             if (World.Mesh->ProjectPoint(FVector3(X, TerrainHeight(X, Z), Z), FVector3(2.0f, 8.0f, 2.0f), Filter, OnMesh)
                 && std::fabs(OnMesh.y - TerrainHeight(OnMesh.x, OnMesh.z)) < 0.5f)
             {
-                World.Points.push_back(OnMesh);
+                World.Points.Add(OnMesh);
             }
         }
     }
@@ -231,7 +231,7 @@ namespace
             Succeeded += bFound && !Path.bPartial ? 1 : 0;
             Partial += Path.bPartial ? 1 : 0;
             Truncated += Path.bTruncated ? 1 : 0;
-            Corners += (int32)Path.Corners.size();
+            Corners += Path.Corners.Num();
         }
 
         void Print(const char* Band, const char* Mode, int32 Ran) const
@@ -245,7 +245,7 @@ namespace
     float PathLength(const FNavPath& Path)
     {
         float Length = 0.0f;
-        for (size_t i = 1; i < Path.Corners.size(); ++i)
+        for (int32 i = 1; i < Path.Corners.Num(); ++i)
         {
             Length += Math::Length(Path.Corners[i] - Path.Corners[i - 1]);
         }
@@ -278,8 +278,8 @@ namespace
         while (Ran < Count && Attempts < Count * 200)
         {
             ++Attempts;
-            const FVector3& A = World.Points[Random.Next() % World.Points.size()];
-            const FVector3& B = World.Points[Random.Next() % World.Points.size()];
+            const FVector3& A = World.Points[Random.Next() % World.Points.Num()];
+            const FVector3& B = World.Points[Random.Next() % World.Points.Num()];
             const float Distance = std::sqrt((A.x - B.x) * (A.x - B.x) + (A.z - B.z) * (A.z - B.z));
             if (Distance < Band.MinDistance || Distance >= Band.MaxDistance)
             {
@@ -330,11 +330,11 @@ namespace
         constexpr uint32 Queries = 8192;
         std::atomic<int32> Unavailable{ 0 };
         PlatformTime::FStopwatch Watch;
-        Task::ParallelFor(Queries, [&](uint32 Index)
+        Jobs::ParallelFor(Queries, [&](uint32 Index)
         {
             FRandom Random(Index * 2654435761u + 3);
-            const FVector3& A = World.Points[Random.Next() % World.Points.size()];
-            const FVector3& B = World.Points[Random.Next() % World.Points.size()];
+            const FVector3& A = World.Points[Random.Next() % World.Points.Num()];
+            const FVector3& B = World.Points[Random.Next() % World.Points.Num()];
             FNavPath Path;
             FNavQueryFilter Filter;
             World.Mesh->FindPath(A, B, Filter, Path);
@@ -358,7 +358,7 @@ namespace
         int32 Hits = 0;
         for (int32 i = 0; i < Projects; ++i)
         {
-            const FVector3& P = World.Points[Random.Next() % World.Points.size()];
+            const FVector3& P = World.Points[Random.Next() % World.Points.Num()];
             FVector3 Out;
             Hits += World.Mesh->ProjectPoint(P + FVector3(0.5f, 1.0f, -0.5f), FVector3(2.0f, 8.0f, 2.0f), Filter, Out) ? 1 : 0;
         }
@@ -369,7 +369,7 @@ namespace
         int32 Blocked = 0;
         for (int32 i = 0; i < Rays; ++i)
         {
-            const FVector3& A = World.Points[Random.Next() % World.Points.size()];
+            const FVector3& A = World.Points[Random.Next() % World.Points.Num()];
             const FVector3 B = A + FVector3(Random.Range(-40.0f, 40.0f), 0.0f, Random.Range(-40.0f, 40.0f));
             SNavRaycastResult Hit;
             World.Mesh->Raycast(A, B, Filter, Hit);
@@ -382,7 +382,7 @@ namespace
         for (int32 i = 0; i < Randoms; ++i)
         {
             FVector3 Out;
-            World.Mesh->FindRandomPoint(World.Points[Random.Next() % World.Points.size()], 30.0f, Filter, Out);
+            World.Mesh->FindRandomPoint(World.Points[Random.Next() % World.Points.Num()], 30.0f, Filter, Out);
         }
         std::printf("[NavBench] random point %d within 30 m, %.2f us avg\n", Randoms, RandomWatch.ElapsedMilliseconds() * 1000.0 / Randoms);
     }
@@ -398,7 +398,7 @@ namespace
         {
             for (int32 DX = 0; DX < 4; ++DX)
             {
-                Coords.push_back(FNavTileCoord{ CX + DX, CY + DY });
+                Coords.Emplace(CX + DX, CY + DY);
             }
         }
 
@@ -412,13 +412,13 @@ namespace
         {
             World.Mesh->RebuildTile(Tile.X, Tile.Y, Move(Tile.Blob));
         }
-        std::printf("[NavBench] rebake 16 tiles from the whole world's %zu tris in %.1f ms, swap %.2f ms\n",
-            Input.Indices.size() / 3, BakeMs, SwapWatch.ElapsedMilliseconds());
+        std::printf("[NavBench] rebake 16 tiles from the whole world's %d tris in %.1f ms, swap %.2f ms\n",
+            Input.Indices.Num() / 3, BakeMs, SwapWatch.ElapsedMilliseconds());
 
         // The first long path after a change relabels the cluster islands, which every later one reuses.
         FNavQueryFilter Filter;
-        const FVector3 From = World.Points.front();
-        const FVector3 To = World.Points.back();
+        const FVector3 From = World.Points[0];
+        const FVector3 To = World.Points.Last();
         for (const char* When : { "first", "second" })
         {
             FNavPath Path;
@@ -435,7 +435,7 @@ TEST(NavBenchmark, DISABLED_OpenWorld)
     FBakedWorld World;
     Bake(World);
     ASSERT_TRUE(World.Mesh && World.Mesh->IsReady());
-    ASSERT_FALSE(World.Points.empty());
+    ASSERT_FALSE(World.Points.IsEmpty());
 
     RunPathQueries(World);
     RunParallelPaths(World);
@@ -461,13 +461,13 @@ TEST(NavBenchmark, DISABLED_WorldSources)
     PlatformTime::FStopwatch BuildWatch;
     World.Create(Size);
     TVector<ECS::FEntity> Obstacles;
-    Obstacles.reserve(ObstacleCount);
+    Obstacles.Reserve(ObstacleCount);
     FRandom Random(99);
     const float Half = Size * 0.5f - 4.0f;
     for (int32 i = 0; i < ObstacleCount; ++i)
     {
         const FVector3 Extent(Random.Range(0.4f, 3.0f), Random.Range(0.5f, 2.5f), Random.Range(0.4f, 3.0f));
-        Obstacles.push_back(NavTest::SpawnBox(World.Registry(), FVector3(Random.Range(-Half, Half), Extent.y, Random.Range(-Half, Half)), Extent));
+        Obstacles.Add(NavTest::SpawnBox(World.Registry(), FVector3(Random.Range(-Half, Half), Extent.y, Random.Range(-Half, Half)), Extent));
     }
     World.Nav().Settings.TileSizeVoxels = 128;
     std::printf("[NavBench] world %.0f m with %d obstacles built in %.0f ms\n", Size, ObstacleCount, BuildWatch.ElapsedMilliseconds());
@@ -478,7 +478,7 @@ TEST(NavBenchmark, DISABLED_WorldSources)
 
     PlatformTime::FStopwatch BakeWatch;
     const bool bReady = World.WaitReady(600000.0);
-    std::printf("[NavBench] bake to ready %s in %.0f ms, %d tiles\n", bReady ? "ok" : "TIMED OUT", BakeWatch.ElapsedMilliseconds(), (int32)World.Nav().Tiles.size());
+    std::printf("[NavBench] bake to ready %s in %.0f ms, %d tiles\n", bReady ? "ok" : "TIMED OUT", BakeWatch.ElapsedMilliseconds(), World.Nav().Tiles.Num());
     ASSERT_TRUE(bReady);
 
     double Idle = 0.0, IdleWorst = 0.0;
@@ -498,7 +498,7 @@ TEST(NavBenchmark, DISABLED_WorldSources)
     {
         for (int32 Moved = 0; Moved < 10; ++Moved)
         {
-            STransformComponent& Transform = World.Registry().Get<STransformComponent>(Obstacles[Random.Next() % Obstacles.size()]);
+            STransformComponent& Transform = World.Registry().Get<STransformComponent>(Obstacles[Random.Next() % Obstacles.Num()]);
             Transform.SetLocation(Transform.GetLocation() + FVector3(Random.Range(-2.0f, 2.0f), 0.0f, Random.Range(-2.0f, 2.0f)));
         }
         const double Ms = World.Tick();
@@ -536,9 +536,9 @@ namespace
             {
                 Sum += Sample;
             }
-            const size_t N = Sorted.size();
+            const int32 N = Sorted.Num();
             std::printf("[NavHitch] %-24s avg %6.2f ms, p99 %6.2f ms, worst %6.2f ms\n", Name, N ? Sum / N : 0.0,
-                N ? Sorted[(size_t)(0.99 * (double)(N - 1))] : 0.0, N ? Sorted.back() : 0.0);
+                N ? Sorted[static_cast<int32>(0.99 * (N - 1))] : 0.0, N ? Sorted.Last() : 0.0);
         }
     };
 
@@ -547,7 +547,7 @@ namespace
     {
         const uint32 Chunks = Math::Max(1u, Jobs::GetNumWorkers()) * 4;
         PlatformTime::FStopwatch Watch;
-        Task::ParallelFor(Chunks, [](uint32)
+        Jobs::ParallelFor(Chunks, [](uint32)
         {
             PlatformTime::FStopwatch Spin;
             while (Spin.ElapsedMilliseconds() < 0.1)
@@ -599,7 +599,7 @@ TEST(NavBenchmark, DISABLED_Hitch)
 
     World.Start(true);
     ASSERT_TRUE(World.WaitReady(600000.0));
-    std::printf("[NavHitch] baked %d tiles\n", (int32)World.Nav().Tiles.size());
+    std::printf("[NavHitch] baked %d tiles\n", World.Nav().Tiles.Num());
 
     for (int32 i = 0; i < AgentCount; ++i)
     {
@@ -622,10 +622,10 @@ TEST(NavBenchmark, DISABLED_Hitch)
         for (int32 Frame = 0; Frame < 600 && Settled < 10; ++Frame)
         {
             const double Ms = World.TickFollow();
-            Wave.Samples.push_back(Ms);
+            Wave.Samples.Add(Ms);
             Settled = Ms < 0.5 ? Settled + 1 : 0;
         }
-        std::printf("[NavHitch] first paths for the crowd took %d frames\n", (int32)Wave.Samples.size());
+        std::printf("[NavHitch] first paths for the crowd took %d frames\n", Wave.Samples.Num());
         Wave.Print("first paths frame");
     }
 
@@ -648,7 +648,7 @@ TEST(NavBenchmark, DISABLED_Hitch)
         {
             Mover.Entity = NavTest::SpawnBox(Registry, Start + FVector3(0.0f, 0.7f, 0.0f), FVector3(2.0f, 0.7f, 2.0f));
         }
-        Movers.push_back(Mover);
+        Movers.Add(Mover);
     }
 
     // Other gameplay asking for long paths from its own thread, the way a script or a spawner would.
@@ -680,11 +680,11 @@ TEST(NavBenchmark, DISABLED_Hitch)
             const FVector3 At = Mover.Center + FVector3(std::cos(Mover.Angle) * Mover.Radius, 0.0f, std::sin(Mover.Angle) * Mover.Radius);
             Registry.Get<STransformComponent>(Mover.Entity).SetLocation(Ground(At.x, At.z) + FVector3(0.0f, bModifierMovers ? 0.0f : 0.7f, 0.0f));
         }
-        NavTick.Samples.push_back(World.Tick());
-        FollowTick.Samples.push_back(World.TickFollow());
-        Probe.Samples.push_back(ProbeWorkers());
+        NavTick.Samples.Add(World.Tick());
+        FollowTick.Samples.Add(World.TickFollow());
+        Probe.Samples.Add(ProbeWorkers());
         const double Used = FrameWatch.ElapsedMilliseconds();
-        Frame.Samples.push_back(Used);
+        Frame.Samples.Add(Used);
         if (Used < kFrameMs)
         {
             std::this_thread::sleep_for(std::chrono::microseconds((int64)((kFrameMs - Used) * 1000.0)));

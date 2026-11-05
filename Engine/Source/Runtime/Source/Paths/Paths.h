@@ -77,8 +77,8 @@ namespace Lumina::Paths
     {
         typename T::value_type;
     } && (
-        requires(T s) { { s.c_str() } -> std::convertible_to<const typename T::value_type*>; } ||
-        requires(T s) { { s.data() } -> std::convertible_to<const typename T::value_type*>; }
+        requires(T s) { { *s } -> std::convertible_to<const typename T::value_type*>; } ||
+        requires(T s) { { s.GetData() } -> std::convertible_to<const typename T::value_type*>; }
     );
     
     template <typename... Paths>
@@ -88,22 +88,22 @@ namespace Lumina::Paths
 
         auto AppendPath = [&Result, bFirst = true](FStringView Path) mutable
         {
-            if (Path.empty())
+            if (Path.IsEmpty())
             {
                 return;
             }
     
-            if (!bFirst && !Result.empty() && Result.back() != '/')
+            if (!bFirst && !Result.IsEmpty() && Result.Last() != '/')
             {
                 Result += '/';
             }
     
-            if (!bFirst && !Path.empty() && Path.front() == '/')
+            if (!bFirst && !Path.IsEmpty() && Path[0] == '/')
             {
-                Path = Path.substr(1);
+                Path = Path.Mid(1);
             }
         
-            Result.append(Path.data(), Path.length());
+            Result.Append(Path.GetData(), Path.Len());
             bFirst = false;
         };
 
@@ -116,10 +116,10 @@ namespace Lumina::Paths
     template<ValidStringType StringType>
     NODISCARD StringType DirName(const StringType& String)
     {
-        size_t LastSlash = String.find_last_of("/\\");
-        if (LastSlash != FString::npos)
+        int32 LastSlash = String.FindLastOf("/\\");
+        if (LastSlash != Constants::kIndexNone)
         {
-            return String.substr(0, LastSlash);
+            return String.Mid(0, LastSlash);
         }
         return String;
     }

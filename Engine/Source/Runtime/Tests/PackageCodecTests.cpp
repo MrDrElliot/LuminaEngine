@@ -29,30 +29,30 @@ namespace
     void AppendU32(TVector<uint8>& Out, uint32 Value)
     {
         const uint8* Bytes = reinterpret_cast<const uint8*>(&Value);
-        Out.insert(Out.end(), Bytes, Bytes + sizeof(Value));
+        Out.Append(Bytes, Bytes + sizeof(Value));
     }
 
     void AppendU64(TVector<uint8>& Out, uint64 Value)
     {
         const uint8* Bytes = reinterpret_cast<const uint8*>(&Value);
-        Out.insert(Out.end(), Bytes, Bytes + sizeof(Value));
+        Out.Append(Bytes, Bytes + sizeof(Value));
     }
 
     uint32 ReadU32At(const TVector<uint8>& Bytes, size_t Offset)
     {
         uint32 Value = 0;
-        std::memcpy(&Value, Bytes.data() + Offset, sizeof(Value));
+        std::memcpy(&Value, Bytes.GetData() + Offset, sizeof(Value));
         return Value;
     }
 
     TVector<uint8> MakeCompressiblePayload(size_t Length)
     {
         TVector<uint8> Payload;
-        Payload.reserve(Length);
+        Payload.Reserve(Lumina::IntCastChecked<Lumina::int32>(Length));
         const char* Pattern = "FloatProperty NoiseScale StructProperty ShapeSize ";
         for (size_t i = 0; i < Length; ++i)
         {
-            Payload.push_back((uint8)Pattern[i % strlen(Pattern)]);
+            Payload.Add((uint8)Pattern[i % strlen(Pattern)]);
         }
         return Payload;
     }
@@ -65,30 +65,30 @@ TEST(PackageCodec, AVersionOneDeflateContainerStillReads)
 
     const TVector<uint8> Payload = MakeCompressiblePayload(64 * 1024);
 
-    mz_ulong Bound = mz_compressBound((mz_ulong)Payload.size());
-    TVector<uint8> Deflated(Bound);
+    mz_ulong Bound = mz_compressBound((mz_ulong)Payload.Num());
+    TVector<uint8> Deflated(Lumina::IntCastChecked<Lumina::int32>(Bound));
     mz_ulong DeflatedLength = Bound;
-    ASSERT_EQ(mz_compress2(Deflated.data(), &DeflatedLength, Payload.data(),
-                           (mz_ulong)Payload.size(), MZ_DEFAULT_LEVEL), MZ_OK);
-    Deflated.resize(DeflatedLength);
+    ASSERT_EQ(mz_compress2(Deflated.GetData(), &DeflatedLength, Payload.GetData(),
+                           (mz_ulong)Payload.Num(), MZ_DEFAULT_LEVEL), MZ_OK);
+    Deflated.SetNum(Lumina::IntCastChecked<Lumina::int32>(DeflatedLength));
 
     // the v1 layout, which carried no codec word because deflate was the only one
     TVector<uint8> Container;
     AppendU32(Container, kChunkMagic);
     AppendU32(Container, 1);
-    AppendU64(Container, Payload.size());
+    AppendU64(Container, Payload.Num());
     AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
-    AppendU32(Container, (uint32)Deflated.size());
-    Container.insert(Container.end(), Deflated.begin(), Deflated.end());
+    AppendU32(Container, (uint32)Deflated.Num());
+    Container.Append(Deflated);
 
     const char* Path = "/PkgCodec/LegacyDeflate.lasset";
-    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.data(), Container.size())));
+    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.GetData(), Container.Num())));
 
     TVector<uint8> Decompressed;
     ASSERT_TRUE(CPackage::ReadPackageFile(Path, Decompressed));
-    EXPECT_EQ(Decompressed.size(), Payload.size());
-    EXPECT_EQ(std::memcmp(Decompressed.data(), Payload.data(), Payload.size()), 0);
+    EXPECT_EQ(Decompressed.Num(), Payload.Num());
+    EXPECT_EQ(std::memcmp(Decompressed.GetData(), Payload.GetData(), Payload.Num()), 0);
 }
 
 TEST(PackageCodec, AnUnknownCodecIsRefusedRatherThanMisread)
@@ -103,10 +103,10 @@ TEST(PackageCodec, AnUnknownCodecIsRefusedRatherThanMisread)
     AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
     AppendU32(Container, 8);
-    Container.resize(Container.size() + 8, 0);
+    Container.SetNum(Container.Num() + 8, 0);
 
     const char* Path = "/PkgCodec/UnknownCodec.lasset";
-    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.data(), Container.size())));
+    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.GetData(), Container.Num())));
 
     TVector<uint8> Decompressed;
     EXPECT_FALSE(CPackage::ReadPackageFile(Path, Decompressed));
@@ -123,10 +123,10 @@ TEST(PackageCodec, AContainerFromAFutureVersionIsRefused)
     AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
     AppendU32(Container, 8);
-    Container.resize(Container.size() + 8, 0);
+    Container.SetNum(Container.Num() + 8, 0);
 
     const char* Path = "/PkgCodec/FutureVersion.lasset";
-    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.data(), Container.size())));
+    ASSERT_TRUE(VFS::WriteFile(Path, TSpan<const uint8>(Container.GetData(), Container.Num())));
 
     TVector<uint8> Decompressed;
     EXPECT_FALSE(CPackage::ReadPackageFile(Path, Decompressed));
@@ -161,8 +161,8 @@ TEST(PackageCodec, ASavedPackageIsZstdAndRoundTrips)
                 Object->ConditionalBeginDestroy();
             }
         }
-        Package->ExportTable.clear();
-        Package->ImportTable.clear();
+        Package->ExportTable.Reset();
+        Package->ImportTable.Reset();
 
         // The root set holds the package's only strong reference, so unrooting is what destroys it.
         Package->RemoveFromRoot();
@@ -170,7 +170,7 @@ TEST(PackageCodec, ASavedPackageIsZstdAndRoundTrips)
 
     TVector<uint8> Raw;
     ASSERT_TRUE(VFS::ReadFile(Raw, Path));
-    ASSERT_GE(Raw.size(), 12u);
+    ASSERT_GE(Raw.Num(), 12);
     EXPECT_EQ(ReadU32At(Raw, 0), kChunkMagic);
     EXPECT_EQ(ReadU32At(Raw, 4), 2u) << "a save must stamp the codec-bearing container version";
     EXPECT_EQ(ReadU32At(Raw, 8), 1u) << "and name zstd as the codec";

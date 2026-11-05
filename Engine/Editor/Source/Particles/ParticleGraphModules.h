@@ -16,7 +16,7 @@ namespace Lumina
         GENERATED_BODY()
     public:
         bool IsPaletteVisible() const override { return false; }
-        FString GetDisplayName() const override { return ModuleName.empty() ? FString("Graph Module") : ModuleName; }
+        FString GetDisplayName() const override { return ModuleName.IsEmpty() ? FString("Graph Module") : ModuleName; }
         FString GetCategory() const override { return "Custom"; }
         uint32 GetAccentColor() const override { return IM_COL32(110, 160, 225, 255); }
         void GetOwnedObjects(TVector<CObject*>& OutObjects) const override;

@@ -35,7 +35,7 @@ namespace Lumina
         void AddSoftReplacement(const FGuid& ToReplaceGUID, FStringView ToReplacePath,
             const FGuid& ReplacementGUID, FStringView ReplacementPath);
 
-        NODISCARD bool IsEmpty() const { return HardEntries.empty() && SoftEntries.empty(); }
+        NODISCARD bool IsEmpty() const { return HardEntries.IsEmpty() && SoftEntries.IsEmpty(); }
 
         /** Applies to every live object and every registered provider. Returns the number rewritten. */
         uint32 ApplyToAllObjects();

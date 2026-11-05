@@ -271,7 +271,7 @@ namespace Lumina
     {
         if (Viewport == nullptr) return;
         if (Algo::Contains(Viewports, Viewport)) return;
-        Viewports.push_back(Viewport);
+        Viewports.Add(Viewport);
 
         if (ActiveViewport == nullptr)
         {
@@ -283,13 +283,9 @@ namespace Lumina
     {
         if (Viewport == nullptr) return;
 
-        auto It = Algo::Find(Viewports, Viewport);
-        if (It != Viewports.end())
-        {
-            Viewports.erase(It);
-        }
+        Viewports.RemoveSingle(Viewport);
 
-        if (ActiveViewport     == Viewport) ActiveViewport     = Viewports.empty() ? nullptr : Viewports.front();
+        if (ActiveViewport     == Viewport) ActiveViewport     = Viewports.IsEmpty() ? nullptr : Viewports[0];
         if (HoveredViewport    == Viewport) HoveredViewport    = nullptr;
         if (MousePressViewport == Viewport) MousePressViewport = nullptr;
 
@@ -458,7 +454,7 @@ namespace Lumina
     bool FInputViewportRegistry::BeginRebind(FName Action, int32 BindingIndex)
     {
         const SInputAction* Found = FInputActionMap::Get().FindAction(Action);
-        if (Found == nullptr || BindingIndex < 0 || BindingIndex >= int32(Found->Bindings.size())
+        if (Found == nullptr || BindingIndex < 0 || BindingIndex >= Found->Bindings.Num()
             || Found->Bindings[BindingIndex].Source != EInputAxisSource::Key)
         {
             return false;
@@ -487,7 +483,7 @@ namespace Lumina
         FInputActionMap& Map = FInputActionMap::Get();
         const SInputAction* Action = Map.FindAction(RebindAction);
         const EKey PressedKey = RawInput->GetFirstPressedKey();
-        if (Action == nullptr || RebindIndex >= int32(Action->Bindings.size()) || PressedKey == EKey::Escape)
+        if (Action == nullptr || RebindIndex >= Action->Bindings.Num() || PressedKey == EKey::Escape)
         {
             CancelRebind();
             return;

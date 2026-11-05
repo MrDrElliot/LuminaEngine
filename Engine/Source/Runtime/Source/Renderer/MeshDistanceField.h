@@ -59,10 +59,10 @@ namespace Lumina
         FORCEINLINE bool IsValid() const
         {
             return Dimensions.x > 0 && Dimensions.y > 0 && Dimensions.z > 0
-                && Distances.size() == (size_t)Dimensions.x * Dimensions.y * Dimensions.z;
+                && static_cast<size_t>(Distances.Num()) == (size_t)Dimensions.x * Dimensions.y * Dimensions.z;
         }
 
-        FORCEINLINE size_t GetSizeBytes() const { return Distances.size(); }
+        FORCEINLINE size_t GetSizeBytes() const { return Distances.Num(); }
 
         friend FArchive& operator << (FArchive& Ar, FDistanceFieldVolume& Data)
         {

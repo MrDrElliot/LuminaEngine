@@ -36,5 +36,6 @@ namespace Lumina
     };
 
     RUNTIME_API FStringView LexToString(EPluginLoadingPhase Phase);
-    RUNTIME_API EPluginLoadingPhase ParsePluginLoadingPhase(FStringView Str, EPluginLoadingPhase Default = EPluginLoadingPhase::PreEngineInit);
+    // False for a name that is not a phase; the descriptor loader reports it, as the build tool does.
+    RUNTIME_API bool TryParsePluginLoadingPhase(FStringView Str, EPluginLoadingPhase& OutPhase);
 }

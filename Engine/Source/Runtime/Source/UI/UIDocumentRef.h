@@ -23,12 +23,12 @@ namespace Lumina
         FString Guid;
 
         SUIDocumentRef() = default;
-        explicit SUIDocumentRef(FStringView InPath) : Path(InPath.data(), InPath.size()) {}
+        explicit SUIDocumentRef(FStringView InPath) : Path(InPath.GetData(), InPath.Len()) {}
 
-        bool IsNull() const  { return Path.empty() && Guid.empty(); }
+        bool IsNull() const  { return Path.IsEmpty() && Guid.IsEmpty(); }
         bool IsValid() const { return !IsNull(); }
 
-        FStringView GetPath() const { return FStringView(Path.c_str(), Path.size()); }
+        FStringView GetPath() const { return FStringView(*Path, Path.Len()); }
         FGuid       GetGuid() const;
 
         // GUID-first lookup that heals Path after a rename, and is safe on any thread and in cooked builds.
@@ -40,7 +40,7 @@ namespace Lumina
         // Editor assignment that derives the GUID, minting a sidecar when the document has none.
         void SetPath(FStringView InPath);
         void Set(FStringView InPath, const FGuid& InGuid);
-        void Reset() { Path.clear(); Guid.clear(); }
+        void Reset() { Path.Reset(); Guid.Reset(); }
 
         // A compact net index when the archive binds the document hooks, otherwise the full path and GUID.
         void NetSerialize(FNetArchive& Ar);

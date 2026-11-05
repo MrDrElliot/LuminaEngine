@@ -86,7 +86,7 @@ namespace Grain
 
             GShaderCompiler->Flush();
 
-            if (Spirv.empty())
+            if (Spirv.IsEmpty())
             {
                 LOG_ERROR("Grain: failed to compile '{}'.", DebugName);
             }
@@ -104,7 +104,7 @@ namespace Grain
             constexpr uint32 kOpEntryPoint = 15u;
             constexpr size_t kHeaderWords = 5;
 
-            for (size_t Word = kHeaderWords; Word + 3 < Spirv.size();)
+            for (int32 Word = kHeaderWords; Word + 3 < Spirv.Num();)
             {
                 const uint32 Count = Spirv[Word] >> 16u;
                 if (Count == 0)
@@ -116,7 +116,7 @@ namespace Grain
                 {
                     const char* Text = reinterpret_cast<const char*>(&Spirv[Word + 3]);
                     const size_t Limit = (Count - 3) * sizeof(uint32);
-                    return FString(Text, strnlen(Text, Limit));
+                    return FString(Text, Lumina::IntCastChecked<Lumina::int32>(strnlen(Text, Limit)));
                 }
 
                 Word += Count;
@@ -128,8 +128,8 @@ namespace Grain
         {
             return RHI::FShaderSource
             {
-                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                     Spirv.size() * sizeof(uint32)),
+                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                     Spirv.Num() * sizeof(uint32)),
                 .EntryPoint = EntryPoint,
             };
         }
@@ -137,7 +137,7 @@ namespace Grain
         RHI::FPipelineH MakePipeline(const TVector<uint32>& Vertex, const TVector<uint32>& Pixel,
                                      const char* PixelEntry, EFormat Format, uint32 Count = 1)
         {
-            if (Vertex.empty() || Pixel.empty())
+            if (Vertex.IsEmpty() || Pixel.IsEmpty())
             {
                 return {};
             }
@@ -157,11 +157,11 @@ namespace Grain
 
         RHI::FPipelineH MakeCompute(const TVector<uint32>& Spirv)
         {
-            if (Spirv.empty())
+            if (Spirv.IsEmpty())
             {
                 return {};
             }
-            return RHI::CreateComputePipeline(ShaderSource(Spirv, EntryPointName(Spirv).c_str()));
+            return RHI::CreateComputePipeline(ShaderSource(Spirv, *EntryPointName(Spirv)));
         }
 
         // RHI::Utils only opens a single target pass, and several passes here split across two or three.
@@ -169,7 +169,7 @@ namespace Grain
                             const FUIntVector2& Extent)
         {
             RHI::FRenderAttachment Attachments[4];
-            for (size_t i = 0; i < Targets.size(); ++i)
+            for (int32 i = 0; i < Targets.Num(); ++i)
             {
                 Attachments[i] = RHI::FRenderAttachment
                 {
@@ -182,7 +182,7 @@ namespace Grain
 
             const RHI::FRenderPassDesc Pass
             {
-                .ColorAttachments = TSpan<const RHI::FRenderAttachment>(Attachments, Targets.size()),
+                .ColorAttachments = TSpan<const RHI::FRenderAttachment>(Attachments, Targets.Num()),
                 .RenderArea       = Extent,
             };
 
@@ -267,8 +267,8 @@ namespace Grain
 
     bool FRenderer::UploadModels(TSpan<const uint32> Descs, TSpan<const uint32> Cells)
     {
-        const uint64 DescBytes = Descs.size() * sizeof(uint32);
-        const uint64 CellBytes = Math::Max<uint64>(Cells.size() * sizeof(uint32), 4);
+        const uint64 DescBytes = Descs.Num() * sizeof(uint32);
+        const uint64 CellBytes = Math::Max<uint64>(Cells.Num() * sizeof(uint32), 4);
 
         ModelDescBuffer = RHI::Malloc(DescBytes, RHI::EMemoryType::Default);
         ModelCellBuffer = RHI::Malloc(CellBytes, RHI::EMemoryType::Default);
@@ -291,11 +291,11 @@ namespace Grain
             return false;
         }
 
-        std::memcpy(Staging.Cpu, Descs.data(), size_t(DescBytes));
-        if (!Cells.empty())
+        std::memcpy(Staging.Cpu, Descs.GetData(), size_t(DescBytes));
+        if (!Cells.IsEmpty())
         {
-            std::memcpy(reinterpret_cast<uint8*>(Staging.Cpu) + DescBytes, Cells.data(),
-                        size_t(Cells.size() * sizeof(uint32)));
+            std::memcpy(reinterpret_cast<uint8*>(Staging.Cpu) + DescBytes, Cells.GetData(),
+                        Cells.Num() * sizeof(uint32));
         }
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
@@ -316,7 +316,7 @@ namespace Grain
 
     void FRenderer::SetEntities(TSpan<const FEntityGpu> InEntities)
     {
-        EntityCount = uint32(Math::Min<size_t>(InEntities.size(), kMaxRenderEntities));
+        EntityCount = uint32(Math::Min<size_t>(InEntities.Num(), kMaxRenderEntities));
 
         EntityBounds = { 0.0f, 0.0f, 0.0f, 0.0f };
 
@@ -326,7 +326,7 @@ namespace Grain
         }
 
         // Host visible, so the write lands without a copy and the submit carries its visibility.
-        std::memcpy(EntityBuffer.Cpu, InEntities.data(), size_t(EntityCount) * sizeof(FEntityGpu));
+        std::memcpy(EntityBuffer.Cpu, InEntities.GetData(), size_t(EntityCount) * sizeof(FEntityGpu));
 
         FVector3 Low = InEntities[0].Position;
         FVector3 High = InEntities[0].Position;
@@ -1043,11 +1043,11 @@ namespace Grain
         if (const uint8* Pixels = Readback.CpuAs<const uint8>())
         {
             TVector<uint8> Rgba;
-            Rgba.resize(size_t(Bytes));
+            Rgba.SetNum(Lumina::IntCastChecked<Lumina::int32>(size_t(Bytes)));
             const bool bSwap = SwapchainFormat == EFormat::BGRA8_UNORM
                             || SwapchainFormat == EFormat::SBGRA8_UNORM;
 
-            for (uint64 i = 0; i < Bytes; i += 4)
+            for (int32 i = 0, Limit = Lumina::IntCastChecked<Lumina::int32>(Bytes); i < Limit; i += 4)
             {
                 Rgba[i + 0] = bSwap ? Pixels[i + 2] : Pixels[i + 0];
                 Rgba[i + 1] = Pixels[i + 1];
@@ -1055,7 +1055,7 @@ namespace Grain
                 Rgba[i + 3] = 255;
             }
 
-            bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Rgba.data(), Extent.x * 4u);
+            bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Rgba.GetData(), Extent.x * 4u);
         }
 
         RHI::Retire(Readback);

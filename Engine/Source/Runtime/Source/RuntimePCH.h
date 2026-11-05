@@ -26,8 +26,6 @@
 #include <cmath>
 #include <atomic>
 
-#include <xxhash.h>
-
 // The ECS facade is reached by most world and component headers, so it is parsed once here.
 
 // Math types used nearly everywhere; headers also carry REFLECTION_PARSER stubs the reflector walks.
@@ -45,7 +43,6 @@
 #include "Core/Assertions/Assert.h"
 #include "Containers/Algorithm.h"
 #include "Containers/Vector.h"
-#include "Containers/VectorOps.h"
 #include "Containers/HashTable.h"
 #include "Containers/Pair.h"
 #include "Containers/Span.h"

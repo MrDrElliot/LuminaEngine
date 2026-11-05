@@ -19,7 +19,7 @@ namespace
         Definition.NativeBaseName = "CDataAsset";
         for (const char* Field : Fields)
         {
-            Definition.Schema.Fields.push_back(ScriptTest::ScalarField(Field, EPropertyTypeFlags::Int32));
+            Definition.Schema.Fields.Add(ScriptTest::ScalarField(Field, EPropertyTypeFlags::Int32));
         }
         Definition.bHasSchema = true;
         return Definition;
@@ -103,7 +103,7 @@ TEST(ScriptReload, ARetiredOriginalStillHeldNeverLandsInItsPackageSave)
 
     TVector<CObject*> InPackage;
     GetObjectsWithPackage(Package, InPackage);
-    ASSERT_EQ(InPackage.size(), 1u) << "only the replacement belongs to the package a save would write";
+    ASSERT_EQ(InPackage.Num(), 1) << "only the replacement belongs to the package a save would write";
     EXPECT_NE(InPackage[0], Asset);
     EXPECT_EQ(InPackage[0]->GetName(), FName("DA_Retired"));
 }

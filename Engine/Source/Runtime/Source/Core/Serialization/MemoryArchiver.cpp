@@ -13,7 +13,7 @@ namespace Lumina
 
     int64 FMemoryReader::TotalSize()
     {
-        return Math::Min((int64)Bytes.size(), LimitSize);   
+        return Math::Min<int64>(Bytes.Num(), LimitSize);   
     }
 
 
@@ -137,15 +137,15 @@ namespace Lumina
 
     void FMemoryWriter::Serialize(void* Data, int64 Size)
     {
-        const int64 NumBytesToAdd = Offset + Size - static_cast<int64>(Bytes.size());
+        const int64 NumBytesToAdd = Offset + Size - static_cast<int64>(Bytes.Num());
         if (NumBytesToAdd > 0)
         {
-            const int64 NewArrayCount = static_cast<int64>(Bytes.size()) + NumBytesToAdd;
+            const int64 NewArrayCount = static_cast<int64>(Bytes.Num()) + NumBytesToAdd;
                 
-            Bytes.resize(NewArrayCount);
+            Bytes.SetNum(IntCastChecked<int32>(NewArrayCount));
         }
 
-        ASSERT((Offset + Size) <= (int64)Bytes.size());
+        ASSERT((Offset + Size) <= Bytes.Num());
         
         Memory::Memcpy(&Bytes[Offset], Data, Size);
         Offset += Size;

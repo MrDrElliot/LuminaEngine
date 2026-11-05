@@ -1,10 +1,13 @@
 #pragma once
 
+#include <concepts>
 #include <optional>
+#include <source_location>
 #include <type_traits>
 #include <utility>
 
 #include "Core/Assertions/CheckFailure.h"
+#include "Core/Templates/IntegerCompare.h"
 #include "Platform/GenericPlatform.h"
 #include "Tuple.h"
 #include "Platform/Platform.h"
@@ -39,6 +42,10 @@
 
 namespace Lumina
 {
+    /** T as const as the object a deducing-this member was called on, so one overload serves both. */
+    template <typename TSelf, typename T>
+    using TLikeSelf = std::conditional_t<std::is_const_v<std::remove_reference_t<TSelf>>, const T, T>;
+
     /** A type whose value is preserved by moving its bytes, with no move-construct or destroy needed. */
     template <typename T>
     struct TIsTriviallyRelocatable
@@ -76,25 +83,6 @@ namespace Lumina
         static constexpr bool Value = TIsTriviallyRelocatable_V<T>;
     };
 
-    /** Value-initializing this type is equivalent to zeroing its bytes, so a range of them can be memset. */
-    template <typename T>
-    struct TIsZeroConstructible
-    {
-        static constexpr bool Value = std::is_scalar_v<T> || std::is_pointer_v<T>;
-    };
-
-    template <typename T>
-    inline constexpr bool TIsZeroConstructible_V = TIsZeroConstructible<T>::Value;
-
-    template <typename T>
-    concept ZeroConstructible = TIsZeroConstructible_V<T>;
-
-    template <typename T, size_t N>
-    struct TIsZeroConstructible<T[N]>
-    {
-        static constexpr bool Value = TIsZeroConstructible_V<T>;
-    };
-
     /** Comparing a range of these for equality is a memcmp; no per-element operator== call is needed. */
     template <typename T>
     struct TIsBitwiseComparable
@@ -104,6 +92,27 @@ namespace Lumina
 
     template <typename T>
     inline constexpr bool TIsBitwiseComparable_V = TIsBitwiseComparable<T>::Value;
+
+    /** A contiguous range of ours: elements reachable through GetData(), counted by Num(). */
+    template <typename T>
+    concept ContiguousContainer = requires(const T& Container)
+    {
+        { Container.GetData() } -> std::convertible_to<const void*>;
+        { Container.Num() } -> std::convertible_to<int64>;
+    };
+}
+
+namespace Lumina::Containers::Private
+{
+    // Growth runs in 64 bits on the count read as unsigned, so a negative or overflowing count lands here as too large in every build.
+    NODISCARD FORCEINLINE constexpr uint64 CheckCapacity(uint64 Requested, uint64 Max, const std::source_location& Location = std::source_location::current())
+    {
+        if (Requested > Max) [[unlikely]]
+        {
+            ::Lumina::Assert::Detail::HandleBoundsFailure("Count", Requested, "<=", "MaxCapacity", Max, Location);
+        }
+        return Requested;
+    }
 }
 
 /** Opts a type into byte-wise relocation, at global scope. It must hold no pointer or reference into itself. */
@@ -112,17 +121,6 @@ namespace Lumina
     {                                                                   \
         template <>                                                     \
         struct TIsTriviallyRelocatable<__VA_ARGS__>                     \
-        {                                                               \
-            static constexpr bool Value = true;                         \
-        };                                                              \
-    }
-
-/** Opts a type into memset-based value initialization, at global scope. */
-#define LUMINA_DECLARE_ZERO_CONSTRUCTIBLE(...)                          \
-    namespace Lumina                                                    \
-    {                                                                   \
-        template <>                                                     \
-        struct TIsZeroConstructible<__VA_ARGS__>                        \
         {                                                               \
             static constexpr bool Value = true;                         \
         };                                                              \

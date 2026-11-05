@@ -127,7 +127,7 @@ namespace Lumina
     {
         CAudioGraphInputNode* OnPlay = FindOnPlayNode();
         CEdNodeGraphPin* Play = FindPinNamed(Player->GetInputPins(), "Play");
-        if (OnPlay != nullptr && OnPlay->Type == EAudioGraphType::Trigger && !OnPlay->GetOutputPins().empty() && Play != nullptr)
+        if (OnPlay != nullptr && OnPlay->Type == EAudioGraphType::Trigger && !OnPlay->GetOutputPins().IsEmpty() && Play != nullptr)
         {
             ConnectPins(OnPlay->GetOutputPins()[0].Get(), Play);
         }
@@ -152,7 +152,7 @@ namespace Lumina
 
     void CAudioNodeGraph::ValidateGraph()
     {
-        Connections.clear();
+        Connections.Reset();
 
         for (const auto& NodeRef : Nodes)
         {
@@ -162,8 +162,8 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    Connections.push_back(InputPin->PinID);
-                    Connections.push_back(Connection->PinID);
+                    Connections.Add(InputPin->PinID);
+                    Connections.Add(Connection->PinID);
                 }
             }
         }

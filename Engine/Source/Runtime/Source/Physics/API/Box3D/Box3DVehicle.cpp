@@ -90,7 +90,7 @@ namespace Lumina::Physics
         Registry.View<SVehicleComponent, SRigidBodyComponent>().ForEach([&](ECS::FEntity Entity, SVehicleComponent& Vehicle, const SRigidBodyComponent& RigidBody)
         {
             const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
-            if (!b3Body_IsValid(Body) || b3Body_GetType(Body) != b3_dynamicBody || Vehicle.Wheels.empty())
+            if (!b3Body_IsValid(Body) || b3Body_GetType(Body) != b3_dynamicBody || Vehicle.Wheels.IsEmpty())
             {
                 return;
             }
@@ -139,7 +139,7 @@ namespace Lumina::Physics
             const float SteerStep = Vehicle.SteerSpeed * FixedDt;
             const float YawRate = Vehicle.Steering == EVehicleSteering::Skid ? Math::Radians(Vehicle.Steer * Vehicle.SkidTurnRate) : 0.0f;
 
-            const int32 WheelCount = Math::Min((int32)Vehicle.Wheels.size(), MaxWheels);
+            const int32 WheelCount = Math::Min(Vehicle.Wheels.Num(), MaxWheels);
             const float SuspensionMass = Mass / (float)WheelCount;
             const float Omega = Math::TwoPi<float>() * Vehicle.SuspensionFrequency;
             const float Stiffness = SuspensionMass * Omega * Omega;

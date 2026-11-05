@@ -26,7 +26,6 @@
 #include "Memory/Allocators/Allocator.h"
 #if USING(WITH_EDITOR)
 #include "TaskSystem/Scheduler/JobProfiler.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
 #endif
 #include "Core/Windows/Window.h"
 #include "encoder/basisu_enc.h"
@@ -43,7 +42,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Scripting/ScriptableObject.h"
-#include "nlohmann/json.hpp"
+#include "Core/Json/Json.h"
 #include "Paths/Paths.h"
 #include "Physics/Physics.h"
 #include "Platform/Filesystem/FileHelper.h"
@@ -104,47 +103,32 @@ namespace Lumina
             return {};
         }
 
-        try
-        {
-            const nlohmann::json Root = nlohmann::json::parse(Json.c_str(), Json.c_str() + Json.size());
-
-            const auto SettingsIt = Root.find("EditorSettings");
-            if (SettingsIt == Root.end() || !SettingsIt->is_object())
-            {
-                return {};
-            }
-
-            const auto StartupIt = SettingsIt->find("StartupProject");
-            if (StartupIt == SettingsIt->end() || !StartupIt->is_string())
-            {
-                return {};
-            }
-
-            const std::string& Value = StartupIt->get_ref<const std::string&>();
-            if (Value.empty() || Value == "NULL")
-            {
-                return {};
-            }
-
-            return FString(Value.c_str(), Value.size());
-        }
-        catch (const std::exception&)
+        FJsonValue Root;
+        if (!FJsonValue::Parse(Json.View(), Root))
         {
             return {};
         }
+
+        const FStringView Value = Root["EditorSettings"]["StartupProject"].AsString();
+        if (Value.IsEmpty() || Value == "NULL")
+        {
+            return {};
+        }
+
+        return FString(Value);
     }
 
     // Accepts either the .lproject itself or the directory holding it, since both spellings reach here.
     static FString ResolveProjectDescriptor(FStringView PathOrDirectory)
     {
-        if (PathOrDirectory.empty())
+        if (PathOrDirectory.IsEmpty())
         {
             return FString();
         }
 
         if (!Filesystem::IsDirectory(PathOrDirectory))
         {
-            return FString(PathOrDirectory.data(), PathOrDirectory.size());
+            return FString(PathOrDirectory.GetData(), PathOrDirectory.Len());
         }
 
         FString Found;
@@ -152,14 +136,14 @@ namespace Lumina
         {
             if (Entry.IsFile() && Entry.GetExtension() == ".lproject")
             {
-                Found.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                Found = FStringView(Entry.FullPath.GetData(), Entry.FullPath.Len());
                 return Filesystem::EVisit::Stop;
             }
 
             return Filesystem::EVisit::Continue;
         });
 
-        if (Found.empty())
+        if (Found.IsEmpty())
         {
             LOG_WARN("No .lproject file was found in '{}'.", PathOrDirectory);
         }
@@ -167,11 +151,34 @@ namespace Lumina
         return Found;
     }
 
+    // The .lproject's plugin list, read the way LuminaBuildTool reads it, so a plugin the project enables is one that gets built.
+    static TVector<FProjectPluginOverride> ParseProjectPluginOverrides(const FJsonValue& Project)
+    {
+        TVector<FProjectPluginOverride> Overrides;
+        const TSpan<const FJsonValue> Entries = Project["Plugins"].AsArray();
+        Overrides.Reserve(Entries.Num());
+        for (const FJsonValue& Entry : Entries)
+        {
+            if (!Entry.IsObject())
+            {
+                continue;
+            }
+            FProjectPluginOverride Override;
+            Override.Name = Entry["Name"].AsString();
+            Override.bEnabled = Entry["Enabled"].AsBool(Override.bEnabled);
+            if (!Override.Name.IsEmpty())
+            {
+                Overrides.Emplace(Move(Override));
+            }
+        }
+        return Overrides;
+    }
+
     static void PreloadProjectPluginOverrides(FStringView PathOrDirectory)
     {
         const FString LprojPath = ResolveProjectDescriptor(PathOrDirectory);
 
-        if (LprojPath.empty())
+        if (LprojPath.IsEmpty())
         {
             LOG_INFO("[PluginManager] No startup project; project plugin overrides not applied.");
             return;
@@ -189,50 +196,14 @@ namespace Lumina
             return;
         }
 
-        nlohmann::json Root;
-        try
-        {
-            Root = nlohmann::json::parse(Json.c_str(), Json.c_str() + Json.size());
-        }
-        catch (const std::exception&)
+        FJsonValue Root;
+        if (!FJsonValue::Parse(Json.View(), Root) || !Root.IsObject())
         {
             return; // Malformed JSON; LoadProject will surface a real error later.
         }
-        if (!Root.is_object())
-        {
-            return;
-        }
 
-        auto It = Root.find("Plugins");
-        if (It == Root.end() || !It->is_array() || It->empty())
-        {
-            return;
-        }
-
-        TVector<FProjectPluginOverride> Overrides;
-        Overrides.reserve(It->size());
-        for (const auto& Entry : *It)
-        {
-            if (!Entry.is_object())
-            {
-                continue;
-            }
-            FProjectPluginOverride Override;
-            if (auto NameIt = Entry.find("Name"); NameIt != Entry.end() && NameIt->is_string())
-            {
-                const std::string& S = NameIt->get_ref<const std::string&>();
-                Override.Name.assign(S.c_str(), S.size());
-            }
-            if (auto EnIt = Entry.find("Enabled"); EnIt != Entry.end() && EnIt->is_boolean())
-            {
-                Override.bEnabled = EnIt->get<bool>();
-            }
-            if (!Override.Name.empty())
-            {
-                Overrides.emplace_back(Move(Override));
-            }
-        }
-        if (!Overrides.empty())
+        const TVector<FProjectPluginOverride> Overrides = ParseProjectPluginOverrides(Root);
+        if (!Overrides.IsEmpty())
         {
             FPluginManager::Get().ApplyProjectOverrides(Overrides);
         }
@@ -298,8 +269,8 @@ namespace Lumina
         bool bStartupProjectFromCommandLine = false;
         if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
         {
-            const FFixedString& V = ProjectArg.value();
-            StartupProject.assign(V.c_str(), V.size());
+            const FFixedString& V = ProjectArg.GetValue();
+            StartupProject = FStringView(*V, V.Len());
             bStartupProjectFromCommandLine = true;
         }
         else
@@ -310,14 +281,14 @@ namespace Lumina
         bool bOpenStartupProject = bStartupProjectFromCommandLine;
         #if WITH_EDITOR
         // Only the editor reopens the stored project on a bare launch, which a packaged game must never do.
-        bOpenStartupProject |= !StartupProject.empty() && Filesystem::Exists(StartupProject);
+        bOpenStartupProject |= !StartupProject.IsEmpty() && Filesystem::Exists(StartupProject);
         #endif
 
         // The project's own plugins have to be known before its overrides apply, or each one reads as missing.
         if (bOpenStartupProject)
         {
             const FString Descriptor = ResolveProjectDescriptor(StartupProject);
-            if (!Descriptor.empty())
+            if (!Descriptor.IsEmpty())
             {
                 FPluginManager::Get().DiscoverProjectPlugins(VFS::Parent(Paths::Normalize(Descriptor)));
             }
@@ -328,12 +299,12 @@ namespace Lumina
         BootMark("Phase Earliest");
 
         const FString& EngineDir = Paths::GetEngineDirectory();
-        if (!EngineDir.empty() && Filesystem::Exists(EngineDir))
+        if (!EngineDir.IsEmpty() && Filesystem::Exists(EngineDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Engine", EngineDir);
         }
         const FString& InstallDir = Paths::GetEngineInstallDirectory();
-        if (!InstallDir.empty() && Filesystem::Exists(InstallDir))
+        if (!InstallDir.IsEmpty() && Filesystem::Exists(InstallDir))
         {
             const FString IntermediatesDir = InstallDir + "/Intermediates";
             Filesystem::MakeDirectoryTree(IntermediatesDir);
@@ -379,8 +350,8 @@ namespace Lumina
         FConsoleRegistry::Get().LoadFromConfig();
         BootMark("Console LoadFromConfig");
         
-        Task::Initialize();
-        BootMark("Task::Initialize");
+        Jobs::Initialize();
+        BootMark("Jobs::Initialize");
 
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
@@ -393,7 +364,7 @@ namespace Lumina
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Core);
         BootMark("Phase Core");
 
-        // Threads rather than jobs, since a CLR and a COM apartment both outlive the fiber a job runs on.
+        // Threads rather than jobs, since a CLR and a COM apartment would stay bound to whichever worker ran the job.
         FThread BasisuThread(FThreadOptions{ "Basisu Init" }, []
         {
             basisu::basisu_encoder_init();
@@ -473,7 +444,7 @@ namespace Lumina
 
         // Applied as soon as the setting is readable, so a crash during startup still carries it.
         if (const CEditorSettings* EditorSettings = GetDefault<CEditorSettings>();
-            !EditorSettings->CrashReportContactEmail.empty())
+            !EditorSettings->CrashReportContactEmail.IsEmpty())
         {
             CrashReporting::SetUser("", EditorSettings->CrashReportContactEmail);
         }
@@ -526,7 +497,7 @@ namespace Lumina
         FCoreDelegates::OnEngineShutdownStarted.Broadcast();
         FCoreDelegates::Get().OnPreEngineShutdown.BroadcastAndClear();
         
-        Jobs::WaitForAll();
+        Jobs::WaitForSpawned();
 
         if (!GIsHeadless)
         {
@@ -545,9 +516,9 @@ namespace Lumina
         Memory::Delete(GWorldManager);
 		GWorldManager = nullptr;
         
-        Jobs::WaitForAll();
+        Jobs::WaitForSpawned();
 
-        // After WaitForAll since in-flight reads write into its records, and before the CObject shutdown.
+        // After WaitForSpawned since in-flight reads write into its records, and before the CObject shutdown.
         FTextureStreamingManager::Shutdown();
 
         ShutdownCObjectSystem();
@@ -569,7 +540,7 @@ namespace Lumina
         {
             NetRuntime->Shutdown();
         }
-        Task::Shutdown();
+        Jobs::Shutdown();
 
         FPluginManager::Get().ShutdownAllPlugins();
         FModuleManager::Get().UnloadAllModules();
@@ -587,7 +558,7 @@ namespace Lumina
         }
         if (GIsHeadless)
         {
-            static const int32 TickRate = GCommandLine->GetInt("tickrate").value_or(GetDefault<CProjectSettings>()->HeadlessTickRate);
+            static const int32 TickRate = GCommandLine->GetInt("tickrate").Get(GetDefault<CProjectSettings>()->HeadlessTickRate);
             return Math::Max(TickRate, 1);
         }
         return UserFrameRateLimit >= 0 ? UserFrameRateLimit : GetDefault<CRendererSettings>()->MaxFPS;
@@ -646,7 +617,8 @@ namespace Lumina
 
     bool FEngine::Update(bool bApplicationWantsExit)
     {
-        LUMINA_PROFILE_SCOPE();
+        // Named outright, since GCC would call it Update and the MCP profiler finds frames by this name.
+        LUMINA_PROFILE_SECTION("Lumina::FEngine::Update");
 
         bEngineReadyToClose = true;
         bCloseRequested = bApplicationWantsExit;
@@ -771,20 +743,6 @@ namespace Lumina
             }
 
             {
-                LUMINA_PROFILE_SECTION_COLORED("During-Physics", tracy::Color::Blue);
-                UpdateContext.UpdateStage = EUpdateStage::DuringPhysics;
-
-                if (IDevelopmentToolUI* DevTools = GetActiveDevelopmentTools())
-                {
-                    DevTools->Update(UpdateContext);
-                }
-
-                GWorldManager->UpdateWorlds(UpdateContext);
-
-                OnUpdateStage(UpdateContext);
-            }
-
-            {
                 // Synchronous, so PostPhysics reads THIS frame's results and contact events fire before it.
                 LUMINA_PROFILE_SECTION_COLORED("Physics", tracy::Color::DarkOliveGreen);
                 GWorldManager->TickPhysics();
@@ -868,9 +826,7 @@ namespace Lumina
             LUMINA_PROFILE_SECTION_COLORED("Frame-Rate-Limiter", tracy::Color::Gray);
             const double TargetFrameTime = 1.0 / static_cast<double>(MaxFrameRate);
 
-            // Paced against a running target rather than this frame's own start. Anchoring to the start
-            // hands every scheduler overshoot to the frame period permanently, and refuses a short frame
-            // the chance to make up for the long one before it, which is what turns a cap into a stutter.
+            // Paced against a running target, not the frame start, which would bake every scheduler overshoot into the period and stutter.
             FrameTargetTime += TargetFrameTime;
 
             // Sleep the bulk, leaving margin for OS scheduler overshoot, then spin for precision.
@@ -886,8 +842,7 @@ namespace Lumina
                 PlatformTime::YieldThread();
             }
 
-            // One frame of credit in either direction. A long frame is made up by the next one alone, and a
-            // stall banks no burst of uncapped frames on the way out.
+            // One frame of credit either way: a long frame is made up by the next, and a stall banks no burst of uncapped frames.
             const double Now = PlatformTime::Seconds();
             FrameTargetTime = (FrameTargetTime < Now - TargetFrameTime) ? Now - TargetFrameTime : FrameTargetTime;
             FrameTargetTime = (FrameTargetTime > Now + TargetFrameTime) ? Now + TargetFrameTime : FrameTargetTime;
@@ -929,30 +884,30 @@ namespace Lumina
         {
             const CProjectSettings* Settings = GetDefault<CProjectSettings>();
             const TVector<TSoftObjectPtr<CWorld>>& Roots = Settings->CookRoots;
-            Result.reserve(Roots.size() + 1);
+            Result.Reserve(Roots.Num() + 1);
 
             // The game boots this map, so a project that only names its startup map still cooks it.
             const FStringView StartupMap = Settings->GameStartupMap.GetPath();
-            if (!StartupMap.empty())
+            if (!StartupMap.IsEmpty())
             {
-                Result.push_back(FCookRoot{ FString(StartupMap.data(), StartupMap.size()), FName("Main") });
+                Result.Emplace(FString(StartupMap.GetData(), StartupMap.Len()), FName("Main"));
             }
 
             for (const TSoftObjectPtr<CWorld>& SoftRoot : Roots)
             {
                 const FStringView PathView = SoftRoot.GetPath();
-                if (PathView.empty() || PathView == StartupMap) continue;
+                if (PathView.IsEmpty() || PathView == StartupMap) continue;
                 FCookRoot Root;
-                Root.Asset = FString(PathView.data(), PathView.size());
+                Root.Asset = FString(PathView.GetData(), PathView.Len());
                 Root.Chunk = FName("Main");
-                Result.emplace_back(Move(Root));
+                Result.Emplace(Move(Root));
             }
 
             for (const FString& Folder : Settings->CookFolders)
             {
-                if (!Folder.empty())
+                if (!Folder.IsEmpty())
                 {
-                    Result.push_back(FCookRoot{ Folder.ends_with("/") ? Folder : Folder + "/", FName("Main") });
+                    Result.Emplace(Folder.EndsWith("/") ? Folder : Folder + "/", FName("Main"));
                 }
             }
         }
@@ -963,7 +918,7 @@ namespace Lumina
             if (!Plugin->IsEnabled())                  continue;
             for (const FCookRoot& Root : Plugin->GetDescriptor().CookRoots)
             {
-                Result.push_back(Root);
+                Result.Add(Root);
             }
         }
 
@@ -980,29 +935,24 @@ namespace Lumina
 
     bool FEngine::MountProject(FStringView Path)
     {
-        using Json = nlohmann::json;
-
         const FString Descriptor = ResolveProjectDescriptor(Path);
 
         FString JsonData;
-        if (Descriptor.empty() || !FileHelper::LoadFileIntoString(JsonData, Descriptor))
+        if (Descriptor.IsEmpty() || !FileHelper::LoadFileIntoString(JsonData, Descriptor))
         {
             LOG_ERROR("Could not read a project descriptor at '{}'.", Path);
             return false;
         }
 
-        Json Data;
-        try
+        FJsonValue Data;
+        FJsonParseError Error;
+        if (!FJsonValue::Parse(JsonData.View(), Data, &Error))
         {
-            Data = Json::parse(JsonData.c_str(), JsonData.c_str() + JsonData.size());
-        }
-        catch (const std::exception& Ex)
-        {
-            LOG_ERROR("Failed to parse project file '{}': {}", Path, Ex.what());
+            LOG_ERROR("Failed to parse project file '{}': {}", Path, Error.Message);
             return false;
         }
 
-        if (!Data.is_object() || !Data.contains("ProjectID") || !Data.contains("Name"))
+        if (!Data.IsObject() || !Data.Contains("ProjectID") || !Data.Contains("Name"))
         {
             LOG_ERROR("Project file '{}' is missing required fields (ProjectID/Name).", Path);
             return false;
@@ -1017,7 +967,7 @@ namespace Lumina
 
         ProjectFile                     = NormalizedDescriptor;
         ProjectPath                     = Directory;
-        ProjectName                     = Data["Name"].get<std::string>().c_str();
+        ProjectName                     = Data["Name"].AsString();
 
         FFixedString ConfigDir          = Paths::Combine(ProjectPath, "Config");
         FFixedString GameRootDir        = Paths::Combine(ProjectPath, "Game");
@@ -1052,47 +1002,18 @@ namespace Lumina
 
         FPluginManager::Get().DiscoverProjectPlugins(ProjectPath);
 
-        if (auto It = Data.find("Plugins"); It != Data.end() && It->is_array())
+        if (const TVector<FProjectPluginOverride> Overrides = ParseProjectPluginOverrides(Data); !Overrides.IsEmpty())
         {
-            TVector<FProjectPluginOverride> Overrides;
-            Overrides.reserve(It->size());
-            for (const auto& Entry : *It)
-            {
-                if (!Entry.is_object()) continue;
-                FProjectPluginOverride Override;
-                if (auto NameIt = Entry.find("Name"); NameIt != Entry.end() && NameIt->is_string())
-                {
-                    const std::string& S = NameIt->get_ref<const std::string&>();
-                    Override.Name.assign(S.c_str(), S.size());
-                }
-                if (auto EnIt = Entry.find("Enabled"); EnIt != Entry.end() && EnIt->is_boolean())
-                {
-                    Override.bEnabled = EnIt->get<bool>();
-                }
-                if (!Override.Name.empty())
-                {
-                    Overrides.emplace_back(Move(Override));
-                }
-            }
             FPluginManager::Get().ApplyProjectOverrides(Overrides);
         }
         
-        LegacyCookRoots.clear();
-        if (auto It = Data.find("CookRoots"); It != Data.end() && It->is_array())
+        LegacyCookRoots.Reset();
+        for (const FJsonValue& Root : Data["CookRoots"].AsArray())
         {
-            for (const auto& R : *It)
+            const FJsonValue& Asset = Root.IsObject() ? Root["Asset"] : Root;
+            if (Asset.IsString())
             {
-                if (R.is_string())
-                {
-                    LegacyCookRoots.emplace_back(R.get<std::string>().c_str());
-                }
-                else if (R.is_object())
-                {
-                    if (auto AIt = R.find("Asset"); AIt != R.end() && AIt->is_string())
-                    {
-                        LegacyCookRoots.emplace_back(AIt->get<std::string>().c_str());
-                    }
-                }
+                LegacyCookRoots.Emplace(Asset.AsString());
             }
         }
 
@@ -1104,7 +1025,7 @@ namespace Lumina
     static bool OfferProjectRebuild(FStringView Name, FStringView ProjectFile, FStringView Reason)
     {
         const FString Script = Paths::GetBuildToolScript();
-        if (Script.empty() || GIsHeadless || GCommandLine->Has("benchmark"))
+        if (Script.IsEmpty() || GIsHeadless || GCommandLine->Has("benchmark"))
         {
             return false;
         }
@@ -1123,7 +1044,7 @@ namespace Lumina
         const FString Params = Format("Open \"{}\" -WaitForEditor", ProjectFile);
         #endif
 
-        if (const int Error = Platform::LaunchProcess(UTF8_TO_TCHAR(Executable.c_str()), UTF8_TO_TCHAR(Params.c_str())); Error != 0)
+        if (const int Error = Platform::LaunchProcess(UTF8_TO_TCHAR(*Executable), UTF8_TO_TCHAR(*Params)); Error != 0)
         {
             LOG_ERROR("Could not start the project rebuild (system error {}).", Error);
             return false;
@@ -1139,19 +1060,19 @@ namespace Lumina
         GConfig->DiscoverAndLoadSettings();
 
         CProjectSettings* ProjectSettings = GetMutableDefault<CProjectSettings>();
-        if (ProjectSettings->CookRoots.empty() && !LegacyCookRoots.empty())
+        if (ProjectSettings->CookRoots.IsEmpty() && !LegacyCookRoots.IsEmpty())
         {
             TVector<TSoftObjectPtr<CWorld>> Migrated;
-            Migrated.reserve(LegacyCookRoots.size());
+            Migrated.Reserve(LegacyCookRoots.Num());
             for (const FString& Root : LegacyCookRoots)
             {
-                Migrated.emplace_back(FStringView(Root.c_str(), Root.size()));
+                Migrated.Emplace(FStringView(*Root, Root.Len()));
             }
-            LOG_INFO("LoadProject: migrating {} cook root(s) from .lproject to Project settings", Migrated.size());
+            LOG_INFO("LoadProject: migrating {} cook root(s) from .lproject to Project settings", Migrated.Num());
             ProjectSettings->CookRoots = Move(Migrated);
             GConfig->SaveSettings(CProjectSettings::StaticClass());
         }
-        LegacyCookRoots.clear();
+        LegacyCookRoots.Reset();
         
         // The project's module DLL lives in its OWN Binaries, exactly like a template project.
         const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,
@@ -1166,7 +1087,7 @@ namespace Lumina
             else
             {
                 const FString& LoadError = FModuleManager::Get().GetLastLoadError();
-                if (!LoadError.empty())
+                if (!LoadError.IsEmpty())
                 {
                     LOG_ERROR("Project module '{}' was not loaded: {}", ProjectName, LoadError);
 #if WITH_EDITOR
@@ -1186,7 +1107,7 @@ namespace Lumina
             }
         }
 #if WITH_EDITOR
-        else if (Paths::Exists(Paths::Combine(ProjectPath, "Source", FFixedString(ProjectName.c_str()).append(".Target.cs")))
+        else if (Paths::Exists(Paths::Combine(ProjectPath, "Source", FFixedString(*ProjectName).Append(".Target.cs")))
             && OfferProjectRebuild(ProjectName, ProjectFile, "has not been built yet"))
         {
             return;
@@ -1202,9 +1123,8 @@ namespace Lumina
 
         FAssetRegistry::Get().RunInitialDiscovery();
 
-        // Discovery is async and LoadStartupMap resolves the map by path, which finds nothing in a
-        // registry still filling in.
-        GTaskSystem->WaitForAll();
+        // Discovery is async and LoadStartupMap resolves by path, which finds nothing in a registry still filling in.
+        Jobs::WaitForSpawned();
 
         // Must run after GConfig->LoadPath but before any OnReady script body.
         FInputActionMap::Get().RebuildFromSettings();
@@ -1232,19 +1152,19 @@ namespace Lumina
 
     void FEngine::LoadBotWorlds(FStringView MapName)
     {
-        const int32 Count = Math::Clamp(GCommandLine->GetInt("bots").value_or(1), 1, 512);
+        const int32 Count = Math::Clamp(GCommandLine->GetInt("bots").Get(1), 1, 512);
         FURL Target;
         if (TOptional<FFixedString> ConnectArg = GCommandLine->Get("connect"))
         {
-            Target = FURL::Parse(FStringView(ConnectArg.value().c_str(), ConnectArg.value().size()));
+            Target = FURL::Parse(FStringView(*ConnectArg.GetValue(), ConnectArg.GetValue().Len()));
         }
-        const FString Host = Target.Host.empty() ? FString("127.0.0.1") : Target.Host;
+        const FString Host = Target.Host.IsEmpty() ? FString("127.0.0.1") : Target.Host;
         const uint16 Port = Target.Port != 0 ? Target.Port : 7777;
 
         CWorld* SourceWorld = LoadObjectGraph<CWorld>(MapName);
         if (SourceWorld == nullptr)
         {
-            LOG_ERROR("[Net] Bots could not load '{}'.", FString(MapName.data(), MapName.size()).c_str());
+            LOG_ERROR("[Net] Bots could not load '{}'.", *FString(MapName.GetData(), MapName.Len()));
             return;
         }
 
@@ -1262,12 +1182,12 @@ namespace Lumina
                 continue;
             }
             Context->SourceWorld  = SourceWorld;
-            Context->MapPath      = FString(MapName.data(), MapName.size());
+            Context->MapPath      = FString(MapName.GetData(), MapName.Len());
             Context->NetHost      = Host;
             Context->NetPort      = Port;
             Context->bBot         = true;
         }
-        LOG_DISPLAY("[Net] Started {} bot client(s) for {}:{}.", Count, Host.c_str(), Port);
+        LOG_DISPLAY("[Net] Started {} bot client(s) for {}:{}.", Count, *Host, Port);
     }
 
     void FEngine::LoadStartupMap()
@@ -1275,28 +1195,28 @@ namespace Lumina
         FString RawMapName;
         if (TOptional<FFixedString> MapArg = GCommandLine->Get("map"))
         {
-            RawMapName.assign(MapArg.value().c_str(), MapArg.value().size());
+            RawMapName = FStringView(*MapArg.GetValue(), MapArg.GetValue().Len());
         }
-        if (RawMapName.empty())
+        if (RawMapName.IsEmpty())
         {
             const FStringView GameMapView = GetDefault<CProjectSettings>()->GameStartupMap.GetPath();
-            RawMapName.assign(GameMapView.data(), GameMapView.size());
+            RawMapName = FStringView(GameMapView.GetData(), GameMapView.Len());
         }
-        if (RawMapName.empty())
+        if (RawMapName.IsEmpty())
         {
             // A folder root names content to ship, not a world to boot.
             for (const FCookRoot& Root : GetCookRoots())
             {
-                if (!Root.Asset.ends_with("/"))
+                if (!Root.Asset.EndsWith("/"))
                 {
                     RawMapName = Root.Asset;
-                    LOG_DISPLAY("No Project.GameStartupMap set; falling back to first cook root '{}'.", RawMapName.c_str());
+                    LOG_DISPLAY("No Project.GameStartupMap set; falling back to first cook root '{}'.", *RawMapName);
                     break;
                 }
             }
         }
 
-        if (RawMapName.empty())
+        if (RawMapName.IsEmpty())
         {
             LOG_WARN("No startup map: set Project.GameStartupMap or add at least one Project.CookRoots entry. Runtime has no world to run.");
             return;
@@ -1304,11 +1224,11 @@ namespace Lumina
 
         // Tolerate legacy absolute paths from before the path resolver.
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawMapName);
-        LOG_DISPLAY("LoadStartupMap: loading '{}' (resolved '{}').", RawMapName.c_str(), MapName.c_str());
+        LOG_DISPLAY("LoadStartupMap: loading '{}' (resolved '{}').", *RawMapName, *MapName);
 
         if (GCommandLine->Has("bots"))
         {
-            LoadBotWorlds(FStringView(MapName.c_str(), MapName.size()));
+            LoadBotWorlds(FStringView(*MapName, MapName.Len()));
             return;
         }
 
@@ -1324,17 +1244,17 @@ namespace Lumina
             uint16 Port = 7777;
             if (TOptional<int> PortArg = GCommandLine->GetInt("port"))
             {
-                Port = static_cast<uint16>(PortArg.value());
+                Port = static_cast<uint16>(PortArg.GetValue());
             }
-            LOG_DISPLAY("[Net] Starting dedicated server on port {} hosting '{}'.", Port, MapName.c_str());
-            HostDedicatedLevel(FStringView(MapName.c_str(), MapName.size()), Port);
+            LOG_DISPLAY("[Net] Starting dedicated server on port {} hosting '{}'.", Port, *MapName);
+            HostDedicatedLevel(FStringView(*MapName, MapName.Len()), Port);
             return;
         }
 
-        CWorld* SourceWorld = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
+        CWorld* SourceWorld = LoadObjectGraph<CWorld>(FStringView(*MapName, MapName.Len()));
         if (SourceWorld == nullptr)
         {
-            LOG_ERROR("Failed to load startup map '{}' (resolved to '{}').", RawMapName.c_str(), MapName.c_str());
+            LOG_ERROR("Failed to load startup map '{}' (resolved to '{}').", *RawMapName, *MapName);
             return;
         }
 
@@ -1342,7 +1262,7 @@ namespace Lumina
         CWorld* StartupWorld = CWorld::DuplicateWorld(SourceWorld);
         if (StartupWorld == nullptr)
         {
-            LOG_ERROR("Failed to duplicate startup map '{}'.", MapName.c_str());
+            LOG_ERROR("Failed to duplicate startup map '{}'.", *MapName);
             return;
         }
 
@@ -1367,7 +1287,7 @@ namespace Lumina
     void FEngine::Travel(FStringView WorldPath, CWorld* FromWorld)
     {
         // Deferred, since tearing down a world inside its own tick is unsafe, and drained next FrameStart.
-        PendingTravelPath.assign(WorldPath.data(), WorldPath.size());
+        PendingTravelPath = FStringView(WorldPath.GetData(), WorldPath.Len());
         PendingTravelWorld = FromWorld;
         bHasPendingTravel = true;
     }
@@ -1392,11 +1312,11 @@ namespace Lumina
         bHasPendingTravel = false;
 
         const FString RawPath = Move(PendingTravelPath);
-        PendingTravelPath.clear();
+        PendingTravelPath.Reset();
         CWorld* const FromWorld = PendingTravelWorld.Get();
         PendingTravelWorld.Reset();
 
-        if (RawPath.empty())
+        if (RawPath.IsEmpty())
         {
             LOG_ERROR("FEngine::Travel: empty world path.");
             return;
@@ -1412,18 +1332,18 @@ namespace Lumina
         if (Level.Frames > 0)
         {
             LOG_INFO("Travel to {}: the level before ran {} frames over {:.1f} s, mean {:.2f} ms, p99 {:.2f} ms, max {:.1f} ms, {} over 50 ms, {} MB committed.",
-                RawPath.c_str(), Level.Frames, Level.WindowSeconds, Level.MeanMs, Level.P99Ms, Level.MaxMs, Level.Over50Ms,
-                (uint64)Platform::GetProcessMemoryUsageMegaBytes());
+                *RawPath, Level.Frames, Level.WindowSeconds, Level.MeanMs, Level.P99Ms, Level.MaxMs, Level.Over50Ms,
+                Platform::GetProcessMemoryUsageMegaBytes());
         }
         LevelStartSeconds = PlatformTime::Seconds();
 
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawPath);
 
         // Travel fans the destination world's whole dependency closure across workers.
-        CWorld* WorldAsset = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
+        CWorld* WorldAsset = LoadObjectGraph<CWorld>(FStringView(*MapName, MapName.Len()));
         if (WorldAsset == nullptr)
         {
-            LOG_ERROR("FEngine::Travel: failed to load world '{}' (resolved to '{}').", RawPath.c_str(), MapName.c_str());
+            LOG_ERROR("FEngine::Travel: failed to load world '{}' (resolved to '{}').", *RawPath, *MapName);
             return;
         }
 
@@ -1450,7 +1370,7 @@ namespace Lumina
             CWorld* ColdWorld = CWorld::DuplicateWorld(WorldAsset);
             if (ColdWorld == nullptr)
             {
-                LOG_ERROR("FEngine::Travel: DuplicateWorld failed for '{}' (cold-boot).", MapName.c_str());
+                LOG_ERROR("FEngine::Travel: DuplicateWorld failed for '{}' (cold-boot).", *MapName);
                 return;
             }
 
@@ -1463,7 +1383,7 @@ namespace Lumina
             if (NewContext != nullptr)
             {
                 NewContext->SourceWorld  = WorldAsset;
-                NewContext->MapPath      = FString(MapName.c_str());
+                NewContext->MapPath      = FString(*MapName);
                 if (bPendingHostOverride)
                 {
                     NewContext->NetPort = PendingHostPort;
@@ -1517,7 +1437,7 @@ namespace Lumina
         CWorld* NewWorld = CWorld::DuplicateWorld(WorldAsset);
         if (NewWorld == nullptr)
         {
-            LOG_ERROR("FEngine::Travel: DuplicateWorld failed for '{}'.", MapName.c_str());
+            LOG_ERROR("FEngine::Travel: DuplicateWorld failed for '{}'.", *MapName);
             return;
         }
 
@@ -1531,7 +1451,7 @@ namespace Lumina
         {
             NewContext->bPIE         = bPIE;
             NewContext->SourceWorld  = WorldAsset; // NewWorld was duplicated from WorldAsset -> that's its source
-            NewContext->MapPath      = FString(MapName.c_str());
+            NewContext->MapPath      = FString(*MapName);
             NewContext->NetHost      = OldNetHost;
             NewContext->NetPort      = NetPort;
         }
@@ -1563,7 +1483,7 @@ namespace Lumina
     void FEngine::HostLevel(FStringView Map, uint16 Port)
     {
         FURL URL;
-        URL.Map.assign(Map.data(), Map.size());
+        URL.Map = FStringView(Map.GetData(), Map.Len());
         URL.Port    = Port;
         URL.bListen = true;
         OpenLevel(URL);
@@ -1572,7 +1492,7 @@ namespace Lumina
     void FEngine::HostDedicatedLevel(FStringView Map, uint16 Port)
     {
         FURL URL;
-        URL.Map.assign(Map.data(), Map.size());
+        URL.Map = FStringView(Map.GetData(), Map.Len());
         URL.Port       = Port;
         URL.bListen    = true;
         URL.bDedicated = true;
@@ -1582,7 +1502,7 @@ namespace Lumina
     void FEngine::ConnectToServer(FStringView Host, uint16 Port)
     {
         FURL URL;
-        URL.Host.assign(Host.data(), Host.size());
+        URL.Host = FStringView(Host.GetData(), Host.Len());
         URL.Port = Port;
         OpenLevel(URL);
     }
@@ -1621,7 +1541,7 @@ namespace Lumina
             Ctx->NetMode = ENetMode::Client;
             Ctx->NetHost = URL.Host;
             Ctx->NetPort = URL.Port;
-            LOG_DISPLAY("[Net] Connecting to {}:{} ...", URL.Host.c_str(), URL.Port);
+            LOG_DISPLAY("[Net] Connecting to {}:{} ...", *URL.Host, URL.Port);
             return;
         }
 
@@ -1666,13 +1586,13 @@ namespace Lumina
                 return;
             }
 
-            PakPaths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+            PakPaths.Emplace(Entry.FullPath.GetData(), Entry.FullPath.Len());
         });
         Algo::Sort(PakPaths);
 
-        if (PakPaths.empty())
+        if (PakPaths.IsEmpty())
         {
-            LOG_ERROR("FEngine::LoadCookedRuntime: no .pak file found in '{}'.", DataDir.c_str());
+            LOG_ERROR("FEngine::LoadCookedRuntime: no .pak file found in '{}'.", *DataDir);
             return false;
         }
 
@@ -1683,16 +1603,16 @@ namespace Lumina
             TSharedPtr<FPakArchive> Archive = FPakArchive::Open(PakPath);
             if (!Archive)
             {
-                LOG_ERROR("FEngine::LoadCookedRuntime: failed to open '{}'.", PakPath.c_str());
+                LOG_ERROR("FEngine::LoadCookedRuntime: failed to open '{}'.", *PakPath);
                 return false;
             }
 
             const TVector<FString> Aliases = Archive->GetTopLevelAliases();
             for (const FString& Alias : Aliases)
             {
-                FFixedString AliasFixed(Alias.c_str(), Alias.size());
+                FFixedString AliasFixed(*Alias, Alias.Len());
                 VFS::Mount<VFS::FPakFileSystem>(AliasFixed, Archive);
-                LOG_DISPLAY("FEngine::LoadCookedRuntime: mounted PAK '{}' at '{}'", PakPath.c_str(), Alias.c_str());
+                LOG_DISPLAY("FEngine::LoadCookedRuntime: mounted PAK '{}' at '{}'", *PakPath, *Alias);
             }
 
             if (!ConfigArchive && Archive->HasEntry("/Config/GameSettings.json"))
@@ -1705,7 +1625,7 @@ namespace Lumina
         if (Filesystem::Exists(LooseGameDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Game", LooseGameDir);
-            LOG_INFO("FEngine::LoadCookedRuntime: mounted loose overlay at '/Game' -> {}", LooseGameDir.c_str());
+            LOG_INFO("FEngine::LoadCookedRuntime: mounted loose overlay at '/Game' -> {}", *LooseGameDir);
         }
 
         if (ConfigArchive)
@@ -1725,10 +1645,10 @@ namespace Lumina
     {
         // Resolve exe dir again, used for project DLL lookup.
         const FString ExeFullPath = FString(TCHAR_TO_UTF8(Platform::BaseDir()));
-        const size_t LastSlash = ExeFullPath.find_last_of("/\\");
-        const FString ExeDir = (LastSlash == FString::npos)
+        const int32 LastSlash = ExeFullPath.FindLastOf("/\\");
+        const FString ExeDir = (LastSlash == Constants::kIndexNone)
             ? ExeFullPath
-            : ExeFullPath.substr(0, LastSlash);
+            : ExeFullPath.Mid(0, LastSlash);
 
         // Prefers the cooked blob to avoid walking every asset, falling back to discovery only if missing.
         bool bLoadedFromBlob = false;
@@ -1739,7 +1659,7 @@ namespace Lumina
                 FMemoryReader Reader(RegistryBlob);
                 if (FAssetRegistry::Get().LoadFromArchive(Reader))
                 {
-                    LOG_DISPLAY("FEngine::LoadCookedRuntime: loaded pre-baked registry ({} bytes).", RegistryBlob.size());
+                    LOG_DISPLAY("FEngine::LoadCookedRuntime: loaded pre-baked registry ({} bytes).", RegistryBlob.Num());
                     bLoadedFromBlob = true;
                 }
                 else
@@ -1753,9 +1673,9 @@ namespace Lumina
         {
             // Discovery is async; MUST wait before LoadStartupMap or GetAssetByPath silently fails on empty registry.
             FAssetRegistry::Get().RunInitialDiscovery();
-            if (GTaskSystem != nullptr)
+            if (Jobs::IsRuntimeRunning())
             {
-                GTaskSystem->WaitForAll();
+                Jobs::WaitForSpawned();
             }
             LOG_DISPLAY("FEngine::LoadCookedRuntime: asset discovery complete.");
         }
@@ -1766,13 +1686,13 @@ namespace Lumina
         FInputActionMap::Get().RebuildFromSettings();
 
         // The cooker stashes the project name in config so the DLL beside the exe can be resolved.
-        ProjectName = GConfig->Get<std::string>("Project.Name").c_str();
-        if (!ProjectName.empty())
+        ProjectName = GConfig->Get<FString>("Project.Name");
+        if (!ProjectName.IsEmpty())
         {
             const FFixedString DLLPath = Paths::Combine(ExeDir, Paths::MakeModuleFileName(ProjectName));
 
             // A monolithic game links its module into the executable, and LoadModule finds it registered there by name.
-            if (Paths::Exists(DLLPath) || FModuleManager::Get().HasStaticFactory(FName(ProjectName.c_str())))
+            if (Paths::Exists(DLLPath) || FModuleManager::Get().HasStaticFactory(FName(*ProjectName)))
             {
                 if (FModuleManager::Get().LoadModule(DLLPath))
                 {
@@ -1781,7 +1701,7 @@ namespace Lumina
             }
             else
             {
-                LOG_INFO("FEngine::LoadCookedRuntime: no project DLL at '{}' (ok if project has no C++ module)", DLLPath.c_str());
+                LOG_INFO("FEngine::LoadCookedRuntime: no project DLL at '{}' (ok if project has no C++ module)", *DLLPath);
             }
         }
 
@@ -1808,15 +1728,15 @@ namespace Lumina
         }
 
         const CProjectSettings* Settings = GetDefault<CProjectSettings>();
-        FString Title = Settings != nullptr && !Settings->GameDisplayName.empty() ? Settings->GameDisplayName : ProjectName;
-        if (Title.empty())
+        FString Title = Settings != nullptr && !Settings->GameDisplayName.IsEmpty() ? Settings->GameDisplayName : ProjectName;
+        if (Title.IsEmpty())
         {
             Title = "Lumina";
         }
 
         #if !defined(LE_SHIPPING)
         const RHI::FGPUDeviceInfo Gpu = RHI::GetDeviceInfo();
-        Title += Format(" | Lumina {} {} | {} | {}", LUMINA_VERSION, LUMINA_CONFIGURATION_NAME, Gpu.APIName.c_str(), Gpu.Name.c_str());
+        Title += Format(" | Lumina {} {} | {} | {}", LUMINA_VERSION, LUMINA_CONFIGURATION_NAME, *Gpu.APIName, *Gpu.Name);
         if (AverageFrameSeconds > 0.0)
         {
             Title += Format(" | {:.0f} fps, {:.2f} ms", 1.0 / AverageFrameSeconds, AverageFrameSeconds * 1000.0);

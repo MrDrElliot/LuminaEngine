@@ -58,7 +58,7 @@ namespace Lumina
 
         void Reset()
         {
-            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear(); Pitch.clear();
+            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset();
         }
     };
 
@@ -79,9 +79,9 @@ namespace Lumina
 
         void Reset()
         {
-            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear(); Pitch.clear();
+            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset();
         }
-        uint32 Num() const { return static_cast<uint32>(Guid.size()); }
+        uint32 Num() const { return static_cast<uint32>(Guid.Num()); }
     };
 
     // Uniform 2D grid over the XZ plane, CSR (counting-sort) layout. Cell c owns SortedRecords in

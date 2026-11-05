@@ -15,20 +15,8 @@ namespace Lumina
         RunsBefore<SAnimationSystem, SEntityScriptSystem>();
     }
 
-    bool SSequencerSystem::HasWork(const SSystemContext& Context)
+    void SSequencerSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
-        CWorld* World = GetWorld();
-        const ECS::TComponentStorage<SSequencePlayerComponent> Players = World != nullptr
-            ? World->GetEntityRegistry().FindStorage<SSequencePlayerComponent>()
-            : ECS::TComponentStorage<SSequencePlayerComponent>();
-        return Players && !Players.IsEmpty();
-    }
-
-    void SSequencerSystem::OnUpdate(const SSystemContext& Context)
-    {
-
-        LUMINA_PROFILE_SCOPE();
-
         CWorld* World = Context.GetWorld();
         if (World == nullptr)
         {
@@ -36,13 +24,11 @@ namespace Lumina
         }
 
         // Real time, so a time dilation track slows the action on screen without stretching the edit.
-        const float DeltaTime = (float)World->GetRealDeltaTime();
+        const float DeltaTime = Context.GetRealDeltaTime();
 
-        auto View = Context.CreateView<SSequencePlayerComponent>();
-        for (ECS::FEntity Entity : View)
+        // Evaluate can spawn binding prefabs, which may grow the player pool, so the walk runs over a snapshot.
+        const auto TickPlayer = [&](SSequencePlayerComponent& Player)
         {
-            SSequencePlayerComponent& Player = View.Get<SSequencePlayerComponent>(Entity);
-
             CSequence* Sequence = Player.Sequence.Get();
             const bool bRestore = Player.FinishAction == ESequenceFinishAction::Restore;
 
@@ -68,13 +54,13 @@ namespace Lumina
                     Player.BoundSequence = nullptr;
                 }
                 Player.bPaused = false;
-                continue;
+                return;
             }
 
             if (Sequence == nullptr)
             {
                 Player.bPlaying = false;
-                continue;
+                return;
             }
 
             bool bFirstFrame = false;
@@ -93,7 +79,7 @@ namespace Lumina
                 Player.Instance.Evaluate(Sequence, World, Player.Time, Player.Time, bRefresh, bFirstFrame, false, true);
                 Player.bNeedsEvaluate = false;
                 Player.bJumped = false;
-                continue;
+                return;
             }
 
             const float PreviousTime = Player.PreviousTime;
@@ -130,6 +116,14 @@ namespace Lumina
                 Player.bPlaying = false;
                 Player.Instance.Release(World, bRestore);
                 Player.BoundSequence = nullptr;
+            }
+        };
+
+        for (ECS::FEntity Entity : Players.Collect())
+        {
+            if (SSequencePlayerComponent* Player = Players.TryGet<SSequencePlayerComponent>(Entity))
+            {
+                TickPlayer(*Player);
             }
         }
     }

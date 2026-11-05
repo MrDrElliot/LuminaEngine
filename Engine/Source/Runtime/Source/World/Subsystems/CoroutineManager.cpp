@@ -19,7 +19,7 @@ namespace Lumina
         }
 
         TScopeLock Guard(WaitLock);
-        Waits.push_back(std::move(Wait));
+        Waits.Add(std::move(Wait));
     }
 
     void FCoroutineManager::Suspend(CoroDetail::FCoroutineState& State, CoroDetail::FLatentWaitSpec&& Spec, uint32 Serial)
@@ -56,14 +56,14 @@ namespace Lumina
                 return;
             }
             Dropped = std::move(It->Callback);
-            Waits.erase(It);
+            Waits.RemoveAt(static_cast<int32>(It - Waits.begin()));
         }
     }
 
     void FCoroutineManager::Track(CoroDetail::FCoroutineState& State)
     {
         TScopeLock Guard(TrackLock);
-        Tracked.push_back(&State);
+        Tracked.Add(&State);
     }
 
     void FCoroutineManager::Untrack(CoroDetail::FCoroutineState& State)
@@ -72,8 +72,8 @@ namespace Lumina
         auto It = Algo::Find(Tracked, &State);
         if (It != Tracked.end())
         {
-            *It = Tracked.back();
-            Tracked.pop_back();
+            *It = Tracked.Last();
+            Tracked.Pop();
         }
     }
 
@@ -109,11 +109,11 @@ namespace Lumina
         {
             TScopeLock Guard(WaitLock);
             Current = std::move(Waits);
-            Waits.clear();
+            Waits.Reset();
         }
 
         TVector<FWait> Kept;
-        Kept.reserve(Current.size());
+        Kept.Reserve(Current.Num());
         for (FWait& Wait : Current)
         {
             if (!Wait.State)
@@ -125,7 +125,7 @@ namespace Lumina
                 }
                 else
                 {
-                    Kept.push_back(std::move(Wait));
+                    Kept.Add(std::move(Wait));
                 }
                 continue;
             }
@@ -141,7 +141,7 @@ namespace Lumina
             {
                 if (State.IsWaitingOn(Wait.Serial))
                 {
-                    Kept.push_back(std::move(Wait));
+                    Kept.Add(std::move(Wait));
                 }
                 continue;
             }
@@ -162,7 +162,7 @@ namespace Lumina
         TScopeLock Guard(WaitLock);
         for (FWait& Wait : Kept)
         {
-            Waits.push_back(std::move(Wait));
+            Waits.Add(std::move(Wait));
         }
     }
 
@@ -174,9 +174,9 @@ namespace Lumina
             for (CoroDetail::FCoroutineState* State : Tracked)
             {
                 State->DetachFromWorld();
-                Bound.emplace_back(State);
+                Bound.Emplace(State);
             }
-            Tracked.clear();
+            Tracked.Reset();
         }
         for (CoroDetail::FStateRef& State : Bound)
         {
@@ -187,7 +187,7 @@ namespace Lumina
         {
             TScopeLock Guard(WaitLock);
             Current = std::move(Waits);
-            Waits.clear();
+            Waits.Reset();
         }
         for (FWait& Wait : Current)
         {
@@ -206,12 +206,12 @@ namespace Lumina
     int32 FCoroutineManager::NumWaiting() const
     {
         TScopeLock Guard(WaitLock);
-        return (int32)Waits.size();
+        return Waits.Num();
     }
 
     int32 FCoroutineManager::NumTracked() const
     {
         TScopeLock Guard(TrackLock);
-        return (int32)Tracked.size();
+        return Tracked.Num();
     }
 }

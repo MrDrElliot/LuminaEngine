@@ -420,21 +420,21 @@ namespace Lumina
         }
 
         FString Directory = Paths::GetEngineDirectory() + "/Saved/Profiling";
-        Paths::CreateDirectories(FStringView(Directory.c_str(), Directory.size()));
+        Paths::CreateDirectories(Directory.View());
 
         FString Path = Directory + "/NsightPerf.csv";
         const bool bWritten = Filesystem::WriteFile(
-            FStringView(Path.c_str(), Path.size()),
-            TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), Csv.size()));
+            Path.View(),
+            TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), static_cast<int32>(Csv.size())));
 
         char Status[512];
         if (bWritten)
         {
-            (void)snprintf(Status, sizeof(Status), "Wrote %zu metrics to %s", Rows, Path.c_str());
+            (void)snprintf(Status, sizeof(Status), "Wrote %zu metrics to %s", Rows, *Path);
         }
         else
         {
-            (void)snprintf(Status, sizeof(Status), "Could not write %s", Path.c_str());
+            (void)snprintf(Status, sizeof(Status), "Could not write %s", *Path);
         }
 
         State->ExportStatus = Status;

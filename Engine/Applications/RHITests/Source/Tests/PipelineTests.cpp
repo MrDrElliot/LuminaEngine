@@ -112,13 +112,13 @@ namespace Lumina::RHITests
 
     RHI_TEST(Pipelines, CompileComputeShader)
     {
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("compute")]
             [numthreads(1, 1, 1)]
             void main() { }
-        )SLANG").c_str(), "RHITests.CompileOnly");
+        )SLANG"), "RHITests.CompileOnly");
 
-        RHI_REQUIRE(!Spirv.empty());
+        RHI_REQUIRE(!Spirv.IsEmpty());
         RHI_CHECK_EQ(Spirv[0], 0x07230203u);   // SPIR-V magic
     }
 
@@ -126,7 +126,7 @@ namespace Lumina::RHITests
     {
         constexpr uint32 Count = 256;
 
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FArgs { uint* Output; uint Count; };
             FArgs* Pass() { return GetArgs<FArgs>(); }
 
@@ -137,8 +137,8 @@ namespace Lumina::RHITests
                 if (DTid.x >= Pass().Count) { return; }
                 Pass().Output[DTid.x] = DTid.x * 3 + 1;
             }
-        )SLANG").c_str(), "RHITests.ComputeWrite");
-        RHI_REQUIRE(!Spirv.empty());
+        )SLANG"), "RHITests.ComputeWrite");
+        RHI_REQUIRE(!Spirv.IsEmpty());
 
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
@@ -175,7 +175,7 @@ namespace Lumina::RHITests
     // The argument buffer is produced by one dispatch and consumed by the next with no host round trip.
     RHI_TEST(Pipelines, ComputeDispatchIndirect)
     {
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FArgs { uint* Output; };
             FArgs* Pass() { return GetArgs<FArgs>(); }
 
@@ -185,8 +185,8 @@ namespace Lumina::RHITests
             {
                 Pass().Output[Gid.x] = Gid.x + 100;
             }
-        )SLANG").c_str(), "RHITests.ComputeIndirect");
-        RHI_REQUIRE(!Spirv.empty());
+        )SLANG"), "RHITests.ComputeIndirect");
+        RHI_REQUIRE(!Spirv.IsEmpty());
 
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
@@ -235,7 +235,7 @@ namespace Lumina::RHITests
     {
         constexpr uint32 Size = 8;
 
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [[vk::binding(2, 0)]] RWTexture2D<float4> gRWTextures2D[];
 
             struct FArgs { uint OutUAV; uint Size; };
@@ -248,8 +248,8 @@ namespace Lumina::RHITests
                 if (DTid.x >= Pass().Size || DTid.y >= Pass().Size) { return; }
                 gRWTextures2D[Pass().OutUAV][DTid.xy] = float4(0.0, 1.0, 0.0, 1.0);
             }
-        )SLANG").c_str(), "RHITests.ComputeStorageImage");
-        RHI_REQUIRE(!Spirv.empty());
+        )SLANG"), "RHITests.ComputeStorageImage");
+        RHI_REQUIRE(!Spirv.IsEmpty());
 
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
@@ -303,7 +303,7 @@ namespace Lumina::RHITests
     // Two pipelines from ONE SPIR-V module, so a silently ignored spec constant leaves them identical.
     RHI_TEST(Pipelines, SpecializationConstantChangesResult)
     {
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [vk::constant_id(0)] const uint SPEC_ADDEND = 7;
 
             struct FArgs { uint* Output; };
@@ -312,8 +312,8 @@ namespace Lumina::RHITests
             [shader("compute")]
             [numthreads(1, 1, 1)]
             void main() { Pass().Output[0] = SPEC_ADDEND; }
-        )SLANG").c_str(), "RHITests.SpecConstant");
-        RHI_REQUIRE(!Spirv.empty());
+        )SLANG"), "RHITests.SpecConstant");
+        RHI_REQUIRE(!Spirv.IsEmpty());
 
         const RHI::FGPUAllocation Output   = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::GPUOnly, "RHITests.SpecOutput");
         const RHI::FGPUAllocation Readback = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::CPURead, "RHITests.SpecReadback");
@@ -361,21 +361,21 @@ namespace Lumina::RHITests
 
     RHI_TEST(Pipelines, GraphicsFullscreenTriangle)
     {
-        const TVector<uint32> VSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> VSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("vertex")]
             float4 main(uint VertexID : SV_VertexID) : SV_Position
             {
                 float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
                 return float4(UV * 2.0 - 1.0, 0.5, 1.0);
             }
-        )SLANG").c_str(), "RHITests.FullscreenVS");
+        )SLANG"), "RHITests.FullscreenVS");
 
-        const TVector<uint32> PSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> PSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("fragment")]
             float4 main() : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
-        )SLANG").c_str(), "RHITests.FullscreenPS");
+        )SLANG"), "RHITests.FullscreenPS");
 
-        RHI_REQUIRE(!VSSpirv.empty() && !PSSpirv.empty());
+        RHI_REQUIRE(!VSSpirv.IsEmpty() && !PSSpirv.IsEmpty());
 
         const RHI::FColorTarget ColorTarget{ .Format = EFormat::RGBA8_UNORM };
         RHI::FRasterDesc Raster;
@@ -396,21 +396,21 @@ namespace Lumina::RHITests
     // Covers the explicit-args form, where the push-constant pointer is not the indirect buffer.
     RHI_TEST(Pipelines, GraphicsDrawIndexedIndirect)
     {
-        const TVector<uint32> VSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> VSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("vertex")]
             float4 main(uint VertexID : SV_VertexID) : SV_Position
             {
                 float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
                 return float4(UV * 2.0 - 1.0, 0.5, 1.0);
             }
-        )SLANG").c_str(), "RHITests.IndexedIndirectVS");
+        )SLANG"), "RHITests.IndexedIndirectVS");
 
-        const TVector<uint32> PSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> PSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("fragment")]
             float4 main() : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
-        )SLANG").c_str(), "RHITests.IndexedIndirectPS");
+        )SLANG"), "RHITests.IndexedIndirectPS");
 
-        RHI_REQUIRE(!VSSpirv.empty() && !PSSpirv.empty());
+        RHI_REQUIRE(!VSSpirv.IsEmpty() && !PSSpirv.IsEmpty());
 
         const RHI::FColorTarget ColorTarget{ .Format = EFormat::RGBA8_UNORM };
         RHI::FRasterDesc Raster;
@@ -447,7 +447,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Pipelines, MeshShaderDraw)
     {
-        const TVector<uint32> MSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> MSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FVertexOut { float4 Position : SV_Position; };
 
             [shader("mesh")]
@@ -461,14 +461,14 @@ namespace Lumina::RHITests
                 Verts[2].Position = float4(-1.0,  3.0, 0.5, 1.0);
                 Tris[0] = uint3(0, 1, 2);
             }
-        )SLANG").c_str(), "RHITests.MeshMS");
+        )SLANG"), "RHITests.MeshMS");
 
-        const TVector<uint32> PSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> PSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("fragment")]
             float4 main() : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
-        )SLANG").c_str(), "RHITests.MeshPS");
+        )SLANG"), "RHITests.MeshPS");
 
-        RHI_REQUIRE(!MSSpirv.empty() && !PSSpirv.empty());
+        RHI_REQUIRE(!MSSpirv.IsEmpty() && !PSSpirv.IsEmpty());
 
         const RHI::FColorTarget ColorTarget{ .Format = EFormat::RGBA8_UNORM };
         RHI::FRasterDesc Raster;
@@ -489,7 +489,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Pipelines, MeshShaderDrawIndirect)
     {
-        const TVector<uint32> MSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> MSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FVertexOut { float4 Position : SV_Position; };
 
             [shader("mesh")]
@@ -503,14 +503,14 @@ namespace Lumina::RHITests
                 Verts[2].Position = float4(-1.0,  3.0, 0.5, 1.0);
                 Tris[0] = uint3(0, 1, 2);
             }
-        )SLANG").c_str(), "RHITests.MeshIndirectMS");
+        )SLANG"), "RHITests.MeshIndirectMS");
 
-        const TVector<uint32> PSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> PSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             [shader("fragment")]
             float4 main() : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
-        )SLANG").c_str(), "RHITests.MeshIndirectPS");
+        )SLANG"), "RHITests.MeshIndirectPS");
 
-        RHI_REQUIRE(!MSSpirv.empty() && !PSSpirv.empty());
+        RHI_REQUIRE(!MSSpirv.IsEmpty() && !PSSpirv.IsEmpty());
 
         const RHI::FColorTarget ColorTarget{ .Format = EFormat::RGBA8_UNORM };
         RHI::FRasterDesc Raster;
@@ -545,7 +545,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Pipelines, PipelineStatistics)
     {
-        const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+        const TVector<uint32> Spirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FArgs { uint* Output; };
             FArgs* Pass() { return GetArgs<FArgs>(); }
 
@@ -557,8 +557,8 @@ namespace Lumina::RHITests
                 for (uint i = 0; i < 16; ++i) { Accum += sin((float)(DTid.x + i)); }
                 Pass().Output[DTid.x] = (uint)(Accum * 1000.0);
             }
-        )SLANG").c_str(), "RHITests.Stats");
-        RHI_REQUIRE(!Spirv.empty());
+        )SLANG"), "RHITests.Stats");
+        RHI_REQUIRE(!Spirv.IsEmpty());
 
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
@@ -571,10 +571,10 @@ namespace Lumina::RHITests
             return;
         }
 
-        RHI_CHECK(!Stats.empty());
+        RHI_CHECK(!Stats.IsEmpty());
         for (const RHI::FPipelineStat& Stat : Stats)
         {
-            RHI_CHECK(!Stat.Name.empty());
+            RHI_CHECK(!Stat.Name.IsEmpty());
         }
     }
 }

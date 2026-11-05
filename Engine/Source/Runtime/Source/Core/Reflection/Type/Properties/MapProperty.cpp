@@ -12,8 +12,8 @@ namespace Lumina
     {
         if (Ar.IsWriting())
         {
-            uint32 Num = static_cast<uint32>(GetNum(Value));
-            Ar.SerializeBits(&Num, 32);
+            uint32 WireCount = static_cast<uint32>(Num(Value));
+            Ar.SerializeBits(&WireCount, 32);
             ForEach(Value, [&](const void* Key, void* Val)
             {
                 KeyProperty->NetSerialize(Ar, const_cast<void*>(Key));
@@ -22,17 +22,24 @@ namespace Lumina
         }
         else
         {
-            uint32 Num = 0;
-            Ar.SerializeBits(&Num, 32);
-            Clear(Value);
-            Reserve(Value, Num);
+            uint32 WireCount = 0;
+            Ar.SerializeBits(&WireCount, 32);
+            if (!Ar.CanHoldCount(WireCount))
+            {
+                LOG_ERROR("Map property '{}' was sent {} entries, more than the packet holds; failing the archive.", Name, WireCount);
+                Ar.SetHasError(true);
+                return;
+            }
+            const int32 Count = static_cast<int32>(WireCount);
+            Reset(Value);
+            Reserve(Value, Count);
 
             void* KeyScratch = Memory::Malloc(GetKeySize(), 16);
-            for (uint32 i = 0; i < Num && !Ar.HasError(); ++i)
+            for (int32 i = 0; i < Count && !Ar.HasError(); ++i)
             {
                 Ops->ConstructKey(Value, KeyScratch);
                 KeyProperty->NetSerialize(Ar, KeyScratch);
-                void* Slot = Insert(Value, KeyScratch, nullptr);
+                void* Slot = Add(Value, KeyScratch, nullptr);
                 ValueProperty->NetSerialize(Ar, Slot);
                 Ops->DestructKey(Value, KeyScratch);
             }
@@ -42,8 +49,8 @@ namespace Lumina
 
     void FMapProperty::Serialize(FArchive& Ar, void* Value)
     {
-        SIZE_T Count = GetNum(Value);
-        Ar << Count;
+        uint64 SerializedCount = Num(Value);
+        Ar << SerializedCount;
 
         // A map never bulk-copies, so a size mismatch is detectable but not fatal, and pairs round-trip.
         size_t SerializedKeySize   = KeyProperty->GetElementSize();
@@ -51,9 +58,9 @@ namespace Lumina
         Ar << SerializedKeySize;
         Ar << SerializedValueSize;
 
-        if (Count > 0xFFFFFFFFull || !Ar.CanHoldCount(Count))
+        if (SerializedCount > static_cast<uint64>(TNumericLimits<int32>::Max()) || !Ar.CanHoldCount(SerializedCount))
         {
-            LOG_ERROR("Map property '{}' tried to serialize {} entries. Aborted", Name, Count);
+            LOG_ERROR("Map property '{}' tried to serialize {} entries. Aborted", Name, SerializedCount);
             Ar.SetHasError(true);
             return;
         }
@@ -68,15 +75,16 @@ namespace Lumina
         }
         else
         {
-            Clear(Value);
+            const int32 Count = static_cast<int32>(SerializedCount);
+            Reset(Value);
             Reserve(Value, Count);
 
             void* KeyScratch = Memory::Malloc(GetKeySize(), 16);
-            for (SIZE_T i = 0; i < Count; ++i)
+            for (int32 i = 0; i < Count; ++i)
             {
                 Ops->ConstructKey(Value, KeyScratch);
                 KeyProperty->Serialize(Ar, KeyScratch);
-                void* Slot = Insert(Value, KeyScratch, nullptr);
+                void* Slot = Add(Value, KeyScratch, nullptr);
                 ValueProperty->Serialize(Ar, Slot);
                 Ops->DestructKey(Value, KeyScratch);
             }
@@ -87,21 +95,21 @@ namespace Lumina
     void FMapProperty::SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* /*Defaults*/)
     {
         // Uses only the array slot API, so it round-trips uniformly with no per-pair record shape.
-        int32 NumSlots = static_cast<int32>(GetNum(Value)) * 2;
+        int32 NumSlots = Num(Value) * 2;
         FArchiveArray Array = Slot.EnterArray(NumSlots);
 
         if (Slot.GetArchiver().IsReading())
         {
             const int32 PairCount = NumSlots / 2;
-            Clear(Value);
-            Reserve(Value, static_cast<size_t>(PairCount));
+            Reset(Value);
+            Reserve(Value, PairCount);
 
             void* KeyScratch = Memory::Malloc(GetKeySize(), 16);
             for (int32 i = 0; i < PairCount; ++i)
             {
                 Ops->ConstructKey(Value, KeyScratch);
                 KeyProperty->SerializeItem(Array.EnterElement(), KeyScratch);
-                void* ValueSlot = Insert(Value, KeyScratch, nullptr);
+                void* ValueSlot = Add(Value, KeyScratch, nullptr);
                 ValueProperty->SerializeItem(Array.EnterElement(), ValueSlot);
                 Ops->DestructKey(Value, KeyScratch);
             }
@@ -119,7 +127,7 @@ namespace Lumina
 
     bool FMapProperty::Identical(const void* ValueA, const void* ValueB) const
     {
-        if (GetNum(ValueA) != GetNum(ValueB))
+        if (Num(ValueA) != Num(ValueB))
         {
             return false;
         }
@@ -143,12 +151,16 @@ namespace Lumina
 
     void FMapProperty::CopyCompleteValue(void* Dst, const void* Src) const
     {
-        Clear(Dst);
-        Reserve(Dst, GetNum(Src));
+        if (Dst == Src)
+        {
+            return;
+        }
+        Reset(Dst);
+        Reserve(Dst, Num(Src));
         ForEach(Src, [&](const void* Key, void* Val)
         {
-            // Insert copies the key and default-constructs the value; then deep-copy the value into that slot.
-            void* Slot = Insert(Dst, Key, nullptr);
+            // Add copies the key and default-constructs the value; then deep-copy the value into that slot.
+            void* Slot = Add(Dst, Key, nullptr);
             ValueProperty->CopyCompleteValue(Slot, Val);
         });
     }

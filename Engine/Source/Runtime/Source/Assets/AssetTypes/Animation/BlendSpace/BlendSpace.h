@@ -159,7 +159,7 @@ namespace Lumina
         const TVector<int32>& GetSortedOrder() const { return SortedOrder; }
 
         /** False once Samples has been resized without a matching RebuildTopology. */
-        bool HasValidTopology() const { return TopologySampleCount == (int32)Samples.size(); }
+        bool HasValidTopology() const { return TopologySampleCount == Samples.Num(); }
 
     private:
 

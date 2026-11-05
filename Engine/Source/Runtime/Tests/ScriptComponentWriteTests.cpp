@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "Containers/Span.h"
 #include "Paths/Paths.h"
 #include "Scripting/DotNet/DotNetHost.h"
+#include "World/ECS/Registry.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 
@@ -41,13 +43,27 @@ TEST_F(FScriptComponentWriteTest, AScriptWriteInvalidatesTheMeshResolve)
     auto* Write = (FWriteComponentFn)DotNet::ResolveManagedExport("Test_WriteStaticMeshComponent");
     ASSERT_NE(Write, nullptr);
 
-    SStaticMeshComponent Component;
+    // Only a pooled component knows its entity, so the write is checked through the registry's resolve queue.
+    ECS::FRegistry Registry;
+    FMeshResolveQueue& Queue = FMeshResolveQueue::Ensure(Registry);
+    const ECS::FEntity Entity = Registry.Create();
+    SStaticMeshComponent& Component = Registry.Emplace<SStaticMeshComponent>(Entity);
+
+    TVector<ECS::FEntity> Dirty;
+    Queue.BeginFrame();
+    (void)Queue.ConsumeFullSweep(EMeshResolveSource::StaticMesh);
+    Queue.TakeDirty(EMeshResolveSource::StaticMesh, Dirty);
+    Component.ResolveBinding.ClearQueued();
     Component.CachedEntryState = 0;
-    const uint32 Before = FMeshResolveCache::GetPendingGeneration();
 
     Write(&Component);
 
     EXPECT_FALSE(Component.bCastShadow);
     EXPECT_EQ(Component.CachedEntryState, MESH_RESOLVE_STATE_STALE);
-    EXPECT_GE(FMeshResolveCache::GetPendingGeneration() - Before, 2u);
+    EXPECT_TRUE(Component.ResolveBinding.IsQueued());
+
+    Queue.BeginFrame();
+    Queue.TakeDirty(EMeshResolveSource::StaticMesh, Dirty);
+    ASSERT_EQ(Dirty.Num(), 1);
+    EXPECT_EQ(Dirty[0], Entity);
 }

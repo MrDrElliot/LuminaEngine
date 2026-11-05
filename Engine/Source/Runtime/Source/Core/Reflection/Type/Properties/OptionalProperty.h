@@ -10,17 +10,18 @@ namespace Lumina
     class LUMINA_VISIBLE_TYPE FOptionalProperty : public FProperty
     {
     public:
-        explicit FOptionalProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
-            , Ops(Desc.Type->GetOptionalOps())
+        explicit FOptionalProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
+            , Ops(InDesc.Type->GetOptionalOps())
         {
+            SetElementSize(Ops != nullptr ? Ops->ContainerSize : 0);
         }
 
         void AddProperty(FProperty* Property) override { Inner = Property; }
 
         FProperty* GetInternalProperty() const { return Inner; }
 
-        bool  HasValue(const void* InContainer) const { return Ops->HasValue(InContainer); }
+        bool  IsSet(const void* InContainer) const    { return Ops->IsSet(InContainer); }
         void* GetValue(void* InContainer) const       { return Ops->GetValue(InContainer); }
         void  SetValue(void* InContainer, const void* InValue) const { Ops->SetValue(InContainer, InValue); }
         void  Reset(void* InContainer) const          { Ops->Reset(InContainer); }
@@ -31,6 +32,7 @@ namespace Lumina
         bool OwnsStorage() const override { return Ops->ConstructContainer != nullptr; }
 
         RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
+        RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
         RUNTIME_API void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
 
         /** Compares engaged-state then payload via Inner; Copy mirrors engaged state. */

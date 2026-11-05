@@ -8,6 +8,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "World/ECS/Registry.h"
+#include "World/Entity/Systems/SystemResources.h"
 #include "World/Subsystems/TweenTypes.h"
 
 namespace Lumina
@@ -160,8 +161,8 @@ namespace Lumina
         FTweenHandle   Handle;
     };
 
-    /** Per-world tween runner, advanced once per frame from the world's tick. */
-    class RUNTIME_API FTweenManager
+    /** Per-world tween runner, advanced once per frame by STweenSystem. */
+    class RUNTIME_API FTweenManager : public ECS::FResource
     {
     public:
 

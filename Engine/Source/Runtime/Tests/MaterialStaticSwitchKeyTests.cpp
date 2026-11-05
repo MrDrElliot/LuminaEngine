@@ -22,9 +22,9 @@ namespace Lumina
         CMaterial* MaterialWithSwitches()
         {
             CMaterial* Material = NewObject<CMaterial>();
-            Material->StaticSwitches.push_back(MakeSwitch("Detail", false, 0));
-            Material->StaticSwitches.push_back(MakeSwitch("Parallax", true, 1));
-            Material->StaticSwitches.push_back(MakeSwitch("Tint", false, 2));
+            Material->StaticSwitches.Add(MakeSwitch("Detail", false, 0));
+            Material->StaticSwitches.Add(MakeSwitch("Parallax", true, 1));
+            Material->StaticSwitches.Add(MakeSwitch("Tint", false, 2));
             return Material;
         }
     }

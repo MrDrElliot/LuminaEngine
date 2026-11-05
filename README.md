@@ -536,7 +536,6 @@ Listed alphabetically.
 | Miniz | Deflate compression for package and pak archive serialization |
 | MSDFGen | Multi-channel signed distance fields for crisp world-space text |
 | .NET Runtime | CoreCLR (.NET 10) bundled as the host for C# (LuminaSharp) scripting |
-| Nlohmann JSON | Modern JSON library with STL compatibility |
 | NVIDIA Aftermath | GPU crash debugging and post-mortem dump analysis |
 | NVIDIA Nsight Perf | GPU counter collection behind the hardware profiler plugin |
 | Recast & Detour | Navigation mesh generation and pathfinding |
@@ -551,7 +550,6 @@ Listed alphabetically.
 | Volk | Vulkan meta-loader for runtime function loading |
 | Vulkan | Low-level graphics API providing explicit GPU control |
 | VulkanMemoryAllocator | Memory management library for Vulkan with defragmentation |
-| xxHash | Extremely fast non-cryptographic hash algorithm |
 
 ---
 

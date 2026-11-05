@@ -20,7 +20,7 @@ namespace Lumina
         bool ResolveNotifyWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FString& Socket, FTransform& OutTransform)
         {
             FMatrix4 SocketTransform;
-            if (!Socket.empty() && SkeletalUtils::GetSocketWorldTransform(Registry, Entity, FName(Socket.c_str()), SocketTransform))
+            if (!Socket.IsEmpty() && SkeletalUtils::GetSocketWorldTransform(Registry, Entity, FName(*Socket), SocketTransform))
             {
                 OutTransform = FTransform(SocketTransform);
                 return true;
@@ -89,9 +89,9 @@ namespace Lumina
             return;
         }
 
-        if (bAttachToSocket && !Socket.empty())
+        if (bAttachToSocket && !Socket.IsEmpty())
         {
-            World->GetSpawner()->SpawnParticleSystemAttached(ParticleSystem.Get(), Entity, FName(Socket.c_str()), Offset, Lifetime);
+            World->GetSpawner()->SpawnParticleSystemAttached(ParticleSystem.Get(), Entity, FName(*Socket), Offset, Lifetime);
             return;
         }
 

@@ -161,8 +161,9 @@ namespace Lumina
             }
         };
 
-        template <typename T>
-        void BindSharedFromThis(FControlBlock* Block, T* Value, const TSharedFromThis<T>* Base) noexcept;
+        // Deduced apart, since a subclass of TSharedFromThis<Base> has a value type that is not Base.
+        template <typename T, typename TBase>
+        void BindSharedFromThis(FControlBlock* Block, T* Value, const TSharedFromThis<TBase>* Base) noexcept;
 
         FORCEINLINE void BindSharedFromThis(FControlBlock*, const void*, const void*) noexcept {}
 
@@ -499,9 +500,9 @@ namespace Lumina
 
     private:
 
-        template <typename U>
+        template <typename U, typename TBase>
         friend void SharedPtrDetail::BindSharedFromThis(SharedPtrDetail::FControlBlock*, U*,
-                                                        const TSharedFromThis<U>*) noexcept;
+                                                        const TSharedFromThis<TBase>*) noexcept;
 
         void Bind(T* Value, SharedPtrDetail::FControlBlock* Block) const noexcept
         {
@@ -515,10 +516,10 @@ namespace Lumina
 
     namespace SharedPtrDetail
     {
-        template <typename T>
-        void BindSharedFromThis(FControlBlock* Block, T* Value, const TSharedFromThis<T>* Base) noexcept
+        template <typename T, typename TBase>
+        void BindSharedFromThis(FControlBlock* Block, T* Value, const TSharedFromThis<TBase>* Base) noexcept
         {
-            Base->Bind(Value, Block);
+            Base->Bind(static_cast<TBase*>(Value), Block);
         }
     }
 

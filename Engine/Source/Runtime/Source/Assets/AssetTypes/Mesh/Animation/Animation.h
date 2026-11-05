@@ -178,8 +178,9 @@ namespace Lumina
             FQuat    SourceBindR;
             FVector3 SourceBindS;
 
-            // Other bones keep the clip's rotation and scale its translation to the target's bone length.
-            float TranslationScale = 1.0f;
+            // Other bones keep the clip's rotation; translation is the target's bind offset plus the clip's scaled motion.
+            FVector3 TargetBindT;
+            float    TranslationScale = 1.0f;
         };
 
         // Resolved once per (skeleton, bind generation) and never mutated after, so sampling inside ParallelFor needs no lock.
@@ -317,12 +318,12 @@ namespace Lumina
 
         const TVector<FAnimationNotify>& GetNotifies() const { return AnimationResource->Notifies; }
         const TVector<FAnimationNotifyState>& GetNotifyStates() const { return AnimationResource->NotifyStates; }
-        bool HasNotifies() const { return !AnimationResource->Notifies.empty() || !AnimationResource->NotifyStates.empty(); }
+        bool HasNotifies() const { return !AnimationResource->Notifies.IsEmpty() || !AnimationResource->NotifyStates.IsEmpty(); }
 
         const FSyncTrack& GetSyncTrack() const { return AnimationResource->SyncTrack; }
 
         const TVector<FAnimationCurve>& GetCurves() const { return AnimationResource->Curves; }
-        bool HasCurves() const { return !AnimationResource->Curves.empty(); }
+        bool HasCurves() const { return !AnimationResource->Curves.IsEmpty(); }
 
         int32 FindCurveIndex(const FName& CurveName) const;
 

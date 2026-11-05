@@ -17,12 +17,12 @@ namespace Lumina::Paths
             FString ExePath = Platform::GetCurrentProcessPath();
             Normalize(ExePath);
 
-            const size_t Slash = ExePath.find_last_of('/');
-            const FString ExeDir = Slash == FString::npos ? FString() : ExePath.substr(0, Slash);
-            FString Stem = Slash == FString::npos ? ExePath : ExePath.substr(Slash + 1);
-            if (const size_t Dot = Stem.find_last_of('.'); Dot != FString::npos)
+            const int32 Slash = ExePath.FindLastOf('/');
+            const FString ExeDir = Slash == Constants::kIndexNone ? FString() : ExePath.Mid(0, Slash);
+            FString Stem = Slash == Constants::kIndexNone ? ExePath : ExePath.Mid(Slash + 1);
+            if (const int32 Dot = Stem.FindLastOf('.'); Dot != Constants::kIndexNone)
             {
-                Stem.resize(Dot);
+                Stem.SetLen(Dot);
             }
 
             const FString DataDir = ExeDir + "/" + Stem + "_Data";
@@ -52,13 +52,13 @@ namespace Lumina::Paths
         // The exe lives in <root>/Binaries/<Platform>, so every checkout runs against its own engine tree.
         const FString LuminaDir = Parent(Parent(Parent(ExePath, true), true), true);
 
-        bInstalledBuild = !LuminaDir.empty() && Filesystem::Exists(LuminaDir + "/" + InstalledBuildMarker);
+        bInstalledBuild = !LuminaDir.IsEmpty() && Filesystem::Exists(LuminaDir + "/" + InstalledBuildMarker);
         // A packaged game has no engine tree beside it, since its engine resources come from the pak.
         const FString& DataDir = GetGameDataDirectory();
-        const bool bPackaged = DataDir.size() > 5 && DataDir.compare(DataDir.size() - 5, 5, "_Data") == 0;
-        if (!bPackaged && (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources")))
+        const bool bPackaged = DataDir.Len() > 5 && DataDir.EndsWith("_Data");
+        if (!bPackaged && (LuminaDir.IsEmpty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources")))
         {
-            LOG_ERROR("Could not resolve the engine root from '{}'. Resources (fonts, shaders) will fail to load.", ExePath.c_str());
+            LOG_ERROR("Could not resolve the engine root from '{}'. Resources (fonts, shaders) will fail to load.", *ExePath);
         }
 
         CachedDirectories[EngineInstallDirectoryName]   = LuminaDir;
@@ -78,10 +78,10 @@ namespace Lumina::Paths
 
     FString GetExtension(const FString& InPath)
     {
-        size_t Dot = InPath.find_last_of('.');
-        if (Dot != FString::npos && Dot + 1 < InPath.length())
+        int32 Dot = InPath.FindLastOf('.');
+        if (Dot != Constants::kIndexNone && Dot + 1 < InPath.Len())
         {
-            return InPath.substr(Dot);
+            return InPath.Mid(Dot);
         }
 
         return {};
@@ -99,10 +99,10 @@ namespace Lumina::Paths
 
     FString GetVirtualPathPrefix(const FString& VirtualPath)
     {
-        size_t Pos = VirtualPath.find("://");
-        if (Pos != FString::npos)
+        int32 Pos = VirtualPath.Find("://");
+        if (Pos != Constants::kIndexNone)
         {
-            return VirtualPath.substr(0, Pos + 3);
+            return VirtualPath.Mid(0, Pos + 3);
         }
 
         return VirtualPath;
@@ -115,19 +115,19 @@ namespace Lumina::Paths
 
     bool IsUnderDirectory(const FString& ParentDirectory, const FString& Directory)
     {
-        if (Directory.length() < ParentDirectory.length())
+        if (Directory.Len() < ParentDirectory.Len())
         {
             return false;
         }
 
-        if (!EqualsIgnoreCase(FStringView(Directory.data(), ParentDirectory.length()), FStringView(ParentDirectory.data(), ParentDirectory.length())))
+        if (!EqualsIgnoreCase(FStringView(Directory.GetData(), ParentDirectory.Len()), FStringView(ParentDirectory.GetData(), ParentDirectory.Len())))
         {
             return false;
         }
 
-        if (Directory.length() > ParentDirectory.length())
+        if (Directory.Len() > ParentDirectory.Len())
         {
-            char nextChar = Directory[ParentDirectory.length()];
+            char nextChar = Directory[ParentDirectory.Len()];
             if (nextChar != '/' && nextChar != '\\')
             {
                 return false;
@@ -145,26 +145,26 @@ namespace Lumina::Paths
         Algo::Replace(NormalizedPath, '\\', '/');
         Algo::Replace(NormalizedBase, '\\', '/');
     
-        if (!NormalizedBase.empty() && NormalizedBase.back() != '/')
+        if (!NormalizedBase.IsEmpty() && NormalizedBase.Last() != '/')
         {
-            NormalizedBase.push_back('/');
+            NormalizedBase.AppendChar('/');
         }
     
-        if (NormalizedPath.find(NormalizedBase) != 0)
+        if (NormalizedPath.Find(NormalizedBase) != 0)
         {
             return Path;
         }
     
-        return NormalizedPath.substr(NormalizedBase.size());
+        return NormalizedPath.Mid(NormalizedBase.Len());
     }
 
     void ReplaceFilename(FString& Path, const FString& NewFilename)
     {
-        size_t LastSlash = Path.find_last_of("/\\");
+        int32 LastSlash = Path.FindLastOf("/\\");
 
-        if (LastSlash != FString::npos)
+        if (LastSlash != Constants::kIndexNone)
         {
-            Path = Path.substr(0, LastSlash + 1) + NewFilename;
+            Path = Path.Mid(0, LastSlash + 1) + NewFilename;
             return;
         }
 
@@ -202,7 +202,7 @@ namespace Lumina::Paths
         FString Directory = Platform::GetEnvVariable("LOCALAPPDATA");
         #else
         FString Directory = Platform::GetEnvVariable("XDG_CONFIG_HOME");
-        if (Directory.empty())
+        if (Directory.IsEmpty())
         {
             Directory = Platform::GetEnvVariable("HOME") + "/.config";
         }
@@ -213,8 +213,8 @@ namespace Lumina::Paths
 
     FString Parent(FStringView Path, bool bRemoveTrailingSlash)
     {
-        auto data = Path.data();
-        auto len = Path.size();
+        auto data = Path.GetData();
+        auto len = Path.Len();
 
         size_t i = len;
         while (i > 0)
@@ -247,7 +247,7 @@ namespace Lumina::Paths
             i = j;
         }
 
-        return FString(data, i);
+        return FString(data, IntCastChecked<int32>(i));
     }
 
     const FString& GetEngineInstallDirectory()
@@ -283,9 +283,9 @@ namespace Lumina::Paths
             }
 
             // 2) collapse runs of '/' to a single '/'.
-            size_t Write = 0;
+            int32 Write = 0;
             bool PrevSlash = false;
-            for (size_t Read = 0; Read < Path.size(); ++Read)
+            for (int32 Read = 0; Read < Path.Len(); ++Read)
             {
                 const char c = Path[Read];
                 if (c == '/')
@@ -299,7 +299,7 @@ namespace Lumina::Paths
                 }
                 Path[Write++] = c;
             }
-            Path.resize(Write);
+            Path.SetLen(Write);
         }
     }
 
@@ -322,14 +322,14 @@ namespace Lumina::Paths
 
     bool PathsEqual(FStringView A, FStringView B)
     {
-        size_t lenA = A.size();
-        size_t lenB = B.size();
+        int32 lenA = A.Len();
+        int32 lenB = B.Len();
         if (lenA != lenB)
         {
             return false;
         }
 
-        for (size_t i = 0; i < lenA; ++i)
+        for (int32 i = 0; i < lenA; ++i)
         {
             char a = A[i];
             char b = B[i];
@@ -352,30 +352,30 @@ namespace Lumina::Paths
     FFixedString MakeGameApplicationName()
     {
         FFixedString Result = "Lumina-";
-        Result.append(LUMINA_CONFIGURATION_NAME).append(LUMINA_EXECUTABLE_EXT_NAME);
+        Result.Append(LUMINA_CONFIGURATION_NAME).Append(LUMINA_EXECUTABLE_EXT_NAME);
         return Result;
     }
 
     FFixedString MakeServerApplicationName()
     {
         FFixedString Result = "Lumina-Server-";
-        Result.append(LUMINA_CONFIGURATION_NAME).append(LUMINA_EXECUTABLE_EXT_NAME);
+        Result.Append(LUMINA_CONFIGURATION_NAME).Append(LUMINA_EXECUTABLE_EXT_NAME);
         return Result;
     }
 
     FFixedString MakeGameModuleFileName(FStringView ModuleName)
     {
         FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;
-        Result.append(ModuleName.data(), ModuleName.size());
-        Result.append("-").append(LUMINA_CONFIGURATION_NAME).append(LUMINA_SHAREDLIB_EXT_NAME);
+        Result.Append(ModuleName.GetData(), ModuleName.Len());
+        Result.Append("-").Append(LUMINA_CONFIGURATION_NAME).Append(LUMINA_SHAREDLIB_EXT_NAME);
         return Result;
     }
 
     FFixedString MakeModuleFileName(FStringView ModuleName)
     {
         FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;
-        Result.append(ModuleName.data(), ModuleName.size());
-        Result.append(LUMINA_BINARY_SUFFIX).append(LUMINA_SHAREDLIB_EXT_NAME);
+        Result.Append(ModuleName.GetData(), ModuleName.Len());
+        Result.Append(LUMINA_BINARY_SUFFIX).Append(LUMINA_SHAREDLIB_EXT_NAME);
         return Result;
     }
 

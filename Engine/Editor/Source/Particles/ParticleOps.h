@@ -79,7 +79,7 @@ namespace Lumina
 
         // CompileEmitter in two halves, so a caller can keep the game thread running while the shader builds.
         EDITOR_API bool BeginCompileEmitter(CParticleSystem* System, int32 EmitterIndex, FParticleEmitterCompileJob& Job,
-                                            FParticleEmitterCompileOutput& Out, ETaskPriority Priority = ETaskPriority::Medium);
+                                            FParticleEmitterCompileOutput& Out, Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal);
         EDITOR_API bool FinishCompileEmitter(FParticleEmitterCompileJob& Job, FParticleEmitterCompileOutput& Out);
 
         // Rewrites only the input values, which works while the generated code still matches the compiled shader.

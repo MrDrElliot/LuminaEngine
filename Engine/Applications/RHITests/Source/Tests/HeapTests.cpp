@@ -31,7 +31,7 @@ namespace Lumina::RHITests
                 }
             )SLANG", "RHITests.SlotProbe");
 
-            return Spirv.empty() ? RHI::FPipelineH{} : Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
+            return Spirv.IsEmpty() ? RHI::FPipelineH{} : Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         }
 
         RHI::FTextureH CreateSolidTexture(const float (&Color)[4], const char* DebugName)
@@ -140,7 +140,7 @@ namespace Lumina::RHITests
         {
             const RHI::FTextureH Texture = Ctx.CreateTexture(MakeSampledDesc(1), "RHITests.ManyTextures");
             RHI_REQUIRE(RHI::IsValid(Texture));
-            Textures.push_back(Texture);
+            Textures.Add(Texture);
         }
 
         for (uint32 i = 0; i < kCount; ++i)
@@ -155,7 +155,7 @@ namespace Lumina::RHITests
         {
             const uint32 Slot = RHI::HeapWriteTexture(Heap, Texture);
             RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
-            Slots.push_back(Slot);
+            Slots.Add(Slot);
         }
 
         Ctx.PumpFrames(RHI::kFramesInFlight);
@@ -198,12 +198,12 @@ namespace Lumina::RHITests
 
         const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
         TVector<uint32> Slots;
-        Slots.reserve(kCount);
+        Slots.Reserve(kCount);
         for (uint32 i = 0; i < kCount; ++i)
         {
             const uint32 Slot = RHI::HeapWriteTexture(Heap, Colors[i % 2]);
             RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
-            Slots.push_back(Slot);
+            Slots.Add(Slot);
         }
 
         Ctx.PumpFrames(RHI::kFramesInFlight);

@@ -145,10 +145,10 @@ namespace Lumina
 
     void CBlendSpace::RebuildTopology()
     {
-        Triangles.clear();
-        SortedOrder.clear();
+        Triangles.Reset();
+        SortedOrder.Reset();
 
-        const int32 NumSamples = (int32)Samples.size();
+        const int32 NumSamples = Samples.Num();
         TopologySampleCount = NumSamples;
 
         if (NumSamples == 0)
@@ -156,10 +156,10 @@ namespace Lumina
             return;
         }
 
-        SortedOrder.reserve(NumSamples);
+        SortedOrder.Reserve(NumSamples);
         for (int32 i = 0; i < NumSamples; ++i)
         {
-            SortedOrder.push_back(i);
+            SortedOrder.Add(i);
         }
 
         Algo::Sort(SortedOrder, [this](int32 A, int32 B)
@@ -174,20 +174,20 @@ namespace Lumina
 
         // Normalized so both axes carry equal weight, or the triangulation degenerates into slivers.
         TVector<FVector2> Points;
-        Points.reserve(NumSamples + 3);
+        Points.Reserve(NumSamples + 3);
         for (const SBlendSpaceSample& Sample : Samples)
         {
-            Points.push_back(FVector2(AxisX.Normalize(Sample.Position.x), AxisY.Normalize(Sample.Position.y)));
+            Points.Emplace(AxisX.Normalize(Sample.Position.x), AxisY.Normalize(Sample.Position.y));
         }
 
         // Far enough out that no super vertex lands in a real circumcircle and skips a hull triangle.
         const int32 Super0 = NumSamples;
-        Points.push_back(FVector2(-1000.0f, -1000.0f));
-        Points.push_back(FVector2( 2001.0f, -1000.0f));
-        Points.push_back(FVector2(-1000.0f,  2001.0f));
+        Points.Emplace(-1000.0f, -1000.0f);
+        Points.Emplace(2001.0f, -1000.0f);
+        Points.Emplace(-1000.0f,  2001.0f);
 
         TVector<FBlendSpaceTriangle> Working;
-        Working.push_back({ Super0, Super0 + 1, Super0 + 2 });
+        Working.Emplace(Super0, Super0 + 1, Super0 + 2);
 
         TVector<FBlendSpaceTriangle> Bad;
         TVector<TPair<int32, int32>> Edges;
@@ -196,19 +196,19 @@ namespace Lumina
         {
             const FVector2& P = Points[PointIndex];
 
-            Bad.clear();
-            for (int32 i = (int32)Working.size() - 1; i >= 0; --i)
+            Bad.Reset();
+            for (int32 i = Working.Num() - 1; i >= 0; --i)
             {
                 const FBlendSpaceTriangle& Tri = Working[i];
                 if (CircumcircleContains(Points[Tri.A], Points[Tri.B], Points[Tri.C], P))
                 {
-                    Bad.push_back(Tri);
-                    Working.erase(Working.begin() + i);
+                    Bad.Add(Tri);
+                    Working.RemoveAt(i);
                 }
             }
 
             // The hole's boundary is every edge belonging to exactly one removed triangle.
-            Edges.clear();
+            Edges.Reset();
             for (const FBlendSpaceTriangle& Tri : Bad)
             {
                 const TPair<int32, int32> TriEdges[3] =
@@ -221,11 +221,11 @@ namespace Lumina
                 for (const TPair<int32, int32>& Edge : TriEdges)
                 {
                     bool bShared = false;
-                    for (int32 e = (int32)Edges.size() - 1; e >= 0; --e)
+                    for (int32 e = Edges.Num() - 1; e >= 0; --e)
                     {
                         if (Edges[e] == Edge)
                         {
-                            Edges.erase(Edges.begin() + e);
+                            Edges.RemoveAt(e);
                             bShared = true;
                             break;
                         }
@@ -233,14 +233,14 @@ namespace Lumina
 
                     if (!bShared)
                     {
-                        Edges.push_back(Edge);
+                        Edges.Add(Edge);
                     }
                 }
             }
 
             for (const TPair<int32, int32>& Edge : Edges)
             {
-                Working.push_back({ Edge.first, Edge.second, PointIndex });
+                Working.Emplace(Edge.Key, Edge.Value, PointIndex);
             }
         }
 
@@ -248,7 +248,7 @@ namespace Lumina
         {
             if (Tri.A < NumSamples && Tri.B < NumSamples && Tri.C < NumSamples)
             {
-                Triangles.push_back(Tri);
+                Triangles.Add(Tri);
             }
         }
     }
@@ -257,12 +257,12 @@ namespace Lumina
     {
         OutWeights = FBlendSpaceWeights();
 
-        if (Samples.empty())
+        if (Samples.IsEmpty())
         {
             return;
         }
 
-        if (Samples.size() == 1)
+        if (Samples.Num() == 1)
         {
             OutWeights.Add(0, 1.0f);
             return;
@@ -288,7 +288,7 @@ namespace Lumina
     void CBlendSpace::EvaluateOneAxis(float X, FBlendSpaceWeights& OutWeights) const
     {
         // SortedOrder ascends in X, so the bracketing pair is the first sample at or past the input.
-        const int32 Count = (int32)SortedOrder.size();
+        const int32 Count = SortedOrder.Num();
 
         if (X <= Samples[SortedOrder[0]].Position.x)
         {
@@ -331,14 +331,14 @@ namespace Lumina
         const FVector2 P(AxisX.Normalize(Input.x), AxisY.Normalize(Input.y));
 
         // Falls back to the nearest pair projected onto their segment, which is what a 1D space does.
-        if (Triangles.empty())
+        if (Triangles.IsEmpty())
         {
             int32 NearestA = Constants::kIndexNone;
             int32 NearestB = Constants::kIndexNone;
             float BestA = 1e30f;
             float BestB = 1e30f;
 
-            for (int32 i = 0; i < (int32)Samples.size(); ++i)
+            for (int32 i = 0; i < Samples.Num(); ++i)
             {
                 const FVector2 Q(AxisX.Normalize(Samples[i].Position.x), AxisY.Normalize(Samples[i].Position.y));
                 const float DistanceSq = Math::LengthSquared(Q - P);
@@ -382,7 +382,7 @@ namespace Lumina
         float BestScore = -1e30f;
         float BestU = 0.0f, BestV = 0.0f, BestW = 0.0f;
 
-        for (int32 i = 0; i < (int32)Triangles.size(); ++i)
+        for (int32 i = 0; i < Triangles.Num(); ++i)
         {
             const FBlendSpaceTriangle& Tri = Triangles[i];
 
@@ -443,7 +443,7 @@ namespace Lumina
         for (int32 i = 0; i < Weights.Count; ++i)
         {
             const int32 SampleIndex = Weights.SampleIndices[i];
-            if (SampleIndex < 0 || SampleIndex >= (int32)Samples.size())
+            if (SampleIndex < 0 || SampleIndex >= Samples.Num())
             {
                 continue;
             }

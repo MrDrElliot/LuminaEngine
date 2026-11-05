@@ -159,66 +159,66 @@ namespace Lumina
 
         RHI::WaitDeviceIdle();
 
-        DrawCalls.clear();
-        PendingTextureUploads.clear();
-        Geometries.clear();
-        Shaders.clear();
-        for (auto& KV : Textures)
+        DrawCalls.Reset();
+        PendingTextureUploads.Reset();
+        Geometries.Reset();
+        Shaders.Reset();
+        for (auto& [Handle, Texture] : Textures)
         {
-            if (KV.second.AssetKeepalive != nullptr)
+            if (Texture.AssetKeepalive != nullptr)
             {
-                KV.second.AssetKeepalive->RemoveFromRoot();
-                KV.second.AssetKeepalive = nullptr;
+                Texture.AssetKeepalive->RemoveFromRoot();
+                Texture.AssetKeepalive = nullptr;
             }
-            if (KV.second.BrushMaterial != nullptr)
+            if (Texture.BrushMaterial != nullptr)
             {
-                KV.second.BrushMaterial->RemoveFromRoot();
-                KV.second.BrushMaterial = nullptr;
+                Texture.BrushMaterial->RemoveFromRoot();
+                Texture.BrushMaterial = nullptr;
             }
-            if (KV.second.Managed.IsValid())
+            if (Texture.Managed.IsValid())
             {
-                RHI::Textures::Release(KV.second.Managed);
+                RHI::Textures::Release(Texture.Managed);
             }
         }
-        Textures.clear();
+        Textures.Reset();
 
-        for (auto& KV : TargetBatches)
+        for (auto& [Target, Batch] : TargetBatches)
         {
-            RHI::Retire(KV.second.VertexBuffer);
-            RHI::Retire(KV.second.IndexBuffer);
+            RHI::Retire(Batch.VertexBuffer);
+            RHI::Retire(Batch.IndexBuffer);
         }
-        TargetBatches.clear();
+        TargetBatches.Reset();
 
-        Filters.clear();
+        Filters.Reset();
         ReleaseAllLayers();
 
         RHI::Textures::Release(DefaultWhite);
 
-        for (auto& KV : PipelineByFormat)
+        for (auto& [FormatKey, Pipeline] : PipelineByFormat)
         {
-            RHI::Retire(KV.second);
+            RHI::Retire(Pipeline);
         }
-        PipelineByFormat.clear();
-        for (auto& KV : BrushPipelines)
+        PipelineByFormat.Reset();
+        for (auto& [BrushKey, Pipeline] : BrushPipelines)
         {
-            RHI::Retire(KV.second);
+            RHI::Retire(Pipeline);
         }
-        BrushPipelines.clear();
-        for (auto& KV : FilterPipelines)
+        BrushPipelines.Reset();
+        for (auto& [FilterKey, Pipeline] : FilterPipelines)
         {
-            RHI::Retire(KV.second);
+            RHI::Retire(Pipeline);
         }
-        FilterPipelines.clear();
+        FilterPipelines.Reset();
 
         bInitialized = false;
     }
 
     RHI::FPipelineH FRmlUiRenderer::GetPipelineForFormat(EFormat Format)
     {
-        auto It = PipelineByFormat.find((uint64)Format);
-        if (It != PipelineByFormat.end())
+        auto It = PipelineByFormat.Find((uint64)Format);
+        if (It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
         // Premultiplied alpha, since RmlUi pre-multiplies vertex colors.
@@ -239,7 +239,7 @@ namespace Lumina
         RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline("RmlUiVert.slang", "RmlUiPixel.slang", RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
-            PipelineByFormat.emplace((uint64)Format, Pipeline);
+            PipelineByFormat.TryAdd((uint64)Format, Pipeline);
         }
         return Pipeline;
     }
@@ -247,10 +247,10 @@ namespace Lumina
     RHI::FPipelineH FRmlUiRenderer::GetFilterPipeline(EFormat Format, bool bBlend)
     {
         const uint64 Key = (uint64)Format | (bBlend ? (1ull << 32) : 0ull);
-        auto It = FilterPipelines.find(Key);
-        if (It != FilterPipelines.end())
+        auto It = FilterPipelines.Find(Key);
+        if (It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
         // A filter pass fully writes its destination; only the composite step blends.
@@ -273,14 +273,14 @@ namespace Lumina
         RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline("FullscreenQuad.slang", "UIFilter.slang", RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
-            FilterPipelines.emplace(Key, Pipeline);
+            FilterPipelines.TryAdd(Key, Pipeline);
         }
         return Pipeline;
     }
 
     uint32 FRmlUiRenderer::AcquireLayer()
     {
-        for (size_t i = 0; i < FreeLayers.size(); ++i)
+        for (int32 i = 0; i < FreeLayers.Num(); ++i)
         {
             const uint32 Index = FreeLayers[i];
             FLayer& Candidate = OwnedLayers[Index];
@@ -296,14 +296,14 @@ namespace Lumina
                 continue;
             }
 
-            FreeLayers[i] = FreeLayers.back();
-            FreeLayers.pop_back();
+            FreeLayers[i] = FreeLayers.Last();
+            FreeLayers.Pop();
             Candidate.LastUsedFrame = EngineFrameCounter;
             return Index;
         }
 
         // Stale-size layers are dropped, since a resize drag otherwise builds hundreds, but only once their readers retire.
-        for (size_t i = 0; i < FreeLayers.size();)
+        for (int32 i = 0; i < FreeLayers.Num();)
         {
             FLayer& Stale = OwnedLayers[FreeLayers[i]];
             const bool bMatchesExtent = (Stale.Size.x == CurrentSize.x && Stale.Size.y == CurrentSize.y);
@@ -320,8 +320,8 @@ namespace Lumina
             }
             Stale.SampledSlot = RHI::kInvalidHeapSlot;
             Stale.Size = FUIntVector2(0, 0);
-            FreeLayers[i] = FreeLayers.back();
-            FreeLayers.pop_back();
+            FreeLayers[i] = FreeLayers.Last();
+            FreeLayers.Pop();
         }
 
         uint32 LiveLayers = 0;
@@ -337,7 +337,7 @@ namespace Lumina
 
         // A retired entry is reused so OwnedLayers does not grow without bound across resizes.
         uint32 Index = kNoLayer;
-        for (uint32 i = 0; i < uint32(OwnedLayers.size()); ++i)
+        for (int32 i = 0; i < OwnedLayers.Num(); ++i)
         {
             if (!OwnedLayers[i].Color.IsValid())
             {
@@ -370,15 +370,15 @@ namespace Lumina
             return Index;
         }
 
-        OwnedLayers.push_back(Layer);
-        return uint32(OwnedLayers.size() - 1);
+        OwnedLayers.Add(Layer);
+        return uint32(OwnedLayers.Num() - 1);
     }
 
     void FRmlUiRenderer::ReleaseLayerToPool(uint32 LayerIndex)
     {
-        if (LayerIndex != kNoLayer && LayerIndex < OwnedLayers.size())
+        if (LayerIndex != kNoLayer && LayerIndex < static_cast<uint32>(OwnedLayers.Num()))
         {
-            FreeLayers.push_back(LayerIndex);
+            FreeLayers.Add(LayerIndex);
         }
     }
 
@@ -391,29 +391,28 @@ namespace Lumina
                 RHI::Textures::Release(Layer.Color);
             }
         }
-        OwnedLayers.clear();
-        FreeLayers.clear();
-        LayerStack.clear();
+        OwnedLayers.Reset();
+        FreeLayers.Reset();
+        LayerStack.Reset();
     }
 
     uint32 FRmlUiRenderer::ResolveLayerHandle(Rml::LayerHandle Handle) const
     {
-        const size_t Depth = size_t(Handle);
-        if (Depth == 0 || Depth > LayerStack.size())
+        if (Handle == 0 || Handle > static_cast<Rml::LayerHandle>(LayerStack.Num()))
         {
             return kNoLayer;
         }
-        return LayerStack[Depth - 1];
+        return LayerStack[static_cast<int32>(Handle) - 1];
     }
 
     uint32 FRmlUiRenderer::CurrentLayerIndex() const
     {
-        return LayerStack.empty() ? kNoLayer : LayerStack.back();
+        return LayerStack.IsEmpty() ? kNoLayer : LayerStack.Last();
     }
 
     RHI::FTextureH FRmlUiRenderer::LayerTexture(uint32 LayerIndex) const
     {
-        if (LayerIndex == kNoLayer || LayerIndex >= OwnedLayers.size())
+        if (LayerIndex == kNoLayer || LayerIndex >= static_cast<uint32>(OwnedLayers.Num()))
         {
             return CurrentTarget;
         }
@@ -422,7 +421,7 @@ namespace Lumina
 
     uint32 FRmlUiRenderer::LayerSlot(uint32 LayerIndex) const
     {
-        if (LayerIndex == kNoLayer || LayerIndex >= OwnedLayers.size())
+        if (LayerIndex == kNoLayer || LayerIndex >= static_cast<uint32>(OwnedLayers.Num()))
         {
             return RHI::kInvalidHeapSlot;
         }
@@ -436,10 +435,10 @@ namespace Lumina
         Hash::HashCombine(Key, VS.Handle);
         Hash::HashCombine(Key, PS.Handle);
 
-        auto It = BrushPipelines.find(Key);
-        if (It != BrushPipelines.end())
+        auto It = BrushPipelines.Find(Key);
+        if (It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
         const RHI::FColorTarget ColorTarget { .Format = EFormat::RGBA8_UNORM, .Blend = {} };
@@ -457,7 +456,7 @@ namespace Lumina
         RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline(VSEntry->Source(), PSEntry->Source(), RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
-            BrushPipelines.emplace(Key, Pipeline);
+            BrushPipelines.TryAdd(Key, Pipeline);
         }
         return Pipeline;
     }
@@ -470,7 +469,7 @@ namespace Lumina
             return;
         }
 
-        for (size_t i = 0; i < FreeLayers.size();)
+        for (int32 i = 0; i < FreeLayers.Num();)
         {
             FLayer& Layer = OwnedLayers[FreeLayers[i]];
             if (Layer.Color.IsValid() && Layer.LastUsedFrame + IdleFrames < EngineFrameCounter)
@@ -478,8 +477,8 @@ namespace Lumina
                 RHI::Textures::Release(Layer.Color);
                 Layer.SampledSlot = RHI::kInvalidHeapSlot;
                 Layer.Size = FUIntVector2(0, 0);
-                FreeLayers[i] = FreeLayers.back();
-                FreeLayers.pop_back();
+                FreeLayers[i] = FreeLayers.Last();
+                FreeLayers.Pop();
                 continue;
             }
             ++i;
@@ -511,7 +510,7 @@ namespace Lumina
 
         EvictStaleLayers();
 
-        DrawCalls.clear();
+        DrawCalls.Reset();
         EvictStaleBatches();
 
         const FUIntVector2 ProjSize = (LogicalSize.x > 0 && LogicalSize.y > 0) ? LogicalSize : ViewportSize;
@@ -537,8 +536,8 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        HashKeyScratch.clear();
-        HashKeyScratch.reserve(DrawCalls.size());
+        HashKeyScratch.Reset();
+        HashKeyScratch.Reserve(DrawCalls.Num());
 
         // Only worth a per-draw map lookup when a brush exists at all, and most UIs have none.
         bool bHasBrush = false;
@@ -558,17 +557,17 @@ namespace Lumina
             Key.Scissor[3]      = Draw.Scissor.Height();
             Key.bScissorEnabled = Draw.bScissorEnabled ? 1u : 0u;
             Key.ClipMaskRange   = Draw.ClipMaskRange;
-            HashKeyScratch.push_back(Key);
+            HashKeyScratch.Add(Key);
 
             if (!bHasBrush && LiveBrushCount > 0 && Draw.Texture != 0)
             {
-                auto It = Textures.find(Draw.Texture);
-                bHasBrush = (It != Textures.end() && It->second.BrushMaterial != nullptr);
+                auto It = Textures.Find(Draw.Texture);
+                bHasBrush = (It != nullptr && It->BrushMaterial != nullptr);
             }
         }
 
-        uint64 Hash = Hash::XXHash::GetHash64(HashKeyScratch.data(), HashKeyScratch.size() * sizeof(FDrawKey));
-        Hash = Hash::XXHash::GetHash64(PendingClipMasks.data(), PendingClipMasks.size() * sizeof(FUiClipMask), Hash);
+        uint64 Hash = Hash::XXHash::GetHash64(HashKeyScratch.GetData(), HashKeyScratch.Num() * sizeof(FDrawKey));
+        Hash = Hash::XXHash::GetHash64(PendingClipMasks.GetData(), PendingClipMasks.Num() * sizeof(FUiClipMask), Hash);
 
         // Layer and filter work is invisible to the draw list, so a filter-only change must still reach the hash.
         for (const FLayerCommand& Cmd : LayerCommands)
@@ -580,10 +579,10 @@ namespace Lumina
 
             for (uint32 i = 0; i < Cmd.FilterCount; ++i)
             {
-                auto It = Filters.find(Rml::CompiledFilterHandle(PendingFilterRefs[Cmd.FilterOffset + i]));
-                if (It != Filters.end())
+                auto It = Filters.Find(Rml::CompiledFilterHandle(PendingFilterRefs[Cmd.FilterOffset + i]));
+                if (It != nullptr)
                 {
-                    Hash = Hash::XXHash::GetHash64(&It->second, sizeof(FFilter), Hash);
+                    Hash = Hash::XXHash::GetHash64(&(*It), sizeof(FFilter), Hash);
                 }
             }
         }
@@ -597,24 +596,24 @@ namespace Lumina
         };
 
         // Without per-frame salt an animated material brush would freeze (draw list unchanged).
-        const FFrameKey FrameKey { CurrentSize, CurrentLogicalSize, DrawCalls.size(), bHasBrush ? FrameCounter : 0ull };
+        const FFrameKey FrameKey { CurrentSize, CurrentLogicalSize, static_cast<uint64>(DrawCalls.Num()), bHasBrush ? FrameCounter : 0ull };
         return Hash::XXHash::GetHash64(&FrameKey, sizeof(FrameKey), Hash);
     }
 
     void FRmlUiRenderer::ResolveBatchTextures(FTargetBatch& Batch) const
     {
-        const size_t Count = Math::Min(Batch.Draws.size(), Batch.DrawTextures.size());
-        for (size_t i = 0; i < Count; ++i)
+        const int32 Count = Math::Min(Batch.Draws.Num(), Batch.DrawTextures.Num());
+        for (int32 i = 0; i < Count; ++i)
         {
             uint32 Slot = DefaultWhite.SampledSlot;
 
             const Rml::TextureHandle Handle = Batch.DrawTextures[i];
             if (Handle != 0)
             {
-                auto It = Textures.find(Handle);
-                if (It != Textures.end() && It->second.ResourceID != RHI::kInvalidHeapSlot)
+                auto It = Textures.Find(Handle);
+                if (It != nullptr && It->ResourceID != RHI::kInvalidHeapSlot)
                 {
-                    Slot = It->second.ResourceID;
+                    Slot = It->ResourceID;
                 }
                 else
                 {
@@ -647,8 +646,8 @@ namespace Lumina
         {
             return false;
         }
-        auto It = TargetBatches.find(Target.Handle);
-        return It != TargetBatches.end() && It->second.bValid && It->second.LastHash == Hash;
+        auto It = TargetBatches.Find(Target.Handle);
+        return It != nullptr && It->bValid && It->LastHash == Hash;
     }
 
     void FRmlUiRenderer::AbortFrame()
@@ -662,52 +661,52 @@ namespace Lumina
     {
         for (const Rml::CompiledGeometryHandle Handle : DeferredGeometryReleases)
         {
-            Geometries.erase(Handle);
+            Geometries.Remove(Handle);
         }
-        DeferredGeometryReleases.clear();
+        DeferredGeometryReleases.Reset();
 
         for (const Rml::CompiledFilterHandle Handle : DeferredFilterReleases)
         {
-            Filters.erase(Handle);
+            Filters.Remove(Handle);
         }
-        DeferredFilterReleases.clear();
+        DeferredFilterReleases.Reset();
 
         for (const Rml::CompiledShaderHandle Handle : DeferredShaderReleases)
         {
-            Shaders.erase(Handle);
+            Shaders.Remove(Handle);
         }
-        DeferredShaderReleases.clear();
+        DeferredShaderReleases.Reset();
 
         // Unbinding inside the frames-in-flight window repoints a slot a recorded draw still samples, showing magenta.
-        for (size_t i = 0; i < DeferredTextureReleases.size();)
+        for (int32 i = 0; i < DeferredTextureReleases.Num();)
         {
             const FRetiredTexture& Retired = DeferredTextureReleases[i];
             if (Retired.Frame + GFramesInFlight <= EngineFrameCounter)
             {
                 ReleaseTextureNow(Retired.Handle);
-                DeferredTextureReleases[i] = DeferredTextureReleases.back();
-                DeferredTextureReleases.pop_back();
+                DeferredTextureReleases[i] = DeferredTextureReleases.Last();
+                DeferredTextureReleases.Pop();
                 continue;
             }
             ++i;
         }
 
-        DrawCalls.clear();
-        PendingClipMasks.clear();
+        DrawCalls.Reset();
+        PendingClipMasks.Reset();
         ActiveClipOffset = 0;
         ActiveClipCount  = 0;
 
-        FreeLayers.clear();
-        for (uint32 Index = 0; Index < uint32(OwnedLayers.size()); ++Index)
+        FreeLayers.Reset();
+        for (int32 Index = 0; Index < OwnedLayers.Num(); ++Index)
         {
             if (OwnedLayers[Index].Color.IsValid())
             {
-                FreeLayers.push_back(Index);
+                FreeLayers.Add(Index);
             }
         }
-        LayerStack.clear();
-        LayerCommands.clear();
-        PendingFilterRefs.clear();
+        LayerStack.Reset();
+        LayerCommands.Reset();
+        PendingFilterRefs.Reset();
         CurrentCmdList = {};
         CurrentTarget  = {};
         bClearTarget   = false;
@@ -715,43 +714,43 @@ namespace Lumina
 
     void FRmlUiRenderer::ReleaseTargetBatch(RHI::FTextureH Target)
     {
-        auto It = TargetBatches.find(Target.Handle);
-        if (It != TargetBatches.end())
+        auto It = TargetBatches.Find(Target.Handle);
+        if (It != nullptr)
         {
-            RHI::Retire(It->second.VertexBuffer);
-            RHI::Retire(It->second.IndexBuffer);
-            TargetBatches.erase(It);
+            RHI::Retire(It->VertexBuffer);
+            RHI::Retire(It->IndexBuffer);
+            TargetBatches.Remove(Target.Handle);
         }
     }
 
     void FRmlUiRenderer::NoteTargetStable(RHI::FTextureH Target, bool bStable)
     {
-        auto It = TargetBatches.find(Target.Handle);
-        if (It == TargetBatches.end())
+        auto It = TargetBatches.Find(Target.Handle);
+        if (It == nullptr)
         {
             return;
         }
-        It->second.LastUsedFrame = FrameCounter;
+        It->LastUsedFrame = FrameCounter;
         if (bStable)
         {
-            ++It->second.StableFrames;
+            ++It->StableFrames;
         }
         else
         {
-            It->second.StableFrames = 0;
+            It->StableFrames = 0;
         }
     }
 
     uint32 FRmlUiRenderer::GetTargetStableFrames(RHI::FTextureH Target)
     {
-        auto It = TargetBatches.find(Target.Handle);
-        if (It == TargetBatches.end())
+        auto It = TargetBatches.Find(Target.Handle);
+        if (It == nullptr)
         {
             return 0;
         }
         // A dormant widget stops rendering entirely, so this poll is the only thing keeping its batch alive.
-        It->second.LastUsedFrame = FrameCounter;
-        return It->second.StableFrames;
+        It->LastUsedFrame = FrameCounter;
+        return It->StableFrames;
     }
 
     void FRmlUiRenderer::EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes)
@@ -785,11 +784,11 @@ namespace Lumina
 
         for (auto It = TargetBatches.begin(); It != TargetBatches.end(); )
         {
-            if (It->second.LastUsedFrame + StaleFrames < FrameCounter)
+            if (It->Value.LastUsedFrame + StaleFrames < FrameCounter)
             {
-                RHI::Retire(It->second.VertexBuffer);
-                RHI::Retire(It->second.IndexBuffer);
-                It = TargetBatches.erase(It);
+                RHI::Retire(It->Value.VertexBuffer);
+                RHI::Retire(It->Value.IndexBuffer);
+                It = TargetBatches.Remove(It);
             }
             else
             {
@@ -813,7 +812,7 @@ namespace Lumina
         // Outside the UI render pass, since each brush opens its own pass before the UI samples it.
         RenderMaterialBrushes();
 
-        if (DrawCalls.empty() || !RHI::IsValid(CurrentTarget))
+        if (DrawCalls.IsEmpty() || !RHI::IsValid(CurrentTarget))
         {
             // An empty frame is a frame too, or the next replay would bring back what was just hidden.
             if (RHI::IsValid(CurrentTarget))
@@ -826,7 +825,7 @@ namespace Lumina
                 Empty.bReplayable       = !bClearTarget;
                 Empty.ReplaySize        = CurrentSize;
                 Empty.ReplayLogicalSize = CurrentLogicalSize;
-                Empty.Draws.clear();
+                Empty.Draws.Reset();
             }
             FinishFrame(CL);
             return;
@@ -850,29 +849,29 @@ namespace Lumina
 
         if (bRebuild)
         {
-            BatchVertices.clear();
-            BatchIndices.clear();
-            BatchDrawData.clear();
-            BatchStops.clear();
-            DrawIndexOffsets.assign(DrawCalls.size(), 0);
-            DrawIndexCounts.assign(DrawCalls.size(), 0);
-            BatchDrawTextures.clear();
+            BatchVertices.Reset();
+            BatchIndices.Reset();
+            BatchDrawData.Reset();
+            BatchStops.Reset();
+            DrawIndexOffsets.Init(0, DrawCalls.Num());
+            DrawIndexCounts.Init(0, DrawCalls.Num());
+            BatchDrawTextures.Reset();
             uint32 DrawSlot = 0;
             bool bUsesBrush = false;
 
             for (const FDrawCall& Draw : DrawCalls)
             {
                 const uint32 ThisDraw = DrawSlot++;
-                DrawIndexOffsets[ThisDraw] = uint32(BatchIndices.size());
+                DrawIndexOffsets[ThisDraw] = uint32(BatchIndices.Num());
 
-                auto GeomIt = Geometries.find(Draw.Geometry);
-                if (GeomIt == Geometries.end())
+                auto GeomIt = Geometries.Find(Draw.Geometry);
+                if (GeomIt == nullptr)
                 {
                     WarnDroppedDrawOnce("its geometry was released before the batch was built");
                     continue;
                 }
-                const FGeometry& Geom = GeomIt->second;
-                if (Geom.VertexData.empty() || Geom.IndexData.empty() || Geom.IndexCount == 0)
+                const FGeometry& Geom = (*GeomIt);
+                if (Geom.VertexData.IsEmpty() || Geom.IndexData.IsEmpty() || Geom.IndexCount == 0)
                 {
                     WarnDroppedDrawOnce("its geometry is empty");
                     continue;
@@ -883,14 +882,14 @@ namespace Lumina
                 bool   bSRGBAsset = false;
                 if (Draw.Texture != 0)
                 {
-                    auto TexIt = Textures.find(Draw.Texture);
-                    if (TexIt != Textures.end() && TexIt->second.ResourceID != RHI::kInvalidHeapSlot)
+                    auto TexIt = Textures.Find(Draw.Texture);
+                    if (TexIt != nullptr && TexIt->ResourceID != RHI::kInvalidHeapSlot)
                     {
-                        bUsesBrush     = bUsesBrush || TexIt->second.BrushMaterial != nullptr;
-                        ResourceID     = TexIt->second.ResourceID;
-                        bStraightAlpha = TexIt->second.bStraightAlpha;
-                        bSRGBAsset     = TexIt->second.AssetKeepalive != nullptr
-                                      && RHI::Format::Info(TexIt->second.AssetKeepalive->GetTextureResource().ImageDescription.Format).bIsSRGB;
+                        bUsesBrush     = bUsesBrush || TexIt->BrushMaterial != nullptr;
+                        ResourceID     = TexIt->ResourceID;
+                        bStraightAlpha = TexIt->bStraightAlpha;
+                        bSRGBAsset     = TexIt->AssetKeepalive != nullptr
+                                      && RHI::Format::Info(TexIt->AssetKeepalive->GetTextureResource().ImageDescription.Format).bIsSRGB;
                     }
                 }
                 if (ResourceID == RHI::kInvalidHeapSlot)
@@ -900,7 +899,7 @@ namespace Lumina
                 }
 
                 // Per-draw entry; this draw's vertices reference it by index.
-                const uint32 DrawIndex = uint32(BatchDrawData.size());
+                const uint32 DrawIndex = uint32(BatchDrawData.Num());
                 FUiDraw DD;
                 DD.MVP      = Draw.MVP;
                 DD.ClipRect = Draw.bScissorEnabled
@@ -924,38 +923,38 @@ namespace Lumina
 
                 if (Draw.Shader != 0)
                 {
-                    auto ShaderIt = Shaders.find(Draw.Shader);
-                    if (ShaderIt == Shaders.end())
+                    auto ShaderIt = Shaders.Find(Draw.Shader);
+                    if (ShaderIt == nullptr)
                     {
                         WarnDroppedDrawOnce("its gradient shader was released before the batch was built");
                         continue;
                     }
-                    if (ShaderIt->second.Stops.empty())
+                    if (ShaderIt->Stops.IsEmpty())
                     {
                         WarnDroppedDrawOnce("its gradient shader compiled with no color stops");
                         continue;
                     }
-                    const FShader& Sh = ShaderIt->second;
+                    const FShader& Sh = (*ShaderIt);
                     DD.ShaderType   = Sh.Type;
                     DD.ShaderParams = Sh.Params;
                     DD.ShaderScale  = Sh.Scale;
                     DD.bRepeating   = Sh.bRepeating ? 1u : 0u;
-                    DD.StopOffset   = uint32(BatchStops.size());
-                    DD.StopCount    = uint32(Sh.Stops.size());
-                    BatchStops.insert(BatchStops.end(), Sh.Stops.begin(), Sh.Stops.end());
+                    DD.StopOffset   = uint32(BatchStops.Num());
+                    DD.StopCount    = uint32(Sh.Stops.Num());
+                    BatchStops.Append(Sh.Stops);
                 }
 
-                BatchDrawData.push_back(DD);
-                BatchDrawTextures.push_back(Draw.Texture);
+                BatchDrawData.Add(DD);
+                BatchDrawTextures.Add(Draw.Texture);
 
-                const Rml::Vertex* SrcVerts = reinterpret_cast<const Rml::Vertex*>(Geom.VertexData.data());
-                const uint32 VtxCount = uint32(Geom.VertexData.size() / sizeof(Rml::Vertex));
-                const int*   SrcInds  = reinterpret_cast<const int*>(Geom.IndexData.data());
+                const Rml::Vertex* SrcVerts = reinterpret_cast<const Rml::Vertex*>(Geom.VertexData.GetData());
+                const uint32 VtxCount = uint32(Geom.VertexData.Num() / sizeof(Rml::Vertex));
+                const int*   SrcInds  = reinterpret_cast<const int*>(Geom.IndexData.GetData());
 
-                const uint32 BaseVertex = uint32(BatchVertices.size());
+                const uint32 BaseVertex = uint32(BatchVertices.Num());
 
                 // Convert to the GPU vertex, baking translation and tagging with the draw index.
-                BatchVertices.reserve(BatchVertices.size() + VtxCount);
+                BatchVertices.Reserve(BatchVertices.Num() + VtxCount);
                 for (uint32 v = 0; v < VtxCount; ++v)
                 {
                     const Rml::Vertex& Src = SrcVerts[v];
@@ -966,44 +965,44 @@ namespace Lumina
                     V.UV[0]     = Src.tex_coord.x;
                     V.UV[1]     = Src.tex_coord.y;
                     V.DrawIndex = DrawIndex;
-                    BatchVertices.push_back(V);
+                    BatchVertices.Add(V);
                 }
 
                 // Rebase indices so we draw with VertexOffset = 0.
-                BatchIndices.reserve(BatchIndices.size() + Geom.IndexCount);
+                BatchIndices.Reserve(BatchIndices.Num() + Geom.IndexCount);
                 for (uint32 i = 0; i < Geom.IndexCount; ++i)
                 {
-                    BatchIndices.push_back(uint32(SrcInds[i]) + BaseVertex);
+                    BatchIndices.Add(uint32(SrcInds[i]) + BaseVertex);
                 }
 
                 DrawIndexCounts[ThisDraw] = Geom.IndexCount;
             }
 
-            Batch.bReplayable       = LayerCommands.empty() && !bUsesBrush && !bClearTarget;
+            Batch.bReplayable       = LayerCommands.IsEmpty() && !bUsesBrush && !bClearTarget;
             Batch.ReplaySize        = CurrentSize;
             Batch.ReplayLogicalSize = CurrentLogicalSize;
 
-            if (BatchIndices.empty() || BatchDrawData.empty())
+            if (BatchIndices.IsEmpty() || BatchDrawData.IsEmpty())
             {
                 Batch.IndexCount = 0;
                 Batch.bValid     = true;
                 Batch.LastHash   = Hash;
-                Batch.Draws.clear();
-                Batch.Stops.clear();
-                Batch.ClipMasks.clear();
+                Batch.Draws.Reset();
+                Batch.Stops.Reset();
+                Batch.ClipMasks.Reset();
                 FinishFrame(CL);
                 return;
             }
 
-            const uint64 VBytes = BatchVertices.size() * sizeof(FUiVertex);
-            const uint64 IBytes = BatchIndices.size()  * sizeof(uint32);
+            const uint64 VBytes = BatchVertices.Num() * sizeof(FUiVertex);
+            const uint64 IBytes = BatchIndices.Num()  * sizeof(uint32);
             EnsureBatchBuffers(Batch, VBytes, IBytes);
 
             // The leading barrier also orders against a prior frame still reading the old contents.
             RHI::FTransientAlloc VBStage = RHI::AllocTransient(VBytes, 16);
             RHI::FTransientAlloc IBStage = RHI::AllocTransient(IBytes, 4);
-            Memory::Memcpy(VBStage.Cpu, BatchVertices.data(), VBytes);
-            Memory::Memcpy(IBStage.Cpu, BatchIndices.data(),  IBytes);
+            Memory::Memcpy(VBStage.Cpu, BatchVertices.GetData(), VBytes);
+            Memory::Memcpy(IBStage.Cpu, BatchIndices.GetData(),  IBytes);
 
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::VertexShader, RHI::EAccessFlags::ShaderWrite,
@@ -1022,7 +1021,7 @@ namespace Lumina
             Batch.DrawFirstIndex = DrawIndexOffsets;
             Batch.DrawIndexCount = DrawIndexCounts;
             Batch.DrawTextures   = Move(BatchDrawTextures);
-            Batch.IndexCount = uint32(BatchIndices.size());
+            Batch.IndexCount = uint32(BatchIndices.Num());
             Batch.LastHash   = Hash;
             Batch.bValid     = true;
         }
@@ -1032,7 +1031,7 @@ namespace Lumina
 
     void FRmlUiRenderer::SubmitBatch(RHI::FCmdListH CL, FTargetBatch& Batch)
     {
-        if (Batch.IndexCount == 0 || Batch.Draws.empty() || Batch.VertexBuffer.Gpu == 0 || Batch.IndexBuffer.Gpu == 0)
+        if (Batch.IndexCount == 0 || Batch.Draws.IsEmpty() || Batch.VertexBuffer.Gpu == 0 || Batch.IndexBuffer.Gpu == 0)
         {
             FinishFrame(CL);
             return;
@@ -1051,18 +1050,18 @@ namespace Lumina
         // Empty arrays stay empty spans: nothing dereferences them, so there is no dummy element to
         // upload just to keep an address non-null.
         const RHI::TGPUSpan<FUiDraw> DrawsSpan =
-            RHI::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
+            RHI::CopyTransientArray(Batch.Draws.GetData(), Batch.Draws.Num());
 
         RHI::TGPUSpan<FUiColorStop> StopsSpan;
-        if (!Batch.Stops.empty())
+        if (!Batch.Stops.IsEmpty())
         {
-            StopsSpan = RHI::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size());
+            StopsSpan = RHI::CopyTransientArray(Batch.Stops.GetData(), Batch.Stops.Num());
         }
 
         RHI::TGPUSpan<FUiClipMask> MasksSpan;
-        if (!Batch.ClipMasks.empty())
+        if (!Batch.ClipMasks.IsEmpty())
         {
-            MasksSpan = RHI::CopyTransientArray(Batch.ClipMasks.data(), Batch.ClipMasks.size());
+            MasksSpan = RHI::CopyTransientArray(Batch.ClipMasks.GetData(), Batch.ClipMasks.Num());
         }
 
         // Composite passes read the same mask array the geometry batch does.
@@ -1121,9 +1120,9 @@ namespace Lumina
         }
         const FUIntVector2 Logical = (LogicalSize.x > 0 && LogicalSize.y > 0) ? LogicalSize : ViewportSize;
         {
-            auto It = TargetBatches.find(Target.Handle);
-            if (It == TargetBatches.end() || !It->second.bValid || !It->second.bReplayable
-                || It->second.ReplaySize != ViewportSize || It->second.ReplayLogicalSize != Logical)
+            auto It = TargetBatches.Find(Target.Handle);
+            if (It == nullptr || !It->bValid || !It->bReplayable
+                || It->ReplaySize != ViewportSize || It->ReplayLogicalSize != Logical)
             {
                 return false;
             }
@@ -1132,16 +1131,16 @@ namespace Lumina
         BeginFrame(CmdList, Target, ViewportSize, LogicalSize);
 
         // BeginFrame evicts stale batches, so the batch is looked up again rather than held across it.
-        auto It = TargetBatches.find(Target.Handle);
-        if (It == TargetBatches.end())
+        auto It = TargetBatches.Find(Target.Handle);
+        if (It == nullptr)
         {
             AbortFrame();
             return false;
         }
         RHI::CmdBeginMarker(CmdList, "RmlUi");
         UploadPendingTextures();
-        It->second.LastUsedFrame = FrameCounter;
-        SubmitBatch(CmdList, It->second);
+        It->LastUsedFrame = FrameCounter;
+        SubmitBatch(CmdList, (*It));
         return true;
     }
 
@@ -1235,12 +1234,12 @@ namespace Lumina
         for (uint32 i = 0; i < FilterCount; ++i)
         {
             const uint32 Ref = PendingFilterRefs[FilterOffset + i];
-            auto It = Filters.find(Rml::CompiledFilterHandle(Ref));
-            if (It == Filters.end())
+            auto It = Filters.Find(Rml::CompiledFilterHandle(Ref));
+            if (It == nullptr)
             {
                 continue;
             }
-            const FFilter& Filter = It->second;
+            const FFilter& Filter = (*It);
 
             FUiFilterArgs Args {};
             Args.ColorMatrix = Filter.ColorMatrix;
@@ -1314,12 +1313,12 @@ namespace Lumina
             {
                 return;
             }
-            for (size_t i = 0; i < FreeLayers.size(); ++i)
+            for (int32 i = 0; i < FreeLayers.Num(); ++i)
             {
                 if (FreeLayers[i] == Index)
                 {
-                    FreeLayers[i] = FreeLayers.back();
-                    FreeLayers.pop_back();
+                    FreeLayers[i] = FreeLayers.Last();
+                    FreeLayers.Pop();
                     return;
                 }
             }
@@ -1335,13 +1334,13 @@ namespace Lumina
         RHI::FPipelineH LayerPipeline = GetPipelineForFormat(EFormat::RGBA8_UNORM);
 
         static thread_local TVector<uint32> Stack;
-        Stack.clear();
+        Stack.Reset();
 
         uint32 Active = kNoLayer;
         uint32 NextDraw = 0;
         bool   bTargetClearPending = bClearTarget;
 
-        const uint32 DrawCount = uint32(Batch.DrawFirstIndex.size());
+        const uint32 DrawCount = uint32(Batch.DrawFirstIndex.Num());
 
         auto FlushDraws = [&](uint32 UpTo)
         {
@@ -1415,16 +1414,16 @@ namespace Lumina
                     ClearLayer(CL, Cmd.TargetLayer);
                     bPassScissorSet = bSaved;
                 }
-                Stack.push_back(Cmd.TargetLayer);
+                Stack.Add(Cmd.TargetLayer);
                 Active = Cmd.TargetLayer;
                 break;
 
             case ELayerOp::Pop:
-                if (!Stack.empty())
+                if (!Stack.IsEmpty())
                 {
-                    Stack.pop_back();
+                    Stack.Pop();
                 }
-                Active = Stack.empty() ? kNoLayer : Stack.back();
+                Active = Stack.IsEmpty() ? kNoLayer : Stack.Last();
                 break;
 
             case ELayerOp::Composite:
@@ -1607,12 +1606,14 @@ namespace Lumina
         FGeometry Geom;
         const uint8* VBytes = reinterpret_cast<const uint8*>(Vertices.data());
         const uint8* IBytes = reinterpret_cast<const uint8*>(Indices.data());
-        Geom.VertexData.assign(VBytes, VBytes + VBSize);
-        Geom.IndexData.assign(IBytes, IBytes + IBSize);
+        Geom.VertexData.Reset();
+        Geom.VertexData.Append(VBytes, VBytes + VBSize);
+        Geom.IndexData.Reset();
+        Geom.IndexData.Append(IBytes, IBytes + IBSize);
         Geom.IndexCount = uint32(Indices.size());
 
         const Rml::CompiledGeometryHandle Handle = NextGeometryHandle++;
-        Geometries.emplace(Handle, Move(Geom));
+        Geometries.TryAdd(Handle, Move(Geom));
         return Handle;
     }
 
@@ -1626,7 +1627,7 @@ namespace Lumina
         Draw.bScissorEnabled = bScissorEnabled;
         Draw.Scissor         = CurrentScissor;
         Draw.ClipMaskRange   = PackClipRange(ActiveClipOffset, ActiveClipCount);
-        DrawCalls.push_back(Move(Draw));
+        DrawCalls.Add(Move(Draw));
     }
 
     void FRmlUiRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle Geometry)
@@ -1635,10 +1636,10 @@ namespace Lumina
         // RmlUi frees temporary geometry during Context::Render, and box shadows did exactly that mid-frame.
         if (RHI::IsValid(CurrentCmdList))
         {
-            DeferredGeometryReleases.push_back(Geometry);
+            DeferredGeometryReleases.Add(Geometry);
             return;
         }
-        Geometries.erase(Geometry);
+        Geometries.Remove(Geometry);
     }
 
     Rml::TextureHandle FRmlUiRenderer::LoadTexture(Rml::Vector2i& OutDimensions, const Rml::String& Source)
@@ -1677,7 +1678,7 @@ namespace Lumina
             Path = "/" + Path;
         }
 
-        const FStringView PathView(Path.c_str(), Path.size());
+        const FStringView PathView(Path.c_str(), IntCastChecked<int32>(Path.size()));
         CObject* Asset = LoadObject<CObject>(PathView);
         if (Asset == nullptr)
         {
@@ -1721,14 +1722,14 @@ namespace Lumina
         const FUIntVector2 Extent = Texture->GetTextureResource().ImageDescription.Extent;
         if (Extent.x == 0 || Extent.y == 0)
         {
-            LOG_WARN("[RmlUi] LoadTexture: '{}' has zero extent.", Texture->GetName().c_str());
+            LOG_WARN("[RmlUi] LoadTexture: '{}' has zero extent.", *Texture->GetName());
             return 0;
         }
 
         const int32 ResourceID = Texture->GetResourceID();
         if (ResourceID < 0)
         {
-            LOG_WARN("[RmlUi] LoadTexture: '{}' has no bindless resource id.", Texture->GetName().c_str());
+            LOG_WARN("[RmlUi] LoadTexture: '{}' has no bindless resource id.", *Texture->GetName());
             return 0;
         }
 
@@ -1741,7 +1742,7 @@ namespace Lumina
         Tex.AssetKeepalive  = Texture;
         Tex.AssetExtent     = Extent;
         Tex.bStraightAlpha  = true;
-        Textures.emplace(Handle, Move(Tex));
+        Textures.TryAdd(Handle, Move(Tex));
 
         OutDimensions.x = int(Extent.x);
         OutDimensions.y = int(Extent.y);
@@ -1752,7 +1753,7 @@ namespace Lumina
     {
         if (Material->GetMaterialType() != EMaterialType::UI)
         {
-            LOG_WARN("[RmlUi] LoadTexture: '{}' is not a UI material (MaterialType must be UI).", Material->GetName().c_str());
+            LOG_WARN("[RmlUi] LoadTexture: '{}' is not a UI material (MaterialType must be UI).", *Material->GetName());
             return 0;
         }
 
@@ -1765,11 +1766,11 @@ namespace Lumina
             .Height = Height,
             .Format = EFormat::RGBA8_UNORM,
             .bRenderTarget = true,
-            .DebugName = BrushName.c_str(),
+            .DebugName = *BrushName,
         });
         if (!Image.IsValid() || Image.SampledSlot == RHI::kInvalidHeapSlot)
         {
-            LOG_WARN("[RmlUi] LoadTexture: failed to create brush RT for '{}'.", Material->GetName().c_str());
+            LOG_WARN("[RmlUi] LoadTexture: failed to create brush RT for '{}'.", *Material->GetName());
             return 0;
         }
 
@@ -1781,8 +1782,8 @@ namespace Lumina
         Tex.ResourceID      = Image.SampledSlot;
         Tex.BrushMaterial   = Material;
         Tex.BrushSize       = FUIntVector2(Width, Height);
-        Tex.BrushSourcePath = FString(SourcePath.data(), SourcePath.size());
-        Textures.emplace(Handle, Move(Tex));
+        Tex.BrushSourcePath = FString(SourcePath.GetData(), SourcePath.Len());
+        Textures.TryAdd(Handle, Move(Tex));
         ++LiveBrushCount;
 
         OutDimensions.x = int(Width);
@@ -1794,13 +1795,14 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
         TVector<uint8> Copy;
-        Copy.assign(Bytes.data(), Bytes.data() + Bytes.size());
+        Copy.Reset();
+        Copy.Append(Bytes.data(), Bytes.data() + Bytes.size());
         return RegisterTexturePending(Move(Copy), Dimensions.x, Dimensions.y);
     }
 
     Rml::TextureHandle FRmlUiRenderer::RegisterTexturePending(TVector<uint8>&& Bytes, int Width, int Height)
     {
-        if (Width <= 0 || Height <= 0 || Bytes.size() < size_t(Width) * size_t(Height) * 4)
+        if (Width <= 0 || Height <= 0 || static_cast<size_t>(Bytes.Num()) < size_t(Width) * size_t(Height) * 4)
         {
             return 0;
         }
@@ -1821,45 +1823,45 @@ namespace Lumina
         FTexture Tex;
         Tex.Managed    = Image;
         Tex.ResourceID = Image.SampledSlot;
-        Textures.emplace(Handle, Move(Tex));
+        Textures.TryAdd(Handle, Move(Tex));
 
         FPendingTexture Pending;
         Pending.Handle = Handle;
         Pending.Width  = Width;
         Pending.Height = Height;
         Pending.Bytes  = Move(Bytes);
-        PendingTextureUploads.push_back(Move(Pending));
+        PendingTextureUploads.Add(Move(Pending));
         return Handle;
     }
 
     void FRmlUiRenderer::UploadPendingTextures()
     {
-        if (PendingTextureUploads.empty())
+        if (PendingTextureUploads.IsEmpty())
         {
             return;
         }
 
         for (FPendingTexture& Pending : PendingTextureUploads)
         {
-            auto It = Textures.find(Pending.Handle);
-            if (It == Textures.end() || !It->second.Managed.IsValid())
+            auto It = Textures.Find(Pending.Handle);
+            if (It == nullptr || !It->Managed.IsValid())
             {
                 continue;
             }
-            RHI::Textures::Upload(It->second.Managed, 0, Pending.Bytes.data(), Pending.Bytes.size(), (uint32)Pending.Width);
+            RHI::Textures::Upload(It->Managed, 0, Pending.Bytes.GetData(), Pending.Bytes.Num(), (uint32)Pending.Width);
         }
 
         // The queue otherwise drains at the next BeginFrame, a frame after this one samples the texture.
         RHI::FlushUploads();
 
-        PendingTextureUploads.clear();
+        PendingTextureUploads.Reset();
     }
 
     void FRmlUiRenderer::ReleaseTexture(Rml::TextureHandle Texture)
     {
         if (RHI::IsValid(CurrentCmdList))
         {
-            DeferredTextureReleases.push_back(FRetiredTexture{ Texture, EngineFrameCounter });
+            DeferredTextureReleases.Emplace(Texture, EngineFrameCounter);
             return;
         }
         ReleaseTextureNow(Texture);
@@ -1868,25 +1870,25 @@ namespace Lumina
     void FRmlUiRenderer::ReleaseTextureNow(Rml::TextureHandle Texture)
     {
 
-        auto It = Textures.find(Texture);
-        if (It != Textures.end())
+        auto It = Textures.Find(Texture);
+        if (It != nullptr)
         {
-            if (It->second.AssetKeepalive != nullptr)
+            if (It->AssetKeepalive != nullptr)
             {
-                It->second.AssetKeepalive->RemoveFromRoot();
-                It->second.AssetKeepalive = nullptr;
+                It->AssetKeepalive->RemoveFromRoot();
+                It->AssetKeepalive = nullptr;
             }
-            if (It->second.BrushMaterial != nullptr)
+            if (It->BrushMaterial != nullptr)
             {
-                It->second.BrushMaterial->RemoveFromRoot();
-                It->second.BrushMaterial = nullptr;
+                It->BrushMaterial->RemoveFromRoot();
+                It->BrushMaterial = nullptr;
                 --LiveBrushCount;
             }
-            if (It->second.Managed.IsValid())
+            if (It->Managed.IsValid())
             {
-                RHI::Textures::Release(It->second.Managed);
+                RHI::Textures::Release(It->Managed);
             }
-            Textures.erase(It);
+            Textures.Remove(Texture);
         }
     }
 
@@ -1903,12 +1905,12 @@ namespace Lumina
     // Every clip mask comes from MeshUtilities::GenerateBackground, so its shape is recoverable from the vertices.
     bool FRmlUiRenderer::InferRoundedRect(const FGeometry& Geom, FVector2 Translation, FUiClipMask& Out)
     {
-        const uint32 Count = uint32(Geom.VertexData.size() / sizeof(Rml::Vertex));
+        const uint32 Count = uint32(Geom.VertexData.Num() / sizeof(Rml::Vertex));
         if (Count < 3)
         {
             return false;
         }
-        const Rml::Vertex* Verts = reinterpret_cast<const Rml::Vertex*>(Geom.VertexData.data());
+        const Rml::Vertex* Verts = reinterpret_cast<const Rml::Vertex*>(Geom.VertexData.GetData());
 
         float MinX = Verts[0].position.x, MaxX = MinX;
         float MinY = Verts[0].position.y, MaxY = MinY;
@@ -2047,14 +2049,14 @@ namespace Lumina
             return;
         }
 
-        auto It = Geometries.find(Geometry);
-        if (It == Geometries.end())
+        auto It = Geometries.Find(Geometry);
+        if (It == nullptr)
         {
             return;
         }
 
         FUiClipMask Mask = {};
-        if (!InferRoundedRect(It->second, FVector2(Translation.x, Translation.y), Mask))
+        if (!InferRoundedRect((*It), FVector2(Translation.x, Translation.y), Mask))
         {
             return;
         }
@@ -2069,11 +2071,11 @@ namespace Lumina
         // An intersection must stay contiguous, so a new list always starts at the current end.
         if (!bIntersect)
         {
-            ActiveClipOffset = uint32(PendingClipMasks.size());
+            ActiveClipOffset = uint32(PendingClipMasks.Num());
             ActiveClipCount  = 0;
         }
 
-        PendingClipMasks.push_back(Mask);
+        PendingClipMasks.Add(Mask);
         ++ActiveClipCount;
     }
 
@@ -2156,7 +2158,7 @@ namespace Lumina
         }
 
         const size_t StopCount = Math::Min<size_t>(List.size(), GMaxColorStops);
-        Shader.Stops.reserve(StopCount);
+        Shader.Stops.Reserve(IntCastChecked<int32>(StopCount));
         for (size_t i = 0; i < StopCount; ++i)
         {
             const Rml::ColorStop& Stop = List[i];
@@ -2164,43 +2166,43 @@ namespace Lumina
             Out.Color    = FVector4(float(Stop.color.red)  / 255.0f, float(Stop.color.green) / 255.0f,
                                     float(Stop.color.blue) / 255.0f, float(Stop.color.alpha) / 255.0f);
             Out.Position = FVector4(Stop.position.number, 0.0f, 0.0f, 0.0f);
-            Shader.Stops.push_back(Out);
+            Shader.Stops.Add(Out);
         }
 
         const Rml::Variant* RepeatVar = Lookup("repeating");
         Shader.bRepeating = (RepeatVar != nullptr) && RepeatVar->Get<bool>();
 
         const Rml::CompiledShaderHandle Handle = NextShaderHandle++;
-        Shaders.emplace(Handle, Move(Shader));
+        Shaders.TryAdd(Handle, Move(Shader));
         return Handle;
     }
 
     void FRmlUiRenderer::RenderShader(Rml::CompiledShaderHandle Shader, Rml::CompiledGeometryHandle Geometry,
                                       Rml::Vector2f Translation, Rml::TextureHandle Texture)
     {
-        if (Shaders.find(Shader) == Shaders.end())
+        if (!Shaders.Contains(Shader))
         {
             return;
         }
         RenderGeometry(Geometry, Translation, Texture);
-        DrawCalls.back().Shader = Shader;
+        DrawCalls.Last().Shader = Shader;
     }
 
     Rml::LayerHandle FRmlUiRenderer::PushLayer()
     {
         const uint32 Index = AcquireLayer();
-        LayerStack.push_back(Index);
+        LayerStack.Add(Index);
 
         FLayerCommand Cmd;
         Cmd.Op          = ELayerOp::Push;
-        Cmd.DrawsBefore = uint32(DrawCalls.size());
+        Cmd.DrawsBefore = uint32(DrawCalls.Num());
         Cmd.bScissorEnabled = bScissorEnabled;
         Cmd.Scissor         = CurrentScissor;
         Cmd.TargetLayer = Index;
-        LayerCommands.push_back(Cmd);
+        LayerCommands.Add(Cmd);
 
         // RmlUi identifies a layer by its depth, and zero is reserved for the frame's own target.
-        return Rml::LayerHandle(LayerStack.size());
+        return Rml::LayerHandle(LayerStack.Num());
     }
 
     void FRmlUiRenderer::CompositeLayers(Rml::LayerHandle Source, Rml::LayerHandle Destination, Rml::BlendMode BlendMode,
@@ -2208,7 +2210,7 @@ namespace Lumina
     {
         FLayerCommand Cmd;
         Cmd.Op           = ELayerOp::Composite;
-        Cmd.DrawsBefore  = uint32(DrawCalls.size());
+        Cmd.DrawsBefore  = uint32(DrawCalls.Num());
         Cmd.bScissorEnabled = bScissorEnabled;
         Cmd.Scissor         = CurrentScissor;
 
@@ -2218,33 +2220,33 @@ namespace Lumina
         Cmd.Source       = ResolveLayerHandle(Source);
         Cmd.Destination  = ResolveLayerHandle(Destination);
         Cmd.bReplace     = (BlendMode == Rml::BlendMode::Replace);
-        Cmd.FilterOffset = uint32(PendingFilterRefs.size());
+        Cmd.FilterOffset = uint32(PendingFilterRefs.Num());
 
         for (const Rml::CompiledFilterHandle Handle : InFilters)
         {
-            if (Filters.find(Handle) != Filters.end())
+            if (Filters.Contains(Handle))
             {
-                PendingFilterRefs.push_back(uint32(Handle));
+                PendingFilterRefs.Add(uint32(Handle));
             }
         }
-        Cmd.FilterCount = uint32(PendingFilterRefs.size()) - Cmd.FilterOffset;
-        LayerCommands.push_back(Cmd);
+        Cmd.FilterCount = uint32(PendingFilterRefs.Num()) - Cmd.FilterOffset;
+        LayerCommands.Add(Cmd);
     }
 
     void FRmlUiRenderer::PopLayer()
     {
         FLayerCommand Cmd;
         Cmd.Op          = ELayerOp::Pop;
-        Cmd.DrawsBefore = uint32(DrawCalls.size());
+        Cmd.DrawsBefore = uint32(DrawCalls.Num());
         Cmd.bScissorEnabled = bScissorEnabled;
         Cmd.Scissor         = CurrentScissor;
-        LayerCommands.push_back(Cmd);
+        LayerCommands.Add(Cmd);
 
-        if (!LayerStack.empty())
+        if (!LayerStack.IsEmpty())
         {
             // Replay runs in record order, so a layer freed here is only reused by a push that also replays later.
-            const uint32 Popped = LayerStack.back();
-            LayerStack.pop_back();
+            const uint32 Popped = LayerStack.Last();
+            LayerStack.Pop();
             ReleaseLayerToPool(Popped);
         }
     }
@@ -2286,11 +2288,11 @@ namespace Lumina
         FTexture Tex;
         Tex.Managed    = Image;
         Tex.ResourceID = Image.SampledSlot;
-        Textures.emplace(Handle, Move(Tex));
+        Textures.TryAdd(Handle, Move(Tex));
 
         FLayerCommand Cmd;
         Cmd.Op           = ELayerOp::SaveTexture;
-        Cmd.DrawsBefore  = uint32(DrawCalls.size());
+        Cmd.DrawsBefore  = uint32(DrawCalls.Num());
         Cmd.Source       = CurrentLayerIndex();
         Cmd.DestTexture  = Image.Texture;
         Cmd.DestSize     = FUIntVector2(RegionW, RegionH);
@@ -2299,7 +2301,7 @@ namespace Lumina
                                     RegionMin.x  / float(Math::Max(CurrentSize.x, 1u)),
                                     RegionMin.y  / float(Math::Max(CurrentSize.y, 1u)));
         Cmd.SavedTexture = Handle;
-        LayerCommands.push_back(Cmd);
+        LayerCommands.Add(Cmd);
 
         return Handle;
     }
@@ -2315,17 +2317,17 @@ namespace Lumina
 
         FLayerCommand Cmd;
         Cmd.Op          = ELayerOp::SaveMaskImage;
-        Cmd.DrawsBefore = uint32(DrawCalls.size());
+        Cmd.DrawsBefore = uint32(DrawCalls.Num());
         Cmd.Source      = CurrentLayerIndex();
         Cmd.TargetLayer = Index;
-        LayerCommands.push_back(Cmd);
+        LayerCommands.Add(Cmd);
 
         FFilter Filter;
         Filter.Kind      = EFilterKind::MaskImage;
         Filter.MaskLayer = Index;
 
         const Rml::CompiledFilterHandle Handle = NextFilterHandle++;
-        Filters.emplace(Handle, Filter);
+        Filters.TryAdd(Handle, Filter);
 
         return Handle;
     }
@@ -2450,7 +2452,7 @@ namespace Lumina
         }
 
         const Rml::CompiledFilterHandle Handle = NextFilterHandle++;
-        Filters.emplace(Handle, Filter);
+        Filters.TryAdd(Handle, Filter);
         return Handle;
     }
 
@@ -2459,35 +2461,34 @@ namespace Lumina
         // Box shadows release their blur the moment the composite is recorded, long before it runs.
         if (RHI::IsValid(CurrentCmdList))
         {
-            DeferredFilterReleases.push_back(Filter);
+            DeferredFilterReleases.Add(Filter);
             return;
         }
-        Filters.erase(Filter);
+        Filters.Remove(Filter);
     }
 
     void FRmlUiRenderer::ReleaseShader(Rml::CompiledShaderHandle Shader)
     {
         if (RHI::IsValid(CurrentCmdList))
         {
-            DeferredShaderReleases.push_back(Shader);
+            DeferredShaderReleases.Add(Shader);
             return;
         }
-        Shaders.erase(Shader);
+        Shaders.Remove(Shader);
     }
 
     void FRmlUiRenderer::RevalidateBrushes(RHI::FCmdListH CmdList)
     {
         // Driven by the asset-registry broadcast, not per frame; a rename-back resumes without a reload.
-        for (auto& KV : Textures)
+        for (auto& [Handle, Tex] : Textures)
         {
-            FTexture& Tex = KV.second;
-            if (Tex.BrushMaterial == nullptr || Tex.BrushSourcePath.empty())
+            if (Tex.BrushMaterial == nullptr || Tex.BrushSourcePath.IsEmpty())
             {
                 continue;
             }
 
             const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(
-                FStringView(Tex.BrushSourcePath.c_str(), Tex.BrushSourcePath.size()));
+                FStringView(*Tex.BrushSourcePath, Tex.BrushSourcePath.Len()));
             const bool bResolves = (Data != nullptr) && (Data->AssetGUID == Tex.BrushMaterial->GetGUID());
 
             if (!bResolves && !Tex.bBrushStale)
@@ -2529,7 +2530,7 @@ namespace Lumina
             RevalidateBrushes(CL);
         }
 
-        if (DrawCalls.empty())
+        if (DrawCalls.IsEmpty())
         {
             return;
         }
@@ -2539,7 +2540,7 @@ namespace Lumina
 
         // Brushes are shared across contexts, so scope the work to the drawing context and de-dup.
         static thread_local TVector<Rml::TextureHandle> Rendered;
-        Rendered.clear();
+        Rendered.Reset();
 
         bool bAnyWrites = false;
 
@@ -2577,8 +2578,8 @@ namespace Lumina
             {
                 continue;
             }
-            auto It = Textures.find(Draw.Texture);
-            if (It == Textures.end() || It->second.BrushMaterial == nullptr || It->second.bBrushStale)
+            auto It = Textures.Find(Draw.Texture);
+            if (It == nullptr || It->BrushMaterial == nullptr || It->bBrushStale)
             {
                 continue;
             }
@@ -2592,9 +2593,9 @@ namespace Lumina
             {
                 continue;
             }
-            Rendered.push_back(Draw.Texture);
+            Rendered.Add(Draw.Texture);
 
-            FTexture& Tex = It->second;
+            FTexture& Tex = (*It);
             CMaterialInterface* Material = Tex.BrushMaterial;
             FShaderH VS;
             FShaderH PS;

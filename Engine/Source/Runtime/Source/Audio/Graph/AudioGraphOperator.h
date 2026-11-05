@@ -23,23 +23,23 @@ namespace Lumina
 
         uint32 GetBlockFrames() const { return BlockFrames; }
 
-        float* AudioRead(uint16 Slot)  { return AudioStorage.data() + (size_t)ResolveRead(Slot, AudioCount) * BlockFrames; }
-        float* AudioWrite(uint16 Slot) { return AudioStorage.data() + (size_t)ResolveWrite(Slot, AudioCount) * BlockFrames; }
+        float* AudioRead(uint16 Slot)  { return AudioStorage.GetData() + (size_t)ResolveRead(Slot, AudioCount) * BlockFrames; }
+        float* AudioWrite(uint16 Slot) { return AudioStorage.GetData() + (size_t)ResolveWrite(Slot, AudioCount) * BlockFrames; }
 
-        float* FloatRead(uint16 Slot)  { return FloatStorage.data() + ResolveRead(Slot, FloatCount); }
-        float* FloatWrite(uint16 Slot) { return FloatStorage.data() + ResolveWrite(Slot, FloatCount); }
+        float* FloatRead(uint16 Slot)  { return FloatStorage.GetData() + ResolveRead(Slot, FloatCount); }
+        float* FloatWrite(uint16 Slot) { return FloatStorage.GetData() + ResolveWrite(Slot, FloatCount); }
 
-        int32* IntRead(uint16 Slot)  { return IntStorage.data() + ResolveRead(Slot, IntCount); }
-        int32* IntWrite(uint16 Slot) { return IntStorage.data() + ResolveWrite(Slot, IntCount); }
+        int32* IntRead(uint16 Slot)  { return IntStorage.GetData() + ResolveRead(Slot, IntCount); }
+        int32* IntWrite(uint16 Slot) { return IntStorage.GetData() + ResolveWrite(Slot, IntCount); }
 
-        uint8* BoolRead(uint16 Slot)  { return BoolStorage.data() + ResolveRead(Slot, BoolCount); }
-        uint8* BoolWrite(uint16 Slot) { return BoolStorage.data() + ResolveWrite(Slot, BoolCount); }
+        uint8* BoolRead(uint16 Slot)  { return BoolStorage.GetData() + ResolveRead(Slot, BoolCount); }
+        uint8* BoolWrite(uint16 Slot) { return BoolStorage.GetData() + ResolveWrite(Slot, BoolCount); }
 
-        FAudioGraphTriggerBuffer* TriggerRead(uint16 Slot)  { return TriggerStorage.data() + ResolveRead(Slot, TriggerCount); }
-        FAudioGraphTriggerBuffer* TriggerWrite(uint16 Slot) { return TriggerStorage.data() + ResolveWrite(Slot, TriggerCount); }
+        FAudioGraphTriggerBuffer* TriggerRead(uint16 Slot)  { return TriggerStorage.GetData() + ResolveRead(Slot, TriggerCount); }
+        FAudioGraphTriggerBuffer* TriggerWrite(uint16 Slot) { return TriggerStorage.GetData() + ResolveWrite(Slot, TriggerCount); }
 
-        const FAudioGraphWaveResource** WaveRead(uint16 Slot)  { return WaveStorage.data() + ResolveRead(Slot, WaveCount); }
-        const FAudioGraphWaveResource** WaveWrite(uint16 Slot) { return WaveStorage.data() + ResolveWrite(Slot, WaveCount); }
+        const FAudioGraphWaveResource** WaveRead(uint16 Slot)  { return WaveStorage.GetData() + ResolveRead(Slot, WaveCount); }
+        const FAudioGraphWaveResource** WaveWrite(uint16 Slot) { return WaveStorage.GetData() + ResolveWrite(Slot, WaveCount); }
 
     private:
 

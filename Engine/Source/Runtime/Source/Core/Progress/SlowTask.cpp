@@ -26,7 +26,7 @@ namespace Lumina
         FScopeLock Lock(GSlowTaskMutex);
         ID = GNextSlowTaskID++;
 
-        FSlowTaskProgress& Entry = GSlowTasks.emplace_back();
+        FSlowTaskProgress& Entry = GSlowTasks.EmplaceGetRef();
         Entry.ID       = ID;
         Entry.Title    = Title;
         Entry.Message  = CurrentMessage;
@@ -40,7 +40,7 @@ namespace Lumina
         {
             if (It->ID == ID)
             {
-                GSlowTasks.erase(It);
+                GSlowTasks.RemoveAt(static_cast<int32>(It - GSlowTasks.begin()));
                 break;
             }
         }
@@ -51,9 +51,9 @@ namespace Lumina
         #if USING(WITH_EDITOR)
         FScopeLock Lock(GSlowTaskMutex);
         CompletedWork += ExpectedWork;
-        if (!Message.empty())
+        if (!Message.IsEmpty())
         {
-            CurrentMessage.assign(Message.begin(), Message.end());
+            CurrentMessage = Message;
         }
         Publish();
         #endif
@@ -63,7 +63,7 @@ namespace Lumina
     {
         #if USING(WITH_EDITOR)
         FScopeLock Lock(GSlowTaskMutex);
-        CurrentMessage.assign(Message.begin(), Message.end());
+        CurrentMessage = Message;
         Publish();
         #endif
     }
@@ -86,7 +86,7 @@ namespace Lumina
         bool HasActive()
         {
             FScopeLock Lock(GSlowTaskMutex);
-            return !GSlowTasks.empty();
+            return !GSlowTasks.IsEmpty();
         }
 
         TVector<FSlowTaskProgress> GetSnapshot()

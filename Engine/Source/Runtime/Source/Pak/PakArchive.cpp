@@ -13,27 +13,27 @@ namespace Lumina
     {
         // Bounds-checked POD read; truncated PAKs fail cleanly.
         template<typename T>
-        bool ReadPOD(const uint8* Data, size_t Size, size_t& Offset, T& Out)
+        bool ReadPOD(const uint8* Data, int64 Size, int64& Offset, T& Out)
         {
-            if (Offset + sizeof(T) > Size)
+            if (Offset < 0 || Offset + static_cast<int64>(sizeof(T)) > Size)
             {
                 return false;
             }
             std::memcpy(&Out, Data + Offset, sizeof(T));
-            Offset += sizeof(T);
+            Offset += static_cast<int64>(sizeof(T));
             return true;
         }
 
         FString TopLevelOf(FStringView Path)
         {
-            if (Path.empty() || Path[0] != '/')
+            if (Path.IsEmpty() || Path[0] != '/')
             {
                 return FString();
             }
-            const size_t Second = Path.find('/', 1);
-            return Second == FStringView::npos
-                ? FString(Path.data(), Path.size())
-                : FString(Path.data(), Path.data() + Second);
+            const int32 Second = Path.Find('/', 1);
+            return Second == Constants::kIndexNone
+                ? FString(Path.GetData(), Path.Len())
+                : FString(Path.GetData(), Path.GetData() + Second);
         }
 
         struct FParsedEntry
@@ -50,35 +50,35 @@ namespace Lumina
     TSharedPtr<FPakArchive> FPakArchive::Open(FStringView NativeFilePath)
     {
         // Native IO; PAK is read before VFS mounts exist.
-        std::ifstream File(FString(NativeFilePath.data(), NativeFilePath.size()).c_str(), std::ios::binary | std::ios::ate);
+        std::ifstream File(*FString(NativeFilePath.GetData(), NativeFilePath.Len()), std::ios::binary | std::ios::ate);
         if (!File)
         {
-            LOG_ERROR("FPakArchive: cannot open '{}'", FString(NativeFilePath.data(), NativeFilePath.size()).c_str());
+            LOG_ERROR("FPakArchive: cannot open '{}'", *FString(NativeFilePath.GetData(), NativeFilePath.Len()));
             return nullptr;
         }
 
         const std::streamsize FileSize = File.tellg();
         if (FileSize < (std::streamsize)sizeof(FPakHeader))
         {
-            LOG_ERROR("FPakArchive: '{}' is too small to be a PAK", FString(NativeFilePath.data(), NativeFilePath.size()).c_str());
+            LOG_ERROR("FPakArchive: '{}' is too small to be a PAK", *FString(NativeFilePath.GetData(), NativeFilePath.Len()));
             return nullptr;
         }
 
-        TVector<uint8> Compressed;
-        Compressed.resize((size_t)FileSize);
+        TVector64<uint8> Compressed;
+        Compressed.SetNum(static_cast<int64>(FileSize));
 
         File.seekg(0, std::ios::beg);
-        if (!File.read(reinterpret_cast<char*>(Compressed.data()), FileSize))
+        if (!File.read(reinterpret_cast<char*>(Compressed.GetData()), FileSize))
         {
-            LOG_ERROR("FPakArchive: read failed for '{}'", FString(NativeFilePath.data(), NativeFilePath.size()).c_str());
+            LOG_ERROR("FPakArchive: read failed for '{}'", *FString(NativeFilePath.GetData(), NativeFilePath.Len()));
             return nullptr;
         }
 
-        const uint8* Data = Compressed.data();
-        const size_t Size = Compressed.size();
+        const uint8* Data = Compressed.GetData();
+        const int64 Size = Compressed.Num();
 
         FPakHeader Header{};
-        size_t Cursor = 0;
+        int64 Cursor = 0;
         if (!ReadPOD(Data, Size, Cursor, Header))
         {
             LOG_ERROR("FPakArchive: header read failed");
@@ -95,16 +95,24 @@ namespace Lumina
             LOG_ERROR("FPakArchive: version {} not supported (expected {})", Header.Version, PAK_VERSION);
             return nullptr;
         }
-        if (Header.TocOffset >= Size)
+        if (Header.TocOffset >= static_cast<uint64>(Size))
         {
             LOG_ERROR("FPakArchive: TOC offset {} past end of file ({})", Header.TocOffset, Size);
             return nullptr;
         }
 
-        Cursor = (size_t)Header.TocOffset;
+        Cursor = static_cast<int64>(Header.TocOffset);
+
+        // Each entry is at least its fixed fields, so a count the table could not hold is caught before it allocates.
+        constexpr int64 MinEntryBytes = sizeof(uint32) + sizeof(uint64) * 4 + sizeof(uint8) + 7;
+        if (Header.EntryCount > (Size - Cursor) / MinEntryBytes)
+        {
+            LOG_ERROR("FPakArchive: TOC claims {} entries, more than its {} bytes can hold", Header.EntryCount, Size - Cursor);
+            return nullptr;
+        }
 
         TVector<FParsedEntry> Parsed;
-        Parsed.reserve(Header.EntryCount);
+        Parsed.Reserve(Header.EntryCount);
 
         uint64 TotalUncompressed = 0;
 
@@ -128,41 +136,57 @@ namespace Lumina
              || !ReadPOD(Data, Size, Cursor, P.UncompressedSize)
              || !ReadPOD(Data, Size, Cursor, P.ContentHash)
              || !ReadPOD(Data, Size, Cursor, P.Method)
-             || Cursor + sizeof(Pad) > Size)
+             || Cursor + static_cast<int64>(sizeof(Pad)) > Size)
             {
                 LOG_ERROR("FPakArchive: TOC entry {} fields read failed", i);
                 return nullptr;
             }
             Cursor += sizeof(Pad);
 
-            // Catch truncated PAKs.
-            if (P.Offset + P.CompressedSize > (uint64)Size || P.Offset >= (uint64)Size)
+            // Compared without adding, so a huge size cannot wrap past the check.
+            if (P.Offset >= (uint64)Size || P.CompressedSize > (uint64)Size - P.Offset)
             {
                 LOG_ERROR("FPakArchive: entry '{}' points outside the file (offset={}, comp={}, file size={})",
                     P.Path, P.Offset, P.CompressedSize, Size);
                 return nullptr;
             }
 
+            // Deflate expands at most about 1032 to 1, so anything claiming more is corrupt rather than a large asset.
+            constexpr uint64 MaxDeflateRatio = 1032;
+            if (P.UncompressedSize > P.CompressedSize * MaxDeflateRatio + 64 || TotalUncompressed + P.UncompressedSize < TotalUncompressed)
+            {
+                LOG_ERROR("FPakArchive: entry '{}' claims {} bytes from {} compressed; PAK is corrupt",
+                    P.Path, P.UncompressedSize, P.CompressedSize);
+                return nullptr;
+            }
+
+            // The archive itself counts in int64, but every entry is handed out as one int32-counted buffer.
+            if (P.UncompressedSize > static_cast<uint64>(TNumericLimits<int32>::Max()))
+            {
+                LOG_ERROR("FPakArchive: entry '{}' is {} bytes, more than one entry can hold", P.Path, P.UncompressedSize);
+                return nullptr;
+            }
+
             TotalUncompressed += P.UncompressedSize;
-            Parsed.emplace_back(Move(P));
+            Parsed.Emplace(Move(P));
         }
 
         TSharedPtr<FPakArchive> Archive(new FPakArchive{});
-        Archive->RawData.resize((size_t)TotalUncompressed);
-        Archive->Entries.reserve(Parsed.size());
+        Archive->RawData.SetNum(static_cast<int64>(TotalUncompressed));
+        Archive->Entries.Reserve(Parsed.Num());
 
         uint64 DestCursor = 0;
         for (const FParsedEntry& P : Parsed)
         {
             const uint8* Src = Data + P.Offset;
-            uint8* Dst = Archive->RawData.data() + DestCursor;
+            uint8* Dst = Archive->RawData.GetData() + DestCursor;
 
             if (P.Method == (uint8)EPakCompression::None)
             {
                 if (P.CompressedSize != P.UncompressedSize)
                 {
                     LOG_ERROR("FPakArchive: entry '{}' uncompressed but sizes differ (comp={}, uncomp={})",
-                        P.Path.c_str(), P.CompressedSize, P.UncompressedSize);
+                        *P.Path, P.CompressedSize, P.UncompressedSize);
                     return nullptr;
                 }
                 if (P.UncompressedSize > 0)
@@ -177,14 +201,14 @@ namespace Lumina
                 if (Ret != MZ_OK || OutLen != P.UncompressedSize)
                 {
                     LOG_ERROR("FPakArchive: decompress failed for '{}' (ret={}, got={}, expected={})",
-                        P.Path.c_str(), Ret, (uint64)OutLen, P.UncompressedSize);
+                        *P.Path, Ret, (uint64)OutLen, P.UncompressedSize);
                     return nullptr;
                 }
             }
             else
             {
                 LOG_ERROR("FPakArchive: entry '{}' has unknown compression method {}",
-                    P.Path.c_str(), (uint32)P.Method);
+                    *P.Path, (uint32)P.Method);
                 return nullptr;
             }
 
@@ -195,21 +219,21 @@ namespace Lumina
                 if (Actual != P.ContentHash)
                 {
                     LOG_ERROR("FPakArchive: content hash mismatch for '{}' (expected 0x{:016X}, got 0x{:016X}); PAK is corrupt",
-                        P.Path.c_str(), P.ContentHash, Actual);
+                        *P.Path, P.ContentHash, Actual);
                     return nullptr;
                 }
             }
 
             FPakEntry Entry{};
-            Entry.Offset = DestCursor;
-            Entry.Size   = P.UncompressedSize;
-            Archive->Entries.emplace(P.Path, Entry);
+            Entry.Offset = static_cast<int64>(DestCursor);
+            Entry.Size   = static_cast<int64>(P.UncompressedSize);
+            Archive->Entries.TryAdd(P.Path, Entry);
 
             DestCursor += P.UncompressedSize;
         }
 
         LOG_INFO("FPakArchive: loaded '{}' ({} entries, {} bytes on disk, {} bytes uncompressed)",
-            FString(NativeFilePath.data(), NativeFilePath.size()).c_str(),
+            *FString(NativeFilePath.GetData(), NativeFilePath.Len()),
             Header.EntryCount, Size, TotalUncompressed);
 
         return Archive;
@@ -217,26 +241,26 @@ namespace Lumina
 
     TSpan<const uint8> FPakArchive::ReadEntry(FStringView VirtualPath) const
     {
-        FFixedString Key(VirtualPath.data(), VirtualPath.size());
-        auto It = Entries.find(Key);
-        if (It == Entries.end())
+        FFixedString Key(VirtualPath.GetData(), VirtualPath.Len());
+        auto It = Entries.Find(Key);
+        if (It == nullptr)
         {
             return {};
         }
-        return TSpan<const uint8>(RawData.data() + It->second.Offset, (size_t)It->second.Size);
+        return TSpan<const uint8>(RawData.GetData() + It->Offset, static_cast<int32>(It->Size));
     }
 
     bool FPakArchive::HasEntry(FStringView VirtualPath) const
     {
-        FFixedString Key(VirtualPath.data(), VirtualPath.size());
-        return Entries.find(Key) != Entries.end();
+        FFixedString Key(VirtualPath.GetData(), VirtualPath.Len());
+        return Entries.Contains(Key);
     }
 
-    size_t FPakArchive::EntrySize(FStringView VirtualPath) const
+    int64 FPakArchive::EntrySize(FStringView VirtualPath) const
     {
-        FFixedString Key(VirtualPath.data(), VirtualPath.size());
-        auto It = Entries.find(Key);
-        return It == Entries.end() ? 0 : (size_t)It->second.Size;
+        FFixedString Key(VirtualPath.GetData(), VirtualPath.Len());
+        auto It = Entries.Find(Key);
+        return It == nullptr ? 0 : It->Size;
     }
 
     TVector<FString> FPakArchive::GetTopLevelAliases() const
@@ -244,37 +268,37 @@ namespace Lumina
         TVector<FString> Out;
         for (const auto& [Key, Entry] : Entries)
         {
-            FString Alias = TopLevelOf(FStringView(Key.data(), Key.size()));
-            if (!Alias.empty() && !Algo::Contains(Out, Alias))
+            FString Alias = TopLevelOf(FStringView(Key.GetData(), Key.Len()));
+            if (!Alias.IsEmpty() && !Algo::Contains(Out, Alias))
             {
-                Out.push_back(Move(Alias));
+                Out.Add(Move(Alias));
             }
         }
         return Out;
     }
 
-    void FPakArchive::ForEachEntry(const TFunction<void(FStringView, size_t)>& Func) const
+    void FPakArchive::ForEachEntry(const TFunction<void(FStringView, int64)>& Func) const
     {
         for (const auto& [Key, Entry] : Entries)
         {
-            Func(FStringView(Key.data(), Key.size()), (size_t)Entry.Size);
+            Func(FStringView(Key.GetData(), Key.Len()), Entry.Size);
         }
     }
 
-    void FPakArchive::ForEachEntryUnder(FStringView Prefix, const TFunction<void(FStringView, size_t)>& Func) const
+    void FPakArchive::ForEachEntryUnder(FStringView Prefix, const TFunction<void(FStringView, int64)>& Func) const
     {
         for (const auto& [Key, Entry] : Entries)
         {
-            FStringView KeyView(Key.data(), Key.size());
+            FStringView KeyView(Key.GetData(), Key.Len());
             if (KeyView == Prefix)
             {
                 continue;
             }
-            if (KeyView.size() > Prefix.size()
-                && KeyView.starts_with(Prefix)
-                && KeyView[Prefix.size()] == '/')
+            if (KeyView.Len() > Prefix.Len()
+                && KeyView.StartsWith(Prefix)
+                && KeyView[Prefix.Len()] == '/')
             {
-                Func(KeyView, (size_t)Entry.Size);
+                Func(KeyView, Entry.Size);
             }
         }
     }

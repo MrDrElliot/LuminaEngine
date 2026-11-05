@@ -119,7 +119,8 @@ namespace Lumina
 
         ~SNavMeshComponent() = default;
         SNavMeshComponent(const SNavMeshComponent& Other)
-            : Settings(Other.Settings)
+            : Agent(Other.Agent)
+            , Settings(Other.Settings)
             , bAutoBake(Other.bAutoBake)
             , bDynamicRebuild(Other.bDynamicRebuild)
             , DynamicRebuildInterval(Other.DynamicRebuildInterval)
@@ -138,6 +139,7 @@ namespace Lumina
         {
             if (this != &Other)
             {
+                Agent                  = Other.Agent;
                 Settings               = Other.Settings;
                 bAutoBake              = Other.bAutoBake;
                 bDynamicRebuild        = Other.bDynamicRebuild;
@@ -229,7 +231,7 @@ namespace Lumina
         FUNCTION()
         bool HasNavData() const { return HasBakedData(); }
 
-        bool HasBakedData() const { return !Tiles.empty() && TileWorldSize > 0.0f; }
+        bool HasBakedData() const { return !Tiles.IsEmpty() && TileWorldSize > 0.0f; }
 
         /** Effective world half-extents: authored Extents scaled by the entity transform. */
         FVector3 GetWorldExtents() const { return Extents * Runtime.WorldScale; }

@@ -67,20 +67,20 @@ namespace Lumina
 
     void FProjectPackagerEditorTool::AppendLog(FStringView Line)
     {
-        LogLines.emplace_back(Line.data(), Line.size());
-        if ((int32)LogLines.size() > MaxLogLines)
+        LogLines.Emplace(Line.GetData(), Line.Len());
+        if (LogLines.Num() > MaxLogLines)
         {
-            LogLines.erase(LogLines.begin(), LogLines.begin() + (LogLines.size() - MaxLogLines));
+            LogLines.RemoveAt(0, LogLines.Num() - MaxLogLines);
         }
     }
 
     void FProjectPackagerEditorTool::ClearLog()
     {
-        LogLines.clear();
-        LastError.clear();
-        LastPakPath.clear();
-        LastOutputDir.clear();
-        LastChunks.clear();
+        LogLines.Reset();
+        LastError.Reset();
+        LastPakPath.Reset();
+        LastOutputDir.Reset();
+        LastChunks.Reset();
         bLastSuccess = false;
     }
 
@@ -90,16 +90,16 @@ namespace Lumina
         template<typename ToolT>
         void CaptureChunksFromResult(const FCookResult& Result, ToolT& Out)
         {
-            Out.clear();
-            Out.reserve(Result.Chunks.size());
+            Out.Reset();
+            Out.Reserve(Result.Chunks.Num());
             for (const FCookChunkResult& C : Result.Chunks)
             {
                 typename ToolT::value_type Entry;
-                Entry.Name   = C.Chunk.ToString().c_str();
+                Entry.Name   = *C.Chunk.ToString();
                 Entry.Path   = C.PakPath;
                 Entry.Assets = C.NumAssets;
                 Entry.Bytes  = C.Bytes;
-                Out.push_back(Move(Entry));
+                Out.Add(Move(Entry));
             }
         }
     }
@@ -115,7 +115,7 @@ namespace Lumina
         TVector<FString> Drained;
         {
             FScopeLock Lock(Session->PendingMutex);
-            Drained.swap(Session->PendingLines);
+            swap(Drained, Session->PendingLines);
         }
         for (FString& Line : Drained)
         {
@@ -156,7 +156,7 @@ namespace Lumina
 
     FString FProjectPackagerEditorTool::DefaultOutputDir(bool bForServer) const
     {
-        return FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/"
+        return FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len()) + "/Build/"
             + FProjectPackager::GetPackageName(GEngine->GetProjectName(), bForServer);
     }
 
@@ -166,7 +166,7 @@ namespace Lumina
         {
             return;
         }
-        if (GEngine == nullptr || GEngine->GetProjectName().empty())
+        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
         {
             AppendLog("[error] No project loaded.");
             return;
@@ -177,11 +177,11 @@ namespace Lumina
 
         const FString Package = PackageName();
 
-        FString PakDir = OutputDir.empty() ? DefaultOutputDir(bServer) : OutputDir;
+        FString PakDir = OutputDir.IsEmpty() ? DefaultOutputDir(bServer) : OutputDir;
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(Package.c_str(), Package.size()));
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(*PakDir, PakDir.Len()), FStringView(*Package, Package.Len()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;
@@ -201,15 +201,15 @@ namespace Lumina
                 AppendLog("Extracting loose scripts...");
                 const size_t Extracted = FProjectPackager::ExtractLooseScripts(PakDir,
                     [this](FStringView Line) { AppendLog(Line); });
-                AppendLog(Format("Extracted {} loose script files.", Extracted).c_str());
+                AppendLog(*Format("Extracted {} loose script files.", Extracted));
             }
 
             bLastSuccess = true;
             LastPakPath = PakPath;
             LastOutputDir = PakDir;
             CaptureChunksFromResult(Result, LastChunks);
-            AppendLog(Format("DONE: {} assets across {} chunk(s), {} bytes total -> {}",
-                Result.NumAssetsCooked, Result.Chunks.size(), Result.TotalBytes, PakDir.c_str()).c_str());
+            AppendLog(*Format("DONE: {} assets across {} chunk(s), {} bytes total -> {}",
+                Result.NumAssetsCooked, Result.Chunks.Num(), Result.TotalBytes, *PakDir));
         }
         else
         {
@@ -226,7 +226,7 @@ namespace Lumina
         {
             return;
         }
-        if (GEngine == nullptr || GEngine->GetProjectName().empty())
+        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
         {
             AppendLog("[error] No project loaded.");
             return;
@@ -243,14 +243,14 @@ namespace Lumina
         // Touches engine state, but is fast, typically sub-second for a small project.
         Stage = EStage::Cooking;
 
-        const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
+        const FString ProjectName(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len());
         const FString Package = PackageName();
 
-        FString PakDir = OutputDir.empty() ? DefaultOutputDir(bServer) : OutputDir;
+        FString PakDir = OutputDir.IsEmpty() ? DefaultOutputDir(bServer) : OutputDir;
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(Package.c_str(), Package.size()));
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(*PakDir, PakDir.Len()), FStringView(*Package, Package.Len()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;
@@ -272,8 +272,8 @@ namespace Lumina
         }
 
         CaptureChunksFromResult(Cook, LastChunks);
-        AppendLog(Format("Cook OK: {} assets across {} chunk(s), {} bytes total",
-            Cook.NumAssetsCooked, Cook.Chunks.size(), Cook.TotalBytes).c_str());
+        AppendLog(*Format("Cook OK: {} assets across {} chunk(s), {} bytes total",
+            Cook.NumAssetsCooked, Cook.Chunks.Num(), Cook.TotalBytes));
 
         // 1.5) Loose-script extraction must run on the main thread (uses VFS).
         if (bExtractScriptsLoose)
@@ -281,7 +281,7 @@ namespace Lumina
             AppendLog("Extracting loose scripts...");
             const size_t Extracted = FProjectPackager::ExtractLooseScripts(PakDir,
                 [this](FStringView Line) { AppendLog(Line); });
-            AppendLog(Format("Extracted {} loose script files.", Extracted).c_str());
+            AppendLog(*Format("Extracted {} loose script files.", Extracted));
         }
 
         // Captures everything by value so the worker is independent of any UI state.
@@ -293,7 +293,7 @@ namespace Lumina
 
         FPackageBuildOptions Opts;
         Opts.OutputDirectory                = PakDir;
-        Opts.ProjectDirectory               = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size());
+        Opts.ProjectDirectory               = FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len());
         Opts.bBuildExecutable               = true;
         Opts.bExtractScriptsAsLooseFiles    = bExtractScriptsLoose;
         Opts.bServer                        = bServer;
@@ -311,18 +311,18 @@ namespace Lumina
             auto LogFunc = [WorkerSession](FStringView Line)
             {
                 FScopeLock Lock(WorkerSession->PendingMutex);
-                WorkerSession->PendingLines.emplace_back(Line.data(), Line.size());
+                WorkerSession->PendingLines.Emplace(Line.GetData(), Line.Len());
             };
 
             const FPackageBuildResult Result = FProjectPackager::BuildAndCopyOnly(
                 Opts,
-                FStringView(ProjectName.c_str(), ProjectName.size()),
-                FStringView(PakPath.c_str(), PakPath.size()),
+                FStringView(*ProjectName, ProjectName.Len()),
+                FStringView(*PakPath, PakPath.Len()),
                 LogFunc);
 
             WorkerSession->bSuccess.store(Result.bSuccess, std::memory_order_release);
             WorkerSession->ErrorMessage = Result.ErrorMessage;
-            WorkerSession->OutputDirectory = Result.OutputDirectory.empty()
+            WorkerSession->OutputDirectory = Result.OutputDirectory.IsEmpty()
                 ? WorkerSession->OutputDirectory
                 : Result.OutputDirectory;
             WorkerSession->bDone.store(true, std::memory_order_release);
@@ -331,7 +331,7 @@ namespace Lumina
 
     void FProjectPackagerEditorTool::DrawWindow(bool bIsFocused)
     {
-        if (GEngine == nullptr || GEngine->GetProjectName().empty())
+        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
         {
             ImGui::TextDisabled("No project loaded.");
             return;
@@ -341,7 +341,7 @@ namespace Lumina
         DrainSession();
 
         // Lazy-init defaults so they reflect the current project.
-        if (OutputDir.empty())
+        if (OutputDir.IsEmpty())
         {
             OutputDir = DefaultOutputDir(bServer);
         }
@@ -350,10 +350,10 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), LE_ICON_PACKAGE_VARIANT " Package Project");
         ImGui::Separator();
 
-        ImGui::Text("Project:    %.*s", (int)GEngine->GetProjectName().size(), GEngine->GetProjectName().data());
+        ImGui::Text("Project:    %.*s", GEngine->GetProjectName().Len(), GEngine->GetProjectName().GetData());
 
         const TVector<FCookRoot> Roots = GEngine->GetCookRoots();
-        if (Roots.empty())
+        if (Roots.IsEmpty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
                 "Cook Roots: <none, open Project Settings > Maps > Cook Roots to add asset paths,");
@@ -363,12 +363,12 @@ namespace Lumina
         else
         {
             const int32 ShownLimit = 6;
-            ImGui::Text("Cook Roots: %zu", Roots.size());
-            const int32 Count = (int32)Roots.size();
+            ImGui::Text("Cook Roots: %d", Roots.Num());
+            const int32 Count = Roots.Num();
             for (int32 i = 0; i < Count && i < ShownLimit; ++i)
             {
                 const FName ChunkName = Roots[i].Chunk.IsNone() ? FName("Main") : Roots[i].Chunk;
-                ImGui::TextDisabled("    [%s]  %s", ChunkName.ToString().c_str(), Roots[i].Asset.c_str());
+                ImGui::TextDisabled("    [%s]  %s", *ChunkName.ToString(), *Roots[i].Asset);
             }
             if (Count > ShownLimit)
             {
@@ -393,7 +393,7 @@ namespace Lumina
         ImGui::Spacing();
 
         // Editable fields.
-        char OutBuf[512]; std::snprintf(OutBuf, sizeof(OutBuf), "%s", OutputDir.c_str());
+        char OutBuf[512]; std::snprintf(OutBuf, sizeof(OutBuf), "%s", *OutputDir);
         ImGui::Text("Output Directory");
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##out", OutBuf, sizeof(OutBuf)))
@@ -416,7 +416,7 @@ namespace Lumina
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Builds the Server target as %s.exe, a headless host that\n"
-                              "loads the startup map and listens without -server.", PackageName().c_str());
+                              "loads the startup map and listens without -server.", *PackageName());
         }
 
         ImGui::Spacing();
@@ -439,7 +439,7 @@ namespace Lumina
         ImGui::Spacing();
 
         // Action buttons.
-        ImGui::BeginDisabled(bIsRunning || Roots.empty());
+        ImGui::BeginDisabled(bIsRunning || Roots.IsEmpty());
         {
             if (ImGui::Button(LE_ICON_PACKAGE_VARIANT " Cook + Build", ImVec2(180, 32)))
             {
@@ -459,22 +459,22 @@ namespace Lumina
             ClearLog();
         }
 
-        if (bLastSuccess && !LastOutputDir.empty())
+        if (bLastSuccess && !LastOutputDir.IsEmpty())
         {
             ImGui::SameLine();
             if (ImGui::Button(LE_ICON_FOLDER_OPEN " Open Output", ImVec2(140, 32)))
             {
-                Platform::LaunchURL(UTF8_TO_TCHAR(LastOutputDir.c_str()));
+                Platform::LaunchURL(UTF8_TO_TCHAR(*LastOutputDir));
             }
         }
 
         // A compact table with one row per .pak written, each click-to-open.
-        if (!LastChunks.empty())
+        if (!LastChunks.IsEmpty())
         {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f),
-                LE_ICON_FILE_OUTLINE " Last cook output (%zu chunk%s):",
-                LastChunks.size(), LastChunks.size() == 1 ? "" : "s");
+                LE_ICON_FILE_OUTLINE " Last cook output (%d chunk%s):",
+                LastChunks.Num(), LastChunks.Num() == 1 ? "" : "s");
 
             if (ImGui::BeginTable("##chunks", 4,
                 ImGuiTableFlags_BordersInner | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX))
@@ -488,17 +488,11 @@ namespace Lumina
                 for (const FChunkSummary& C : LastChunks)
                 {
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(C.Name.c_str());
-                    ImGui::TableSetColumnIndex(1); ImGui::Text("%zu", C.Assets);
-                    ImGui::TableSetColumnIndex(2);
-                    if (C.Bytes >= Constants::kMiB)
-                        ImGui::Text("%.2f MiB", (double)C.Bytes / double(Constants::kMiB));
-                    else if (C.Bytes >= 1024)
-                        ImGui::Text("%.1f KiB", (double)C.Bytes / double(Constants::kKiB));
-                    else
-                        ImGui::Text("%zu B", C.Bytes);
+                    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(*C.Name);
+                    ImGui::TableSetColumnIndex(1); ImGui::Text("%d", C.Assets);
+                    ImGui::TableSetColumnIndex(2); ImGui::TextUnformatted(*ImGuiX::FormatSize(C.Bytes));
                     ImGui::TableSetColumnIndex(3);
-                    ImGui::TextUnformatted(C.Path.c_str());
+                    ImGui::TextUnformatted(*C.Path);
                 }
                 ImGui::EndTable();
             }
@@ -530,31 +524,31 @@ namespace Lumina
             for (const FString& Line : LogLines)
             {
                 ImVec4 Color = ColDefault;
-                if (Line.find("[error]") != FString::npos || Line.find("FAILED") != FString::npos
-                    || Line.find(" error ") != FString::npos || Line.find("error C") != FString::npos
-                    || Line.find("error LNK") != FString::npos)
+                if (Line.Find("[error]") != Constants::kIndexNone || Line.Find("FAILED") != Constants::kIndexNone
+                    || Line.Find(" error ") != Constants::kIndexNone || Line.Find("error C") != Constants::kIndexNone
+                    || Line.Find("error LNK") != Constants::kIndexNone)
                 {
                     Color = ColError;
                 }
-                else if (Line.find("[warn]") != FString::npos || Line.find(" warning ") != FString::npos)
+                else if (Line.Find("[warn]") != Constants::kIndexNone || Line.Find(" warning ") != Constants::kIndexNone)
                 {
                     Color = ColWarn;
                 }
-                else if (Line.find("DONE") != FString::npos)
+                else if (Line.Find("DONE") != Constants::kIndexNone)
                 {
                     Color = ColSuccess;
                 }
-                else if (Line.size() >= 4 && Line[0] == ' ' && Line[1] == ' ' && Line[2] == '+')
+                else if (Line.Len() >= 4 && Line[0] == ' ' && Line[1] == ' ' && Line[2] == '+')
                 {
                     Color = ColCookEntry;
                 }
-                else if (Line.size() >= 4 && Line[0] == ' ' && Line[1] == ' ' && Line[2] == '|')
+                else if (Line.Len() >= 4 && Line[0] == ' ' && Line[1] == ' ' && Line[2] == '|')
                 {
                     Color = ColBuildTool;
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Text, Color);
-                ImGui::TextUnformatted(Line.c_str());
+                ImGui::TextUnformatted(*Line);
                 ImGui::PopStyleColor();
             }
             if (bAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f)
@@ -570,7 +564,7 @@ namespace Lumina
 
     void FProjectPackagerEditorTool::DrawExtrasSection()
     {
-        const FString ProjectPath(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size());
+        const FString ProjectPath(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len());
 
         ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.55f, 1.0f), LE_ICON_PACKAGE_VARIANT_CLOSED " Extras (manually included in PAK)");
         ImGui::Spacing();
@@ -579,10 +573,10 @@ namespace Lumina
         ImGui::TextDisabled("Extra Files");
         if (ImGui::BeginListBox("##extra_files", ImVec2(-1, 80)))
         {
-            for (int32 i = 0; i < (int32)ExtraFiles.size(); ++i)
+            for (int32 i = 0; i < ExtraFiles.Num(); ++i)
             {
                 const bool bSelected = (SelectedExtraFile == i);
-                if (ImGui::Selectable(ExtraFiles[i].c_str(), bSelected))
+                if (ImGui::Selectable(*ExtraFiles[i], bSelected))
                 {
                     SelectedExtraFile = i;
                 }
@@ -594,16 +588,16 @@ namespace Lumina
             FFixedString Picked;
             // Filter is "Display\0Pattern\0Display\0Pattern\0\0"; pass a generic All Files match.
             static const char Filter[] = "All Files\0*.*\0";
-            if (Platform::OpenFileDialogue(Picked, "Add Extra File", Filter, ProjectPath.c_str()))
+            if (Platform::OpenFileDialogue(Picked, "Add Extra File", Filter, *ProjectPath))
             {
-                ExtraFiles.emplace_back(Picked.c_str(), Picked.size());
+                ExtraFiles.Emplace(*Picked, Picked.Len());
             }
         }
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedExtraFile < 0 || SelectedExtraFile >= (int32)ExtraFiles.size());
+        ImGui::BeginDisabled(SelectedExtraFile < 0 || SelectedExtraFile >= ExtraFiles.Num());
         if (ImGui::Button(LE_ICON_MINUS " Remove File", ImVec2(140, 0)))
         {
-            ExtraFiles.erase(ExtraFiles.begin() + SelectedExtraFile);
+            ExtraFiles.RemoveAt(SelectedExtraFile);
             SelectedExtraFile = -1;
         }
         ImGui::EndDisabled();
@@ -614,10 +608,10 @@ namespace Lumina
         ImGui::TextDisabled("Extra Directories");
         if (ImGui::BeginListBox("##extra_dirs", ImVec2(-1, 80)))
         {
-            for (int32 i = 0; i < (int32)ExtraDirectories.size(); ++i)
+            for (int32 i = 0; i < ExtraDirectories.Num(); ++i)
             {
                 const bool bSelected = (SelectedExtraDirectory == i);
-                if (ImGui::Selectable(ExtraDirectories[i].c_str(), bSelected))
+                if (ImGui::Selectable(*ExtraDirectories[i], bSelected))
                 {
                     SelectedExtraDirectory = i;
                 }
@@ -628,16 +622,16 @@ namespace Lumina
         {
             FFixedString Picked;
             // Null filter = folder picker (see WindowsPlatformProcess::OpenFileDialogue).
-            if (Platform::OpenFileDialogue(Picked, "Add Extra Directory", nullptr, ProjectPath.c_str()))
+            if (Platform::OpenFileDialogue(Picked, "Add Extra Directory", nullptr, *ProjectPath))
             {
-                ExtraDirectories.emplace_back(Picked.c_str(), Picked.size());
+                ExtraDirectories.Emplace(*Picked, Picked.Len());
             }
         }
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedExtraDirectory < 0 || SelectedExtraDirectory >= (int32)ExtraDirectories.size());
+        ImGui::BeginDisabled(SelectedExtraDirectory < 0 || SelectedExtraDirectory >= ExtraDirectories.Num());
         if (ImGui::Button(LE_ICON_MINUS " Remove Directory", ImVec2(180, 0)))
         {
-            ExtraDirectories.erase(ExtraDirectories.begin() + SelectedExtraDirectory);
+            ExtraDirectories.RemoveAt(SelectedExtraDirectory);
             SelectedExtraDirectory = -1;
         }
         ImGui::EndDisabled();

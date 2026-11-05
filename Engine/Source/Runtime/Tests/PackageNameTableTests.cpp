@@ -44,7 +44,7 @@ TEST(PackageNameTable, ANameSurvivesTheSlotRoundTrip)
         Table.Serialize(TableReader);
     }
 
-    EXPECT_EQ(Table.Num(), 4u) << "a name used twice must take one slot";
+    EXPECT_EQ(Table.Num(), 4) << "a name used twice must take one slot";
 
     FPackageContainerReader Reader(Stream);
     Reader.SetNameTable(&Table);
@@ -115,7 +115,7 @@ TEST(PackageNameTable, ANumberedNameSharesItsBaseSlot)
         Table.Serialize(TableReader);
     }
 
-    EXPECT_EQ(Table.Num(), 1u) << "the number is not part of the interned text";
+    EXPECT_EQ(Table.Num(), 1) << "the number is not part of the interned text";
 
     FPackageContainerReader Reader(Stream);
     Reader.SetNameTable(&Table);
@@ -161,7 +161,7 @@ TEST(PackageNameTable, ACorruptEntryCountIsRefused)
     Table.Serialize(Reader);
 
     EXPECT_TRUE(Reader.HasError());
-    EXPECT_EQ(Table.Num(), 0u);
+    EXPECT_EQ(Table.Num(), 0);
 }
 
 TEST(PropertyHeader, RoundTripsAtTheCurrentVersion)
@@ -179,7 +179,7 @@ TEST(PropertyHeader, RoundTripsAtTheCurrentVersion)
     }
 
     // 1 kind + the name + 4 size, where the name costs 8 bytes of text length before its 10 characters.
-    EXPECT_LT(Bytes.size(), 24u) << "the tag is what the stream pays per property";
+    EXPECT_LT(Bytes.Num(), 24) << "the tag is what the stream pays per property";
 
     FPropertyHeader Read;
     FMemoryReader Reader(Bytes);
@@ -272,8 +272,8 @@ namespace
                 Object->ConditionalBeginDestroy();
             }
         }
-        Package->ExportTable.clear();
-        Package->ImportTable.clear();
+        Package->ExportTable.Reset();
+        Package->ImportTable.Reset();
         // The root set holds the only strong reference, so unrooting is what destroys it.
         Package->RemoveFromRoot();
     }
@@ -370,19 +370,19 @@ TEST(PackageNameTable, AContainerReaderDecodesTheExportTableWithoutAPackage)
     Reader << Header;
     Reader.SetFileVersion(Header.Version);
 
-    ASSERT_EQ(Header.Tag, (uint32)PACKAGE_FILE_TAG);
+    ASSERT_EQ(Header.Tag, PACKAGE_FILE_TAG);
     ASSERT_GT(Header.NameTableOffset, 0) << "a current-version package must locate its name table";
 
     FPackageNameTable Names;
     ASSERT_TRUE(CPackage::ReadNameTable(Reader, Header, Names));
-    EXPECT_GT(Names.Num(), 0u);
+    EXPECT_GT(Names.Num(), 0);
     Reader.SetNameTable(&Names);
 
     Reader.Seek(Header.ExportTableOffset);
     TVector<FObjectExport> Exports;
     Reader << Exports;
 
-    ASSERT_FALSE(Exports.empty());
+    ASSERT_FALSE(Exports.IsEmpty());
 
     const FObjectExport* Found = nullptr;
     for (const FObjectExport& Export : Exports)
@@ -427,6 +427,6 @@ TEST(PackageNameTable, AContainerReadWithoutItsNameTableDoesNotInventNames)
     TVector<FObjectExport> Exports;
     Reader << Exports;
 
-    ASSERT_FALSE(Exports.empty());
+    ASSERT_FALSE(Exports.IsEmpty());
     EXPECT_EQ(Exports[0].ObjectName, NAME_None) << "an unresolvable slot must read as none, not as a real name";
 }

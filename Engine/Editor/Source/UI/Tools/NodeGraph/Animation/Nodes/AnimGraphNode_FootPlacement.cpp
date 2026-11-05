@@ -53,7 +53,7 @@ namespace Lumina
             return;
         }
 
-        if (Legs.empty())
+        if (Legs.IsEmpty())
         {
             ReportPlacementError(Compiler, this, "No Legs",
                         "Foot Placement has no legs, so it would trace nothing. Add one leg per foot.");
@@ -63,7 +63,7 @@ namespace Lumina
         const FSkeletonResource* Skeleton = Compiler.GetSkeleton();
 
         TVector<FResolvedLeg> Resolved;
-        Resolved.reserve(Legs.size());
+        Resolved.Reserve(Legs.Num());
 
         for (const SAnimFootPlacementLeg& Leg : Legs)
         {
@@ -93,8 +93,8 @@ namespace Lumina
                 return;
             }
 
-            Resolved.push_back(FResolvedLeg{ (uint16)ThighIndex, (uint16)CalfIndex, (uint16)FootIndex,
-                                             Math::Max(Leg.SoleHeight, 0.0f) });
+            Resolved.Emplace((uint16)ThighIndex, (uint16)CalfIndex, (uint16)FootIndex,
+                             Math::Max(Leg.SoleHeight, 0.0f));
         }
 
         const uint16 AlphaReg    = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
@@ -102,13 +102,13 @@ namespace Lumina
         const uint16 AlignReg    = Compiler.EmitLoadConst(Math::Clamp(GroundAlignment, 0.0f, 1.0f));
 
         TVector<FLegRegisters> LegRegisters;
-        LegRegisters.reserve(Resolved.size());
+        LegRegisters.Reserve(Resolved.Num());
 
         uint16 UpX = 0;
         uint16 UpY = 0;
         uint16 UpZ = 0;
 
-        for (SIZE_T i = 0; i < Resolved.size(); ++i)
+        for (int32 i = 0; i < Resolved.Num(); ++i)
         {
             const FAnimationGraphCompiler::FGroundTraceRegisters Trace = Compiler.EmitGroundTrace(
                 Resolved[i].Foot, UpAxis,
@@ -123,7 +123,7 @@ namespace Lumina
             Registers.NormalX = Compiler.EmitSmoothScalar(Trace.NormalX, HalfLifeReg);
             Registers.NormalY = Compiler.EmitSmoothScalar(Trace.NormalY, HalfLifeReg);
             Registers.NormalZ = Compiler.EmitSmoothScalar(Trace.NormalZ, HalfLifeReg);
-            LegRegisters.push_back(Registers);
+            LegRegisters.Add(Registers);
 
             // Every trace resolves the same component-space up, so the first one speaks for all of them.
             if (i == 0)
@@ -156,7 +156,7 @@ namespace Lumina
         uint16 PoseReg = Compiler.EmitTranslateBone(SrcReg, AlphaReg, PelvisX, PelvisY, PelvisZ, (uint16)PelvisIndex);
 
         // The pelvis carried every foot down with it, so each leg reaches for what is left of its offset.
-        for (SIZE_T i = 0; i < Resolved.size(); ++i)
+        for (int32 i = 0; i < Resolved.Num(); ++i)
         {
             const FLegRegisters& Registers = LegRegisters[i];
 

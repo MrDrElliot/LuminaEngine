@@ -28,7 +28,7 @@ namespace Lumina
     bool FuzzyMatch(const char* Query, const char* Target, int32& OutScore, TVector<uint16>& OutMatchIndices)
     {
         OutScore = 0;
-        OutMatchIndices.clear();
+        OutMatchIndices.Reset();
 
         if (Query == nullptr || Query[0] == '\0')
         {
@@ -59,7 +59,7 @@ namespace Lumina
 
             if (QC == TC)
             {
-                OutMatchIndices.push_back(static_cast<uint16>(i));
+                OutMatchIndices.Add(static_cast<uint16>(i));
 
                 if (i == 0)
                 {
@@ -108,7 +108,7 @@ namespace Lumina
 
         if (Query[QueryIdx] != '\0')
         {
-            OutMatchIndices.clear();
+            OutMatchIndices.Reset();
             OutScore = 0;
             return false;
         }
@@ -127,15 +127,15 @@ namespace Lumina
                 return;
             }
 
-            const size_t Length = strlen(Text);
-            if (Length == 0 || MatchIndices.empty())
+            const int32 Length = FStringView(Text).Len();
+            if (Length == 0 || MatchIndices.IsEmpty())
             {
                 ImGui::TextUnformatted(Text);
                 return;
             }
 
-            size_t Cursor = 0;
-            size_t MatchIdx = 0;
+            int32 Cursor = 0;
+            int32 MatchIdx = 0;
             bool bFirstSpan = true;
 
             while (Cursor < Length)
@@ -146,13 +146,13 @@ namespace Lumina
                 }
                 bFirstSpan = false;
 
-                const bool bInMatch = (MatchIdx < MatchIndices.size()) && (MatchIndices[MatchIdx] == Cursor);
+                const bool bInMatch = (MatchIdx < MatchIndices.Num()) && (MatchIndices[MatchIdx] == Cursor);
 
-                size_t SpanEnd = Cursor + 1;
+                int32 SpanEnd = Cursor + 1;
                 if (bInMatch)
                 {
                     while (SpanEnd < Length
-                        && MatchIdx + (SpanEnd - Cursor) < MatchIndices.size()
+                        && MatchIdx + (SpanEnd - Cursor) < MatchIndices.Num()
                         && MatchIndices[MatchIdx + (SpanEnd - Cursor)] == SpanEnd)
                     {
                         ++SpanEnd;
@@ -165,7 +165,7 @@ namespace Lumina
                 }
                 else
                 {
-                    while (SpanEnd < Length && (MatchIdx >= MatchIndices.size() || MatchIndices[MatchIdx] != SpanEnd))
+                    while (SpanEnd < Length && (MatchIdx >= MatchIndices.Num() || MatchIndices[MatchIdx] != SpanEnd))
                     {
                         ++SpanEnd;
                     }
@@ -181,9 +181,9 @@ namespace Lumina
     void FGraphActionMenu::Reset()
     {
         QueryBuffer[0] = '\0';
-        CachedQueryForScore.clear();
-        Actions.clear();
-        VisibleIndices.clear();
+        CachedQueryForScore.Reset();
+        Actions.Reset();
+        VisibleIndices.Reset();
         SelectedIndex = 0;
         LastSelectedIndex = -1;
         bActionsDirty = true;
@@ -193,7 +193,7 @@ namespace Lumina
 
     void FGraphActionMenu::ClampSelection()
     {
-        if (VisibleIndices.empty())
+        if (VisibleIndices.IsEmpty())
         {
             SelectedIndex = 0;
             return;
@@ -203,16 +203,16 @@ namespace Lumina
         {
             SelectedIndex = 0;
         }
-        else if (SelectedIndex >= static_cast<int32>(VisibleIndices.size()))
+        else if (SelectedIndex >= VisibleIndices.Num())
         {
-            SelectedIndex = static_cast<int32>(VisibleIndices.size()) - 1;
+            SelectedIndex = VisibleIndices.Num() - 1;
         }
     }
 
     void FGraphActionMenu::RebuildActions(CEdNodeGraph* Graph)
     {
-        Actions.clear();
-        VisibleIndices.clear();
+        Actions.Reset();
+        VisibleIndices.Reset();
 
         if (Graph == nullptr)
         {
@@ -220,7 +220,7 @@ namespace Lumina
         }
 
         const THashSet<CClass*>& SupportedNodes = Graph->GetSupportedNodes();
-        Actions.reserve(SupportedNodes.size());
+        Actions.Reserve(SupportedNodes.Num());
 
         THashSet<CClass*> Accepting;
         bHasSourceFilter = Graph->PendingSourcePin != nullptr;
@@ -240,21 +240,21 @@ namespace Lumina
             FGraphAction Action;
             Action.NodeClass   = NodeClass;
             Action.DisplayName = FString(CDO->GetNodeDisplayName());
-            Action.Category    = CDO->GetNodeCategory().c_str();
+            Action.Category    = *CDO->GetNodeCategory();
             Action.Tooltip     = FString(CDO->GetNodeTooltip());
-            Action.bAcceptsSource = !bHasSourceFilter || Accepting.contains(NodeClass);
+            Action.bAcceptsSource = !bHasSourceFilter || Accepting.Contains(NodeClass);
 
             TVector<FGraphNodeVariant> Variants;
             CDO->GetVariants(Variants);
-            if (Variants.empty())
+            if (Variants.IsEmpty())
             {
-                Actions.push_back(Move(Action));
+                Actions.Add(Move(Action));
                 continue;
             }
 
             for (const FGraphNodeVariant& Variant : Variants)
             {
-                FGraphAction& Entry = Actions.emplace_back(Action);
+                FGraphAction& Entry = Actions.EmplaceGetRef(Action);
                 Entry.Variant     = Variant.Name;
                 Entry.DisplayName = Variant.DisplayName;
                 Entry.Category    = Variant.Category;
@@ -267,12 +267,12 @@ namespace Lumina
 
     void FGraphActionMenu::Rescore()
     {
-        VisibleIndices.clear();
-        VisibleIndices.reserve(Actions.size());
+        VisibleIndices.Reset();
+        VisibleIndices.Reserve(Actions.Num());
 
         const bool bHasQuery = QueryBuffer[0] != '\0';
 
-        for (int32 i = 0; i < static_cast<int32>(Actions.size()); ++i)
+        for (int32 i = 0; i < Actions.Num(); ++i)
         {
             FGraphAction& Action = Actions[i];
             if (bHasSourceFilter && bOnlyAcceptingNodes && !Action.bAcceptsSource)
@@ -283,18 +283,18 @@ namespace Lumina
             if (!bHasQuery)
             {
                 Action.Score = 0;
-                Action.MatchIndices.clear();
-                VisibleIndices.push_back(i);
+                Action.MatchIndices.Reset();
+                VisibleIndices.Add(i);
                 continue;
             }
 
             int32 NameScore = 0;
             TVector<uint16> NameIndices;
-            const bool bNameMatched = FuzzyMatch(QueryBuffer, Action.DisplayName.c_str(), NameScore, NameIndices);
+            const bool bNameMatched = FuzzyMatch(QueryBuffer, *Action.DisplayName, NameScore, NameIndices);
 
             int32 CategoryScore = 0;
             TVector<uint16> CategoryIndices;
-            const bool bCategoryMatched = FuzzyMatch(QueryBuffer, Action.Category.c_str(), CategoryScore, CategoryIndices);
+            const bool bCategoryMatched = FuzzyMatch(QueryBuffer, *Action.Category, CategoryScore, CategoryIndices);
 
             if (!bNameMatched && !bCategoryMatched)
             {
@@ -309,10 +309,10 @@ namespace Lumina
             else
             {
                 Action.Score = CategoryScore;
-                Action.MatchIndices.clear();
+                Action.MatchIndices.Reset();
             }
 
-            VisibleIndices.push_back(i);
+            VisibleIndices.Add(i);
         }
 
         if (bHasQuery)
@@ -417,14 +417,14 @@ namespace Lumina
         const bool bArrowDown = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
         const bool bArrowUp   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true);
 
-        if (bArrowDown && !VisibleIndices.empty())
+        if (bArrowDown && !VisibleIndices.IsEmpty())
         {
-            SelectedIndex = (SelectedIndex + 1) % static_cast<int32>(VisibleIndices.size());
+            SelectedIndex = (SelectedIndex + 1) % VisibleIndices.Num();
             bPendingScrollToSelected = true;
         }
-        if (bArrowUp && !VisibleIndices.empty())
+        if (bArrowUp && !VisibleIndices.IsEmpty())
         {
-            SelectedIndex = (SelectedIndex - 1 + static_cast<int32>(VisibleIndices.size())) % static_cast<int32>(VisibleIndices.size());
+            SelectedIndex = (SelectedIndex - 1 + VisibleIndices.Num()) % VisibleIndices.Num();
             bPendingScrollToSelected = true;
         }
 
@@ -441,7 +441,7 @@ namespace Lumina
             FString CurrentCategory;
             const bool bGroupByCategory = QueryBuffer[0] == '\0';
 
-            for (int32 Position = 0; Position < static_cast<int32>(VisibleIndices.size()); ++Position)
+            for (int32 Position = 0; Position < VisibleIndices.Num(); ++Position)
             {
                 const int32 ActionIdx = VisibleIndices[Position];
                 const FGraphAction& Action = Actions[ActionIdx];
@@ -457,7 +457,7 @@ namespace Lumina
 
                     ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor);
                     ImGui::SetCursorPosX(8);
-                    ImGui::TextUnformatted(CurrentCategory.c_str());
+                    ImGui::TextUnformatted(*CurrentCategory);
                     ImGui::PopStyleColor();
 
                     ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.22f, 0.22f, 0.24f, 1.0f));
@@ -500,26 +500,26 @@ namespace Lumina
                 }
 
                 ImGui::SetCursorScreenPos(ImVec2(RowStart.x + 14.0f, RowStart.y + (ItemHeight - ImGui::GetTextLineHeight()) * 0.5f));
-                DrawHighlightedText(Action.DisplayName.c_str(), Action.MatchIndices, MatchColor);
+                DrawHighlightedText(*Action.DisplayName, Action.MatchIndices, MatchColor);
 
-                if (!bGroupByCategory && !Action.Category.empty())
+                if (!bGroupByCategory && !Action.Category.IsEmpty())
                 {
-                    const float CategoryWidth = ImGui::CalcTextSize(Action.Category.c_str()).x;
+                    const float CategoryWidth = ImGui::CalcTextSize(*Action.Category).x;
                     ImGui::SameLine(PopupSize.x - CategoryWidth - 20.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor);
-                    ImGui::TextUnformatted(Action.Category.c_str());
+                    ImGui::TextUnformatted(*Action.Category);
                     ImGui::PopStyleColor();
                 }
 
-                if (bHovered && !Action.Tooltip.empty())
+                if (bHovered && !Action.Tooltip.IsEmpty())
                 {
                     ImGui::SetNextWindowSizeConstraints(ImVec2(200.0f, 25.0f), ImVec2(200.0f, 700.0f));
                     ImGui::BeginTooltip();
                     ImGui::PushStyleColor(ImGuiCol_Text, AccentColor);
-                    ImGui::TextUnformatted(Action.DisplayName.c_str());
+                    ImGui::TextUnformatted(*Action.DisplayName);
                     ImGui::PopStyleColor();
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-                    ImGui::TextWrapped("%s", Action.Tooltip.c_str());
+                    ImGui::TextWrapped("%s", *Action.Tooltip);
                     ImGui::PopStyleColor();
                     ImGui::EndTooltip();
                 }
@@ -534,7 +534,7 @@ namespace Lumina
                 ImGui::PopID();
             }
 
-            if (VisibleIndices.empty())
+            if (VisibleIndices.IsEmpty())
             {
                 const char* NoResults = QueryBuffer[0] == '\0' ? "No nodes registered" : "No nodes found";
                 const float TextWidth = ImGui::CalcTextSize(NoResults).x;
@@ -559,7 +559,7 @@ namespace Lumina
             }
         }
 
-        if (bEnterCommitted && SelectedIndex >= 0 && SelectedIndex < static_cast<int32>(VisibleIndices.size()))
+        if (bEnterCommitted && SelectedIndex >= 0 && SelectedIndex < VisibleIndices.Num())
         {
             CommittedActionIndex = VisibleIndices[SelectedIndex];
             bCommitted = true;

@@ -54,8 +54,8 @@ namespace Lumina
 
         void Reset()
         {
-            ShadowLights.clear();
-            CaptureFrusta.clear();
+            ShadowLights.Reset();
+            CaptureFrusta.Reset();
             bEnabled = true;
             bHasSun  = false;
         }
@@ -100,7 +100,7 @@ namespace Lumina
             OutKeep = Keep & ~RejectMask;
 
             // Anything still rejected has a second chance only if one of the rare lists is non-empty.
-            const bool bHasExtras = !CaptureFrusta.empty() || !ShadowLights.empty();
+            const bool bHasExtras = !CaptureFrusta.IsEmpty() || !ShadowLights.IsEmpty();
             OutMaybe = bHasExtras ? (~OutKeep & ~RejectMask & 0xFFu) : 0u;
         }
 

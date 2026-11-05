@@ -23,9 +23,9 @@ namespace Lumina
         void AddTriangle(TVector<FSimpleElementVertex>& Vertices, const FVector3& A, const FVector3& B,
             const FVector3& C, uint32 Color)
         {
-            Vertices.push_back({ A, Color });
-            Vertices.push_back({ B, Color });
-            Vertices.push_back({ C, Color });
+            Vertices.Emplace(A, Color);
+            Vertices.Emplace(B, Color);
+            Vertices.Emplace(C, Color);
         }
 
         void AddQuad(TVector<FSimpleElementVertex>& Vertices, const FVector3& A, const FVector3& B,
@@ -87,16 +87,16 @@ namespace Lumina
     void FWorldDebugInterface::DrawSolidTriangles(TSpan<const SDebugDrawVertex> Input, EDebugFillMode Mode, float Duration)
     {
         #if !defined(LE_SHIPPING)
-        if (Input.empty() || Input.size() % 3 != 0)
+        if (Input.IsEmpty() || Input.Num() % 3 != 0)
         {
             return;
         }
 
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Input.size());
+        Vertices.Reserve(Input.Num());
         for (const SDebugDrawVertex& Vertex : Input)
         {
-            Vertices.push_back({ Vertex.Position, PackColor(Vertex.Color) });
+            Vertices.Emplace(Vertex.Position, PackColor(Vertex.Color));
         }
         DrawSolidTriangles(std::move(Vertices), ToSolidMode(Mode), Duration);
         #endif
@@ -106,7 +106,7 @@ namespace Lumina
     {
         #if !defined(LE_SHIPPING)
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(3);
+        Vertices.Reserve(3);
         AddTriangle(Vertices, A, B, C, PackColor(Color));
         DrawSolidTriangles(std::move(Vertices), ToSolidMode(Mode), Duration);
         #endif
@@ -116,7 +116,7 @@ namespace Lumina
     {
         #if !defined(LE_SHIPPING)
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(6);
+        Vertices.Reserve(6);
         AddQuad(Vertices, A, B, C, D, PackColor(Color));
         DrawSolidTriangles(std::move(Vertices), ToSolidMode(Mode), Duration);
         #endif
@@ -143,7 +143,7 @@ namespace Lumina
         }
 
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(36);
+        Vertices.Reserve(36);
         const uint32 Packed = PackColor(Color);
         AddQuad(Vertices, Corners[0], Corners[3], Corners[2], Corners[1], Packed);
         AddQuad(Vertices, Corners[4], Corners[5], Corners[6], Corners[7], Packed);
@@ -169,7 +169,7 @@ namespace Lumina
         const FVector3 Right(1.0f, 0.0f, 0.0f);
         const FVector3 Up(0.0f, 0.0f, 1.0f);
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * Rings * 6);
+        Vertices.Reserve(Segments * Rings * 6);
         const uint32 Packed = PackColor(Color);
         for (int32 Ring = 0; Ring < Rings; ++Ring)
         {
@@ -198,7 +198,7 @@ namespace Lumina
 
         constexpr int32 Segments = 16;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * 12);
+        Vertices.Reserve(Segments * 12);
         const uint32 Packed = PackColor(Color);
         AddRingBand(Vertices, Start, Radius, End, Radius, Right, Up, Packed, Segments);
         AddDisk(Vertices, Start, Radius, Right, Up, Packed, Segments);
@@ -225,7 +225,7 @@ namespace Lumina
         const FVector3 Base = Apex + Axis * Length;
         const float Radius = Math::Tan(AngleRadians) * Length;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * 9);
+        Vertices.Reserve(Segments * 9);
         const uint32 Packed = PackColor(Color);
         AddRingBand(Vertices, Apex, 0.0f, Base, Radius, Right, Up, Packed, Segments);
         AddDisk(Vertices, Base, Radius, Right, Up, Packed, Segments);
@@ -251,7 +251,7 @@ namespace Lumina
         constexpr int32 Segments = 16;
         constexpr int32 Rings = 4;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * (Rings * 2 + 1) * 6);
+        Vertices.Reserve(Segments * (Rings * 2 + 1) * 6);
         const uint32 Packed = PackColor(Color);
         for (int32 Ring = 0; Ring < Rings; ++Ring)
         {
@@ -288,7 +288,7 @@ namespace Lumina
 
         constexpr int32 Segments = 32;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * 3);
+        Vertices.Reserve(Segments * 3);
         AddDisk(Vertices, Center, Radius, Right, Up, PackColor(Color), Segments);
         DrawSolidTriangles(std::move(Vertices), ToSolidMode(Mode), Duration);
         #endif
@@ -311,7 +311,7 @@ namespace Lumina
 
         constexpr int32 Segments = 32;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * 3);
+        Vertices.Reserve(Segments * 3);
         const uint32 Packed = PackColor(Color);
         for (int32 Index = 0; Index < Segments; ++Index)
         {
@@ -345,7 +345,7 @@ namespace Lumina
         const FVector3 HeadBase = Tip - Axis * HeadLength;
         const float ShaftRadius = HeadSize * 0.25f;
         TVector<FSimpleElementVertex> Vertices;
-        Vertices.reserve(Segments * 18);
+        Vertices.Reserve(Segments * 18);
         const uint32 Packed = PackColor(Color);
         AddRingBand(Vertices, Start, ShaftRadius, HeadBase, ShaftRadius, Right, Up, Packed, Segments);
         AddDisk(Vertices, Start, ShaftRadius, Right, Up, Packed, Segments);

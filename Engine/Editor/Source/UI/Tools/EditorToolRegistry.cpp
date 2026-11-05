@@ -15,20 +15,20 @@ namespace Lumina
         FString NormalizeExtension(FStringView Extension)
         {
             FString Result;
-            if (!Extension.empty() && Extension.front() != '.')
+            if (!Extension.IsEmpty() && Extension[0] != '.')
             {
-                Result.push_back('.');
+                Result.AppendChar('.');
             }
 
             for (char Ch : Extension)
             {
-                Result.push_back((Ch >= 'A' && Ch <= 'Z') ? char(Ch - 'A' + 'a') : Ch);
+                Result.AppendChar((Ch >= 'A' && Ch <= 'Z') ? char(Ch - 'A' + 'a') : Ch);
             }
 
             return Result;
         }
 
-        // FName::c_str() is only good for a few more calls, and every message below names two owners.
+        // FName::operator* is only good for a few more calls, and every message below names two owners.
         FString DescribeOwner(FName Owner)
         {
             return Owner.IsNone() ? FString("<unnamed>") : Owner.ToString();
@@ -58,18 +58,18 @@ namespace Lumina
         }
 
         // Not an error, but logged because two plugins claiming one type resolve by load order.
-        if (auto Existing = AssetEditors.find(AssetClass); Existing != AssetEditors.end())
+        if (auto Existing = AssetEditors.Find(AssetClass); Existing != nullptr)
         {
             LOG_WARN("[EditorToolRegistry] {} replaces the '{}' asset editor previously registered by {}.",
-                DescribeOwner(Owner), AssetClass->GetName(), DescribeOwner(Existing->second.Owner));
+                DescribeOwner(Owner), AssetClass->GetName(), DescribeOwner(Existing->Owner));
         }
 
-        AssetEditors.insert_or_assign(AssetClass, FAssetRegistration{ Move(Factory), Owner });
+        AssetEditors.Emplace(AssetClass, Move(Factory), Owner);
     }
 
     void FEditorToolRegistry::RegisterFileEditor(FStringView Extension, FFileEditorFactory Factory, FName Owner)
     {
-        if (Extension.empty() || !Factory)
+        if (Extension.IsEmpty() || !Factory)
         {
             LOG_WARN("[EditorToolRegistry] Ignoring a file editor registration from {} with no extension or no factory.",
                 DescribeOwner(Owner));
@@ -78,13 +78,13 @@ namespace Lumina
 
         FString Normalized = NormalizeExtension(Extension);
 
-        if (auto Existing = FileEditors.find(Normalized); Existing != FileEditors.end())
+        if (auto Existing = FileEditors.Find(Normalized); Existing != nullptr)
         {
             LOG_WARN("[EditorToolRegistry] {} replaces the '{}' file editor previously registered by {}.",
-                DescribeOwner(Owner), Normalized, DescribeOwner(Existing->second.Owner));
+                DescribeOwner(Owner), Normalized, DescribeOwner(Existing->Owner));
         }
 
-        FileEditors.insert_or_assign(Move(Normalized), FFileRegistration{ Move(Factory), Owner });
+        FileEditors.Emplace(Move(Normalized), Move(Factory), Owner);
     }
 
     bool FEditorToolRegistry::UnregisterAssetEditor(CClass* AssetClass)
@@ -94,17 +94,17 @@ namespace Lumina
             return false;
         }
 
-        return AssetEditors.erase(AssetClass) > 0;
+        return AssetEditors.Remove(AssetClass) > 0;
     }
 
     bool FEditorToolRegistry::UnregisterFileEditor(FStringView Extension)
     {
-        if (Extension.empty())
+        if (Extension.IsEmpty())
         {
             return false;
         }
 
-        return FileEditors.erase(NormalizeExtension(Extension)) > 0;
+        return FileEditors.Remove(NormalizeExtension(Extension)) > 0;
     }
 
     void FEditorToolRegistry::UnregisterFileEditors(std::initializer_list<FStringView> Extensions)
@@ -129,9 +129,9 @@ namespace Lumina
 
         for (auto Itr = AssetEditors.begin(); Itr != AssetEditors.end();)
         {
-            if (Itr->second.Owner == Owner)
+            if (Itr->Value.Owner == Owner)
             {
-                Itr = AssetEditors.erase(Itr);
+                Itr = AssetEditors.Remove(Itr);
                 ++Removed;
             }
             else
@@ -142,9 +142,9 @@ namespace Lumina
 
         for (auto Itr = FileEditors.begin(); Itr != FileEditors.end();)
         {
-            if (Itr->second.Owner == Owner)
+            if (Itr->Value.Owner == Owner)
             {
-                Itr = FileEditors.erase(Itr);
+                Itr = FileEditors.Remove(Itr);
                 ++Removed;
             }
             else
@@ -168,10 +168,10 @@ namespace Lumina
         // Walks up the class chain, so a concrete registration wins over one for a base type.
         for (CClass* Class = Asset->GetClass(); Class != nullptr; Class = Class->GetSuperClass())
         {
-            auto Itr = AssetEditors.find(Class);
-            if (Itr != AssetEditors.end())
+            auto Itr = AssetEditors.Find(Class);
+            if (Itr != nullptr)
             {
-                return Itr->second.Factory(Context, Asset);
+                return Itr->Factory(Context, Asset);
             }
         }
 
@@ -183,10 +183,10 @@ namespace Lumina
     {
         const FString Ext = NormalizeExtension(VFS::Extension(VirtualPath));
 
-        auto Itr = FileEditors.find(Ext);
-        if (Itr != FileEditors.end())
+        auto Itr = FileEditors.Find(Ext);
+        if (Itr != nullptr)
         {
-            return Itr->second.Factory(Context, VirtualPath);
+            return Itr->Factory(Context, VirtualPath);
         }
 
         return nullptr;
@@ -194,12 +194,12 @@ namespace Lumina
 
     bool FEditorToolRegistry::HasAssetEditor(CClass* AssetClass) const
     {
-        return AssetClass != nullptr && AssetEditors.find(AssetClass) != AssetEditors.end();
+        return AssetClass != nullptr && AssetEditors.Contains(AssetClass);
     }
 
     bool FEditorToolRegistry::HasFileEditor(FStringView Extension) const
     {
-        return FileEditors.find(NormalizeExtension(Extension)) != FileEditors.end();
+        return FileEditors.Contains(NormalizeExtension(Extension));
     }
 
     FName FEditorToolRegistry::GetAssetEditorOwner(CClass* AssetClass) const
@@ -209,7 +209,7 @@ namespace Lumina
             return FName();
         }
 
-        auto Itr = AssetEditors.find(AssetClass);
-        return Itr != AssetEditors.end() ? Itr->second.Owner : FName();
+        auto Itr = AssetEditors.Find(AssetClass);
+        return Itr != nullptr ? Itr->Owner : FName();
     }
 }

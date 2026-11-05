@@ -64,14 +64,14 @@ namespace Lumina
         // ImGui allows only one modal chain, so sibling modals would close each other every frame.
         if (ActiveModal && ActiveModal->bBlocking)
         {
-            ImGui::OpenPopup(ActiveModal->Title.c_str());
+            ImGui::OpenPopup(*ActiveModal->Title);
 
             ImGui::SetNextWindowPos(ModalAnchorCenter(ActiveModal->OpenPos), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             SetNextModalSize(ActiveModal->Size);
 
             bool* bOpen = ActiveModal->bCloseable ? &ActiveModal->bOpen : nullptr;
 
-            if (ImGui::BeginPopupModal(ActiveModal->Title.c_str(), bOpen, ImGuiWindowFlags_NoCollapse))
+            if (ImGui::BeginPopupModal(*ActiveModal->Title, bOpen, ImGuiWindowFlags_NoCollapse))
             {
                 const bool bEscape = WantsEscapeClose(ActiveModal->bCloseable);
                 const bool bClose = ActiveModal->DrawModal() || !ActiveModal->bOpen || bEscape;
@@ -101,7 +101,7 @@ namespace Lumina
 
             bool* bOpen = ActiveModal->bCloseable ? &ActiveModal->bOpen : nullptr;
 
-            const bool bVisible = ImGui::Begin(ActiveModal->Title.c_str(), bOpen, ImGuiWindowFlags_NoCollapse);
+            const bool bVisible = ImGui::Begin(*ActiveModal->Title, bOpen, ImGuiWindowFlags_NoCollapse);
             const bool bEscape = bVisible && WantsEscapeClose(ActiveModal->bCloseable);
             if (bVisible && (ActiveModal->DrawModal() || !ActiveModal->bOpen || bEscape))
             {

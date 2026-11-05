@@ -24,18 +24,18 @@ namespace Lumina
     // An lvalue, and in bounds because the buffer holds PARTICLE_ATTR_FLOATS per slot of MaxParticles.
     static FString AttributeSlotExpr(int32 Slot)
     {
-        return FString("PAttr().At(Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Slot).c_str() + "u)[0]";
+        return FString("PAttr().At(Index * PARTICLE_ATTR_FLOATS + ") + *Format("{}", Slot) + "u)[0]";
     }
 
     // A single pass, so inserted text is not rescanned.
     static void ReplaceAll(FString& Source, const char* Token, const FString& Replacement)
     {
         const size_t TokenLen = strlen(Token);
-        size_t Pos = Source.find(Token);
-        while (Pos != FString::npos)
+        int32 Pos = Source.Find(Token);
+        while (Pos != Constants::kIndexNone)
         {
-            Source.replace(Pos, TokenLen, Replacement);
-            Pos = Source.find(Token, Pos + Replacement.length());
+            Source.RemoveAt(Pos, IntCastChecked<int32>(TokenLen)).InsertAt(Pos, Replacement);
+            Pos = Source.Find(Token, Pos + Replacement.Len());
         }
     }
 
@@ -54,35 +54,35 @@ namespace Lumina
     {
         // Attribute defaults splice ahead of the spawn stack, so a read-only module still sees a value.
         FString AttrDefaults;
-        for (int32 i = 0; i < (int32)Attributes.size(); ++i)
+        for (int32 i = 0; i < Attributes.Num(); ++i)
         {
             AttrDefaults += "\t" + AttributeSlotExpr(i) + " = " + Attributes[i].DefaultExpr + ";\n";
         }
 
         FString GridConstants;
-        for (int32 Channel = 0; Channel < (int32)GridChannels.size(); ++Channel)
+        for (int32 Channel = 0; Channel < GridChannels.Num(); ++Channel)
         {
-            GridConstants += Format("static const uint GRID_{} = {}u;\n", GridChannels[Channel], Channel).c_str();
+            GridConstants += *Format("static const uint GRID_{} = {}u;\n", GridChannels[Channel], Channel);
         }
 
         FString ArrayConstants;
-        for (int32 Array = 0; Array < (int32)Arrays.size(); ++Array)
+        for (int32 Array = 0; Array < Arrays.Num(); ++Array)
         {
-            ArrayConstants += Format("static const uint ARRAY_{} = {}u;\n", Arrays[Array], Array).c_str();
+            ArrayConstants += *Format("static const uint ARRAY_{} = {}u;\n", Arrays[Array], Array);
         }
 
         FString GridStages;
         FString GridCases;
-        for (int32 Stage = 0; Stage < (int32)GridStageChunks.size(); ++Stage)
+        for (int32 Stage = 0; Stage < GridStageChunks.Num(); ++Stage)
         {
-            GridStages += Format("void GridStage{}(inout float Cell[PARTICLE_GRID_CHANNELS], int2 Coord, float2 UV, float3 WorldPos, float DeltaTime, float TotalTime, uint Iteration)\n{{\n", Stage).c_str();
+            GridStages += *Format("void GridStage{}(inout float Cell[PARTICLE_GRID_CHANNELS], int2 Coord, float2 UV, float3 WorldPos, float DeltaTime, float TotalTime, uint Iteration)\n{{\n", Stage);
             GridStages += GridStageChunks[Stage] + "}\n\n";
-            GridCases  += Format("    case {}u: GridStage{}(Cell, Coord, UV, WorldPos, DeltaTime, TotalTime, Iteration); break;\n", Stage, Stage).c_str();
+            GridCases  += *Format("    case {}u: GridStage{}(Cell, Coord, UV, WorldPos, DeltaTime, TotalTime, Iteration); break;\n", Stage, Stage);
         }
 
-        ReplaceAll(Source, AttrCountToken,     Format("{}", GetAttributeFloatCount()).c_str());
+        ReplaceAll(Source, AttrCountToken,     *Format("{}", GetAttributeFloatCount()));
         ReplaceAll(Source, AttrDefaultsToken,  AttrDefaults);
-        ReplaceAll(Source, GridChannelsToken,  Format("{}u", Math::Max((uint32)GridChannels.size(), 1u)).c_str());
+        ReplaceAll(Source, GridChannelsToken,  *Format("{}u", Math::Max((uint32)GridChannels.Num(), 1u)));
         ReplaceAll(Source, GridConstantsToken, GridConstants);
         ReplaceAll(Source, ArrayConstantsToken, ArrayConstants);
         ReplaceAll(Source, GridStagesToken,    GridStages);
@@ -106,11 +106,11 @@ namespace Lumina
             break;
         case EParticleContext::Grid:
             // Grid modules ahead of any Simulation Stage form a stage of their own.
-            if (GridStageChunks.empty())
+            if (GridStageChunks.IsEmpty())
             {
                 BeginGridStage(1);
             }
-            GridStageChunks.back() += "\t" + Line + "\n";
+            GridStageChunks.Last() += "\t" + Line + "\n";
             break;
         case EParticleContext::Target:
             TargetChunks += "\t" + Line + "\n";
@@ -120,13 +120,13 @@ namespace Lumina
 
     void FParticleCompiler::BeginGridStage(int32 Iterations)
     {
-        GridStageChunks.emplace_back();
-        GridStageIterations.push_back(Math::Clamp(Iterations, 0, ParticleStageMaxIterations));
+        GridStageChunks.Emplace();
+        GridStageIterations.Add(Math::Clamp(Iterations, 0, ParticleStageMaxIterations));
     }
 
     FString FParticleCompiler::ArrayInput(const FName& Name)
     {
-        const FString ArrayName(Name.ToString().c_str());
+        const FString ArrayName(*Name.ToString());
         if (!CParticleModule::IsIdentifier(ArrayName))
         {
             AddError({ "Array", "Array '" + ArrayName + "' is not a valid identifier." });
@@ -135,14 +135,14 @@ namespace Lumina
 
         if (!Algo::Contains(Arrays, ArrayName))
         {
-            Arrays.push_back(ArrayName);
+            Arrays.Add(ArrayName);
         }
         return "ARRAY_" + ArrayName;
     }
 
     FString FParticleCompiler::GridChannel(const FName& Name)
     {
-        const FString ChannelName(Name.ToString().c_str());
+        const FString ChannelName(*Name.ToString());
         if (!CParticleModule::IsIdentifier(ChannelName))
         {
             AddError({ "Grid", "Grid channel '" + ChannelName + "' is not a valid identifier." });
@@ -151,20 +151,20 @@ namespace Lumina
 
         if (!Algo::Contains(GridChannels, ChannelName))
         {
-            if ((int32)GridChannels.size() >= kParticleGridMaxChannels)
+            if (GridChannels.Num() >= kParticleGridMaxChannels)
             {
-                AddError({ "Grid", Format("Grid channel '{}' is past the limit of {} channels per cell.", ChannelName, kParticleGridMaxChannels).c_str() });
+                AddError({ "Grid", *Format("Grid channel '{}' is past the limit of {} channels per cell.", ChannelName, kParticleGridMaxChannels) });
                 return "0u";
             }
-            GridChannels.push_back(ChannelName);
+            GridChannels.Add(ChannelName);
         }
         return "GRID_" + ChannelName;
     }
 
     FString FParticleCompiler::AddParamSlot(const char* DebugName, const FVector4& Value, uint32 Components)
     {
-        const uint32 Slot = (uint32)ParamValues.size();
-        ParamValues.push_back(Value);
+        const uint32 Slot = (uint32)ParamValues.Num();
+        ParamValues.Add(Value);
 
         FString Expr = "MP(" + Format("{}", Slot) + ")";
         switch (Components)
@@ -184,7 +184,7 @@ namespace Lumina
         const FString AttrName(Name);
 
         int32 Index = Constants::kIndexNone;
-        for (int32 i = 0; i < (int32)Attributes.size(); ++i)
+        for (int32 i = 0; i < Attributes.Num(); ++i)
         {
             if (Attributes[i].Name == AttrName)
             {
@@ -195,8 +195,8 @@ namespace Lumina
 
         if (Index == Constants::kIndexNone)
         {
-            Index = (int32)Attributes.size();
-            FAttributeDecl& Decl = Attributes.emplace_back();
+            Index = Attributes.Num();
+            FAttributeDecl& Decl = Attributes.EmplaceGetRef();
             Decl.Name        = AttrName;
             Decl.DefaultExpr = DefaultExpr;
         }
@@ -208,7 +208,7 @@ namespace Lumina
     int32 FParticleCompiler::FindAttributeSlot(const char* Name) const
     {
         const FString Wanted(Name);
-        for (int32 i = 0; i < (int32)Attributes.size(); ++i)
+        for (int32 i = 0; i < Attributes.Num(); ++i)
         {
             if (Attributes[i].Name == Wanted)
             {
@@ -220,34 +220,34 @@ namespace Lumina
 
     uint32 FParticleCompiler::GetAttributeFloatCount() const
     {
-        return Math::Max((uint32)Attributes.size(), 1u);
+        return Math::Max((uint32)Attributes.Num(), 1u);
     }
 
     uint64 FParticleCompiler::GetGeneratedCodeHash() const
     {
         uint64 Hash = 0;
-        Hash::HashCombine(Hash, FStringView(SpawnChunks.data(), SpawnChunks.size()));
-        Hash::HashCombine(Hash, FStringView(UpdateChunks.data(), UpdateChunks.size()));
+        Hash::HashCombine(Hash, FStringView(SpawnChunks.GetData(), SpawnChunks.Len()));
+        Hash::HashCombine(Hash, FStringView(UpdateChunks.GetData(), UpdateChunks.Len()));
         for (const FString& Stage : GridStageChunks)
         {
-            Hash::HashCombine(Hash, FStringView(Stage.data(), Stage.size()));
+            Hash::HashCombine(Hash, FStringView(Stage.GetData(), Stage.Len()));
         }
-        Hash::HashCombine(Hash, GridStageChunks.size());
-        Hash::HashCombine(Hash, FStringView(TargetChunks.data(), TargetChunks.size()));
+        Hash::HashCombine(Hash, GridStageChunks.Num());
+        Hash::HashCombine(Hash, FStringView(TargetChunks.GetData(), TargetChunks.Len()));
         for (const FString& Channel : GridChannels)
         {
-            Hash::HashCombine(Hash, FStringView(Channel.data(), Channel.size()));
+            Hash::HashCombine(Hash, FStringView(Channel.GetData(), Channel.Len()));
         }
         for (const FString& Array : Arrays)
         {
-            Hash::HashCombine(Hash, FStringView(Array.data(), Array.size()));
+            Hash::HashCombine(Hash, FStringView(Array.GetData(), Array.Len()));
         }
         Hash::HashCombine(Hash, bNeighborGrid);
         // The attribute block is spliced into the source too, so it keys the artifact cache alongside the stacks.
         for (const FAttributeDecl& Attribute : Attributes)
         {
-            Hash::HashCombine(Hash, FStringView(Attribute.Name.data(), Attribute.Name.size()));
-            Hash::HashCombine(Hash, FStringView(Attribute.DefaultExpr.data(), Attribute.DefaultExpr.size()));
+            Hash::HashCombine(Hash, FStringView(Attribute.Name.GetData(), Attribute.Name.Len()));
+            Hash::HashCombine(Hash, FStringView(Attribute.DefaultExpr.GetData(), Attribute.DefaultExpr.Len()));
         }
         return Hash;
     }
@@ -255,12 +255,12 @@ namespace Lumina
     FString FParticleCompiler::Param(const char* DebugName, const SParticleParam& Value)
     {
         // The editor preview simulates with it, and the runtime falls back to it for an unset parameter.
-        const int32  Slot = (int32)ParamValues.size();
+        const int32  Slot = ParamValues.Num();
         const FString Expr = AddParamSlot(DebugName, Value.Constant, ParticleParamComponents(Value.Type));
 
         if (Value.IsBound())
         {
-            SParticleParamBinding& Binding = ParamBindings.emplace_back();
+            SParticleParamBinding& Binding = ParamBindings.EmplaceGetRef();
             Binding.ParameterName = Value.ParameterName;
             Binding.SlotIndex     = Slot;
             Binding.Type          = Value.Type;
@@ -301,7 +301,7 @@ namespace Lumina
             TimeMax = TimeMin + 1.0f;
         }
 
-        const uint32 BaseSlot = (uint32)ParamValues.size();
+        const uint32 BaseSlot = (uint32)ParamValues.Num();
 
         // A curve is scalar, so one slot each would waste three quarters of the table.
         FVector4 Packed(0.0f, 0.0f, 0.0f, 0.0f);
@@ -317,7 +317,7 @@ namespace Lumina
             case 2: Packed.z = Sample; break;
             default:
                 Packed.w = Sample;
-                ParamValues.push_back(Packed);
+                ParamValues.Add(Packed);
                 Packed = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
                 break;
             }
@@ -325,11 +325,11 @@ namespace Lumina
         // Flush a partial trailing group so the table is always a whole number of slots.
         if ((kParticleLUTSamples & 3) != 0)
         {
-            ParamValues.push_back(Packed);
+            ParamValues.Add(Packed);
         }
 
         (void)DebugName;
-        return Format("{}", BaseSlot).c_str();
+        return *Format("{}", BaseSlot);
     }
 
     FString FParticleCompiler::ParamGradient(const char* DebugName, const SGradient& Value)
@@ -341,17 +341,17 @@ namespace Lumina
             TimeMax = TimeMin + 1.0f;
         }
 
-        const uint32 BaseSlot = (uint32)ParamValues.size();
+        const uint32 BaseSlot = (uint32)ParamValues.Num();
 
         // One slot per sample, since a color already fills a float4.
         for (int32 i = 0; i < kParticleLUTSamples; ++i)
         {
             const float Alpha = (float)i / (float)(kParticleLUTSamples - 1);
-            ParamValues.push_back(Value.Evaluate(TimeMin + (TimeMax - TimeMin) * Alpha));
+            ParamValues.Add(Value.Evaluate(TimeMin + (TimeMax - TimeMin) * Alpha));
         }
 
         (void)DebugName;
-        return Format("{}", BaseSlot).c_str();
+        return *Format("{}", BaseSlot);
     }
 
     void FParticleCompiler::EnsureEmitted(CParticleGraphNode* Node, EParticleContext Context)
@@ -363,11 +363,11 @@ namespace Lumina
 
         // Only spawn and update graphs share a compile, so every other context can share the update set.
         THashSet<CParticleGraphNode*>& EmittedSet = (Context == EParticleContext::Spawn) ? EmittedSpawn : EmittedUpdate;
-        if (EmittedSet.find(Node) != EmittedSet.end())
+        if (EmittedSet.Contains(Node))
         {
             return;
         }
-        EmittedSet.insert(Node);
+        EmittedSet.Add(Node);
 
         const EParticleContext Saved = CurrentContext;
         CurrentContext = Context;
@@ -388,7 +388,7 @@ namespace Lumina
                 if (SourceNode)
                 {
                     EnsureEmitted(SourceNode, CurrentContext);
-                    Result.Value = Out->ResolvedVar.empty() ? FString(SourceNode->GetNodeFullName()) : Out->ResolvedVar;
+                    Result.Value = Out->ResolvedVar.IsEmpty() ? SourceNode->GetNodeFullName() : Out->ResolvedVar;
                     Result.Type  = Out->GetPinType();
                     return Result;
                 }
@@ -401,10 +401,10 @@ namespace Lumina
             Result.Type = Pin->GetPinType();
             switch (Result.Type)
             {
-            case EParticlePinType::Float:  Result.Value = Format("{}", V.x).c_str(); break;
-            case EParticlePinType::Float2: Result.Value = Format("float2({}, {})", V.x, V.y).c_str(); break;
-            case EParticlePinType::Float3: Result.Value = Format("float3({}, {}, {})", V.x, V.y, V.z).c_str(); break;
-            case EParticlePinType::Float4: Result.Value = Format("float4({}, {}, {}, {})", V.x, V.y, V.z, V.w).c_str(); break;
+            case EParticlePinType::Float:  Result.Value = *Format("{}", V.x); break;
+            case EParticlePinType::Float2: Result.Value = *Format("float2({}, {})", V.x, V.y); break;
+            case EParticlePinType::Float3: Result.Value = *Format("float3({}, {}, {})", V.x, V.y, V.z); break;
+            case EParticlePinType::Float4: Result.Value = *Format("float4({}, {}, {}, {})", V.x, V.y, V.z, V.w); break;
             }
         }
 
@@ -414,9 +414,9 @@ namespace Lumina
     FParticleInputValue FParticleCompiler::GetInputFloat(CParticleInput* Pin, float Default)
     {
         FParticleInputValue V = GetInputValue(Pin);
-        if (V.Value.empty())
+        if (V.Value.IsEmpty())
         {
-            V.Value = FString(Format("{}", Default));
+            V.Value = Format("{}", Default);
             V.Type  = EParticlePinType::Float;
         }
         return V;
@@ -425,9 +425,9 @@ namespace Lumina
     FParticleInputValue FParticleCompiler::GetInputFloat3(CParticleInput* Pin, const FVector3& Default)
     {
         FParticleInputValue V = GetInputValue(Pin);
-        if (V.Value.empty())
+        if (V.Value.IsEmpty())
         {
-            V.Value = "float3(" + FString(Format("{}", Default.x)) + ", " + FString(Format("{}", Default.y)) + ", " + FString(Format("{}", Default.z)) + ")";
+            V.Value = "float3(" + Format("{}", Default.x) + ", " + Format("{}", Default.y) + ", " + Format("{}", Default.z) + ")";
             V.Type  = EParticlePinType::Float3;
         }
         return V;
@@ -436,9 +436,9 @@ namespace Lumina
     FParticleInputValue FParticleCompiler::GetInputFloat4(CParticleInput* Pin, const FVector4& Default)
     {
         FParticleInputValue V = GetInputValue(Pin);
-        if (V.Value.empty())
+        if (V.Value.IsEmpty())
         {
-            V.Value = "float4(" + FString(Format("{}", Default.x)) + ", " + FString(Format("{}", Default.y)) + ", " + FString(Format("{}", Default.z)) + ", " + FString(Format("{}", Default.w)) + ")";
+            V.Value = "float4(" + Format("{}", Default.x) + ", " + Format("{}", Default.y) + ", " + Format("{}", Default.z) + ", " + Format("{}", Default.w) + ")";
             V.Type  = EParticlePinType::Float4;
         }
         return V;

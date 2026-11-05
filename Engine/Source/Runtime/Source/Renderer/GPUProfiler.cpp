@@ -56,8 +56,8 @@ namespace Lumina
                 RHI::Retire(Slot.Pool);
                 Slot.Pool = {};
             }
-            Slot.Scopes.clear();
-            Slot.Stack.clear();
+            Slot.Scopes.Reset();
+            Slot.Stack.Reset();
             Slot.bPendingResolve = false;
         }
 
@@ -105,8 +105,8 @@ namespace Lumina
             Slot.bPendingResolve = false;
         }
 
-        Slot.Scopes.clear();
-        Slot.Stack.clear();
+        Slot.Scopes.Reset();
+        Slot.Stack.Reset();
         Slot.QueryCursor = 0;
         Slot.FrameNumber = ++FrameCounter;
 
@@ -124,17 +124,17 @@ namespace Lumina
         FScopeLock Lock(Mutex);
 
         FSlot& Slot = Slots[CurrentSlot];
-        if (!RHI::IsValid(Slot.Pool) || Slot.Scopes.size() >= MaxScopesPerFrame)
+        if (!RHI::IsValid(Slot.Pool) || static_cast<uint32>(Slot.Scopes.Num()) >= MaxScopesPerFrame)
         {
             // A depth entry is still pushed so the matching EndScope stays balanced.
-            Slot.Stack.push_back(Constants::kIndexNone);
+            Slot.Stack.Add(Constants::kIndexNone);
             return;
         }
 
-        FPendingScope& Scope = Slot.Scopes.emplace_back();
+        FPendingScope& Scope = Slot.Scopes.EmplaceGetRef();
         Scope.Name        = Name;
-        Scope.ParentIndex = Slot.Stack.empty() ? Constants::kIndexNone : Slot.Stack.back();
-        Scope.Depth       = (int32)Slot.Stack.size();
+        Scope.ParentIndex = Slot.Stack.IsEmpty() ? Constants::kIndexNone : Slot.Stack.Last();
+        Scope.Depth       = Slot.Stack.Num();
         Scope.BeginQuery  = Slot.QueryCursor;
         Scope.EndQuery    = Slot.QueryCursor + 1;
         Slot.QueryCursor += kQueriesPerScope;
@@ -146,7 +146,7 @@ namespace Lumina
         }
         RHI::CmdWriteTimestamp(CL, Slot.Pool, Scope.BeginQuery, RHI::EStageFlags::AllCommands);
 
-        Slot.Stack.push_back((int32)Slot.Scopes.size() - 1);
+        Slot.Stack.Add(Slot.Scopes.Num() - 1);
     }
 
     void FGPUProfiler::EndScope(RHI::FCmdListH CL)
@@ -159,13 +159,13 @@ namespace Lumina
         FScopeLock Lock(Mutex);
 
         FSlot& Slot = Slots[CurrentSlot];
-        if (Slot.Stack.empty())
+        if (Slot.Stack.IsEmpty())
         {
             return;
         }
 
-        const int32 Index = Slot.Stack.back();
-        Slot.Stack.pop_back();
+        const int32 Index = Slot.Stack.Last();
+        Slot.Stack.Pop();
 
         if (Index == Constants::kIndexNone || !RHI::IsValid(Slot.Pool))
         {
@@ -178,16 +178,16 @@ namespace Lumina
 
     void FGPUProfiler::Resolve(FSlot& Slot)
     {
-        if (Slot.Scopes.empty() || Slot.QueryCursor == 0)
+        if (Slot.Scopes.IsEmpty() || Slot.QueryCursor == 0)
         {
             return;
         }
 
         TVector<uint64> Ticks;
-        Ticks.resize(Slot.QueryCursor);
+        Ticks.SetNum(Slot.QueryCursor);
 
         // A frame whose markers never reached the GPU is dropped rather than reported as zero-length work.
-        if (!RHI::ReadTimestamps(Slot.Pool, 0, Slot.QueryCursor, TSpan<uint64>(Ticks.data(), Ticks.size())))
+        if (!RHI::ReadTimestamps(Slot.Pool, 0, Slot.QueryCursor, TSpan<uint64>(Ticks.GetData(), Ticks.Num())))
         {
             return;
         }
@@ -206,14 +206,14 @@ namespace Lumina
 
         const double ToMs = PeriodNs / 1000000.0;
 
-        Latest.Scopes.clear();
-        Latest.Scopes.reserve(Slot.Scopes.size());
+        Latest.Scopes.Reset();
+        Latest.Scopes.Reserve(Slot.Scopes.Num());
         Latest.FrameNumber = Slot.FrameNumber;
 
         double FrameEndMs = 0.0;
         for (const FPendingScope& Pending : Slot.Scopes)
         {
-            FGPUProfileScope& Out = Latest.Scopes.emplace_back();
+            FGPUProfileScope& Out = Latest.Scopes.EmplaceGetRef();
             Out.Name        = Pending.Name;
             Out.ParentIndex = Pending.ParentIndex;
             Out.Depth       = Pending.Depth;
@@ -225,10 +225,10 @@ namespace Lumina
         Latest.TotalMs = FrameEndMs;
         bHasResolvedFrame = true;
 
-        FrameTimeHistory.push_back((float)Latest.TotalMs);
-        if (FrameTimeHistory.size() > FrameHistorySize)
+        FrameTimeHistory.Add((float)Latest.TotalMs);
+        if (static_cast<uint32>(FrameTimeHistory.Num()) > FrameHistorySize)
         {
-            FrameTimeHistory.erase(FrameTimeHistory.begin());
+            FrameTimeHistory.RemoveAt(0);
         }
     }
 }

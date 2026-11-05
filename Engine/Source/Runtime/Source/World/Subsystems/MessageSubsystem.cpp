@@ -48,7 +48,7 @@ namespace Lumina
         Params.Channel  = Channel;
         Params.Owner    = Owner;
         Params.Type     = Type;
-        Params.Match    = bExactMatch ? EGameplayTagMatch::Exact : EGameplayTagMatch::Partial;
+        Params.Match    = bExactMatch ? EHierarchicalTagMatch::Exact : EHierarchicalTagMatch::Partial;
         Params.Invoke   = &InvokeManagedListener;
         Params.Context  = reinterpret_cast<void*>(Listener.Token);
         Params.Destroy  = &Scripting::FreeManagedHandle;

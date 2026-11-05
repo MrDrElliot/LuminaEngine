@@ -145,7 +145,7 @@ namespace Lumina
     {
         FMatrix4 Transform;
         FVector4 SphereBounds;   // xyz = center, w = radius
-        int32     TypeIndex;
+        int32    TypeIndex;      // -1 for an instance the bake skipped, so a baked index is the painted index
     };
 
     // Holds every foliage instance in the world in one flat array (grouped logically by TypeIndex). Painted
@@ -165,86 +165,58 @@ namespace Lumina
         PROPERTY(Hidden, Category = "Foliage")
         TVector<SFoliageInstance> Instances;
 
-        // Transient: last terrain HeightmapVersion this component re-projected against (terrain follow).
-        uint32 LastTerrainVersion = 0;
 
-        // Transient render cache. BakedInstances is regenerated only when BakedVersion != InstancesVersion
-        // (or a previous bake hit a not-yet-loaded mesh). Never serialized.
+        // Transient render cache, rebuilt when BakedVersion trails InstancesVersion or a bake hit a mesh still loading.
         TVector<FFoliageBakedInstance> BakedInstances;
         uint32 InstancesVersion = 1;            // bumped whenever Instances/Types change
         uint32 BakedVersion     = 0;            // version BakedInstances was built from
         bool   bBakeIncomplete  = false;        // a type's mesh wasn't ready; rebake next frame
-        uint32 BakeSerial       = 0;            // bumped by every bake, unlike BakedVersion which a retry repeats
-        uint32 BakeRetryGeneration = 0;         // resolve generation an incomplete bake last retried at
-        // Separate from BakedVersion, which the scene polls to decide whether a sync is owed at all.
+        // Separate from BakedVersion, so a released bake rebuilds on the next EnsureRenderCache without a version bump.
         bool   bBakeReleased    = false;
+        // Per type, the local bounds a bake places instances with, or an inverted box for a type whose mesh is not ready.
+        TVector<SAABB> BakeTypeBounds;
 
         // Instances a game has hidden at runtime, such as a felled tree, kept apart from Instances so no rebake is owed.
         TVector<uint8>  HiddenInstances;
-        TVector<uint32> PendingVisibilityEdits;
 
         // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
         uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
 
-        bool IsValidType(int32 Index) const { return Index >= 0 && Index < (int32)Types.size(); }
+        bool IsValidType(int32 Index) const { return Index >= 0 && Index < Types.Num(); }
 
-        bool IsInstanceHidden(uint32 Index) const { return Index < (uint32)HiddenInstances.size() && HiddenInstances[Index] != 0; }
-
-        void SetInstanceHidden(uint32 Index, bool bHidden)
-        {
-            if (Index >= (uint32)Instances.size() || IsInstanceHidden(Index) == bHidden)
-            {
-                return;
-            }
-            if (HiddenInstances.size() < Instances.size())
-            {
-                HiddenInstances.resize(Instances.size(), 0);
-            }
-            HiddenInstances[Index] = bHidden ? 1 : 0;
-            PendingVisibilityEdits.push_back(Index);
-        }
+        bool IsInstanceHidden(uint32 Index) const { return Index < (uint32)HiddenInstances.Num() && HiddenInstances[Index] != 0; }
 
         /** Marks the render cache stale so the next frame rebakes. Call after any edit to Instances/Types. */
         void MarkInstancesChanged() { ++InstancesVersion; }
 
-        // A details panel or tool edit to a type rebakes like a paint stroke, or the renderer keeps the old values.
+        // A details panel or tool edit rebakes like a paint stroke. With no entity to name, it stales the types so the resolve sweep re-marks the render scene.
         void PostEditChange(const FPropertyChangedEvent& Event);
 
         void AddInstance(const SFoliageInstance& Instance)
         {
-            Instances.push_back(Instance);
+            Instances.Add(Instance);
             MarkInstancesChanged();
         }
 
         /** Erase instances of a given type within Radius of WorldCenter (XZ distance). Returns the count removed. */
         int32 RemoveInRadius(const FVector3& WorldCenter, float Radius, int32 TypeFilter);
 
-        /** Rebuild BakedInstances from Instances/Types if the cache is stale. Cheap no-op when up to date.
-         *  Game-thread only (called during render-command compile). */
+        // Rebuilds BakedInstances from Instances and Types when stale, a no-op when current. Game thread.
         void EnsureRenderCache();
 
         // Frees the bake once the retained scene holds it; the next EnsureRenderCache rebuilds it.
         void ReleaseRenderCache()
         {
-            BakedInstances.clear();
-            BakedInstances.shrink_to_fit();
+            BakedInstances.Reset();
+            BakedInstances.Shrink();
             bBakeReleased = true;
         }
     };
 
-    /** Call after ANY edit to a foliage component's Instances or Types.
-     *
-     *  Foliage has two independent caches and an edit invalidates both, which is exactly the trap this
-     *  exists to close:
-     *
-     *    1. MarkInstancesChanged() bumps InstancesVersion, which rebuilds BakedInstances (the CPU-side
-     *       transform + bounds bake).
-     *    2. The render dirty tracker is what makes FScenePrimitiveSet::SyncFoliage run, and that is what
-     *       actually adds or removes primitives in the retained scene.
-     *
-     *  Doing only (1) bakes instances nothing ever draws. That was the painting bug: newly painted foliage
-     *  stayed invisible until some unrelated change happened to force a scene sync. Always use this rather
-     *  than calling MarkInstancesChanged() directly. */
+    // Call after any edit to Instances or Types, since a version bump alone rebakes what the render scene is never told to draw.
     RUNTIME_API void MarkFoliageChanged(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage);
+
+    // Hides or shows one painted instance at runtime and tells the render scene, which then flips only that instance's slots.
+    RUNTIME_API void SetFoliageInstanceHidden(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage, uint32 Index, bool bHidden);
 }

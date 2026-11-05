@@ -2,9 +2,7 @@
 #include "DebugDrawSystem.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Renderer/ImmediateLineRenderer.h"
-#include "SystemSingletons.h"
 #include "World/World.h"
-#include "World/Entity/Components/CameraComponent.h"
 
 namespace Lumina
 {
@@ -22,26 +20,13 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
-        Reads<SCameraComponent>();
-        #endif
-    }
-
-    void SDebugDrawSystem::OnStartup(const SSystemContext& Context)
-    {
-        #if !defined(LE_SHIPPING)
-
-        Context.GetRegistry().Ctx().Emplace<FDebugDrawState>();
         #endif
     }
 
     void SDebugDrawSystem::OnUpdate(const SSystemContext& Context)
     {
         #if !defined(LE_SHIPPING)
-
-        FDebugDrawState& State = Context.GetRegistry().Ctx().Get<FDebugDrawState>();
-
-        CWorld* World = Context.GetWorld();
-
+        FDebugDrawState& State = *DrawState;
         State.bEnabled     = CVarDebugDrawEnabled.GetValue();
         State.bCullSources = CVarDebugDrawCullSources.GetValue();
         State.bHasView     = false;
@@ -49,23 +34,18 @@ namespace Lumina
         const float MaxDistance = CVarDebugDrawDistance.GetValue();
         State.MaxDistanceSq = (MaxDistance > 0.0f) ? (MaxDistance * MaxDistance) : 0.0f;
 
-        if (World == nullptr)
-        {
-            return;
-        }
-
         // The resolved view is one frame old, which is fine for a broad-phase cull.
-        const FResolvedSceneView* Resolved = Context.GetRegistry().Ctx().Find<FResolvedSceneView>();
-        if (Resolved != nullptr && Resolved->bHasView)
+        const FResolvedSceneView& Resolved = *ResolvedView;
+        if (Resolved.bHasView)
         {
-            State.Frustum    = Resolved->ViewVolume.GetFrustum();
-            State.ViewOrigin = Resolved->ViewVolume.GetViewPosition();
+            State.Frustum    = Resolved.ViewVolume.GetFrustum();
+            State.ViewOrigin = Resolved.ViewVolume.GetViewPosition();
             State.bHasView   = true;
             return;
         }
 
         // Before the first bake (world just loaded) fall back to the live camera so frame one still draws.
-        if (const SCameraComponent* Camera = World->GetCamera()->GetActiveCamera())
+        if (const SCameraComponent* Camera = Cameras.TryGet<SCameraComponent>(CameraState->ActiveCameraEntity))
         {
             State.Frustum    = Camera->GetViewVolume().GetFrustum();
             State.ViewOrigin = Camera->GetPosition();
@@ -74,10 +54,9 @@ namespace Lumina
         #endif
     }
 
-    void SDebugDrawSystem::OnTeardown(const SSystemContext& Context)
+    void SDebugDrawSystem::OnTeardown(const SExclusiveContext& Context)
     {
         #if !defined(LE_SHIPPING)
-
         Context.GetRegistry().Ctx().Erase<FDebugDrawState>();
         #endif
     }

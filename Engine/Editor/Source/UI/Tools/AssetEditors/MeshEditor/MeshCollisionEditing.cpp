@@ -33,11 +33,11 @@ namespace Lumina
                               const FMatrix4& Matrix, const FVector4& Color)
     {
         TVector<FSimpleElementVertex> Triangles;
-        Triangles.reserve(Indices.size());
+        Triangles.Reserve(Indices.Num());
         const uint32 Packed = PackColor(Color);
         for (uint32 Index : Indices)
         {
-            Triangles.push_back({ FVector3(Matrix * FVector4(Vertices[Index], 1.0f)), Packed });
+            Triangles.Emplace(FVector3(Matrix * FVector4(Vertices[Index], 1.0f)), Packed);
         }
         Debug.DrawSolidTriangles(Move(Triangles), ESolidDrawMode::XRay);
     }
@@ -286,7 +286,7 @@ namespace Lumina
 
             void Capture(TVector<uint8>& Out) const
             {
-                Out.clear();
+                Out.Reset();
                 if (CStaticMesh* Target = Mesh.Get())
                 {
                     FMemoryWriter Writer(Out);
@@ -352,7 +352,7 @@ namespace Lumina
     bool FMeshCollisionEditing::HasSelection() const
     {
         const SMeshCollision* Collision = GetCollision();
-        return Collision != nullptr && SelectedPrimitive >= 0 && SelectedPrimitive < (int32)Collision->Primitives.size();
+        return Collision != nullptr && SelectedPrimitive >= 0 && SelectedPrimitive < Collision->Primitives.Num();
     }
 
     void FMeshCollisionEditing::MarkChanged()
@@ -391,15 +391,15 @@ namespace Lumina
 
     void FMeshCollisionEditing::RebuildHullWireframes()
     {
-        HullDrawData.clear();
+        HullDrawData.Reset();
         const SMeshCollision* Collision = GetCollision();
         if (Collision == nullptr)
         {
             return;
         }
 
-        HullDrawData.resize(Collision->Primitives.size());
-        for (int32 i = 0; i < (int32)Collision->Primitives.size(); ++i)
+        HullDrawData.SetNum(Collision->Primitives.Num());
+        for (int32 i = 0; i < Collision->Primitives.Num(); ++i)
         {
             const SCollisionPrimitive& Primitive = Collision->Primitives[i];
             if (Primitive.Type == ECollisionPrimitiveType::ConvexHull)
@@ -416,7 +416,7 @@ namespace Lumina
         // A restore rewrites the primitives wholesale, so the details pointer and selection go stale.
         DetailsTarget = nullptr;
         const SMeshCollision* Collision = GetCollision();
-        if (Collision != nullptr && SelectedPrimitive >= (int32)Collision->Primitives.size())
+        if (Collision != nullptr && SelectedPrimitive >= Collision->Primitives.Num())
         {
             SelectedPrimitive = Constants::kIndexNone;
         }
@@ -446,13 +446,13 @@ namespace Lumina
         }
 
         const bool bSuccess = Physics::CollisionGen::Generate(Generator, Target, Collision);
-        const int32 FirstAdded = (int32)Kept.size();
+        const int32 FirstAdded = Kept.Num();
         if (!bReplaces)
         {
-            Collision.Primitives.insert(Collision.Primitives.begin(), Kept.begin(), Kept.end());
+            Collision.Primitives.Insert(Kept, 0);
         }
 
-        SelectedPrimitive = (bSuccess && !Collision.IsConcave() && FirstAdded < (int32)Collision.Primitives.size()) ? FirstAdded : Constants::kIndexNone;
+        SelectedPrimitive = (bSuccess && !Collision.IsConcave() && FirstAdded < Collision.Primitives.Num()) ? FirstAdded : Constants::kIndexNone;
         RebuildHullWireframes();
         MarkChanged();
         EndTransaction();
@@ -480,8 +480,8 @@ namespace Lumina
             Collision->Clear();
         }
 
-        Collision->Primitives.push_back(Primitive);
-        SelectedPrimitive = (int32)Collision->Primitives.size() - 1;
+        Collision->Primitives.Add(Primitive);
+        SelectedPrimitive = Collision->Primitives.Num() - 1;
 
         RebuildHullWireframes();
         MarkChanged();
@@ -492,14 +492,14 @@ namespace Lumina
     void FMeshCollisionEditing::RemovePrimitiveAt(int32 Index)
     {
         SMeshCollision* Collision = GetCollision();
-        if (Collision == nullptr || Index < 0 || Index >= (int32)Collision->Primitives.size())
+        if (Collision == nullptr || Index < 0 || Index >= Collision->Primitives.Num())
         {
             return;
         }
 
         BeginTransaction("Remove Collision Shape");
 
-        Collision->Primitives.erase(Collision->Primitives.begin() + Index);
+        Collision->Primitives.RemoveAt(Index);
         SelectedPrimitive = Constants::kIndexNone;
 
         RebuildHullWireframes();
@@ -531,7 +531,7 @@ namespace Lumina
 
         ImGui::BeginGroup();
 
-        if (Collision == nullptr || (!Collision->IsConcave() && Collision->Primitives.empty()))
+        if (Collision == nullptr || (!Collision->IsConcave() && Collision->Primitives.IsEmpty()))
         {
             const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 2.0f);
             const ImVec2 Min = ImGui::GetCursorScreenPos();
@@ -551,7 +551,7 @@ namespace Lumina
         }
         else
         {
-            for (int32 i = 0; i < (int32)Collision->Primitives.size(); ++i)
+            for (int32 i = 0; i < Collision->Primitives.Num(); ++i)
             {
                 const SCollisionPrimitive& Primitive = Collision->Primitives[i];
                 ImGui::PushID(i);
@@ -586,7 +586,7 @@ namespace Lumina
                 if (Primitive.Type == ECollisionPrimitiveType::ConvexHull)
                 {
                     char Points[32];
-                    snprintf(Points, sizeof(Points), "%d points", (int)Primitive.HullPoints.size());
+                    snprintf(Points, sizeof(Points), "%d points", Primitive.HullPoints.Num());
                     const float NameEnd = RowMin.x + 6.0f + ImGui::GetFontSize() * 1.6f + ImGui::CalcTextSize(PrimitiveTypeName(Primitive.Type)).x;
                     Draw->AddText(ImVec2(NameEnd + ImGui::GetFontSize() * 0.75f, TextY), EditorColors::U32(EditorColors::TextMuted()), Points);
                 }
@@ -621,7 +621,7 @@ namespace Lumina
         if (Collision != nullptr && Collision->HasCollision())
         {
             ImGui::Spacing();
-            const int32 NumShapes = Collision->IsConcave() ? 1 : (int32)Collision->Primitives.size();
+            const int32 NumShapes = Collision->IsConcave() ? 1 : Collision->Primitives.Num();
             ImGui::TextDisabled("%d %s, %d hull points", NumShapes, NumShapes == 1 ? "shape" : "shapes", Collision->NumHullPoints());
             ImGui::SameLine();
             if (ImGui::SmallButton(LE_ICON_BROOM " Clear All"))
@@ -743,13 +743,13 @@ namespace Lumina
 
         case ECollisionPrimitiveType::ConvexHull:
             {
-                if (Index < 0 || Index >= (int32)HullDrawData.size())
+                if (Index < 0 || Index >= HullDrawData.Num())
                 {
                     break;
                 }
 
                 const FHullDrawData& Hull = HullDrawData[Index];
-                for (SIZE_T e = 0; e + 1 < Hull.Edges.size(); e += 2)
+                for (int32 e = 0; e + 1 < Hull.Edges.Num(); e += 2)
                 {
                     const FVector3 A = FVector3(Matrix * FVector4(Hull.Vertices[Hull.Edges[e]], 1.0f));
                     const FVector3 B = FVector3(Matrix * FVector4(Hull.Vertices[Hull.Edges[e + 1]], 1.0f));
@@ -770,7 +770,7 @@ namespace Lumina
         // A baked triangle mesh replaces the primitives, so draw it alone to match what gets built.
         if (Collision->IsConcave())
         {
-            for (SIZE_T i = 0; i + 2 < Collision->TriangleIndices.size(); i += 3)
+            for (int32 i = 0; i + 2 < Collision->TriangleIndices.Num(); i += 3)
             {
                 const FVector3& A = Collision->TriangleVertices[Collision->TriangleIndices[i]];
                 const FVector3& B = Collision->TriangleVertices[Collision->TriangleIndices[i + 1]];
@@ -788,7 +788,7 @@ namespace Lumina
             return;
         }
 
-        for (int32 i = 0; i < (int32)Collision->Primitives.size(); ++i)
+        for (int32 i = 0; i < Collision->Primitives.Num(); ++i)
         {
             const bool bSelected = (i == SelectedPrimitive);
             DrawPrimitive(World, Collision->Primitives[i], i, bSelected ? ShapeSelColor : ShapeColor, bSelected ? 3.0f : 1.5f);
@@ -806,7 +806,7 @@ namespace Lumina
         int32 Best = Constants::kIndexNone;
         float BestDistance = 1e30f;
 
-        for (int32 i = 0; i < (int32)Collision->Primitives.size(); ++i)
+        for (int32 i = 0; i < Collision->Primitives.Num(); ++i)
         {
             const SCollisionPrimitive& Primitive = Collision->Primitives[i];
             const FMatrix4 Matrix = GetPrimitiveMatrix(Primitive);
@@ -828,7 +828,7 @@ namespace Lumina
 
             case ECollisionPrimitiveType::ConvexHull:
                 {
-                    if (i >= (int32)HullDrawData.size() || HullDrawData[i].Vertices.empty())
+                    if (i >= HullDrawData.Num() || HullDrawData[i].Vertices.IsEmpty())
                     {
                         break;
                     }
@@ -864,7 +864,7 @@ namespace Lumina
     void FMeshCollisionEditing::GatherShapeHandles(TVector<FShapeHandle>& OutHandles)
     {
         SMeshCollision* Collision = GetCollision();
-        OutHandles.clear();
+        OutHandles.Reset();
         if (!HasSelection())
         {
             return;
@@ -881,18 +881,18 @@ namespace Lumina
         switch (Primitive.Type)
         {
         case ECollisionPrimitiveType::Sphere:
-            OutHandles.push_back({ EShapeHandle::Radius, Center + AxisX * Primitive.Radius, AxisX, Center });
+            OutHandles.Emplace(EShapeHandle::Radius, Center + AxisX * Primitive.Radius, AxisX, Center);
             break;
 
         case ECollisionPrimitiveType::Capsule:
-            OutHandles.push_back({ EShapeHandle::Radius,     Center + AxisX * Primitive.Radius,     AxisX, Center });
-            OutHandles.push_back({ EShapeHandle::HalfHeight, Center + AxisY * Primitive.HalfHeight, AxisY, Center });
+            OutHandles.Emplace(EShapeHandle::Radius,     Center + AxisX * Primitive.Radius,     AxisX, Center);
+            OutHandles.Emplace(EShapeHandle::HalfHeight, Center + AxisY * Primitive.HalfHeight, AxisY, Center);
             break;
 
         case ECollisionPrimitiveType::Box:
-            OutHandles.push_back({ EShapeHandle::ExtentX, Center + AxisX * Primitive.HalfExtent.x, AxisX, Center });
-            OutHandles.push_back({ EShapeHandle::ExtentY, Center + AxisY * Primitive.HalfExtent.y, AxisY, Center });
-            OutHandles.push_back({ EShapeHandle::ExtentZ, Center + AxisZ * Primitive.HalfExtent.z, AxisZ, Center });
+            OutHandles.Emplace(EShapeHandle::ExtentX, Center + AxisX * Primitive.HalfExtent.x, AxisX, Center);
+            OutHandles.Emplace(EShapeHandle::ExtentY, Center + AxisY * Primitive.HalfExtent.y, AxisY, Center);
+            OutHandles.Emplace(EShapeHandle::ExtentZ, Center + AxisZ * Primitive.HalfExtent.z, AxisZ, Center);
             break;
 
         default:

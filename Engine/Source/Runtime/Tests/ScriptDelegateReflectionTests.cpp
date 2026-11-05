@@ -24,16 +24,16 @@ TEST(ScriptDelegateReflection, EveryArityIsReflectedWithTheRightArgumentCount)
 {
     ASSERT_NE(SDelegateTestHost::StaticStruct(), nullptr);
 
-    EXPECT_EQ(FindDelegate("OnNothing")->GetNumArgs(), 0u);
-    EXPECT_EQ(FindDelegate("OnOne")->GetNumArgs(), 1u);
-    EXPECT_EQ(FindDelegate("OnTwo")->GetNumArgs(), 2u);
-    EXPECT_EQ(FindDelegate("OnThree")->GetNumArgs(), 3u);
+    EXPECT_EQ(FindDelegate("OnNothing")->GetNumArgs(), 0);
+    EXPECT_EQ(FindDelegate("OnOne")->GetNumArgs(), 1);
+    EXPECT_EQ(FindDelegate("OnTwo")->GetNumArgs(), 2);
+    EXPECT_EQ(FindDelegate("OnThree")->GetNumArgs(), 3);
 }
 
 TEST(ScriptDelegateReflection, ArgumentsAreInDeclarationOrderWithTheirOwnKinds)
 {
     const FDelegateProperty* Three = FindDelegate("OnThree");
-    ASSERT_EQ(Three->GetNumArgs(), 3u);
+    ASSERT_EQ(Three->GetNumArgs(), 3);
 
     const TSpan<FProperty* const> Args = Three->GetArgs();
 
@@ -81,7 +81,7 @@ TEST(ScriptDelegateReflection, BroadcastWritesArgumentsAtTheReflectedOffsets)
     EXPECT_FLOAT_EQ(SeenPayload.X, 2.0f);
     EXPECT_EQ(SeenPayload.Count, 5);
     EXPECT_FLOAT_EQ(SeenFloat, 0.25f);
-    EXPECT_STREQ(SeenString.c_str(), "hello");
+    EXPECT_STREQ(*SeenString, "hello");
 }
 
 TEST(ScriptDelegateReflection, DelegatePropertySizeIsTheDelegateNotThePack)
@@ -96,8 +96,8 @@ TEST(ScriptDelegateReflection, AliasAndTypedefSignaturesReflectLikeTheSpelledFor
 {
     const FDelegateProperty* Aliased = FindDelegate("OnAliasedTwo");
     const FDelegateProperty* Direct  = FindDelegate("OnTwo");
-    ASSERT_EQ(Aliased->GetNumArgs(), 2u);
-    ASSERT_EQ(Direct->GetNumArgs(), 2u);
+    ASSERT_EQ(Aliased->GetNumArgs(), 2);
+    ASSERT_EQ(Direct->GetNumArgs(), 2);
 
     EXPECT_EQ(Aliased->GetArgs()[0]->TypeFlags, Direct->GetArgs()[0]->TypeFlags);
     EXPECT_EQ(Aliased->GetArgs()[1]->TypeFlags, Direct->GetArgs()[1]->TypeFlags);
@@ -106,9 +106,9 @@ TEST(ScriptDelegateReflection, AliasAndTypedefSignaturesReflectLikeTheSpelledFor
 
     const FDelegateProperty* Typedefed = FindDelegate("OnTypedefThree");
     const FDelegateProperty* Spelled   = FindDelegate("OnThree");
-    ASSERT_EQ(Typedefed->GetNumArgs(), 3u);
+    ASSERT_EQ(Typedefed->GetNumArgs(), 3);
 
-    for (size_t Index = 0; Index < 3; ++Index)
+    for (int32 Index = 0; Index < 3; ++Index)
     {
         EXPECT_EQ(Typedefed->GetArgs()[Index]->TypeFlags, Spelled->GetArgs()[Index]->TypeFlags);
         EXPECT_EQ(Typedefed->GetArgs()[Index]->Offset, Spelled->GetArgs()[Index]->Offset);
@@ -161,7 +161,7 @@ TEST(ScriptDelegateReflection, CoreDelegateSlotsMatchTheSingletonLayout)
         FProperty* Slot = Events->GetProperty(FName(Case.Name));
         ASSERT_NE(Slot, nullptr) << Case.Name;
         EXPECT_EQ(Base + Slot->Offset, reinterpret_cast<const uint8*>(Case.Member)) << Case.Name;
-        EXPECT_EQ(static_cast<const FDelegateProperty*>(Slot)->GetNumArgs(), 0u) << Case.Name;
+        EXPECT_EQ(static_cast<const FDelegateProperty*>(Slot)->GetNumArgs(), 0) << Case.Name;
     }
 }
 

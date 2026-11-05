@@ -1,6 +1,7 @@
 #pragma once
 #include "RenderResource.h"   // RHI::Format::BytesPerBlock
 #include "RHITexture.h"
+#include "Containers/Algorithm.h"
 #include "Containers/Vector.h"
 #include "Core/Serialization/Archiver.h"
 
@@ -23,14 +24,14 @@ namespace Lumina
         TVector<uint8> Bytes;
         FBulkDataRef   BulkRef;
 
-        bool IsValid() const     { return !Bytes.empty() || BulkRef.IsValid(); }
-        bool IsResident() const  { return !Bytes.empty(); }
-        uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Bytes.size(); }
+        bool IsValid() const     { return !Bytes.IsEmpty() || BulkRef.IsValid(); }
+        bool IsResident() const  { return !Bytes.IsEmpty(); }
+        uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Bytes.Num(); }
 
         void Reset()
         {
-            Bytes.clear();
-            Bytes.shrink_to_fit();
+            Bytes.Reset();
+            Bytes.Shrink();
             BulkRef = FBulkDataRef{};
         }
 
@@ -40,9 +41,9 @@ namespace Lumina
             {
                 if (Ar.IsWriting() && !Ar.IsBulkPassthrough())
                 {
-                    if (!Ar.WriteBulkData(Data.BulkRef, Data.Bytes.data(), (int64)Data.Bytes.size()))
+                    if (!Ar.WriteBulkData(Data.BulkRef, Data.Bytes.GetData(), Data.Bytes.Num()))
                     {
-                        LOG_ERROR("FTextureSourceFile: failed to write {} source bytes", Data.Bytes.size());
+                        LOG_ERROR("FTextureSourceFile: failed to write {} source bytes", Data.Bytes.Num());
                         Data.BulkRef = FBulkDataRef{};
                     }
                 }
@@ -74,7 +75,7 @@ namespace Lumina
             FBulkDataRef BulkRef;
 
             /** Byte count regardless of residency. */
-            uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Pixels.size(); }
+            uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Pixels.Num(); }
         };
 
         // Serialized texture description: exactly what Textures::Create needs at load.
@@ -124,7 +125,7 @@ namespace Lumina
         FDescription            ImageDescription;
         RHI::FManagedTexture    NewTexture;
 
-        TFixedVector<FMip, 1>   Mips;
+        TInlineVector<FMip, 1>  Mips;
 
         /** First mip currently uploaded to the GPU. Starts at FirstInlineMip after load and walks toward 0
          *  as the streamer promotes. Runtime state -- never serialized. */
@@ -171,7 +172,7 @@ namespace Lumina
                 for (uint32 Mip = FirstMip; Mip < NumMips; ++Mip)
                 {
                     const uint32 Index = MipIndex(Layer, Mip);
-                    if (Index < Mips.size())
+                    if (Index < static_cast<uint32>(Mips.Num()))
                     {
                         Total += Mips[Index].SizeBytes();
                     }
@@ -191,7 +192,7 @@ namespace Lumina
                 for (uint32 Mip = ResidentFirstMip; Mip < NumMips; ++Mip)
                 {
                     const uint32 Index = MipIndex(Layer, Mip);
-                    if (Index < Mips.size())
+                    if (Index < static_cast<uint32>(Mips.Num()))
                     {
                         Total += Mips[Index].SizeBytes();
                     }
@@ -289,20 +290,20 @@ namespace Lumina
                     Data.ImageDescription.LayerCount, (uint32)Data.ImageDescription.Format);
                 Ar.SetHasError(true);
                 Data.ImageDescription = FDescription{};
-                Data.Mips.clear();
+                Data.Mips.Reset();
                 return Ar;
             }
 
             if (Ar.IsReading())
             {
-                Data.Mips.clear();
-                Data.Mips.resize(Data.GetNumMips() * Data.GetNumLayers());
+                Data.Mips.Reset();
+                Data.Mips.SetNum(Data.GetNumMips() * Data.GetNumLayers());
             }
 
             const uint32 NumMips        = Data.GetNumMips();
             const uint32 FirstInlineMip = Data.ImageDescription.FirstInlineMip;
 
-            for (uint32 Index = 0; Index < (uint32)Data.Mips.size(); ++Index)
+            for (int32 Index = 0; Index < Data.Mips.Num(); ++Index)
             {
                 FMip& Mip = Data.Mips[Index];
 
@@ -317,7 +318,7 @@ namespace Lumina
 
                 if (MipLevel >= FirstInlineMip)
                 {
-                    if (Ar.IsWriting() && Mip.Pixels.empty() && Mip.BulkRef.IsValid())
+                    if (Ar.IsWriting() && Mip.Pixels.IsEmpty() && Mip.BulkRef.IsValid())
                     {
                         // Flagged, not just reported: a successful splice commits this container verbatim.
                         LOG_WARN("FTextureResource: mip {} is inline in these bytes but has no resident pixels; "
@@ -325,7 +326,7 @@ namespace Lumina
                                  "Extent={}x{}, MipEntries={}, Passthrough={})",
                             MipLevel, FirstInlineMip, NumMips, Data.GetNumLayers(),
                             Data.ImageDescription.Extent.x, Data.ImageDescription.Extent.y,
-                            Data.Mips.size(), Ar.IsBulkPassthrough());
+                            Data.Mips.Num(), Ar.IsBulkPassthrough());
 
                         Ar.FlagUnresolvedBulkData();
                     }
@@ -336,10 +337,10 @@ namespace Lumina
                 
                 if (Ar.IsWriting())
                 {
-                    if (!Ar.WriteBulkData(Mip.BulkRef, Mip.Pixels.data(), (int64)Mip.Pixels.size()))
+                    if (!Ar.WriteBulkData(Mip.BulkRef, Mip.Pixels.GetData(), Mip.Pixels.Num()))
                     {
                         LOG_ERROR("FTextureResource: failed to write bulk mip {} ({} bytes); texture will be incomplete",
-                            MipLevel, Mip.Pixels.size());
+                            MipLevel, Mip.Pixels.Num());
                         Mip.BulkRef = FBulkDataRef{};
                     }
                 }

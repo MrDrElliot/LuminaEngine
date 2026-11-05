@@ -94,6 +94,6 @@ namespace Lumina::Scripting
         TVector<FScriptExportFunction> Functions;
 
         // A behavior-only type still mints, for its functions, so a schema with either counts.
-        bool IsValid() const { return !Fields.empty() || !Functions.empty(); }
+        bool IsValid() const { return !Fields.IsEmpty() || !Functions.IsEmpty(); }
     };
 }

@@ -17,7 +17,7 @@
         // 1) Occupied grid cells only (cheap even with a huge grid -- empty cells are skipped).
         const FVector4 CellColor(0.30f, 0.55f, 1.0f, 1.0f);
         const int32 NumCells = Grid.NumCells();
-        if (static_cast<int32>(Grid.CellStart.size()) == NumCells + 1)
+        if (static_cast<int32>(Grid.CellStart.Num()) == NumCells + 1)
         {
             for (int32 cz = 0; cz < Grid.DimZ; ++cz)
             {
@@ -55,7 +55,7 @@
         };
         for (const auto& KV : Net->OwnerToRecord)
         {
-            const uint32 Rec = KV.second;
+            const uint32 Rec = KV.Value;
             if (Rec >= Ex.Num()) { continue; }
             const FVector3 VP = Ex.Pos[Rec];
             DrawCircleXZ(VP, Settings.AOIEnterRadius, FVector4(0.2f, 1.0f, 0.3f, 1.0f));
@@ -72,15 +72,15 @@
         ECS::FRegistry& Registry = World->GetEntityRegistry();
         for (const auto& CVKV : Net->ClientViews)
         {
-            const FNetClientView& CV = CVKV.second;
+            const FNetClientView& CV = CVKV.Value;
             for (const auto& RKV : CV.Relevant)
             {
-                const ECS::FEntity E = Net->GuidTable.Find(SNetGUID{ RKV.first });
+                const ECS::FEntity E = Net->GuidTable.Find(SNetGUID{ RKV.Key });
                 if (E == ECS::NullEntity || !Registry.IsValid(E)) { continue; }
                 STransformComponent* T = Registry.TryGet<STransformComponent>(E);
                 if (T == nullptr) { continue; }
                 const FVector3  P   = T->GetWorldLocationCached();
-                const FVector4& Col = TierCol[static_cast<int>(RKV.second.Tier) & 3];
+                const FVector4& Col = TierCol[static_cast<int>(RKV.Value.Tier) & 3];
                 const float     r   = 0.5f;
                 World->GetDebugInterface()->DrawLine(P - FVector3(r, 0, 0), P + FVector3(r, 0, 0), Col, 2.0f, false, -1.0f);
                 World->GetDebugInterface()->DrawLine(P - FVector3(0, 0, r), P + FVector3(0, 0, r), Col, 2.0f, false, -1.0f);

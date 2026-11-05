@@ -70,22 +70,22 @@ namespace Lumina
 
     static void GatherChildOffsets(const FSkeletonResource& Resource, int32 BoneIndex, TVector<FVector3>& OutOffsets)
     {
-        OutOffsets.clear();
+        OutOffsets.Reset();
         for (int32 ChildIndex : Resource.GetChildBones(BoneIndex))
         {
-            OutOffsets.push_back(FVector3(Resource.GetBone(ChildIndex).LocalTransform[3]));
+            OutOffsets.Emplace(Resource.GetBone(ChildIndex).LocalTransform[3]);
         }
     }
 
     // False means the bone is too small to be worth simulating and Body was left untouched.
     static bool ShapeBodyForBone(SPhysicsBodySetup& Body, const TVector<FVector3>& ChildOffsets, float MinBoneLength)
     {
-        if (ChildOffsets.empty())
+        if (ChildOffsets.IsEmpty())
         {
             return false;
         }
 
-        if (ChildOffsets.size() == 1)
+        if (ChildOffsets.Num() == 1)
         {
             const FVector3& Offset = ChildOffsets[0];
             const float BoneLength = Math::Length(Offset);
@@ -109,7 +109,7 @@ namespace Lumina
         {
             MeanDistance += Math::Length(Offset);
         }
-        MeanDistance /= (float)ChildOffsets.size();
+        MeanDistance /= (float)ChildOffsets.Num();
 
         if (MeanDistance < MinBoneLength || MeanDistance < 1e-4f)
         {
@@ -225,7 +225,7 @@ namespace Lumina
     }
 
     FPhysicsAssetEditorTool::FPhysicsAssetEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
@@ -283,9 +283,9 @@ namespace Lumina
                 const char* Icon = (BodyIndex != Constants::kIndexNone) ? ShapeIcon(PhysicsAsset->Bodies[BodyIndex].Shape) : LE_ICON_BONE;
 
                 // The widget draws IconText OVER the row, so without the prefix it lands on the name.
-                const FString Label = FString(Icon) + "  " + BoneName.c_str();
+                const FString Label = FString(Icon) + "  " + *BoneName;
 
-                FTreeNodeID Node = Tree.CreateNode(ParentNode, FStringView(Label.c_str()));
+                FTreeNodeID Node = Tree.CreateNode(ParentNode, FStringView(*Label));
                 Tree.EmplaceUserData<int32>(Node, BoneIndex);
                 Tree.Get<FTreeNodeState>(Node).bExpanded = true;
 
@@ -324,7 +324,7 @@ namespace Lumina
             }
 
             const int32 BoneIndex = Tree.Get<int32>(Item);
-            return BoneIndex >= 0 && BoneIndex < (int32)BodySubtreeMask.size() && BodySubtreeMask[BoneIndex] != 0;
+            return BoneIndex >= 0 && BoneIndex < BodySubtreeMask.Num() && BodySubtreeMask[BoneIndex] != 0;
         };
 
         BoneListContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool)
@@ -484,8 +484,8 @@ namespace Lumina
         DetailsType = nullptr;
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (SelectedBodyIndex >= (int32)PhysicsAsset->Bodies.size()
-            || SelectedConstraintIndex >= (int32)PhysicsAsset->Constraints.size())
+        if (SelectedBodyIndex >= PhysicsAsset->Bodies.Num()
+            || SelectedConstraintIndex >= PhysicsAsset->Constraints.Num())
         {
             ClearSelection();
         }
@@ -527,7 +527,7 @@ namespace Lumina
 
         RebuildBoneWorldTransforms();
 
-        if (BoneWorldTransforms.empty())
+        if (BoneWorldTransforms.IsEmpty())
         {
             return;
         }
@@ -558,7 +558,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::RebuildBoneWorldTransforms()
     {
-        BoneWorldTransforms.clear();
+        BoneWorldTransforms.Reset();
 
         FSkeletonResource* Resource = GetSkeletonResource();
         if (Resource == nullptr || Resource->GetNumBones() == 0)
@@ -572,7 +572,7 @@ namespace Lumina
             EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
         }
 
-        BoneWorldTransforms.resize(Resource->GetNumBones());
+        BoneWorldTransforms.SetNum(Resource->GetNumBones());
         for (int32 i = 0; i < Resource->GetNumBones(); ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = Resource->GetBone(i);
@@ -589,7 +589,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::RebuildBodySubtreeMask()
     {
-        BodySubtreeMask.clear();
+        BodySubtreeMask.Reset();
 
         FSkeletonResource* Resource = GetSkeletonResource();
         if (Resource == nullptr)
@@ -597,12 +597,12 @@ namespace Lumina
             return;
         }
 
-        BodySubtreeMask.resize(Resource->GetNumBones(), 0);
+        BodySubtreeMask.SetNum(Resource->GetNumBones(), 0);
 
         for (const SPhysicsBodySetup& Body : GetAsset<CPhysicsAsset>()->Bodies)
         {
             int32 Index = Resource->FindBoneIndex(Body.BoneName);
-            while (Index >= 0 && Index < (int32)BodySubtreeMask.size())
+            while (Index >= 0 && Index < BodySubtreeMask.Num())
             {
                 BodySubtreeMask[Index] = 1;
                 Index = Resource->GetBone(Index).ParentIndex;
@@ -619,7 +619,7 @@ namespace Lumina
         }
 
         const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
-        if (BoneIndex == Constants::kIndexNone || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex == Constants::kIndexNone || BoneIndex >= BoneWorldTransforms.Num())
         {
             return FMatrix4(1.0f);
         }
@@ -636,14 +636,14 @@ namespace Lumina
             return false;
         }
         const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
-        return BoneIndex != Constants::kIndexNone && BoneIndex < (int32)BoneWorldTransforms.size();
+        return BoneIndex != Constants::kIndexNone && BoneIndex < BoneWorldTransforms.Num();
     }
 
     void FPhysicsAssetEditorTool::DrawBodies()
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
+        for (int32 i = 0; i < PhysicsAsset->Bodies.Num(); ++i)
         {
             const SPhysicsBodySetup& Body = PhysicsAsset->Bodies[i];
             if (!HasBodyBone(Body))
@@ -696,12 +696,12 @@ namespace Lumina
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        for (int32 i = 0; i < (int32)PhysicsAsset->Constraints.size(); ++i)
+        for (int32 i = 0; i < PhysicsAsset->Constraints.Num(); ++i)
         {
             const SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints[i];
 
             const int32 ChildIndex = Resource->FindBoneIndex(Constraint.ChildBone);
-            if (ChildIndex == Constants::kIndexNone || ChildIndex >= (int32)BoneWorldTransforms.size())
+            if (ChildIndex == Constants::kIndexNone || ChildIndex >= BoneWorldTransforms.Num())
             {
                 continue;
             }
@@ -714,7 +714,7 @@ namespace Lumina
             const FVector3 Pivot = FVector3(ChildMatrix[3]);
 
             const int32 ParentIndex = Resource->FindBoneIndex(Constraint.ParentBone);
-            if (ParentIndex != Constants::kIndexNone && ParentIndex < (int32)BoneWorldTransforms.size())
+            if (ParentIndex != Constants::kIndexNone && ParentIndex < BoneWorldTransforms.Num())
             {
                 World->GetDebugInterface()->DrawLine(Pivot, FVector3(BoneWorldTransforms[ParentIndex][3]), Color, Thickness, false);
             }
@@ -732,7 +732,7 @@ namespace Lumina
         int32 BestBody = Constants::kIndexNone;
         float BestDistance = 1e30f;
 
-        for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
+        for (int32 i = 0; i < PhysicsAsset->Bodies.Num(); ++i)
         {
             const SPhysicsBodySetup& Body = PhysicsAsset->Bodies[i];
             if (!HasBodyBone(Body))
@@ -776,11 +776,11 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::GatherShapeHandles(TVector<FShapeHandle>& OutHandles)
     {
-        OutHandles.clear();
+        OutHandles.Reset();
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
         if (SelectionMode != EPhysicsAssetSelection::Body
-            || SelectedBodyIndex < 0 || SelectedBodyIndex >= (int32)PhysicsAsset->Bodies.size())
+            || SelectedBodyIndex < 0 || SelectedBodyIndex >= PhysicsAsset->Bodies.Num())
         {
             return;
         }
@@ -796,18 +796,18 @@ namespace Lumina
         switch (Body.Shape)
         {
         case ERagdollBodyShape::Capsule:
-            OutHandles.push_back({ EShapeHandle::Radius,     Center + AxisX * Body.Radius,     AxisX, Center });
-            OutHandles.push_back({ EShapeHandle::HalfHeight, Center + AxisY * Body.HalfHeight, AxisY, Center });
+            OutHandles.Emplace(EShapeHandle::Radius,     Center + AxisX * Body.Radius,     AxisX, Center);
+            OutHandles.Emplace(EShapeHandle::HalfHeight, Center + AxisY * Body.HalfHeight, AxisY, Center);
             break;
 
         case ERagdollBodyShape::Sphere:
-            OutHandles.push_back({ EShapeHandle::Radius, Center + AxisX * Body.Radius, AxisX, Center });
+            OutHandles.Emplace(EShapeHandle::Radius, Center + AxisX * Body.Radius, AxisX, Center);
             break;
 
         case ERagdollBodyShape::Box:
-            OutHandles.push_back({ EShapeHandle::ExtentX, Center + AxisX * Body.HalfExtent.x, AxisX, Center });
-            OutHandles.push_back({ EShapeHandle::ExtentY, Center + AxisY * Body.HalfExtent.y, AxisY, Center });
-            OutHandles.push_back({ EShapeHandle::ExtentZ, Center + AxisZ * Body.HalfExtent.z, AxisZ, Center });
+            OutHandles.Emplace(EShapeHandle::ExtentX, Center + AxisX * Body.HalfExtent.x, AxisX, Center);
+            OutHandles.Emplace(EShapeHandle::ExtentY, Center + AxisY * Body.HalfExtent.y, AxisY, Center);
+            OutHandles.Emplace(EShapeHandle::ExtentZ, Center + AxisZ * Body.HalfExtent.z, AxisZ, Center);
             break;
         }
     }
@@ -815,7 +815,7 @@ namespace Lumina
     void FPhysicsAssetEditorTool::ApplyShapeHandleDrag(const FShapeHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection)
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (SelectedBodyIndex < 0 || SelectedBodyIndex >= (int32)PhysicsAsset->Bodies.size())
+        if (SelectedBodyIndex < 0 || SelectedBodyIndex >= PhysicsAsset->Bodies.Num())
         {
             return;
         }
@@ -873,7 +873,7 @@ namespace Lumina
         FSkeletonResource* Resource = GetSkeletonResource();
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        if (Resource == nullptr || SelectedBodyIndex < 0 || SelectedBodyIndex >= (int32)PhysicsAsset->Bodies.size())
+        if (Resource == nullptr || SelectedBodyIndex < 0 || SelectedBodyIndex >= PhysicsAsset->Bodies.Num())
         {
             return;
         }
@@ -881,7 +881,7 @@ namespace Lumina
         SPhysicsBodySetup& Body = PhysicsAsset->Bodies[SelectedBodyIndex];
 
         const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
-        if (BoneIndex == Constants::kIndexNone || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex == Constants::kIndexNone || BoneIndex >= BoneWorldTransforms.Num())
         {
             return;
         }
@@ -902,7 +902,7 @@ namespace Lumina
         FSkeletonResource* Resource = GetSkeletonResource();
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        if (Resource == nullptr || BodyIndex < 0 || BodyIndex >= (int32)PhysicsAsset->Bodies.size())
+        if (Resource == nullptr || BodyIndex < 0 || BodyIndex >= PhysicsAsset->Bodies.Num())
         {
             return;
         }
@@ -963,7 +963,7 @@ namespace Lumina
             const TOptional<SRayResult> Hit = Scene->CastRay(Settings);
 
             // The floor is static, so grabbing it would latch the drag onto something that can never move.
-            if (!Hit.has_value() || (ECS::FEntity)Hit->Entity == FloorBodyEntity)
+            if (!Hit.IsSet() || (ECS::FEntity)Hit->Entity == FloorBodyEntity)
             {
                 return;
             }
@@ -1042,7 +1042,7 @@ namespace Lumina
             return;
         }
 
-        if (BoneWorldTransforms.empty())
+        if (BoneWorldTransforms.IsEmpty())
         {
             return;
         }
@@ -1067,7 +1067,7 @@ namespace Lumina
         Frame.bViewportHovered = bViewportHovered;
         Frame.bSuppressClicks  = ShouldSuppressViewportClickInput();
         Frame.bHasGizmoTarget  = SelectionMode == EPhysicsAssetSelection::Body
-                              && SelectedBodyIndex >= 0 && SelectedBodyIndex < (int32)PhysicsAsset->Bodies.size();
+                              && SelectedBodyIndex >= 0 && SelectedBodyIndex < PhysicsAsset->Bodies.Num();
 
         TickShapeHandles(*this, HandleState, Frame);
     }
@@ -1084,7 +1084,7 @@ namespace Lumina
 
         BeginAssetTransaction("Add Body");
 
-        SPhysicsBodySetup& Body = PhysicsAsset->Bodies.emplace_back();
+        SPhysicsBodySetup& Body = PhysicsAsset->Bodies.EmplaceGetRef();
         Body.BoneName = BoneName;
 
         FSkeletonResource* Resource = GetSkeletonResource();
@@ -1105,13 +1105,13 @@ namespace Lumina
         BoneListView.MarkTreeDirty();
         EndAssetTransaction();
 
-        return (int32)PhysicsAsset->Bodies.size() - 1;
+        return PhysicsAsset->Bodies.Num() - 1;
     }
 
     void FPhysicsAssetEditorTool::RemoveBodyAt(int32 BodyIndex)
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (BodyIndex < 0 || BodyIndex >= (int32)PhysicsAsset->Bodies.size())
+        if (BodyIndex < 0 || BodyIndex >= PhysicsAsset->Bodies.Num())
         {
             return;
         }
@@ -1119,14 +1119,14 @@ namespace Lumina
         BeginAssetTransaction("Remove Body");
 
         const FName BoneName = PhysicsAsset->Bodies[BodyIndex].BoneName;
-        PhysicsAsset->Bodies.erase(PhysicsAsset->Bodies.begin() + BodyIndex);
+        PhysicsAsset->Bodies.RemoveAt(BodyIndex);
 
         // A joint referencing a body that no longer exists cannot be built at runtime.
-        for (int32 i = (int32)PhysicsAsset->Constraints.size() - 1; i >= 0; --i)
+        for (int32 i = PhysicsAsset->Constraints.Num() - 1; i >= 0; --i)
         {
             if (PhysicsAsset->Constraints[i].ChildBone == BoneName || PhysicsAsset->Constraints[i].ParentBone == BoneName)
             {
-                PhysicsAsset->Constraints.erase(PhysicsAsset->Constraints.begin() + i);
+                PhysicsAsset->Constraints.RemoveAt(i);
             }
         }
 
@@ -1140,15 +1140,15 @@ namespace Lumina
     void FPhysicsAssetEditorTool::ClearAllBodies()
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (PhysicsAsset->Bodies.empty() && PhysicsAsset->Constraints.empty())
+        if (PhysicsAsset->Bodies.IsEmpty() && PhysicsAsset->Constraints.IsEmpty())
         {
             return;
         }
 
         BeginAssetTransaction("Clear Bodies");
 
-        PhysicsAsset->Bodies.clear();
-        PhysicsAsset->Constraints.clear();
+        PhysicsAsset->Bodies.Reset();
+        PhysicsAsset->Constraints.Reset();
 
         ClearSelection();
         NotifyAssetDataChanged();
@@ -1178,7 +1178,7 @@ namespace Lumina
         }
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        for (int32 i = 0; i < (int32)PhysicsAsset->Constraints.size(); ++i)
+        for (int32 i = 0; i < PhysicsAsset->Constraints.Num(); ++i)
         {
             if (PhysicsAsset->Constraints[i].ChildBone == ChildBone)
             {
@@ -1188,27 +1188,27 @@ namespace Lumina
 
         BeginAssetTransaction("Add Constraint");
 
-        SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints.emplace_back();
+        SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints.EmplaceGetRef();
         Constraint.ChildBone = ChildBone;
         Constraint.ParentBone = ParentBone;
 
         NotifyAssetDataChanged();
         EndAssetTransaction();
 
-        return (int32)PhysicsAsset->Constraints.size() - 1;
+        return PhysicsAsset->Constraints.Num() - 1;
     }
 
     void FPhysicsAssetEditorTool::RemoveConstraintAt(int32 ConstraintIndex)
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (ConstraintIndex < 0 || ConstraintIndex >= (int32)PhysicsAsset->Constraints.size())
+        if (ConstraintIndex < 0 || ConstraintIndex >= PhysicsAsset->Constraints.Num())
         {
             return;
         }
 
         BeginAssetTransaction("Remove Constraint");
 
-        PhysicsAsset->Constraints.erase(PhysicsAsset->Constraints.begin() + ConstraintIndex);
+        PhysicsAsset->Constraints.RemoveAt(ConstraintIndex);
 
         ClearSelection();
         NotifyAssetDataChanged();
@@ -1253,8 +1253,8 @@ namespace Lumina
 
         if (bReplaceExisting)
         {
-            PhysicsAsset->Bodies.clear();
-            PhysicsAsset->Constraints.clear();
+            PhysicsAsset->Bodies.Reset();
+            PhysicsAsset->Constraints.Reset();
             ClearSelection();
         }
 
@@ -1277,11 +1277,11 @@ namespace Lumina
                 continue;
             }
 
-            PhysicsAsset->Bodies.push_back(Candidate);
+            PhysicsAsset->Bodies.Add(Candidate);
         }
 
         // Every body exists by the second pass, so the ancestor walk sees the whole set.
-        for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
+        for (int32 i = 0; i < PhysicsAsset->Bodies.Num(); ++i)
         {
             const FName ChildBone = PhysicsAsset->Bodies[i].BoneName;
 
@@ -1312,7 +1312,7 @@ namespace Lumina
                 continue;
             }
 
-            SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints.emplace_back();
+            SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints.EmplaceGetRef();
             Constraint.ChildBone = ChildBone;
             Constraint.ParentBone = ParentBone;
         }
@@ -1377,7 +1377,7 @@ namespace Lumina
             ? World->TryGetComponent<SSkeletalMeshComponent>(MeshEntity) : nullptr;
 
         if (Resource == nullptr || MeshComponent == nullptr
-            || (int32)MeshComponent->BoneTransforms.size() != Resource->GetNumBones())
+            || MeshComponent->BoneTransforms.Num() != Resource->GetNumBones())
         {
             return;
         }
@@ -1410,7 +1410,7 @@ namespace Lumina
         }
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        if (PhysicsAsset->Bodies.empty())
+        if (PhysicsAsset->Bodies.IsEmpty())
         {
             return;
         }
@@ -1489,13 +1489,13 @@ namespace Lumina
         CStruct* Type = nullptr;
 
         if (SelectionMode == EPhysicsAssetSelection::Body
-            && SelectedBodyIndex >= 0 && SelectedBodyIndex < (int32)PhysicsAsset->Bodies.size())
+            && SelectedBodyIndex >= 0 && SelectedBodyIndex < PhysicsAsset->Bodies.Num())
         {
             Target = &PhysicsAsset->Bodies[SelectedBodyIndex];
             Type = SPhysicsBodySetup::StaticStruct();
         }
         else if (SelectionMode == EPhysicsAssetSelection::Constraint
-            && SelectedConstraintIndex >= 0 && SelectedConstraintIndex < (int32)PhysicsAsset->Constraints.size())
+            && SelectedConstraintIndex >= 0 && SelectedConstraintIndex < PhysicsAsset->Constraints.Num())
         {
             Target = &PhysicsAsset->Constraints[SelectedConstraintIndex];
             Type = SPhysicsConstraintSetup::StaticStruct();
@@ -1538,7 +1538,7 @@ namespace Lumina
         }
         else
         {
-            ImGui::BeginDisabled(PhysicsAsset->Bodies.empty() || MeshEntity == ECS::NullEntity);
+            ImGui::BeginDisabled(PhysicsAsset->Bodies.IsEmpty() || MeshEntity == ECS::NullEntity);
             if (ImGui::Button(LE_ICON_PLAY " Simulate"))
             {
                 StartSimulation();
@@ -1594,7 +1594,7 @@ namespace Lumina
         }
 
         ImGui::SameLine();
-        ImGui::TextDisabled("%d bodies, %d constraints", (int)PhysicsAsset->Bodies.size(), (int)PhysicsAsset->Constraints.size());
+        ImGui::TextDisabled("%d bodies, %d constraints", PhysicsAsset->Bodies.Num(), PhysicsAsset->Constraints.Num());
 
         ImGui::Separator();
         ImGui::Spacing();
@@ -1606,7 +1606,7 @@ namespace Lumina
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        if (PhysicsAsset->Constraints.empty())
+        if (PhysicsAsset->Constraints.IsEmpty())
         {
             ImGui::TextDisabled("No constraints.");
             ImGui::TextWrapped("Right-click a bone that has a body and choose \"Constrain To Parent Body\".");
@@ -1622,7 +1622,7 @@ namespace Lumina
 
             int32 PendingRemoval = Constants::kIndexNone;
 
-            for (int32 i = 0; i < (int32)PhysicsAsset->Constraints.size(); ++i)
+            for (int32 i = 0; i < PhysicsAsset->Constraints.Num(); ++i)
             {
                 const SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints[i];
 
@@ -1639,10 +1639,10 @@ namespace Lumina
                 }
 
                 ImGui::SameLine(0.0f, 0.0f);
-                ImGui::TextUnformatted(Constraint.ParentBone.c_str());
+                ImGui::TextUnformatted(*Constraint.ParentBone);
 
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(Constraint.ChildBone.c_str());
+                ImGui::TextUnformatted(*Constraint.ChildBone);
 
                 ImGui::TableNextColumn();
                 ImGui::BeginDisabled(bSimulating);
@@ -1803,9 +1803,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(CenterID, ImGuiDir_Left, 0.26f, &LeftID, &CenterID);
         ImGui::DockBuilderSplitNode(LeftID, ImGuiDir_Down, 0.35f, &LeftBottomID, &LeftID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), CenterID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SkeletonTreeWindowName).c_str(), LeftID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ConstraintsWindowName).c_str(), LeftBottomID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(PhysicsAssetDetailsWindowName).c_str(), RightID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), CenterID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(SkeletonTreeWindowName), LeftID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ConstraintsWindowName), LeftBottomID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(PhysicsAssetDetailsWindowName), RightID);
     }
 }

@@ -145,12 +145,12 @@ namespace Lumina
 
 		const size_t BlockSamples = (size_t)BlockFrames * NumChannels;
 
-		BusAccum.assign(BlockSamples * NumAudioBuses, 0.0f);
-		MasterAccum.assign(BlockSamples, 0.0f);
-		ReverbInput.assign(BlockSamples, 0.0f);
-		ReverbOutput.assign(BlockSamples, 0.0f);
-		VoiceScratch.assign(BlockSamples, 0.0f);
-		SourceScratch.assign((size_t)kSourceScratchFrames * MaxChannels, 0.0f);
+		BusAccum.Init(0.0f, IntCastChecked<int32>(BlockSamples * NumAudioBuses));
+		MasterAccum.Init(0.0f, IntCastChecked<int32>(BlockSamples));
+		ReverbInput.Init(0.0f, IntCastChecked<int32>(BlockSamples));
+		ReverbOutput.Init(0.0f, IntCastChecked<int32>(BlockSamples));
+		VoiceScratch.Init(0.0f, IntCastChecked<int32>(BlockSamples));
+		SourceScratch.Init(0.0f, (size_t)kSourceScratchFrames * MaxChannels);
 
 		StartQueue.Initialize(kStartQueueCapacity);
 		CommandQueue.Initialize(kCommandQueueCapacity);
@@ -205,12 +205,12 @@ namespace Lumina
 
 		Reverb.Shutdown();
 
-		BusAccum.clear();
-		MasterAccum.clear();
-		ReverbInput.clear();
-		ReverbOutput.clear();
-		VoiceScratch.clear();
-		SourceScratch.clear();
+		BusAccum.Reset();
+		MasterAccum.Reset();
+		ReverbInput.Reset();
+		ReverbOutput.Reset();
+		VoiceScratch.Reset();
+		SourceScratch.Reset();
 
 		ActiveVoices.store(0, Atomic::MemoryOrderRelease);
 	}
@@ -419,7 +419,8 @@ namespace Lumina
 		FMixerVoiceDesc Desc;
 		while (StartQueue.TryDequeue(Desc))
 		{
-			if (Desc.Slot >= MaxVoices || Desc.Source == nullptr)
+			// The scratch buffer holds at most MaxChannels interleaved, so a wider source is refused rather than overrun it.
+			if (Desc.Slot >= MaxVoices || Desc.Source == nullptr || Desc.Source->GetChannelCount() == 0 || Desc.Source->GetChannelCount() > MaxChannels)
 			{
 				continue;
 			}
@@ -700,12 +701,13 @@ namespace Lumina
 		const double Advances = Math::Max(Math::Floor(Voice.ResamplePos + (double)(Frames - 1) * (double)Ratio), 0.0);
 		const uint32 PrimeFrames = Voice.bPrimed ? 0u : 2u;
 
-		const uint32 SourceNeeded = Math::Min((uint32)Advances + PrimeFrames, kSourceScratchFrames);
+		const uint32 ScratchFrames = SourceScratch.Num() / Math::Max(Voice.Source->GetChannelCount(), 1u);
+		const uint32 SourceNeeded = Math::Min(Math::Min((uint32)Advances + PrimeFrames, kSourceScratchFrames), ScratchFrames);
 
 		uint32 SourceAvailable = 0;
 		if (SourceNeeded > 0)
 		{
-			SourceAvailable = Voice.Source->Pull(SourceScratch.data(), SourceNeeded);
+			SourceAvailable = Voice.Source->Pull(SourceScratch.GetData(), SourceNeeded);
 			if (SourceAvailable < SourceNeeded)
 			{
 				Voice.bSourceDrained = true;
@@ -723,7 +725,7 @@ namespace Lumina
 			}
 
 			// Alpha zero emits PrevFrame, so the pair has to straddle the first source frame from the start.
-			const float* First  = SourceScratch.data();
+			const float* First  = SourceScratch.GetData();
 			const float* Second = SourceAvailable > 1 ? First + SourceChannels : First;
 
 			for (uint32 c = 0; c < SourceChannels; ++c)
@@ -747,7 +749,7 @@ namespace Lumina
 			{
 				if (SourceIndex < SourceAvailable)
 				{
-					const float* At = SourceScratch.data() + (size_t)SourceIndex * SourceChannels;
+					const float* At = SourceScratch.GetData() + (size_t)SourceIndex * SourceChannels;
 					for (uint32 c = 0; c < SourceChannels; ++c)
 					{
 						Voice.PrevFrame[c] = Voice.NextFrame[c];
@@ -785,7 +787,7 @@ namespace Lumina
 				Interpolated[c] = Voice.PrevFrame[c] + (Voice.NextFrame[c] - Voice.PrevFrame[c]) * Alpha;
 			}
 
-			ConvertChannels(Interpolated, SourceChannels, VoiceScratch.data() + (size_t)Frame * NumChannels, NumChannels);
+			ConvertChannels(Interpolated, SourceChannels, VoiceScratch.GetData() + (size_t)Frame * NumChannels, NumChannels);
 
 			Voice.ResamplePos += (double)Ratio;
 			++Produced;
@@ -853,7 +855,7 @@ namespace Lumina
 			? Math::Clamp(1.0f - Math::Exp(-2.0f * Math::Pi<float>() * Voice.LowPassCutoff / (float)SampleRate), 0.0f, 1.0f)
 			: 1.0f;
 
-		float* Bus = BusAccum.data() + (size_t)(uint32)Voice.Bus * BlockFrames * NumChannels;
+		float* Bus = BusAccum.GetData() + (size_t)(uint32)Voice.Bus * BlockFrames * NumChannels;
 		const float InvProduced = 1.0f / (float)Produced;
 
 		for (uint32 Frame = 0; Frame < Produced; ++Frame)
@@ -869,7 +871,7 @@ namespace Lumina
 
 			for (uint32 c = 0; c < NumChannels; ++c)
 			{
-				const size_t Index = (size_t)Frame * NumChannels + c;
+				const uint32 Index = Frame * NumChannels + c;
 				float Sample = VoiceScratch[Index];
 
 				if (bFiltered)
@@ -892,7 +894,7 @@ namespace Lumina
 
 		for (uint32 i = 0; i < NumAudioBuses; ++i)
 		{
-			Memory::Memzero(BusAccum.data() + (size_t)i * StrideSamples, BlockSamples * sizeof(float));
+			Memory::Memzero(BusAccum.GetData() + (size_t)i * StrideSamples, BlockSamples * sizeof(float));
 		}
 
 		uint32 Active = 0;
@@ -944,14 +946,14 @@ namespace Lumina
 
 		ActiveVoices.store(Active, Atomic::MemoryOrderRelaxed);
 
-		Memory::Memzero(MasterAccum.data(), BlockSamples * sizeof(float));
-		Memory::Memzero(ReverbInput.data(), BlockSamples * sizeof(float));
+		Memory::Memzero(MasterAccum.GetData(), BlockSamples * sizeof(float));
+		Memory::Memzero(ReverbInput.GetData(), BlockSamples * sizeof(float));
 
 		bool bAnyReverb = false;
 
 		for (uint32 i = 0; i < NumAudioBuses; ++i)
 		{
-			const float* Source = BusAccum.data() + (size_t)i * StrideSamples;
+			const float* Source = BusAccum.GetData() + (size_t)i * StrideSamples;
 
 			// Master is summed raw here; its own volume lands on the final mix once, at the end.
 			const float Gain = (i == (uint32)EAudioBus::Master)
@@ -964,7 +966,7 @@ namespace Lumina
 			}
 
 			const float Send = BusReverbSends[i].load(Atomic::MemoryOrderRelaxed);
-			for (size_t s = 0; s < BlockSamples; ++s)
+			for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
 			{
 				MasterAccum[s] += Source[s] * Gain;
 			}
@@ -973,7 +975,7 @@ namespace Lumina
 			{
 				bAnyReverb = true;
 				const float WetGain = Gain * Send;
-				for (size_t s = 0; s < BlockSamples; ++s)
+				for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
 				{
 					ReverbInput[s] += Source[s] * WetGain;
 				}
@@ -982,8 +984,8 @@ namespace Lumina
 
 		if (bAnyReverb && Reverb.IsInitialized())
 		{
-			Reverb.Process(ReverbInput.data(), ReverbOutput.data(), Frames);
-			for (size_t s = 0; s < BlockSamples; ++s)
+			Reverb.Process(ReverbInput.GetData(), ReverbOutput.GetData(), Frames);
+			for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
 			{
 				MasterAccum[s] += ReverbOutput[s];
 			}
@@ -996,7 +998,7 @@ namespace Lumina
 		// Instant attack and a smooth release, with the clamp left only as a guard against a single sample overshooting.
 		for (uint32 Frame = 0; Frame < Frames; ++Frame)
 		{
-			const size_t First = (size_t)Frame * NumChannels;
+			const uint32 First = Frame * NumChannels;
 			float Peak = 0.0f;
 			for (uint32 Channel = 0; Channel < NumChannels; ++Channel)
 			{

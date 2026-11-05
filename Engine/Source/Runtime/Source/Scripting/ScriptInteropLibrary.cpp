@@ -12,12 +12,12 @@ namespace Lumina
 {
     int32 CScriptInteropLibrary::GetMirrorSize(const FString& Key)
     {
-        return DotNet::GetLayoutSize(Key.c_str(), (int32)Key.size());
+        return DotNet::GetLayoutSize(*Key, Key.Len());
     }
 
     int32 CScriptInteropLibrary::GetPropertyTypeValue(const FString& Name)
     {
-        const FStringView Wanted(Name.c_str(), Name.size());
+        const FStringView Wanted(*Name, Name.Len());
         for (int32 Index = 0; Index < (int32)EPropertyTypeFlags::Count; ++Index)
         {
             if (FStringView(PropertyTypePlainNames[Index]) == Wanted)
@@ -35,7 +35,7 @@ namespace Lumina
 
     int32 CScriptInteropLibrary::GetPropertyFlagValue(const FString& Name)
     {
-        const FStringView Wanted(Name.c_str(), Name.size());
+        const FStringView Wanted(*Name, Name.Len());
         for (size_t Index = 0; Index < std::size(PropertyFlagNames); ++Index)
         {
             if (FStringView(PropertyFlagNames[Index]) == Wanted)
@@ -52,7 +52,7 @@ namespace Lumina
         uint32 Alignment = 0;
         if (Kind == (int32)EPropertyTypeFlags::Struct)
         {
-            const CStruct* Struct = StructName.empty() ? nullptr : FindObject<CStruct>(FName(StructName.c_str()));
+            const CStruct* Struct = StructName.IsEmpty() ? nullptr : FindObject<CStruct>(FName(*StructName));
             if (Struct == nullptr)
             {
                 return -1;
@@ -70,6 +70,6 @@ namespace Lumina
 
     uint64 CScriptInteropLibrary::GetModuleLayoutHash(const FString& Module)
     {
-        return FindModuleLayoutHash(FStringView(Module.c_str(), Module.size()));
+        return FindModuleLayoutHash(FStringView(*Module, Module.Len()));
     }
 }

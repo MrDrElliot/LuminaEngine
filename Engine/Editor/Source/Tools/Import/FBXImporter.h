@@ -28,7 +28,7 @@ namespace Lumina
 
         void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
         {
-            OutExtensions.insert(OutExtensions.end(), { ".fbx" });
+            OutExtensions.Add({ ".fbx" });
         }
 
         // Embedded image payloads are views into the loaded ufbx scene, so the parse outlives

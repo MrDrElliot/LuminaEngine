@@ -27,20 +27,20 @@ namespace Lumina::Dialogs
         FString Quote(FStringView Value)
         {
             FString Result;
-            Result.reserve(Value.size() + 2);
-            Result.push_back('"');
+            Result.Reserve(Value.Len() + 2);
+            Result.AppendChar('"');
 
             for (const char Character : Value)
             {
                 if (Character == '"' || Character == '\\')
                 {
-                    Result.push_back('\\');
+                    Result.AppendChar('\\');
                 }
 
-                Result.push_back(Character);
+                Result.AppendChar(Character);
             }
 
-            Result.push_back('"');
+            Result.AppendChar('"');
 
             return Result;
         }
@@ -95,7 +95,7 @@ namespace Lumina::Dialogs
             break;
         }
 
-        const int ExitCode = Platform::RunProcessAndWait("/usr/bin/zenity", Params.c_str(), nullptr);
+        const int ExitCode = Platform::RunProcessAndWait("/usr/bin/zenity", *Params, nullptr);
 
         if (ExitCode < 0)
         {

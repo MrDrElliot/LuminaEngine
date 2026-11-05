@@ -33,7 +33,7 @@ namespace Lumina
 
         bool AddWatch(int Notify, const FString& Directory, FWatchPaths& OutWatchPaths)
         {
-            const int Descriptor = ::inotify_add_watch(Notify, Directory.c_str(), kWatchMask);
+            const int Descriptor = ::inotify_add_watch(Notify, *Directory, kWatchMask);
 
             if (Descriptor < 0)
             {
@@ -56,7 +56,7 @@ namespace Lumina
             Filesystem::IterateDirectoryRecursive(Root, [&Callback](const Filesystem::FDirectoryEntry& Entry)
             {
                 FFileEvent Event;
-                Event.Path.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                Event.Path = FStringView(Entry.FullPath.GetData(), Entry.FullPath.Len());
                 Event.Action = EFileAction::Added;
                 Paths::Normalize(Event.Path);
 
@@ -79,7 +79,7 @@ namespace Lumina
                         return;
                     }
 
-                    FString Child(Entry.FullPath.data(), Entry.FullPath.size());
+                    FString Child(Entry.FullPath.GetData(), Entry.FullPath.Len());
                     Paths::Normalize(Child);
                     AddWatch(Notify, Child, OutWatchPaths);
                 });
@@ -142,13 +142,13 @@ namespace Lumina
             return;
         }
 
-        FString Root(Path.c_str());
+        FString Root(*Path);
         Paths::Normalize(Root);
 
         FWatchPaths WatchPaths;
         AddWatchTree(Notify, Root, bWatchRecursive, WatchPaths);
 
-        if (WatchPaths.empty())
+        if (WatchPaths.IsEmpty())
         {
             ::close(Notify);
             bRunning.store(false, Atomic::MemoryOrderRelaxed);
@@ -201,7 +201,7 @@ namespace Lumina
                 break;
             }
 
-            PendingMoves.clear();
+            PendingMoves.Reset();
 
             for (ssize_t Offset = 0; Offset < Read; )
             {
@@ -217,18 +217,18 @@ namespace Lumina
 
                 if (Event->mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF))
                 {
-                    WatchPaths.erase(Event->wd);
+                    WatchPaths.Remove(Event->wd);
                     continue;
                 }
 
-                const auto Found = WatchPaths.find(Event->wd);
+                const auto Found = WatchPaths.Find(Event->wd);
 
-                if (Found == WatchPaths.end() || Event->len == 0)
+                if (Found == nullptr || Event->len == 0)
                 {
                     continue;
                 }
 
-                FString FullPath = Found->second;
+                FString FullPath = (*Found);
                 FullPath += '/';
                 FullPath += Event->name;
                 Paths::Normalize(FullPath);
@@ -246,7 +246,7 @@ namespace Lumina
 
                 if (Event->mask & IN_MOVED_FROM)
                 {
-                    PendingMoves.push_back(FPendingMove{ Event->cookie, FullPath });
+                    PendingMoves.Emplace(Event->cookie, FullPath);
                     continue;
                 }
 
@@ -257,13 +257,13 @@ namespace Lumina
                 {
                     Out.Action = EFileAction::Added;
 
-                    for (size_t Index = 0; Index < PendingMoves.size(); ++Index)
+                    for (int32 Index = 0; Index < PendingMoves.Num(); ++Index)
                     {
                         if (PendingMoves[Index].Cookie == Event->cookie)
                         {
                             Out.Action = EFileAction::Renamed;
                             Out.OldPath = Move(PendingMoves[Index].OldPath);
-                            PendingMoves.erase(PendingMoves.begin() + static_cast<ptrdiff_t>(Index));
+                            PendingMoves.RemoveAt(static_cast<ptrdiff_t>(Index));
                             break;
                         }
                     }
@@ -308,7 +308,7 @@ namespace Lumina
                 }
             }
 
-            PendingMoves.clear();
+            PendingMoves.Reset();
         }
 
         ::close(Notify);

@@ -226,7 +226,7 @@ namespace Lumina::Logging
 
 			FScopeLock Lock(GFallbackMutex);
 			std::fwrite("[", 1, 1, stdout);
-			std::fwrite(Descriptor.Name.data(), 1, Descriptor.Name.size(), stdout);
+			std::fwrite(Descriptor.Name.GetData(), 1, Descriptor.Name.Len(), stdout);
 			std::fwrite("] ", 1, 2, stdout);
 			std::fwrite(Text, 1, Length, stdout);
 			std::fwrite("\n", 1, 1, stdout);
@@ -261,7 +261,7 @@ namespace Lumina::Logging
 
 				const FLogRecord Record
 				{
-					FStringView(Notice.data(), Notice.size()),
+					FStringView(Notice.GetData(), Notice.Len()),
 					&Timestamps.Get(Now),
 					ELogLevel::Warn,
 					static_cast<uint32>(Threading::GetThreadID()),
@@ -406,7 +406,7 @@ namespace Lumina::Logging
 		}
 
 		FScopeLock Lock(GSinkMutex);
-		GSinks.push_back(Move(Sink));
+		GSinks.Add(Move(Sink));
 	}
 
 
@@ -431,8 +431,8 @@ namespace Lumina::Logging
 		// Starts in the game's data folder (the exe's own outside a package) because no project is known this early, and moves once one loads.
 		{
 			FString LogPath = Paths::GetGameDataDirectory();
-			LogPath.append("/Logs/");
-			LogPath.append(GLogFileName);
+			LogPath.Append("/Logs/");
+			LogPath.Append(GLogFileName);
 
 			constexpr uint64 MaxLogSizeBytes = 16 * Constants::kMiB;
 			constexpr uint32 MaxLogFiles     = 5;
@@ -444,7 +444,7 @@ namespace Lumina::Logging
 			{
 				FScopeLock Lock(GSinkMutex);
 				GFileSink = FileSink.get();
-				GSinks.push_back(Move(FileSink));
+				GSinks.Add(Move(FileSink));
 			}
 		}
 
@@ -490,7 +490,7 @@ namespace Lumina::Logging
 		{
 			FScopeLock Lock(GSinkMutex);
 			GFileSink = nullptr;
-			GSinks.clear();
+			GSinks.Reset();
 		}
 	}
 
@@ -504,7 +504,7 @@ namespace Lumina::Logging
 
 	void SetLogFileDirectory(FStringView Directory)
 	{
-		if (Directory.empty())
+		if (Directory.IsEmpty())
 		{
 			return;
 		}
@@ -515,12 +515,12 @@ namespace Lumina::Logging
 			return;
 		}
 
-		FString LogPath(Directory.data(), Directory.size());
-		if (!LogPath.empty() && LogPath.back() != '/' && LogPath.back() != '\\')
+		FString LogPath(Directory.GetData(), Directory.Len());
+		if (!LogPath.IsEmpty() && LogPath.Last() != '/' && LogPath.Last() != '\\')
 		{
-			LogPath.push_back('/');
+			LogPath.AppendChar('/');
 		}
-		LogPath.append(GLogFileName);
+		LogPath.Append(GLogFileName);
 
 		// Retarget flushes what the sink is holding, so nothing written so far is lost.
 		GFileSink->Retarget(LogPath);
@@ -529,7 +529,7 @@ namespace Lumina::Logging
 
 	void SetLogFileName(FStringView FileName)
 	{
-		if (FileName.empty())
+		if (FileName.IsEmpty())
 		{
 			return;
 		}
@@ -540,16 +540,16 @@ namespace Lumina::Logging
 			return;
 		}
 
-		GLogFileName.assign(FileName.data(), FileName.size());
-		if (!GLogFileName.ends_with(".log"))
+		GLogFileName = FStringView(FileName.GetData(), FileName.Len());
+		if (!GLogFileName.EndsWith(".log"))
 		{
-			GLogFileName.append(".log");
+			GLogFileName.Append(".log");
 		}
 
 		FString NewPath = GFileSink->GetBasePath();
-		const size_t LastSlash = NewPath.find_last_of("/\\");
-		NewPath.resize(LastSlash == FString::npos ? 0 : LastSlash + 1);
-		NewPath.append(GLogFileName);
+		const int32 LastSlash = NewPath.FindLastOf("/\\");
+		NewPath.SetLen(LastSlash == Constants::kIndexNone ? 0 : LastSlash + 1);
+		NewPath.Append(GLogFileName);
 
 		GFileSink->Retarget(NewPath);
 	}
@@ -592,7 +592,7 @@ namespace Lumina::Logging
 	void ClearLogQueue()
 	{
 		FScopeLock Lock(GSinkMutex);
-		GetConsoleLogQueue().clear();
+		GetConsoleLogQueue().Reset();
 	}
 
 
@@ -606,14 +606,14 @@ namespace Lumina::Logging
 	void SetConsoleLogQueueCapacity(uint32 Capacity)
 	{
 		FScopeLock Lock(GSinkMutex);
-		GetConsoleLogQueue().set_capacity(Capacity == 0 ? 1u : Capacity);
+		GetConsoleLogQueue().SetCapacity(Capacity == 0 ? 1u : Capacity);
 	}
 
 
 	uint32 GetConsoleLogQueueCapacity()
 	{
 		FScopeLock Lock(GSinkMutex);
-		return (uint32)GetConsoleLogQueue().capacity();
+		return (uint32)GetConsoleLogQueue().Max();
 	}
 
 
@@ -660,9 +660,9 @@ namespace Lumina::Logging
 		}
 
 		Fmt::TInlineFormatBuffer<1024>& Buffer = GetFormatBuffer();
-		Buffer.Clear();
+		Buffer.Reset();
 		Fmt::VFormatTo(Buffer, Format, Args);
 
-		Dispatch(Level, Buffer.Data(), static_cast<uint32>(Buffer.Size()));
+		Dispatch(Level, Buffer.GetData(), static_cast<uint32>(Buffer.Len()));
 	}
 }

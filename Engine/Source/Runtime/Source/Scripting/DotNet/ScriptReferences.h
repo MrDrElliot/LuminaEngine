@@ -18,7 +18,7 @@ namespace Lumina::DotNet
         TVector<FScriptPackageRef> Packages;
         TVector<FString>           Assemblies;
 
-        bool IsEmpty() const { return Packages.empty() && Assemblies.empty(); }
+        bool IsEmpty() const { return Packages.IsEmpty() && Assemblies.IsEmpty(); }
     };
 
     // Reads the "ScriptReferences" object from a descriptor. Assemblies resolve against RootDir when relative.

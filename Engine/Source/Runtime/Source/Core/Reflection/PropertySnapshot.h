@@ -27,19 +27,19 @@ namespace Lumina
         void Reset();
 
         bool IsCaptured() const { return bCaptured; }
-        size_t Num() const { return Fields.size(); }
-        FProperty* Field(size_t Index) const { return Fields[Index]; }
+        int32 Num() const { return Fields.Num(); }
+        FProperty* Field(int32 Index) const { return Fields[Index]; }
 
         // The value held for field Index, which is the old one until Store replaces it.
-        void* Slot(size_t Index);
+        void* Slot(int32 Index);
 
         // False for a field that does not report its size, which then always matches.
-        bool IsTracked(size_t Index) const;
+        bool IsTracked(int32 Index) const;
 
         // True when field Index in Container still equals the held value.
-        bool Matches(size_t Index, const void* Container);
+        bool Matches(int32 Index, const void* Container);
 
-        void Store(size_t Index, const void* Container);
+        void Store(int32 Index, const void* Container);
 
         // The index of Field, or -1 when it is not held.
         int32 IndexOf(const FProperty* InField) const;

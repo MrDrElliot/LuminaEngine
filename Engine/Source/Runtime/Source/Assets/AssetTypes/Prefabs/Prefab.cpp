@@ -97,7 +97,7 @@ namespace Lumina
         // A script field's override path is its class name then the field, so scripts on one entity never collide.
         FString ScriptPathPrefix(const CClass* Class)
         {
-            return FString(Class->GetName().ToString().c_str()) + ".";
+            return FString(*Class->GetName().ToString()) + ".";
         }
 
         // Which scripts an instance carries is an override too, marked per class beside its field paths.
@@ -110,7 +110,7 @@ namespace Lumina
             {
                 if (CEntityScript* PrefabScript = Held.Get(); PrefabScript != nullptr && FindScriptOfClass(Instance, PrefabScript->GetClass()) == nullptr)
                 {
-                    OutPaths.push_back(FName((ScriptPathPrefix(PrefabScript->GetClass()) + ScriptRemovedMarker).c_str()));
+                    OutPaths.Emplace(*(ScriptPathPrefix(PrefabScript->GetClass()) + ScriptRemovedMarker));
                 }
             }
 
@@ -122,7 +122,7 @@ namespace Lumina
                 {
                     if (InstanceScript != nullptr)
                     {
-                        OutPaths.push_back(FName((ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker).c_str()));
+                        OutPaths.Emplace(*(ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker));
                     }
                     continue;
                 }
@@ -132,14 +132,14 @@ namespace Lumina
                 const FString Prefix = ScriptPathPrefix(InstanceScript->GetClass());
                 for (const FName& Leaf : Leaves)
                 {
-                    OutPaths.push_back(FName((Prefix + Leaf.c_str()).c_str()));
+                    OutPaths.Emplace(*(Prefix + *Leaf));
                 }
             }
         }
 
         bool IsScriptMarked(const THashSet<FName>& OverriddenPaths, const CClass* Class, const char* Marker)
         {
-            return OverriddenPaths.find(FName((ScriptPathPrefix(Class) + Marker).c_str())) != OverriddenPaths.end();
+            return OverriddenPaths.Contains(FName(*(ScriptPathPrefix(Class) + Marker)));
         }
 
         // The overridden field paths of one script class, with the class prefix stripped.
@@ -149,10 +149,10 @@ namespace Lumina
             THashSet<FName> ClassPaths;
             for (const FName& Path : OverriddenPaths)
             {
-                const FStringView Full(Path.c_str());
-                if (Full.starts_with(FStringView(Prefix)))
+                const FStringView Full(*Path);
+                if (Full.StartsWith(FStringView(Prefix)))
                 {
-                    ClassPaths.insert(FName(FString(Full.substr(Prefix.size())).c_str()));
+                    ClassPaths.Emplace(*FString(Full.Mid(Prefix.Len())));
                 }
             }
             return ClassPaths;
@@ -161,10 +161,10 @@ namespace Lumina
         // The variant side of ApplyInheritedScriptLeaves, writing only what the variant authored onto inherited script data.
         void ApplyOverriddenScriptLeaves(SEntityScriptComponent& Dest, const SEntityScriptComponent& Authored, const THashSet<FName>& OverriddenPaths)
         {
-            Dest.Scripts.erase(Algo::RemoveIf(Dest.Scripts, [&](const TStrongObjectPtr<CEntityScript>& Held)
+            Dest.Scripts.RemoveAll([&](const TStrongObjectPtr<CEntityScript>& Held)
             {
                 return Held.Get() != nullptr && IsScriptMarked(OverriddenPaths, Held->GetClass(), ScriptRemovedMarker);
-            }), Dest.Scripts.end());
+            });
 
             for (const TStrongObjectPtr<CEntityScript>& Held : Authored.Scripts)
             {
@@ -183,7 +183,7 @@ namespace Lumina
                     {
                         if (CEntityScript* Clone = EntityScripts::Clone(AuthoredScript))
                         {
-                            Dest.Scripts.push_back(Clone);
+                            Dest.Scripts.Add(Clone);
                         }
                     }
                     continue;
@@ -218,7 +218,7 @@ namespace Lumina
                 CEntityScript* InstanceScript = Current != nullptr ? FindScriptOfClass(*Current, Class) : nullptr;
                 if (InstanceScript == nullptr)
                 {
-                    if (OverriddenPaths.find(FName((ScriptPathPrefix(Class) + ScriptRemovedMarker).c_str())) != OverriddenPaths.end())
+                    if (OverriddenPaths.Contains(FName(*(ScriptPathPrefix(Class) + ScriptRemovedMarker))))
                     {
                         continue;
                     }
@@ -245,10 +245,10 @@ namespace Lumina
                     {
                         continue;
                     }
-                    const FName AddedPath((ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker).c_str());
-                    if (OverriddenPaths.find(AddedPath) == OverriddenPaths.end())
+                    const FName AddedPath(*(ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker));
+                    if (!OverriddenPaths.Contains(AddedPath))
                     {
-                        Dropped.push_back(InstanceScript);
+                        Dropped.Add(InstanceScript);
                     }
                 }
             }
@@ -292,15 +292,15 @@ namespace Lumina
                     const SPrefabInstanceComponent* Inst = Registry.TryGet<SPrefabInstanceComponent>(Child);
                     if (Inst == nullptr || !Inst->bIsRoot)
                     {
-                        Pending.push_back(Child);
+                        Pending.Add(Child);
                     }
                 }
             };
             PushChildren(InstanceRoot);
-            while (!Pending.empty())
+            while (!Pending.IsEmpty())
             {
-                const ECS::FEntity Current = Pending.back();
-                Pending.pop_back();
+                const ECS::FEntity Current = Pending.Last();
+                Pending.Pop();
                 Func(Current);
                 PushChildren(Current);
             }
@@ -320,13 +320,13 @@ namespace Lumina
                 const int32 Repeat = Seen[Node.StableID]++;
                 if (Repeat > 0)
                 {
-                    Node.StableID = FName(Format("{}_{}", Node.StableID.c_str(), Repeat));
+                    Node.StableID = FName(Format("{}_{}", *Node.StableID, Repeat));
                     ++Reminted;
                 }
             });
             if (Reminted > 0)
             {
-                LOG_WARN("Prefab '{}' repeated {} node id(s); they were given their own, so resave it to keep them.", Prefab.GetName().c_str(), Reminted);
+                LOG_WARN("Prefab '{}' repeated {} node id(s); they were given their own, so resave it to keep them.", *Prefab.GetName(), Reminted);
             }
         }
 
@@ -469,7 +469,7 @@ namespace Lumina
         {
             // Registry holds nothing to resolve onto, and unflagged that reads as a prefab shipping no entities.
             LOG_ERROR("Prefab '{}' is a variant whose parent could not be loaded; leaving it unresolved.",
-                GetName().c_str());
+                *GetName());
             bVariantResolveFailed = true;
         }
     }
@@ -516,13 +516,13 @@ namespace Lumina
 
             for (ECS::FEntity SrcE : SrcSet)
             {
-                auto It = OutMap.find(SrcE);
-                if (It == OutMap.end())
+                auto It = OutMap.Find(SrcE);
+                if (It == nullptr)
                 {
                     continue;
                 }
 
-                ECS::FEntity DestE = It->second;
+                ECS::FEntity DestE = (*It);
                 void* SrcCompPtr = SrcSet.GetRaw(SrcE);
 
                 // Each tag has its own storage, and copied by type alone every tag of an entity would land in one unnamed slot.
@@ -555,10 +555,10 @@ namespace Lumina
         ECS::Utils::FParentLinks Links;
         for (const auto& [SrcE, DestE] : OutMap)
         {
-            const auto ParentIt = OutMap.find(SourceHierarchy.GetParent(SrcE));
-            if (ParentIt != OutMap.end())
+            const auto ParentIt = OutMap.Find(SourceHierarchy.GetParent(SrcE));
+            if (ParentIt != nullptr)
             {
-                Links.Links.push_back({ DestE, ParentIt->second, SiblingIndices[SrcE.GetIndex()] });
+                Links.Links.Emplace(DestE, (*ParentIt), SiblingIndices[SrcE.GetIndex()]);
             }
         }
         Links.Apply(Dest);
@@ -588,7 +588,7 @@ namespace Lumina
 
         if (bVariantResolveFailed)
         {
-            LOG_WARN("Prefab '{}' did not resolve against its parent; refusing to instantiate it.", GetName().c_str());
+            LOG_WARN("Prefab '{}' did not resolve against its parent; refusing to instantiate it.", *GetName());
             return ECS::NullEntity;
         }
 
@@ -597,26 +597,26 @@ namespace Lumina
         ECS::FRegistry& WorldRegistry = TargetWorld->GetEntityRegistry();
         
         TVector<ECS::FEntity> PrefabRoots;
-        PrefabRoots.reserve(2);
+        PrefabRoots.Reserve(2);
         Registry.ForEachEntity([&](ECS::FEntity E)
         {
             if (Registry.GetHierarchy().GetParent(E) == ECS::NullEntity)
             {
-                PrefabRoots.push_back(E);
+                PrefabRoots.Add(E);
             }
         });
 
-        if (PrefabRoots.empty())
+        if (PrefabRoots.IsEmpty())
         {
-            LOG_WARN("Prefab '{}' has no entities; nothing to instantiate.", GetName().c_str());
+            LOG_WARN("Prefab '{}' has no entities; nothing to instantiate.", *GetName());
             return ECS::NullEntity;
         }
 
         const ECS::FEntity PrefabRoot = PrefabRoots[0];
-        if (PrefabRoots.size() > 1)
+        if (PrefabRoots.Num() > 1)
         {
             LOG_WARN("Prefab '{}' has {} parentless entities; reparenting extras under the first.",
-                     GetName().c_str(), (uint32)PrefabRoots.size());
+                     *GetName(), (uint32)PrefabRoots.Num());
         }
         
         THashMap<ECS::FEntity, ECS::FEntity> Map;
@@ -649,7 +649,7 @@ namespace Lumina
             }
 
             // Rescue any extra parentless entities so the spawn has a single hierarchical root.
-            for (size_t i = 1; i < PrefabRoots.size(); ++i)
+            for (int32 i = 1; i < PrefabRoots.Num(); ++i)
             {
                 const ECS::FEntity Extra = Map[PrefabRoots[i]];
                 if (Extra != ECS::NullEntity && WorldRegistry.IsValid(Extra))
@@ -694,7 +694,7 @@ namespace Lumina
             {
                 if (const CEntityScript* Script = Held.Get())
                 {
-                    Classes.push_back(Script->GetClass());
+                    Classes.Add(Script->GetClass());
                 }
             }
         });
@@ -702,8 +702,8 @@ namespace Lumina
 
     void CPrefab::ClearPreCommitState()
     {
-        PreCommitTransforms.clear();
-        PreCommitScripts.clear();
+        PreCommitTransforms.Reset();
+        PreCommitScripts.Reset();
     }
 
     void CPrefab::RefreshInstance(CWorld* World, ECS::FEntity InstanceRoot)
@@ -718,7 +718,7 @@ namespace Lumina
         if (bVariantResolveFailed)
         {
             LOG_WARN("Prefab '{}' did not resolve against its parent; leaving its instances untouched.",
-                GetName().c_str());
+                *GetName());
             return;
         }
 
@@ -726,7 +726,7 @@ namespace Lumina
         if (Registry.NumEntities() == 0)
         {
             LOG_WARN("Prefab '{}' has no entities; leaving its instances untouched rather than emptying them.",
-                GetName().c_str());
+                *GetName());
             return;
         }
 
@@ -773,22 +773,22 @@ namespace Lumina
         THashSet<ECS::FEntity> Followers;
         for (auto& [StableID, WorldE] : InstanceByStableID)
         {
-            auto PrefabIt = PrefabByStableID.find(StableID);
-            if (WorldE == InstanceRoot || PrefabIt == PrefabByStableID.end())
+            auto PrefabIt = PrefabByStableID.Find(StableID);
+            if (WorldE == InstanceRoot || PrefabIt == nullptr)
             {
                 continue;
             }
-            const STransformComponent* Authored = Registry.TryGet<STransformComponent>(PrefabIt->second);
+            const STransformComponent* Authored = Registry.TryGet<STransformComponent>(*PrefabIt);
             const STransformComponent* Placed = WorldRegistry.TryGet<STransformComponent>(WorldE);
             if (Authored == nullptr || Placed == nullptr)
             {
                 continue;
             }
-            auto Previous = PreCommitTransforms.find(StableID);
-            const bool bUntouched = Previous != PreCommitTransforms.end() && Placed->LocalTransform == Previous->second;
+            auto Previous = PreCommitTransforms.Find(StableID);
+            const bool bUntouched = Previous != nullptr && Placed->LocalTransform == (*Previous);
             if (bUntouched || Placed->LocalTransform == Authored->LocalTransform)
             {
-                Followers.insert(WorldE);
+                Followers.Add(WorldE);
             }
         }
 
@@ -800,17 +800,17 @@ namespace Lumina
             {
                 continue;
             }
-            if (PrefabByStableID.find(StableID) == PrefabByStableID.end())
+            if (!PrefabByStableID.Contains(StableID))
             {
-                ToDestroy.push_back(WorldE);
+                ToDestroy.Add(WorldE);
             }
         }
         // Survivors detach to the root first, and the hierarchy-mirror pass re-nests them per the prefab.
         THashSet<ECS::FEntity> DeadSet;
-        DeadSet.reserve(ToDestroy.size());
+        DeadSet.Reserve(ToDestroy.Num());
         for (ECS::FEntity E : ToDestroy)
         {
-            DeadSet.insert(E);
+            DeadSet.Add(E);
         }
         for (ECS::FEntity Dead : ToDestroy)
         {
@@ -821,16 +821,16 @@ namespace Lumina
             TVector<ECS::FEntity> Survivors;
             WorldRegistry.GetHierarchy().ForEachDescendant(Dead, [&](ECS::FEntity Desc)
             {
-                if (DeadSet.find(Desc) == DeadSet.end())
+                if (!DeadSet.Contains(Desc))
                 {
-                    Survivors.push_back(Desc);
+                    Survivors.Add(Desc);
                 }
             });
             for (ECS::FEntity S : Survivors)
             {
                 if (WorldRegistry.IsValid(S) && WorldRegistry.HasAll<STransformComponent>(S))
                 {
-                    ECS::Utils::ReparentEntity(WorldRegistry, S, InstanceRoot, Followers.find(S) == Followers.end());
+                    ECS::Utils::ReparentEntity(WorldRegistry, S, InstanceRoot, !Followers.Contains(S));
                 }
             }
         }
@@ -849,12 +849,12 @@ namespace Lumina
         {
             if (!WorldRegistry.IsValid(WorldE))
             {
-                StaleIDs.push_back(StableID);
+                StaleIDs.Add(StableID);
             }
         }
         for (const FName& StaleID : StaleIDs)
         {
-            InstanceByStableID.erase(StaleID);
+            InstanceByStableID.Remove(StaleID);
         }
 
         THashSet<FName> RemovedNodes;
@@ -862,11 +862,11 @@ namespace Lumina
         {
             // A node the prefab dropped, or one an undo brought back, no longer needs suppressing.
             auto& Removed = Ledger->RemovedEntities;
-            Removed.erase(Algo::RemoveIf(Removed, [&](const FName& NodeID)
+            Removed.RemoveAll([&](const FName& NodeID)
             {
-                return PrefabByStableID.find(NodeID) == PrefabByStableID.end() || InstanceByStableID.find(NodeID) != InstanceByStableID.end();
-            }), Removed.end());
-            RemovedNodes.insert(Removed.begin(), Removed.end());
+                return !PrefabByStableID.Contains(NodeID) || InstanceByStableID.Contains(NodeID);
+            });
+            RemovedNodes.Append(Removed);
         }
 
         // A node the prefab adds beneath a deleted one goes with it, rather than surfacing under the root.
@@ -874,7 +874,7 @@ namespace Lumina
         {
             for (ECS::FEntity Cur = PrefabE; Registry.IsValid(Cur);)
             {
-                if (const SPrefabComponent* Tag = Registry.TryGet<SPrefabComponent>(Cur); Tag && RemovedNodes.find(Tag->StableID) != RemovedNodes.end())
+                if (const SPrefabComponent* Tag = Registry.TryGet<SPrefabComponent>(Cur); Tag && RemovedNodes.Contains(Tag->StableID))
                 {
                     return true;
                 }
@@ -887,18 +887,18 @@ namespace Lumina
         THashSet<ECS::FEntity> Spawned;
         for (auto& [StableID, PrefabE] : PrefabByStableID)
         {
-            if (InstanceByStableID.find(StableID) != InstanceByStableID.end())
+            if (InstanceByStableID.Contains(StableID))
             {
                 continue;
             }
-            if (!RemovedNodes.empty() && IsUnderRemovedNode(PrefabE))
+            if (!RemovedNodes.IsEmpty() && IsUnderRemovedNode(PrefabE))
             {
                 continue;
             }
             // A recycled slot could be one the world editor's undo history means to restore.
             const ECS::FEntity NewE = WorldRegistry.CreateInFreshSlot();
             InstanceByStableID[StableID] = NewE;
-            Spawned.insert(NewE);
+            Spawned.Add(NewE);
 
             SPrefabInstanceComponent& Inst = WorldRegistry.Emplace<SPrefabInstanceComponent>(NewE);
             Inst.SourcePrefab = this;
@@ -910,10 +910,10 @@ namespace Lumina
         THashMap<ECS::FEntity, ECS::FEntity> PrefabToInstance;
         for (auto& [StableID, PrefabE] : PrefabByStableID)
         {
-            auto It = InstanceByStableID.find(StableID);
-            if (It != InstanceByStableID.end())
+            auto It = InstanceByStableID.Find(StableID);
+            if (It != nullptr)
             {
-                PrefabToInstance[PrefabE] = It->second;
+                PrefabToInstance[PrefabE] = (*It);
             }
         }
 
@@ -925,15 +925,15 @@ namespace Lumina
         {
             for (const SPrefabPropertyOverride& O : Ledger->PropertyOverrides)
             {
-                OverriddenLeaves[O.EntityStableID][O.ComponentType].insert(O.PropertyPath);
+                OverriddenLeaves[O.EntityStableID][O.ComponentType].Add(O.PropertyPath);
             }
             for (const SPrefabComponentRef& C : Ledger->AddedComponents)
             {
-                AddedComponents[C.EntityStableID].insert(C.ComponentType);
+                AddedComponents[C.EntityStableID].Add(C.ComponentType);
             }
             for (const SPrefabComponentRef& C : Ledger->RemovedComponents)
             {
-                RemovedComponents[C.EntityStableID].insert(C.ComponentType);
+                RemovedComponents[C.EntityStableID].Add(C.ComponentType);
             }
         }
 
@@ -949,6 +949,10 @@ namespace Lumina
             if (ID == ScriptComponentID)
             {
                 EntityScripts::DetachAll(WorldRegistry, WorldE);
+                if (!WorldRegistry.IsValid(WorldE))
+                {
+                    return;
+                }
             }
             Ops->EmplaceCopy(WorldRegistry, WorldE, SrcCompPtr);
 
@@ -959,13 +963,13 @@ namespace Lumina
         // Copy/replace components prefab -> instance honoring overrides, then prune ones the prefab dropped.
         Registry.View<SPrefabComponent>().ForEach([&](ECS::FEntity PrefabE, const SPrefabComponent& PrefabComp)
         {
-            auto It = InstanceByStableID.find(PrefabComp.StableID);
-            if (It == InstanceByStableID.end())
+            auto It = InstanceByStableID.Find(PrefabComp.StableID);
+            if (It == nullptr)
             {
                 return;
             }
 
-            const ECS::FEntity WorldE = It->second;
+            const ECS::FEntity WorldE = (*It);
             if (!WorldRegistry.IsValid(WorldE))
             {
                 return; // stale mapping (e.g. collaterally destroyed); skip this node.
@@ -973,25 +977,25 @@ namespace Lumina
             const FName NodeID = PrefabComp.StableID;
 
             const THashMap<FName, THashSet<FName>>* NodeOverrides = nullptr;
-            if (auto NIt = OverriddenLeaves.find(NodeID); NIt != OverriddenLeaves.end())
+            if (auto NIt = OverriddenLeaves.Find(NodeID); NIt != nullptr)
             {
-                NodeOverrides = &NIt->second;
+                NodeOverrides = &(*NIt);
             }
             const THashSet<FName>* NodeRemoved = nullptr;
-            if (auto RIt = RemovedComponents.find(NodeID); RIt != RemovedComponents.end())
+            if (auto RIt = RemovedComponents.Find(NodeID); RIt != nullptr)
             {
-                NodeRemoved = &RIt->second;
+                NodeRemoved = &(*RIt);
             }
             const THashSet<FName>* NodeAdded = nullptr;
-            if (auto AIt = AddedComponents.find(NodeID); AIt != AddedComponents.end())
+            if (auto AIt = AddedComponents.Find(NodeID); AIt != nullptr)
             {
-                NodeAdded = &AIt->second;
+                NodeAdded = &(*AIt);
             }
             const bool bNodeHasLedger = (NodeOverrides != nullptr) || (NodeRemoved != nullptr);
 
             // Track the prefab's storages for this entity so we can drop ones the prefab no longer has.
             THashSet<uint32> PrefabComponentIDs;
-            PrefabComponentIDs.reserve(8);
+            PrefabComponentIDs.Reserve(8);
 
             for (Lumina::ECS::FSparseSet* PrefabStoragePtr : Registry.GetActiveStorages())
             {
@@ -1026,10 +1030,10 @@ namespace Lumina
                     else if (WorldE != InstanceRoot)
                     {
                         // Gizmo moves record no override, so only a child still at the old prefab value follows the edit.
-                        auto Previous = PreCommitTransforms.find(NodeID);
+                        auto Previous = PreCommitTransforms.Find(NodeID);
                         const FTransform& Authored = static_cast<const STransformComponent*>(SrcCompPtr)->LocalTransform;
                         STransformComponent& Placed = WorldRegistry.Get<STransformComponent>(WorldE);
-                        if (Previous != PreCommitTransforms.end() && Previous->second != Authored && Placed.LocalTransform == Previous->second)
+                        if (Previous != nullptr && (*Previous) != Authored && Placed.LocalTransform == (*Previous))
                         {
                             Placed.SetLocalTransform(Authored);
                         }
@@ -1040,7 +1044,7 @@ namespace Lumina
                 // A placed root carries the name its level gave it, so like its transform it is only ever seeded.
                 if (ID == NameID && WorldE == InstanceRoot)
                 {
-                    PrefabComponentIDs.insert(ID);
+                    PrefabComponentIDs.Add(ID);
                     if (!WorldRegistry.HasAll<SNameComponent>(WorldE))
                     {
                         Ops->EmplaceCopy(WorldRegistry, WorldE, SrcCompPtr);
@@ -1051,7 +1055,7 @@ namespace Lumina
                 // A node with no ledger refreshes exactly as before.
                 if (!bNodeHasLedger)
                 {
-                    PrefabComponentIDs.insert(ID);
+                    PrefabComponentIDs.Add(ID);
                     EmplaceFromPrefab(ID, CompStruct, Ops, WorldE, SrcCompPtr);
                     continue;
                 }
@@ -1059,19 +1063,19 @@ namespace Lumina
                 const FName CompName = CompStruct->GetName();
 
                 // The instance deleted this inherited component, so leave it absent rather than re-adding.
-                if (NodeRemoved && !CompName.IsNone() && NodeRemoved->find(CompName) != NodeRemoved->end())
+                if (NodeRemoved && !CompName.IsNone() && NodeRemoved->Contains(CompName))
                 {
                     continue;
                 }
 
-                PrefabComponentIDs.insert(ID);
+                PrefabComponentIDs.Add(ID);
 
                 const THashSet<FName>* CompOverrides = nullptr;
                 if (NodeOverrides && CompStruct)
                 {
-                    if (auto OIt = NodeOverrides->find(CompName); OIt != NodeOverrides->end() && !OIt->second.empty())
+                    if (auto OIt = NodeOverrides->Find(CompName); OIt != nullptr && !OIt->IsEmpty())
                     {
-                        CompOverrides = &OIt->second;
+                        CompOverrides = &(*OIt);
                     }
                 }
 
@@ -1087,9 +1091,9 @@ namespace Lumina
                 if (ID == ScriptComponentID && CompOverrides != nullptr && DstCompPtr != nullptr)
                 {
                     const FRemappedPrefabValue Inherited(CompStruct, SrcCompPtr, PrefabToInstance);
-                    const auto PreviousScripts = PreCommitScripts.find(NodeID);
+                    const auto PreviousScripts = PreCommitScripts.Find(NodeID);
                     ApplyInheritedScriptLeaves(WorldRegistry, WorldE, *static_cast<const SEntityScriptComponent*>(Inherited.Get()), *CompOverrides,
-                        PreviousScripts != PreCommitScripts.end() ? &PreviousScripts->second : nullptr);
+                        PreviousScripts != nullptr ? &(*PreviousScripts) : nullptr);
                     continue;
                 }
 
@@ -1098,6 +1102,7 @@ namespace Lumina
                 {
                     const FRemappedPrefabValue Inherited(CompStruct, SrcCompPtr, PrefabToInstance);
                     PrefabOverride::ApplyInheritedLeaves(CompStruct, DstCompPtr, Inherited.Get(), *CompOverrides);
+                    Ops->Patch(WorldRegistry, WorldE);
                 }
                 else
                 {
@@ -1115,20 +1120,20 @@ namespace Lumina
                 if (IsRuntimeOnlyComponent(ID))    continue;
                 if (ID == TransformID)             continue;
                 if (ID == TagID)                   continue;
-                if (PrefabComponentIDs.find(ID) != PrefabComponentIDs.end()) continue;
+                if (PrefabComponentIDs.Contains(ID)) continue;
                 if (!WorldStorage.Contains(WorldE)) continue;
 
                 // Keep instance-added components the prefab never shipped.
                 if (NodeAdded != nullptr)
                 {
                     if (CStruct* WS = FindComponentStructByTypeId(ID);
-                        WS != nullptr && NodeAdded->find(WS->GetName()) != NodeAdded->end())
+                        WS != nullptr && NodeAdded->Contains(WS->GetName()))
                     {
                         continue;
                     }
                 }
 
-                ToRemoveStorages.push_back(ID);
+                ToRemoveStorages.Add(ID);
             }
             for (uint32 ID : ToRemoveStorages)
             {
@@ -1165,20 +1170,20 @@ namespace Lumina
             if (WorldE == InstanceRoot) continue;
             if (!WorldRegistry.IsValid(WorldE)) continue;
 
-            const auto PrefabIt = PrefabByStableID.find(StableID);
-            if (PrefabIt == PrefabByStableID.end()) continue;
+            const auto PrefabIt = PrefabByStableID.Find(StableID);
+            if (PrefabIt == nullptr) continue;
 
-            const ECS::FEntity PrefabParent = Registry.GetHierarchy().GetParent(PrefabIt->second);
+            const ECS::FEntity PrefabParent = Registry.GetHierarchy().GetParent(*PrefabIt);
 
             ECS::FEntity DesiredWorldParent = InstanceRoot;
             if (PrefabParent != ECS::NullEntity)
             {
                 if (const SPrefabComponent* ParentTag = Registry.TryGet<SPrefabComponent>(PrefabParent))
                 {
-                    auto ParentIt = InstanceByStableID.find(ParentTag->StableID);
-                    if (ParentIt != InstanceByStableID.end())
+                    auto ParentIt = InstanceByStableID.Find(ParentTag->StableID);
+                    if (ParentIt != nullptr)
                     {
-                        DesiredWorldParent = ParentIt->second;
+                        DesiredWorldParent = (*ParentIt);
                     }
                 }
             }
@@ -1191,8 +1196,8 @@ namespace Lumina
                 && WorldRegistry.HasAll<STransformComponent>(DesiredWorldParent))
             {
                 // A node following the prefab keeps its authored local, and only one the instance moved keeps its placement.
-                const bool bFollowsPrefab = Spawned.find(WorldE) != Spawned.end() || Followers.find(WorldE) != Followers.end();
-                Moves.push_back({ WorldE, DesiredWorldParent, !bFollowsPrefab });
+                const bool bFollowsPrefab = Spawned.Contains(WorldE) || Followers.Contains(WorldE);
+                Moves.Emplace(WorldE, DesiredWorldParent, !bFollowsPrefab);
             }
         }
 
@@ -1248,7 +1253,7 @@ namespace Lumina
             const CPrefab* Source = Inst.SourcePrefab.Get();
             if (Inst.bIsRoot && Source != nullptr && (!bOnlyStale || Inst.AppliedRevision != Source->GetRevision()))
             {
-                Roots.push_back(E);
+                Roots.Add(E);
             }
         });
 
@@ -1284,11 +1289,11 @@ namespace Lumina
             {
                 if (Inst.bIsRoot && Inst.SourcePrefab.Get() == this)
                 {
-                    Roots.push_back(E);
+                    Roots.Add(E);
                 }
             });
 
-            if (Roots.empty())
+            if (Roots.IsEmpty())
             {
                 continue;
             }
@@ -1322,7 +1327,7 @@ namespace Lumina
             CPrefab* Src = Inst.SourcePrefab.Get();
             if (Src == nullptr || Src->HasAnyFlag(OF_MarkedDestroy))
             {
-                Orphans.push_back(E);
+                Orphans.Add(E);
             }
         });
         for (ECS::FEntity E : Orphans)
@@ -1357,7 +1362,7 @@ namespace Lumina
             {
                 if (Inst.SourcePrefab.Get() == this)
                 {
-                    Matching.push_back(E);
+                    Matching.Add(E);
                 }
             });
 
@@ -1395,14 +1400,14 @@ namespace Lumina
         CPrefab* const Source = RootInstance->SourcePrefab.Get();
 
         TVector<ECS::FEntity> ToStrip;
-        ToStrip.reserve(16);
-        ToStrip.push_back(InstanceRoot);
+        ToStrip.Reserve(16);
+        ToStrip.Add(InstanceRoot);
         ForEachOwnInstanceNode(WorldRegistry, InstanceRoot, [&](ECS::FEntity Desc)
         {
             const SPrefabInstanceComponent* Inst = WorldRegistry.TryGet<SPrefabInstanceComponent>(Desc);
             if (Inst != nullptr && Inst->SourcePrefab.Get() == Source)
             {
-                ToStrip.push_back(Desc);
+                ToStrip.Add(Desc);
             }
         });
 
@@ -1430,11 +1435,11 @@ namespace Lumina
         }
 
         TVector<ECS::FEntity> EntitiesToCapture;
-        EntitiesToCapture.reserve(16);
-        EntitiesToCapture.push_back(RootEntity);
+        EntitiesToCapture.Reserve(16);
+        EntitiesToCapture.Add(RootEntity);
         WorldRegistry.GetHierarchy().ForEachDescendant(RootEntity, [&](ECS::FEntity E)
         {
-            EntitiesToCapture.push_back(E);
+            EntitiesToCapture.Add(E);
         });
 
         // Placed instances key their root by this, so an untagged source must not mint a new one for it.
@@ -1458,12 +1463,12 @@ namespace Lumina
         if (const SPrefabInstanceComponent* RootInst = WorldRegistry.TryGet<SPrefabInstanceComponent>(RootEntity);
             RootInst != nullptr && RootInst->bIsRoot && RootInst->SourcePrefab.Get() == this)
         {
-            PlacedIDs.emplace(RootEntity, RootInst->StableID);
+            PlacedIDs.TryAdd(RootEntity, RootInst->StableID);
             ForEachOwnInstanceNode(WorldRegistry, RootEntity, [&](ECS::FEntity E)
             {
                 if (const SPrefabInstanceComponent* Inst = WorldRegistry.TryGet<SPrefabInstanceComponent>(E); Inst != nullptr && Inst->SourcePrefab.Get() == this)
                 {
-                    PlacedIDs.emplace(E, Inst->StableID);
+                    PlacedIDs.TryAdd(E, Inst->StableID);
                 }
             });
         }
@@ -1472,27 +1477,27 @@ namespace Lumina
         THashSet<FName> UsedIDs;
         for (ECS::FEntity SrcE : EntitiesToCapture)
         {
-            auto It = Map.find(SrcE);
-            if (It == Map.end())
+            auto It = Map.Find(SrcE);
+            if (It == nullptr)
             {
                 continue;
             }
 
             FName StableID;
-            if (auto Placed = PlacedIDs.find(SrcE); Placed != PlacedIDs.end())
+            if (auto Placed = PlacedIDs.Find(SrcE); Placed != nullptr)
             {
-                StableID = Placed->second;
+                StableID = (*Placed);
             }
             if (StableID.IsNone() && SrcE == RootEntity)
             {
                 StableID = PreviousRootID;
             }
-            if (StableID.IsNone() || !UsedIDs.insert(StableID).second)
+            if (StableID.IsNone() || !UsedIDs.TryAdd(StableID))
             {
                 StableID = GenerateStableID();
-                UsedIDs.insert(StableID);
+                UsedIDs.Add(StableID);
             }
-            Registry.EmplaceOrReplace<SPrefabComponent>(It->second).StableID = StableID;
+            Registry.EmplaceOrReplace<SPrefabComponent>(*It).StableID = StableID;
 
             // An untagged source node would read as missing to the next refresh, which spawns a duplicate beside it.
             if (bAdoptSourceAsInstance)
@@ -1522,7 +1527,7 @@ namespace Lumina
             {
                 if (!Comp.StableID.IsNone())
                 {
-                    Out.try_emplace(Comp.StableID, E);
+                    Out.FindOrAdd(Comp.StableID, E);
                 }
             });
             return Out;
@@ -1577,37 +1582,54 @@ namespace Lumina
         void AppendReferencedEntities(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Entities)
         {
             THashSet<ECS::FEntity> Present;
-            Present.reserve(Entities.size());
+            Present.Reserve(Entities.Num());
             for (ECS::FEntity E : Entities)
             {
-                Present.insert(E);
+                Present.Add(E);
             }
 
             // Only the entities the caller supplied are walked, so an anchor cannot drag in a further one.
             TVector<ECS::FEntity> Referenced;
-            const size_t OriginalCount = Entities.size();
-            for (size_t i = 0; i < OriginalCount; ++i)
+            const int32 OriginalCount = Entities.Num();
+            for (int32 i = 0; i < OriginalCount; ++i)
             {
-                Referenced.clear();
+                Referenced.Reset();
                 ECS::Utils::CollectEntityReferences(Registry, Entities[i], Referenced);
                 for (ECS::FEntity Target : Referenced)
                 {
-                    if (Registry.IsValid(Target) && Present.insert(Target).second)
+                    if (Registry.IsValid(Target) && Present.TryAdd(Target))
                     {
-                        Entities.push_back(Target);
+                        Entities.Add(Target);
                     }
                 }
             }
         }
     }
 
+    // Walks two steps for every one of a trailing cursor, so a cycle above this prefab that does not reach Candidate ends the walk.
     bool CPrefab::IsDescendantOf(const CPrefab* Candidate) const
     {
-        for (const CPrefab* Cur = this; Cur != nullptr; Cur = Cur->ParentPrefab.Get())
+        const CPrefab* Slow = this;
+        for (const CPrefab* Fast = this; Fast != nullptr;)
         {
-            if (Cur == Candidate)
+            if (Fast == Candidate)
             {
                 return true;
+            }
+            Fast = Fast->ParentPrefab.Get();
+            if (Fast == nullptr)
+            {
+                return false;
+            }
+            if (Fast == Candidate)
+            {
+                return true;
+            }
+            Fast = Fast->ParentPrefab.Get();
+            Slow = Slow->ParentPrefab.Get();
+            if (Fast == Slow)
+            {
+                return false;
             }
         }
         return false;
@@ -1621,7 +1643,7 @@ namespace Lumina
             CPrefab* Candidate = *It;
             if (Candidate != this && Candidate->ParentPrefab.Get() == this)
             {
-                Out.push_back(Candidate);
+                Out.Add(Candidate);
             }
         }
         return Out;
@@ -1630,11 +1652,11 @@ namespace Lumina
     void CPrefab::ClearVariantDelta()
     {
         VariantDelta = ECS::FRegistry{};
-        VariantOverriddenProperties.clear();
-        VariantAddedComponents.clear();
-        VariantRemovedComponents.clear();
-        VariantStructuralNodes.clear();
-        VariantRemovedEntities.clear();
+        VariantOverriddenProperties.Reset();
+        VariantAddedComponents.Reset();
+        VariantRemovedComponents.Reset();
+        VariantStructuralNodes.Reset();
+        VariantRemovedEntities.Reset();
     }
 
     void CPrefab::ResolveVariant()
@@ -1652,7 +1674,7 @@ namespace Lumina
 
         if (Algo::Contains(VisitStack, this))
         {
-            LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", GetName().c_str());
+            LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", *GetName());
             bVariantResolveFailed = true;
             return;
         }
@@ -1660,20 +1682,20 @@ namespace Lumina
         CPrefab* Parent = ParentPrefab.Get();
         if (Parent == this || Parent->IsDescendantOf(this))
         {
-            LOG_ERROR("Prefab '{}' would parent onto its own descendant; leaving it unresolved.", GetName().c_str());
+            LOG_ERROR("Prefab '{}' would parent onto its own descendant; leaving it unresolved.", *GetName());
             bVariantResolveFailed = true;
             return;
         }
 
-        VisitStack.push_back(this);
+        VisitStack.Add(this);
         Parent->ResolveVariantGuarded(VisitStack);
-        VisitStack.pop_back();
+        VisitStack.Pop();
 
         // Resolving onto a parent that is itself empty would read as the variant having deleted everything.
         if (Parent->IsUnresolvedVariant())
         {
             LOG_ERROR("Prefab '{}' cannot resolve because its parent '{}' did not; leaving it unresolved.",
-                GetName().c_str(), Parent->GetName().c_str());
+                *GetName(), *Parent->GetName());
             bVariantResolveFailed = true;
             return;
         }
@@ -1698,13 +1720,13 @@ namespace Lumina
         // Surviving children are rescued to the root first, exactly as an instance refresh does.
         for (const FName& DeadID : VariantRemovedEntities)
         {
-            auto It = Resolved.find(DeadID);
-            if (It == Resolved.end() || !Registry.IsValid(It->second))
+            auto It = Resolved.Find(DeadID);
+            if (It == nullptr || !Registry.IsValid(*It))
             {
                 continue;
             }
 
-            const ECS::FEntity Dead = It->second;
+            const ECS::FEntity Dead = *It;
             auto IsDoomed = [&](ECS::FEntity E)
             {
                 const FName ID = StableIDOf(Registry, E);
@@ -1717,7 +1739,7 @@ namespace Lumina
             {
                 if (!IsDoomed(Desc) && IsDoomed(Registry.GetHierarchy().GetParent(Desc)))
                 {
-                    Survivors.push_back(Desc);
+                    Survivors.Add(Desc);
                 }
             });
             // A prefab registry is never propagated, so its world matrices are stale and only locals can be trusted.
@@ -1730,20 +1752,20 @@ namespace Lumina
             }
 
             ECS::Utils::DestroyEntityHierarchy(Registry, Dead);
-            Resolved.erase(It);
+            Resolved.Remove(DeadID);
         }
 
         // An entity with no counterpart is one the variant adds, and the rest carry only its divergences.
         THashMap<FName, THashSet<FName>> RemovedByNode;
         for (const SPrefabComponentRef& Ref : VariantRemovedComponents)
         {
-            RemovedByNode[Ref.EntityStableID].insert(Ref.ComponentType);
+            RemovedByNode[Ref.EntityStableID].Add(Ref.ComponentType);
         }
 
         THashMap<FName, THashMap<FName, THashSet<FName>>> OverridesByNode;
         for (const SPrefabPropertyOverride& Override : VariantOverriddenProperties)
         {
-            OverridesByNode[Override.EntityStableID][Override.ComponentType].insert(Override.PropertyPath);
+            OverridesByNode[Override.EntityStableID][Override.ComponentType].Add(Override.PropertyPath);
         }
 
         THashSet<FName> AddedNodes;
@@ -1751,7 +1773,7 @@ namespace Lumina
         {
             if (Node.bAdded)
             {
-                AddedNodes.insert(Node.StableID);
+                AddedNodes.Add(Node.StableID);
             }
         }
 
@@ -1764,15 +1786,15 @@ namespace Lumina
                 return;
             }
 
-            auto It = Resolved.find(Comp.StableID);
-            if (It != Resolved.end())
+            auto It = Resolved.Find(Comp.StableID);
+            if (It != nullptr)
             {
-                DeltaToResolved[DeltaE] = It->second;
+                DeltaToResolved[DeltaE] = (*It);
                 return;
             }
 
             // The parent deleted a node this variant only overrode, so its overrides have nothing left to land on.
-            if (AddedNodes.find(Comp.StableID) == AddedNodes.end())
+            if (!AddedNodes.Contains(Comp.StableID))
             {
                 DeltaToResolved[DeltaE] = ECS::NullEntity;
                 return;
@@ -1790,17 +1812,17 @@ namespace Lumina
         // A component absent from the resolved data is emplaced wholesale, otherwise only its leaves land.
         VariantDelta.View<SPrefabComponent>().ForEach([&](ECS::FEntity DeltaE, const SPrefabComponent& Comp)
         {
-            auto DestIt = DeltaToResolved.find(DeltaE);
-            if (DestIt == DeltaToResolved.end() || !Registry.IsValid(DestIt->second))
+            auto DestIt = DeltaToResolved.Find(DeltaE);
+            if (DestIt == nullptr || !Registry.IsValid(*DestIt))
             {
                 return;
             }
 
-            const ECS::FEntity DestE = DestIt->second;
+            const ECS::FEntity DestE = (*DestIt);
             const THashMap<FName, THashSet<FName>>* NodeOverrides = nullptr;
-            if (auto OIt = OverridesByNode.find(Comp.StableID); OIt != OverridesByNode.end())
+            if (auto OIt = OverridesByNode.Find(Comp.StableID); OIt != nullptr)
             {
-                NodeOverrides = &OIt->second;
+                NodeOverrides = &(*OIt);
             }
 
             for (Lumina::ECS::FSparseSet* DeltaStoragePtr : VariantDelta.GetActiveStorages())
@@ -1825,9 +1847,9 @@ namespace Lumina
                 const THashSet<FName>* Leaves = nullptr;
                 if (NodeOverrides != nullptr && CompStruct != nullptr)
                 {
-                    if (auto LIt = NodeOverrides->find(CompStruct->GetName()); LIt != NodeOverrides->end())
+                    if (auto LIt = NodeOverrides->Find(CompStruct->GetName()); LIt != nullptr)
                     {
-                        Leaves = &LIt->second;
+                        Leaves = &(*LIt);
                     }
                 }
 
@@ -1837,7 +1859,7 @@ namespace Lumina
                     Ops->EmplaceCopy(Registry, DestE, SrcPtr);
                 }
                 // A variant captured before scripts were diffed per field recorded the whole component, and resolves as it always did.
-                else if (CompStruct == SEntityScriptComponent::StaticStruct() && Leaves->find(PrefabOverride::WholeValuePath()) == Leaves->end())
+                else if (CompStruct == SEntityScriptComponent::StaticStruct() && !Leaves->Contains(PrefabOverride::WholeValuePath()))
                 {
                     ApplyOverriddenScriptLeaves(*static_cast<SEntityScriptComponent*>(DstPtr), *static_cast<const SEntityScriptComponent*>(SrcPtr), *Leaves);
                 }
@@ -1854,8 +1876,8 @@ namespace Lumina
         // Components the variant deletes from an inherited node.
         for (auto& [NodeID, CompNames] : RemovedByNode)
         {
-            auto It = Resolved.find(NodeID);
-            if (It == Resolved.end() || !Registry.IsValid(It->second))
+            auto It = Resolved.Find(NodeID);
+            if (It == nullptr || !Registry.IsValid(*It))
             {
                 continue;
             }
@@ -1865,12 +1887,12 @@ namespace Lumina
             {
                 const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
                 Lumina::ECS::FSparseSet& Storage = *StoragePtr;
-                if (IsStructuralStorage(ID) || !Storage.Contains(It->second)) continue;
+                if (IsStructuralStorage(ID) || !Storage.Contains(*It)) continue;
 
                 CStruct* CompStruct = StructOfStorage(Storage);
-                if (CompStruct != nullptr && CompNames.find(CompStruct->GetName()) != CompNames.end())
+                if (CompStruct != nullptr && CompNames.Contains(CompStruct->GetName()))
                 {
-                    ToRemove.push_back(ID);
+                    ToRemove.Add(ID);
                 }
             }
 
@@ -1878,7 +1900,7 @@ namespace Lumina
             {
                 if (auto* Storage = Registry.FindStorage(ID))
                 {
-                    Storage->RemoveEntity(It->second);
+                    Storage->RemoveEntity(*It);
                 }
             }
         }
@@ -1887,29 +1909,29 @@ namespace Lumina
         TVector<TPair<ECS::FEntity, ECS::FEntity>> Moves;
         for (const SPrefabVariantNode& Node : VariantStructuralNodes)
         {
-            auto ChildIt = Resolved.find(Node.StableID);
-            if (ChildIt == Resolved.end() || !Registry.IsValid(ChildIt->second))
+            auto ChildIt = Resolved.Find(Node.StableID);
+            if (ChildIt == nullptr || !Registry.IsValid(*ChildIt))
             {
                 continue;
             }
 
             // ReparentEntity reads the child's transform, and an added node may not have carried one.
-            if (!Registry.HasAll<STransformComponent>(ChildIt->second))
+            if (!Registry.HasAll<STransformComponent>(*ChildIt))
             {
-                Registry.Emplace<STransformComponent>(ChildIt->second);
+                Registry.Emplace<STransformComponent>(*ChildIt);
             }
 
             ECS::FEntity NewParent = ECS::NullEntity;
             if (!Node.ParentStableID.IsNone())
             {
-                auto ParentIt = Resolved.find(Node.ParentStableID);
-                if (ParentIt == Resolved.end() || !Registry.IsValid(ParentIt->second))
+                auto ParentIt = Resolved.Find(Node.ParentStableID);
+                if (ParentIt == nullptr || !Registry.IsValid(*ParentIt))
                 {
                     continue;
                 }
-                NewParent = ParentIt->second;
+                NewParent = (*ParentIt);
             }
-            Moves.push_back({ ChildIt->second, NewParent });
+            Moves.Add({ (*ChildIt), NewParent });
         }
 
         // Every mover lifts out before any lands, since a swap applied one move at a time passes through a cycle.
@@ -1927,7 +1949,7 @@ namespace Lumina
             if (Registry.GetHierarchy().IsDescendantOf(NewParent, Child))
             {
                 LOG_WARN("Prefab '{}' moves '{}' under '{}', which its parent prefab now nests beneath it; leaving it at the root.",
-                    GetName().c_str(), StableIDOf(Registry, Child).c_str(), StableIDOf(Registry, NewParent).c_str());
+                    *GetName(), *StableIDOf(Registry, Child), *StableIDOf(Registry, NewParent));
                 continue;
             }
             ECS::Utils::ReparentEntity(Registry, Child, NewParent, false);
@@ -1948,7 +1970,7 @@ namespace Lumina
         if (bVariantResolveFailed || Parent->IsUnresolvedVariant())
         {
             LOG_ERROR("Prefab '{}' is unresolved against its parent; keeping its stored delta rather than "
-                      "overwriting it with a diff of empty data.", GetName().c_str());
+                      "overwriting it with a diff of empty data.", *GetName());
             return;
         }
 
@@ -1966,8 +1988,8 @@ namespace Lumina
             THashMap<ECS::FEntity, ECS::FEntity> ViewToMine;
             ParentView.View<SPrefabComponent>().ForEach([&](ECS::FEntity ViewE, const SPrefabComponent& Comp)
             {
-                auto It = MineByID.find(Comp.StableID);
-                ViewToMine[ViewE] = It != MineByID.end() ? It->second : ECS::NullEntity;
+                auto It = MineByID.Find(Comp.StableID);
+                ViewToMine[ViewE] = It != nullptr ? (*It) : ECS::NullEntity;
             });
             ParentView.ForEachEntity([&](ECS::FEntity ViewE)
             {
@@ -1980,9 +2002,9 @@ namespace Lumina
         // Entities the parent still has and this variant dropped.
         for (auto& [StableID, ParentE] : ParentByID)
         {
-            if (MineByID.find(StableID) == MineByID.end())
+            if (!MineByID.Contains(StableID))
             {
-                VariantRemovedEntities.push_back(StableID);
+                VariantRemovedEntities.Add(StableID);
             }
         }
 
@@ -1992,21 +2014,21 @@ namespace Lumina
 
         for (auto& [StableID, MineE] : MineByID)
         {
-            auto ParentIt = ParentByID.find(StableID);
-            const bool bAdded = ParentIt == ParentByID.end();
+            auto ParentIt = ParentByID.Find(StableID);
+            const bool bAdded = ParentIt == nullptr;
 
             if (bAdded)
             {
-                DivergedEntities.push_back(MineE);
-                VariantStructuralNodes.push_back(SPrefabVariantNode{ StableID, ParentStableIDOf(Registry, MineE), true });
+                DivergedEntities.Add(MineE);
+                VariantStructuralNodes.Emplace(StableID, ParentStableIDOf(Registry, MineE), true);
                 continue;
             }
 
-            const ECS::FEntity ParentE = ParentIt->second;
+            const ECS::FEntity ParentE = (*ParentIt);
 
             if (ParentStableIDOf(Registry, MineE) != ParentStableIDOf(ParentView, ParentE))
             {
-                VariantStructuralNodes.push_back(SPrefabVariantNode{ StableID, ParentStableIDOf(Registry, MineE), false });
+                VariantStructuralNodes.Emplace(StableID, ParentStableIDOf(Registry, MineE), false);
             }
 
             bool bNodeDiverged = false;
@@ -2027,8 +2049,8 @@ namespace Lumina
 
                 if (!bParentHas)
                 {
-                    VariantAddedComponents.push_back(SPrefabComponentRef{ StableID, CompStruct->GetName() });
-                    KeepComponentsByNode[StableID].insert(CompStruct->GetName());
+                    VariantAddedComponents.Emplace(StableID, CompStruct->GetName());
+                    KeepComponentsByNode[StableID].Add(CompStruct->GetName());
                     bNodeDiverged = true;
                     continue;
                 }
@@ -2047,12 +2069,12 @@ namespace Lumina
 
                 for (const FName& Path : Leaves)
                 {
-                    VariantOverriddenProperties.push_back(SPrefabPropertyOverride{ StableID, CompStruct->GetName(), Path });
+                    VariantOverriddenProperties.Emplace(StableID, CompStruct->GetName(), Path);
                 }
 
-                if (!Leaves.empty())
+                if (!Leaves.IsEmpty())
                 {
-                    KeepComponentsByNode[StableID].insert(CompStruct->GetName());
+                    KeepComponentsByNode[StableID].Add(CompStruct->GetName());
                     bNodeDiverged = true;
                 }
             }
@@ -2070,17 +2092,17 @@ namespace Lumina
 
                 if (CStruct* CompStruct = StructOfStorage(ParentStorage))
                 {
-                    VariantRemovedComponents.push_back(SPrefabComponentRef{ StableID, CompStruct->GetName() });
+                    VariantRemovedComponents.Emplace(StableID, CompStruct->GetName());
                 }
             }
 
             if (bNodeDiverged)
             {
-                DivergedEntities.push_back(MineE);
+                DivergedEntities.Add(MineE);
             }
         }
 
-        if (DivergedEntities.empty())
+        if (DivergedEntities.IsEmpty())
         {
             return;
         }
@@ -2094,7 +2116,7 @@ namespace Lumina
         // The delta stores authored values only, and carrying the rest would freeze them against parent edits.
         VariantDelta.View<SPrefabComponent>().ForEach([&](ECS::FEntity DeltaE, const SPrefabComponent& Comp)
         {
-            auto KeepIt = KeepComponentsByNode.find(Comp.StableID);
+            auto KeepIt = KeepComponentsByNode.Find(Comp.StableID);
             const bool bAddedNode = Algo::AnyOf(VariantStructuralNodes,
                 [&](const SPrefabVariantNode& N) { return N.bAdded && N.StableID == Comp.StableID; });
 
@@ -2112,12 +2134,12 @@ namespace Lumina
 
                 CStruct* CompStruct = StructOfStorage(Storage);
                 const bool bKeep = CompStruct != nullptr
-                    && KeepIt != KeepComponentsByNode.end()
-                    && KeepIt->second.find(CompStruct->GetName()) != KeepIt->second.end();
+                    && KeepIt != nullptr
+                    && KeepIt->Contains(CompStruct->GetName());
 
                 if (!bKeep)
                 {
-                    ToStrip.push_back(ID);
+                    ToStrip.Add(ID);
                 }
             }
 
@@ -2137,12 +2159,12 @@ namespace Lumina
         TVector<CPrefab*> Frontier = FindDirectVariants();
         THashSet<CPrefab*> Seen;
 
-        while (!Frontier.empty())
+        while (!Frontier.IsEmpty())
         {
             TVector<CPrefab*> Next;
             for (CPrefab* Variant : Frontier)
             {
-                if (!Seen.insert(Variant).second)
+                if (!Seen.TryAdd(Variant))
                 {
                     continue;
                 }
@@ -2155,7 +2177,7 @@ namespace Lumina
 
                 for (CPrefab* Child : Variant->FindDirectVariants())
                 {
-                    Next.push_back(Child);
+                    Next.Add(Child);
                 }
             }
             Frontier = Move(Next);
@@ -2164,13 +2186,13 @@ namespace Lumina
 
     void CPrefab::RebuildStableIDLookup()
     {
-        StableIDLookup.clear();
+        StableIDLookup.Reset();
         Registry.View<SPrefabComponent>().ForEach([&](ECS::FEntity E, const SPrefabComponent& Comp)
         {
             if (!Comp.StableID.IsNone())
             {
                 // A duplicate id is a bug elsewhere, and picking the same entity keeps the baseline stable.
-                StableIDLookup.try_emplace(Comp.StableID, E);
+                StableIDLookup.FindOrAdd(Comp.StableID, E);
             }
         });
     }
@@ -2191,14 +2213,14 @@ namespace Lumina
             bStableIDLookupBuilt     = true;
         }
 
-        auto It = StableIDLookup.find(StableID);
-        if (It == StableIDLookup.end())
+        auto It = StableIDLookup.Find(StableID);
+        if (It == nullptr)
         {
             return ECS::NullEntity;
         }
 
         // A missed generation bump would hand back a recycled entity, and a wrong component is worse than none.
-        const ECS::FEntity Cached = It->second;
+        const ECS::FEntity Cached = (*It);
         if (!Registry.IsValid(Cached))
         {
             return ECS::NullEntity;
@@ -2287,14 +2309,14 @@ namespace Lumina
             SPrefabOverrideComponent& Ledger = Registry.GetOrEmplace<SPrefabOverrideComponent>(Target.Root);
             const FName CompName = Target.ComponentType->GetName();
             auto& Recs = Ledger.PropertyOverrides;
-            Recs.erase(Algo::RemoveIf(Recs, [&](const SPrefabPropertyOverride& O)
+            Recs.RemoveAll([&](const SPrefabPropertyOverride& O)
             {
                 return O.EntityStableID == Target.NodeID && O.ComponentType == CompName;
-            }), Recs.end());
+            });
 
             for (const FName& Path : Paths)
             {
-                Recs.push_back({ Target.NodeID, CompName, Path });
+                Recs.Emplace(Target.NodeID, CompName, Path);
             }
         }
     }
@@ -2337,7 +2359,7 @@ namespace Lumina
                 {
                     if (Override.EntityStableID == Target.NodeID && Override.ComponentType == Target.ComponentType->GetName())
                     {
-                        Paths.push_back(Override.PropertyPath);
+                        Paths.Add(Override.PropertyPath);
                     }
                 }
             }
@@ -2361,7 +2383,7 @@ namespace Lumina
 
         // The restored value may predate a prefab edit, so every leaf it did not override takes the prefab's current one.
         THashSet<FName> Overridden;
-        Overridden.insert(Paths.begin(), Paths.end());
+        Overridden.Append(Paths);
         const FRemappedPrefabValue Inherited(Target.ComponentType, Target.PrefabPtr, MapPrefabOntoInstance(*Target.Source, Registry, Target.Root));
         if (Target.ComponentType == SEntityScriptComponent::StaticStruct())
         {
@@ -2414,7 +2436,7 @@ namespace Lumina
 
         // A genuinely new component is recorded as instance-added, so refresh never prunes it.
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(Algo::RemoveIf(Removed, MatchesPair), Removed.end());
+        Removed.RemoveAll(MatchesPair);
 
         if (!bPrefabHas)
         {
@@ -2424,7 +2446,7 @@ namespace Lumina
                 SPrefabComponentRef Rec;
                 Rec.EntityStableID = NodeID;
                 Rec.ComponentType  = CompName;
-                Added.push_back(Rec);
+                Added.Add(Rec);
             }
         }
     }
@@ -2461,13 +2483,13 @@ namespace Lumina
 
         // Any property overrides for the gone component are meaningless now.
         auto& Props = Ledger.PropertyOverrides;
-        Props.erase(Algo::RemoveIf(Props, MatchesPair), Props.end());
+        Props.RemoveAll(MatchesPair);
 
         auto& Added = Ledger.AddedComponents;
-        Added.erase(Algo::RemoveIf(Added, MatchesPair), Added.end());
+        Added.RemoveAll(MatchesPair);
 
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(Algo::RemoveIf(Removed, MatchesPair), Removed.end());
+        Removed.RemoveAll(MatchesPair);
 
         // An inherited component the user deleted must be recorded so refresh won't re-add it.
         if (bPrefabHas)
@@ -2475,7 +2497,7 @@ namespace Lumina
             SPrefabComponentRef Rec;
             Rec.EntityStableID = NodeID;
             Rec.ComponentType  = CompName;
-            Removed.push_back(Rec);
+            Removed.Add(Rec);
         }
     }
 
@@ -2514,7 +2536,7 @@ namespace Lumina
         {
             if (!Algo::Contains(OutRoots, Root))
             {
-                OutRoots.push_back(Root);
+                OutRoots.Add(Root);
             }
         });
     }
@@ -2526,7 +2548,7 @@ namespace Lumina
             TVector<FName>& Removed = Registry.GetOrEmplace<SPrefabOverrideComponent>(Root).RemovedEntities;
             if (!Algo::Contains(Removed, NodeID))
             {
-                Removed.push_back(NodeID);
+                Removed.Add(NodeID);
             }
         });
     }

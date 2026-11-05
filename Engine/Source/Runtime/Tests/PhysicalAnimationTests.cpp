@@ -117,16 +117,16 @@ namespace
                 Bone.ParentIndex    = Source.Parent;
                 Bone.LocalTransform = Math::Translate(FMatrix4(1.0f), Source.Position - ParentPosition);
                 Bone.InvBindMatrix  = Math::Inverse(Global);
-                Skeleton.Bones.push_back(Bone);
+                Skeleton.Bones.Add(Bone);
                 Skeleton.BoneNameToIndex[Bone.Name] = Index;
-                BindGlobals.push_back(Global);
+                BindGlobals.Add(Global);
             }
 
             Asset = NewObject<CPhysicsAsset>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             AssetOwner = Asset;
             for (const FMannequinBody& Source : kMannequinBodies)
             {
-                SPhysicsBodySetup& Body = Asset->Bodies.emplace_back();
+                SPhysicsBodySetup& Body = Asset->Bodies.EmplaceGetRef();
                 Body.BoneName          = FName(Source.Bone);
                 Body.Shape             = Source.Shape;
                 Body.TranslationOffset = Source.Offset;
@@ -138,7 +138,7 @@ namespace
             }
             for (const FMannequinJoint& Source : kMannequinJoints)
             {
-                SPhysicsConstraintSetup& Joint = Asset->Constraints.emplace_back();
+                SPhysicsConstraintSetup& Joint = Asset->Constraints.EmplaceGetRef();
                 Joint.ChildBone          = FName(Source.Child);
                 Joint.ParentBone         = Skeleton.GetBone(Skeleton.GetBone(Skeleton.FindBoneIndex(Joint.ChildBone)).ParentIndex).Name;
                 Joint.TwistLimitDegrees  = Source.Twist;

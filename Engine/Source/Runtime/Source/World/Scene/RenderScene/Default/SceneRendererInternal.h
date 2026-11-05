@@ -23,7 +23,6 @@
 #include "Renderer/RHITexture.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/TextureStreamingManager.h"
-#include "TaskSystem/TaskGraph.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "UI/RmlUiBridge.h"
@@ -40,7 +39,6 @@
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
 #include "World/Entity/Components/LocalFogVolumeComponent.h"
-#include "World/Entity/Components/LocalFogVolumeComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/LineBatcherComponent.h"
 #include "World/Entity/Components/TriangleBatcherComponent.h"
@@ -52,7 +50,6 @@
 #include "World/Entity/Components/WaterComponent.h"
 #include "World/Entity/Components/FollowerPoseComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
-#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "World/Entity/Components/SplineComponent.h"
@@ -69,12 +66,37 @@
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
-#include "TaskSystem/FiberSync.h"
+#include "Core/Threading/Sync.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {
+    // Raw bytes, so only for trivially copyable inputs of an extract cache key.
+    template <typename T>
+    uint64 HashExtractValue(const T& Value, uint64 Seed)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "Hashed as raw bytes.");
+        return Hash::GetHash64(&Value, sizeof(T), Seed);
+    }
+
+    // Drops entries an extract did not touch, walking down so a swapped-in entry is already checked; free when every entry was visited.
+    template <typename TEntry>
+    void SweepUnseenExtractCache(ECS::TEntityMap<TEntry>& Cache, uint32 Serial, uint32 Visited)
+    {
+        if (Cache.Num() <= Visited)
+        {
+            return;
+        }
+        for (uint32 Dense = Cache.Num(); Dense-- > 0;)
+        {
+            if (Cache.GetValueAt(Dense).SeenSerial != Serial)
+            {
+                Cache.RemoveAt(Dense);
+            }
+        }
+    }
+
     // About twice Godot's default 64-slice volume; FroxelResolutionScale raises it where the fog needs detail.
     inline constexpr uint32 GFroxelGridX = 96;
     inline constexpr uint32 GFroxelGridY = 54;
@@ -107,12 +129,10 @@ namespace Lumina
     inline constexpr uint32 GSkinnedLayoutGrain = 256;
 
 
-    // A ceiling reserves nothing, so it scales with the card rather than pinning one number that risks
-    // an allocation failure on a small GPU and wastes headroom on a large one.
+    // A ceiling reserves nothing, so it scales with the card instead of risking a failed allocation on a small GPU.
     inline uint64 AutoPreSkinnedBudgetMiB()
     {
-        // Resolved once: a ceiling that drifted with another process's VRAM use would resize the
-        // buffer for reasons the scene cannot see.
+        // Resolved once, so another process using VRAM never resizes the buffer.
         static const uint64 Resolved = []
         {
             RHI::FGPUMemoryStats Stats;
@@ -257,7 +277,7 @@ namespace Lumina
         RHI::FCmdListH CL;
         static void SerializeForTiming(RHI::FCmdListH InCL)
         {
-            static const bool bSerialize = !Platform::GetEnvVariable("LUMINA_SERIAL_GPU_SCOPES").empty();
+            static const bool bSerialize = !Platform::GetEnvVariable("LUMINA_SERIAL_GPU_SCOPES").IsEmpty();
             if (bSerialize)
             {
                 RHI::CmdBarrier(InCL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);

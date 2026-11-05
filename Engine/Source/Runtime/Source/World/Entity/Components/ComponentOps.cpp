@@ -53,6 +53,17 @@ namespace Lumina
 
     void* FComponentOps::Get(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
+        ECS::FSparseSet* Storage = Registry.FindStorage(GetTypeID());
+        if (Storage == nullptr)
+        {
+            return nullptr;
+        }
+        Storage->MarkPointersEscaped();
+        return Storage->GetRawForWrite(Entity);
+    }
+
+    void* FComponentOps::GetUnmarked(ECS::FRegistry& Registry, ECS::FEntity Entity) const
+    {
         const ECS::FSparseSet* Storage = Registry.FindStorage(GetTypeID());
         return Storage != nullptr ? Storage->GetRaw(Entity) : nullptr;
     }
@@ -65,7 +76,9 @@ namespace Lumina
 
     void* FComponentOps::Emplace(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
-        return Registry.GetOrEmplaceRaw(GetTypeID(), Entity);
+        void* Value = Registry.GetOrEmplaceRaw(GetTypeID(), Entity);
+        Registry.AssureStorage(GetTypeID()).MarkPointersEscaped();
+        return Value;
     }
 
     int32 FComponentOps::Remove(ECS::FRegistry& Registry, ECS::FEntity Entity) const

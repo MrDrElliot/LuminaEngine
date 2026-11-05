@@ -110,14 +110,14 @@ namespace Lumina
         FCodePosition GetCursor() const { return Cursors[MainCursor].Head; }
         FCodeRange GetSelection() const;
         bool HasSelection() const;
-        int32 GetCursorCount() const { return (int32)Cursors.size(); }
+        int32 GetCursorCount() const { return Cursors.Num(); }
         void SetCursor(FCodePosition Position, bool bCenter = true);
         void Select(const FCodeRange& Range, bool bCenter = true);
         void SelectAll();
         void ScrollToLine(int32 Line);
 
-        bool CanUndo() const { return !Settings.bReadOnly && !UndoStack.empty(); }
-        bool CanRedo() const { return !Settings.bReadOnly && !RedoStack.empty(); }
+        bool CanUndo() const { return !Settings.bReadOnly && !UndoStack.IsEmpty(); }
+        bool CanRedo() const { return !Settings.bReadOnly && !RedoStack.IsEmpty(); }
         void Undo();
         void Redo();
 
@@ -388,7 +388,7 @@ namespace Lumina
         void RebuildRows();
         int32 RowOf(int32 Line) const;
         int32 LineAtRow(int32 Row) const;
-        int32 VisibleRows() const { return Math::Max(1, (int32)LineOfRow.size()); }
+        int32 VisibleRows() const { return Math::Max(1, LineOfRow.Num()); }
         const FCodeFold* FoldStartingAt(int32 Line) const;
         bool IsCollapsed(int32 Line) const;
         // Opens every fold hiding Line, so a caret or a jump never lands out of sight.

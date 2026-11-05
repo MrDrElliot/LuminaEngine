@@ -30,10 +30,10 @@ TEST(NodeGraphDuplicate, ACopiedGraphKeepsItsLinksAndLayout)
     CObject* Sources[] = { Graph, Switch, Feed };
     const THashMap<CObject*, CObject*> Remap = CopyObjectsInto(Sources, CPackage::CreatePackage("/GraphDuplicate/Copy"),
         [](CObject* Object) { return Object->GetName(); });
-    ASSERT_EQ(Remap.size(), 3u);
+    ASSERT_EQ(Remap.Num(), 3);
 
-    const CMaterialExpression_StaticSwitch* CopiedSwitch = static_cast<CMaterialExpression_StaticSwitch*>(Remap.at(Switch));
-    const CMaterialExpression_StaticSwitch* CopiedFeed   = static_cast<CMaterialExpression_StaticSwitch*>(Remap.at(Feed));
+    const CMaterialExpression_StaticSwitch* CopiedSwitch = static_cast<CMaterialExpression_StaticSwitch*>(Remap.FindChecked(Switch));
+    const CMaterialExpression_StaticSwitch* CopiedFeed   = static_cast<CMaterialExpression_StaticSwitch*>(Remap.FindChecked(Feed));
     ASSERT_NE(CopiedSwitch->True, nullptr);
     ASSERT_TRUE(CopiedSwitch->True->HasConnection());
     EXPECT_EQ(CopiedSwitch->True->GetConnection(0), CopiedFeed->Output);

@@ -60,7 +60,7 @@ namespace Lumina
         TVector<IUpscaler*>& Upscalers = GetUpscalers();
         if (!Algo::Contains(Upscalers, Upscaler))
         {
-            Upscalers.push_back(Upscaler);
+            Upscalers.Add(Upscaler);
         }
     }
 
@@ -68,7 +68,7 @@ namespace Lumina
     {
         FScopeLock Lock(GUpscalerMutex);
         TVector<IUpscaler*>& Upscalers = GetUpscalers();
-        Upscalers.erase(Algo::Remove(Upscalers, Upscaler), Upscalers.end());
+        Upscalers.Remove(Upscaler);
     }
 
     IUpscaler* FUpscalerRegistry::Find(EUpscaler Type)

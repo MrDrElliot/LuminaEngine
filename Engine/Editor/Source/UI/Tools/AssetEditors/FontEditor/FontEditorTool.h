@@ -12,7 +12,7 @@ namespace Lumina
         LUMINA_EDITOR_TOOL(FFontEditorTool)
 
         FFontEditorTool(IEditorToolContext* Context, CObject* InAsset)
-            : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+            : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
         {}
 
         bool IsSingleWindowTool() const override { return false; }

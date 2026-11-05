@@ -249,19 +249,19 @@ namespace Lumina
 
                 auto* ScaleParam = AddNode<CMaterialExpression_ConstantFloat2>(Graph, ColUV - 320.0f, Y);
                 ScaleParam->bDynamic      = true;
-                ScaleParam->ParameterName = FName((Stem + "UVScale").c_str());
+                ScaleParam->ParameterName = FName(*(Stem + "UVScale"));
                 ScaleParam->Value         = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
                 Connect(ScaleParam->GetOutputPins()[0].Get(), Coords->Tiling);
 
                 auto* RotationParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColUV - 320.0f, Y + 95.0f);
                 RotationParam->bDynamic      = true;
-                RotationParam->ParameterName = FName((Stem + "UVRotation").c_str());
+                RotationParam->ParameterName = FName(*(Stem + "UVRotation"));
                 RotationParam->Value         = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
                 Connect(RotationParam->GetOutputPins()[0].Get(), Coords->Rotation);
 
                 auto* OffsetParam = AddNode<CMaterialExpression_ConstantFloat2>(Graph, ColUV - 320.0f, Y + 190.0f);
                 OffsetParam->bDynamic      = true;
-                OffsetParam->ParameterName = FName((Stem + "UVOffset").c_str());
+                OffsetParam->ParameterName = FName(*(Stem + "UVOffset"));
                 OffsetParam->Value         = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
 
                 auto* Add = AddNode<CMaterialExpression_Addition>(Graph, ColUV + 320.0f, Y);
@@ -530,7 +530,7 @@ namespace Lumina
         FFixedString EnsureUniquePath(const FFixedString& Path)
         {
             FFixedString Reserved = Import::PathReservations::Reserve(Path);
-            return Reserved.empty() ? Path : Reserved;
+            return Reserved.IsEmpty() ? Path : Reserved;
         }
 
         // An asset an earlier import left at Path, whether it is already loaded or still only on disk.
@@ -564,13 +564,13 @@ namespace Lumina
             TVector<FInstanceParam> Params;
             auto Scalar = [&](const FName& Name, float Value)
             {
-                Params.push_back({ Name, EMaterialParameterType::Scalar, Value });
+                Params.Emplace(Name, EMaterialParameterType::Scalar, Value);
             };
             auto Vector = [&](const FName& Name, const FVector4& Value)
             {
                 FInstanceParam Param{ Name, EMaterialParameterType::Vector };
                 Param.Vector = Value;
-                Params.push_back(Param);
+                Params.Add(Param);
             };
 
             Vector("BaseColorFactor", Src.BaseColorFactor);
@@ -588,7 +588,7 @@ namespace Lumina
                 {
                     return;
                 }
-                CTexture* Resolved = ((size_t)ImageIndex < ImageAssets.size()) ? ImageAssets[ImageIndex] : nullptr;
+                CTexture* Resolved = ((size_t)ImageIndex < static_cast<size_t>(ImageAssets.Num())) ? ImageAssets[ImageIndex] : nullptr;
                 if (Resolved == nullptr)
                 {
                     LOG_WARN("[MaterialImport] '{}' texture '{}' (image {}) did not resolve; using neutral default.", Src.Name, Name, ImageIndex);
@@ -596,7 +596,7 @@ namespace Lumina
                 }
                 FInstanceParam Param{ Name, EMaterialParameterType::Texture };
                 Param.Texture = Resolved;
-                Params.push_back(Param);
+                Params.Add(Param);
             };
 
             Texture("BaseColorTexture", Src.BaseColorImage);
@@ -626,10 +626,10 @@ namespace Lumina
                 }
                 const FTextureUVTransform& UVT = Src.UVTransforms[Slot];
                 const FString Stem = GSlotNames[Slot];
-                Vector(FName((Stem + "UVScale").c_str()), FVector4(UVT.Scale.x, UVT.Scale.y, 0.0f, 0.0f));
-                Vector(FName((Stem + "UVOffset").c_str()), FVector4(UVT.Offset.x, UVT.Offset.y, 0.0f, 0.0f));
+                Vector(FName(*(Stem + "UVScale")), FVector4(UVT.Scale.x, UVT.Scale.y, 0.0f, 0.0f));
+                Vector(FName(*(Stem + "UVOffset")), FVector4(UVT.Offset.x, UVT.Offset.y, 0.0f, 0.0f));
                 // Radians, which is what the TexCoords Rotation pin expects.
-                Scalar(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
+                Scalar(FName(*(Stem + "UVRotation")), UVT.Rotation);
             }
 
             if ((FeatureSignature & MFB_NormalScale) != 0)
@@ -677,12 +677,12 @@ namespace Lumina
                 return false;
             }
 
-            size_t EnabledOverrides = 0;
+            int32 EnabledOverrides = 0;
             for (const SMaterialParameterOverride& Override : Candidate.Overrides)
             {
                 EnabledOverrides += Override.bEnabled ? 1 : 0;
             }
-            if (EnabledOverrides != Params.size())
+            if (EnabledOverrides != Params.Num())
             {
                 return false;
             }
@@ -734,7 +734,7 @@ namespace Lumina
             bool                                bSourceHasVertexColors)
         {
             TVector<CMaterialInstance*> Instances;
-            if (SourceMaterials.empty())
+            if (SourceMaterials.IsEmpty())
             {
                 return Instances;
             }
@@ -754,7 +754,7 @@ namespace Lumina
                 auto FindOrCreate = [&](const char* Name, uint8 R, uint8 G, uint8 B) -> TStrongObjectPtr<CTexture>
                 {
                     FFixedString Path = MaterialsDir;
-                    Path.append(Name);
+                    Path.Append(Name);
                     if (CTexture* Existing = FindExistingAsset<CTexture>(Path))
                     {
                         return Existing;
@@ -763,7 +763,7 @@ namespace Lumina
                     // Pushed ahead of any master, so reverse-order teardown frees masters before their textures.
                     if (Created)
                     {
-                        OutCreated.push_back(Created.Get());
+                        OutCreated.Add(Created.Get());
                     }
                     return Created;
                 };
@@ -811,43 +811,43 @@ namespace Lumina
 
                 // The name spells out everything the graph is built from, so it alone identifies a reusable master.
                 FFixedString Variant;
-                if (Blend == EBlendMode::Masked)           { Variant.append("_Masked"); }
-                else if (Blend == EBlendMode::Translucent) { Variant.append("_Translucent"); }
-                else if (Blend == EBlendMode::Additive)    { Variant.append("_Additive"); }
+                if (Blend == EBlendMode::Masked)           { Variant.Append("_Masked"); }
+                else if (Blend == EBlendMode::Translucent) { Variant.Append("_Translucent"); }
+                else if (Blend == EBlendMode::Additive)    { Variant.Append("_Additive"); }
                 if (Blend == EBlendMode::Masked && Math::Abs(Cutoff - 0.5f) > 0.001f)
                 {
-                    Variant.append("_C");
-                    Variant.append(Format("{}", (int32)Math::Round(Cutoff * 1000.0f)));
+                    Variant.Append("_C");
+                    Variant.Append(Format("{}", (int32)Math::Round(Cutoff * 1000.0f)));
                 }
-                if (Shading == EMaterialShadingModel::Unlit)     { Variant.append("_Unlit"); }
-                if (Shading == EMaterialShadingModel::Clearcoat) { Variant.append("_Clearcoat"); }
-                if (bTwoSided)                               { Variant.append("_TwoSided"); }
+                if (Shading == EMaterialShadingModel::Unlit)     { Variant.Append("_Unlit"); }
+                if (Shading == EMaterialShadingModel::Clearcoat) { Variant.Append("_Clearcoat"); }
+                if (bTwoSided)                               { Variant.Append("_TwoSided"); }
                 if (UVSignature != 0)
                 {
-                    Variant.append("_UV");
-                    Variant.append(Format("{}", UVSignature));
+                    Variant.Append("_UV");
+                    Variant.Append(Format("{}", UVSignature));
                 }
                 if (SamplerSignature != 0)
                 {
-                    Variant.append("_S");
-                    Variant.append(Format("{}", SamplerSignature));
+                    Variant.Append("_S");
+                    Variant.Append(Format("{}", SamplerSignature));
                 }
                 if (FeatureSignature != 0)
                 {
-                    Variant.append("_F");
-                    Variant.append(Format("{}", FeatureSignature));
+                    Variant.Append("_F");
+                    Variant.Append(Format("{}", FeatureSignature));
                 }
 
                 FFixedString MasterPath = MaterialsDir;
-                MasterPath.append("M_Imported");
-                MasterPath.append(Variant.c_str());
+                MasterPath.Append("M_Imported");
+                MasterPath.Append(*Variant);
 
                 CMaterial* Existing = FindExistingAsset<CMaterial>(MasterPath);
                 if (Existing != nullptr && Existing->MaterialType == EMaterialType::PBR && Existing->BlendMode == Blend
                     && Existing->ShadingModel == Shading && Existing->bTwoSided == bTwoSided
                     && (Blend != EBlendMode::Masked || Math::Abs(Existing->OpacityMaskClipValue - Cutoff) < 0.001f))
                 {
-                    Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature, FeatureSignature, Existing });
+                    Groups.Emplace(Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature, FeatureSignature, Existing);
                     return Existing;
                 }
 
@@ -887,7 +887,7 @@ namespace Lumina
                     // Named even with no errors, since an empty list is exactly what used to drop a master silently.
                     LOG_ERROR("[MaterialImport] Generated PBR material '{}' failed to compile ({} error(s)); "
                               "every surface using it will import without a material.",
-                              Master->GetName(), (uint32)CompileResult.Errors.size());
+                              Master->GetName(), (uint32)CompileResult.Errors.Num());
                     for (const EdNodeGraph::FError& Error : CompileResult.Errors)
                     {
                         LOG_ERROR("[MaterialImport] Generated PBR material '{}' failed to compile [{}]: {}", Master->GetName(), Error.Name, Error.Description);
@@ -901,17 +901,17 @@ namespace Lumina
                 }
 
                 // Master before graph, so reverse-order teardown releases the back-ref before the master is freed.
-                OutCreated.push_back(Master);
-                OutCreated.push_back(Graph);
-                Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature,
-                                   FeatureSignature, Master });
+                OutCreated.Add(Master);
+                OutCreated.Add(Graph);
+                Groups.Emplace(Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature,
+                               FeatureSignature, Master);
                 return Master;
             };
 
-            Instances.resize(SourceMaterials.size(), nullptr);
+            Instances.SetNum(SourceMaterials.Num(), nullptr);
             uint32 Reused = 0;
 
-            for (size_t i = 0; i < SourceMaterials.size(); ++i)
+            for (int32 i = 0; i < SourceMaterials.Num(); ++i)
             {
                 const FMeshImportMaterial& Src = SourceMaterials[i];
 
@@ -928,7 +928,7 @@ namespace Lumina
 
                 // The folder already scopes the instance, so the name only needs cleaning.
                 FFixedString BasePath = MaterialsDir;
-                BasePath.append(Import::MakeAssetName("MI_", Src.Name.c_str(), "Material").c_str());
+                BasePath.Append(*Import::MakeAssetName("MI_", *Src.Name, "Material"));
 
                 // An identical instance from an earlier import, or from earlier in this one, is shared rather than copied.
                 CMaterialInstance* Instance = nullptr;
@@ -937,7 +937,7 @@ namespace Lumina
                     FFixedString Candidate = BasePath;
                     if (N > 0)
                     {
-                        Candidate.append("_").append(Format("{}", N).c_str());
+                        Candidate.Append("_").Append(*Format("{}", N));
                     }
                     CMaterialInstance* Existing = FindExistingAsset<CMaterialInstance>(Candidate);
                     if (Existing != nullptr && InstanceMatches(*Existing, Master, Params))
@@ -965,13 +965,13 @@ namespace Lumina
                 ApplyInstanceParams(Instance, Params);
                 Instance->PostLoad();
 
-                OutCreated.push_back(Instance);
+                OutCreated.Add(Instance);
                 Instances[i] = Instance;
             }
 
             if (Reused > 0)
             {
-                LOG_INFO("[MaterialImport] '{}' reused {} of {} material instance(s) already in {}.", BaseName, Reused, (uint32)SourceMaterials.size(), MaterialsDir);
+                LOG_INFO("[MaterialImport] '{}' reused {} of {} material instance(s) already in {}.", BaseName, Reused, (uint32)SourceMaterials.Num(), MaterialsDir);
             }
 
             return Instances;

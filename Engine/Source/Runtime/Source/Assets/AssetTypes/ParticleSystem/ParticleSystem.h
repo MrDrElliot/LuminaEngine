@@ -488,7 +488,7 @@ namespace Lumina
         /** Slot for a renderer-consumed attribute, or -1. Safe on an asset saved before the entry existed. */
         int32 GetRenderAttributeSlot(ParticleRenderAttribute::Type Attr) const
         {
-            return (int32)Attr < (int32)RenderAttributeSlots.size() ? RenderAttributeSlots[(int32)Attr] : -1;
+            return (int32)Attr < RenderAttributeSlots.Num() ? RenderAttributeSlots[(int32)Attr] : -1;
         }
 
         /** Shown as the column header in the editor. Purely cosmetic, but an effect with four emitters is

@@ -1,11 +1,15 @@
 #pragma once
 #include "EntitySystem.h"
+#include "World/Entity/Components/CameraFollowComponent.h"
+#include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Components/SpringArmComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "CameraRigSystem.generated.h"
 
 namespace Lumina
 {
-    // Positions cameras from rig components (follow + spring-arm boom) at FrameEnd before SCameraSystem, on
-    // settled transforms. Game/simulation only. With both rig components the spring arm wins (processed last).
+
+    // Places rig cameras (follow, spring arm) on settled transforms before SCameraSystem; with both, the spring arm wins.
     REFLECT()
     class SCameraRigSystem : public CEntitySystem
     {
@@ -14,10 +18,15 @@ namespace Lumina
 
         void Configure() override;
 
-        // Writes transforms + the follow/spring-arm rig components; reads the physics scene (spring-arm
-        // collision sweep) via the PhysicsQuery resource. Runs before SCameraSystem in the same stage; the
-        // shared STransformComponent write keeps that ordering. Defined in the .cpp.
+        // The rigs decide, since the target lookup matches nearly every entity.
+        bool HasWork(const SSystemContext& Context) override;
 
         void OnUpdate(const SSystemContext& Context) override;
+
+    private:
+
+        ECS::TQuery<ECS::Write<SCameraFollowComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>, ECS::Without<SSpringArmComponent>> Followers;
+        ECS::TQuery<ECS::Write<SSpringArmComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>> SpringArms;
+        ECS::TQuery<ECS::Read<STransformComponent>> Targets;
     };
 }

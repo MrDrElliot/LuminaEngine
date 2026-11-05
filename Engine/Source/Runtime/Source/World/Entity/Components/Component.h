@@ -44,7 +44,12 @@ namespace Lumina
 
         NODISCARD ECS::FComponentTypeID GetTypeID() const { return static_cast<ECS::FComponentTypeID>(TypeId); }
 
+        // Mutable access, so a tracked pool stamps the element and treats the pointer as one a holder may cache.
         NODISCARD void* Get(ECS::FRegistry& Registry, ECS::FEntity Entity) const;
+
+        // Neither stamps nor marks the pointer cached, so a caller that writes through it records the write with Registry.MarkChangedRaw.
+        NODISCARD void* GetUnmarked(ECS::FRegistry& Registry, ECS::FEntity Entity) const;
+
         NODISCARD int32 Has(ECS::FRegistry& Registry, ECS::FEntity Entity) const;
 
         // Get or emplace, never replacing a value already there. Null for a tag.

@@ -42,11 +42,11 @@ namespace Lumina
 
     FGuid SUIDocumentRef::GetGuid() const
     {
-        if (Guid.empty())
+        if (Guid.IsEmpty())
         {
             return FGuid();
         }
-        if (TOptional<FGuid> Parsed = FGuid::TryParse(FStringView(Guid.c_str(), Guid.size())); Parsed.has_value())
+        if (TOptional<FGuid> Parsed = FGuid::TryParse(FStringView(*Guid, Guid.Len())); Parsed.IsSet())
         {
             return *Parsed;
         }
@@ -63,17 +63,17 @@ namespace Lumina
         {
             if (FTextAssetData* Data = Registry.GetTextAssetByGUID(G))
             {
-                const FStringView Current(Data->Path.c_str(), Data->Path.size());
+                const FStringView Current(*Data->Path, Data->Path.Len());
                 if (Current != GetPath())
                 {
-                    const_cast<SUIDocumentRef*>(this)->Path.assign(Current.data(), Current.size());
+                    const_cast<SUIDocumentRef*>(this)->Path = FStringView(Current.GetData(), Current.Len());
                 }
                 return GetPath();
             }
         }
 
         // Back-fills the GUID from the record, so legacy path-only data self-heals once a sidecar exists.
-        if (!Path.empty())
+        if (!Path.IsEmpty())
         {
             if (FTextAssetData* Data = Registry.GetTextAssetByPath(GetPath()))
             {
@@ -87,7 +87,7 @@ namespace Lumina
     bool SUIDocumentRef::ReadText(FString& OutText) const
     {
         const FStringView ResolvedPath = ResolvePath();
-        if (ResolvedPath.empty())
+        if (ResolvedPath.IsEmpty())
         {
             return false;
         }
@@ -96,8 +96,8 @@ namespace Lumina
 
     void SUIDocumentRef::SetPath(FStringView InPath)
     {
-        Path.assign(InPath.data(), InPath.size());
-        Guid.clear();
+        Path = FStringView(InPath.GetData(), InPath.Len());
+        Guid.Reset();
 
         // Mint/resolve a sidecar identity now (editor context).
         const FGuid G = FAssetRegistry::Get().EnsureTextAsset(InPath);
@@ -109,7 +109,7 @@ namespace Lumina
 
     void SUIDocumentRef::Set(FStringView InPath, const FGuid& InGuid)
     {
-        Path.assign(InPath.data(), InPath.size());
+        Path = FStringView(InPath.GetData(), InPath.Len());
         Guid = InGuid.IsValid() ? InGuid.ToString() : FString();
     }
 }

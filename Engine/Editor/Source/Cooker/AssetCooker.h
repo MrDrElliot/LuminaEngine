@@ -23,17 +23,17 @@ namespace Lumina
     {
         FName   Chunk;        // FName("Main") for the default / shared content chunk.
         FString PakPath;      // Absolute path of the written .pak.
-        size_t  NumAssets   = 0;
-        size_t  NumExtras   = 0; // engine resources, shaders, config, etc. (Main only)
-        size_t  Bytes       = 0;
+        int32   NumAssets   = 0;
+        int32   NumExtras   = 0; // engine resources, shaders, config, etc. (Main only)
+        int64   Bytes       = 0;
     };
 
     struct FCookResult
     {
         bool                      bSuccess        = false;
-        size_t                    NumAssetsCooked = 0;
-        size_t                    NumExtraFiles   = 0;
-        size_t                    TotalBytes      = 0;
+        int32                     NumAssetsCooked = 0;
+        int32                     NumExtraFiles   = 0;
+        int64                     TotalBytes      = 0;
         TVector<FCookChunkResult> Chunks;          // one entry per written .pak
         FString                   ErrorMessage;
     };

@@ -83,7 +83,7 @@ namespace Lumina
         FString GetRangeText(const FCodeRange& Range) const;
         size_t GetByteSize() const;
 
-        int32 GetLineCount() const { return (int32)Lines.size(); }
+        int32 GetLineCount() const { return Lines.Num(); }
         const FString& GetLine(int32 Line) const { return Lines[Line].Text; }
         FStringView GetLineView(int32 Line) const { return Lines[Line].Text.View(); }
 

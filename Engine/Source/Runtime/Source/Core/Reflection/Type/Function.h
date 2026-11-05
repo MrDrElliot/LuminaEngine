@@ -196,7 +196,7 @@ namespace Lumina
 
         /** Typed access to one argument, by its index in GetParams(). UB if T is not the parameter's type. */
         template<typename T>
-        T& At(size_t Index) const
+        T& At(int32 Index) const
         {
             return *reinterpret_cast<T*>(static_cast<uint8*>(Memory) + OffsetOf(Index));
         }
@@ -212,7 +212,7 @@ namespace Lumina
 
     private:
 
-        RUNTIME_API size_t OffsetOf(size_t Index) const;
+        RUNTIME_API size_t OffsetOf(int32 Index) const;
         RUNTIME_API size_t ReturnOffset() const;
 
         static constexpr size_t kInlineBytes = 128;

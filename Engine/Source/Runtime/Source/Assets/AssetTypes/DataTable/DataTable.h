@@ -78,7 +78,7 @@ namespace Lumina
         NODISCARD RUNTIME_API bool RowsAreNamed(const FName& BaseName) const;
 
         FUNCTION()
-        NODISCARD RUNTIME_API int32 GetRowCount() const { return (int32)Rows.size(); }
+        NODISCARD RUNTIME_API int32 GetRowCount() const { return Rows.Num(); }
 
         /** Index of RowName, or Constants::kIndexNone. Linear: tables are authored small and read by name rarely
          *  enough that an index would cost more to keep coherent than it saves. */

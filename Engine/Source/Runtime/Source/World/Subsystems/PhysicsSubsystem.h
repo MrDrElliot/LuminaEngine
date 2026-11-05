@@ -247,6 +247,10 @@ namespace Lumina
         FUNCTION()
         bool IsAwake(ECS::FEntity Entity);
 
+        /** Bodies the solver is simulating, the asleep ones left out. One call, rather than IsAwake on every body. */
+        FUNCTION()
+        int32 GetAwakeBodyCount();
+
         /** Drags bodies resting on this collider, the conveyor belt. Zero clears it. */
         FUNCTION()
         void SetSurfaceVelocity(ECS::FEntity Entity, FVector3 Linear, FVector3 Angular);

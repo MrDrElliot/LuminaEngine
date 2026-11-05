@@ -14,7 +14,7 @@ namespace Lumina::Containers
     struct TArray
     {
         using value_type             = T;
-        using size_type              = size_t;
+        using size_type              = int32;
         using difference_type        = ptrdiff_t;
         using reference              = T&;
         using const_reference        = const T&;
@@ -28,53 +28,49 @@ namespace Lumina::Containers
         T Elements[N];
 
         // Elements is an array member, so a const object deduces const T* and const T& on its own.
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto* data(this Self&& S) noexcept { return S.Elements; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto* GetData(this TSelf&& Self) noexcept { return Self.Elements; }
 
-        NODISCARD static constexpr size_t size() noexcept { return N; }
-        NODISCARD static constexpr size_t max_size() noexcept { return N; }
-        NODISCARD static constexpr bool empty() noexcept { return N == 0; }
-        NODISCARD static constexpr size_t Num() noexcept { return N; }
+        NODISCARD static constexpr int32 Num() noexcept { return static_cast<int32>(N); }
+        NODISCARD static constexpr bool IsEmpty() noexcept { return N == 0; }
+        NODISCARD static constexpr bool IsValidIndex(int32 Index) noexcept { return static_cast<uint32>(Index) < N; }
 
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto* begin(this Self&& S) noexcept { return S.Elements; }
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto* end(this Self&& S) noexcept { return S.Elements + N; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto* begin(this TSelf&& Self) noexcept { return Self.Elements; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto* end(this TSelf&& Self) noexcept { return Self.Elements + N; }
         NODISCARD FORCEINLINE constexpr const T* cbegin() const noexcept { return Elements; }
         NODISCARD FORCEINLINE constexpr const T* cend() const noexcept { return Elements + N; }
 
-        template <typename Self> NODISCARD constexpr auto rbegin(this Self&& S) noexcept { return std::reverse_iterator(S.end()); }
-        template <typename Self> NODISCARD constexpr auto rend(this Self&& S) noexcept { return std::reverse_iterator(S.begin()); }
+        template <typename TSelf> NODISCARD constexpr auto rbegin(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.end()); }
+        template <typename TSelf> NODISCARD constexpr auto rend(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.begin()); }
 
-        template <typename Self>
-        NODISCARD FORCEINLINE constexpr auto& operator[](this Self&& S, size_t Index) noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE constexpr auto& operator[](this TSelf&& Self, int32 Index) noexcept
         {
             LUMINA_CONTAINER_CHECK_INDEX(Index, N);
-            return S.Elements[Index];
+            return Self.Elements[Index];
         }
 
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto& at(this Self&& S, size_t Index) noexcept { return S[Index]; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto& Last(this TSelf&& Self, int32 IndexFromEnd = 0) noexcept { return Self[static_cast<int32>(N) - IndexFromEnd - 1]; }
 
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto& front(this Self&& S) noexcept { return S[0]; }
-        template <typename Self> NODISCARD FORCEINLINE constexpr auto& back(this Self&& S) noexcept { return S[N - 1]; }
-
-        constexpr void fill(const T& Value)
+        constexpr void Fill(const T& Value)
         {
-            for (size_t Index = 0; Index < N; ++Index)
+            for (uint32 Index = 0; Index < N; ++Index)
             {
                 Elements[Index] = Value;
             }
         }
 
-        constexpr void swap(TArray& Other) noexcept(std::is_nothrow_swappable_v<T>)
+        friend constexpr void swap(TArray& Left, TArray& Right) noexcept(std::is_nothrow_swappable_v<T>)
         {
             using std::swap;
-            for (size_t Index = 0; Index < N; ++Index)
+            for (uint32 Index = 0; Index < N; ++Index)
             {
-                swap(Elements[Index], Other.Elements[Index]);
+                swap(Left.Elements[Index], Right.Elements[Index]);
             }
         }
 
         NODISCARD friend constexpr bool operator==(const TArray& Left, const TArray& Right)
         {
-            for (size_t Index = 0; Index < N; ++Index)
+            for (uint32 Index = 0; Index < N; ++Index)
             {
                 if (!(Left.Elements[Index] == Right.Elements[Index]))
                 {
@@ -86,7 +82,7 @@ namespace Lumina::Containers
 
         NODISCARD friend constexpr auto operator<=>(const TArray& Left, const TArray& Right)
         {
-            for (size_t Index = 0; Index < N; ++Index)
+            for (uint32 Index = 0; Index < N; ++Index)
             {
                 if (const auto Order = Left.Elements[Index] <=> Right.Elements[Index]; Order != 0)
                 {
@@ -102,7 +98,7 @@ namespace Lumina::Containers
     struct TArray<T, 0>
     {
         using value_type      = T;
-        using size_type       = size_t;
+        using size_type       = int32;
         using reference       = T&;
         using const_reference = const T&;
         using pointer         = T*;
@@ -110,43 +106,36 @@ namespace Lumina::Containers
         using iterator        = T*;
         using const_iterator  = const T*;
 
-        NODISCARD FORCEINLINE constexpr T* data() noexcept { return nullptr; }
-        NODISCARD FORCEINLINE constexpr const T* data() const noexcept { return nullptr; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto GetData(this TSelf&&) noexcept -> TLikeSelf<TSelf, T>* { return nullptr; }
 
-        NODISCARD static constexpr size_t size() noexcept { return 0; }
-        NODISCARD static constexpr size_t max_size() noexcept { return 0; }
-        NODISCARD static constexpr bool empty() noexcept { return true; }
-        NODISCARD static constexpr size_t Num() noexcept { return 0; }
+        NODISCARD static constexpr int32 Num() noexcept { return 0; }
+        NODISCARD static constexpr bool IsEmpty() noexcept { return true; }
 
-        NODISCARD FORCEINLINE constexpr T* begin() noexcept { return nullptr; }
-        NODISCARD FORCEINLINE constexpr const T* begin() const noexcept { return nullptr; }
-        NODISCARD FORCEINLINE constexpr T* end() noexcept { return nullptr; }
-        NODISCARD FORCEINLINE constexpr const T* end() const noexcept { return nullptr; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto begin(this TSelf&&) noexcept -> TLikeSelf<TSelf, T>* { return nullptr; }
+        template <typename TSelf> NODISCARD FORCEINLINE constexpr auto end(this TSelf&&) noexcept -> TLikeSelf<TSelf, T>* { return nullptr; }
 
-        constexpr void fill(const T&) {}
-        constexpr void swap(TArray&) noexcept {}
+        constexpr void Fill(const T&) {}
+        friend constexpr void swap(TArray&, TArray&) noexcept {}
 
         NODISCARD friend constexpr bool operator==(const TArray&, const TArray&) { return true; }
     };
 
-    template <typename T, size_t N>
-    FORCEINLINE constexpr void swap(TArray<T, N>& Left, TArray<T, N>& Right) noexcept(noexcept(Left.swap(Right)))
+    namespace Private
     {
-        Left.swap(Right);
+        template <typename T>
+        inline constexpr size_t kStaticArrayNum = ~static_cast<size_t>(0);
+
+        template <typename T, size_t N>
+        inline constexpr size_t kStaticArrayNum<TArray<T, N>> = N;
     }
 
-    template <size_t Index, typename T, size_t N>
-    NODISCARD constexpr T& get(TArray<T, N>& Value) noexcept
+    // One overload for every value category, so a structured binding by value moves out of its hidden copy.
+    template <size_t Index, typename TSelf>
+    requires (Private::kStaticArrayNum<std::remove_cvref_t<TSelf>> != ~static_cast<size_t>(0))
+    NODISCARD constexpr auto&& get(TSelf&& Value) noexcept
     {
-        static_assert(Index < N, "Element index is past the end of the array.");
-        return Value.Elements[Index];
-    }
-
-    template <size_t Index, typename T, size_t N>
-    NODISCARD constexpr const T& get(const TArray<T, N>& Value) noexcept
-    {
-        static_assert(Index < N, "Element index is past the end of the array.");
-        return Value.Elements[Index];
+        static_assert(Index < Private::kStaticArrayNum<std::remove_cvref_t<TSelf>>, "Element index is past the end of the array.");
+        return std::forward_like<TSelf>(Value.Elements[Index]);
     }
 }
 

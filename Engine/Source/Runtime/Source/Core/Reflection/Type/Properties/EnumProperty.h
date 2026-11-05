@@ -9,10 +9,10 @@ namespace Lumina
     {
     public:
 
-        explicit FEnumProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FEnumProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            CEnum* InternalEnum = Desc.Type->GetEnum();
+            CEnum* InternalEnum = InDesc.Type->GetEnum();
             ASSERT(InternalEnum);
             SetEnum(InternalEnum);
         }

@@ -3,25 +3,26 @@
 
 #include "AnimNotify.h"
 #include "Containers/Algorithm.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
+#include "World/Entity/Systems/SystemContext.h"
 
 namespace Lumina
 {
     void FAnimNotifyQueue::Prepare()
     {
         const uint32 NumSlots = Math::Max(Jobs::GetNumThreadSlots(), 1u);
-        if (Slots.size() < NumSlots)
+        if (static_cast<uint32>(Slots.Num()) < NumSlots)
         {
-            Slots.resize(NumSlots);
+            Slots.SetNum(NumSlots);
         }
     }
 
     void FAnimNotifyQueue::Record(ECS::FEntity Entity, EAnimNotifyPass Pass, const TVector<FAnimNotifyEvent>& Events)
     {
-        const uint32 SlotIndex = Jobs::GetWorkerIndex();
-        DEBUG_ASSERT(SlotIndex < Slots.size(), "FAnimNotifyQueue::Prepare must run before the passes record");
+        const uint32 SlotIndex = Jobs::GetThreadSlot();
+        DEBUG_ASSERT(SlotIndex < static_cast<uint32>(Slots.Num()), "FAnimNotifyQueue::Prepare must run before the passes record");
         TVector<FRecord>& Slot = Slots[SlotIndex];
 
         for (const FAnimNotifyEvent& Event : Events)
@@ -31,7 +32,7 @@ namespace Lumina
                 continue;
             }
 
-            FRecord& Record = Slot.emplace_back();
+            FRecord& Record = Slot.EmplaceGetRef();
             Record.Source = TStrongObjectPtr<const CObject>(Event.Source);
             Record.Notify = Event.Notify;
             Record.State  = Event.State;
@@ -42,27 +43,28 @@ namespace Lumina
         }
     }
 
-    void FAnimNotifyQueue::Submit(ECS::FCommandBus& Bus)
+    TVector<FAnimNotifyQueue::FRecord> FAnimNotifyQueue::TakeSorted()
     {
         SIZE_T Count = 0;
         for (const TVector<FRecord>& Slot : Slots)
         {
-            Count += Slot.size();
-        }
-        if (Count == 0)
-        {
-            return;
+            Count += Slot.Num();
         }
 
         TVector<FRecord> Records;
-        Records.reserve(Count);
+        if (Count == 0)
+        {
+            return Records;
+        }
+
+        Records.Reserve(IntCastChecked<int32>(Count));
         for (TVector<FRecord>& Slot : Slots)
         {
             for (FRecord& Record : Slot)
             {
-                Records.push_back(std::move(Record));
+                Records.Add(std::move(Record));
             }
-            Slot.clear();
+            Slot.Reset();
         }
 
         // Workers claim entities in any order, and a stable sort restores one order without reordering an entity's own events.
@@ -70,10 +72,34 @@ namespace Lumina
         {
             return A.Pass != B.Pass ? A.Pass < B.Pass : A.Entity.Value < B.Entity.Value;
         });
+        return Records;
+    }
+
+    void FAnimNotifyQueue::Submit(ECS::FCommandBus& Bus)
+    {
+        TVector<FRecord> Records = TakeSorted();
+        if (Records.IsEmpty())
+        {
+            return;
+        }
 
         Bus.Enqueue([Records = std::move(Records)](ECS::FRegistry& Registry)
         {
             Dispatch(Records, Registry);
+        });
+    }
+
+    void FAnimNotifyQueue::Submit(const SSystemContext& Context)
+    {
+        TVector<FRecord> Records = TakeSorted();
+        if (Records.IsEmpty())
+        {
+            return;
+        }
+
+        Context.Defer([Records = std::move(Records)](const SExclusiveContext& Exclusive)
+        {
+            Dispatch(Records, Exclusive.GetRegistry());
         });
     }
 

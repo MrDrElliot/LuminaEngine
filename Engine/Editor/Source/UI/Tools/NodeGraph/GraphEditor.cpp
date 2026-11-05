@@ -95,50 +95,50 @@ namespace Lumina
             const ImVec2 EndControl(End.x - Bend, End.y);
             for (int32 Index = bIncludeStart ? 0 : 1; Index <= Segments; ++Index)
             {
-                Out.push_back(ImBezierCubicCalc(Start, StartControl, EndControl, End, (float)Index / (float)Segments));
+                Out.Add(ImBezierCubicCalc(Start, StartControl, EndControl, End, (float)Index / (float)Segments));
             }
         }
 
         // Curves from Start through a short straight run at each tie center to End.
         void AppendTiedRoute(TVector<ImVec2>& Out, ImVec2 Start, ImVec2 End, const TVector<ImVec2>& Centers, int32 Segments)
         {
-            const int32 CurveSegments = Math::Max(Segments / ((int32)Centers.size() + 1), 8);
+            const int32 CurveSegments = Math::Max(Segments / (Centers.Num() + 1), 8);
             ImVec2 From = Start;
             for (const ImVec2& Center : Centers)
             {
                 const ImVec2 RunStart(Center.x - kTieRun, Center.y);
-                AppendWireCurve(Out, From, RunStart, CurveSegments, Out.empty());
+                AppendWireCurve(Out, From, RunStart, CurveSegments, Out.IsEmpty());
                 From = ImVec2(Center.x + kTieRun, Center.y);
-                Out.push_back(Center);
-                Out.push_back(From);
+                Out.Add(Center);
+                Out.Add(From);
             }
-            AppendWireCurve(Out, From, End, CurveSegments, Out.empty());
+            AppendWireCurve(Out, From, End, CurveSegments, Out.IsEmpty());
         }
 
         // Count points evenly spaced by length, so two routes of different point counts blend point for point.
         void ResampleByLength(const TVector<ImVec2>& Path, int32 Count, TVector<ImVec2>& Out)
         {
             float Total = 0.0f;
-            for (size_t Index = 1; Index < Path.size(); ++Index)
+            for (int32 Index = 1; Index < Path.Num(); ++Index)
             {
                 Total += Math::Sqrt(ImLengthSqr(Path[Index] - Path[Index - 1]));
             }
 
-            Out.clear();
-            size_t Segment = 1;
+            Out.Reset();
+            int32 Segment = 1;
             float  Walked  = 0.0f;
             for (int32 Point = 0; Point < Count; ++Point)
             {
                 const float Target = Total * (float)Point / (float)(Count - 1);
-                float Length = Segment < Path.size() ? Math::Sqrt(ImLengthSqr(Path[Segment] - Path[Segment - 1])) : 0.0f;
-                while (Segment + 1 < Path.size() && Walked + Length < Target)
+                float Length = Segment < Path.Num() ? Math::Sqrt(ImLengthSqr(Path[Segment] - Path[Segment - 1])) : 0.0f;
+                while (Segment + 1 < Path.Num() && Walked + Length < Target)
                 {
                     Walked += Length;
                     ++Segment;
                     Length = Math::Sqrt(ImLengthSqr(Path[Segment] - Path[Segment - 1]));
                 }
                 const float Fraction = Length > 0.0f ? Math::Clamp((Target - Walked) / Length, 0.0f, 1.0f) : 0.0f;
-                Out.push_back(Path[Segment - 1] + (Path[Math::Min(Segment, Path.size() - 1)] - Path[Segment - 1]) * Fraction);
+                Out.Add(Path[Segment - 1] + (Path[Math::Min(Segment, Path.Num() - 1)] - Path[Segment - 1]) * Fraction);
             }
         }
 
@@ -208,7 +208,7 @@ namespace Lumina
         FinishedStroke      = EGraphStroke::None;
         ReportedHoveredLink = 0;
         SpliceDrop          = FGraphSplice();
-        Tooltip.clear();
+        Tooltip.Reset();
         if (bLinkDragActive && LinkDrag.bDropped)
         {
             bLinkDragActive = false;
@@ -278,9 +278,9 @@ namespace Lumina
         Splitter.Split(DrawList, kFirstNodeChannel + RankCount * 2 + 1);
         SetChannel(kWireChannel);
 
-        Pins.clear();
-        Wires.clear();
-        FrameComments.clear();
+        Pins.Reset();
+        Wires.Reset();
+        FrameComments.Reset();
     }
 
     void FGraphEditor::UpdateView()
@@ -387,7 +387,7 @@ namespace Lumina
             {
                 for (const auto& [NodeID, State] : Nodes)
                 {
-                    SelectedNodes.insert(NodeID);
+                    SelectedNodes.Add(NodeID);
                 }
             }
             return;
@@ -400,7 +400,7 @@ namespace Lumina
 
         if (!IO.KeyShift && !IO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F, false))
         {
-            if (SelectedNodes.empty())
+            if (SelectedNodes.IsEmpty())
             {
                 NavigateToContent(0.25f);
             }
@@ -414,21 +414,21 @@ namespace Lumina
     void FGraphEditor::AssignRanks()
     {
         TVector<FNodeState*> Ordered;
-        Ordered.reserve(Nodes.size());
+        Ordered.Reserve(Nodes.Num());
         for (auto& [NodeID, State] : Nodes)
         {
             if (!State.bComment)
             {
-                Ordered.push_back(&State);
+                Ordered.Add(&State);
             }
         }
 
         Algo::Sort(Ordered, [](const FNodeState* A, const FNodeState* B) { return A->ZOrder < B->ZOrder; });
-        for (int32 Index = 0; Index < (int32)Ordered.size(); ++Index)
+        for (int32 Index = 0; Index < Ordered.Num(); ++Index)
         {
             Ordered[Index]->Rank = Math::Min(Index, RankCount - 1);
         }
-        NextRank = (int32)Ordered.size();
+        NextRank = Ordered.Num();
     }
 
     int32 FGraphEditor::GetNodeChannel(const FNodeState& State, bool bBackground) const
@@ -442,17 +442,18 @@ namespace Lumina
 
     void FGraphEditor::BeginNode(int64 NodeID, ImVec2& InOutPosition, const FGraphNodeStyle& Style)
     {
-        auto [Iterator, bAdded] = Nodes.try_emplace(NodeID);
-        FNodeState& State = Iterator->second;
+        FNodeState* Found = Nodes.Find(NodeID);
+        const bool bAdded = Found == nullptr;
+        FNodeState& State = bAdded ? Nodes.Add(NodeID) : *Found;
         if (bAdded)
         {
             State.ZOrder = NextZOrder++;
             State.Rank   = Math::Min(NextRank++, RankCount - 1);
         }
 
-        if (auto Start = DragStartNodes.find(NodeID); Start != DragStartNodes.end())
+        if (auto Start = DragStartNodes.Find(NodeID); Start != nullptr)
         {
-            InOutPosition = Start->second + DragDelta;
+            InOutPosition = (*Start) + DragDelta;
         }
 
         State.Position  = InOutPosition;
@@ -546,9 +547,9 @@ namespace Lumina
     {
         FNodeState& State = Nodes[NodeID];
 
-        if (auto Start = DragStartNodes.find(NodeID); Start != DragStartNodes.end())
+        if (auto Start = DragStartNodes.Find(NodeID); Start != nullptr)
         {
-            InOutPosition = Start->second + DragDelta;
+            InOutPosition = (*Start) + DragDelta;
         }
 
         if (Action == EAction::ResizeComment && Press.ID == (uint64)NodeID)
@@ -583,7 +584,7 @@ namespace Lumina
         State.MinBodySize  = MinBodySize;
         State.LastFrame    = Frame;
         State.bComment     = true;
-        FrameComments.push_back(NodeID);
+        FrameComments.Add(NodeID);
 
         SetChannel(kCommentChannel);
     }
@@ -613,7 +614,7 @@ namespace Lumina
 
     void FGraphEditor::Link(uint64 LinkID, uint32 OutputPin, uint32 InputPin, ImU32 Color, float Thickness, bool bFlow)
     {
-        FWire& Wire    = Wires.emplace_back();
+        FWire& Wire    = Wires.EmplaceGetRef();
         Wire.ID        = LinkID;
         Wire.OutputPin = OutputPin;
         Wire.InputPin  = InputPin;
@@ -624,10 +625,10 @@ namespace Lumina
 
     void FGraphEditor::LinkBadge(FStringView Text, ImU32 Color)
     {
-        if (!Wires.empty())
+        if (!Wires.IsEmpty())
         {
-            Wires.back().Badge.assign(Text.data(), Text.size());
-            Wires.back().BadgeColor = Color;
+            Wires.Last().Badge = FStringView(Text.GetData(), Text.Len());
+            Wires.Last().BadgeColor = Color;
         }
     }
 
@@ -639,8 +640,9 @@ namespace Lumina
 
     void FGraphEditor::ZipTie(uint64 TieID, ImVec2& InOutPosition, const TVector<uint64>& LinkIDs)
     {
-        auto [Iterator, bAdded] = Ties.try_emplace(TieID);
-        FZipTieState& State = Iterator->second;
+        FZipTieState* Found = Ties.Find(TieID);
+        const bool bAdded = Found == nullptr;
+        FZipTieState& State = bAdded ? Ties.Add(TieID) : *Found;
 
         // A graph opened with ties already in it shows them tied, rather than every one animating in at once.
         if (bAdded && !bHasDrawn)
@@ -648,9 +650,9 @@ namespace Lumina
             State.Amount = 1.0f;
         }
 
-        if (auto Start = DragStartTies.find(TieID); Start != DragStartTies.end())
+        if (auto Start = DragStartTies.Find(TieID); Start != nullptr)
         {
-            InOutPosition = Start->second + DragDelta;
+            InOutPosition = (*Start) + DragDelta;
         }
 
         State.Position  = InOutPosition;
@@ -660,20 +662,20 @@ namespace Lumina
 
     ImDrawList* FGraphEditor::GetNodeBackgroundDrawList(int64 NodeID)
     {
-        auto Iterator = Nodes.find(NodeID);
-        if (Iterator == Nodes.end() || Iterator->second.LastFrame != Frame)
+        auto Iterator = Nodes.Find(NodeID);
+        if (Iterator == nullptr || Iterator->LastFrame != Frame)
         {
             return nullptr;
         }
 
-        SetChannel(GetNodeChannel(Iterator->second, true));
+        SetChannel(GetNodeChannel((*Iterator), true));
         return DrawList;
     }
 
     ImVec2 FGraphEditor::GetNodeSize(int64 NodeID) const
     {
-        auto Iterator = Nodes.find(NodeID);
-        return Iterator != Nodes.end() ? Iterator->second.Size : ImVec2(0.0f, 0.0f);
+        auto Iterator = Nodes.Find(NodeID);
+        return Iterator != nullptr ? Iterator->Size : ImVec2(0.0f, 0.0f);
     }
 
     void FGraphEditor::End()
@@ -686,7 +688,7 @@ namespace Lumina
             Tie.Amount = Math::Saturate(Tie.Amount + (bLive ? DeltaTime : -DeltaTime) / kTieSeconds);
             Tie.Flash  = Previous < 1.0f && Tie.Amount >= 1.0f ? 1.0f : Math::Max(Tie.Flash - DeltaTime * 4.0f, 0.0f);
         }
-        erase_if(Ties, [this](const auto& Pair) { return Pair.second.LastFrame != Frame && Pair.second.Amount <= 0.0f; });
+        Ties.RemoveAll([this](const auto& Pair) { return Pair.Value.LastFrame != Frame && Pair.Value.Amount <= 0.0f; });
 
         BuildWires();
 
@@ -739,12 +741,12 @@ namespace Lumina
         Canvas.End();
         DrawMinimap();
 
-        erase_if(Nodes, [this](const auto& Pair) { return Pair.second.LastFrame != Frame; });
-        erase_if(SelectedNodes, [this](int64 NodeID) { return !Nodes.contains(NodeID); });
-        erase_if(SelectedTies, [this](uint64 TieID) { auto Tie = Ties.find(TieID); return Tie == Ties.end() || Tie->second.LastFrame != Frame; });
-        if (!SelectedLinks.empty())
+        Nodes.RemoveAll([this](const auto& Pair) { return Pair.Value.LastFrame != Frame; });
+        SelectedNodes.RemoveAll([this](int64 NodeID) { return !Nodes.Contains(NodeID); });
+        SelectedTies.RemoveAll([this](uint64 TieID) { auto Tie = Ties.Find(TieID); return Tie == nullptr || Tie->LastFrame != Frame; });
+        if (!SelectedLinks.IsEmpty())
         {
-            erase_if(SelectedLinks, [this](uint64 LinkID) { return Algo::FindIf(Wires, [LinkID](const FWire& Wire) { return Wire.ID == LinkID; }) == Wires.end(); });
+            SelectedLinks.RemoveAll([this](uint64 LinkID) { return Algo::FindIf(Wires, [LinkID](const FWire& Wire) { return Wire.ID == LinkID; }) == Wires.end(); });
         }
 
         bLinkDragRejected = false;
@@ -758,24 +760,24 @@ namespace Lumina
 
     bool FGraphEditor::FindPinAnchor(uint32 PinID, ImVec2& OutAnchor) const
     {
-        auto Iterator = Pins.find(PinID);
-        if (Iterator == Pins.end())
+        auto Iterator = Pins.Find(PinID);
+        if (Iterator == nullptr)
         {
             return false;
         }
-        OutAnchor = Iterator->second.Anchor;
+        OutAnchor = Iterator->Anchor;
         return true;
     }
 
     void FGraphEditor::BuildWires()
     {
-        WirePoints.clear();
+        WirePoints.Reset();
 
         // Every tie a wire passes through is a stop on its route.
         THashMap<uint64, TVector<int32>> WiresOfTie;
         {
             THashMap<uint64, int32> WireOfLink;
-            for (int32 Index = 0; Index < (int32)Wires.size(); ++Index)
+            for (int32 Index = 0; Index < Wires.Num(); ++Index)
             {
                 WireOfLink[Wires[Index].ID] = Index;
             }
@@ -783,9 +785,9 @@ namespace Lumina
             {
                 for (uint64 LinkID : Tie.Links)
                 {
-                    if (auto Wire = WireOfLink.find(LinkID); Wire != WireOfLink.end())
+                    if (auto Wire = WireOfLink.Find(LinkID); Wire != nullptr)
                     {
-                        WiresOfTie[TieID].push_back(Wire->second);
+                        WiresOfTie[TieID].Add(*Wire);
                     }
                 }
             }
@@ -805,7 +807,7 @@ namespace Lumina
             const FZipTieState* Tie;
             float               Lane;
         };
-        TVector<TVector<FStop>> Stops(Wires.size());
+        TVector<TVector<FStop>> Stops(Wires.Num());
         for (auto& [TieID, Group] : WiresOfTie)
         {
             Algo::Sort(Group, [&](int32 A, int32 B) { return ArrivalHeight(Wires[A]) < ArrivalHeight(Wires[B]); });
@@ -816,12 +818,12 @@ namespace Lumina
                 Widest = Math::Max(Widest, Wires[Index].Thickness);
             }
             const float Spacing = Widest + kTieLaneGap;
-            const float Count   = (float)Group.size();
+            const float Count   = (float)Group.Num();
             FZipTieState& Tie = Ties[TieID];
             Tie.HalfSpan = (Count - 1.0f) * Spacing * 0.5f + Widest * 0.5f + kTiePadding;
-            for (size_t Index = 0; Index < Group.size(); ++Index)
+            for (int32 Index = 0; Index < Group.Num(); ++Index)
             {
-                Stops[Group[Index]].push_back({ &Tie, ((float)Index - (Count - 1.0f) * 0.5f) * Spacing });
+                Stops[Group[Index]].Emplace(&Tie, ((float)Index - (Count - 1.0f) * 0.5f) * Spacing);
             }
         }
 
@@ -830,7 +832,7 @@ namespace Lumina
         TVector<ImVec2> Centers;
         TVector<ImVec2> From;
         TVector<ImVec2> To;
-        for (int32 WireIndex = 0; WireIndex < (int32)Wires.size(); ++WireIndex)
+        for (int32 WireIndex = 0; WireIndex < Wires.Num(); ++WireIndex)
         {
             FWire& Wire = Wires[WireIndex];
             Wire.PointCount = 0;
@@ -841,7 +843,7 @@ namespace Lumina
             }
 
             const int32 Segments = Math::Clamp((int32)(Math::Sqrt(ImLengthSqr(End - Start)) * Zoom / 12.0f), 12, 48);
-            Wire.FirstPoint = (int32)WirePoints.size();
+            Wire.FirstPoint = WirePoints.Num();
 
             // Stops run in order from the output to the input, whichever way the wire points.
             TVector<FStop>& Route = Stops[WireIndex];
@@ -849,8 +851,8 @@ namespace Lumina
             Algo::Sort(Route, [&](const FStop& A, const FStop& B) { return ImDot(A.Tie->Position - Start, Direction) < ImDot(B.Tie->Position - Start, Direction); });
 
             // A tie still pulling tight or letting go blends from the route without it to the route with it.
-            SettledCenters.clear();
-            Centers.clear();
+            SettledCenters.Reset();
+            Centers.Reset();
             float Blend = 1.0f;
             for (const FStop& Stop : Route)
             {
@@ -859,10 +861,10 @@ namespace Lumina
                     continue;
                 }
                 const ImVec2 Center(Stop.Tie->Position.x, Stop.Tie->Position.y + Stop.Lane);
-                Centers.push_back(Center);
+                Centers.Add(Center);
                 if (Stop.Tie->Amount >= 1.0f)
                 {
-                    SettledCenters.push_back(Center);
+                    SettledCenters.Add(Center);
                 }
                 else
                 {
@@ -870,26 +872,26 @@ namespace Lumina
                 }
             }
 
-            ScratchTiedPath.clear();
-            AppendTiedRoute(ScratchTiedPath, Start, End, Centers, Math::Max(Segments, 24 * (int32)Centers.size()));
-            if (SettledCenters.size() == Centers.size())
+            ScratchTiedPath.Reset();
+            AppendTiedRoute(ScratchTiedPath, Start, End, Centers, Math::Max(Segments, 24 * Centers.Num()));
+            if (SettledCenters.Num() == Centers.Num())
             {
-                WirePoints.insert(WirePoints.end(), ScratchTiedPath.begin(), ScratchTiedPath.end());
+                WirePoints.Append(ScratchTiedPath);
             }
             else
             {
-                const int32 Count = (int32)ScratchTiedPath.size();
-                ScratchFreePath.clear();
-                AppendTiedRoute(ScratchFreePath, Start, End, SettledCenters, Math::Max(Segments, 24 * (int32)SettledCenters.size()));
+                const int32 Count = ScratchTiedPath.Num();
+                ScratchFreePath.Reset();
+                AppendTiedRoute(ScratchFreePath, Start, End, SettledCenters, Math::Max(Segments, 24 * SettledCenters.Num()));
                 ResampleByLength(ScratchFreePath, Count, From);
                 ResampleByLength(ScratchTiedPath, Count, To);
                 for (int32 Index = 0; Index < Count; ++Index)
                 {
-                    WirePoints.push_back(From[Index] + (To[Index] - From[Index]) * Blend);
+                    WirePoints.Add(From[Index] + (To[Index] - From[Index]) * Blend);
                 }
             }
 
-            Wire.PointCount = (int32)WirePoints.size() - Wire.FirstPoint;
+            Wire.PointCount = WirePoints.Num() - Wire.FirstPoint;
             Wire.Bounds = BoundsOf(&WirePoints[Wire.FirstPoint], Wire.PointCount);
         }
     }
@@ -906,8 +908,8 @@ namespace Lumina
 
         auto TouchesHighlightedNode = [this](uint32 PinID)
         {
-            auto Pin = Pins.find(PinID);
-            return Pin != Pins.end() && (IsNodeSelected(Pin->second.NodeID) || HoveredNode == Pin->second.NodeID);
+            auto Pin = Pins.Find(PinID);
+            return Pin != nullptr && (IsNodeSelected(Pin->NodeID) || HoveredNode == Pin->NodeID);
         };
 
         for (const FWire& Wire : Wires)
@@ -945,17 +947,17 @@ namespace Lumina
             const ImU32 Color       = bHovered ? Brighten(Wire.Color, 0.2f) : Wire.Color;
             DrawList->AddPolyline(Points, Wire.PointCount, bBeingMoved ? ScaleAlpha(Color, 0.25f) : Color, Thickness);
 
-            if (!Wire.Badge.empty() && Zoom >= kBadgeMinZoom)
+            if (!Wire.Badge.IsEmpty() && Zoom >= kBadgeMinZoom)
             {
                 const float  FontSize = ImGui::GetFontSize() * kBadgeFontScale;
-                const ImVec2 TextSize = ImGui::GetFont()->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Wire.Badge.c_str());
+                const ImVec2 TextSize = ImGui::GetFont()->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, *Wire.Badge);
                 const ImVec2 Padding(4.0f, 1.5f);
                 const ImVec2 Middle = Points[Wire.PointCount / 2];
                 const ImVec2 Min    = Middle - TextSize * 0.5f - Padding;
                 const ImVec2 Max    = Middle + TextSize * 0.5f + Padding;
                 DrawList->AddRectFilled(Min, Max, IM_COL32(20, 21, 24, 235), 4.0f);
                 DrawList->AddRect(Min, Max, Wire.BadgeColor, 4.0f, 1.0f);
-                DrawList->AddText(nullptr, FontSize, Min + Padding, Wire.BadgeColor, Wire.Badge.c_str());
+                DrawList->AddText(nullptr, FontSize, Min + Padding, Wire.BadgeColor, *Wire.Badge);
             }
 
             if (!Wire.bFlow)
@@ -1062,8 +1064,8 @@ namespace Lumina
 
         if (Action == EAction::DragLink)
         {
-            auto From = Pins.find(LinkDrag.FromPin);
-            if (From != Pins.end())
+            auto From = Pins.Find(LinkDrag.FromPin);
+            if (From != nullptr)
             {
                 ImVec2 Target = Mouse;
                 const bool bOverTarget = LinkDrag.ToPin != 0 || LinkDrag.ToNode != 0;
@@ -1072,7 +1074,7 @@ namespace Lumina
                     FindPinAnchor(LinkDrag.ToPin, Target);
                 }
 
-                ImU32 Color = From->second.Color;
+                ImU32 Color = From->Color;
                 if (bOverTarget)
                 {
                     Color = bLinkDragRejected ? EditorColors::U32(EditorColors::Danger()) : Brighten(Color, 0.15f);
@@ -1100,13 +1102,13 @@ namespace Lumina
                         }
                     }
                 }
-                else if (From->second.Kind == EGraphPinKind::Output)
+                else if (From->Kind == EGraphPinKind::Output)
                 {
-                    DrawDragWire(From->second.Anchor, Target);
+                    DrawDragWire(From->Anchor, Target);
                 }
                 else
                 {
-                    DrawDragWire(Target, From->second.Anchor);
+                    DrawDragWire(Target, From->Anchor);
                 }
                 DrawList->AddCircleFilled(Target, 3.5f, Color);
 
@@ -1126,12 +1128,12 @@ namespace Lumina
             DrawList->AddRect(Min, Max, EditorColors::U32(EditorColors::WithAlpha(EditorColors::Accent(), 0.7f)), 0.0f, 1.0f / Zoom);
         }
 
-        if (Action == EAction::Stroke && !StrokePoints.empty())
+        if (Action == EAction::Stroke && !StrokePoints.IsEmpty())
         {
             const ImU32 Color = EditorColors::U32(GetStrokeColor(StrokeKind));
-            StrokePoints.push_back(Mouse);
-            DrawList->AddPolyline(StrokePoints.data(), (int32)StrokePoints.size(), Color, 2.0f / Zoom);
-            StrokePoints.pop_back();
+            StrokePoints.Add(Mouse);
+            DrawList->AddPolyline(StrokePoints.GetData(), StrokePoints.Num(), Color, 2.0f / Zoom);
+            StrokePoints.Pop();
 
             // Sized against the zoom, so the label reads the same however far out the canvas is.
             DrawList->AddText(nullptr, ImGui::GetFontSize() / Zoom, Mouse + ImVec2(12.0f, 10.0f) / Zoom, Color, GetStrokeLabel(StrokeKind));
@@ -1185,8 +1187,8 @@ namespace Lumina
         int32 PinRank = -1;
         for (const auto& [PinID, Pin] : Pins)
         {
-            auto Owner = Nodes.find(Pin.NodeID);
-            const int32 Rank = Owner != Nodes.end() ? Owner->second.Rank : 0;
+            auto Owner = Nodes.Find(Pin.NodeID);
+            const int32 Rank = Owner != nullptr ? Owner->Rank : 0;
             if (Rank >= TopRank && Rank > PinRank && Pin.Rect.Contains(Mouse))
             {
                 PinRank = Rank;
@@ -1232,7 +1234,7 @@ namespace Lumina
             return;
         }
 
-        for (int32 Index = (int32)FrameComments.size() - 1; Index >= 0; --Index)
+        for (int32 Index = FrameComments.Num() - 1; Index >= 0; --Index)
         {
             const FNodeState& State = Nodes[FrameComments[Index]];
             const uint8  Edges = GetCommentResizeEdges(State, Mouse);
@@ -1324,7 +1326,7 @@ namespace Lumina
                             }
                             else
                             {
-                                SelectedTies.erase(HoveredTie);
+                                SelectedTies.Remove(HoveredTie);
                             }
                         }
                         else if (!bSelected)
@@ -1404,9 +1406,9 @@ namespace Lumina
             }
             case EAction::Stroke:
             {
-                if (ImLengthSqr(Canvas.CanvasToScreen(Mouse) - Canvas.CanvasToScreen(StrokePoints.back())) > 9.0f)
+                if (ImLengthSqr(Canvas.CanvasToScreen(Mouse) - Canvas.CanvasToScreen(StrokePoints.Last())) > 9.0f)
                 {
-                    StrokePoints.push_back(Mouse);
+                    StrokePoints.Add(Mouse);
                 }
                 UpdateStrokeHits();
                 break;
@@ -1473,9 +1475,9 @@ namespace Lumina
         if (Press.Button == ImGuiMouseButton_Right && (Press.bCtrl || Press.bShift || Press.bAlt))
         {
             StrokeKind = Press.bCtrl ? EGraphStroke::Cut : (Press.bShift ? EGraphStroke::Reroute : EGraphStroke::ZipTie);
-            StrokePoints.clear();
-            StrokePoints.push_back(Press.CanvasPos);
-            StrokeHits.clear();
+            StrokePoints.Reset();
+            StrokePoints.Add(Press.CanvasPos);
+            StrokeHits.Reset();
             Action = EAction::Stroke;
             return;
         }
@@ -1485,8 +1487,8 @@ namespace Lumina
 
     void FGraphEditor::CollectDragSet()
     {
-        DragStartNodes.clear();
-        DragStartTies.clear();
+        DragStartNodes.Reset();
+        DragStartTies.Reset();
         DragDelta = ImVec2(0.0f, 0.0f);
 
         const bool bPressedNode     = Press.Item == EGraphItem::Node;
@@ -1518,7 +1520,7 @@ namespace Lumina
             const FNodeState& State = Nodes[NodeID];
             if (State.bComment)
             {
-                Carriers.push_back(State.GetRect());
+                Carriers.Add(State.GetRect());
             }
         }
         for (const ImRect& Carrier : Carriers)
@@ -1527,14 +1529,14 @@ namespace Lumina
             {
                 if (State.LastFrame == Frame && Carrier.Contains(State.GetRect()))
                 {
-                    DragStartNodes.try_emplace(NodeID, State.Position);
+                    DragStartNodes.FindOrAdd(NodeID, State.Position);
                 }
             }
             for (const auto& [TieID, Tie] : Ties)
             {
                 if (Tie.LastFrame == Frame && Carrier.Contains(Tie.Position))
                 {
-                    DragStartTies.try_emplace(TieID, Tie.Position);
+                    DragStartTies.FindOrAdd(TieID, Tie.Position);
                 }
             }
         }
@@ -1549,30 +1551,30 @@ namespace Lumina
             const ImRect Rect = State.GetRect();
             if (State.bComment ? Box.Contains(Rect) : Box.Overlaps(Rect))
             {
-                SelectedNodes.insert(NodeID);
+                SelectedNodes.Add(NodeID);
             }
         }
 
         if (!Press.bCtrl && !Press.bShift)
         {
-            SelectedLinks.clear();
-            SelectedTies.clear();
+            SelectedLinks.Reset();
+            SelectedTies.Reset();
         }
         for (const auto& [TieID, Tie] : Ties)
         {
             if (Tie.LastFrame == Frame && Box.Contains(Tie.Position))
             {
-                SelectedTies.insert(TieID);
+                SelectedTies.Add(TieID);
             }
         }
     }
 
     void FGraphEditor::UpdateStrokeHits()
     {
-        StrokeHits.clear();
+        StrokeHits.Reset();
 
-        StrokePoints.push_back(ImGui::GetIO().MousePos);
-        const ImRect StrokeBounds = BoundsOf(StrokePoints.data(), (int32)StrokePoints.size());
+        StrokePoints.Add(ImGui::GetIO().MousePos);
+        const ImRect StrokeBounds = BoundsOf(StrokePoints.GetData(), StrokePoints.Num());
         for (const FWire& Wire : Wires)
         {
             if (Wire.PointCount < 2 || !Wire.Bounds.Overlaps(StrokeBounds))
@@ -1582,28 +1584,28 @@ namespace Lumina
 
             const ImVec2* Points = &WirePoints[Wire.FirstPoint];
             bool bCrossed = false;
-            for (int32 StrokeIndex = 1; StrokeIndex < (int32)StrokePoints.size() && !bCrossed; ++StrokeIndex)
+            for (int32 StrokeIndex = 1; StrokeIndex < StrokePoints.Num() && !bCrossed; ++StrokeIndex)
             {
                 for (int32 WireIndex = 1; WireIndex < Wire.PointCount && !bCrossed; ++WireIndex)
                 {
                     ImVec2 Crossing;
                     if (SegmentsCross(StrokePoints[StrokeIndex - 1], StrokePoints[StrokeIndex], Points[WireIndex - 1], Points[WireIndex], Crossing))
                     {
-                        StrokeHits.push_back(FGraphStrokeHit{ Wire.ID, Crossing });
+                        StrokeHits.Emplace(Wire.ID, Crossing);
                         bCrossed = true;
                     }
                 }
             }
         }
-        StrokePoints.pop_back();
+        StrokePoints.Pop();
     }
 
     uint64 FGraphEditor::FindWireAt(ImVec2 Point, float ScreenSlop, int64 IgnoredNode) const
     {
         auto OwnedByIgnored = [this, IgnoredNode](uint32 PinID)
         {
-            auto Pin = Pins.find(PinID);
-            return IgnoredNode != 0 && Pin != Pins.end() && Pin->second.NodeID == IgnoredNode;
+            auto Pin = Pins.Find(PinID);
+            return IgnoredNode != 0 && Pin != nullptr && Pin->NodeID == IgnoredNode;
         };
 
         uint64 Found = 0;
@@ -1635,14 +1637,14 @@ namespace Lumina
     void FGraphEditor::UpdateSplice(ImVec2 Mouse)
     {
         Splice = FGraphSplice();
-        if (DragStartNodes.size() != 1 || !DragStartTies.empty())
+        if (DragStartNodes.Num() != 1 || !DragStartTies.IsEmpty())
         {
             return;
         }
 
-        const int64 NodeID = DragStartNodes.begin()->first;
-        auto State = Nodes.find(NodeID);
-        if (State == Nodes.end() || State->second.bComment)
+        const int64 NodeID = DragStartNodes.begin()->Key;
+        auto State = Nodes.Find(NodeID);
+        if (State == nullptr || State->bComment)
         {
             return;
         }
@@ -1765,7 +1767,7 @@ namespace Lumina
                 {
                     if (Press.bCtrl && IsLinkSelected(Press.ID))
                     {
-                        SelectedLinks.erase(Press.ID);
+                        SelectedLinks.Remove(Press.ID);
                     }
                     else
                     {
@@ -1799,10 +1801,10 @@ namespace Lumina
         Action = EAction::None;
         Splice = FGraphSplice();
         AcceptedSpliceLink = 0;
-        DragStartNodes.clear();
-        DragStartTies.clear();
+        DragStartNodes.Reset();
+        DragStartTies.Reset();
         DragDelta = ImVec2(0.0f, 0.0f);
-        StrokePoints.clear();
+        StrokePoints.Reset();
     }
 
     void FGraphEditor::CancelAction()
@@ -1822,8 +1824,8 @@ namespace Lumina
             }
             case EAction::Stroke:
             {
-                StrokeHits.clear();
-                StrokePoints.clear();
+                StrokeHits.Reset();
+                StrokePoints.Reset();
                 break;
             }
             case EAction::Pending:
@@ -1875,16 +1877,16 @@ namespace Lumina
         ImRect Bounds(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
         for (int64 NodeID : SelectedNodes)
         {
-            if (auto State = Nodes.find(NodeID); State != Nodes.end())
+            if (auto State = Nodes.Find(NodeID); State != nullptr)
             {
-                Bounds.Add(State->second.GetRect());
+                Bounds.Add(State->GetRect());
             }
         }
         for (uint64 TieID : SelectedTies)
         {
-            if (auto Tie = Ties.find(TieID); Tie != Ties.end())
+            if (auto Tie = Ties.Find(TieID); Tie != nullptr)
             {
-                Bounds.Add(GetZipTieRect(Tie->second));
+                Bounds.Add(GetZipTieRect(*Tie));
             }
         }
         if (Bounds.Min.x <= Bounds.Max.x)
@@ -1896,9 +1898,9 @@ namespace Lumina
 
     void FGraphEditor::ClearSelection()
     {
-        SelectedNodes.clear();
-        SelectedLinks.clear();
-        SelectedTies.clear();
+        SelectedNodes.Reset();
+        SelectedLinks.Reset();
+        SelectedTies.Reset();
     }
 
     void FGraphEditor::SelectNode(int64 NodeID, bool bAppend)
@@ -1907,12 +1909,12 @@ namespace Lumina
         {
             ClearSelection();
         }
-        SelectedNodes.insert(NodeID);
+        SelectedNodes.Add(NodeID);
     }
 
     void FGraphEditor::DeselectNode(int64 NodeID)
     {
-        SelectedNodes.erase(NodeID);
+        SelectedNodes.Remove(NodeID);
     }
 
     TVector<int64> FGraphEditor::GetSelectedNodes() const
@@ -1926,7 +1928,7 @@ namespace Lumina
         {
             ClearSelection();
         }
-        SelectedLinks.insert(LinkID);
+        SelectedLinks.Add(LinkID);
     }
 
     TVector<uint64> FGraphEditor::GetSelectedLinks() const
@@ -1940,7 +1942,7 @@ namespace Lumina
         {
             ClearSelection();
         }
-        SelectedTies.insert(TieID);
+        SelectedTies.Add(TieID);
     }
 
     TVector<uint64> FGraphEditor::GetSelectedZipTies() const

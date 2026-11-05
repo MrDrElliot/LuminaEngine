@@ -126,12 +126,12 @@ namespace Lumina
         case EAnimTransitionSource::Curve:
             return CurveName.IsNone()
                 ? FString("Always")
-                : Format("{} {} {}", CurveName.c_str(), SM::CompareSymbol(Compare), CompareValue);
+                : Format("{} {} {}", *CurveName, SM::CompareSymbol(Compare), CompareValue);
 
         default:
             return ParameterName.IsNone()
                 ? FString("Always")
-                : Format("{} {} {}", ParameterName.c_str(), SM::CompareSymbol(Compare), CompareValue);
+                : Format("{} {} {}", *ParameterName, SM::CompareSymbol(Compare), CompareValue);
         }
     }
 
@@ -143,7 +143,7 @@ namespace Lumina
 
     void CAnimStateTransition::MigrateLegacyCondition()
     {
-        if (!Conditions.empty())
+        if (!Conditions.IsEmpty())
         {
             return;
         }
@@ -154,7 +154,7 @@ namespace Lumina
             return;
         }
 
-        SAnimTransitionCondition& Migrated = Conditions.emplace_back();
+        SAnimTransitionCondition& Migrated = Conditions.EmplaceGetRef();
         Migrated.ConditionSource = ConditionSource;
         Migrated.ParameterName   = ConditionParameter;
         Migrated.Compare         = Compare;
@@ -167,7 +167,7 @@ namespace Lumina
 
     FString CAnimStateTransition::GetConditionText() const
     {
-        if (Conditions.empty())
+        if (Conditions.IsEmpty())
         {
             return FString("Always");
         }
@@ -175,14 +175,14 @@ namespace Lumina
         // Two rules is what a badge can carry before it stops being readable next to the wire.
         const char* Join = bRequireAll ? " & " : " | ";
         FString Text = Conditions[0].ToText();
-        if (Conditions.size() > 1)
+        if (Conditions.Num() > 1)
         {
             Text += Join;
             Text += Conditions[1].ToText();
         }
-        if (Conditions.size() > 2)
+        if (Conditions.Num() > 2)
         {
-            Text += Format("{}+{}", Join, (int32)Conditions.size() - 2);
+            Text += Format("{}+{}", Join, Conditions.Num() - 2);
         }
         return Text;
     }
@@ -292,12 +292,12 @@ namespace Lumina
 
     void CAnimStateMachineGraph::GetOutgoingTransitions(int64 FromStateNodeID, TVector<CAnimStateTransition*>& Out) const
     {
-        Out.clear();
+        Out.Reset();
         for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Transitions)
         {
             if (Transition.IsValid() && Transition->FromStateNodeID == FromStateNodeID)
             {
-                Out.push_back(Transition.Get());
+                Out.Add(Transition.Get());
             }
         }
 
@@ -335,8 +335,8 @@ namespace Lumina
     void CAnimStateMachineGraph::ValidateGraph()
     {
         // PostLoad reads the serialized list back to rewire pins on open, as in the other graphs.
-        Connections.clear();
-        Connections.reserve(16);
+        Connections.Reset();
+        Connections.Reserve(16);
 
         for (const auto& NodeRef : Nodes)
         {
@@ -346,8 +346,8 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    Connections.push_back(InputPin->PinID);
-                    Connections.push_back(Connection->PinID);
+                    Connections.Add(InputPin->PinID);
+                    Connections.Add(Connection->PinID);
                 }
             }
         }
@@ -378,20 +378,20 @@ namespace Lumina
                     {
                         continue;
                     }
-                    LiveKeys.insert(MakeTransitionKey(FromNode->GetNodeID(), Node->GetNodeID()));
+                    LiveKeys.Add(MakeTransitionKey(FromNode->GetNodeID(), Node->GetNodeID()));
                 }
             }
         }
 
         // Drop transitions whose wire no longer exists.
-        for (int32 i = (int32)Transitions.size() - 1; i >= 0; --i)
+        for (int32 i = Transitions.Num() - 1; i >= 0; --i)
         {
             CAnimStateTransition* Transition = Transitions[i].Get();
             const bool bStale = Transition == nullptr ||
-                LiveKeys.find(MakeTransitionKey(Transition->FromStateNodeID, Transition->ToStateNodeID)) == LiveKeys.end();
+                !LiveKeys.Contains(MakeTransitionKey(Transition->FromStateNodeID, Transition->ToStateNodeID));
             if (bStale)
             {
-                Transitions.erase(Transitions.begin() + i);
+                Transitions.RemoveAt(i);
             }
         }
 
@@ -406,7 +406,7 @@ namespace Lumina
                 CAnimStateTransition* NewTransition = NewObject<CAnimStateTransition>(GetPackage());
                 NewTransition->FromStateNodeID = FromNodeID;
                 NewTransition->ToStateNodeID   = ToNodeID;
-                Transitions.push_back(NewTransition);
+                Transitions.Add(NewTransition);
             }
         }
     }
@@ -420,10 +420,10 @@ namespace Lumina
         }
 
         THashMap<int64, int64> RemappedIDs;
-        RemappedIDs.reserve(Clones.size());
-        for (const auto& Entry : Clones)
+        RemappedIDs.Reserve(Clones.Num());
+        for (const auto& [Original, Clone] : Clones)
         {
-            RemappedIDs.emplace(Entry.first->GetNodeID(), Entry.second->GetNodeID());
+            RemappedIDs.TryAdd(Original->GetNodeID(), Clone->GetNodeID());
         }
 
         for (const TStrongObjectPtr<CAnimStateTransition>& SourceTransition : SourceGraph->Transitions)
@@ -433,23 +433,23 @@ namespace Lumina
                 continue;
             }
 
-            const auto FromItr = RemappedIDs.find(SourceTransition->FromStateNodeID);
-            const auto ToItr   = RemappedIDs.find(SourceTransition->ToStateNodeID);
-            if (FromItr == RemappedIDs.end() || ToItr == RemappedIDs.end())
+            const auto FromItr = RemappedIDs.Find(SourceTransition->FromStateNodeID);
+            const auto ToItr = RemappedIDs.Find(SourceTransition->ToStateNodeID);
+            if (FromItr == nullptr || ToItr == nullptr)
             {
                 continue;
             }
 
             // ValidateGraph already made a bare transition for the cloned wire; this fills its data in.
-            CAnimStateTransition* Transition = FindTransition(FromItr->second, ToItr->second);
+            CAnimStateTransition* Transition = FindTransition((*FromItr), (*ToItr));
             if (Transition == nullptr)
             {
                 continue;
             }
 
             SourceTransition->CopyPropertiesTo(Transition);
-            Transition->FromStateNodeID = FromItr->second;
-            Transition->ToStateNodeID   = ToItr->second;
+            Transition->FromStateNodeID = (*FromItr);
+            Transition->ToStateNodeID   = (*ToItr);
         }
     }
 
@@ -475,7 +475,7 @@ namespace Lumina
 
         const FGraphDebugContext& Debug = GetDebugContext();
         const bool bActive = Debug.bEnabled && Debug.ActiveNodes != nullptr
-            && Debug.ActiveNodes->find(Node) != Debug.ActiveNodes->end();
+            && Debug.ActiveNodes->Contains(Node);
 
         ImVec4 Accent = ImGui::ColorConvertU32ToFloat4(Node->GetNodeTitleColor());
         if (bActive)
@@ -509,7 +509,7 @@ namespace Lumina
                 const bool bIsEntryState = GetEntryState() == State;
 
                 ImGui::BeginHorizontal("title");
-                ImGui::TextColored(EditorColors::TextPrimary(), "%s", State->GetStateLabel().c_str());
+                ImGui::TextColored(EditorColors::TextPrimary(), "%s", *State->GetStateLabel());
                 ImGui::Spring(1.0f, 12.0f);
                 if (bIsEntryState)
                 {
@@ -528,13 +528,13 @@ namespace Lumina
                 GetOutgoingTransitions(State->GetNodeID(), Outgoing);
 
                 ImGui::BeginHorizontal("sub");
-                if (Outgoing.empty())
+                if (Outgoing.IsEmpty())
                 {
                     ImGui::TextColored(EditorColors::TextMuted(), "no exits");
                 }
                 else
                 {
-                    ImGui::TextColored(EditorColors::TextDim(), "%d exit%s", (int32)Outgoing.size(), Outgoing.size() == 1 ? "" : "s");
+                    ImGui::TextColored(EditorColors::TextDim(), "%d exit%s", Outgoing.Num(), Outgoing.Num() == 1 ? "" : "s");
                 }
                 ImGui::Spring(1.0f, 12.0f);
                 if (State->BlendTree.IsValid())
@@ -554,12 +554,12 @@ namespace Lumina
                 else if (Alias != nullptr)
                 {
                     Label = FString(LE_ICON_ARROW_DECISION " ") + Alias->GetNodeTitleText();
-                    Icon  = Label.c_str();
+                    Icon  = *Label;
                 }
                 else if (Conduit != nullptr)
                 {
                     Label = FString(LE_ICON_SOURCE_MERGE " ") + Conduit->GetNodeTitleText();
-                    Icon  = Label.c_str();
+                    Icon  = *Label;
                 }
 
                 ImGui::BeginHorizontal("title");
@@ -599,7 +599,7 @@ namespace Lumina
 
     void CAnimStateMachineGraph::DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links)
     {
-        if (Links.empty())
+        if (Links.IsEmpty())
         {
             return;
         }
@@ -613,10 +613,10 @@ namespace Lumina
         const ImVec2 MousePos = ImGui::GetMousePos();
         const bool bCanPick = Editor.GetHoveredNode() == 0 && Editor.GetHoveredPin() == 0;
 
-        for (int32 Index = 0; Index < (int32)Links.size(); ++Index)
+        for (int32 Index = 0; Index < Links.Num(); ++Index)
         {
-            CEdNodeGraphPin* InputPin  = Links[Index].first;
-            CEdNodeGraphPin* OutputPin = Links[Index].second;
+            CEdNodeGraphPin* InputPin  = Links[Index].Key;
+            CEdNodeGraphPin* OutputPin = Links[Index].Value;
             if (InputPin == nullptr || OutputPin == nullptr)
             {
                 continue;
@@ -677,7 +677,7 @@ namespace Lumina
                 BadgeText = "transition";
             }
 
-            const ImVec2 TextSize = Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, BadgeText.c_str());
+            const ImVec2 TextSize = Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, *BadgeText);
             const ImVec2 BadgePad(7.0f, 3.5f);
             const ImVec2 BadgeMin = Mid - ImVec2(TextSize.x * 0.5f + BadgePad.x, TextSize.y * 0.5f + BadgePad.y);
             const ImVec2 BadgeMax = Mid + ImVec2(TextSize.x * 0.5f + BadgePad.x, TextSize.y * 0.5f + BadgePad.y);
@@ -707,7 +707,7 @@ namespace Lumina
             {
                 LineColor = EditorColors::Lighten(LineColor, 0.25f);
             }
-            else if (Transition != nullptr && Transition->Conditions.empty())
+            else if (Transition != nullptr && Transition->Conditions.IsEmpty())
             {
                 // An unconditional edge fires the instant its source becomes active; call it out.
                 LineColor = EditorColors::Warning();
@@ -740,7 +740,7 @@ namespace Lumina
             DL->AddRectFilled(BadgeMin, BadgeMax, EditorColors::U32(BadgeBg), SM::BadgeRounding);
             DL->AddRect(BadgeMin, BadgeMax, LineU32, SM::BadgeRounding, bSelected || bHovered ? 1.8f : 1.1f, 0);
             DL->AddText(Font, FontSize, ImVec2(Mid.x - TextSize.x * 0.5f, Mid.y - TextSize.y * 0.5f),
-                        EditorColors::U32(bSelected ? EditorColors::TextPrimary() : EditorColors::TextDim()), BadgeText.c_str());
+                        EditorColors::U32(bSelected ? EditorColors::TextPrimary() : EditorColors::TextDim()), *BadgeText);
 
             // Blend duration and the interrupt flag are what you compare across edges without clicking each.
             if (Transition != nullptr)
@@ -753,18 +753,18 @@ namespace Lumina
                 }
 
                 const float MetaFontSize = FontSize * 0.85f;
-                const ImVec2 MetaSize = Font->CalcTextSizeA(MetaFontSize, FLT_MAX, 0.0f, Meta.c_str());
+                const ImVec2 MetaSize = Font->CalcTextSizeA(MetaFontSize, FLT_MAX, 0.0f, *Meta);
                 DL->AddText(Font, MetaFontSize,
                             ImVec2(Mid.x - MetaSize.x * 0.5f, BadgeMax.y + 2.0f),
-                            EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextMuted(), 0.9f)), Meta.c_str());
+                            EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextMuted(), 0.9f)), *Meta);
 
                 if (bBlending)
                 {
                     const FString Weight = Format("{:.0f}%", DebugTransitionWeight * 100.0f);
-                    const ImVec2 WeightSize = Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Weight.c_str());
+                    const ImVec2 WeightSize = Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, *Weight);
                     DL->AddText(Font, FontSize,
                                 ImVec2(Mid.x - WeightSize.x * 0.5f, BadgeMax.y + 2.0f + MetaSize.y + 1.0f),
-                                LineU32, Weight.c_str());
+                                LineU32, *Weight);
                 }
             }
         }
@@ -781,13 +781,13 @@ namespace Lumina
 
         ImGui::BeginTooltip();
         ImGui::TextColored(EditorColors::TextPrimary(), "%s  " LE_ICON_ARROW_RIGHT_BOLD "  %s",
-                           GetEndpointLabel(FromNode->GetNodeID()).c_str(),
-                           GetEndpointLabel(ToNode->GetNodeID()).c_str());
+                           *GetEndpointLabel(FromNode->GetNodeID()),
+                           *GetEndpointLabel(ToNode->GetNodeID()));
 
         if (CAnimStateTransition* Transition = FindTransition(FromNode->GetNodeID(), ToNode->GetNodeID()))
         {
             ImGui::Separator();
-            ImGui::Text("Condition   %s", Transition->GetConditionText().c_str());
+            ImGui::Text("Condition   %s", *Transition->GetConditionText());
             ImGui::Text("Blend       %.2fs", Transition->BlendDuration);
             ImGui::Text("Priority    %d", Transition->Priority);
             ImGui::Text("Interrupt   %s", Transition->bCanInterrupt ? "can pre-empt an in-flight blend" : "runs to completion");

@@ -19,24 +19,23 @@ namespace Lumina
         void Configure() override
         {
             RequireUpdate(EUpdateStage::FrameEnd);
-
-            // The destroy defers to the end of the batch, so only the countdown needs declaring.
-            Writes<SLifetimeComponent>();
         }
-        
+
         void OnUpdate(const SSystemContext& Context) override
         {
-
-            LUMINA_PROFILE_SCOPE();
-            
-            Context.CreateView<SLifetimeComponent>().ForEach([&](ECS::FEntity Entity, SLifetimeComponent& Component)
+            const float Dt = Context.GetDeltaTime();
+            Expiring.ParallelForEach([&](ECS::FEntity Entity, SLifetimeComponent& Component)
             {
-                Component.Lifetime -= static_cast<float>(Context.GetDeltaTime());
+                Component.Lifetime -= Dt;
                 if (Component.Lifetime <= 0.0f)
                 {
                     Context.Destroy(Entity);
                 }
             });
         }
+
+    private:
+
+        ECS::TQuery<ECS::Write<SLifetimeComponent>> Expiring;
     };
 }

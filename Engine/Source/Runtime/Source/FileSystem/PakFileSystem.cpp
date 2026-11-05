@@ -22,18 +22,19 @@ namespace Lumina::VFS
             return false;
         }
         TSpan<const uint8> Data = Archive->ReadEntry(Path);
-        if (Data.empty() && !Archive->HasEntry(Path))
+        if (Data.IsEmpty() && !Archive->HasEntry(Path))
         {
             return false;
         }
-        Result.assign(Data.begin(), Data.end());
+        Result.Reset();
+        Result.Append(Data.begin(), Data.end());
         return true;
     }
 
     // The archive already holds the whole pak, so a ranged read avoids copying the whole entry.
-    bool FPakFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    bool FPakFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size)
     {
-        Result.clear();
+        Result.Reset();
 
         if (!Archive)
         {
@@ -41,20 +42,20 @@ namespace Lumina::VFS
         }
 
         TSpan<const uint8> Data = Archive->ReadEntry(Path);
-        if (Data.empty() && !Archive->HasEntry(Path))
+        if (Data.IsEmpty() && !Archive->HasEntry(Path))
         {
             return false;
         }
 
-        if (Offset >= (uint64)Data.size())
+        Result.Reset();
+        if (Offset < 0 || Size <= 0 || Offset >= Data.Num())
         {
             return true;
         }
 
-        const uint64 Remaining = (uint64)Data.size() - Offset;
-        const uint64 ToRead    = Size < Remaining ? Size : Remaining;
-
-        Result.assign(Data.begin() + (size_t)Offset, Data.begin() + (size_t)(Offset + ToRead));
+        const int64 Remaining = Data.Num() - Offset;
+        const int64 ToRead    = Size < Remaining ? Size : Remaining;
+        Result.Append(Data.GetData() + Offset, static_cast<int32>(ToRead));
         return true;
     }
 
@@ -65,11 +66,11 @@ namespace Lumina::VFS
             return false;
         }
         TSpan<const uint8> Data = Archive->ReadEntry(Path);
-        if (Data.empty() && !Archive->HasEntry(Path))
+        if (Data.IsEmpty() && !Archive->HasEntry(Path))
         {
             return false;
         }
-        OutString.assign(reinterpret_cast<const char*>(Data.data()), Data.size());
+        OutString = FStringView(reinterpret_cast<const char*>(Data.GetData()), Data.Num());
         return true;
     }
 
@@ -120,7 +121,7 @@ namespace Lumina::VFS
         return !bAny;
     }
 
-    size_t FPakFileSystem::Size(FStringView Path) const
+    int64 FPakFileSystem::Size(FStringView Path) const
     {
         return Archive ? Archive->EntrySize(Path) : 0;
     }
@@ -138,17 +139,17 @@ namespace Lumina::VFS
         Archive->ForEachEntryUnder(Path, [&](FStringView EntryPath, size_t Bytes)
         {
             // Anything deeper than one level becomes a synthetic directory entry instead.
-            FStringView Suffix = EntryPath.substr(Path.size() + 1); // skip leading "/"
-            const size_t NextSlash = Suffix.find('/');
+            FStringView Suffix = EntryPath.Mid(Path.Len() + 1); // skip leading "/"
+            const int32 NextSlash = Suffix.Find('/');
 
-            if (NextSlash == FStringView::npos)
+            if (NextSlash == Constants::kIndexNone)
             {
                 // Direct file child.
                 FFileInfo Info
                 {
-                    .Name           = FString(FileNameOf(EntryPath).data(), FileNameOf(EntryPath).size()),
-                    .VirtualPath    = FString(EntryPath.data(), EntryPath.size()),
-                    .PathSource     = FString(EntryPath.data(), EntryPath.size()),
+                    .Name           = FString(FileNameOf(EntryPath).GetData(), FileNameOf(EntryPath).Len()),
+                    .VirtualPath    = FString(EntryPath.GetData(), EntryPath.Len()),
+                    .PathSource     = FString(EntryPath.GetData(), EntryPath.Len()),
                     .LastModifyTime = 0,
                     .Flags          = FlagsForPath(EntryPath, false, true),
                 };
@@ -157,20 +158,20 @@ namespace Lumina::VFS
             else
             {
                 // Synthetic directory.
-                FStringView DirRel = Suffix.substr(0, NextSlash);
-                FFixedString DirFullPath(Path.data(), Path.size());
-                DirFullPath.append("/");
-                DirFullPath.append(DirRel.data(), DirRel.size());
+                FStringView DirRel = Suffix.Mid(0, NextSlash);
+                FFixedString DirFullPath(Path.GetData(), Path.Len());
+                DirFullPath.Append("/");
+                DirFullPath.Append(DirRel.GetData(), DirRel.Len());
 
-                if (EmittedDirs.insert(DirFullPath).second)
+                if (EmittedDirs.TryAdd(DirFullPath))
                 {
                     FFileInfo Info
                     {
-                        .Name           = FString(DirRel.data(), DirRel.size()),
-                        .VirtualPath    = FString(DirFullPath.c_str(), DirFullPath.size()),
-                        .PathSource     = FString(DirFullPath.c_str(), DirFullPath.size()),
+                        .Name           = FString(DirRel.GetData(), DirRel.Len()),
+                        .VirtualPath    = FString(*DirFullPath, DirFullPath.Len()),
+                        .PathSource     = FString(*DirFullPath, DirFullPath.Len()),
                         .LastModifyTime = 0,
-                        .Flags          = FlagsForPath(FStringView(DirFullPath.data(), DirFullPath.size()), true, true),
+                        .Flags          = FlagsForPath(FStringView(DirFullPath.GetData(), DirFullPath.Len()), true, true),
                     };
                     Callback(Info);
                 }
@@ -188,9 +189,9 @@ namespace Lumina::VFS
         {
             FFileInfo Info
             {
-                .Name           = FString(FileNameOf(EntryPath).data(), FileNameOf(EntryPath).size()),
-                .VirtualPath    = FString(EntryPath.data(), EntryPath.size()),
-                .PathSource     = FString(EntryPath.data(), EntryPath.size()),
+                .Name           = FString(FileNameOf(EntryPath).GetData(), FileNameOf(EntryPath).Len()),
+                .VirtualPath    = FString(EntryPath.GetData(), EntryPath.Len()),
+                .PathSource     = FString(EntryPath.GetData(), EntryPath.Len()),
                 .LastModifyTime = 0,
                 .Flags          = FlagsForPath(EntryPath, false, true),
             };

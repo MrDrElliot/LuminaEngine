@@ -25,7 +25,6 @@ namespace Lumina
             ThreadGroup_Physics = 10,
             ThreadGroup_Audio   = 20,
             ThreadGroup_Worker  = 100,
-            ThreadGroup_Fiber   = 200,
             ThreadGroup_Other   = 1000,
         };
     }
@@ -165,30 +164,28 @@ namespace Lumina
 
         RUNTIME_API bool SetCurrentThreadPriority(EThreadPriority Priority);
 
-        // One entry per logical processor. SMT siblings share PhysicalCore; last-level-cache peers share
-        // CacheGroup. Both are dense ids with no meaning beyond equality.
+        // SMT siblings share PhysicalCore, last-level-cache peers share CacheGroup; both are dense ids with no meaning beyond equality.
         struct FCpuTopology
         {
             uint16 PhysicalCore = 0;
             uint16 CacheGroup   = 0;
         };
 
-        // Fills up to MaxCount entries and returns how many logical processors were described. Returns 0 when
-        // the platform cannot report topology, which callers must treat as "every processor is equidistant".
+        // Returns 0 when the platform cannot report topology; callers must treat that as every processor equidistant.
         RUNTIME_API uint32 GetCpuTopology(FCpuTopology* Out, uint32 MaxCount);
 
-        // Asks the scheduler to prefer LogicalProcessor for the calling thread. A hint, not an affinity mask:
-        // the thread still migrates under load, so nothing may depend on it for correctness.
+        // A hint, not an affinity mask: the thread still migrates, so nothing may depend on it for correctness.
         RUNTIME_API void SetThreadIdealProcessor(uint32 LogicalProcessor);
 
-        // Sleeps until the word at Address stops reading Compare or TimeoutMs elapses, whichever comes first.
-        // The timeout is what makes a missed wake cost latency instead of a hang, so callers may treat the
-        // wake as advisory and re-check their own condition on every return.
+        // The timeout makes a missed wake cost latency, not a hang; callers must re-check their own condition on every return.
         RUNTIME_API bool WaitOnAddress32(const volatile uint32* Address, uint32 Compare, uint32 TimeoutMs);
 
-        // Wakes everything sleeping in WaitOnAddress32 on this word. Never mix with std::atomic::wait on the
-        // same word: the two use different wait queues on Windows.
+        // Never mix with std::atomic::wait on the same word: they use different wait queues on Windows.
         RUNTIME_API void WakeAllOnAddress32(const volatile uint32* Address);
+        RUNTIME_API void WakeOneOnAddress32(const volatile uint32* Address);
+
+        // Orders every running thread's earlier memory operations before this point; false where the OS offers nothing better than a local fence.
+        RUNTIME_API bool ProcessWideMemoryBarrier();
     }
     
 

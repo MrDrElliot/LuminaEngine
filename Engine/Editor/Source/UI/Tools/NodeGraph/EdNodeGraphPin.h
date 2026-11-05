@@ -50,15 +50,15 @@ namespace Lumina
         virtual FString GetPinTypeName() const { return FString(); }
         void SetPinColor(uint32 Color) { PinColor = Color;}
                 
-        void AddConnection(CEdNodeGraphPin* Pin) { Connections.push_back(Pin); }
+        void AddConnection(CEdNodeGraphPin* Pin) { Connections.Add(Pin); }
         void RemoveConnection(CEdNodeGraphPin* Pin);
         FORCEINLINE TVector<CEdNodeGraphPin*> GetConnections() const { return Connections; }
-        FORCEINLINE CEdNodeGraphPin* GetConnection(size_t Index) const { return Connections[Index]; }
+        FORCEINLINE CEdNodeGraphPin* GetConnection(int32 Index) const { return Connections[Index]; }
         void DisconnectFrom(CEdNodeGraphPin* OtherPin);
         void ClearConnections();
 
         bool IsSingleInput() const { return bSingleInput; }
-        bool HasConnection() const { return !Connections.empty(); }
+        bool HasConnection() const { return !Connections.IsEmpty(); }
         uint32 GetPinGUID() const { return PinID; }
         CEdGraphNode* GetOwningNode() const { return OwningNode; }
 
@@ -79,7 +79,7 @@ namespace Lumina
 
         template<typename T>
         requires(std::is_base_of_v<CEdNodeGraphPin, T>)
-        T* GetConnection(size_t Index)
+        T* GetConnection(int32 Index)
         {
             return static_cast<T*>(Connections[Index]);
         }

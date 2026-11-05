@@ -43,7 +43,7 @@ namespace ECSBench
         static_assert(!CCanTryGet<FDisabledTag>, "a tag has no value, so TryGet must not compile");
         static_assert(!CCanPatch<FDisabledTag>, "a tag has no value to patch");
         static_assert(!CCanGet<FPosition*>, "a pointer spelling must not compile");
-        static_assert(!CCanGet<const FPosition>, "a const spelling must not compile");
+        static_assert(CCanGet<const FPosition>, "a const spelling reads the component const");
 
         static_assert(CCanEmplace<FDisabledTag>, "a tag can be added");
         static_assert(!CCanEmplace<FDisabledTag, int>, "a tag takes no constructor arguments");
@@ -117,11 +117,11 @@ namespace ECSBench
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FStablePosition>(Entity, FStablePosition{ static_cast<float>(Index), 0.0f, 0.0f });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             const ECS::TComponentStorage<FStablePosition> Pool = Registry.GetStorage<FStablePosition>();
-            const size_t DenseBefore = Pool.GetDenseSize();
+            const int32 DenseBefore = Pool.GetDenseSize();
 
             Registry.Remove<FStablePosition>(Entities[2]);
             Registry.Remove<FStablePosition>(Entities[5]);
@@ -133,13 +133,13 @@ namespace ECSBench
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FStablePosition>(Entity, FStablePosition{ 100.0f + static_cast<float>(Extra), 0.0f, 0.0f });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             Check(Pool.GetDenseSize() == DenseBefore + 1, "refills reuse both holes and then append exactly one slot");
             Check(Pool.Num() == DenseBefore + 1, "the pool has no tombstones left");
 
-            size_t Walked = 0;
+            int32 Walked = 0;
             Registry.View<FStablePosition>().ForEach([&Walked](ECS::FEntity, FStablePosition&) { ++Walked; });
             Check(Walked == DenseBefore + 1, "iteration sees every live element after the chain drained");
 
@@ -160,7 +160,7 @@ namespace ECSBench
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FSmallPages>(Entity, FSmallPages{ static_cast<float>(Index) });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             Check(Registry.GetStorage<FSmallPages>().GetSet()->GetPayloadPageSize() == 64,
@@ -235,7 +235,7 @@ namespace ECSBench
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FStablePosition>(Entity, FStablePosition{ static_cast<float>(Index), 0.0f, 0.0f });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             // FStablePosition is in-place delete, so removal leaves tombstones and Num() drops below the dense size.
@@ -248,22 +248,22 @@ namespace ECSBench
             Check(View.NumDenseSlots() > View.NumCandidates(),
                 "a pool with tombstones has more dense slots than live entities");
 
-            size_t WholeWalk = 0;
+            int32 WholeWalk = 0;
             View.ForEach([&WholeWalk](ECS::FEntity, FStablePosition&) { ++WholeWalk; });
 
             // Split the way a parallel job would, in chunks over the dense bound.
-            size_t Chunked = 0;
-            const size_t Slots = View.NumDenseSlots();
-            for (size_t Begin = 0; Begin < Slots; Begin += 32)
+            int32 Chunked = 0;
+            const int32 Slots = View.NumDenseSlots();
+            for (int32 Begin = 0; Begin < Slots; Begin += 32)
             {
-                const size_t End = Begin + 32 < Slots ? Begin + 32 : Slots;
+                const int32 End = Begin + 32 < Slots ? Begin + 32 : Slots;
                 View.ForEachInRange(Begin, End, [&Chunked](ECS::FEntity, FStablePosition&) { ++Chunked; });
             }
 
             Check(WholeWalk == Count / 2, "the whole walk visits every surviving entity");
             Check(Chunked == WholeWalk, "chunked range iteration visits exactly what the whole walk does");
 
-            size_t Overrun = 0;
+            int32 Overrun = 0;
             View.ForEachInRange(0, Slots * 4, [&Overrun](ECS::FEntity, FStablePosition&) { ++Overrun; });
             Check(Overrun == WholeWalk, "a range past the end is clamped rather than reading off the array");
         }
@@ -315,7 +315,7 @@ namespace ECSBench
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FPosition>(Entity, FPosition{ static_cast<float>(Index), 0.0f, 0.0f });
                 Registry.Emplace<FStablePosition>(Entity, FStablePosition{ static_cast<float>(Index), 0.0f, 0.0f });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             // Odd indices survive the removal below, so this is a component that outlives the churn.
@@ -416,7 +416,7 @@ namespace ECSBench
                 {
                     const ECS::FEntity Entity = Registry.Create();
                     Registry.Emplace<FOwning>(Entity);
-                    Entities.push_back(Entity);
+                    Entities.Add(Entity);
                 }
 
                 bool bAllLive = true;
@@ -653,7 +653,7 @@ namespace ECSBench
                 {
                     Registry.Emplace<T>(Entity);
                 }
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             TVector<uint32> Visits(RemovalEntityCount, 0u);
@@ -738,7 +738,7 @@ namespace ECSBench
             {
                 AddPartnersSoTheSeededPoolDrives<FRemovalPaged>(Registry);
                 auto View = Registry.View<FRemovalPaged, FRemovalPartner>();
-                Check(View.GetDriver() == Registry.FindStorage<FRemovalPaged>().GetSet(), "the smaller pool drives the view");
+                Check(View.IsDrivenBy(Registry.FindStorage<FRemovalPaged>().GetSet()), "the smaller pool drives the view");
                 View.ForEach([&](ECS::FEntity Entity, FRemovalPaged&, FRemovalPartner&) { Visit(Entity); });
             });
 
@@ -806,7 +806,7 @@ namespace ECSBench
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FRemovalPaged>(Entity, FRemovalPaged{ .Value = Index });
                 Registry.Emplace<FRemovalPartner>(Entity, FRemovalPartner{ .Value = Index });
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             uint32 Visited = 0;

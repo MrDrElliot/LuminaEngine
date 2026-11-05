@@ -31,7 +31,7 @@ namespace Lumina::ECS
 
         // Compile-time here, so the typed hot path folds page math that the type-erased side has to compute.
         static constexpr bool bInPlaceDelete = TComponentTraits<T>::InPlaceDelete;
-        static constexpr size_t PageSize = TComponentTraits<T>::PageSize;
+        static constexpr int32 PageSize = TComponentTraits<T>::PageSize;
 
         // A tag has no value, so Emplace hands back nothing rather than a reference to a shared dummy.
         using FEmplaceResult = std::conditional_t<bEmpty, void, T&>;
@@ -46,10 +46,13 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE explicit operator bool() const { return Set != nullptr; }
 
         NODISCARD FORCEINLINE bool Contains(FEntity Entity) const { return Set->Contains(Entity); }
-        NODISCARD FORCEINLINE size_t Num() const { return Set->Num(); }
+        NODISCARD FORCEINLINE int32 Num() const { return Set->Num(); }
         NODISCARD FORCEINLINE bool IsEmpty() const { return Set->IsEmpty(); }
+
+        // Safe on a storage FindStorage found nothing for, which IsEmpty is not.
+        NODISCARD FORCEINLINE bool IsEmptyOrMissing() const { return Set == nullptr || Set->IsEmpty(); }
         NODISCARD FORCEINLINE bool HasTombstones() const { return Set->HasTombstones(); }
-        NODISCARD FORCEINLINE size_t GetDenseSize() const { return Set->GetDenseSize(); }
+        NODISCARD FORCEINLINE int32 GetDenseSize() const { return Set->GetDenseSize(); }
         NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Set->GetDenseData(); }
 
         // Tuple iteration over the pool, matching the shape a view hands back. Walks backward like every pool walk.
@@ -59,7 +62,7 @@ namespace Lumina::ECS
 
             FEachIterator() = default;
 
-            FEachIterator(const TComponentStorage* InStorage, size_t InEndSlot)
+            FEachIterator(const TComponentStorage* InStorage, int32 InEndSlot)
                 : Storage(InStorage)
                 , EndSlot(InEndSlot)
             {
@@ -68,7 +71,8 @@ namespace Lumina::ECS
 
             NODISCARD auto operator * () const
             {
-                const size_t Index = EndSlot - 1u;
+                const int32 Index = EndSlot - 1;
+                Storage->GetSet()->StampIfTracked(static_cast<uint32>(Index));
                 return TTuple<FEntity, T&>(Storage->GetDenseData()[Index],
                     Storage->GetAtDense(static_cast<uint32>(Index)));
             }
@@ -88,7 +92,7 @@ namespace Lumina::ECS
                 }
 
                 const FEntity* Dense = Storage->GetDenseData();
-                while (EndSlot > 0 && Dense[EndSlot - 1u].IsTombstone())
+                while (EndSlot > 0 && Dense[EndSlot - 1].IsTombstone())
                 {
                     --EndSlot;
                 }
@@ -97,7 +101,7 @@ namespace Lumina::ECS
             const TComponentStorage* Storage = nullptr;
 
             // One past the current slot, so the finished walk sits at zero without wrapping.
-            size_t EndSlot = 0;
+            int32 EndSlot = 0;
         };
 
         struct FEachRange
@@ -124,15 +128,34 @@ namespace Lumina::ECS
             }
         }
 
-        // Undefined unless the pool holds the entity, so the check is worth its cost outside shipping.
+        // Undefined unless the pool holds the entity. Mutable access, so a tracked pool stamps the element.
         NODISCARD FORCEINLINE T& Get(FEntity Entity) const requires CDataComponent<T>
+        {
+            DEBUG_ASSERT(Set->Contains(Entity), "Get on a component the entity does not have");
+            const uint32 DenseIndex = Set->GetDenseIndex(Entity);
+            Set->StampIfTracked(DenseIndex);
+            return GetAtDense(DenseIndex);
+        }
+
+        NODISCARD FORCEINLINE T* TryGet(FEntity Entity) const requires CDataComponent<T>
+        {
+            T* Value = TryGetUntracked(Entity);
+            if (Value != nullptr)
+            {
+                Set->StampIfTracked(Set->GetDenseIndex(Entity));
+            }
+            return Value;
+        }
+
+        // Never stamps, for a reader or for a caller that stamps by itself.
+        NODISCARD FORCEINLINE T& GetUntracked(FEntity Entity) const requires CDataComponent<T>
         {
             DEBUG_ASSERT(Set->Contains(Entity), "Get on a component the entity does not have");
             return GetAtDense(Set->GetDenseIndex(Entity));
         }
 
         // Does the lookup itself rather than through GetRaw, so the layout branches fold away at compile time.
-        NODISCARD FORCEINLINE T* TryGet(FEntity Entity) const requires CDataComponent<T>
+        NODISCARD FORCEINLINE T* TryGetUntracked(FEntity Entity) const requires CDataComponent<T>
         {
             // An empty slot is memset to the null handle, so a null query would match one and index out of bounds.
             if (Entity.IsNull())
@@ -152,6 +175,9 @@ namespace Lumina::ECS
         FEmplaceResult Emplace(FEntity Entity, TArgs&&... Args) const
             requires (CDataComponent<T> || sizeof...(TArgs) == 0)
         {
+            static_assert(std::is_trivially_copyable_v<T> || TIsTriviallyRelocatable_V<T> || std::is_move_constructible_v<T> || TComponentTraits<T>::InPlaceDelete,
+                "A pool moves its components on removal, so one without a move constructor must be trivially relocatable or in-place-delete.");
+
             const uint32 DenseIndex = Set->AllocateSlot(Entity);
             if constexpr (!bEmpty)
             {
@@ -166,9 +192,11 @@ namespace Lumina::ECS
         {
             if (Set->Contains(Entity))
             {
+                const uint32 DenseIndex = Set->GetDenseIndex(Entity);
+                Set->MarkWritten(DenseIndex);
                 if constexpr (!bEmpty)
                 {
-                    T& Existing = Get(Entity);
+                    T& Existing = GetAtDense(DenseIndex);
                     Memory::DestroyAt(&Existing);
                     Memory::ConstructAt(&Existing, std::forward<TArgs>(Args)...);
                     return Existing;
@@ -201,20 +229,20 @@ namespace Lumina::ECS
 
         bool RemoveEntity(FEntity Entity) const { return Set->RemoveEntity(Entity); }
 
-        void Reserve(size_t Count) const { Set->Reserve(Count); }
+        void Reserve(int32 Count) const { Set->Reserve(Count); }
 
         // Both callables by value, or the compiler must assume a store in the body aliases them.
         template<typename TPredicate, typename TFunc>
         FORCEINLINE void ForEachDenseWhere(TPredicate Accept, TFunc Func) const
         {
             const FEntity* DenseData = Set->GetDenseData();
-            const size_t DenseSize = Set->GetDenseSize();
+            const int32 DenseSize = Set->GetDenseSize();
             const uint8* PackedBlock = Set->GetPackedBlock();
 
             // A tag reaches the callback as membership only, so the value is never in the argument list.
             if constexpr (bEmpty)
             {
-                for (size_t Index = DenseSize; Index-- > 0;)
+                for (int32 Index = DenseSize; Index-- > 0;)
                 {
                     const FEntity Entity = DenseData[Index];
                     if (Accept(Entity))
@@ -226,15 +254,15 @@ namespace Lumina::ECS
             else if constexpr (bPaged)
             {
                 const bool bSkipHoles = bInPlaceDelete && Set->HasTombstones();
-                const size_t PageCount = (DenseSize + PageSize - 1u) / PageSize;
+                const int32 PageCount = (DenseSize + PageSize - 1) / PageSize;
 
-                for (size_t PageIndex = PageCount; PageIndex-- > 0;)
+                for (int32 PageIndex = PageCount; PageIndex-- > 0;)
                 {
                     T* Page = reinterpret_cast<T*>(Set->GetPayloadPage(PageIndex));
-                    const size_t Base = PageIndex * PageSize;
-                    const size_t Count = (Base + PageSize <= DenseSize) ? PageSize : (DenseSize - Base);
+                    const int32 Base = PageIndex * PageSize;
+                    const int32 Count = (Base + PageSize <= DenseSize) ? PageSize : (DenseSize - Base);
 
-                    for (size_t Offset = Count; Offset-- > 0;)
+                    for (int32 Offset = Count; Offset-- > 0;)
                     {
                         const FEntity Entity = DenseData[Base + Offset];
                         if ((!bSkipHoles || !Entity.IsTombstone()) && Accept(Entity))
@@ -247,7 +275,7 @@ namespace Lumina::ECS
             else
             {
                 T* Elements = reinterpret_cast<T*>(Set->GetPackedBlock());
-                for (size_t Index = DenseSize; Index-- > 0;)
+                for (int32 Index = DenseSize; Index-- > 0;)
                 {
                     const FEntity Entity = DenseData[Index];
                     if (Accept(Entity))
@@ -265,12 +293,12 @@ namespace Lumina::ECS
         FORCEINLINE void ForEachDense(TFunc Func) const
         {
             const FEntity* DenseData = Set->GetDenseData();
-            const size_t DenseSize = Set->GetDenseSize();
+            const int32 DenseSize = Set->GetDenseSize();
             const uint8* PackedBlock = Set->GetPackedBlock();
 
             if constexpr (bEmpty)
             {
-                for (size_t Index = DenseSize; Index-- > 0;)
+                for (int32 Index = DenseSize; Index-- > 0;)
                 {
                     Func(DenseData[Index]);
                 }
@@ -278,18 +306,18 @@ namespace Lumina::ECS
             else if constexpr (bPaged)
             {
                 const bool bSkipHoles = bInPlaceDelete && Set->HasTombstones();
-                const size_t PageCount = (DenseSize + PageSize - 1u) / PageSize;
+                const int32 PageCount = (DenseSize + PageSize - 1) / PageSize;
 
-                for (size_t PageIndex = PageCount; PageIndex-- > 0;)
+                for (int32 PageIndex = PageCount; PageIndex-- > 0;)
                 {
                     T* Page = reinterpret_cast<T*>(Set->GetPayloadPage(PageIndex));
-                    const size_t Base = PageIndex * PageSize;
-                    const size_t Count = (Base + PageSize <= DenseSize) ? PageSize : (DenseSize - Base);
+                    const int32 Base = PageIndex * PageSize;
+                    const int32 Count = (Base + PageSize <= DenseSize) ? PageSize : (DenseSize - Base);
 
                     // Split rather than branching per element, so the common no-hole page stays a tight loop.
                     if (bSkipHoles)
                     {
-                        for (size_t Offset = Count; Offset-- > 0;)
+                        for (int32 Offset = Count; Offset-- > 0;)
                         {
                             const FEntity Entity = DenseData[Base + Offset];
                             if (!Entity.IsTombstone())
@@ -300,7 +328,7 @@ namespace Lumina::ECS
                     }
                     else
                     {
-                        for (size_t Offset = Count; Offset-- > 0;)
+                        for (int32 Offset = Count; Offset-- > 0;)
                         {
                             InvokeEntityCallback(Func, DenseData[Base + Offset], Page[Offset]);
                         }
@@ -310,7 +338,7 @@ namespace Lumina::ECS
             else
             {
                 T* Elements = reinterpret_cast<T*>(Set->GetPackedBlock());
-                for (size_t Index = DenseSize; Index-- > 0;)
+                for (int32 Index = DenseSize; Index-- > 0;)
                 {
                     InvokeEntityCallback(Func, DenseData[Index], Elements[Index]);
                 }

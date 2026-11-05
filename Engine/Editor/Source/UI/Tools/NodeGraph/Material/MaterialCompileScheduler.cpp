@@ -13,7 +13,7 @@
 #include "Platform/Time/PlatformTime.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderCompiler.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
 
@@ -25,7 +25,7 @@ namespace Lumina
         constexpr double kLaunchBudgetMs = 4.0;
 
         // Nothing waits on these, and a waiting thread that helped with one would stall its frame for the whole compile.
-        constexpr ETaskPriority kCompilePriority = ETaskPriority::Background;
+        constexpr Jobs::EJobPriority kCompilePriority = Jobs::EJobPriority::Background;
     }
 
     struct FMaterialCompileScheduler::FJob
@@ -64,7 +64,7 @@ namespace Lumina
         FinishSettledJobs(Queue);
         LaunchJobs(Queue);
 
-        if (InFlight.empty() && Deferred.empty() && MaterialsNeedingSave > 0)
+        if (InFlight.IsEmpty() && Deferred.IsEmpty() && MaterialsNeedingSave > 0)
         {
             ImGuiX::Notifications::NotifyInfo("{0} material(s) recompiled into the artifact cache. Save them once to drop the bytecode from their assets.", MaterialsNeedingSave);
             MaterialsNeedingSave = 0;
@@ -73,7 +73,7 @@ namespace Lumina
 
     void FMaterialCompileScheduler::FinishSettledJobs(FMaterialCompileQueue& Queue)
     {
-        for (size_t i = 0; i < InFlight.size();)
+        for (int32 i = 0; i < InFlight.Num();)
         {
             FJob& Job = *InFlight[i];
             if (!Job.Result.StageLog->Stages.IsSettled())
@@ -90,7 +90,7 @@ namespace Lumina
             {
                 FinishRecompile(Job, Queue);
             }
-            InFlight.erase(InFlight.begin() + i);
+            InFlight.RemoveAt(i);
         }
     }
 
@@ -101,13 +101,13 @@ namespace Lumina
         const uint64 Start = PlatformTime::Cycles();
 
         TVector<FRequest> Retry = Move(Deferred);
-        Deferred.clear();
-        size_t NextRetry = 0;
+        Deferred.Reset();
+        int32 NextRetry = 0;
 
         while (OutstandingStages() < StageBudget && PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) < kLaunchBudgetMs)
         {
             FRequest Request;
-            if (NextRetry < Retry.size())
+            if (NextRetry < Retry.Num())
             {
                 Request = Move(Retry[NextRetry++]);
             }
@@ -118,9 +118,9 @@ namespace Lumina
             Launch(Move(Request));
         }
 
-        for (; NextRetry < Retry.size(); ++NextRetry)
+        for (; NextRetry < Retry.Num(); ++NextRetry)
         {
-            Deferred.push_back(Move(Retry[NextRetry]));
+            Deferred.Add(Move(Retry[NextRetry]));
         }
     }
 
@@ -155,7 +155,7 @@ namespace Lumina
         // Two jobs on one material would race each other's stage commits.
         if (IsCompiling(Request.Material.Get()))
         {
-            Deferred.push_back(Move(Request));
+            Deferred.Add(Move(Request));
             return;
         }
 
@@ -182,7 +182,7 @@ namespace Lumina
         CMaterialNodeGraph* Graph = LoadMaterialGraph(Material);
         if (Graph == nullptr)
         {
-            LOG_WARN("Material '{0}' has no saved graph to recompile from", Material->GetName().c_str());
+            LOG_WARN("Material '{0}' has no saved graph to recompile from", *Material->GetName());
             return;
         }
 
@@ -200,10 +200,10 @@ namespace Lumina
             {
                 Graph->MarkCompiled();
             }
-            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", Material->GetName().c_str());
+            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", *Material->GetName());
             return;
         }
-        InFlight.push_back(Move(Job));
+        InFlight.Add(Move(Job));
     }
 
     void FMaterialCompileScheduler::LaunchPermutation(FRequest&& Request)
@@ -227,17 +227,17 @@ namespace Lumina
         {
             LOG_WARN("Material '{0}': an instance selects a static switch permutation this material has not "
                      "compiled, and it has no saved graph to compile it from. The instance draws with every "
-                     "switch at its default.", Material->GetName().c_str());
+                     "switch at its default.", *Material->GetName());
             return;
         }
 
         Job->Material = Move(Request.Material);
         if (!BeginMaterialGraphCompile(Material, Graph, Job->Compiler, Job->Result, Job->Target, kCompilePriority))
         {
-            ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile", Material->GetName().c_str());
+            ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile", *Material->GetName());
             return;
         }
-        InFlight.push_back(Move(Job));
+        InFlight.Add(Move(Job));
     }
 
     void FMaterialCompileScheduler::FinishRecompile(FJob& Job, FMaterialCompileQueue& Queue)
@@ -251,14 +251,14 @@ namespace Lumina
             Job.Graph->MarkCompiled();
         }
 
-        const FString Name = Material->GetName().c_str();
+        const FString Name = *Material->GetName();
         if (!Job.Result.bSuccess)
         {
             for (const EdNodeGraph::FError& Error : Job.Result.Errors)
             {
-                LOG_ERROR("Material '{0}' recompile failed. {1}", Name.c_str(), Error.Description.c_str());
+                LOG_ERROR("Material '{0}' recompile failed. {1}", *Name, *Error.Description);
             }
-            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", Name.c_str());
+            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", *Name);
             return;
         }
 
@@ -279,7 +279,7 @@ namespace Lumina
         const bool bSuperseded = Queue.IsFunctionRecompileQueued(Material->GetGUID());
         if (!Job.bSaveWhenComplete || !bGraphUnchanged || bSuperseded)
         {
-            ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled after a material function changed; save to keep", Name.c_str());
+            ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled after a material function changed; save to keep", *Name);
             return;
         }
 
@@ -288,11 +288,11 @@ namespace Lumina
         {
             FAssetRegistry::Get().AssetSaved(Material);
             FCoreEditorDelegates::OnAssetSaved.Broadcast(Material);
-            LOG_INFO("Material '{0}' recompiled and saved after a material function changed", Name.c_str());
+            LOG_INFO("Material '{0}' recompiled and saved after a material function changed", *Name);
         }
         else
         {
-            ImGuiX::Notifications::NotifyError("Material '{0}' recompiled but could not be saved", Name.c_str());
+            ImGuiX::Notifications::NotifyError("Material '{0}' recompiled but could not be saved", *Name);
         }
     }
 
@@ -301,9 +301,9 @@ namespace Lumina
         FinishMaterialGraphCompile(Job.Material.Get(), Job.Compiler, Job.Result, Job.Target);
 
         // A recompile that superseded this permutation fails it with no errors, and says so itself.
-        if (!Job.Result.bSuccess && !Job.Result.Errors.empty())
+        if (!Job.Result.bSuccess && !Job.Result.Errors.IsEmpty())
         {
-            ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile", Job.Material->GetName().c_str());
+            ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile", *Job.Material->GetName());
         }
     }
 

@@ -82,7 +82,7 @@ namespace Lumina
         
         NODISCARD RUNTIME_API double GetDeltaTime() const { return UpdateContext.DeltaTime; }
         
-        NODISCARD RUNTIME_API bool HasLoadedProject() const { return !ProjectName.empty(); }
+        NODISCARD RUNTIME_API bool HasLoadedProject() const { return !ProjectName.IsEmpty(); }
 
         RUNTIME_API const FUpdateContext& GetUpdateContext() const { return UpdateContext; }
 

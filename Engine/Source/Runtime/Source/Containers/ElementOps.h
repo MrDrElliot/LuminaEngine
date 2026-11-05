@@ -125,6 +125,95 @@ namespace Lumina::ElementOps
         }
     }
 
+    /** Assigns over live elements, which lets each keep its own storage where destroying and rebuilding would free it. */
+    template <typename T>
+    FORCEINLINE void CopyAssignRange(T* RESTRICT Dest, const T* RESTRICT Src, size_t Count)
+    {
+        if constexpr (std::is_trivially_copyable_v<T>)
+        {
+            if (Count != 0)
+            {
+                Memory::Memcpy(Dest, Src, Count * sizeof(T));
+            }
+        }
+        else
+        {
+            for (size_t Index = 0; Index < Count; ++Index)
+            {
+                Dest[Index] = Src[Index];
+            }
+        }
+    }
+
+    /** Exchanges two elements; a trivially relocatable one swaps as bytes instead of running its move members three times. */
+    template <typename T>
+    FORCEINLINE void SwapElements(T& A, T& B)
+    {
+        if constexpr (TIsTriviallyRelocatable_V<T>)
+        {
+            alignas(T) unsigned char Staged[sizeof(T)];
+            std::memcpy(Staged, static_cast<void*>(&A), sizeof(T));
+            std::memcpy(static_cast<void*>(&A), static_cast<const void*>(&B), sizeof(T));
+            std::memcpy(static_cast<void*>(&B), Staged, sizeof(T));
+        }
+        else
+        {
+            T Staged(std::move(A));
+            A = std::move(B);
+            B = std::move(Staged);
+        }
+    }
+
+    // Integers and pointers compare a block at a time with no exit inside it, which vectorizes; one byte goes to memchr.
+    template <typename TSize, typename T, typename TKey>
+    NODISCARD FORCEINLINE TSize FindIndex(const T* Data, TSize Num, const TKey& Key)
+    {
+        if constexpr (TIsBitwiseComparable_V<T> && std::is_scalar_v<T> && std::is_same_v<T, TKey>)
+        {
+            if constexpr (sizeof(T) == 1)
+            {
+                const void* Hit = Num > 0 ? std::memchr(Data, static_cast<unsigned char>(Key), static_cast<size_t>(Num)) : nullptr;
+                return Hit != nullptr ? static_cast<TSize>(static_cast<const T*>(Hit) - Data) : TSize(-1);
+            }
+            else
+            {
+                constexpr TSize kBlock = static_cast<TSize>(64 / sizeof(T));
+                TSize Index = 0;
+                for (; Index + kBlock <= Num; Index += kBlock)
+                {
+                    bool bAny = false;
+                    for (TSize Lane = 0; Lane < kBlock; ++Lane)
+                    {
+                        bAny |= Data[Index + Lane] == Key;
+                    }
+                    if (bAny)
+                    {
+                        break;
+                    }
+                }
+                for (; Index < Num; ++Index)
+                {
+                    if (Data[Index] == Key)
+                    {
+                        return Index;
+                    }
+                }
+                return TSize(-1);
+            }
+        }
+        else
+        {
+            for (TSize Index = 0; Index < Num; ++Index)
+            {
+                if (Data[Index] == Key)
+                {
+                    return Index;
+                }
+            }
+            return TSize(-1);
+        }
+    }
+
     template <typename T>
     FORCEINLINE void FillConstructRange(T* Dest, size_t Count, const T& Value)
     {

@@ -1,6 +1,5 @@
 ﻿#include "RuntimePCH.h"
 #include "PluginLoadingPhase.h"
-#include "Log/Log.h"
 
 namespace Lumina
 {
@@ -19,18 +18,17 @@ namespace Lumina
         }
     }
 
-    EPluginLoadingPhase ParsePluginLoadingPhase(FStringView Str, EPluginLoadingPhase Default)
+    bool TryParsePluginLoadingPhase(FStringView Str, EPluginLoadingPhase& OutPhase)
     {
-        if (Str.empty())              return Default;
-        if (Str == "Earliest")        return EPluginLoadingPhase::Earliest;
-        if (Str == "Core")            return EPluginLoadingPhase::Core;
-        if (Str == "PreEngineInit")   return EPluginLoadingPhase::PreEngineInit;
-        if (Str == "EngineInit")      return EPluginLoadingPhase::EngineInit;
-        if (Str == "PostEngineInit")  return EPluginLoadingPhase::PostEngineInit;
-        if (Str == "PostProjectLoad") return EPluginLoadingPhase::PostProjectLoad;
-        if (Str == "EditorInit")      return EPluginLoadingPhase::EditorInit;
-        LOG_WARN("[PluginManager] Unknown LoadingPhase '{}' in .lplugin; falling back to '{}'",
-            Str, LexToString(Default));
-        return Default;
+        for (uint8 Index = 0; Index < static_cast<uint8>(EPluginLoadingPhase::Count); ++Index)
+        {
+            const EPluginLoadingPhase Phase = static_cast<EPluginLoadingPhase>(Index);
+            if (Str == LexToString(Phase))
+            {
+                OutPhase = Phase;
+                return true;
+            }
+        }
+        return false;
     }
 }

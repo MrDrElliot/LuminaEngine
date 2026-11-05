@@ -9,14 +9,14 @@
 
 namespace Lumina
 {
-    FPropertyHandle::FPropertyHandle(void* InContainerPtr, FProperty* InProperty, int64 InIndex)
+    FPropertyHandle::FPropertyHandle(void* InContainerPtr, FProperty* InProperty, int32 InIndex)
         : ContainerPtr(InContainerPtr)
         , Property(InProperty)
         , Index(InIndex)
     {
     }
 
-    FPropertyHandle::FPropertyHandle(void* InContainerPtr, void* InDefaultContainerPtr, FProperty* InProperty, int64 InIndex)
+    FPropertyHandle::FPropertyHandle(void* InContainerPtr, void* InDefaultContainerPtr, FProperty* InProperty, int32 InIndex)
         : ContainerPtr(InContainerPtr)
         , DefaultContainerPtr(InDefaultContainerPtr)
         , Property(InProperty)
@@ -24,7 +24,7 @@ namespace Lumina
     {
     }
 
-    FPropertyHandle::FPropertyHandle(FArrayProperty* InOwnerArray, void* InArrayPtr, void* InDefaultArrayPtr, FProperty* InElementProperty, int64 InIndex)
+    FPropertyHandle::FPropertyHandle(FArrayProperty* InOwnerArray, void* InArrayPtr, void* InDefaultArrayPtr, FProperty* InElementProperty, int32 InIndex)
         : ContainerPtr(InArrayPtr)
         , DefaultContainerPtr(InDefaultArrayPtr)
         , Property(InElementProperty)
@@ -33,7 +33,7 @@ namespace Lumina
     {
     }
 
-    FPropertyHandle::FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int64 InIndex, bool bInIsKey)
+    FPropertyHandle::FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int32 InIndex, bool bInIsKey)
         : ContainerPtr(InMapPtr)
         , DefaultContainerPtr(InDefaultMapPtr)
         , Property(InProperty)
@@ -44,13 +44,13 @@ namespace Lumina
     }
 
     // Resolve the slot for a map entry (key or value) at iteration Index against the given map instance.
-    static void* ResolveMapSlot(FMapProperty* Map, void* Container, int64 Index, bool bKey)
+    static void* ResolveMapSlot(FMapProperty* Map, void* Container, int32 Index, bool bKey)
     {
-        if (Map == nullptr || Container == nullptr || Index < 0 || (size_t)Index >= Map->GetNum(Container))
+        if (Map == nullptr || Container == nullptr || Index < 0 || Index >= Map->Num(Container))
         {
             return nullptr;
         }
-        return bKey ? const_cast<void*>(Map->GetKeyAt(Container, (size_t)Index)) : Map->GetValueAt(Container, (size_t)Index);
+        return bKey ? const_cast<void*>(Map->GetKeyAt(Container, Index)) : Map->GetValueAt(Container, Index);
     }
 
     void* FPropertyHandle::GetValuePtr() const
@@ -62,7 +62,7 @@ namespace Lumina
         // Resolve the element fresh each call so a vector reallocation can't leave us with a stale pointer.
         if (OwnerArray != nullptr)
         {
-            return Index < (int64)OwnerArray->GetNum(ContainerPtr) ? OwnerArray->GetAt(ContainerPtr, (size_t)Index) : nullptr;
+            return Index < OwnerArray->Num(ContainerPtr) ? OwnerArray->GetAt(ContainerPtr, Index) : nullptr;
         }
         if (OwnerMap != nullptr)
         {
@@ -79,7 +79,7 @@ namespace Lumina
         }
         if (OwnerArray != nullptr)
         {
-            return Index < (int64)OwnerArray->GetNum(DefaultContainerPtr) ? OwnerArray->GetAt(DefaultContainerPtr, (size_t)Index) : nullptr;
+            return Index < OwnerArray->Num(DefaultContainerPtr) ? OwnerArray->GetAt(DefaultContainerPtr, Index) : nullptr;
         }
         if (OwnerMap != nullptr)
         {
@@ -124,25 +124,25 @@ namespace Lumina
 
     void FPropertyCustomizationRegistry::RegisterPropertyCustomization(const FName& Name, PropertyCustomizationRegisterFn Callback)
     {
-        ASSERT(RegisteredProperties.find(Name) == RegisteredProperties.end());
-        RegisteredProperties.emplace(Name, Callback);
+        ASSERT(!RegisteredProperties.Contains(Name));
+        RegisteredProperties.TryAdd(Name, Callback);
     }
 
     void FPropertyCustomizationRegistry::UnregisterPropertyCustomization(const FName& Name)
     {
-        ASSERT(RegisteredProperties.find(Name) != RegisteredProperties.end());
-        RegisteredProperties.erase(Name);
+        ASSERT(RegisteredProperties.Contains(Name));
+        RegisteredProperties.Remove(Name);
     }
 
     bool FPropertyCustomizationRegistry::IsTypeRegistered(const FName& Name)
     {
-        return RegisteredProperties.find(Name) != RegisteredProperties.end();
+        return RegisteredProperties.Contains(Name);
     }
 
     TSharedPtr<IPropertyTypeCustomization> FPropertyCustomizationRegistry::GetPropertyCustomizationForType(const FName& Type)
     {
-        auto It = RegisteredProperties.find(Type);
-        return It != RegisteredProperties.end() ? It->second() : nullptr;
+        auto It = RegisteredProperties.Find(Type);
+        return It != nullptr ? (*It)() : nullptr;
     }
     
 }

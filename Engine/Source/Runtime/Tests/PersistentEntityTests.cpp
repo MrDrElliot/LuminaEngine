@@ -65,17 +65,17 @@ TEST(PersistentEntities, TheSameScriptInstanceAndChildrenArriveInTheNextWorld)
 
     FPersistentCarry Carry;
     Carry.Lift(From);
-    EXPECT_TRUE(Old.Get<SEntityScriptComponent>(Hero).Scripts.empty()) << "the old world's teardown must find nothing to detach";
+    EXPECT_TRUE(Old.Get<SEntityScriptComponent>(Hero).Scripts.IsEmpty()) << "the old world's teardown must find nothing to detach";
     Carry.Land(To);
 
     ECS::FRegistry& New = To->GetEntityRegistry();
     const TVector<ECS::FEntity> Arrived = Heroes(To);
-    ASSERT_EQ(Arrived.size(), 1u);
+    ASSERT_EQ(Arrived.Num(), 1);
     const ECS::FEntity Arrival = Arrived[0];
-    EXPECT_EQ(New.NumEntities(), 2u) << "only the persistent entity and its child travel";
+    EXPECT_EQ(New.NumEntities(), 2) << "only the persistent entity and its child travel";
 
     const SEntityScriptComponent& Scripts = New.Get<SEntityScriptComponent>(Arrival);
-    ASSERT_EQ(Scripts.Scripts.size(), 1u);
+    ASSERT_EQ(Scripts.Scripts.Num(), 1);
     EXPECT_EQ(Scripts.Scripts[0].Get(), Script);
     EXPECT_EQ(Script->GetOwningEntity(), Arrival);
     EXPECT_EQ(Script->GetWorld(), To);
@@ -102,7 +102,7 @@ TEST(PersistentEntities, AnArrivalReplacesThePlacedEntityWithItsTag)
     Carry.Land(To);
 
     const TVector<ECS::FEntity> Arrived = Heroes(To);
-    ASSERT_EQ(Arrived.size(), 1u);
+    ASSERT_EQ(Arrived.Num(), 1);
     EXPECT_NE(Arrived[0], Placed);
     EXPECT_FALSE(New.IsValid(Placed));
     EXPECT_EQ(New.Get<SCameraFollowComponent>(Door).Target, Arrived[0]) << "the level's own references follow the replacement";
@@ -122,6 +122,6 @@ TEST(PersistentEntities, WithoutTakePlacementTheArrivalKeepsItsOwnTransform)
     Carry.Land(To);
 
     const TVector<ECS::FEntity> Arrived = Heroes(To);
-    ASSERT_EQ(Arrived.size(), 1u);
+    ASSERT_EQ(Arrived.Num(), 1);
     EXPECT_EQ(To->GetEntityRegistry().Get<STransformComponent>(Arrived[0]).LocalTransform.GetLocation(), FVector3(1.0f, 2.0f, 3.0f));
 }

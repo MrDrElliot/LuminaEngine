@@ -118,7 +118,10 @@ public sealed unsafe class UIDataModel : IDisposable
         {
             Model.Binding = this;
         }
-        Registry[(World, Name)] = this;
+        lock (Registry)
+        {
+            Registry[(World, Name)] = this;
+        }
         PushAll();
     }
 
@@ -137,7 +140,12 @@ public sealed unsafe class UIDataModel : IDisposable
     public static UIDataModel? Find(Lumina.CWorld World, string Name) => Find(World.WorldHandle, Name);
 
     internal static UIDataModel? Find(ulong World, string Name)
-        => Registry.TryGetValue((World, Name), out UIDataModel? Model) ? Model : null;
+    {
+        lock (Registry)
+        {
+            return Registry.TryGetValue((World, Name), out UIDataModel? Model) ? Model : null;
+        }
+    }
 
     private void BindMembers()
     {
@@ -412,15 +420,19 @@ public sealed unsafe class UIDataModel : IDisposable
     {
         try
         {
-            if (Registry.Count == 0)
-            {
-                return;
-            }
-
             // Copied out, since a model's getters may create or dispose models mid-poll.
-            int Count = Registry.Count;
-            UIDataModel[] Models = System.Buffers.ArrayPool<UIDataModel>.Shared.Rent(Count);
-            Registry.Values.CopyTo(Models, 0);
+            int Count;
+            UIDataModel[] Models;
+            lock (Registry)
+            {
+                Count = Registry.Count;
+                if (Count == 0)
+                {
+                    return;
+                }
+                Models = System.Buffers.ArrayPool<UIDataModel>.Shared.Rent(Count);
+                Registry.Values.CopyTo(Models, 0);
+            }
             try
             {
                 for (int Index = 0; Index < Count; ++Index)
@@ -445,7 +457,7 @@ public sealed unsafe class UIDataModel : IDisposable
     // Drops the models belonging to one world as it tears down, since its Rml context goes with it.
     internal static void RemoveForWorld(ulong World)
     {
-        foreach (UIDataModel Model in new List<UIDataModel>(Registry.Values))
+        foreach (UIDataModel Model in SnapshotRegistry())
         {
             if (Model._world == World)
             {
@@ -457,18 +469,32 @@ public sealed unsafe class UIDataModel : IDisposable
     // Before a script load context unloads, since a live model roots the user types it binds.
     public static void DisposeAll()
     {
-        foreach (UIDataModel Model in new List<UIDataModel>(Registry.Values))
+        foreach (UIDataModel Model in SnapshotRegistry())
         {
             Model.Dispose();
         }
-        Registry.Clear();
+        lock (Registry)
+        {
+            Registry.Clear();
+        }
+    }
+
+    private static List<UIDataModel> SnapshotRegistry()
+    {
+        lock (Registry)
+        {
+            return new List<UIDataModel>(Registry.Values);
+        }
     }
 
     public void Dispose()
     {
-        if (Registry.TryGetValue((_world, _name), out UIDataModel? Registered) && ReferenceEquals(Registered, this))
+        lock (Registry)
         {
-            Registry.Remove((_world, _name));
+            if (Registry.TryGetValue((_world, _name), out UIDataModel? Registered) && ReferenceEquals(Registered, this))
+            {
+                Registry.Remove((_world, _name));
+            }
         }
         if (_native.IsValid)
         {

@@ -54,8 +54,7 @@ namespace Lumina
 
 	using FAssetDataMap = THashSet<TSharedPtr<FAssetData>, FAssetDataPtrHash, FAssetDataPtrEqual>;
 
-	// Lightweight identity record for a loose text asset (.rml/.rcss). Lives in a map entirely
-	// separate from FAssetData / the .lasset cook dependency graph. GUID sourced from the file's sidecar.
+	// Identity record for a loose text asset (.rml/.rcss), kept in a map separate from FAssetData and the cook dependency graph.
 	struct FTextAssetData
 	{
 		FGuid          Guid;
@@ -88,8 +87,7 @@ namespace Lumina
 
 		static FAssetRegistry& Get();
 
-		// Walks engine/project/plugin content, extracting FAssetData (incl. Dependencies) per .lasset.
-		// Incremental via the binary cache, skipping files whose mtime and size match it; async on Task::AsyncTask.
+		// Incremental via the binary cache (skips files whose mtime and size match); async on a background job.
 		void RunInitialDiscovery();
 		void OnInitialDiscoveryCompleted();
 
@@ -107,8 +105,7 @@ namespace Lumina
 
 		// --- Text assets (.rml/.rcss): GUID identity sourced from hidden .lmeta sidecars. ---
 
-		// Editor-only: walk content roots, read-or-mint a sidecar GUID per text file, rebuild the map.
-		// Not called in cooked runtime (the shipped registry already carries the table).
+		// Editor-only; not called in cooked runtime, where the shipped registry already carries the table.
 		void RunTextAssetDiscovery();
 
 		// Resolve/mint a single text asset (used on create + first-touch). Returns its stable GUID.
@@ -129,18 +126,13 @@ namespace Lumina
 		// Every asset listing GUID in its Dependencies; O(1) avg via a reverse map built lazily after change.
 		TVector<FAssetData*> GetReferencersOf(const FGuid& GUID) const;
 
-		// Serialize the live registry to compact binary; the cooker bundles a pre-baked registry into
-		// the PAK so the runtime skips the filesystem rescan at start. (The editor cache is JSON instead;
-		// see SaveCache/LoadCache.)
+		// The cooker bundles this pre-baked registry into the PAK so runtime skips the rescan; the editor cache is JSON.
 		void WriteToArchive(FArchive& Ar) const;
 		bool LoadFromArchive(FArchive& Ar);
 
 		FAssetRegistryUpdatedDelegate& GetOnAssetRegistryUpdated() { return OnAssetRegistryUpdated; }
 
-		// Coalesce registry-update broadcasts across a bulk operation (e.g. importing many assets). While
-		// suspended (count > 0) the per-asset mutators record a pending broadcast instead of firing one each;
-		// the final ResumeBroadcasts fires a single broadcast iff anything changed. Reentrant/thread-safe.
-		// Prefer the FScopedAssetRegistryBatch guard below.
+		// While suspended, mutators only flag a pending broadcast; the final ResumeBroadcasts fires one. Prefer FScopedAssetRegistryBatch.
 		void SuspendBroadcasts();
 		void ResumeBroadcasts();
 
@@ -149,12 +141,10 @@ namespace Lumina
 
 	private:
 
-		// Fire OnAssetRegistryUpdated, or, while broadcasts are suspended, just flag one pending. Always called
-		// OUTSIDE AssetsMutex so a listener can re-enter the (non-recursive) registry without self-deadlock.
+		// Always called OUTSIDE AssetsMutex so a listener can re-enter the non-recursive registry without deadlock.
 		void NotifyRegistryChanged();
 
-		// Actually fires the delegate, hopping to the main thread first when called from anywhere else.
-		// Every subscriber touches editor UI state, and asset creation runs on import task fibers.
+		// Fires the delegate on the main thread, hopping there first, since every subscriber touches editor UI state.
 		void DispatchRegistryChanged();
 
 		// True when the cached entry came from a file with this exact stamp, so nothing needs reading.
@@ -178,8 +168,7 @@ namespace Lumina
 		// (Re)build the reverse-dep map from current Assets. Cheap O(N*avgDeps).
 		void RebuildReverseMap();
 
-		// Reap cached entries under a walked root not visited this discovery (externally deleted).
-		// Disabled-plugin content survives: its mount isn't a walked root.
+		// Disabled-plugin content survives because its mount is not a walked root.
 		size_t ReapStaleEntries();
 
 
@@ -215,13 +204,10 @@ namespace Lumina
 		THashMap<FGuid, TVector<FGuid>, FGuidHash> ReverseDepMap; // dep -> referrers
 		mutable bool					bReverseMapDirty = true;
 
-		// Broadcast coalescing (see SuspendBroadcasts). Suspend count is reentrant; pending flag survives until
-		// the final resume fires the single broadcast.
 		std::atomic<int32>				BroadcastSuspendCount { 0 };
 		std::atomic<bool>				bBroadcastPending { false };
 
-		// Snapshot from the most recent RunInitialDiscovery, consumed by
-		// OnInitialDiscoveryCompleted to drive the reap pass.
+		// Snapshot from the latest RunInitialDiscovery, consumed by OnInitialDiscoveryCompleted for the reap pass.
 		TVector<FFixedString>			LastDiscoveryWalkedRoots;
 		TVector<FFixedString>			LastDiscoveryVisitedPaths; // sorted
 
@@ -235,8 +221,7 @@ namespace Lumina
 		std::atomic<uint32>				DiscoveryExtracted { 0 };
 	};
 
-	// RAII: suspends FAssetRegistry broadcasts for its lifetime so a bulk operation (importing many assets)
-	// fires one registry-update broadcast at the end instead of one per asset. Reentrant (nests safely).
+	// Suspends FAssetRegistry broadcasts for its lifetime so a bulk operation fires one broadcast at the end.
 	struct RUNTIME_API FScopedAssetRegistryBatch
 	{
 		FScopedAssetRegistryBatch();

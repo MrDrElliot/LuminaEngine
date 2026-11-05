@@ -186,7 +186,7 @@ namespace Lumina
                 }
                 else
                 {
-                    if (Index >= (int32)Parameters.size())
+                    if (Index >= Parameters.Num())
                     {
                         return false;
                     }
@@ -264,17 +264,17 @@ namespace Lumina
             return;
         }
 
-        State.ScalarRegisters.assign(Graph->NumScalarRegisters, 0.0f);
-        State.StateSlots.assign(Graph->NumStateSlots, 0.0f);
+        State.ScalarRegisters.Init(0.0f, Graph->NumScalarRegisters);
+        State.StateSlots.Init(0.0f, Graph->NumStateSlots);
 
-        State.Parameters.resize(Graph->Parameters.size());
-        for (SIZE_T i = 0; i < Graph->Parameters.size(); ++i)
+        State.Parameters.SetNum(Graph->Parameters.Num());
+        for (int32 i = 0; i < Graph->Parameters.Num(); ++i)
         {
             State.Parameters[i] = Graph->Parameters[i].DefaultValue;
         }
 
         // Seed non-zero slot values (entry state index, From = -1); zeroed slots are already correct.
-        const SIZE_T NumSlots = State.StateSlots.size();
+        const int32 NumSlots = State.StateSlots.Num();
         for (const FAnimGraphStateMachine& SM : Graph->StateMachines)
         {
             if (SM.CurrentStateSlot < NumSlots)
@@ -288,17 +288,17 @@ namespace Lumina
         }
 
         // One inertialization record per state machine (transition smoothing; rebuilt each init).
-        State.Inertializers.assign(Graph->StateMachines.size(), FAnimInertializer());
-        State.NodeInertializers.assign(Graph->NumInertializerNodes, FAnimInertializer());
-        State.PoseSnapshots.assign(Graph->PoseSnapshotNames.size(), FPose());
-        State.DeadBlends.assign(Graph->NumDeadBlendNodes, FAnimDeadBlend());
+        State.Inertializers.Init(FAnimInertializer(), Graph->StateMachines.Num());
+        State.NodeInertializers.Init(FAnimInertializer(), Graph->NumInertializerNodes);
+        State.PoseSnapshots.Init(FPose(), Graph->PoseSnapshotNames.Num());
+        State.DeadBlends.Init(FAnimDeadBlend(), Graph->NumDeadBlendNodes);
 
-        State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
-        State.CurveValues.assign(Graph->CurveNames.size(), 0.0f);
+        State.SyncGroups.Init(FAnimSyncGroup(), Graph->NumSyncGroups);
+        State.CurveValues.Init(0.0f, Graph->CurveNames.Num());
         State.UpdateSerial = 0;
 
         // Defaults live on the graph's parameter struct, which the update pull reads every frame.
-        State.ObjectParameters.assign(Graph->ObjectParameters.size(), nullptr);
+        State.ObjectParameters.Init(nullptr, Graph->ObjectParameters.Num());
 
         State.SourceGraph  = Graph;
         State.bInitialized = true;
@@ -317,10 +317,10 @@ namespace Lumina
 
             void BeginCall(SIZE_T Count)
             {
-                if (Entries.size() < Count)
+                if (static_cast<size_t>(Entries.Num()) < Count)
                 {
-                    Entries.resize(Count);
-                    Stamps.resize(Count, 0u);
+                    Entries.SetNum(IntCastChecked<int32>(Count));
+                    Stamps.SetNum(IntCastChecked<int32>(Count), 0u);
                 }
                 if (++Stamp == 0u)
                 {
@@ -329,13 +329,13 @@ namespace Lumina
                 }
             }
 
-            NODISCARD FORCEINLINE const T& Read(SIZE_T Index) const
+            NODISCARD FORCEINLINE const T& Read(int32 Index) const
             {
                 return Stamps[Index] == Stamp ? Entries[Index] : DefaultEntry;
             }
 
             // The first touch in a call starts the entry from its default, as a cleared array would have.
-            NODISCARD FORCEINLINE T& Write(SIZE_T Index)
+            NODISCARD FORCEINLINE T& Write(int32 Index)
             {
                 if (Stamps[Index] != Stamp)
                 {
@@ -368,7 +368,7 @@ namespace Lumina
                 State.bInitialized = false;
                 LOG_WARN("AnimationGraph '{}': compiled bytecode version {} does not match runtime version {}; "
                          "showing bind pose. Open and re-save the graph in the editor to recompile.",
-                         Graph->GetName().c_str(), Graph->BytecodeVersion, kAnimBytecodeVersion);
+                         *Graph->GetName(), Graph->BytecodeVersion, kAnimBytecodeVersion);
             }
 
             FAnimTask Ref;
@@ -381,11 +381,11 @@ namespace Lumina
         // Re-initialize when the state is stale or sized for a different graph asset.
         if (!State.bInitialized ||
             State.SourceGraph != Graph ||
-            (int32)State.ScalarRegisters.size() != Graph->NumScalarRegisters ||
-            (int32)State.StateSlots.size() != Graph->NumStateSlots ||
-            (int32)State.SyncGroups.size() != Graph->NumSyncGroups ||
-            State.CurveValues.size() != Graph->CurveNames.size() ||
-            State.Parameters.size() != Graph->Parameters.size())
+            State.ScalarRegisters.Num() != Graph->NumScalarRegisters ||
+            State.StateSlots.Num() != Graph->NumStateSlots ||
+            State.SyncGroups.Num() != Graph->NumSyncGroups ||
+            State.CurveValues.Num() != Graph->CurveNames.Num() ||
+            State.Parameters.Num() != Graph->Parameters.Num())
         {
             InitState(Graph, State);
         }
@@ -405,20 +405,20 @@ namespace Lumina
 
         OutTasks.Skeleton = Skeleton;
 
-        const SIZE_T NumScalar = State.ScalarRegisters.size();
-        const SIZE_T NumState  = State.StateSlots.size();
-        const SIZE_T NumClips  = Graph->Clips.size();
-        const SIZE_T NumParams = State.Parameters.size();
-        const SIZE_T NumPose   = Graph->NumPoseRegisters;
+        const int32 NumScalar = State.ScalarRegisters.Num();
+        const int32 NumState  = State.StateSlots.Num();
+        const int32 NumClips  = Graph->Clips.Num();
+        const int32 NumParams = State.Parameters.Num();
+        const int32 NumPose   = Graph->NumPoseRegisters;
 
-        float* RESTRICT Scalars = State.ScalarRegisters.data();
+        float* RESTRICT Scalars = State.ScalarRegisters.GetData();
 
         // Object registers are pure dataflow within one call, so they are scratch, not per-instance state.
         const SIZE_T NumObjectRegs = Graph->NumObjectRegisters;
-        const SIZE_T NumObjectParams = State.ObjectParameters.size();
+        const int32 NumObjectParams = State.ObjectParameters.Num();
 
         thread_local TVector<CObject*> ObjectRegs;
-        ObjectRegs.assign(NumObjectRegs, nullptr);
+        ObjectRegs.Init(nullptr, IntCastChecked<int32>(NumObjectRegs));
 
         const auto ReadObjectReg = [&](uint16 Reg) -> CObject*
         {
@@ -438,12 +438,12 @@ namespace Lumina
         const bool bExtractRootMotion = RootMotionInOut.Mode == ERootMotionLockMode::FromAsset &&
                                         RootMotionInOut.RootBoneIndex != Constants::kIndexNone;
 
-        EventScratch.clear();
+        EventScratch.Reset();
 
         // Copy FAnimNotifyEvent instead of scaling in place as a pose can be reused on both sides of a blend.
         const auto MixEvents = [](const FEventRange& A, float MulA, const FEventRange& B, float MulB, bool bSum) -> FEventRange
         {
-            const uint16 Start = (uint16)EventScratch.size();
+            const uint16 Start = (uint16)EventScratch.Num();
             const auto Append = [&](const FEventRange& Range, float Mul)
             {
                 for (uint16 i = Range.Start; i < Range.End && i < Start; ++i)
@@ -452,7 +452,7 @@ namespace Lumina
                     Event.Weight *= Mul;
 
                     FAnimNotifyEvent* Same = nullptr;
-                    for (uint16 j = Start; j < (uint16)EventScratch.size(); ++j)
+                    for (int32 j = Start; j < (uint16)EventScratch.Num(); ++j)
                     {
                         const FAnimNotifyEvent& Other = EventScratch[j];
                         if (Other.Notify == Event.Notify && Other.State == Event.State && Other.Animation == Event.Animation
@@ -465,7 +465,7 @@ namespace Lumina
 
                     if (Same == nullptr)
                     {
-                        EventScratch.push_back(Event);
+                        EventScratch.Add(Event);
                     }
                     else
                     {
@@ -476,7 +476,7 @@ namespace Lumina
 
             Append(A, MulA);
             Append(B, MulB);
-            return FEventRange{ Start, (uint16)EventScratch.size() };
+            return FEventRange{ Start, (uint16)EventScratch.Num() };
         };
 
         const auto ReadScalar = [&](uint16 Reg, float Default) -> float
@@ -566,26 +566,26 @@ namespace Lumina
         };
 
         // Every op that blends poses blends the curves identically, so a value tracks its branch weight.
-        const SIZE_T NumCurves = Graph->CurveNames.size();
+        const int32 NumCurves = Graph->CurveNames.Num();
 
         // A register's curve row is zeroed the first time this call touches it rather than every row up front.
         thread_local TVector<float>  PoseCurves;
         thread_local TVector<uint32> PoseCurveStamps;
         thread_local TVector<float>  CurveScratch;
-        if (PoseCurves.size() < NumPose * NumCurves)
+        if (PoseCurves.Num() < NumPose * NumCurves)
         {
-            PoseCurves.resize(NumPose * NumCurves);
+            PoseCurves.SetNum(NumPose * NumCurves);
         }
-        if (PoseCurveStamps.size() < NumPose)
+        if (PoseCurveStamps.Num() < NumPose)
         {
-            PoseCurveStamps.resize(NumPose, 0u);
+            PoseCurveStamps.SetNum(NumPose, 0u);
         }
         const uint32 CurveStamp = PoseTags.Stamp;
-        CurveScratch.assign(NumCurves, 0.0f);
+        CurveScratch.Init(0.0f, NumCurves);
 
-        if (!State.CurveValues.empty())
+        if (!State.CurveValues.IsEmpty())
         {
-            Memory::Memset(State.CurveValues.data(), 0, State.CurveValues.size() * sizeof(float));
+            Memory::Memset(State.CurveValues.GetData(), 0, State.CurveValues.Num() * sizeof(float));
         }
 
         const auto CurvesOf = [&](uint16 Reg) -> float*
@@ -594,7 +594,7 @@ namespace Lumina
             {
                 return nullptr;
             }
-            float* Row = PoseCurves.data() + (SIZE_T)Reg * NumCurves;
+            float* Row = PoseCurves.GetData() + (SIZE_T)Reg * NumCurves;
             if (PoseCurveStamps[Reg] != CurveStamp)
             {
                 Memory::Memset(Row, 0, NumCurves * sizeof(float));
@@ -617,8 +617,8 @@ namespace Lumina
             }
 
             const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
-            const SIZE_T Count = Math::Min(Curves.size(), Map->Slots.size());
-            for (SIZE_T i = 0; i < Count; ++i)
+            const int32 Count = Math::Min(Curves.Num(), Map->Slots.Num());
+            for (int32 i = 0; i < Count; ++i)
             {
                 const int32 Slot = Map->Slots[i];
                 if (Slot >= 0 && Slot < (int32)NumCurves)
@@ -630,7 +630,7 @@ namespace Lumina
 
         const auto ClipCurveMapFor = [&](uint16 ClipIdx) -> const FAnimGraphClipCurveMap*
         {
-            return ClipIdx < Graph->ClipCurveMaps.size() ? &Graph->ClipCurveMaps[ClipIdx] : nullptr;
+            return ClipIdx < Graph->ClipCurveMaps.Num() ? &Graph->ClipCurveMaps[ClipIdx] : nullptr;
         };
 
         // Keyed on the graph too, since slot layout is per graph and one clip maps differently in each.
@@ -666,14 +666,14 @@ namespace Lumina
 
             Entry.Graph = Graph;
             Entry.Clip  = Clip;
-            Entry.Map.Slots.clear();
+            Entry.Map.Slots.Reset();
 
             // Only slots the graph already declares can be driven; the bytecode addresses them by index.
             const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
-            Entry.Map.Slots.reserve(Curves.size());
+            Entry.Map.Slots.Reserve(Curves.Num());
             for (const FAnimationCurve& Curve : Curves)
             {
-                Entry.Map.Slots.push_back(Graph->FindCurveIndex(Curve.Name));
+                Entry.Map.Slots.Add(Graph->FindCurveIndex(Curve.Name));
             }
 
             return &Entry.Map;
@@ -721,7 +721,7 @@ namespace Lumina
                 return;
             }
 
-            for (SIZE_T i = 0; i < NumCurves; ++i)
+            for (int32 i = 0; i < NumCurves; ++i)
             {
                 const float VA = SA != nullptr ? SA[i] : 0.0f;
                 const float VB = SB != nullptr ? SB[i] : 0.0f;
@@ -738,7 +738,7 @@ namespace Lumina
             }
             const float* SBase  = CurvesOf(Base);
             const float* SDelta = CurvesOf(Delta);
-            for (SIZE_T i = 0; i < NumCurves; ++i)
+            for (int32 i = 0; i < NumCurves; ++i)
             {
                 D[i] = (SBase != nullptr ? SBase[i] : 0.0f) + (SDelta != nullptr ? SDelta[i] : 0.0f) * Alpha;
             }
@@ -754,16 +754,16 @@ namespace Lumina
                 return;
             }
 
-            if (Inert.CurveOffsets.size() != NumCurves)
+            if (Inert.CurveOffsets.Num() != NumCurves)
             {
-                Inert.CurveOffsets.assign(NumCurves, 0.0f);
-                Inert.PrevCurves.assign(NumCurves, 0.0f);
+                Inert.CurveOffsets.Init(0.0f, NumCurves);
+                Inert.PrevCurves.Init(0.0f, NumCurves);
                 Inert.bHasCurveHistory = false;
             }
 
             if (bStart)
             {
-                for (SIZE_T i = 0; i < NumCurves; ++i)
+                for (int32 i = 0; i < NumCurves; ++i)
                 {
                     Inert.CurveOffsets[i] = Inert.bHasCurveHistory ? (Inert.PrevCurves[i] - D[i]) : 0.0f;
                 }
@@ -773,13 +773,13 @@ namespace Lumina
             {
                 const float U = Math::Clamp(Inert.Elapsed / Inert.Duration, 0.0f, 1.0f);
                 const float Decay = InertializationDecay(U);
-                for (SIZE_T i = 0; i < NumCurves; ++i)
+                for (int32 i = 0; i < NumCurves; ++i)
                 {
                     D[i] += Inert.CurveOffsets[i] * Decay;
                 }
             }
 
-            Memory::Memcpy(Inert.PrevCurves.data(), D, NumCurves * sizeof(float));
+            Memory::Memcpy(Inert.PrevCurves.GetData(), D, NumCurves * sizeof(float));
             Inert.bHasCurveHistory = true;
         };
 
@@ -805,12 +805,12 @@ namespace Lumina
 
         const auto MachineIsValid = [&](uint16 SmIdx) -> bool
         {
-            if (SmIdx >= Graph->StateMachines.size() || SmIdx >= State.Inertializers.size())
+            if (SmIdx >= Graph->StateMachines.Num() || SmIdx >= State.Inertializers.Num())
             {
                 return false;
             }
             const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
-            return !SM.StatePoseRegisters.empty() && SM.CurrentStateSlot < NumState &&
+            return !SM.StatePoseRegisters.IsEmpty() && SM.CurrentStateSlot < NumState &&
                    SM.FromStateSlot < NumState && SM.TimeInStateSlot < NumState;
         };
 
@@ -824,12 +824,12 @@ namespace Lumina
 
         // Decided once the current state has run, so the edge can read its curves and finished flag.
         thread_local TVector<FMachineDecision> Decisions;
-        Decisions.assign(Graph->StateMachines.size(), FMachineDecision());
+        Decisions.Init(FMachineDecision(), Graph->StateMachines.Num());
 
         const auto DecideTransition = [&](uint16 SmIdx) -> FMachineDecision
         {
             const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
-            const int32 NumStates = (int32)SM.StatePoseRegisters.size();
+            const int32 NumStates = SM.StatePoseRegisters.Num();
             FAnimInertializer& Inert = State.Inertializers[SmIdx];
 
             FMachineDecision Out;
@@ -849,7 +849,7 @@ namespace Lumina
             TransitionContext.TimeInState = State.StateSlots[SM.TimeInStateSlot];
             TransitionContext.Curves      = CurvesOf(SM.StatePoseRegisters[Out.Current]);
             TransitionContext.NumCurves   = NumCurves;
-            if (Out.Current < (int32)SM.StateFinishedRegisters.size())
+            if (Out.Current < SM.StateFinishedRegisters.Num())
             {
                 TransitionContext.ClipFinished = ReadScalar(SM.StateFinishedRegisters[Out.Current], 0.0f);
             }
@@ -882,7 +882,7 @@ namespace Lumina
             };
 
             // The per-state table skips every edge leaving some other state, and a graph built without it scans them all.
-            if (SM.TransitionsByStateStart.size() == (SIZE_T)NumStates + 1)
+            if (static_cast<size_t>(SM.TransitionsByStateStart.Num()) == (SIZE_T)NumStates + 1)
             {
                 const uint32 First = SM.TransitionsByStateStart[Out.Current];
                 const uint32 End   = SM.TransitionsByStateStart[Out.Current + 1];
@@ -908,8 +908,8 @@ namespace Lumina
         };
 
         Detail::FByteReader Reader;
-        Reader.Data = Graph->Bytecode.data();
-        Reader.Size = Graph->Bytecode.size();
+        Reader.Data = Graph->Bytecode.GetData();
+        Reader.Size = Graph->Bytecode.Num();
 
         // A machine whose states carry their bytecode ranges runs only the one it is in, then returns here.
         struct FMachineFrame
@@ -922,7 +922,7 @@ namespace Lumina
         };
 
         thread_local TVector<FMachineFrame> MachineFrames;
-        MachineFrames.clear();
+        MachineFrames.Reset();
 
         const auto StateCodeOffset = [&](SIZE_T Table, int32 StateIndex, bool bEnd) -> SIZE_T
         {
@@ -933,9 +933,9 @@ namespace Lumina
 
         while (!Reader.AtEnd())
         {
-            if (!MachineFrames.empty() && Reader.Cursor == MachineFrames.back().ReturnAt)
+            if (!MachineFrames.IsEmpty() && Reader.Cursor == MachineFrames.Last().ReturnAt)
             {
-                FMachineFrame& Frame = MachineFrames.back();
+                FMachineFrame& Frame = MachineFrames.Last();
                 if (!Frame.bRanTarget)
                 {
                     const FMachineDecision Decision = DecideTransition(Frame.SmIdx);
@@ -952,7 +952,7 @@ namespace Lumina
                 }
 
                 Reader.Cursor = Frame.StatesEnd;
-                MachineFrames.pop_back();
+                MachineFrames.Pop();
                 continue;
             }
 
@@ -1005,7 +1005,7 @@ namespace Lumina
                 const uint16 Dst      = Reader.Read<uint16>();
                 if (Dst < NumObjectRegs)
                 {
-                    ObjectRegs[Dst] = ConstIdx < (uint16)Graph->ObjectConstants.size()
+                    ObjectRegs[Dst] = ConstIdx < (uint16)Graph->ObjectConstants.Num()
                         ? Graph->ObjectConstants[ConstIdx].Get()
                         : nullptr;
                 }
@@ -1067,7 +1067,7 @@ namespace Lumina
                     bool bSynced = false;
 
                     // The playhead advances once per update at the group's blended rate, and synced clips loop.
-                    if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.size() && Duration > 0.0f)
+                    if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.Num() && Duration > 0.0f)
                     {
                         FAnimSyncGroup& Group = State.SyncGroups[SyncGroup];
                         const FSyncTrack& ClipTrack = Clip->GetSyncTrack();
@@ -1124,7 +1124,7 @@ namespace Lumina
                     {
                         LOG_INFO("[AnimClock] state={} speedReg={} speed={} clip={} prev={} clock={} sync={}",
                                  StateIdx, SpeedReg, Speed,
-                                 Clip != nullptr ? Clip->GetName().c_str() : "<null>",
+                                 Clip != nullptr ? *Clip->GetName() : "<null>",
                                  PrevClock, Clock, SyncGroup == kAnimNoSyncGroup ? -1 : (int32)SyncGroup);
                     }
 
@@ -1159,9 +1159,9 @@ namespace Lumina
                         {
                             // Crossing is (Prev, Cur], so a just-started clip would never fire a notify sitting on its start.
                             const float NotifyFromTime = bStartedThisUpdate ? PrevSampleTime - 1e-4f : PrevSampleTime;
-                            const uint16 EventStart = (uint16)EventScratch.size();
+                            const uint16 EventStart = (uint16)EventScratch.Num();
                             AnimEvents::CollectTriggeredNotifies(Clip, NotifyFromTime, Clock, bLooping, 1.0f, EventScratch);
-                            ClockTags.Write(DstClock).Events = { EventStart, (uint16)EventScratch.size() };
+                            ClockTags.Write(DstClock).Events = { EventStart, (uint16)EventScratch.Num() };
                         }
                     }
                     if (DstFinished < NumScalar)
@@ -1224,7 +1224,7 @@ namespace Lumina
 
                 const CBlendSpace* BlendSpace = bDynamicBlendSpace
                     ? Cast<CBlendSpace>(ReadObjectReg(BlendSpaceIdx))
-                    : ((BlendSpaceIdx < (uint16)Graph->BlendSpaces.size()) ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr);
+                    : ((BlendSpaceIdx < (uint16)Graph->BlendSpaces.Num()) ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr);
 
                 if (BlendSpace == nullptr)
                 {
@@ -1239,7 +1239,7 @@ namespace Lumina
                 const float RawY = ReadScalar(YReg, 0.0f);
 
                 // Four consecutive slots the compiler reserved as a block, x value and velocity then y.
-                float* SmoothState = ((SIZE_T)SmoothSlot + 3 < NumState)
+                float* SmoothState = ((SIZE_T)SmoothSlot + 3 < static_cast<size_t>(NumState))
                     ? &State.StateSlots[SmoothSlot] : nullptr;
 
                 // Seeding waits for a resolved blend space, so a dynamic asset that arrives late still starts on phase.
@@ -1281,7 +1281,7 @@ namespace Lumina
                 }
 
                 const FAnimGraphBlendSpaceCurveMap* BlendSpaceCurves =
-                    (!bDynamicBlendSpace && BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size())
+                    (!bDynamicBlendSpace && BlendSpaceIdx < Graph->BlendSpaceCurveMaps.Num())
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
 
@@ -1295,7 +1295,7 @@ namespace Lumina
                 for (int32 i = 0; i < Weights.Count; ++i)
                 {
                     const int32 FoldSample = Weights.SampleIndices[i];
-                    CAnimation* FoldClip = (FoldSample >= 0 && FoldSample < (int32)BlendSpace->Samples.size())
+                    CAnimation* FoldClip = (FoldSample >= 0 && FoldSample < BlendSpace->Samples.Num())
                         ? BlendSpace->Samples[FoldSample].Animation.Get() : nullptr;
 
                     // An unassigned sample has no cycle, so it must not drag the blended duration toward zero.
@@ -1323,7 +1323,7 @@ namespace Lumina
                 }
 
                 // The playhead speed comes from the blended duration, so it retimes as the blend moves.
-                const float PrevSlotValue = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
+                const float PrevSlotValue = (PhaseSlot < (uint16)State.StateSlots.Num()) ? State.StateSlots[PhaseSlot] : 0.0f;
                 const FSyncPosition PrevPosition = FSyncPosition::FromFloat(PrevSlotValue);
                 FSyncPosition Position = PrevPosition;
 
@@ -1332,7 +1332,7 @@ namespace Lumina
                     Position = BlendSpaceTrack.Advance(PrevPosition, (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration);
                 }
 
-                if (PhaseSlot < (uint16)State.StateSlots.size())
+                if (PhaseSlot < (uint16)State.StateSlots.Num())
                 {
                     State.StateSlots[PhaseSlot] = Position.ToFloat();
                 }
@@ -1342,7 +1342,7 @@ namespace Lumina
 
                 // A sample contributing 20% of the pose contributes 20% of the motion.
                 FRootMotionDelta BlendedDelta;
-                const uint16 EventStart = (uint16)EventScratch.size();
+                const uint16 EventStart = (uint16)EventScratch.Num();
 
                 for (int32 i = 0; i < Weights.Count; ++i)
                 {
@@ -1393,7 +1393,7 @@ namespace Lumina
                     const int32 SampleIndex = Weights.SampleIndices[i];
                     const FAnimGraphClipCurveMap* SampleCurveMap = bDynamicBlendSpace
                         ? DynamicClipCurveMapFor(SampleClip)
-                        : ((BlendSpaceCurves != nullptr && SampleIndex >= 0 && SampleIndex < (int32)BlendSpaceCurves->SampleMaps.size())
+                        : ((BlendSpaceCurves != nullptr && SampleIndex >= 0 && SampleIndex < BlendSpaceCurves->SampleMaps.Num())
                            ? &BlendSpaceCurves->SampleMaps[SampleIndex] : nullptr);
 
                     if (Accumulated == FAnimTask::NoTask)
@@ -1420,8 +1420,8 @@ namespace Lumina
 
                     if (DstCurves != nullptr)
                     {
-                        SampleClipCurvesInto(CurveScratch.data(), SampleClip, SampleCurveMap, SampleTime);
-                        for (SIZE_T c = 0; c < NumCurves; ++c)
+                        SampleClipCurvesInto(CurveScratch.GetData(), SampleClip, SampleCurveMap, SampleTime);
+                        for (int32 c = 0; c < NumCurves; ++c)
                         {
                             DstCurves[c] += (CurveScratch[c] - DstCurves[c]) * FoldAlpha;
                         }
@@ -1429,7 +1429,7 @@ namespace Lumina
                 }
 
                 SetPoseTask(Dst, Accumulated);
-                SetPoseTags(Dst, BlendedDelta, FEventRange{ EventStart, (uint16)EventScratch.size() });
+                SetPoseTags(Dst, BlendedDelta, FEventRange{ EventStart, (uint16)EventScratch.Num() });
                 break;
             }
 
@@ -1468,7 +1468,7 @@ namespace Lumina
                 // Consumed next update, so the weights are one frame latent.
                 const FSyncTag SyncA = SyncOf(A);
                 const FSyncTag SyncB = SyncOf(B);
-                if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < (int32)State.SyncGroups.size()
+                if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < State.SyncGroups.Num()
                     && SyncA.Track != nullptr && SyncB.Track != nullptr)
                 {
                     FAnimSyncGroup& Group = State.SyncGroups[SyncA.Group];
@@ -1501,7 +1501,7 @@ namespace Lumina
                 Task.DepB  = PoseTaskFor(B);
                 Task.Alpha = ReadScalar(Alpha, 0.0f);
                 // Out-of-range mask index falls back to a whole-skeleton blend (null weights).
-                Task.MaskWeights = MaskIdx < Graph->BoneMasks.size() ? &Graph->BoneMasks[MaskIdx].Weights : nullptr;
+                Task.MaskWeights = MaskIdx < Graph->BoneMasks.Num() ? &Graph->BoneMasks[MaskIdx].Weights : nullptr;
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
                 // A layered blend keeps the base's root motion, while events from both layers fire at full weight.
@@ -1725,7 +1725,7 @@ namespace Lumina
                 const bool bTrace = SceneContext != nullptr &&
                     SceneContext->IsValid() &&
                     ReadScalar(GateReg, 1.0f) > 0.0f &&
-                    FootIdx < SceneContext->BoneTransforms->size() &&
+                    FootIdx < SceneContext->BoneTransforms->Num() &&
                     (int32)FootIdx < Skeleton->GetNumBones();
 
                 if (bTrace)
@@ -1740,7 +1740,7 @@ namespace Lumina
                     Ray.Start     = FootWorld + WorldUp * TraceUp;
                     Ray.End       = FootWorld - WorldUp * TraceDown;
                     Ray.LayerMask = (ECollisionProfiles)LayerMask;
-                    Ray.IgnoreEntities.push_back(SceneContext->SelfEntity);
+                    Ray.IgnoreEntities.Add(SceneContext->SelfEntity);
 
                     if (const TOptional<SRayResult> Hit = SceneContext->Scene->CastRay(Ray))
                     {
@@ -1862,7 +1862,7 @@ namespace Lumina
                 FAnimTask Task;
                 Task.Type     = EAnimTaskType::SavePoseSnapshot;
                 Task.DepA     = PoseTaskFor(Src);
-                Task.Snapshot = Index < State.PoseSnapshots.size() ? &State.PoseSnapshots[Index] : nullptr;
+                Task.Snapshot = Index < State.PoseSnapshots.Num() ? &State.PoseSnapshots[Index] : nullptr;
                 Task.bCapture = ReadScalar(Request, 0.0f) > 0.5f;
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
@@ -1879,7 +1879,7 @@ namespace Lumina
 
                 FAnimTask Task;
                 Task.Type     = EAnimTaskType::LoadPoseSnapshot;
-                Task.Snapshot = Index < State.PoseSnapshots.size() ? &State.PoseSnapshots[Index] : nullptr;
+                Task.Snapshot = Index < State.PoseSnapshots.Num() ? &State.PoseSnapshots[Index] : nullptr;
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
                 // A stored pose carries no motion of its own, and its curves were not captured with it.
@@ -1897,7 +1897,7 @@ namespace Lumina
                 const uint16 Index    = Reader.Read<uint16>();
                 const uint16 Dst      = Reader.Read<uint16>();
 
-                if (Index >= State.NodeInertializers.size())
+                if (Index >= State.NodeInertializers.Num())
                 {
                     SetPoseTask(Dst, PoseTaskFor(Src));
                     SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
@@ -1963,7 +1963,7 @@ namespace Lumina
                 const uint16 Index    = Reader.Read<uint16>();
                 const uint16 Dst      = Reader.Read<uint16>();
 
-                if (Index >= State.DeadBlends.size())
+                if (Index >= State.DeadBlends.Num())
                 {
                     SetPoseTask(Dst, PoseTaskFor(Src));
                     SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
@@ -2050,7 +2050,7 @@ namespace Lumina
 
                 // Anything that does not line up falls through and runs every state in order, which is always correct.
                 if (NumRanges == 0 || !MachineIsValid(SmIdx) ||
-                    NumRanges != Graph->StateMachines[SmIdx].StatePoseRegisters.size() ||
+                    NumRanges != Graph->StateMachines[SmIdx].StatePoseRegisters.Num() ||
                     Reader.Cursor > StatesEnd || StatesEnd > Reader.Size)
                 {
                     break;
@@ -2076,7 +2076,7 @@ namespace Lumina
                 Frame.ReturnAt  = StateCodeOffset(Table, Current, true);
                 Frame.StatesEnd = StatesEnd;
                 Frame.Table     = Table;
-                MachineFrames.push_back(Frame);
+                MachineFrames.Add(Frame);
 
                 Reader.Cursor = StateCodeOffset(Table, Current, false);
                 break;
@@ -2087,13 +2087,13 @@ namespace Lumina
                 const uint16 SmIdx = Reader.Read<uint16>();
                 const uint16 Dst   = Reader.Read<uint16>();
 
-                if (SmIdx >= Graph->StateMachines.size() || Dst >= NumPose)
+                if (SmIdx >= Graph->StateMachines.Num() || Dst >= NumPose)
                 {
                     break;
                 }
 
                 const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
-                const int32 NumStates = (int32)SM.StatePoseRegisters.size();
+                const int32 NumStates = SM.StatePoseRegisters.Num();
 
                 FAnimTask RefTask;
                 RefTask.Type = EAnimTaskType::ReferencePose;
@@ -2182,9 +2182,9 @@ namespace Lumina
                 State.StateSlots[SM.TimeInStateSlot]   = bStart ? 0.0f : State.StateSlots[SM.TimeInStateSlot] + DeltaTime;
 
                 // Inactive states hold their clocks at zero, so a finished play-once replays on re-entry.
-                const int32 NumClockRanges = (int32)Math::Min(SM.StateClockSlotFirst.size(), SM.StateClockSlotEnd.size());
-                const uint16 NumClockSlots = (uint16)SM.ClockSlots.size();
-                const int32 NumChildRanges = (int32)Math::Min(SM.StateChildMachineFirst.size(), SM.StateChildMachineEnd.size());
+                const int32 NumClockRanges = Math::Min(SM.StateClockSlotFirst.Num(), SM.StateClockSlotEnd.Num());
+                const uint16 NumClockSlots = (uint16)SM.ClockSlots.Num();
+                const int32 NumChildRanges = Math::Min(SM.StateChildMachineFirst.Num(), SM.StateChildMachineEnd.Num());
 
                 for (int32 StateIndex = 0; StateIndex < NumStates; ++StateIndex)
                 {
@@ -2196,7 +2196,7 @@ namespace Lumina
                     // A machine under an inactive state is held at its entry, so re-entering restarts it.
                     if (StateIndex < NumChildRanges)
                     {
-                        const uint16 ChildEnd = Math::Min(SM.StateChildMachineEnd[StateIndex], (uint16)Graph->StateMachines.size());
+                        const uint16 ChildEnd = Math::Min(SM.StateChildMachineEnd[StateIndex], (uint16)Graph->StateMachines.Num());
                         for (uint16 ChildIndex = SM.StateChildMachineFirst[StateIndex]; ChildIndex < ChildEnd; ++ChildIndex)
                         {
                             const FAnimGraphStateMachine& Child = Graph->StateMachines[ChildIndex];
@@ -2209,7 +2209,7 @@ namespace Lumina
                             if (Child.FromStateSlot < NumState)    { State.StateSlots[Child.FromStateSlot] = -1.0f; }
                             if (Child.TimeInStateSlot < NumState)  { State.StateSlots[Child.TimeInStateSlot] = 0.0f; }
 
-                            if (ChildIndex < State.Inertializers.size())
+                            if (ChildIndex < State.Inertializers.Num())
                             {
                                 State.Inertializers[ChildIndex].bActive = false;
                             }
@@ -2303,9 +2303,9 @@ namespace Lumina
                 RootMotionInOut.Delta = DeltaOf(Src);
 
                 const float* OutputCurves = CurvesOf(Src);
-                if (OutputCurves != nullptr && State.CurveValues.size() == NumCurves)
+                if (OutputCurves != nullptr && State.CurveValues.Num() == NumCurves)
                 {
-                    Memory::Memcpy(State.CurveValues.data(), OutputCurves, NumCurves * sizeof(float));
+                    Memory::Memcpy(State.CurveValues.GetData(), OutputCurves, NumCurves * sizeof(float));
                 }
 
                 // A root-motion driven branch moves the entity, so the pose itself must stay centered.
@@ -2316,11 +2316,11 @@ namespace Lumina
                 if (OutEvents != nullptr)
                 {
                     const FEventRange Surviving = EventsOf(Src);
-                    for (uint16 i = Surviving.Start; i < Surviving.End && i < (uint16)EventScratch.size(); ++i)
+                    for (int32 i = Surviving.Start; i < Surviving.End && i < (uint16)EventScratch.Num(); ++i)
                     {
                         if (EventScratch[i].Weight > 0.01f)
                         {
-                            OutEvents->push_back(EventScratch[i]);
+                            OutEvents->Add(EventScratch[i]);
                         }
                     }
                 }
@@ -2377,9 +2377,9 @@ namespace Lumina
                 CopyCurves(Dst, Src);
 
                 thread_local TVector<FAnimMontageSlotContribution> Contributions;
-                Contributions.clear();
+                Contributions.Reset();
 
-                if (Montages != nullptr && SlotIdx < Graph->SlotNames.size())
+                if (Montages != nullptr && SlotIdx < Graph->SlotNames.Num())
                 {
                     Montages->GatherSlot(Graph->SlotNames[SlotIdx], Contributions);
                 }
@@ -2414,8 +2414,8 @@ namespace Lumina
                     if (MontageCurveMap != nullptr)
                     {
                         const TVector<FAnimationCurve>& Curves = Contribution.Clip->GetCurves();
-                        const SIZE_T Count = Math::Min(Curves.size(), MontageCurveMap->Slots.size());
-                        for (SIZE_T i = 0; i < Count; ++i)
+                        const int32 Count = Math::Min(Curves.Num(), MontageCurveMap->Slots.Num());
+                        for (int32 i = 0; i < Count; ++i)
                         {
                             const int32 Slot = MontageCurveMap->Slots[i];
                             if (Slot != Constants::kIndexNone)

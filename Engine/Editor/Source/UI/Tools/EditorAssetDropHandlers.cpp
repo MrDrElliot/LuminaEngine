@@ -161,11 +161,12 @@ namespace Lumina
                     return ECS::NullEntity;
                 }
 
-                if (MeshComponent->MaterialOverrides.empty())
+                if (MeshComponent->MaterialOverrides.IsEmpty())
                 {
-                    MeshComponent->MaterialOverrides.resize(1);
+                    MeshComponent->MaterialOverrides.SetNum(1);
                 }
                 MeshComponent->MaterialOverrides[0] = Material;
+                MeshComponent->MarkRenderStateDirty();
                 return DropTarget;
             });
 
@@ -359,10 +360,10 @@ namespace Lumina
     const FEditorAssetDropRegistry::FEntry* FEditorAssetDropRegistry::FindEntry(FName AssetClass) const
     {
         // Direct hit on the concrete class name first.
-        auto It = Handlers.find(AssetClass);
-        if (It != Handlers.end())
+        auto It = Handlers.Find(AssetClass);
+        if (It != nullptr)
         {
-            return &It->second;
+            return &(*It);
         }
 
         // Walking the class chain lets a CMaterialInterface registration cover both subclasses.
@@ -374,10 +375,10 @@ namespace Lumina
             {
                 break;
             }
-            It = Handlers.find(Super->GetName());
-            if (It != Handlers.end())
+            It = Handlers.Find(Super->GetName());
+            if (It != nullptr)
             {
-                return &It->second;
+                return &(*It);
             }
             Class = Super;
         }
@@ -410,12 +411,12 @@ namespace Lumina
                 CClass* Accepts = static_cast<FObjectProperty*>(Property)->GetPropertyClass();
                 if (Accepts != nullptr && Asset->IsA(Accepts))
                 {
-                    Fields.push_back({ Struct, Component, Property });
+                    Fields.Emplace(Struct, Component, Property);
                 }
             }
         });
 
-        if (Fields.empty())
+        if (Fields.IsEmpty())
         {
             LOG_WARN("Asset drop: nothing on the target takes a '{}'.", Asset->GetClass()->GetName());
             return ECS::NullEntity;
@@ -423,13 +424,13 @@ namespace Lumina
 
         // With several fields that fit, an empty one is filled rather than guessing which set one to replace.
         auto Chosen = Fields.begin();
-        if (Fields.size() > 1)
+        if (Fields.Num() > 1)
         {
             Chosen = Algo::FindIf(Fields, [](const FObjectField& Field) { return Field.Slot()->Get() == nullptr; });
             if (Chosen == Fields.end())
             {
                 LOG_WARN("Asset drop: {} fields on the target take a '{}' and all are set, so set the one you mean in the details panel.",
-                         Fields.size(), Asset->GetClass()->GetName());
+                         Fields.Num(), Asset->GetClass()->GetName());
                 return ECS::NullEntity;
             }
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Memory/SmartPtr.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
@@ -49,9 +50,10 @@ namespace Lumina
     // map is exported once over a reliable stream and replayed to late joiners. One struct, both directions.
     struct FNetObjectMap
     {
-        THashMap<CObject*, uint32> ObjToIndex;     // outgoing object index
+        THashMap<FGuid, uint32>    GuidToIndex;    // outgoing object index
         THashMap<uint32, FGuid>    IndexToGuid;    // outgoing on assign, incoming from export
-        THashMap<uint32, CObject*> IndexToObject;  // incoming resolved cache
+        THashMap<uint32, TWeakObjectPtr<CObject>> IndexToObject;  // incoming resolved cache
+        THashSet<uint32>           FailedIndices;  // incoming, GUIDs that did not load
         TVector<uint32>            PendingExports; // outgoing, assigned but not yet sent
         uint32                     NextIndex = 1;  // 0 is null
     };
@@ -193,12 +195,9 @@ namespace Lumina
         ENetLeaveReason               PendingLeaveReason = ENetLeaveReason::None;
         double                        ConnectStartTime = -1.0;
 
-        //~ Client snapshot interpolation for SimulatedProxy movement. Per-entity sample rings live on the
-        //  entity's FRepTransform component; this state is the global render clock shared by all of them.
+        // Newest server time received, mirrored into FNetInterpClock for the render clock.
         double                        LatestServerTime   = 0.0;
-        double                        ServerPlaybackTime = 0.0;
         double                        ClockOffset        = 0.0; // legacy (unused by the smooth clock)
-        bool                          bClockInitialized  = false;
 
         // Net-index caches. Outgoing maps this peer mints and exports; incoming maps are kept per sender
         // connection id since the index space is sender-owned.
@@ -234,8 +233,8 @@ namespace Lumina
             {
                 return true;
             }
-            const auto View = ClientViews.find(Connection);
-            return View != ClientViews.end() && View->second.Relevant.contains(Guid);
+            const auto View = ClientViews.Find(Connection);
+            return View != nullptr && View->Relevant.Contains(Guid);
         }
 
         // Incremented once per ServerReplicateRelevant tick. An FRelevantEntry is "relevant this tick" when

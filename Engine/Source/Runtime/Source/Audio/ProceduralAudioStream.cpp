@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "ProceduralAudioStream.h"
+#include "Audio/AudioMixer.h"
 
 #include "Core/Math/Scalar.h"
 #include "Log/Log.h"
@@ -13,7 +14,7 @@ namespace Lumina
         : SampleRate(InSampleRate)
         , ChannelCount(InChannelCount)
     {
-        if (InSampleRate == 0 || InChannelCount == 0 || BufferFrames == 0)
+        if (InSampleRate == 0 || InChannelCount == 0 || InChannelCount > FAudioMixer::MaxChannels || BufferFrames == 0)
         {
             LOG_ERROR("FProceduralAudioStream: invalid parameters (rate={}, channels={}, frames={})",
                 InSampleRate, InChannelCount, BufferFrames);
@@ -21,7 +22,7 @@ namespace Lumina
         }
 
         LUMINA_MEMORY_SCOPE("Audio");
-        Storage.assign((size_t)BufferFrames * InChannelCount, 0.0f);
+        Storage.Init(0.0f, IntCastChecked<int32>(static_cast<int64>(BufferFrames) * InChannelCount));
 
         CapacityFrames = BufferFrames;
         bInitialized = true;
@@ -47,11 +48,11 @@ namespace Lumina
         const uint32 Offset = (uint32)(Write % CapacityFrames);
         const uint32 FirstRun = Math::Min(FrameCount, CapacityFrames - Offset);
 
-        Memory::Memcpy(Storage.data() + (size_t)Offset * ChannelCount, Samples, (size_t)FirstRun * ChannelCount * sizeof(float));
+        Memory::Memcpy(Storage.GetData() + (size_t)Offset * ChannelCount, Samples, (size_t)FirstRun * ChannelCount * sizeof(float));
 
         if (FrameCount > FirstRun)
         {
-            Memory::Memcpy(Storage.data(), Samples + (size_t)FirstRun * ChannelCount,
+            Memory::Memcpy(Storage.GetData(), Samples + (size_t)FirstRun * ChannelCount,
                 (size_t)(FrameCount - FirstRun) * ChannelCount * sizeof(float));
         }
 
@@ -83,11 +84,11 @@ namespace Lumina
             const uint32 Offset = (uint32)(Read % CapacityFrames);
             const uint32 FirstRun = Math::Min(FrameCount, CapacityFrames - Offset);
 
-            Memory::Memcpy(Out, Storage.data() + (size_t)Offset * ChannelCount, (size_t)FirstRun * ChannelCount * sizeof(float));
+            Memory::Memcpy(Out, Storage.GetData() + (size_t)Offset * ChannelCount, (size_t)FirstRun * ChannelCount * sizeof(float));
 
             if (FrameCount > FirstRun)
             {
-                Memory::Memcpy(Out + (size_t)FirstRun * ChannelCount, Storage.data(),
+                Memory::Memcpy(Out + (size_t)FirstRun * ChannelCount, Storage.GetData(),
                     (size_t)(FrameCount - FirstRun) * ChannelCount * sizeof(float));
             }
 

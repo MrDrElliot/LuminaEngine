@@ -16,8 +16,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 #include <thread>
-#include "TaskSystem/Future.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/TaskSystem.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Windows/Window.h"
 #include "Core/Profiler/Profile.h"
@@ -73,12 +72,12 @@ namespace Lumina
             return {};
         }
         const FString Settings = CGameUserSettings::GetSettingsFilePath();
-        FString Path = Paths::Parent(FStringView(Settings.c_str(), Settings.size()), true);
+        FString Path = Paths::Parent(FStringView(*Settings, Settings.Len()), true);
 
         // A packaged game creates the device before it knows its project name, which would share one cache across games.
-        if (GEngine == nullptr || (GEngine->GetProjectPath().empty() && GEngine->GetProjectName().empty()))
+        if (GEngine == nullptr || (GEngine->GetProjectPath().IsEmpty() && GEngine->GetProjectName().IsEmpty()))
         {
-            Path = Paths::Parent(FStringView(Path.c_str(), Path.size()), true);
+            Path = Paths::Parent(FStringView(*Path, Path.Len()), true);
             Path += "/";
             #if PLATFORM_TCHAR_IS_WIDE
             Path += StringUtils::FromWideString(Platform::ExecutableName());
@@ -101,7 +100,7 @@ namespace Lumina
         // Half the cores, since a driver compile pins a whole thread and the frame's own jobs still need workers.
         uint32 MaxConcurrentPipelineBuilds()
         {
-            const uint32 Cores = Math::Max(1u, (uint32)std::thread::hardware_concurrency());
+            const uint32 Cores = Math::Max(1u, std::thread::hardware_concurrency());
             return Math::Clamp(Cores / 2u, 1u, 8u);
         }
 
@@ -122,21 +121,20 @@ namespace Lumina
         FShaderH              Shaders[3];
         FPipelineBuild        Build;
         std::atomic<uint8>    State{ PendingQueued };
-        TPromise<void>        Done;
-        TFuture<void>         DoneFuture = Done.GetFuture();
+        Jobs::FTaskEvent      Done;
     };
 
     RHI::FPipelineH FScenePipelineCache::Find(uint64 Hash)
     {
         FReadScopeLock Lock(Mutex);
-        auto It = Entries.find(Hash);
-        return It != Entries.end() ? It->second.Pipeline : RHI::FPipelineH{};
+        auto It = Entries.Find(Hash);
+        return It != nullptr ? It->Pipeline : RHI::FPipelineH{};
     }
 
     bool FScenePipelineCache::IsPending(uint64 Hash)
     {
         FReadScopeLock Lock(Mutex);
-        return PendingBuilds.find(Hash) != PendingBuilds.end();
+        return PendingBuilds.Contains(Hash);
     }
 
     TSharedPtr<FScenePipelineCache::FPendingBuild> FScenePipelineCache::AddPending(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build, bool bQueued)
@@ -149,7 +147,7 @@ namespace Lumina
         }
         Pending->Build = Move(Build);
         Pending->State.store(bQueued ? PendingQueued : PendingRunning, std::memory_order_relaxed);
-        PendingBuilds.emplace(Hash, Pending);
+        PendingBuilds.TryAdd(Hash, Pending);
         return Pending;
     }
 
@@ -162,16 +160,16 @@ namespace Lumina
             FWriteScopeLock Lock(Mutex);
             if (Pipeline)
             {
-                Entries.emplace(Hash, FEntry{ Pipeline, { Pending.Shaders[0], Pending.Shaders[1], Pending.Shaders[2] } });
+                Entries.TryAdd(Hash, FEntry{ Pipeline, { Pending.Shaders[0], Pending.Shaders[1], Pending.Shaders[2] } });
             }
-            if (auto It = PendingBuilds.find(Hash); It != PendingBuilds.end() && It->second.get() == &Pending)
+            if (auto It = PendingBuilds.Find(Hash); It != nullptr && It->get() == &Pending)
             {
-                PendingBuilds.erase(It);
+                PendingBuilds.Remove(Hash);
             }
         }
 
         Pending.State.store(PendingDone, std::memory_order_release);
-        Pending.Done.SetValue();
+        Pending.Done.Signal();
         return Pipeline;
     }
 
@@ -179,18 +177,18 @@ namespace Lumina
     {
         {
             FWriteScopeLock Lock(Mutex);
-            if (auto It = Entries.find(Hash); It != Entries.end())
+            if (auto It = Entries.Find(Hash); It != nullptr)
             {
-                return It->second.Pipeline;
+                return It->Pipeline;
             }
-            if (PendingBuilds.find(Hash) != PendingBuilds.end() || !Build)
+            if (PendingBuilds.Contains(Hash) || !Build)
             {
                 return {};
             }
 
             TSharedPtr<FPendingBuild> Pending = AddPending(Hash, Shaders, Move(Build), true);
             FScopeLock QueueLock(QueueMutex);
-            Queue.push_back(Move(Pending));
+            Queue.Add(Move(Pending));
         }
 
         Pump();
@@ -203,14 +201,14 @@ namespace Lumina
         bool bOwn = false;
         {
             FWriteScopeLock Lock(Mutex);
-            if (auto It = Entries.find(Hash); It != Entries.end())
+            if (auto It = Entries.Find(Hash); It != nullptr)
             {
-                return It->second.Pipeline;
+                return It->Pipeline;
             }
 
-            if (auto It = PendingBuilds.find(Hash); It != PendingBuilds.end())
+            if (auto It = PendingBuilds.Find(Hash); It != nullptr)
             {
-                Pending = It->second;
+                Pending = (*It);
                 // A build still waiting for a worker is taken over here rather than waited behind the queue.
                 uint8 Expected = PendingQueued;
                 bOwn = Pending->State.compare_exchange_strong(Expected, PendingRunning, std::memory_order_acq_rel);
@@ -231,20 +229,16 @@ namespace Lumina
             return RunBuild(Hash, *Pending);
         }
 
-        Pending->DoneFuture.Wait();
+        Pending->Done.Wait();
         return Find(Hash);
     }
 
     struct FScenePipelineCache::FPumpJob
     {
-        FScenePipelineCache*        Cache;
-        TSharedPtr<FPendingBuild>   Pending;
-
-        static void Run(void* Arg, uint32)
+        static Jobs::TTask<void> Run(FScenePipelineCache* Cache, TSharedPtr<FPendingBuild> Pending)
         {
-            FPumpJob* Job = static_cast<FPumpJob*>(Arg);
-            Job->Cache->RunQueued(*Job->Pending);
-            Memory::Delete(Job);
+            Cache->RunQueued(*Pending);
+            co_return;
         }
     };
 
@@ -261,7 +255,7 @@ namespace Lumina
         {
             FScopeLock Lock(QueueMutex);
             --InFlight;
-            bDrained = InFlight == 0 && Queue.empty();
+            bDrained = InFlight == 0 && Queue.IsEmpty();
         }
 
         if (bDrained && BuiltSinceSave.load(std::memory_order_relaxed) >= kBuildsPerCacheSave)
@@ -281,18 +275,17 @@ namespace Lumina
             TSharedPtr<FPendingBuild> Next;
             {
                 FScopeLock Lock(QueueMutex);
-                if (InFlight >= MaxInFlight || Queue.empty())
+                if (InFlight >= MaxInFlight || Queue.IsEmpty())
                 {
                     return;
                 }
-                Next = Move(Queue.front());
-                Queue.erase(Queue.begin());
+                Next = Move(Queue[0]);
+                Queue.RemoveAt(0);
                 ++InFlight;
             }
 
             // Background, so a thread assist-waiting on frame work never inherits a driver compile.
-            FPumpJob* Job = Memory::New<FPumpJob>(FPumpJob{ this, Move(Next) });
-            Jobs::RunJob(&FPumpJob::Run, Job, Jobs::EJobPriority::Background, nullptr, "PipelineBuild");
+            Jobs::Spawn(Jobs::EJobPriority::Background, &FPumpJob::Run, this, Move(Next));
         }
     }
 
@@ -305,10 +298,10 @@ namespace Lumina
                 uint8 Expected = PendingQueued;
                 if (Pending->State.compare_exchange_strong(Expected, PendingDone, std::memory_order_acq_rel))
                 {
-                    Pending->Done.SetValue();
+                    Pending->Done.Signal();
                 }
             }
-            Queue.clear();
+            Queue.Reset();
         }
 
         // A worker still compiling writes into Entries and needs the device alive until it returns.
@@ -325,7 +318,7 @@ namespace Lumina
         }
 
         FWriteScopeLock Lock(Mutex);
-        PendingBuilds.clear();
+        PendingBuilds.Reset();
     }
 
     void FScenePipelineCache::PurgeStale()
@@ -334,15 +327,15 @@ namespace Lumina
         for (auto It = Entries.begin(); It != Entries.end();)
         {
             bool bStale = false;
-            for (const FShaderH& Shader : It->second.Shaders)
+            for (const FShaderH& Shader : It->Value.Shaders)
             {
                 bStale |= Shader != nullptr && FShaderLibrary::Resolve(Shader) == nullptr;
             }
 
             if (bStale)
             {
-                RHI::Retire(It->second.Pipeline);
-                It = Entries.erase(It);
+                RHI::Retire(It->Value.Pipeline);
+                It = Entries.Remove(It);
             }
             else
             {
@@ -359,7 +352,7 @@ namespace Lumina
         {
             RHI::Retire(Entry.Pipeline);
         }
-        Entries.clear();
+        Entries.Reset();
     }
 
     FRenderManager::FRenderManager()
@@ -548,8 +541,7 @@ namespace Lumina
         #endif
 
         {
-            // Normally already done at the top of the frame; this covers a caller that drives FrameEnd
-            // directly, and a frame whose slot advanced past an early-out above.
+            // Covers a caller driving FrameEnd directly and a frame whose slot advanced past an early-out above.
             if (!bFrameSlotWaited)
             {
                 LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
@@ -710,7 +702,8 @@ namespace Lumina
         {
             CompletedWindowCapture.Width  = Extent.x;
             CompletedWindowCapture.Height = Extent.y;
-            CompletedWindowCapture.Pixels.assign(Mapped, Mapped + (size_t)Extent.x * Extent.y * 4u);
+            CompletedWindowCapture.Pixels.Reset();
+            CompletedWindowCapture.Pixels.Append(Mapped, Mapped + (size_t)Extent.x * Extent.y * 4u);
             CompletedWindowCaptureTicket = InFlightWindowCapture.Ticket;
         }
 

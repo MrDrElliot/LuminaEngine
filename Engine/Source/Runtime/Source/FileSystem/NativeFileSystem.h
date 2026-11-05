@@ -14,19 +14,20 @@ namespace Lumina::VFS
 
         bool ReadFile(TVector<uint8>& Result, FStringView Path) override;
         bool ReadFile(FString& OutString, FStringView Path) override;
-        bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size) override;
+        bool ReadFile(TVector64<uint8>& Result, FStringView Path) override;
+        bool ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size) override;
 
         bool WriteFile(FStringView Path, FStringView Data) override;
         bool WriteFile(FStringView Path, TSpan<const uint8> Data) override;
         bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data) override;
         bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                    FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                    FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                     TSpan<const uint8> Suffix) override;
 
         bool Exists(FStringView Path) const override;
         bool IsDirectory(FStringView Path) const override;
         bool IsEmpty(FStringView Path) const override;
-        size_t Size(FStringView Path) const override;
+        int64 Size(FStringView Path) const override;
 
         bool CreateDir(FStringView Path) override;
         bool Remove(FStringView Path) override;

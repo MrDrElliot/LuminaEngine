@@ -4,7 +4,6 @@
 #include "Core/Object/ObjectReferenceProvider.h"
 #include <imgui/imgui.h>
 #include "Events/EventProcessor.h"
-#include "nlohmann/json.hpp"
 #include "Tools/EditorToolContext.h"
 #include "Tools/EditorToolModal.h"
 #include "Tools/UI/DevelopmentToolUI.h"
@@ -483,7 +482,7 @@ namespace Lumina
     {
         if (FEditorTool* Existing = FindToolByTypeID(T::s_toolTypeID))
         {
-            ToolsPendingDestroy.push(Existing);
+            ToolsPendingDestroy.Enqueue(Existing);
             return;
         }
         CreateTool<T>(std::forward<Args>(args)...);

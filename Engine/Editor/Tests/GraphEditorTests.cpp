@@ -43,8 +43,8 @@ namespace
             IO.IniFilename  = nullptr;
             IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 
-            Nodes.push_back(FTestNode{ 1, ImVec2(100.0f, 100.0f), 11, 12 });
-            Nodes.push_back(FTestNode{ 2, ImVec2(500.0f, 300.0f), 21, 22 });
+            Nodes.Emplace(1, ImVec2(100.0f, 100.0f), 11, 12);
+            Nodes.Emplace(2, ImVec2(500.0f, 300.0f), 21, 22);
         }
 
         ~FCanvasHarness()
@@ -68,7 +68,7 @@ namespace
             ImGui::Begin("Host", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
             ImGui::PopStyleVar();
 
-            Editor.Begin("Canvas", (int32)Nodes.size() + 1);
+            Editor.Begin("Canvas", Nodes.Num() + 1);
             for (FTestNode& Node : Nodes)
             {
                 Editor.BeginNode(Node.ID, Node.Position);
@@ -90,7 +90,7 @@ namespace
             {
                 Editor.Link(LinkID, Nodes[0].OutputPin, Nodes[1].InputPin, IM_COL32(200, 120, 60, 255), 2.5f);
             }
-            for (size_t Index = 0; Index < TiePositions.size(); ++Index)
+            for (int32 Index = 0; Index < TiePositions.Num(); ++Index)
             {
                 Editor.ZipTie(kFirstTieID + Index, TiePositions[Index], { LinkID });
             }
@@ -302,7 +302,7 @@ TEST(GraphEditor, AltRightDragAcrossAWireAsksForAZipTie)
     Harness.Modifier(ImGuiMod_Alt, false);
 
     EXPECT_EQ(Stroke, EGraphStroke::ZipTie);
-    ASSERT_EQ(Hits.size(), 1u);
+    ASSERT_EQ(Hits.Num(), 1);
     EXPECT_EQ(Hits[0].LinkID, Harness.LinkID);
     EXPECT_NEAR(Hits[0].Point.x, Middle.x, 2.0f);
 }
@@ -334,7 +334,7 @@ TEST(GraphEditor, AWireRunsThroughEveryTieItIsIn)
     Harness.Frames(30);
 
     // One tie above the untied curve and one below it, so the wire can only reach both by routing through each.
-    for (size_t Index = 0; Index < Harness.TiePositions.size(); ++Index)
+    for (int32 Index = 0; Index < Harness.TiePositions.Num(); ++Index)
     {
         uint64 Hovered = 0;
         Harness.MoveTo(Harness.TiePositions[Index] + ImVec2(16.0f, 0.0f));

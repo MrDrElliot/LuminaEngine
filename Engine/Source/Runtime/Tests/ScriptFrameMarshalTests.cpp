@@ -169,7 +169,7 @@ namespace
         }
 
         Scripting::FScriptExportSchema Properties;
-        Properties.Fields.push_back(ScriptTest::ScalarField("Anchor", EPropertyTypeFlags::Int32));
+        Properties.Fields.Add(ScriptTest::ScalarField("Anchor", EPropertyTypeFlags::Int32));
         Scripting::AppendScriptPropertiesToClass(Class, Properties);
 
         CScriptStruct* Record = Cast<CScriptStruct>(Class->LayoutRecord.Get());
@@ -219,7 +219,7 @@ TEST_F(FFrameMarshalTest, AStructMirrorIsReadFromItsFrameSlot)
     ASSERT_NE(Read, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(NativeStructField("Where", "FVector3"));
+    Params.Fields.Add(NativeStructField("Where", "FVector3"));
 
     FFunction* Function = MintFrame("FrameMarshal_ReadVector", Params);
     ASSERT_NE(Function, nullptr);
@@ -243,7 +243,7 @@ TEST_F(FFrameMarshalTest, AStructMirrorIsWrittenBackIntoItsFrameSlot)
     ASSERT_NE(Write, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(NativeStructField("Where", "FVector3"));
+    Params.Fields.Add(NativeStructField("Where", "FVector3"));
 
     FFunction* Function = MintFrame("FrameMarshal_WriteVector", Params);
     ASSERT_NE(Function, nullptr);
@@ -265,8 +265,8 @@ TEST_F(FFrameMarshalTest, AByteEnumIsReadAtItsOwnWidth)
     ASSERT_NE(Read, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ByteEnumField("Channel", "FrameMarshal_Channel"));
-    Params.Fields.push_back(ScriptTest::ScalarField("After", EPropertyTypeFlags::UInt8));
+    Params.Fields.Add(ByteEnumField("Channel", "FrameMarshal_Channel"));
+    Params.Fields.Add(ScriptTest::ScalarField("After", EPropertyTypeFlags::UInt8));
 
     FFunction* Function = MintFrame("FrameMarshal_ReadEnum", Params);
     ASSERT_NE(Function, nullptr);
@@ -290,8 +290,8 @@ TEST_F(FFrameMarshalTest, AByteEnumWriteStaysInsideItsSlot)
     ASSERT_NE(Write, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ByteEnumField("Channel", "FrameMarshal_WriteChannel"));
-    Params.Fields.push_back(ScriptTest::ScalarField("After", EPropertyTypeFlags::UInt8));
+    Params.Fields.Add(ByteEnumField("Channel", "FrameMarshal_WriteChannel"));
+    Params.Fields.Add(ScriptTest::ScalarField("After", EPropertyTypeFlags::UInt8));
 
     FFunction* Function = MintFrame("FrameMarshal_WriteEnum", Params);
     ASSERT_NE(Function, nullptr);
@@ -316,7 +316,7 @@ TEST_F(FFrameMarshalTest, AnEntityHandleCrossesAsItsPackedId)
     ASSERT_NE(Read, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(EntityField("Who"));
+    Params.Fields.Add(EntityField("Who"));
 
     FFunction* Function = MintFrame("FrameMarshal_ReadEntity", Params);
     ASSERT_NE(Function, nullptr);
@@ -337,7 +337,7 @@ TEST_F(FFrameMarshalTest, ASlotTooNarrowForItsMirrorIsRefused)
     ASSERT_NE(Bind, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ScriptTest::ScalarField("NotAVector", EPropertyTypeFlags::Float));
+    Params.Fields.Add(ScriptTest::ScalarField("NotAVector", EPropertyTypeFlags::Float));
 
     FFunction* Function = MintFrame("FrameMarshal_Mismatch", Params);
     ASSERT_NE(Function, nullptr);
@@ -377,16 +377,16 @@ TEST_F(FFrameMarshalTest, AnOverriddenPropertyStaysInItsParentsSchema)
 TEST_F(FFrameMarshalTest, AParameterCarriesItsDirectionOntoTheMintedProperty)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
-    Params.Fields.push_back(ParamField("Both", EPropertyTypeFlags::Int32,
+    Params.Fields.Add(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+    Params.Fields.Add(ParamField("Both", EPropertyTypeFlags::Int32,
         EPropertyFlags::OutParam | EPropertyFlags::RefParam));
 
     FFunction* Function = MintFrame("FrameMarshal_Direction", Params);
     ASSERT_NE(Function, nullptr);
 
     const TSpan<FProperty* const> All = Function->GetParams();
-    ASSERT_EQ(All.size(), 3u);
+    ASSERT_EQ(All.Num(), 3);
 
     EXPECT_FALSE(All[0]->IsOutParam());
     EXPECT_TRUE(All[1]->IsOutParam());
@@ -419,8 +419,8 @@ TEST_F(FFrameMarshalTest, AnOutParameterComesBackThroughTheFrame)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+    Params.Fields.Add(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
 
     FFunction* Function = MintFrame("FrameMarshal_Out", Params, "MarshalOut");
     ASSERT_NE(Function, nullptr);
@@ -448,7 +448,7 @@ TEST_F(FFrameMarshalTest, ARefParameterIsReadInAndWrittenBack)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32,
+    Params.Fields.Add(ParamField("Value", EPropertyTypeFlags::Int32,
         EPropertyFlags::OutParam | EPropertyFlags::RefParam));
 
     FFunction* Function = MintFrame("FrameMarshal_Ref", Params, "MarshalRef");
@@ -616,9 +616,9 @@ TEST_F(FFrameMarshalTest, AContainerSlotIsReadThroughAViewOverTheFramesStorage)
 
     FFunctionFrame Frame(*Function);
     TVector<float>& Values = Frame.At<TVector<float>>(0);
-    Values.push_back(1.0f);
-    Values.push_back(2.0f);
-    Values.push_back(4.0f);
+    Values.Add(1.0f);
+    Values.Add(2.0f);
+    Values.Add(4.0f);
 
     float Sum = 0.0f;
     EXPECT_EQ(Read(Frame.GetMemory(), Slot, &Sum), 3) << "the view did not see the frame's elements";
@@ -637,11 +637,11 @@ TEST_F(FFrameMarshalTest, AppendingThroughTheViewGrowsTheFramesContainer)
 
     FFunctionFrame Frame(*Function);
     TVector<float>& Values = Frame.At<TVector<float>>(0);
-    Values.push_back(9.0f);
+    Values.Add(9.0f);
 
     ASSERT_EQ(Append(Frame.GetMemory(), Slot, 5.5f), 1);
 
-    ASSERT_EQ(Values.size(), 2u) << "the append went somewhere other than the frame's own vector";
+    ASSERT_EQ(Values.Num(), 2) << "the append went somewhere other than the frame's own vector";
     EXPECT_FLOAT_EQ(Values[0], 9.0f);
     EXPECT_FLOAT_EQ(Values[1], 5.5f);
 }
@@ -674,13 +674,13 @@ TEST_F(FFrameMarshalTest, AContainerRoundTripsThroughTheDispatcher)
 
     FFunctionFrame Frame(*Function);
     TVector<float>& Values = Frame.At<TVector<float>>(0);
-    Values.push_back(1.0f);
-    Values.push_back(2.0f);
-    Values.push_back(3.0f);
+    Values.Add(1.0f);
+    Values.Add(2.0f);
+    Values.Add(3.0f);
 
     Invoke(Target, Function, Frame.GetMemory());
 
-    ASSERT_EQ(Values.size(), 4u) << "the callee's append did not reach the caller's vector";
+    ASSERT_EQ(Values.Num(), 4) << "the callee's append did not reach the caller's vector";
     EXPECT_FLOAT_EQ(Values[3], 6.0f);
 
     FreeTarget(Target);
@@ -696,7 +696,7 @@ TEST_F(FFrameMarshalTest, AScriptMintedArrayIsReadThroughTheSameView)
     ASSERT_NE(Append, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(VectorField("Values", EPropertyTypeFlags::Float));
+    Params.Fields.Add(VectorField("Values", EPropertyTypeFlags::Float));
 
     FFunction* Function = MintFrame("FrameMarshal_ScriptArray", Params);
     ASSERT_NE(Function, nullptr);
@@ -712,16 +712,16 @@ TEST_F(FFrameMarshalTest, AScriptMintedArrayIsReadThroughTheSameView)
 
     for (float Value : {2.0f, 3.0f, 5.0f})
     {
-        Ops->PushBack(Vector, &Value);
+        Ops->Add(Vector, &Value);
     }
-    ASSERT_EQ(Ops->Size(Vector), 3u);
+    ASSERT_EQ(Ops->Num(Vector), 3);
 
     float Sum = 0.0f;
     EXPECT_EQ(Read(Frame.GetMemory(), Slot, &Sum), 3) << "the view mis-read the script array's length";
     EXPECT_FLOAT_EQ(Sum, 10.0f);
 
     ASSERT_EQ(Append(Frame.GetMemory(), Slot, 7.0f), 1);
-    EXPECT_EQ(Ops->Size(Vector), 4u);
+    EXPECT_EQ(Ops->Num(Vector), 4);
 }
 
 // A script-declared optional has no C++ TOptional<T> to take ops from, so the mint synthesizes them and the
@@ -734,7 +734,7 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalBindsAsANullable)
     ASSERT_NE(Write, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(OptionalField("Maybe", EPropertyTypeFlags::Float));
+    Params.Fields.Add(OptionalField("Maybe", EPropertyTypeFlags::Float));
 
     FFunction* Function = MintFrame("FrameMarshal_ScriptOptional", Params);
     ASSERT_NE(Function, nullptr);
@@ -758,11 +758,11 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalBindsAsANullable)
     EXPECT_FLOAT_EQ(Payload, 7.5f);
 
     ASSERT_EQ(Write(Frame.GetMemory(), Slot, 1, 3.25f), 1);
-    ASSERT_TRUE(Optional->HasValue(Member));
+    ASSERT_TRUE(Optional->IsSet(Member));
     EXPECT_FLOAT_EQ(*static_cast<const float*>(Optional->GetValue(Member)), 3.25f);
 
     ASSERT_EQ(Write(Frame.GetMemory(), Slot, 0, 0.0f), 1);
-    EXPECT_FALSE(Optional->HasValue(Member)) << "a null nullable has to reset the script optional";
+    EXPECT_FALSE(Optional->IsSet(Member)) << "a null nullable has to reset the script optional";
 }
 
 // The synthesized ops are what FOptionalProperty's own serialize, copy and compare run on, so they have to
@@ -770,8 +770,8 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalBindsAsANullable)
 TEST_F(FFrameMarshalTest, AScriptMintedOptionalCopiesAndComparesThroughItsOps)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(OptionalField("A", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(OptionalField("B", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(OptionalField("A", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(OptionalField("B", EPropertyTypeFlags::Int32));
 
     FFunction* Function = MintFrame("FrameMarshal_ScriptOptionalOps", Params);
     ASSERT_NE(Function, nullptr);
@@ -790,13 +790,13 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalCopiesAndComparesThroughItsOps)
     EXPECT_FALSE(First->Identical(A, B));
 
     First->CopyCompleteValue(B, A);
-    ASSERT_TRUE(Second->HasValue(B));
+    ASSERT_TRUE(Second->IsSet(B));
     EXPECT_EQ(*static_cast<const int32*>(Second->GetValue(B)), 41);
     EXPECT_TRUE(First->Identical(A, B));
 
     First->Reset(A);
-    EXPECT_FALSE(First->HasValue(A));
-    EXPECT_TRUE(Second->HasValue(B)) << "the copy owns its own payload";
+    EXPECT_FALSE(First->IsSet(A));
+    EXPECT_TRUE(Second->IsSet(B)) << "the copy owns its own payload";
 }
 
 TEST_F(FFrameMarshalTest, ANullableResolvesToAnOptionalOverItsPayload)
@@ -845,8 +845,8 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalRoundTripsThroughTheDispatcher)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(OptionalField("In", EPropertyTypeFlags::Float));
-    Params.Fields.push_back(OptionalField("ReturnValue", EPropertyTypeFlags::Float));
+    Params.Fields.Add(OptionalField("In", EPropertyTypeFlags::Float));
+    Params.Fields.Add(OptionalField("ReturnValue", EPropertyTypeFlags::Float));
 
     FFunction* Function = MintFrame("FrameMarshal_ScriptOptionalCall", Params, "OnMaybeDouble", 1);
     ASSERT_NE(Function, nullptr);
@@ -866,7 +866,7 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalRoundTripsThroughTheDispatcher)
         Invoke(Target, Function, Frame.GetMemory());
 
         void* Slot = Return->GetValuePtr<void>(Frame.GetMemory());
-        ASSERT_TRUE(Return->HasValue(Slot));
+        ASSERT_TRUE(Return->IsSet(Slot));
         EXPECT_FLOAT_EQ(*static_cast<const float*>(Return->GetValue(Slot)), 2.5f);
     }
 
@@ -877,7 +877,7 @@ TEST_F(FFrameMarshalTest, AScriptMintedOptionalRoundTripsThroughTheDispatcher)
 
         Invoke(Target, Function, Frame.GetMemory());
 
-        EXPECT_FALSE(Return->HasValue(Return->GetValuePtr<void>(Frame.GetMemory())))
+        EXPECT_FALSE(Return->IsSet(Return->GetValuePtr<void>(Frame.GetMemory())))
             << "a null return has to reset the script optional";
     }
 
@@ -1148,13 +1148,13 @@ TEST_F(FFrameMarshalTest, AlternatingTwoFunctionsKeepsEachBoundToItsOwnMethod)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema OutParams;
-    OutParams.Fields.push_back(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    OutParams.Fields.push_back(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+    OutParams.Fields.Add(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    OutParams.Fields.Add(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
     FFunction* OutFunction = MintFrame("FrameMarshal_AltOut", OutParams, "MarshalOut");
     ASSERT_NE(OutFunction, nullptr);
 
     Scripting::FScriptExportSchema RefParams;
-    RefParams.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32,
+    RefParams.Fields.Add(ParamField("Value", EPropertyTypeFlags::Int32,
         EPropertyFlags::OutParam | EPropertyFlags::RefParam));
     FFunction* RefFunction = MintFrame("FrameMarshal_AltRef", RefParams, "MarshalRef");
     ASSERT_NE(RefFunction, nullptr);
@@ -1190,8 +1190,8 @@ TEST_F(FFrameMarshalTest, ADispatchedFunctionPublishesAnInvokerNativeCanCallDire
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+    Params.Fields.Add(ParamField("In", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(ParamField("Out", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
 
     FFunction* Function = MintFrame("FrameMarshal_Published", Params, "MarshalOut");
     ASSERT_NE(Function, nullptr);
@@ -1234,7 +1234,7 @@ TEST_F(FFrameMarshalTest, ASoftReferenceElementRoundTripsItsPath)
 
     EXPECT_EQ(ReadLength, 10) << "the managed read handed back an empty path instead of /Game/Read";
     EXPECT_EQ(WrittenLength, 13);
-    EXPECT_EQ(FString(Slot.GetPath().data(), Slot.GetPath().size()), FString("/Game/Written"));
+    EXPECT_EQ(FString(Slot.GetPath().GetData(), Slot.GetPath().Len()), FString("/Game/Written"));
 }
 
 // The kinds the frame lane needs beyond a blittable copy, driven through the one element marshaller.
@@ -1293,8 +1293,8 @@ TEST_F(FFrameMarshalTest, AStringParameterDispatchesThroughTheGeneratedInvoker)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("In", EPropertyTypeFlags::String, EPropertyFlags::None));
-    Params.Fields.push_back(ParamField("Length", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+    Params.Fields.Add(ParamField("In", EPropertyTypeFlags::String, EPropertyFlags::None));
+    Params.Fields.Add(ParamField("Length", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
 
     FFunction* Function = MintFrame("FrameMarshal_Text", Params, "MarshalText");
     ASSERT_NE(Function, nullptr);
@@ -1325,8 +1325,8 @@ TEST_F(FFrameMarshalTest, AnOpaqueStructParameterIsReadThroughAViewOverItsSlot)
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(NativeStructField("Bone", "SAnimGraphBoneMaskBone"));
-    Params.Fields.push_back(ParamField("Weight", EPropertyTypeFlags::Float, EPropertyFlags::OutParam));
+    Params.Fields.Add(NativeStructField("Bone", "SAnimGraphBoneMaskBone"));
+    Params.Fields.Add(ParamField("Weight", EPropertyTypeFlags::Float, EPropertyFlags::OutParam));
 
     FFunction* Function = MintFrame("FrameMarshal_StructView", Params, "MarshalStructView");
     ASSERT_NE(Function, nullptr);
@@ -1350,8 +1350,8 @@ TEST_F(FFrameMarshalTest, ResetClearsEveryCacheKeyedByAUserType)
     ASSERT_NE(Probe, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(NativeStructField("Bone", "SAnimGraphBoneMaskBone"));
-    Params.Fields.push_back(VectorField("Values", EPropertyTypeFlags::Float));
+    Params.Fields.Add(NativeStructField("Bone", "SAnimGraphBoneMaskBone"));
+    Params.Fields.Add(VectorField("Values", EPropertyTypeFlags::Float));
 
     FFunction* Function = MintFrame("FrameMarshal_CacheProbe", Params, "MarshalStructView");
     ASSERT_NE(Function, nullptr);
@@ -1396,7 +1396,7 @@ TEST_F(FFrameMarshalTest, ABindingThatDeclaresTheWrongWidthIsDropped)
     int32 NativeWidth = -1;
     const int32 Result = Probe(&NativeWidth);
 
-    EXPECT_EQ(NativeWidth, (int32)DotNet::GetExportSignature("LuminaSharp_PropertyOffset", 26))
+    EXPECT_EQ(NativeWidth, DotNet::GetExportSignature("LuminaSharp_PropertyOffset", 26))
         << "the export did not register the width the managed side checks against";
     EXPECT_EQ(Result & 1, 1) << "an agreeing width has to resolve";
     EXPECT_EQ(Result & 2, 2) << "a drifted width has to be dropped rather than called";
@@ -1427,7 +1427,7 @@ TEST_F(FFrameMarshalTest, ASlotViewBindsInPlaceRatherThanByWidth)
         ASSERT_NE(Slot, nullptr) << Case.Property;
 
         TVector<uint8> Storage(Owner->GetAlignedSize(), (uint8)0);
-        EXPECT_EQ(Probe(Slot, Storage.data(), Case.bDelegate), 2)
+        EXPECT_EQ(Probe(Slot, Storage.GetData(), Case.bDelegate), 2)
             << Case.Struct << "." << Case.Property << " did not bind as a view over its slot";
     }
 }
@@ -1443,9 +1443,9 @@ TEST_F(FFrameMarshalTest, AMapCarriesAMarshalledKeyAndValue)
     SInteropOpaqueStruct Opaque;
     EXPECT_EQ(RoundTrip(&Opaque), 63) << "a map operation did not survive the round trip";
 
-    EXPECT_EQ(Opaque.Weights.size(), 1u) << "native does not see what managed left behind";
-    EXPECT_TRUE(Opaque.Weights.contains(FString("beta")));
-    EXPECT_EQ(Opaque.Labels.size(), 1u);
+    EXPECT_EQ(Opaque.Weights.Num(), 1) << "native does not see what managed left behind";
+    EXPECT_TRUE(Opaque.Weights.Contains(FString("beta")));
+    EXPECT_EQ(Opaque.Labels.Num(), 1);
 }
 
 // A view borrows storage it cannot hand back, but a copy fills the return slot the frame already owns.
@@ -1458,8 +1458,8 @@ TEST_F(FFrameMarshalTest, AContainerIsReturnedByValueWhenTheCalleeHandsBackAList
     ASSERT_NE(Invoke, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("Count", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(VectorField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ParamField("Count", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(VectorField("ReturnValue", EPropertyTypeFlags::Int32));
 
     FFunction* Function = MintFrame("FrameMarshal_ListReturn", Params, "OnBuildRange", 1);
     ASSERT_NE(Function, nullptr);
@@ -1473,9 +1473,9 @@ TEST_F(FFrameMarshalTest, AContainerIsReturnedByValueWhenTheCalleeHandsBackAList
 
     // A minted array keeps its elements in a byte vector, so the native size is the element count times stride.
     const TVector<uint8>& Returned = *Function->GetParams()[1]->GetValuePtr<TVector<uint8>>(Frame.GetMemory());
-    ASSERT_EQ(Returned.size(), 4u * sizeof(int32)) << "the callee's list never reached the frame's return slot";
+    ASSERT_EQ(Returned.Num(), 4 * sizeof(int32)) << "the callee's list never reached the frame's return slot";
 
-    const int32* Values = reinterpret_cast<const int32*>(Returned.data());
+    const int32* Values = reinterpret_cast<const int32*>(Returned.GetData());
     EXPECT_EQ(Values[0], 0);
     EXPECT_EQ(Values[3], 9);
 
@@ -1495,7 +1495,7 @@ TEST_F(FFrameMarshalTest, AnOptionalCarriesAMarshalledPayload)
     EXPECT_FALSE(Opaque.Note.IsSet()) << "native still sees a payload managed reset";
 }
 
-// A worker posting a continuation must not run it there, because a job fiber can migrate between threads.
+// A worker posting a continuation must not run it there, because a job can resume on a different thread.
 TEST_F(FFrameMarshalTest, AContinuationRunsOnTheGameThreadAtTheNextTick)
 {
     auto* Probe = (FContinuationFn)DotNet::ResolveManagedExport("Test_ContinuationResumesOnTheGameThread");
@@ -1537,8 +1537,8 @@ TEST_F(FFrameMarshalTest, AnAsyncScriptFunctionHandsBackATokenNativeCanPoll)
     ASSERT_NE(Gate, nullptr);
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
+    Params.Fields.Add(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
 
     FFunction* Function = MintFrame("FrameMarshal_Async", Params, "MarshalAsync", 1);
     ASSERT_NE(Function, nullptr);
@@ -1583,8 +1583,8 @@ TEST_F(FFrameMarshalTest, AFinishedAsyncScriptFunctionIsReapedOnTheTick)
     const int32 Before = Count();
 
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
+    Params.Fields.Add(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
 
     FFunction* Function = MintFrame("FrameMarshal_AsyncReap", Params, "MarshalAsync", 1);
     ASSERT_NE(Function, nullptr);
@@ -1727,7 +1727,7 @@ TEST_F(FFrameMarshalTest, ScriptsReadAndSendThroughTheWorldEventQueues)
     int32 UnreadAfter = -1;
     EXPECT_EQ(ReadEngine(World.Get(), &JumpSum, &SlotLength, &UnreadAfter), 2);
     EXPECT_EQ(JumpSum, 7) << "the C# mirror must read the native layout in place";
-    EXPECT_EQ(SlotLength, (int32)Completed.SlotName.length()) << "a view must read the queued string, not a copy of its pointer";
+    EXPECT_EQ(SlotLength, Completed.SlotName.Len()) << "a view must read the queued string, not a copy of its pointer";
     EXPECT_EQ(UnreadAfter, 0);
 
     double ScaleSum = 0.0;
@@ -1756,7 +1756,7 @@ TEST_F(FFrameMarshalTest, ScriptViewSurvivesMidLoopStructuralChanges)
         const ECS::FEntity Entity = Registry.Create();
         Registry.Emplace<STransformComponent>(Entity);
         Registry.Emplace<SBuoyancyComponent>(Entity).Buoyancy = (float)(i + 1);
-        Members.push_back((uint32)Entity);
+        Members.Add((uint32)Entity);
     }
 
     TVector<uint32> Joiners;
@@ -1764,18 +1764,18 @@ TEST_F(FFrameMarshalTest, ScriptViewSurvivesMidLoopStructuralChanges)
     {
         const ECS::FEntity Entity = Registry.Create();
         Registry.Emplace<STransformComponent>(Entity);
-        Joiners.push_back((uint32)Entity);
+        Joiners.Add((uint32)Entity);
     }
 
     TVector<uint32> Doomed;
     for (int32 i = 0; i < kMembers; i += 4)
     {
-        Doomed.push_back(Members[i]);
+        Doomed.Add(Members[i]);
     }
 
     uint32 First = 0;
     double Sum = 0.0;
-    const int32 Visited = Mutate(World.Get(), Doomed.data(), (int32)Doomed.size(), Joiners.data(), (int32)Joiners.size(), &First, &Sum);
+    const int32 Visited = Mutate(World.Get(), Doomed.GetData(), Doomed.Num(), Joiners.GetData(), Joiners.Num(), &First, &Sum);
 
     double Expected = 0.0;
     int32 ExpectedVisits = 0;

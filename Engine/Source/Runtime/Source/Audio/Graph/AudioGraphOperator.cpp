@@ -16,12 +16,12 @@ namespace Lumina
         WaveCount    = Counts.Get(EAudioGraphType::Wave);
 
         // Two spare elements per type back the read null and the write discard.
-        AudioStorage.resize((size_t)(AudioCount + 2) * BlockFrames, 0.0f);
-        FloatStorage.resize(FloatCount + 2, 0.0f);
-        IntStorage.resize(IntCount + 2, 0);
-        BoolStorage.resize(BoolCount + 2, 0);
-        TriggerStorage.resize(TriggerCount + 2);
-        WaveStorage.resize(WaveCount + 2, nullptr);
+        AudioStorage.SetNum(IntCastChecked<int32>(static_cast<int64>((AudioCount + 2)) * BlockFrames), 0.0f);
+        FloatStorage.SetNum(FloatCount + 2, 0.0f);
+        IntStorage.SetNum(IntCount + 2, 0);
+        BoolStorage.SetNum(BoolCount + 2, 0);
+        TriggerStorage.SetNum(TriggerCount + 2);
+        WaveStorage.SetNum(WaveCount + 2, nullptr);
     }
 
     void FAudioGraphArena::BeginBlock()
@@ -34,18 +34,18 @@ namespace Lumina
 
     uint32 FAudioGraphOperatorBuildParams::NumInputs() const
     {
-        return (uint32)Node->InputSlots.size();
+        return (uint32)Node->InputSlots.Num();
     }
 
     // A pin past the compiled list reads zero and writes nowhere, so an operator may gain pins after a graph was saved.
     uint16 FAudioGraphOperatorBuildParams::InputSlot(uint32 Pin) const
     {
-        return Pin < Node->InputSlots.size() ? Node->InputSlots[Pin] : kAudioGraphInvalidSlot;
+        return Pin < static_cast<uint32>(Node->InputSlots.Num()) ? Node->InputSlots[Pin] : kAudioGraphInvalidSlot;
     }
 
     uint16 FAudioGraphOperatorBuildParams::OutputSlot(uint32 Pin) const
     {
-        return Pin < Node->OutputSlots.size() ? Node->OutputSlots[Pin] : kAudioGraphInvalidSlot;
+        return Pin < static_cast<uint32>(Node->OutputSlots.Num()) ? Node->OutputSlots[Pin] : kAudioGraphInvalidSlot;
     }
 
     FAudioGraphNodeRegistry& FAudioGraphNodeRegistry::Get()
@@ -64,11 +64,11 @@ namespace Lumina
 
         if (Find(NodeClass.Name) != nullptr)
         {
-            LOG_ERROR("AudioGraph: node class '{}' is already registered", NodeClass.Name.c_str());
+            LOG_ERROR("AudioGraph: node class '{}' is already registered", *NodeClass.Name);
             return;
         }
 
-        Classes.push_back(Move(NodeClass));
+        Classes.Add(Move(NodeClass));
     }
 
     const FAudioGraphNodeClass* FAudioGraphNodeRegistry::Find(const FName& Name) const
@@ -93,7 +93,7 @@ namespace Lumina
         const FAudioGraphNodeClass* NodeClass = FAudioGraphNodeRegistry::Get().Find(Params.Node->OperatorName);
         if (NodeClass == nullptr)
         {
-            LOG_WARN("AudioGraph: no operator named '{}'", Params.Node->OperatorName.c_str());
+            LOG_WARN("AudioGraph: no operator named '{}'", *Params.Node->OperatorName);
             return nullptr;
         }
 

@@ -38,17 +38,17 @@ namespace Lumina
             for (const SInputActionBinding& Binding : Action.Bindings)
             {
                 const FString Token = Binding.GetDisplayName();
-                if (Token.empty())
+                if (Token.IsEmpty())
                 {
                     continue;
                 }
-                if (!Result.empty())
+                if (!Result.IsEmpty())
                 {
                     Result += ", ";
                 }
                 Result += Token;
             }
-            return Result.empty() ? FString("Unbound") : Result;
+            return Result.IsEmpty() ? FString("Unbound") : Result;
         }
 
         namespace
@@ -68,7 +68,7 @@ namespace Lumina
                     return;
                 }
                 const FString Text = FString(TypeLabel(Action.Type)) + ":  " + DescribeBindings(Action);
-                ImGuiX::TextTooltip_Internal(Text.c_str());
+                ImGuiX::TextTooltip_Internal(*Text);
             }
         }
 
@@ -77,26 +77,26 @@ namespace Lumina
             const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
 
             const SInputAction* Current = nullptr;
-            if (!Value.empty())
+            if (!Value.IsEmpty())
             {
-                Current = FInputActionMap::Get().FindAction(FName(Value.c_str()));
+                Current = FInputActionMap::Get().FindAction(FName(*Value));
             }
 
             // A name that resolves to nothing is the rename/delete case, and reads as bound until said so.
-            const bool bDangling = !Value.empty() && Current == nullptr;
+            const bool bDangling = !Value.IsEmpty() && Current == nullptr;
 
             FFixedString Preview;
-            if (Value.empty())
+            if (Value.IsEmpty())
             {
                 Preview = LE_ICON_CLOSE_CIRCLE_OUTLINE "  None";
             }
             else if (bDangling)
             {
-                AppendFormat(Preview, "{}  {}", LE_ICON_ALERT_CIRCLE_OUTLINE, Value.c_str());
+                AppendFormat(Preview, "{}  {}", LE_ICON_ALERT_CIRCLE_OUTLINE, *Value);
             }
             else
             {
-                AppendFormat(Preview, "{}  {}", TypeIcon(Current->Type), Value.c_str());
+                AppendFormat(Preview, "{}  {}", TypeIcon(Current->Type), *Value);
             }
 
             if (bDangling)
@@ -107,12 +107,12 @@ namespace Lumina
             const float Scale = ImGuiX::GetUIScale();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
             ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * Scale, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
-            const bool bOpen = ImGui::BeginCombo(Id, Preview.c_str());
+            const bool bOpen = ImGui::BeginCombo(Id, *Preview);
 
             if (bDangling)
             {
                 ImGui::PopStyleColor();
-                ImGuiX::TextTooltip("No action named '{}' in Settings > Engine > Input", Value.c_str());
+                ImGuiX::TextTooltip("No action named '{}' in Settings > Engine > Input", *Value);
             }
 
             if (!bOpen)
@@ -129,9 +129,9 @@ namespace Lumina
             ImGui::Separator();
 
             bool bPicked = false;
-            if (ImGui::Selectable(LE_ICON_CLOSE_CIRCLE_OUTLINE "  None", Value.empty()))
+            if (ImGui::Selectable(LE_ICON_CLOSE_CIRCLE_OUTLINE "  None", Value.IsEmpty()))
             {
-                Value.clear();
+                Value.Reset();
                 bPicked = true;
             }
 
@@ -142,8 +142,8 @@ namespace Lumina
                 {
                     continue;
                 }
-                const FString ActionName(Action.Name.c_str());
-                if (!ImGuiX::PassSearchFilter(Filter, ActionName.c_str()))
+                const FString ActionName(*Action.Name);
+                if (!ImGuiX::PassSearchFilter(Filter, *ActionName))
                 {
                     continue;
                 }
@@ -151,8 +151,8 @@ namespace Lumina
                 ++Shown;
 
                 FFixedString Row;
-                AppendFormat(Row, "{}  {}", TypeIcon(Action.Type), ActionName.c_str());
-                if (ImGui::Selectable(Row.c_str(), Value == ActionName))
+                AppendFormat(Row, "{}  {}", TypeIcon(Action.Type), *ActionName);
+                if (ImGui::Selectable(*Row, Value == ActionName))
                 {
                     Value = ActionName;
                     bPicked = true;
@@ -163,7 +163,7 @@ namespace Lumina
 
             if (Shown == 0)
             {
-                ImGui::TextDisabled(Actions.empty()
+                ImGui::TextDisabled(Actions.IsEmpty()
                     ? "No input actions. Add them in Settings > Engine > Input."
                     : "No matching actions.");
             }
@@ -175,11 +175,11 @@ namespace Lumina
 
     EPropertyChangeOp FInputActionHandlePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
-        FString Picked = DisplayValue.Name.IsNone() ? FString() : FString(DisplayValue.Name.c_str());
+        FString Picked = DisplayValue.Name.IsNone() ? FString() : FString(*DisplayValue.Name);
 
         if (InputActionPicker::DrawCombo("##inputactionhandle", Picked, SearchFilter))
         {
-            DisplayValue.SetName(Picked.empty() ? FName() : FName(Picked.c_str()));
+            DisplayValue.SetName(Picked.IsEmpty() ? FName() : FName(*Picked));
             bFinishPending = true;
             return EPropertyChangeOp::Started;
         }

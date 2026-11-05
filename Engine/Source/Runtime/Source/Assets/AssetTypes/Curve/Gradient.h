@@ -44,8 +44,8 @@ namespace Lumina
         void RemoveKey(int32 Index);
         void SortKeys();
 
-        int32 NumKeys() const { return (int32)Keys.size(); }
-        bool IsEmpty() const { return Keys.empty(); }
+        int32 NumKeys() const { return Keys.Num(); }
+        bool IsEmpty() const { return Keys.IsEmpty(); }
 
         void GetTimeRange(float& OutMin, float& OutMax) const;
 

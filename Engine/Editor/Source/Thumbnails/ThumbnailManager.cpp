@@ -47,7 +47,7 @@ namespace Lumina
         constexpr FStringView Extension = ".lasset";
         auto Stem = [&](FStringView Path)
         {
-            return Path.ends_with(Extension) ? Path.substr(0, Path.size() - Extension.size()) : Path;
+            return Path.EndsWith(Extension) ? Path.Mid(0, Path.Len() - Extension.Len()) : Path;
         };
         return Stem(A) == Stem(B);
     }
@@ -115,7 +115,7 @@ namespace Lumina
                 if (const FMeshResource* Resource = Mesh->TryGetMeshResource())
                 {
                     const TVector<uint32>& BoneIndices = Resource->MeshletData.MeshletBoneIndices;
-                    if (!BoneIndices.empty() && BoneIndices[0] < MeshComponent.BoneTransforms.size())
+                    if (!BoneIndices.IsEmpty() && BoneIndices[0] < static_cast<unsigned int>(MeshComponent.BoneTransforms.Num()))
                     {
                         Bounds = Bounds.ToWorld(MeshComponent.BoneTransforms[BoneIndices[0]]);
                     }
@@ -191,7 +191,7 @@ namespace Lumina
                 MeshComp.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
                 if (!bIsPostProcess)
                 {
-                    MeshComp.MaterialOverrides.push_back(Material);
+                    MeshComp.MaterialOverrides.Add(Material);
                 }
 
                 if (bIsPostProcess)
@@ -199,7 +199,7 @@ namespace Lumina
                     ECS::FEntity VolumeEntity = Scene.SpawnEntity("PreviewPostProcessVolume");
                     SPostProcessComponent& Volume = World->EmplaceComponent<SPostProcessComponent>(VolumeEntity);
                     Volume.bInfiniteExtent = true;
-                    Volume.PostProcessMaterials.push_back(Material);
+                    Volume.PostProcessMaterials.Add(Material);
                 }
 
                 // Sphere mesh has a half-meter radius.
@@ -245,10 +245,10 @@ namespace Lumina
     {
         {
             FReadScopeLock Lock(ThumbnailLock);
-            auto It = Thumbnails.find(Package);
-            if (It != Thumbnails.end())
+            auto It = Thumbnails.Find(Package);
+            if (It != nullptr)
             {
-                FThumbnailRecord* Record = It->second.get();
+                FThumbnailRecord* Record = It->get();
                 if (Record != nullptr && Record->Thumbnail.IsReadyForRender())
                 {
                     return &Record->Thumbnail;
@@ -261,13 +261,13 @@ namespace Lumina
         // First sighting, so insert a placeholder to dedup concurrent callers and resolve asynchronously.
         {
             FWriteScopeLock Lock(ThumbnailLock);
-            if (Thumbnails.find(Package) != Thumbnails.end())
+            if (Thumbnails.Contains(Package))
             {
                 return nullptr;   // another caller raced us in; let its resolve run
             }
             auto Record = MakeUnique<FThumbnailRecord>();
             Record->Thumbnail.LoadState.store(FPackageThumbnail::EState::Requested, std::memory_order_release);
-            Thumbnails.insert_or_assign(Package, Move(Record));
+            Thumbnails.Add(Package, Move(Record));
         }
 
         ResolveThumbnailAsync(Package);
@@ -277,7 +277,7 @@ namespace Lumina
     void CThumbnailManager::ResolveThumbnailAsync(FName Package)
     {
         LUMINA_MEMORY_SCOPE("Thumbnails");
-        Task::AsyncTask(1, 1, [this, Package](uint32, uint32, uint32)
+        Jobs::Spawn(Jobs::EJobPriority::Normal, [](CThumbnailManager* Self, FName PackageName) -> Jobs::TTask<void>
         {
             // The returned pointer is only valid under the registry's momentary lock, so snapshot it now.
             FGuid        GUID;
@@ -285,11 +285,11 @@ namespace Lumina
             FName        ClassName;
             FFixedString PackagePath;
             {
-                const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Package.c_str());
+                const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(*PackageName);
                 if (Data == nullptr)
                 {
-                    SetRecordState(Package, FPackageThumbnail::EState::Failed);
-                    return;
+                    Self->SetRecordState(PackageName, FPackageThumbnail::EState::Failed);
+                    co_return;
                 }
                 GUID        = Data->AssetGUID;
                 ContentHash = Data->ContentHash;
@@ -299,12 +299,12 @@ namespace Lumina
 
             // Record the identity so a later invalidation sweep can compare content hashes.
             {
-                FWriteScopeLock Lock(ThumbnailLock);
-                auto It = Thumbnails.find(Package);
-                if (It != Thumbnails.end() && It->second)
+                FWriteScopeLock Lock(Self->ThumbnailLock);
+                auto It = Self->Thumbnails.Find(PackageName);
+                if (It != nullptr && (*It))
                 {
-                    It->second->GUID        = GUID;
-                    It->second->ContentHash = ContentHash;
+                    (*It)->GUID        = GUID;
+                    (*It)->ContentHash = ContentHash;
                 }
             }
 
@@ -313,8 +313,8 @@ namespace Lumina
                 FPackageThumbnail Cached;
                 if (ThumbnailCache::Load(GUID, ContentHash, Cached))
                 {
-                    UploadAndStore(Package, Cached);
-                    return;
+                    Self->UploadAndStore(PackageName, Cached);
+                    co_return;
                 }
             }
 
@@ -331,33 +331,34 @@ namespace Lumina
                 {
                     if (FPackageThumbnail* Embedded = Pkg->GetPackageThumbnail())
                     {
-                        if (!Embedded->ImageData.empty())
+                        if (!Embedded->ImageData.IsEmpty())
                         {
                             ThumbnailCache::Save(GUID, ContentHash, *Embedded);
-                            UploadAndStore(Package, *Embedded);
-                            return;
+                            Self->UploadAndStore(PackageName, *Embedded);
+                            co_return;
                         }
                     }
                 }
             }
 
             // Never load the object here, since that would race the editor's own loader on the same object.
-            if (Klass == nullptr || !CanGenerateFor(Klass))
+            if (Klass == nullptr || !Self->CanGenerateFor(Klass))
             {
-                SetRecordState(Package, FPackageThumbnail::EState::Failed);
-                return;
+                Self->SetRecordState(PackageName, FPackageThumbnail::EState::Failed);
+                co_return;
             }
 
             FRenderRequest Request;
-            Request.Package     = Package;
+            Request.Package     = PackageName;
             Request.GUID        = GUID;
             Request.ContentHash = ContentHash;
 
             {
-                FScopeLock Lock(RenderQueueMutex);
-                RenderQueue.push_back(Move(Request));
+                FScopeLock Lock(Self->RenderQueueMutex);
+                Self->RenderQueue.Add(Move(Request));
             }
-        });
+            co_return;
+        }, this, Package);
     }
 
     bool CThumbnailManager::StageThumbnail(FThumbnailScene& Scene, CObject* Asset)
@@ -382,18 +383,18 @@ namespace Lumina
             .Width  = Width,
             .Height = Height,
             .Format = EFormat::RGBA8_UNORM,
-            .DebugName = DebugName.c_str(),
+            .DebugName = *DebugName,
         });
 
         // Stored bottom-up; flip back to top-down for display (matches ThumbnailUtils::StoreDownsampledRGBA).
         const uint32 RowBytes = Width * 4u;
-        TVector<uint8> Flipped(Thumbnail.ImageData.size());
+        TVector<uint8> Flipped(Thumbnail.ImageData.Num());
         for (uint32 y = 0; y < Height; ++y)
         {
             const uint32 FlippedY = Height - 1 - y;
-            Memory::Memcpy(Flipped.data() + FlippedY * RowBytes, Thumbnail.ImageData.data() + y * RowBytes, RowBytes);
+            Memory::Memcpy(Flipped.GetData() + FlippedY * RowBytes, Thumbnail.ImageData.GetData() + y * RowBytes, RowBytes);
         }
-        RHI::Textures::Upload(Image, 0, Flipped.data(), Flipped.size(), Width);
+        RHI::Textures::Upload(Image, 0, Flipped.GetData(), Flipped.Num(), Width);
         return Image;
     }
 
@@ -402,7 +403,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Thumbnails");
         const uint32 Width  = Source.ImageWidth;
         const uint32 Height = Source.ImageHeight;
-        if (Width == 0 || Height == 0 || Source.ImageData.size() < (size_t)Width * Height * 4u)
+        if (Width == 0 || Height == 0 || static_cast<size_t>(Source.ImageData.Num()) < (size_t)Width * Height * 4u)
         {
             SetRecordState(Package, FPackageThumbnail::EState::Failed);
             return;
@@ -411,21 +412,21 @@ namespace Lumina
         RHI::FManagedTexture Image = CreateThumbnailTexture(Source, FString("Thumbnail.") + Package.ToString());
 
         FWriteScopeLock Lock(ThumbnailLock);
-        auto It = Thumbnails.find(Package);
-        if (It == Thumbnails.end() || It->second == nullptr)
+        auto It = Thumbnails.Find(Package);
+        if (It == nullptr || (*It) == nullptr)
         {
             RHI::Textures::Release(Image);   // record vanished (invalidated) while we uploaded
             return;
         }
 
-        FPackageThumbnail& Dest = It->second->Thumbnail;
+        FPackageThumbnail& Dest = (*It)->Thumbnail;
         if (Dest.LoadedImage.IsValid())
         {
             RHI::Textures::Release(Dest.LoadedImage);
         }
         Dest.ImageWidth  = Width;
         Dest.ImageHeight = Height;
-        Dest.ImageData.clear();   // the GPU texture is what displays; drop the CPU copy to save memory
+        Dest.ImageData.Reset();   // the GPU texture is what displays; drop the CPU copy to save memory
         Dest.LoadedImage = Image;
         Dest.LoadState.store(FPackageThumbnail::EState::Loaded, std::memory_order_release);
     }
@@ -433,10 +434,10 @@ namespace Lumina
     void CThumbnailManager::SetRecordState(const FName& Package, FPackageThumbnail::EState State)
     {
         FWriteScopeLock Lock(ThumbnailLock);
-        auto It = Thumbnails.find(Package);
-        if (It != Thumbnails.end() && It->second)
+        auto It = Thumbnails.Find(Package);
+        if (It != nullptr && (*It))
         {
-            It->second->Thumbnail.LoadState.store(State, std::memory_order_release);
+            (*It)->Thumbnail.LoadState.store(State, std::memory_order_release);
         }
     }
 
@@ -444,10 +445,10 @@ namespace Lumina
     {
         for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
         {
-            auto It = ThumbnailRenderers.find(Klass);
-            if (It != ThumbnailRenderers.end())
+            auto It = ThumbnailRenderers.Find(Klass);
+            if (It != nullptr)
             {
-                return &It->second;
+                return &(*It);
             }
         }
         return nullptr;
@@ -457,10 +458,10 @@ namespace Lumina
     {
         for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
         {
-            auto It = ThumbnailPainters.find(Klass);
-            if (It != ThumbnailPainters.end())
+            auto It = ThumbnailPainters.Find(Klass);
+            if (It != nullptr)
             {
-                return &It->second;
+                return &(*It);
             }
         }
         return nullptr;
@@ -600,9 +601,9 @@ namespace Lumina
         TVector<FRenderRequest> Work;
         {
             FScopeLock Lock(RenderQueueMutex);
-            Work.swap(RenderQueue);
+            swap(Work, RenderQueue);
         }
-        if (Work.empty())
+        if (Work.IsEmpty())
         {
             // Releasing while idle also keeps the scene from outliving the RHI at shutdown.
             constexpr uint32 kSceneIdleFramesBeforeRelease = 240;   // ~4s at 60fps
@@ -622,13 +623,13 @@ namespace Lumina
         uint32 Rendered = 0;
         uint32 Loaded   = 0;
         TVector<FRenderRequest> Keep;
-        Keep.reserve(Work.size());
+        Keep.Reserve(Work.Num());
 
         auto DeferOrDrop = [&](FRenderRequest& Request)
         {
             if (++Request.DeferChecks < kMaxDeferChecks)
             {
-                Keep.push_back(Move(Request));
+                Keep.Add(Move(Request));
             }
             else
             {
@@ -637,14 +638,14 @@ namespace Lumina
         };
 
         // Newest first so visible/just-scrolled tiles win.
-        for (size_t Index = Work.size(); Index-- > 0; )
+        for (int32 Index = Work.Num(); Index-- > 0; )
         {
             FRenderRequest& Request = Work[Index];
 
             // bHasPendingRequest gates as hard as the budget, since only one capture can be in flight.
             if (Rendered >= Budget || bHasPendingRequest)
             {
-                Keep.push_back(Move(Request));   // budget spent this frame; re-check next frame
+                Keep.Add(Move(Request));   // budget spent this frame; re-check next frame
                 continue;
             }
 
@@ -716,12 +717,12 @@ namespace Lumina
             }
         }
 
-        if (!Keep.empty())
+        if (!Keep.IsEmpty())
         {
             FScopeLock Lock(RenderQueueMutex);   // fresh resolves may have arrived during the scan; keep both
             for (FRenderRequest& R : Keep)
             {
-                RenderQueue.push_back(Move(R));
+                RenderQueue.Add(Move(R));
             }
         }
     }
@@ -731,7 +732,7 @@ namespace Lumina
         FWriteScopeLock Lock(ThumbnailLock);
         for (auto It = Thumbnails.begin(); It != Thumbnails.end(); )
         {
-            FThumbnailRecord* Record = It->second.get();
+            FThumbnailRecord* Record = It->Value.get();
             bool bDrop = (Record == nullptr);
 
             if (!bDrop)
@@ -751,14 +752,14 @@ namespace Lumina
                 }
             }
 
-            It = bDrop ? Thumbnails.erase(It) : std::next(It);
+            It = bDrop ? Thumbnails.Remove(It) : std::next(It);
         }
     }
 
     void CThumbnailManager::InvalidateThumbnail(const FName& Package)
     {
         FWriteScopeLock Lock(ThumbnailLock);
-        Thumbnails.erase(Package);
+        Thumbnails.Remove(Package);
     }
 
     void CThumbnailManager::RegisterThumbnailRenderer(CClass* AssetClass, FThumbnailRendererFn Renderer)
@@ -767,7 +768,7 @@ namespace Lumina
         {
             return;
         }
-        ThumbnailRenderers.insert_or_assign(AssetClass, Move(Renderer));
+        ThumbnailRenderers.Add(AssetClass, Move(Renderer));
     }
 
     void CThumbnailManager::RegisterThumbnailPainter(CClass* AssetClass, FThumbnailPainterFn Painter)
@@ -776,7 +777,7 @@ namespace Lumina
         {
             return;
         }
-        ThumbnailPainters.insert_or_assign(AssetClass, Move(Painter));
+        ThumbnailPainters.Add(AssetClass, Move(Painter));
     }
 
     bool CThumbnailManager::GenerateThumbnail(CObject* Asset, CPackage* Package)
@@ -799,7 +800,7 @@ namespace Lumina
     void CThumbnailManager::OnPackageDestroyed(FName Package)
     {
         FGuid GUID;
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Package.c_str()))
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(*Package))
         {
             GUID = Data->AssetGUID;
         }
@@ -809,9 +810,9 @@ namespace Lumina
             FWriteScopeLock Lock(ThumbnailLock);
             for (auto It = Thumbnails.begin(); It != Thumbnails.end(); )
             {
-                const FThumbnailRecord* Record = It->second.get();
+                const FThumbnailRecord* Record = It->Value.get();
                 const bool bSameAsset = GUID.IsValid() && Record != nullptr && Record->GUID == GUID;
-                if (!bSameAsset && !IsSamePackagePath(FStringView(It->first.c_str()), FStringView(Package.c_str())))
+                if (!bSameAsset && !IsSamePackagePath(FStringView(*It->Key), FStringView(*Package)))
                 {
                     ++It;
                     continue;
@@ -821,7 +822,7 @@ namespace Lumina
                 {
                     GUID = Record->GUID;
                 }
-                It = Thumbnails.erase(It);
+                It = Thumbnails.Remove(It);
             }
         }
 

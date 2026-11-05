@@ -200,6 +200,10 @@ namespace Lumina
         FUNCTION(ScriptInternal)
         void SendRpcCall(void* Function, void* Frame);
 
+        // Frees a frame from MakeRpcFrame that will never be sent, such as one whose arguments failed to write.
+        FUNCTION(ScriptInternal)
+        static void DiscardRpcFrame(void* Function, void* Frame);
+
         // The FromOwner Sync field named Name, or null when this script has none by that name.
         FUNCTION(ScriptInternal)
         void* FindSyncField(FName Name) const;

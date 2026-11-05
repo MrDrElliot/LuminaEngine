@@ -6,6 +6,7 @@
 #include "World/World.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include <cfloat>
 
 namespace Lumina
 {
@@ -19,15 +20,15 @@ namespace Lumina
             return World != nullptr ? World->GetPhysicsScene() : nullptr;
         }
 
-        void StageIgnore(ECS::FEntity Entity, TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities>& Out)
+        void StageIgnore(ECS::FEntity Entity, TInlineVector<ECS::FEntity, MaxInlineIgnoreEntities>& Out)
         {
             if (Entity != ECS::NullEntity)
             {
-                Out.push_back(Entity);
+                Out.Add(Entity);
             }
         }
 
-        using FIgnoreList = TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities>;
+        using FIgnoreList = TInlineVector<ECS::FEntity, MaxInlineIgnoreEntities>;
 
         FIgnoreList IgnoreOf(ECS::FEntity Entity)
         {
@@ -54,11 +55,11 @@ namespace Lumina
                 return;
             }
 
-            const size_t Start = Out.size();
-            Out.resize(Start + DefaultQueryCapacity);
+            const int32 Start = Out.Num();
+            Out.SetNum(Start + DefaultQueryCapacity);
             const int32 Written = Scene->OverlapShape(Shape, Center, LayerMask, IgnoreOf(IgnoreEntity),
-                TSpan<ECS::FEntity>(Out.data() + Start, DefaultQueryCapacity));
-            Out.resize(Start + (size_t)(Written > 0 ? Written : 0));
+                TSpan<ECS::FEntity>(Out.GetData() + Start, DefaultQueryCapacity));
+            Out.SetNum(Start + (size_t)(Written > 0 ? Written : 0));
         }
 
         bool IsFree(CWorld* World, const SQueryShape& Shape, const FVector3& Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
@@ -85,7 +86,7 @@ namespace Lumina
         StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
 
         TOptional<SRayResult> Result = Scene->CastRay(Settings);
-        return Result.has_value() ? Result.value() : Miss;
+        return Result.IsSet() ? Result.GetValue() : Miss;
     }
 
     void CPhysicsSubsystem::RaycastAll(FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity,
@@ -135,7 +136,7 @@ namespace Lumina
     {
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
         TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastRayAgainst(Entity, Start, End) : TOptional<SRayResult>();
-        return Hit.has_value() ? Hit.value() : MissOf(Start, End);
+        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
     }
 
     void CPhysicsSubsystem::SphereCast(FVector3 Start, FVector3 End, float Radius,
@@ -185,7 +186,7 @@ namespace Lumina
     {
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
         TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastShapeClosest(Shape, Start, End, LayerMask, IgnoreOf(IgnoreEntity)) : TOptional<SRayResult>();
-        return Hit.has_value() ? Hit.value() : MissOf(Start, End);
+        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
     }
 
     void CPhysicsSubsystem::ShapeCastAll(SQueryShape Shape, FVector3 Start, FVector3 End,
@@ -323,12 +324,12 @@ namespace Lumina
         }
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        if (SCharacterPhysicsComponent* Character = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
+        if (SCharacterPhysicsComponent* Character = Registry.TryGet<ECS::Write<SCharacterPhysicsComponent>>(Entity))
         {
             Character->Radius     = Math::Max(Radius, 0.0f);
             Character->HalfHeight = Math::Max(HalfHeight, 0.0f);
         }
-        else if (SCapsuleColliderComponent* Capsule = Registry.TryGet<SCapsuleColliderComponent>(Entity))
+        else if (SCapsuleColliderComponent* Capsule = Registry.TryGet<ECS::Write<SCapsuleColliderComponent>>(Entity))
         {
             Capsule->Radius     = Math::Max(Radius, 0.0f);
             Capsule->HalfHeight = Math::Max(HalfHeight, 0.0f);
@@ -344,7 +345,7 @@ namespace Lumina
             return;
         }
 
-        if (SBoxColliderComponent* Box = World->GetEntityRegistry().TryGet<SBoxColliderComponent>(Entity))
+        if (SBoxColliderComponent* Box = World->GetEntityRegistry().TryGet<ECS::Write<SBoxColliderComponent>>(Entity))
         {
             Box->HalfExtent = Math::Max(HalfExtent, FVector3(0.0f));
             RebuildPhysics(Entity);
@@ -359,7 +360,7 @@ namespace Lumina
             return;
         }
 
-        if (SSphereColliderComponent* Sphere = World->GetEntityRegistry().TryGet<SSphereColliderComponent>(Entity))
+        if (SSphereColliderComponent* Sphere = World->GetEntityRegistry().TryGet<ECS::Write<SSphereColliderComponent>>(Entity))
         {
             Sphere->Radius = Math::Max(Radius, 0.0f);
             RebuildPhysics(Entity);
@@ -375,11 +376,11 @@ namespace Lumina
         }
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        if (SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity))
+        if (SRigidBodyComponent* Body = Registry.TryGet<ECS::Write<SRigidBodyComponent>>(Entity))
         {
             Body->CollisionProfile = Profile;
         }
-        if (SCharacterPhysicsComponent* Character = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
+        if (SCharacterPhysicsComponent* Character = Registry.TryGet<ECS::Write<SCharacterPhysicsComponent>>(Entity))
         {
             Character->CollisionProfile = Profile;
         }
@@ -533,6 +534,12 @@ namespace Lumina
             return false;
         }
         return Scene->IsBodyActive(Entity);
+    }
+
+    int32 CPhysicsSubsystem::GetAwakeBodyCount()
+    {
+        Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
+        return Scene != nullptr ? static_cast<int32>(Scene->GetAwakeBodyCount()) : 0;
     }
 
     void CPhysicsSubsystem::SetSurfaceVelocity(ECS::FEntity Entity, FVector3 Linear, FVector3 Angular)

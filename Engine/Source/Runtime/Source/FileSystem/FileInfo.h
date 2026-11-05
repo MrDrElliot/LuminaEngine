@@ -42,13 +42,13 @@ namespace Lumina::VFS
         
         NODISCARD FString GetExt() const
         {
-            size_t DotPos = Name.find_last_of('.');
-            if (DotPos == FString::npos)
+            int32 DotPos = Name.FindLastOf('.');
+            if (DotPos == Constants::kIndexNone)
             {
                 return {};
             }
             
-            return Name.substr(DotPos);
+            return Name.Mid(DotPos);
         }
         
         NODISCARD bool IsDirectory() const  { return EnumHasAllFlags(Flags, EFileFlags::Directory); }

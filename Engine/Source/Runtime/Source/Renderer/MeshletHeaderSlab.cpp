@@ -36,7 +36,7 @@ namespace Lumina::MeshletHeaderSlab
 
         // FIFO, with Release pushing to the back and Acquire taking from the front. See the header.
         TVector<uint32> GFreeList;
-        SIZE_T          GFreeHead = 0;
+        int32           GFreeHead = 0;
 
         // The version says this is no longer the header the deferred reset was told to retire.
         TVector<uint32> GSlotVersion;
@@ -68,7 +68,7 @@ namespace Lumina::MeshletHeaderSlab
             RHI::SetDebugName(GNullGeometry.Gpu, "Mesh.NullGeometry");
 
             const TVector<uint8> Zeroes((SIZE_T)kNullGeometryBytes, (uint8)0);
-            RHI::UploadBuffer(GNullGeometry, Zeroes.data(), (SIZE_T)kNullGeometryBytes);
+            RHI::UploadBuffer(GNullGeometry, Zeroes.GetData(), (SIZE_T)kNullGeometryBytes);
         }
 
         /** Caller holds GMutex and has called EnsureNullGeometryLocked. */
@@ -146,9 +146,9 @@ namespace Lumina::MeshletHeaderSlab
             RHI::SetDebugName(NewSlab.Gpu, "Mesh.MeshletHeaderSlab");
 
             // The whole mirror, so the staged allocation is fully defined by the time it is published.
-            GMirror.resize(NewCapacity, MakeNullHeader());
-            GSlotVersion.resize(NewCapacity, 0u);
-            if (!RHI::UploadBuffer(NewSlab, GMirror.data(), (SIZE_T)Bytes))
+            GMirror.SetNum(NewCapacity, MakeNullHeader());
+            GSlotVersion.SetNum(NewCapacity, 0u);
+            if (!RHI::UploadBuffer(NewSlab, GMirror.GetData(), (SIZE_T)Bytes))
             {
                 // Nothing was queued, so no batch names this copy and publishing would swap in raw Malloc bytes.
                 LOG_ERROR("MeshletHeaderSlab: the mirror copy into a {} slot slab was dropped; the grow is abandoned.",
@@ -212,14 +212,14 @@ namespace Lumina::MeshletHeaderSlab
 
         PublishPendingLocked();
 
-        if (GFreeHead < GFreeList.size())
+        if (GFreeHead < GFreeList.Num())
         {
             const uint32 Recycled = GFreeList[GFreeHead++];
 
             // Compact once the dead prefix outweighs the live tail, so the FIFO does not grow forever.
-            if (GFreeHead > GFreeList.size() / 2)
+            if (GFreeHead > GFreeList.Num() / 2)
             {
-                GFreeList.erase(GFreeList.begin(), GFreeList.begin() + (SIZE_T)GFreeHead);
+                GFreeList.RemoveAt(0, GFreeHead);
                 GFreeHead = 0;
             }
             return Recycled;
@@ -279,7 +279,7 @@ namespace Lumina::MeshletHeaderSlab
         /** Caller holds GMutex. */
         uint32 VersionOfLocked(uint32 Slot)
         {
-            return Slot < GSlotVersion.size() ? GSlotVersion[Slot] : 0u;
+            return Slot < static_cast<uint32>(GSlotVersion.Num()) ? GSlotVersion[Slot] : 0u;
         }
     }
 
@@ -325,7 +325,7 @@ namespace Lumina::MeshletHeaderSlab
 
             if (Slot < GCapacity && GSlab.Gpu != 0)
             {
-                GFreeList.push_back(Slot);
+                GFreeList.Add(Slot);
             }
         });
     }
@@ -400,7 +400,7 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         FScopeLock Lock(GMutex);
-        return Slot < (uint32)GMirror.size() && GMirror[Slot].BonePaletteCount != 0;
+        return Slot < (uint32)GMirror.Num() && GMirror[Slot].BonePaletteCount != 0;
     }
 
     RHI::GPUPtr GetAddress()
@@ -437,9 +437,9 @@ namespace Lumina::MeshletHeaderSlab
             GNullGeometry    = {};
             GCapacity        = 0;
             GNextSlot     = kNullSlot + 1u;
-            GMirror.clear();
-            GSlotVersion.clear();
-            GFreeList.clear();
+            GMirror.Reset();
+            GSlotVersion.Reset();
+            GFreeList.Reset();
             GFreeHead = 0;
         }
 

@@ -30,18 +30,18 @@ namespace Lumina
                 return;
             }
         }
-        All.push_back(Provider);
+        All.Add(Provider);
     }
 
     void FObjectReferenceProviders::Unregister(IObjectReferenceProvider* Provider)
     {
         TVector<IObjectReferenceProvider*>& All = Registered();
-        for (size_t Index = 0; Index < All.size(); ++Index)
+        for (int32 Index = 0; Index < All.Num(); ++Index)
         {
             if (All[Index] == Provider)
             {
-                All[Index] = All.back();
-                All.pop_back();
+                All[Index] = All.Last();
+                All.Pop();
                 return;
             }
         }

@@ -55,7 +55,7 @@ namespace Lumina
         TVector<uint16> QuantizedData;
         TVector<float> RawData;
 
-        bool IsValid() const { return NumFrames > 0 && !Bones.empty(); }
+        bool IsValid() const { return NumFrames > 0 && !Bones.IsEmpty(); }
 
         RUNTIME_API bool HasConsistentTracks() const;
 
@@ -63,16 +63,16 @@ namespace Lumina
         {
             NumFrames = 0;
             SampleRate = 0.0f;
-            Bones.clear();
-            QuantizedData.clear();
-            RawData.clear();
+            Bones.Reset();
+            QuantizedData.Reset();
+            RawData.Reset();
         }
 
         SIZE_T GetMemoryUsage() const
         {
-            return Bones.size() * sizeof(FCompressedAnimBone)
-                 + QuantizedData.size() * sizeof(uint16)
-                 + RawData.size() * sizeof(float);
+            return Bones.Num() * sizeof(FCompressedAnimBone)
+                 + QuantizedData.Num() * sizeof(uint16)
+                 + RawData.Num() * sizeof(float);
         }
 
         RUNTIME_API void GetFrameBlend(float Time, float Duration, uint32& OutFrame0, uint32& OutFrame1, float& OutAlpha) const;

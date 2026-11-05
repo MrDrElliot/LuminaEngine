@@ -26,6 +26,14 @@ namespace Lumina::ECS
             return Dense != InvalidDense ? &Values[Dense] : nullptr;
         }
 
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto FindChecked(this TSelf&& Self, FEntity Entity) -> TLikeSelf<TSelf, T>&
+        {
+            auto* Found = Self.Find(Entity);
+            LUMINA_CONTAINER_CHECK(Found != nullptr);
+            return *Found;
+        }
+
         NODISCARD FORCEINLINE bool Contains(FEntity Entity) const { return FindDense(Entity) != InvalidDense; }
 
         // Default-constructs the value when the entity has none yet.
@@ -35,10 +43,18 @@ namespace Lumina::ECS
             {
                 return *Existing;
             }
-            const uint32 Dense = (uint32)Keys.size();
-            AssureSlot(Entity.GetIndex()) = FEntity(Dense, Entity.GetVersion());
-            Keys.push_back(Entity);
-            return Values.emplace_back();
+
+            // A destroyed entity whose index was reused still owns a value here; dropping it keeps one entry per index.
+            FEntity& Slot = AssureSlot(Entity.GetIndex());
+            if (!Slot.IsNull())
+            {
+                RemoveAt(Slot.GetIndex());
+            }
+
+            const uint32 Dense = (uint32)Keys.Num();
+            Slot = FEntity(Dense, Entity.GetVersion());
+            Keys.Add(Entity);
+            return Values.EmplaceGetRef();
         }
 
         // Swap-removes, so it moves the last value and invalidates pointers to it.
@@ -49,7 +65,15 @@ namespace Lumina::ECS
             {
                 return false;
             }
-            const uint32 Last = (uint32)Keys.size() - 1u;
+            RemoveAt(Dense);
+            return true;
+        }
+
+        // Removes by dense position, so a sweep over GetKeyAt can drop entries without looking them up again.
+        void RemoveAt(uint32 Dense)
+        {
+            const FEntity Removed = Keys[Dense];
+            const uint32  Last    = (uint32)Keys.Num() - 1u;
             if (Dense != Last)
             {
                 const FEntity Moved = Keys[Last];
@@ -57,21 +81,20 @@ namespace Lumina::ECS
                 Values[Dense] = std::move(Values[Last]);
                 Pages[Moved.GetIndex() / PageSize][Moved.GetIndex() % PageSize] = FEntity(Dense, Moved.GetVersion());
             }
-            Pages[Entity.GetIndex() / PageSize][Entity.GetIndex() % PageSize] = NullEntity;
-            Keys.pop_back();
-            Values.pop_back();
-            return true;
+            Pages[Removed.GetIndex() / PageSize][Removed.GetIndex() % PageSize] = NullEntity;
+            Keys.Pop();
+            Values.Pop();
         }
 
         void Clear()
         {
-            Pages.clear();
-            Keys.clear();
-            Values.clear();
+            Pages.Reset();
+            Keys.Reset();
+            Values.Reset();
         }
 
-        NODISCARD FORCEINLINE uint32 Num() const { return (uint32)Keys.size(); }
-        NODISCARD FORCEINLINE bool IsEmpty() const { return Keys.empty(); }
+        NODISCARD FORCEINLINE uint32 Num() const { return (uint32)Keys.Num(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const { return Keys.IsEmpty(); }
 
         NODISCARD FORCEINLINE FEntity GetKeyAt(uint32 Dense) const { return Keys[Dense]; }
         NODISCARD FORCEINLINE T& GetValueAt(uint32 Dense) { return Values[Dense]; }
@@ -85,7 +108,7 @@ namespace Lumina::ECS
         {
             const uint32 Index = Entity.GetIndex();
             const uint32 Page = Index / PageSize;
-            if (Entity.IsNull() || Page >= (uint32)Pages.size() || Pages[Page].empty())
+            if (Entity.IsNull() || Page >= (uint32)Pages.Num() || Pages[Page].IsEmpty())
             {
                 return InvalidDense;
             }
@@ -96,13 +119,13 @@ namespace Lumina::ECS
         FEntity& AssureSlot(uint32 Index)
         {
             const uint32 Page = Index / PageSize;
-            if (Page >= (uint32)Pages.size())
+            if (Page >= (uint32)Pages.Num())
             {
-                Pages.resize(Page + 1u);
+                Pages.SetNum(Page + 1u);
             }
-            if (Pages[Page].empty())
+            if (Pages[Page].IsEmpty())
             {
-                Pages[Page].resize(PageSize, NullEntity);
+                Pages[Page].SetNum(PageSize, NullEntity);
             }
             return Pages[Page][Index % PageSize];
         }

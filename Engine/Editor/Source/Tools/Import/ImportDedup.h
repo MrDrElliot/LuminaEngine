@@ -16,7 +16,7 @@ namespace Lumina::Import
     {
     public:
 
-        explicit FKeyDedup(size_t Reserve) { Keys.reserve(Reserve); }
+        explicit FKeyDedup(size_t Reserve) { Keys.Reserve(IntCastChecked<int32>(Reserve)); }
 
         // Returns the slot this key maps to, and whether the slot is newly created.
         uint32 Insert(TVector<uint32>&& Key, bool& bOutIsNew)
@@ -33,9 +33,9 @@ namespace Lumina::Import
                 }
             }
 
-            const uint32 Slot = (uint32)Keys.size();
-            Keys.push_back(Move(Key));
-            Bucket.push_back(Slot);
+            const uint32 Slot = (uint32)Keys.Num();
+            Keys.Add(Move(Key));
+            Bucket.Add(Slot);
             bOutIsNew = true;
             return Slot;
         }
@@ -81,7 +81,7 @@ namespace Lumina::Import
         for (size_t i = 0; i < Length && Raw[i] != '\0'; ++i)
         {
             const char C = Raw[i];
-            Name.push_back((C == '.' || C == '/' || C == '\\') ? '_' : C);
+            Name.AppendChar((C == '.' || C == '/' || C == '\\') ? '_' : C);
         }
         return Name;
     }

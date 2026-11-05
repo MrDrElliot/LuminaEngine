@@ -168,7 +168,7 @@ TEST(BoundedQueue, LosesNothingUnderManyProducersAndConsumers)
 
     for (uint32 p = 0; p < kProducers; ++p)
     {
-        Threads.push_back(FThread([&Queue, p]()
+        Threads.Emplace([&Queue, p]()
         {
             for (uint32 i = 0; i < kPerProducer; ++i)
             {
@@ -178,12 +178,12 @@ TEST(BoundedQueue, LosesNothingUnderManyProducersAndConsumers)
                     Threading::ThreadYield();
                 }
             }
-        }));
+        });
     }
 
     for (uint32 c = 0; c < kConsumers; ++c)
     {
-        Threads.push_back(FThread([&Queue, &Seen, &Consumed]()
+        Threads.Emplace([&Queue, &Seen, &Consumed]()
         {
             uint32 Value = 0;
             while (Consumed.load(Atomic::MemoryOrderAcquire) < kTotal)
@@ -198,7 +198,7 @@ TEST(BoundedQueue, LosesNothingUnderManyProducersAndConsumers)
                     Threading::ThreadYield();
                 }
             }
-        }));
+        });
     }
 
     for (FThread& Thread : Threads)
@@ -220,7 +220,7 @@ TEST(BoundedQueue, FixedCapacityNeedsNoInitialize)
     TBoundedMPMCQueue<int, 8> Queue;
     EXPECT_TRUE(Queue.IsInitialized());
     EXPECT_TRUE(Queue.IsFixedCapacity());
-    EXPECT_EQ(Queue.GetCapacity(), 8u);
+    EXPECT_EQ(Queue.GetCapacity(), 8);
 
     for (int i = 0; i < 8; ++i)
     {
@@ -239,11 +239,11 @@ TEST(BoundedQueue, FixedCapacityNeedsNoInitialize)
 TEST(BoundedQueue, CapacityRoundsUpToAPowerOfTwo)
 {
     TBoundedMPMCQueue<int, 5> Fixed;
-    EXPECT_EQ(Fixed.GetCapacity(), 8u);
+    EXPECT_EQ(Fixed.GetCapacity(), 8);
 
     TBoundedMPMCQueue<int> Runtime;
     Runtime.Initialize(5);
-    EXPECT_EQ(Runtime.GetCapacity(), 8u);
+    EXPECT_EQ(Runtime.GetCapacity(), 8);
 }
 
 TEST(BoundedQueue, EveryShapeKeepsFifoOrder)
@@ -338,7 +338,7 @@ TEST(BoundedQueue, MpscLosesNothingAcrossManyProducers)
 
     for (uint32 p = 0; p < kProducers; ++p)
     {
-        Threads.push_back(FThread([&Queue, p]()
+        Threads.Emplace([&Queue, p]()
         {
             for (uint32 i = 0; i < kPerProducer; ++i)
             {
@@ -347,7 +347,7 @@ TEST(BoundedQueue, MpscLosesNothingAcrossManyProducers)
                     Threading::ThreadYield();
                 }
             }
-        }));
+        });
     }
 
     uint32 Consumed = 0;

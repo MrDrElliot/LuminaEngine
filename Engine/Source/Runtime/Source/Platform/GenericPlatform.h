@@ -30,6 +30,15 @@ namespace Lumina
     using uint64 = uint64_t;
 }
 
+namespace Lumina::Constants
+{
+    // Invalid Index
+    constexpr int32 kIndexNone = -1;
+
+    // The unsigned "no index" sentinel, for slots, handles and offsets stored as uint32.
+    constexpr uint32 kIndexNoneU32 = ~0u;
+}
+
 using ANSICHAR = char;
 using WIDECHAR = wchar_t;
 

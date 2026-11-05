@@ -13,7 +13,7 @@ namespace Lumina
     {
     public:
         
-        static constexpr size_t GUID_SIZE = 16;
+        static constexpr int32 GUID_SIZE = 16;
         
         using ByteArray = TArray<uint8, GUID_SIZE>;
     
@@ -51,7 +51,7 @@ namespace Lumina
         
         const ByteArray& GetBytes() const noexcept { return Bytes; }
         ByteArray& GetBytes() noexcept { return Bytes; }
-        const uint8_t* Data() const noexcept { return Bytes.data(); }
+        const uint8_t* Data() const noexcept { return Bytes.GetData(); }
         
         void Invalidate() noexcept;
         void Swap(FGuid& other) noexcept;
@@ -60,7 +60,7 @@ namespace Lumina
 
         friend FArchive& operator<<(FArchive& Ar, FGuid& Guid)
         {
-            Ar.Serialize(Guid.Bytes.data(), Guid.Bytes.size());
+            Ar.Serialize(Guid.Bytes.GetData(), Guid.Bytes.Num());
             return Ar;
         }
         
@@ -68,8 +68,8 @@ namespace Lumina
         friend RUNTIME_API std::istream& operator>>(std::istream& is, FGuid& guid);
     
     private:
-        uint64 LowWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.data(), sizeof(Word)); return Word; }
-        uint64 HighWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.data() + sizeof(Word), sizeof(Word)); return Word; }
+        uint64 LowWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.GetData(), sizeof(Word)); return Word; }
+        uint64 HighWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.GetData() + sizeof(Word), sizeof(Word)); return Word; }
 
         ByteArray Bytes{};
 
@@ -82,7 +82,7 @@ namespace Lumina
 {
     NODISCARD FORCEINLINE uint64 GetTypeHash(const FGuid& Guid) noexcept
     {
-        return static_cast<uint64>(Guid.Hash());
+        return Guid.Hash();
     }
 }
 

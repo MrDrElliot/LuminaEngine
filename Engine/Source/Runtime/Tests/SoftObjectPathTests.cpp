@@ -15,12 +15,12 @@ namespace
 {
     std::string ToStd(FStringView View)
     {
-        return std::string(View.data(), View.size());
+        return std::string(View.GetData(), View.Len());
     }
 
     std::string ToStd(const FFixedString& Str)
     {
-        return std::string(Str.c_str(), Str.size());
+        return std::string(*Str, Str.Len());
     }
 }
 
@@ -40,16 +40,16 @@ TEST(SoftObjectPath, ResolveFollowsRenameByGUID)
 
     const FFixedString OldPath = Data->Path;
     FFixedString NewPath = OldPath;
-    const size_t NamePos = NewPath.find("OldName");
-    ASSERT_NE(NamePos, FFixedString::npos);
-    NewPath.replace(NamePos, 7, "NewName");
+    const int32 NamePos = NewPath.Find("OldName");
+    ASSERT_NE(NamePos, Constants::kIndexNone);
+    NewPath.RemoveAt(NamePos, 7).InsertAt(NamePos, "NewName");
 
-    FSoftObjectPath Soft{ FStringView(OldPath.c_str(), OldPath.size()) };
+    FSoftObjectPath Soft{ FStringView(*OldPath, OldPath.Len()) };
     ASSERT_TRUE(Soft.TryResolve());
     ASSERT_TRUE(Soft.GetCachedGUID() == Table->GetGUID());
 
-    Registry.AssetRenamed(FStringView(OldPath.c_str(), OldPath.size()),
-                          FStringView(NewPath.c_str(), NewPath.size()));
+    Registry.AssetRenamed(FStringView(*OldPath, OldPath.Len()),
+                          FStringView(*NewPath, NewPath.Len()));
 
     EXPECT_TRUE(Soft.TryResolve());
     EXPECT_EQ(ToStd(Soft.GetPath()), ToStd(NewPath));
@@ -66,7 +66,7 @@ TEST(SoftObjectPath, ResolveAdoptsAnAssetRecreatedAtTheSamePath)
     Registry.AssetCreated(First);
     const FFixedString Path = Registry.GetAssetByGUID(First->GetGUID())->Path;
 
-    FSoftObjectPath Soft{ FStringView(Path.c_str(), Path.size()) };
+    FSoftObjectPath Soft{ FStringView(*Path, Path.Len()) };
     ASSERT_TRUE(Soft.TryResolve());
     ASSERT_TRUE(Soft.GetCachedGUID() == First->GetGUID());
     Registry.AssetDeleted(First->GetGUID());
@@ -75,7 +75,7 @@ TEST(SoftObjectPath, ResolveAdoptsAnAssetRecreatedAtTheSamePath)
     ASSERT_NE(Second, nullptr);
     Registry.AssetCreated(Second);
     const FFixedString StandInPath = Registry.GetAssetByGUID(Second->GetGUID())->Path;
-    Registry.AssetRenamed(FStringView(StandInPath.c_str(), StandInPath.size()), FStringView(Path.c_str(), Path.size()));
+    Registry.AssetRenamed(FStringView(*StandInPath, StandInPath.Len()), FStringView(*Path, Path.Len()));
 
     EXPECT_TRUE(Soft.TryResolve());
     EXPECT_TRUE(Soft.GetCachedGUID() == Second->GetGUID());

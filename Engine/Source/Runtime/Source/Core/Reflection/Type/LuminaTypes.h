@@ -53,7 +53,7 @@ namespace Lumina
         NODISCARD CStruct* GetOwnerStruct() const { return OwnerStruct; }
 
         template<typename ValueType>
-        ValueType* SetValuePtr(void* ContainerPtr, const ValueType& Value, int64 ArrayIndex = 0) const
+        ValueType* SetValuePtr(void* ContainerPtr, const ValueType& Value, int32 ArrayIndex = 0) const
         {
             ValueType* ValuePtr = GetValuePtr<ValueType>(ContainerPtr, ArrayIndex);
             *ValuePtr = Value;
@@ -63,20 +63,20 @@ namespace Lumina
         /** UB if ValueType doesn't match the property type. */
         template<typename ValueType>
         requires (!std::is_pointer_v<ValueType>)
-        ValueType* GetValuePtr(void* ContainerPtr, int64 ArrayIndex = 0) const
+        ValueType* GetValuePtr(void* ContainerPtr, int32 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(ContainerPtr, ArrayIndex));
         }
 
         template<typename ValueType>
         requires (!std::is_pointer_v<ValueType>)
-        const ValueType* GetValuePtr(const void* ContainerPtr, int64 ArrayIndex = 0) const
+        const ValueType* GetValuePtr(const void* ContainerPtr, int32 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(const_cast<void*>(ContainerPtr), ArrayIndex));
         }
 
         template<typename ValueType>
-        void SetValue(void* InContainer, const ValueType& InValue, int64 ArrayIndex = 0) const
+        void SetValue(void* InContainer, const ValueType& InValue, int32 ArrayIndex = 0) const
         {
             if (!HasSetter())
             {
@@ -89,7 +89,7 @@ namespace Lumina
         }
 
         template<typename ValueType>
-        void GetValue(void const* InContainer, ValueType* OutValue, int64 ArrayIndex = 0) const
+        void GetValue(void const* InContainer, ValueType* OutValue, int32 ArrayIndex = 0) const
         {
             if (!HasGetter())
             {
@@ -113,6 +113,14 @@ namespace Lumina
         virtual void ConstructValue(void* Value) const { }
         virtual void DestructValue(void* Value) const { }
 
+        // Moves a live value into raw memory and ends the source; a kind whose identity a copy would lose overrides it.
+        virtual void RelocateValue(void* Dest, void* Source) const
+        {
+            ConstructValue(Dest);
+            CopyCompleteValue(Dest, Source);
+            DestructValue(Source);
+        }
+
         /** True when this property's value owns memory, i.e. it overrides the pair above. Lets a holder ask
          *  the property whether it needs lifecycle instead of testing a list of kinds. */
         virtual bool OwnsStorage() const { return false; }
@@ -127,8 +135,8 @@ namespace Lumina
         /** Defaults to memcpy on ElementSize; non-trivial types override. */
         RUNTIME_API virtual void CopyCompleteValue(void* Dst, const void* Src) const;
 
-        RUNTIME_API bool Identical_InContainer(const void* ContainerA, const void* ContainerB, int64 ArrayIndex = 0) const;
-        RUNTIME_API void CopyCompleteValue_InContainer(void* DstContainer, const void* SrcContainer, int64 ArrayIndex = 0) const;
+        RUNTIME_API bool Identical_InContainer(const void* ContainerA, const void* ContainerB, int32 ArrayIndex = 0) const;
+        RUNTIME_API void CopyCompleteValue_InContainer(void* DstContainer, const void* SrcContainer, int32 ArrayIndex = 0) const;
 
         RUNTIME_API bool IsA(EPropertyTypeFlags Flag) const { return TypeFlags == Flag; }
 
@@ -187,7 +195,7 @@ namespace Lumina
         
     private:
 
-        RUNTIME_API void* GetValuePtrInternal(void* ContainerPtr, int64 ArrayIndex) const;
+        RUNTIME_API void* GetValuePtrInternal(void* ContainerPtr, int32 ArrayIndex) const;
         
     public:
 
@@ -212,8 +220,8 @@ namespace Lumina
     {
     public:
 
-        explicit FNumericProperty(const FPropertyDesc& Desc)
-            :FProperty(Desc)
+        explicit FNumericProperty(const FPropertyDesc& InDesc)
+            :FProperty(InDesc)
         {}
 
         RUNTIME_API virtual void SetIntPropertyValue(void* Data, uint64 Value) const { }
@@ -267,8 +275,8 @@ namespace Lumina
 
         using TTypeInfo = TPropertyTypeLayout<TCPPType>;
         
-        explicit TProperty(const FPropertyDesc& Desc)
-            :TBacking(Desc)
+        explicit TProperty(const FPropertyDesc& InDesc)
+            :TBacking(InDesc)
         {
             this->ElementSize = TTypeInfo::Size;
         }
@@ -295,8 +303,8 @@ namespace Lumina
         using TTypeInfo = TPropertyTypeLayout<TCPPType>;
         using Super = TProperty<FNumericProperty, TCPPType>;
 
-        explicit TProperty_Numeric(const FPropertyDesc& Desc)
-            :Super(Desc)
+        explicit TProperty_Numeric(const FPropertyDesc& InDesc)
+            :Super(InDesc)
         {}
 
         virtual FString ToString(const void* Data) const override;
@@ -360,8 +368,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<bool>;
 
-        explicit FBoolProperty(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FBoolProperty(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
 
         // Tight: a bool is one bit on the wire.
@@ -373,8 +381,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<int8>;
 
-        explicit FInt8Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FInt8Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -383,8 +391,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<int16>;
 
-        explicit FInt16Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FInt16Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -393,8 +401,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<int32>;
 
-        explicit FInt32Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FInt32Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -403,8 +411,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<int64>;
 
-        explicit FInt64Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FInt64Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -413,8 +421,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<uint8>;
 
-        explicit FUInt8Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FUInt8Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -423,8 +431,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<uint16>;
 
-        explicit FUInt16Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FUInt16Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -433,8 +441,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<uint32>;
 
-        explicit FUInt32Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FUInt32Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -444,8 +452,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<uint32>;
 
-        explicit FEntityProperty(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FEntityProperty(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
 
         // Routed through the archive so a save game can translate ids between worlds.
@@ -460,8 +468,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<uint64>;
 
-        explicit FUInt64Property(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FUInt64Property(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -470,8 +478,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<float>;
 
-        explicit FFloatProperty(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FFloatProperty(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 
@@ -480,8 +488,8 @@ namespace Lumina
     public:
         using Super = TProperty_Numeric<double>;
 
-        explicit FDoubleProperty(const FPropertyDesc& Desc)
-            : Super(Desc)
+        explicit FDoubleProperty(const FPropertyDesc& InDesc)
+            : Super(InDesc)
         {}
     };
 

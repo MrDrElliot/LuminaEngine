@@ -24,8 +24,8 @@ namespace Lumina::EntityScriptPicker
     // A reflected name with its namespace dropped, such as Walker for Ashgrave.Walker.
     inline FStringView ShortTypeName(FStringView FullName)
     {
-        const size_t Dot = FullName.find_last_of('.');
-        return Dot == FStringView::npos ? FullName : FullName.substr(Dot + 1);
+        const int32 Dot = FullName.FindLastOf('.');
+        return Dot == Constants::kIndexNone ? FullName : FullName.Mid(Dot + 1);
     }
 
     // One pass over the script roots, so filing many C# types by folder does not walk them once per type.

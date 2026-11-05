@@ -127,6 +127,32 @@ TEST(DelegateReentrancy, AHandlerThatDestroysItsOwnerKeepsItsCapturesUntilTheBro
     EXPECT_EQ(Owner, nullptr);
 }
 
+TEST(DelegateReentrancy, AHandlerThatRelocatesItsOwnerThenRemovesItselfKeepsItsCaptures)
+{
+    FOwner* Owner = Memory::New<FOwner>();
+    FOwner* Moved = nullptr;
+    bool bFreed = false;
+    bool bFreedWhileRunning = true;
+    FDelegateHandle Handle;
+
+    Handle = Owner->Event.AddLambda([&Owner, &Moved, &Handle, &bFreed, &bFreedWhileRunning, Flag = FFreedFlag(&bFreed)](const int32&)
+    {
+        Moved = Memory::New<FOwner>(std::move(*Owner));
+        Memory::Delete(Owner);
+        Owner = nullptr;
+        Moved->Event.Remove(Handle);
+        bFreedWhileRunning = bFreed;
+    });
+
+    Owner->Event.Broadcast(4);
+
+    EXPECT_FALSE(bFreedWhileRunning) << "the relocated delegate freed the handler that was still running";
+    EXPECT_TRUE(bFreed) << "the removed callable must be freed once the broadcast unwinds";
+    ASSERT_NE(Moved, nullptr);
+    EXPECT_FALSE(Moved->Event.IsBound());
+    Memory::Delete(Moved);
+}
+
 // Only the first of several listeners destroys the owner; the rest must simply not run.
 TEST(DelegateReentrancy, DestroyingMidFanOutStopsTheRemainingListeners)
 {

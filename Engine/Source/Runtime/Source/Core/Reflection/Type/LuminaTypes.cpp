@@ -8,6 +8,7 @@
 #include "Properties/ArrayProperty.h"
 #include "Properties/EnumProperty.h"
 #include "Properties/MapProperty.h"
+#include "Properties/OptionalProperty.h"
 #include "Properties/StructProperty.h"
 
 namespace Lumina
@@ -102,18 +103,18 @@ namespace Lumina
     TOptional<double> FProperty::GetMetadataNumber(FStringView Key) const
     {
         FStringView Text = GetMetadata(Key);
-        if (!Text.empty() && Text.front() == '+')
+        if (!Text.IsEmpty() && Text[0] == '+')
         {
-            Text.remove_prefix(1);
+            Text.RemovePrefix(1);
         }
-        if (!Text.empty() && (Text.back() == 'f' || Text.back() == 'F'))
+        if (!Text.IsEmpty() && (Text.Last() == 'f' || Text.Last() == 'F'))
         {
-            Text.remove_suffix(1);
+            Text.RemoveSuffix(1);
         }
 
         double Value = 0.0;
-        const auto [End, Error] = std::from_chars(Text.data(), Text.data() + Text.size(), Value);
-        if (Text.empty() || Error != std::errc() || End != Text.data() + Text.size())
+        const auto [End, Error] = std::from_chars(Text.GetData(), Text.GetData() + Text.Len(), Value);
+        if (Text.IsEmpty() || Error != std::errc() || End != Text.GetData() + Text.Len())
         {
             return {};
         }
@@ -123,9 +124,9 @@ namespace Lumina
     void FProperty::OnMetadataFinalized(FPropertyArena& Arena)
     {
         // An authored name already lives in the metadata table, so only a derived one needs arena storage.
-        if (const FCStringView MaybeDisplayName = GetMetadata("DisplayName"); !MaybeDisplayName.empty())
+        if (const FCStringView MaybeDisplayName = GetMetadata("DisplayName"); !MaybeDisplayName.IsEmpty())
         {
-            DisplayName = MaybeDisplayName.c_str();
+            DisplayName = *MaybeDisplayName;
         }
         else
         {
@@ -135,21 +136,21 @@ namespace Lumina
 
     FString FProperty::MakeDisplayNameFromName(EPropertyTypeFlags TypeFlags, const FName& InName)
     {
-        FFixedString Raw = InName.c_str();
-        FStringView View(Raw.begin(), Raw.length());
+        FFixedString Raw = *InName;
+        FStringView View(Raw.begin(), Raw.Len());
         
         if (TypeFlags == EPropertyTypeFlags::Bool)
         {
-            if (View.starts_with('b') && std::isupper(Raw[1]))
+            if (View.StartsWith('b') && std::isupper(Raw[1]))
             {
-                Raw.erase(0, 1);
+                Raw.RemoveAt(0, 1);
             }
         }
 
         FString Display;
-        for (size_t i = 0; i < Raw.size(); ++i)
+        for (int32 i = 0; i < Raw.Len(); ++i)
         {
-            const bool bAcronymEnds = i > 0 && i + 1 < Raw.size() && std::isupper(Raw[i - 1]) && std::islower(Raw[i + 1]);
+            const bool bAcronymEnds = i > 0 && i + 1 < Raw.Len() && std::isupper(Raw[i - 1]) && std::islower(Raw[i + 1]);
             if (i > 0 && std::isupper(Raw[i]) && !std::isspace(Raw[i - 1]) && (!std::isupper(Raw[i - 1]) || bAcronymEnds))
             {
                 Display += ' ';
@@ -157,7 +158,7 @@ namespace Lumina
             Display += Raw[i];
         }
 
-        if (!Display.empty())
+        if (!Display.IsEmpty())
         {
             Display[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Display[0])));
         }
@@ -165,7 +166,7 @@ namespace Lumina
         return Display;
     }
     
-    void* FProperty::GetValuePtrInternal(void* ContainerPtr, int64 ArrayIndex) const
+    void* FProperty::GetValuePtrInternal(void* ContainerPtr, int32 ArrayIndex) const
     {
         void* PropertyPtr = (uint8*)ContainerPtr + Offset;
         return (uint8*)PropertyPtr + ArrayIndex * ElementSize;
@@ -187,6 +188,11 @@ namespace Lumina
             {
                 const FProperty* Inner = static_cast<const FArrayProperty*>(this)->GetInternalProperty();
                 return Inner != nullptr && Inner->HasSameValueType(static_cast<const FArrayProperty*>(Other)->GetInternalProperty());
+            }
+            case EPropertyTypeFlags::Optional:
+            {
+                const FProperty* Inner = static_cast<const FOptionalProperty*>(this)->GetInternalProperty();
+                return Inner != nullptr && Inner->HasSameValueType(static_cast<const FOptionalProperty*>(Other)->GetInternalProperty());
             }
             case EPropertyTypeFlags::Map:
             {
@@ -211,14 +217,14 @@ namespace Lumina
         memcpy(Dst, Src, ElementSize);
     }
 
-    bool FProperty::Identical_InContainer(const void* ContainerA, const void* ContainerB, int64 ArrayIndex) const
+    bool FProperty::Identical_InContainer(const void* ContainerA, const void* ContainerB, int32 ArrayIndex) const
     {
         const void* A = GetValuePtrInternal(const_cast<void*>(ContainerA), ArrayIndex);
         const void* B = GetValuePtrInternal(const_cast<void*>(ContainerB), ArrayIndex);
         return Identical(A, B);
     }
 
-    void FProperty::CopyCompleteValue_InContainer(void* DstContainer, const void* SrcContainer, int64 ArrayIndex) const
+    void FProperty::CopyCompleteValue_InContainer(void* DstContainer, const void* SrcContainer, int32 ArrayIndex) const
     {
         void* D = GetValuePtrInternal(DstContainer, ArrayIndex);
         const void* S = GetValuePtrInternal(const_cast<void*>(SrcContainer), ArrayIndex);

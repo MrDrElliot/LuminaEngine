@@ -38,23 +38,23 @@ namespace Lumina
 
     void CFont::BuildGlyphLookup()
     {
-        GlyphLookup.clear();
-        GlyphLookup.reserve(Glyphs.size());
-        for (int32 i = 0; i < (int32)Glyphs.size(); ++i)
+        GlyphLookup.Reset();
+        GlyphLookup.Reserve(Glyphs.Num());
+        for (int32 i = 0; i < Glyphs.Num(); ++i)
         {
-            GlyphLookup.emplace(Glyphs[i].Codepoint, i);
+            GlyphLookup.TryAdd(Glyphs[i].Codepoint, i);
         }
         ++ShapeVersion;
     }
 
     const FFontGlyph* CFont::FindGlyph(uint32 Codepoint) const
     {
-        auto It = GlyphLookup.find(Codepoint);
-        if (It == GlyphLookup.end())
+        auto It = GlyphLookup.Find(Codepoint);
+        if (It == nullptr)
         {
             return nullptr;
         }
-        return &Glyphs[It->second];
+        return &Glyphs[(*It)];
     }
 
     int32 CFont::GetAtlasResourceID()
@@ -77,13 +77,13 @@ namespace Lumina
             .Format = EFormat::RGBA8_UNORM,
             .DebugName = "Font.MTSDFAtlas"
         });
-        RHI::Textures::Upload(AtlasTexture, 0, AtlasPixels.data(), AtlasPixels.size(), AtlasWidth);
+        RHI::Textures::Upload(AtlasTexture, 0, AtlasPixels.GetData(), AtlasPixels.Num(), AtlasWidth);
 
         return (int32)AtlasTexture.ResourceID();
     }
 
     // Advances Index past one code point and returns it, or the replacement char on bad input.
-    static uint32 DecodeUTF8(const char* Str, size_t Length, size_t& Index)
+    static uint32 DecodeUTF8(const char* Str, int32 Length, int32& Index)
     {
         const uint8 C0 = (uint8)Str[Index++];
         if (C0 < 0x80) return C0;
@@ -106,30 +106,30 @@ namespace Lumina
 
     bool CFont::ShapeText(const FString& Text, float HAlign, float VAlign, float LineSpacing, TVector<FShapedGlyph>& Out) const
     {
-        Out.clear();
+        Out.Reset();
 
         if (!HasAtlas())
         {
             return false;
         }
 
-        const char*  Str    = Text.c_str();
-        const size_t Length = Text.size();
+        const char*  Str    = *Text;
+        const int32 Length = Text.Len();
         const float  LineAdvance = LineHeight * (LineSpacing <= 0.0f ? 1.0f : LineSpacing);
 
         // Two passes, so per-line runs and widths come first and each line aligns independently.
         TVector<TVector<const FFontGlyph*>> Lines;
         TVector<float>                      LineWidths;
-        Lines.emplace_back();
-        LineWidths.push_back(0.0f);
+        Lines.Emplace();
+        LineWidths.Add(0.0f);
 
-        for (size_t i = 0; i < Length; )
+        for (int32 i = 0; i < Length; )
         {
             const uint32 CP = DecodeUTF8(Str, Length, i);
             if (CP == '\n')
             {
-                Lines.emplace_back();
-                LineWidths.push_back(0.0f);
+                Lines.Emplace();
+                LineWidths.Add(0.0f);
                 continue;
             }
             if (CP == '\r')
@@ -139,12 +139,12 @@ namespace Lumina
 
             if (const FFontGlyph* G = FindGlyph(CP))
             {
-                Lines.back().push_back(G);
-                LineWidths.back() += G->Advance;
+                Lines.Last().Add(G);
+                LineWidths.Last() += G->Advance;
             }
         }
 
-        const int32 NumLines    = (int32)Lines.size();
+        const int32 NumLines    = Lines.Num();
         const float BlockHeight = (Ascender - Descender) + (float)(NumLines - 1) * LineAdvance;
         const float StartY      = -Ascender + VAlign * BlockHeight;
 
@@ -159,7 +159,7 @@ namespace Lumina
                 // Zero-area glyphs such as space still advance the pen below.
                 if (P.z > P.x && P.w > P.y)
                 {
-                    FShapedGlyph& S = Out.emplace_back();
+                    FShapedGlyph& S = Out.EmplaceGetRef();
                     S.Min = FVector2(PenX + P.x, BaselineY + P.y);
                     S.Max = FVector2(PenX + P.z, BaselineY + P.w);
                     S.UV  = G->AtlasUV;

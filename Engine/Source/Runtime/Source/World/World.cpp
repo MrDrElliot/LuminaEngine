@@ -74,13 +74,59 @@
 #include "World/Net/NetRole.h"
 #include "Networking/INetworkRuntime.h"
 #include "Subsystems/WorldSettings.h"
+#include "Subsystems/CoroutineManager.h"
+#include "Subsystems/TimerManager.h"
+#include "Subsystems/TweenManager.h"
 #include "UI/RmlUiBridge.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
+#include "World/Entity/Components/AnimatedSprite3DComponent.h"
+#include "World/Entity/Components/BillboardComponent.h"
+#include "World/Entity/Components/CloudComponent.h"
+#include "World/Entity/Components/DecalComponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
+#include "World/Entity/Components/ExponentialHeightFogComponent.h"
+#include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/LocalFogVolumeComponent.h"
+#include "World/Entity/Components/ReflectionProbeComponent.h"
+#include "World/Entity/Components/SkyLightComponent.h"
+#include "World/Entity/Components/SplineComponent.h"
+#include "World/Entity/Components/Sprite3DComponent.h"
+#include "World/Entity/Components/TextComponent.h"
+#include "World/Entity/Components/WaterComponent.h"
 
 namespace Lumina
 {
+    namespace WorldInternal
+    {
+        // Every type the renderer extracts outside the mesh and transform channels, so each keeps exact change ticks.
+        void TrackRenderedComponentChanges(ECS::FRegistry& Registry)
+        {
+            Registry.TrackChanges<SDirectionalLightComponent>();
+            Registry.TrackChanges<SPointLightComponent>();
+            Registry.TrackChanges<SSpotLightComponent>();
+            Registry.TrackChanges<SAreaLightComponent>();
+            Registry.TrackChanges<SSkyLightComponent>();
+            Registry.TrackChanges<SDecalComponent>();
+            Registry.TrackChanges<SSplineComponent>();
+            Registry.TrackChanges<SReflectionProbeComponent>();
+            Registry.TrackChanges<STextComponent>();
+            Registry.TrackChanges<SSprite3DComponent>();
+            Registry.TrackChanges<SAnimatedSprite3DComponent>();
+            Registry.TrackChanges<SBillboardComponent>();
+            Registry.TrackChanges<SWidgetComponent>();
+            Registry.TrackChanges<SWaterComponent>();
+            Registry.TrackChanges<SExponentialHeightFogComponent>();
+            Registry.TrackChanges<SLocalFogVolumeComponent>();
+            Registry.TrackChanges<SCloudComponent>();
+            Registry.TrackChanges<SEnvironmentComponent>();
+            Registry.TrackChanges<STerrainComponent>();
+            Registry.TrackChanges<SParticleSystemComponent>();
+            Registry.TrackChanges<SPostProcessComponent>();
+        }
+    }
+
     // Generous for the handful of paint ops a frame issues, and drained every Extract.
     static constexpr uint32 kRenderTargetPaintQueueCapacity = 1024;
 
@@ -114,7 +160,6 @@ namespace Lumina
             {
                 Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
             }
-            FMeshResolveCache::MarkPendingWork();
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage,
                                                        EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
         }
@@ -164,9 +209,9 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World != nullptr && !World->IsSuspended())
         {
-            FDebugTextLine& Line = World->DebugTextLines.emplace_back();
+            FDebugTextLine& Line = World->DebugTextLines.EmplaceGetRef();
             Line.Text = FString(Text);
-            Line.Color = Color.value_or(FVector4(1.0f));
+            Line.Color = Color.Get(FVector4(1.0f));
         }
         #endif
     }
@@ -175,7 +220,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            DrawLine(Start, End, Color, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            DrawLine(Start, End, Color, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -184,7 +229,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            IPrimitiveDrawInterface::DrawBox(Center, HalfExtents, Rotation, Color, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            IPrimitiveDrawInterface::DrawBox(Center, HalfExtents, Rotation, Color, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -193,7 +238,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            IPrimitiveDrawInterface::DrawSphere(Center, Radius, Color, 16, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            IPrimitiveDrawInterface::DrawSphere(Center, Radius, Color, 16, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -202,7 +247,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            IPrimitiveDrawInterface::DrawCapsule(Start, End, Radius, Color, 16, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            IPrimitiveDrawInterface::DrawCapsule(Start, End, Radius, Color, 16, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -211,7 +256,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            IPrimitiveDrawInterface::DrawCone(Apex, Direction, AngleRadians, Length, Color, 16, 4, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            IPrimitiveDrawInterface::DrawCone(Apex, Direction, AngleRadians, Length, Color, 16, 4, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -220,7 +265,7 @@ namespace Lumina
         #if !defined(LE_SHIPPING)
         if (World)
         {
-            IPrimitiveDrawInterface::DrawArrow(Start, Direction, Length, Color, Thickness.value_or(1.0f), bDepthTest.value_or(true), Duration.value_or(0.0f));
+            IPrimitiveDrawInterface::DrawArrow(Start, Direction, Length, Color, Thickness.Get(1.0f), bDepthTest.Get(true), Duration.Get(0.0f));
         }
             #endif
     }
@@ -296,7 +341,7 @@ namespace Lumina
         FTexturePaintOp Op;
         while (RenderTargetPaintQueue.TryDequeue(Op))
         {
-            OutOps.push_back(Move(Op));
+            OutOps.Add(Move(Op));
         }
     }
 
@@ -421,6 +466,11 @@ namespace Lumina
         // SCameraSystem owns FCameraGlobalState and writes FResolvedSceneView for Extract.
         EntityRegistry.Ctx().Emplace<FCameraGlobalState>();
         EntityRegistry.Ctx().Emplace<FResolvedSceneView>();
+        EntityRegistry.Ctx().Emplace<FWorldSettingsState>();
+        EntityRegistry.Ctx().GetOrEmplace<FTimerManager>();
+        EntityRegistry.Ctx().GetOrEmplace<FCoroutineManager>();
+        EntityRegistry.Ctx().GetOrEmplace<FTweenManager>().SetWorldRegistry(&EntityRegistry);
+        SyncWorldSettingsState();
 
         {
             LUMINA_PROFILE_SECTION("CreateRenderer");
@@ -429,10 +479,10 @@ namespace Lumina
         UIContext = RmlUi::CreateWorldUI(this);
 
         // Seeded before registering systems so a disabled system is never constructed.
-        DisabledSystems.clear();
+        DisabledSystems.Reset();
         for (const FName& Name : GetDefaultWorldSettings().DisabledSystems)
         {
-            DisabledSystems.insert(Name);
+            DisabledSystems.Add(Name);
         }
         PendingDisabledSystems = DisabledSystems;
 
@@ -454,6 +504,13 @@ namespace Lumina
         }
 
         EntityRegistry.GetSignals<STransformComponent>().OnConstruct    .Connect<&ThisClass::OnTransformComponentConstruct>(this);
+        EntityRegistry.GetSignals<SDecalComponent>().OnConstruct        .Connect<&ThisClass::OnDecalComponentConstruct>(this);
+
+        // Loaded, duplicated and startup-spawned decals arrived before the hook, and SpawnTime is not serialized.
+        for (ECS::FEntity Decal : EntityRegistry.View<SDecalComponent>())
+        {
+            OnDecalComponentConstruct(EntityRegistry, Decal);
+        }
         EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy   .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.OnEntityDestroyed()                              .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.GetSignals<SWidgetComponent>().OnDestroy         .Connect<&ThisClass::OnWidgetComponentDestroyed>(this);
@@ -472,8 +529,13 @@ namespace Lumina
         EntityRegistry.GetSignals<SDisabledTag>().OnConstruct           .Connect<&MarkRenderVisibilityDirty>();
         EntityRegistry.GetSignals<SDisabledTag>().OnDestroy             .Connect<&MarkRenderVisibilityDirty>();
 
-        FMeshResolveCache::MarkPendingWork();
+        // A queue swapped in with the loaded registry predates this world's hooks, so it sweeps once; a new one starts with a sweep anyway.
+        if (FMeshResolveQueue* ResolveQueue = FMeshResolveQueue::Find(EntityRegistry))
+        {
+            ResolveQueue->RequestFullSweep();
+        }
         FRenderDirtyTracker::Ensure(EntityRegistry).RequestFullRescan();
+        WorldInternal::TrackRenderedComponentChanges(EntityRegistry);
 
         ECS::Utils::FTransformDirtyGate* DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
         auto TransformView = EntityRegistry.View<STransformComponent>();
@@ -504,7 +566,7 @@ namespace Lumina
             }
         }
 
-        auto CameraView = EntityRegistry.View<SCameraComponent>(ECS::TExclude<SDisabledTag>{});
+        auto CameraView = EntityRegistry.View<SCameraComponent, ECS::Without<SDisabledTag>>();
         CameraView.ForEach([&](ECS::FEntity Entity, const SCameraComponent& Camera)
         {
            if (Camera.bAutoActivate)
@@ -556,8 +618,8 @@ namespace Lumina
         for (int32 i = 0; i < (int32)EUpdateStage::Max; ++i)
         {
             StageSchedules[i] = {};
-            SystemBatches[i].clear();
-            SystemsWithWork[i].clear();
+            SystemSegments[i].Reset();
+            SystemsWithWork[i].Reset();
         }
 
         // Keyed on the scene, since StopSimulate is what disconnects its registry listeners.
@@ -632,7 +694,11 @@ namespace Lumina
             WorldSubsystems::Update(Subsystems, (float)DeltaTime);
         }
 
+        // Every stage, since the editor and scripts change the settings in place between any two.
+        SyncWorldSettingsState();
+
         SystemContext.DeltaTime     = DeltaTime;
+        SystemContext.RealDeltaTime = RealDeltaTime;
         SystemContext.Time          = TimeSinceCreation;
         SystemContext.UpdateStage   = Stage;
 
@@ -849,9 +915,9 @@ namespace Lumina
             const uint32 Headroom  = MaxBodies - Used;
             MaxFragments = Headroom > 16 ? Headroom - 16 : 0;
 
-            const uint32 Desired = Pieces.empty()
+            const uint32 Desired = Pieces.IsEmpty()
                 ? (uint32)Math::Clamp(Destructible->FragmentCount, 2, 512)
-                : (uint32)Pieces.size();
+                : (uint32)Pieces.Num();
             if (Desired > MaxFragments)
             {
                 LOG_WARN("FractureEntity: clamped {} fragments to {} (physics body headroom {}/{}). Raise World Settings > Physics > MaxPhysicsBodies.",
@@ -859,10 +925,10 @@ namespace Lumina
             }
         }
 
-        if (!Pieces.empty())
+        if (!Pieces.IsEmpty())
         {
             const TVector<TStrongObjectPtr<CMaterialInterface>>& PieceMaterials =
-                (CollectionData && !Destructible->Collection->Materials.empty())
+                (CollectionData && !Destructible->Collection->Materials.IsEmpty())
                     ? Destructible->Collection->Materials
                     : SourceMesh->Materials;
 
@@ -870,12 +936,12 @@ namespace Lumina
             const TVector<TStrongObjectPtr<CStaticMesh>>* CachedMeshes =
                 CollectionData ? &Destructible->Collection->GetPieceMeshes() : nullptr;
 
-            for (size_t PieceIndex = 0; PieceIndex < Pieces.size() && (uint32)Spawned < MaxFragments; ++PieceIndex)
+            for (int32 PieceIndex = 0; PieceIndex < Pieces.Num() && (uint32)Spawned < MaxFragments; ++PieceIndex)
             {
                 const FFracturePiece& Piece = Pieces[PieceIndex];
 
                 CStaticMesh* PieceMesh = CachedMeshes
-                    ? (PieceIndex < CachedMeshes->size() ? (*CachedMeshes)[PieceIndex].Get() : nullptr)
+                    ? (PieceIndex < CachedMeshes->Num() ? (*CachedMeshes)[PieceIndex].Get() : nullptr)
                     : Fracture::BuildPieceMesh(Piece, PieceMaterials, "GCPiece");
                 if (PieceMesh == nullptr)
                 {
@@ -1014,7 +1080,7 @@ namespace Lumina
                 if (Storage.Contains(Source) && !Storage.Contains(NewEntity))
                 {
                     Storage.EmplaceCopyRaw(NewEntity, Storage.GetRaw(Source));
-                    CopiedStorages.push_back(&Storage);
+                    CopiedStorages.Add(&Storage);
                 }
             }
 
@@ -1115,14 +1181,14 @@ namespace Lumina
         const ECS::FHierarchy& Hierarchy = EntityRegistry.GetHierarchy();
         for (ECS::FEntity Current = Entity; Current != ECS::NullEntity; Current = Hierarchy.GetParent(Current))
         {
-            Out.push_back(Current);
+            Out.Add(Current);
         }
     }
 
     void CWorld::GetSubtree(ECS::FEntity Entity, TVector<ECS::FEntity>& Out) const
     {
-        Out.push_back(Entity);
-        EntityRegistry.GetHierarchy().ForEachDescendant(Entity, [&Out](ECS::FEntity Descendant) { Out.push_back(Descendant); });
+        Out.Add(Entity);
+        EntityRegistry.GetHierarchy().ForEachDescendant(Entity, [&Out](ECS::FEntity Descendant) { Out.Add(Descendant); });
     }
 
     void CWorld::DestroyEntity(ECS::FEntity Entity)
@@ -1150,7 +1216,7 @@ namespace Lumina
         STransformComponent* Transform = EntityRegistry.IsValid(Entity) ? EntityRegistry.TryGet<STransformComponent>(Entity) : nullptr;
         if (Transform == nullptr)
         {
-            LOG_WARN("CWorld::{} on entity {} with no transform, which was likely destroyed already.", Caller, (uint32)Entity.GetPacked());
+            LOG_WARN("CWorld::{} on entity {} with no transform, which was likely destroyed already.", Caller, Entity.GetPacked());
         }
         return Transform;
     }
@@ -1255,6 +1321,25 @@ namespace Lumina
     {
         ASSERT(EntityRegistry.IsValid(SingletonEntity), "Render settings live on the singleton entity, which InitializeWorld creates.");
         return EntityRegistry.GetOrEmplace<SWorldRenderSettings>(SingletonEntity);
+    }
+
+    void CWorld::SetAnimatesWhilePaused(bool bAnimate)
+    {
+        bAnimatesWhilePaused = bAnimate;
+        SyncWorldSettingsState();
+    }
+
+    void CWorld::SyncWorldSettingsState()
+    {
+        FWorldSettingsState* State = EntityRegistry.Ctx().Find<FWorldSettingsState>();
+        if (State == nullptr)
+        {
+            return;
+        }
+
+        const SDefaultWorldSettings& Settings = GetDefaultWorldSettings();
+        State->Gravity              = Settings.GravityDirection * (9.81f * Settings.GravityScale);
+        State->bAnimatesWhilePaused = bAnimatesWhilePaused;
     }
 
     SDefaultWorldSettings& CWorld::GetDefaultWorldSettings()
@@ -1466,6 +1551,16 @@ namespace Lumina
         return PIEWorld;
     }
 
+    // Once per world rather than per renderer, so every view fades a timed decal on the same clock.
+    void CWorld::OnDecalComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        SDecalComponent& Decal = Registry.Get<SDecalComponent>(Entity);
+        if (Decal.SpawnTime < 0.0f)
+        {
+            Decal.SpawnTime = (float)GetTimeSinceWorldCreation();
+        }
+    }
+
     void CWorld::OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         STransformComponent& TransformComponent = Registry.Get<STransformComponent>(Entity);
@@ -1516,10 +1611,10 @@ namespace Lumina
 
         TVector<CEntityScript*> Found;
         EntityScripts::FindAll(EntityRegistry, Entity, ScriptClass.Get(), Found);
-        Out.reserve(Out.size() + Found.size());
+        Out.Reserve(Out.Num() + Found.Num());
         for (CEntityScript* Script : Found)
         {
-            Out.emplace_back(Script);
+            Out.Emplace(Script);
         }
     }
 
@@ -1536,7 +1631,7 @@ namespace Lumina
             {
                 if (Script.Get() != nullptr && Script->IsAttached() && Script->GetClass()->IsChildOf(ScriptClass.Get()))
                 {
-                    Out.push_back(Script);
+                    Out.Add(Script);
                 }
             }
         }
@@ -1571,7 +1666,7 @@ namespace Lumina
 
     CWorld::FStageSchedule SystemSchedule::OrderStage(const TVector<CEntitySystem*>& Systems, EUpdateStage Stage)
     {
-        const size_t Count = Systems.size();
+        const int32 Count = Systems.Num();
 
         TVector<TVector<uint16>> Predecessors(Count);
         TVector<TVector<uint16>> Successors(Count);
@@ -1582,8 +1677,8 @@ namespace Lumina
             {
                 if (First != Second && DeclaresOrder(Systems[First], Systems[Second]))
                 {
-                    Successors[First].push_back(Second);
-                    Predecessors[Second].push_back(First);
+                    Successors[First].Add(Second);
+                    Predecessors[Second].Add(First);
                     ++Waiting[Second];
                 }
             }
@@ -1604,7 +1699,7 @@ namespace Lumina
         TVector<uint16> Order;
         TVector<uint8>  Placed(Count, 0);
         bool            bReportedCycle = false;
-        while (Order.size() < Count)
+        while (Order.Num() < Count)
         {
             int32 Next = Constants::kIndexNone;
             for (uint16 Index = 0; Index < (uint16)Count; ++Index)
@@ -1623,7 +1718,7 @@ namespace Lumina
                 {
                     if (!Placed[Index])
                     {
-                        Cycle += Cycle.empty() ? "" : ", ";
+                        Cycle += Cycle.IsEmpty() ? "" : ", ";
                         Cycle += Systems[Index]->GetClass()->GetName().ToString();
                         if (Next == Constants::kIndexNone || Sooner(Index, (uint16)Next))
                         {
@@ -1640,7 +1735,7 @@ namespace Lumina
             }
 
             Placed[Next] = 1;
-            Order.push_back((uint16)Next);
+            Order.Add((uint16)Next);
             for (uint16 Successor : Successors[Next])
             {
                 Waiting[Successor] = Waiting[Successor] > 0 ? (uint16)(Waiting[Successor] - 1) : 0;
@@ -1648,16 +1743,16 @@ namespace Lumina
         }
 
         CWorld::FStageSchedule Out;
-        Out.Systems.reserve(Count);
+        Out.Systems.Reserve(Count);
         TVector<uint16> Position(Count, 0);
         for (uint16 Index = 0; Index < (uint16)Count; ++Index)
         {
             Position[Order[Index]] = Index;
-            Out.Systems.push_back(Systems[Order[Index]]);
+            Out.Systems.Add(Systems[Order[Index]]);
         }
 
         // Closed over the order, so a system with no work this frame still keeps the two around it in sequence.
-        Out.Precedes.resize(Count * Count, 0);
+        Out.Precedes.SetNum(Count * Count, 0);
         for (uint16 Index = 0; Index < (uint16)Count; ++Index)
         {
             for (uint16 Predecessor : Predecessors[Order[Index]])
@@ -1667,12 +1762,12 @@ namespace Lumina
                 {
                     continue;
                 }
-                Out.Precedes[(size_t)From * Count + Index] = 1;
+                Out.Precedes[From * Count + Index] = 1;
                 for (uint16 Earlier = 0; Earlier < From; ++Earlier)
                 {
                     if (Out.MustPrecede(Earlier, From))
                     {
-                        Out.Precedes[(size_t)Earlier * Count + Index] = 1;
+                        Out.Precedes[Earlier * Count + Index] = 1;
                     }
                 }
             }
@@ -1680,11 +1775,23 @@ namespace Lumina
         return Out;
     }
 
-    TVector<CWorld::FSystemBatch> SystemSchedule::BuildBatches(const CWorld::FStageSchedule& Stage, const TVector<uint8>& WithWork)
+    bool SystemSchedule::NeedsFlushBetween(const FSystemAccess& Earlier, const FSystemAccess& Later, bool bDeclaredOrder)
     {
-        TVector<CWorld::FSystemBatch> Batches;
-        TVector<uint16> BatchOf(Stage.Systems.size(), 0);
-        for (uint16 Index = 0; Index < (uint16)Stage.Systems.size(); ++Index)
+        if (bDeclaredOrder || Earlier.bExclusive || Later.bExclusive)
+        {
+            return true;
+        }
+        return FSystemAccess::Intersects(Earlier.SentEvents, Later.Reads) || FSystemAccess::Intersects(Earlier.SentEvents, Later.Writes);
+    }
+
+    TVector<CWorld::FSystemSegment> SystemSchedule::BuildSegments(const CWorld::FStageSchedule& Stage, const TVector<uint8>& WithWork)
+    {
+        const int32 Count = Stage.Systems.Num();
+        TVector<CWorld::FSystemSegment> Segments;
+        TVector<int32>  SegmentOf(Count, Constants::kIndexNone);
+        TVector<uint16> LocalOf(Count, 0);
+
+        for (int32 Index = 0; Index < Count; ++Index)
         {
             if (!WithWork[Index])
             {
@@ -1692,23 +1799,105 @@ namespace Lumina
             }
 
             const FSystemAccess& Access = Stage.Systems[Index]->GetAccess();
-
-            size_t Earliest = 0;
-            for (uint16 Earlier = 0; Earlier < Index; ++Earlier)
+            TVector<int32> Predecessors;
+            int32 Target = 0;
+            for (int32 Earlier = 0; Earlier < Index; ++Earlier)
             {
-                if (WithWork[Earlier] && (Stage.MustPrecede(Earlier, Index) || FSystemAccess::Conflicts(Access, Stage.Systems[Earlier]->GetAccess())))
+                if (SegmentOf[Earlier] == Constants::kIndexNone)
                 {
-                    Earliest = Math::Max(Earliest, (size_t)BatchOf[Earlier] + 1);
+                    continue;
+                }
+
+                const FSystemAccess& EarlierAccess = Stage.Systems[Earlier]->GetAccess();
+                const bool bDeclaredOrder = Stage.MustPrecede(Earlier, Index);
+                if (!bDeclaredOrder && !FSystemAccess::Conflicts(Access, EarlierAccess))
+                {
+                    continue;
+                }
+
+                const bool bFlush = SystemSchedule::NeedsFlushBetween(EarlierAccess, Access, bDeclaredOrder);
+                Target = Math::Max(Target, SegmentOf[Earlier] + (bFlush ? 1 : 0));
+                Predecessors.Add(Earlier);
+            }
+
+            if (Target == Segments.Num())
+            {
+                Segments.Emplace();
+                Segments.Last().bExclusive = Access.bExclusive;
+            }
+
+            CWorld::FSystemSegment& Segment = Segments[Target];
+            const uint16 Local = static_cast<uint16>(Segment.Members.Num());
+            Segment.Members.Add(static_cast<uint16>(Index));
+            Segment.Successors.Emplace();
+            Segment.PredecessorCounts.Add(0);
+            for (int32 Earlier : Predecessors)
+            {
+                if (SegmentOf[Earlier] == Target)
+                {
+                    Segment.Successors[LocalOf[Earlier]].Add(Local);
+                    ++Segment.PredecessorCounts[Local];
                 }
             }
-            if (Earliest == Batches.size())
-            {
-                Batches.emplace_back();
-            }
-            Batches[Earliest].Members.push_back(Index);
-            BatchOf[Index] = (uint16)Earliest;
+
+            SegmentOf[Index] = Target;
+            LocalOf[Index]   = Local;
         }
-        return Batches;
+        return Segments;
+    }
+
+    TVector<CWorld::FSystemBatch> SystemSchedule::BuildLevels(const TVector<CWorld::FSystemSegment>& Segments)
+    {
+        TVector<CWorld::FSystemBatch> Levels;
+        int32 Base = 0;
+        for (const CWorld::FSystemSegment& Segment : Segments)
+        {
+            // Successors always come later in the member list, so one forward pass settles every depth.
+            TVector<int32> Depth(Segment.Members.Num(), 0);
+            int32 Deepest = 0;
+            for (int32 Local = 0; Local < Segment.Members.Num(); ++Local)
+            {
+                Deepest = Math::Max(Deepest, Depth[Local]);
+                for (uint16 Next : Segment.Successors[Local])
+                {
+                    Depth[Next] = Math::Max(Depth[Next], Depth[Local] + 1);
+                }
+            }
+
+            Levels.SetNum(Base + Deepest + 1);
+            for (int32 Local = 0; Local < Segment.Members.Num(); ++Local)
+            {
+                Levels[Base + Depth[Local]].Members.Add(Segment.Members[Local]);
+            }
+            Base += Deepest + 1;
+        }
+        return Levels;
+    }
+
+    TVector<SystemSchedule::FAmbiguity> SystemSchedule::FindAmbiguities(const CWorld::FStageSchedule& Stage)
+    {
+        TVector<FAmbiguity> Ambiguities;
+        const int32 Count = Stage.Systems.Num();
+        for (int32 Second = 0; Second < Count; ++Second)
+        {
+            const FSystemAccess& SecondAccess = Stage.Systems[Second]->GetAccess();
+            if (SecondAccess.bExclusive)
+            {
+                continue;
+            }
+            for (int32 First = 0; First < Second; ++First)
+            {
+                const FSystemAccess& FirstAccess = Stage.Systems[First]->GetAccess();
+                uint32 ConflictId = 0;
+                if (FirstAccess.bExclusive || Stage.MustPrecede(First, Second) || Stage.MustPrecede(Second, First)
+                    || !FSystemAccess::FindConflictingId(FirstAccess, SecondAccess, ConflictId))
+                {
+                    continue;
+                }
+                Ambiguities.Emplace(First, Second, ConflictId);
+            }
+        }
+        return Ambiguities;
     }
 
     void CWorld::RegisterSystems()
@@ -1734,14 +1923,17 @@ namespace Lumina
             // A declared event read means a consumer exists, so producers that skip unheard events keep filling that queue.
             for (const uint32 TypeID : System->GetAccess().Reads)
             {
-                EventQueues.AddInterest((ECS::FComponentTypeID)TypeID);
+                if (TypeID < ECS::MaxComponentTypes)
+                {
+                    EventQueues.AddInterest((ECS::FComponentTypeID)TypeID);
+                }
             }
 
             for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
             {
                 if (System->RunsInStage((EUpdateStage)i))
                 {
-                    InStage[i].push_back(System.Get());
+                    InStage[i].Add(System.Get());
                 }
             }
         }
@@ -1750,9 +1942,17 @@ namespace Lumina
         {
             StageSchedules[i] = SystemSchedule::OrderStage(InStage[i], (EUpdateStage)i);
 
+            const FStageSchedule& Stage = StageSchedules[i];
+            for (const SystemSchedule::FAmbiguity& Ambiguity : SystemSchedule::FindAmbiguities(Stage))
+            {
+                LOG_INFO("World: systems {} and {} both access {} in stage {} with no RunsAfter or RunsBefore between them, so registration order decides which runs first",
+                    Stage.Systems[Ambiguity.First]->GetClass()->GetName(), Stage.Systems[Ambiguity.Second]->GetClass()->GetName(),
+                    GetAccessTypeName(Ambiguity.ConflictId), GUpdateStageNames[i]);
+            }
+
             // Built on the next tick, once each system has said whether it has work.
-            SystemBatches[i].clear();
-            SystemsWithWork[i].clear();
+            SystemSegments[i].Reset();
+            SystemsWithWork[i].Reset();
         }
     }
 
@@ -1767,30 +1967,30 @@ namespace Lumina
     // Read-only snapshot of the per-stage batch layout for the Gameplay Insights tool.
     void CWorld::GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const
     {
-        Out.clear();
+        Out.Reset();
         for (uint8 s = 0; s < (uint8)EUpdateStage::Max; ++s)
         {
             const FStageSchedule& Stage = StageSchedules[s];
-            const TVector<FSystemBatch>& Batches = SystemBatches[s];
-            for (uint8 b = 0; b < (uint8)Batches.size(); ++b)
+            const TVector<FSystemBatch> Batches = SystemSchedule::BuildLevels(SystemSegments[s]);
+            for (uint8 b = 0; b < (uint8)Batches.Num(); ++b)
             {
                 for (uint16 Index : Batches[b].Members)
                 {
                     const CEntitySystem* System = Stage.Systems[Index];
                     const FSystemAccess& Access = System->GetAccess();
 
-                    FSystemScheduleEntry& Entry = Out.emplace_back();
+                    FSystemScheduleEntry& Entry = Out.EmplaceGetRef();
                     Entry.Name       = System->GetClass()->GetName();
                     Entry.Stage      = (uint8)s;
                     for (const CEntitySystem* Other : Stage.Systems)
                     {
                         if (Other != System && SystemSchedule::DeclaresOrder(Other, System))
                         {
-                            Entry.RunsAfter.push_back(Other->GetClass()->GetName());
+                            Entry.RunsAfter.Add(Other->GetClass()->GetName());
                         }
                     }
                     Entry.Batch      = b;
-                    Entry.BatchSize  = (uint8)Batches[b].Members.size();
+                    Entry.BatchSize  = (uint8)Batches[b].Members.Num();
                     Entry.bExclusive = Access.bExclusive;
                     Entry.bManaged   = Cast<CScriptClass>(System->GetClass()) != nullptr;
                     Entry.Writes     = Access.Writes;
@@ -1825,7 +2025,7 @@ namespace Lumina
 
     void CWorld::GetAllSystems(TVector<FSystemInfo>& Out) const
     {
-        Out.clear();
+        Out.Reset();
 
         EntitySystems::ForEachSystemClass([&](CClass* Class)
         {
@@ -1847,16 +2047,16 @@ namespace Lumina
                 Described->ConfigureSystem();
             }
 
-            FSystemInfo& Info = Out.emplace_back();
+            FSystemInfo& Info = Out.EmplaceGetRef();
             Info.Class    = Class;
             Info.Name     = Class->GetName();
-            Info.bEnabled = PendingDisabledSystems.count(Info.Name) == 0;
+            Info.bEnabled = PendingDisabledSystems.Contains(Info.Name) == 0;
 
             for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
             {
                 if (Described->RunsInStage((EUpdateStage)i))
                 {
-                    Info.Stages.push_back((EUpdateStage)i);
+                    Info.Stages.Add((EUpdateStage)i);
                 }
             }
             Info.RunsAfter  = Described->GetRunsAfter();
@@ -1866,7 +2066,7 @@ namespace Lumina
 
     bool CWorld::IsSystemEnabled(TSubclassOf<CEntitySystem> System) const
     {
-        return System.IsValid() && PendingDisabledSystems.count(System->GetName()) == 0;
+        return System.IsValid() && PendingDisabledSystems.Contains(System->GetName()) == 0;
     }
 
     void CWorld::SetSystemEnabled(TSubclassOf<CEntitySystem> SystemClass, bool bEnabled)
@@ -1879,7 +2079,7 @@ namespace Lumina
         // Disabled systems persist by class name, since that survives a reload that remints the class.
         const FName System = SystemClass->GetName();
 
-        const bool bCurrentlyEnabled = PendingDisabledSystems.count(System) == 0;
+        const bool bCurrentlyEnabled = PendingDisabledSystems.Contains(System) == 0;
         if (bCurrentlyEnabled == bEnabled)
         {
             return;
@@ -1887,19 +2087,19 @@ namespace Lumina
 
         if (bEnabled)
         {
-            PendingDisabledSystems.erase(System);
+            PendingDisabledSystems.Remove(System);
         }
         else
         {
-            PendingDisabledSystems.insert(System);
+            PendingDisabledSystems.Add(System);
         }
 
         // Persisted immediately; the system-list rebuild defers to ApplyPendingSystemChanges.
         SDefaultWorldSettings& Settings = GetDefaultWorldSettings();
-        Settings.DisabledSystems.clear();
+        Settings.DisabledSystems.Reset();
         for (const FName& Name : PendingDisabledSystems)
         {
-            Settings.DisabledSystems.push_back(Name);
+            Settings.DisabledSystems.Add(Name);
         }
 
         bSystemsDirty = true;
@@ -1927,7 +2127,7 @@ namespace Lumina
     void CWorld::DrainDebugTextLines(TVector<FDebugTextLine>& Out)
     {
         Out = Move(DebugTextLines);
-        DebugTextLines.clear();
+        DebugTextLines.Reset();
     }
 
     EUpdateStage CWorld::GetUpdateStage() const
@@ -1965,12 +2165,12 @@ namespace Lumina
             return;
         }
 
-        Out.reserve(Out.size() + TagStorage->Num());
+        Out.Reserve(Out.Num() + TagStorage->Num());
         for (const ECS::FEntity Entity : *TagStorage)
         {
             if (!Entity.IsTombstone())
             {
-                Out.push_back(Entity);
+                Out.Add(Entity);
             }
         }
     }
@@ -2017,32 +2217,98 @@ namespace Lumina
         EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
     }
 
+    // Owned by RunSegment's frame, which outlives every task SyncWait runs over it.
+    struct CWorld::FSegmentRun
+    {
+        CWorld*               World   = nullptr;
+        const FStageSchedule* Stage   = nullptr;
+        const FSystemSegment* Segment = nullptr;
+        SSystemContext*       Context = nullptr;
+        TVector<uint32>       Remaining;
+    };
+
+    // Whichever predecessor finishes last forks the system, so each one starts the moment its own inputs are ready.
+    Jobs::TTask<void> CWorld::RunSegmentMember(FSegmentRun* Run, uint16 Local)
+    {
+        Run->World->RunScheduledSystem(Run->Stage->Systems[Run->Segment->Members[Local]], *Run->Context);
+        for (uint16 Next : Run->Segment->Successors[Local])
+        {
+            if (std::atomic_ref<uint32>(Run->Remaining[Next]).fetch_sub(1, std::memory_order_acq_rel) == 1)
+            {
+                co_await Jobs::Fork(RunSegmentMember(Run, Next));
+            }
+        }
+        co_await Jobs::Join();
+    }
+
+    Jobs::TTask<void> CWorld::RunSegmentRoots(FSegmentRun* Run)
+    {
+        for (uint16 Local = 0; Local < static_cast<uint16>(Run->Segment->Members.Num()); ++Local)
+        {
+            if (Run->Segment->PredecessorCounts[Local] == 0)
+            {
+                co_await Jobs::Fork(RunSegmentMember(Run, Local));
+            }
+        }
+        co_await Jobs::Join();
+    }
+
+    void CWorld::RunScheduledSystem(CEntitySystem* System, SSystemContext& Context)
+    {
+        // Named per system, so one that has no zones of its own still shows up in a capture.
+        LUMINA_PROFILE_SECTION_NAMED(*System->GetClass()->GetName());
+
+        // Stamped as it starts, since a reader ordered before it in the same segment must not see the write early.
+        const FSystemAccess& Access = System->GetAccess();
+        MarkDeclaredWrites(EntityRegistry, Access);
+
+        // A system that declared its access shares the segment, so its structural changes wait for the segment to end.
+        const ECS::FCommandBus::FDeferScope Defer(!Access.bExclusive);
+        const FSystemAccess* Outer = SetExecutingSystemAccess(&Access);
+        System->OnUpdate(Context);
+        SetExecutingSystemAccess(Outer);
+    }
+
+    void CWorld::RunSegment(const FStageSchedule& Stage, const FSystemSegment& Segment, SSystemContext& Context)
+    {
+        // Created here before going wide, since view() writes the shared pool map.
+        for (uint16 Index : Segment.Members)
+        {
+            const FSystemAccess& MemberAccess = Stage.Systems[Index]->GetAccess();
+            EntityRegistry.AssureStorages(MemberAccess.Pools);
+            for (ECS::FComponentTypeID TypeID : MemberAccess.TrackedPools)
+            {
+                EntityRegistry.FindStorage(TypeID)->TrackChanges();
+            }
+        }
+
+        FSegmentRun Run;
+        Run.World   = this;
+        Run.Stage   = &Stage;
+        Run.Segment = &Segment;
+        Run.Context = &Context;
+        Run.Remaining.Reserve(Segment.PredecessorCounts.Num());
+        for (uint16 Count : Segment.PredecessorCounts)
+        {
+            Run.Remaining.Add(Count);
+        }
+        Jobs::SyncWait(Jobs::EJobPriority::Normal, &CWorld::RunSegmentRoots, &Run);
+    }
+
     void CWorld::TickSystems(SSystemContext& Context)
     {
         LUMINA_PROFILE_SCOPE();
 
         const FStageSchedule& Stage = StageSchedules[(uint32)Context.GetUpdateStage()];
 
-        auto RunOne = [&](CEntitySystem* System)
-        {
-            // Named per system, so one that has no zones of its own still shows up in a capture.
-            LUMINA_PROFILE_SECTION_NAMED(System->GetClass()->GetName().c_str());
-
-            // A system that declared its access shares the frame, so its structural changes wait for the batch to end.
-            const ECS::FCommandBus::FDeferScope Defer(!System->GetAccess().bExclusive);
-            SetExecutingSystemAccess(&System->GetAccess());
-            System->OnUpdate(Context);
-            SetExecutingSystemAccess(nullptr);
-        };
-
         FlushCommands();
 
         // After the flush, so work its commands created counts this frame.
         const EUpdateStage StageId = Context.GetUpdateStage();
         TVector<uint8>& WithWork = SystemsWithWork[(uint32)StageId];
-        bool bWorkChanged = WithWork.size() != Stage.Systems.size();
-        WithWork.resize(Stage.Systems.size(), 0);
-        for (size_t Index = 0; Index < Stage.Systems.size(); ++Index)
+        bool bWorkChanged = WithWork.Num() != Stage.Systems.Num();
+        WithWork.SetNum(Stage.Systems.Num(), 0);
+        for (int32 Index = 0; Index < Stage.Systems.Num(); ++Index)
         {
             const uint8 bHasWork = Stage.Systems[Index]->HasWork(Context) ? 1 : 0;
             bWorkChanged |= WithWork[Index] != bHasWork;
@@ -2050,33 +2316,19 @@ namespace Lumina
         }
         if (bWorkChanged)
         {
-            SystemBatches[(uint32)StageId] = SystemSchedule::BuildBatches(Stage, WithWork);
+            SystemSegments[(uint32)StageId] = SystemSchedule::BuildSegments(Stage, WithWork);
         }
 
-        const TVector<FSystemBatch>& Batches = SystemBatches[(uint32)StageId];
-        for (const FSystemBatch& Batch : Batches)
+        for (const FSystemSegment& Segment : SystemSegments[(uint32)StageId])
         {
-            const TVector<uint16>& Members = Batch.Members;
-            if (Members.size() == 1)
+            if (Segment.Members.Num() == 1)
             {
-                RunOne(Stage.Systems[Members[0]]);
+                RunScheduledSystem(Stage.Systems[Segment.Members[0]], Context);
             }
             else
             {
-                // Create every declared pool before going wide, since view() writes the shared pool map.
-                for (uint16 Index : Members)
-                {
-                    for (const ECS::FComponentTypeID TypeID : Stage.Systems[Index]->GetAccess().Pools)
-                    {
-                        (void)EntityRegistry.AssureStorage(TypeID);
-                    }
-                }
-
-                Task::ParallelFor(static_cast<uint32>(Members.size()), [&](uint32 Index)
-                {
-                    DEBUG_ASSERT(!Stage.Systems[Members[Index]]->GetAccess().bExclusive); // batched implies not exclusive
-                    RunOne(Stage.Systems[Members[Index]]);
-                }, 1);
+                DEBUG_ASSERT(!Segment.bExclusive);
+                RunSegment(Stage, Segment, Context);
             }
 
             FlushCommands();
@@ -2098,8 +2350,11 @@ namespace Lumina
 
             if (!bEvents && !bCommands)
             {
-                return;
+                break;
             }
         }
+
+        // Settled here on one thread, so systems walking the parent links in parallel never rebuild the order under each other.
+        EntityRegistry.GetHierarchy().EnsureOrder();
     }
 }

@@ -18,7 +18,7 @@ namespace
         TVector<float> Out((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Out[(size_t)i] = std::sin(Seed + (float)i * 0.37f) * 12.0f;
+            Out[i] = std::sin(Seed + (float)i * 0.37f) * 12.0f;
         }
         return Out;
     }
@@ -26,8 +26,8 @@ namespace
     // Doubles so the reference carries more precision than either float path it judges.
     void ExpectClose(const TVector<float>& Got, const TVector<double>& Want, const char* What)
     {
-        ASSERT_EQ(Got.size(), Want.size()) << What;
-        for (size_t i = 0; i < Got.size(); ++i)
+        ASSERT_EQ(Got.Num(), Want.Num()) << What;
+        for (int32 i = 0; i < Got.Num(); ++i)
         {
             const double Scale = std::fmax(1.0, std::fabs(Want[i]));
             EXPECT_NEAR((double)Got[i], Want[i], Scale * 1e-5) << What << " at lane " << i;
@@ -46,11 +46,11 @@ TEST(SIMDArrayOps, LerpArrayMatchesReference)
         TVector<double> Want((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Want[(size_t)i] = (double)A[(size_t)i] * (1.0 - Alpha) + (double)B[(size_t)i] * Alpha;
+            Want[i] = (double)A[i] * (1.0 - Alpha) + (double)B[i] * Alpha;
         }
 
         TVector<float> Got((size_t)Count);
-        SIMD::LerpArray(Got.data(), A.data(), B.data(), Count, Alpha);
+        SIMD::LerpArray(Got.GetData(), A.GetData(), B.GetData(), Count, Alpha);
         ExpectClose(Got, Want, "LerpArray");
     }
 }
@@ -65,18 +65,18 @@ TEST(SIMDArrayOps, LerpArrayVarAlphaMatchesReference)
         TVector<float> Alphas((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Alphas[(size_t)i] = (float)(i % 9) / 8.0f;
+            Alphas[i] = (float)(i % 9) / 8.0f;
         }
 
         TVector<double> Want((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            const double T = Alphas[(size_t)i];
-            Want[(size_t)i] = (double)A[(size_t)i] * (1.0 - T) + (double)B[(size_t)i] * T;
+            const double T = Alphas[i];
+            Want[i] = (double)A[i] * (1.0 - T) + (double)B[i] * T;
         }
 
         TVector<float> Got((size_t)Count);
-        SIMD::LerpArrayVarAlpha(Got.data(), A.data(), B.data(), Alphas.data(), Count);
+        SIMD::LerpArrayVarAlpha(Got.GetData(), A.GetData(), B.GetData(), Alphas.GetData(), Count);
         ExpectClose(Got, Want, "LerpArrayVarAlpha");
     }
 }
@@ -92,11 +92,11 @@ TEST(SIMDArrayOps, AddScaledArrayMatchesReference)
         TVector<double> Want((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Want[(size_t)i] = (double)A[(size_t)i] + (double)B[(size_t)i] * S;
+            Want[i] = (double)A[i] + (double)B[i] * S;
         }
 
         TVector<float> Got((size_t)Count);
-        SIMD::AddScaledArray(Got.data(), A.data(), B.data(), S, Count);
+        SIMD::AddScaledArray(Got.GetData(), A.GetData(), B.GetData(), S, Count);
         ExpectClose(Got, Want, "AddScaledArray");
     }
 }
@@ -112,11 +112,11 @@ TEST(SIMDArrayOps, MulAddArrayMatchesReference)
         TVector<double> Want((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Want[(size_t)i] = (double)Base[(size_t)i] + (double)Dir[(size_t)i] * (double)Scale[(size_t)i];
+            Want[i] = (double)Base[i] + (double)Dir[i] * (double)Scale[i];
         }
 
         TVector<float> Got((size_t)Count);
-        SIMD::MulAddArray(Got.data(), Base.data(), Dir.data(), Scale.data(), Count);
+        SIMD::MulAddArray(Got.GetData(), Base.GetData(), Dir.GetData(), Scale.GetData(), Count);
         ExpectClose(Got, Want, "MulAddArray");
     }
 }
@@ -132,11 +132,11 @@ TEST(SIMDArrayOps, MulLerpOneArrayMatchesReference)
         TVector<double> Want((size_t)Count);
         for (int32 i = 0; i < Count; ++i)
         {
-            Want[(size_t)i] = (double)A[(size_t)i] * (1.0 + S * ((double)B[(size_t)i] - 1.0));
+            Want[i] = (double)A[i] * (1.0 + S * ((double)B[i] - 1.0));
         }
 
         TVector<float> Got((size_t)Count);
-        SIMD::MulLerpOneArray(Got.data(), A.data(), B.data(), S, Count);
+        SIMD::MulLerpOneArray(Got.GetData(), A.GetData(), B.GetData(), S, Count);
         ExpectClose(Got, Want, "MulLerpOneArray");
     }
 }
@@ -149,13 +149,13 @@ TEST(SIMDArrayOps, OutputMayAliasAnInput)
     constexpr float Alpha = 0.25f;
 
     TVector<float> Separate((size_t)Count);
-    SIMD::LerpArray(Separate.data(), A.data(), B.data(), Count, Alpha);
+    SIMD::LerpArray(Separate.GetData(), A.GetData(), B.GetData(), Count, Alpha);
 
     TVector<float> InPlace = A;
-    SIMD::LerpArray(InPlace.data(), InPlace.data(), B.data(), Count, Alpha);
+    SIMD::LerpArray(InPlace.GetData(), InPlace.GetData(), B.GetData(), Count, Alpha);
 
     for (int32 i = 0; i < Count; ++i)
     {
-        EXPECT_FLOAT_EQ(InPlace[(size_t)i], Separate[(size_t)i]) << "aliased write diverged at lane " << i;
+        EXPECT_FLOAT_EQ(InPlace[i], Separate[i]) << "aliased write diverged at lane " << i;
     }
 }

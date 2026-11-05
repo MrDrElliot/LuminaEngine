@@ -8,6 +8,7 @@
 #include "Containers/StringFormat.h"
 #include "Containers/Vector.h"
 #include "TaskSystem/ParallelSort.h"
+#include "TaskSystem/TaskSystem.h"
 
 // Namespaced because the unity build merges this file with others that do "using namespace Lumina".
 namespace LuminaParallelSortTests
@@ -29,10 +30,10 @@ namespace LuminaParallelSortTests
     {
         uint64 State = Seed;
         TVector<int32> Values;
-        Values.reserve(Count);
+        Values.Reserve(Lumina::IntCastChecked<Lumina::int32>(Count));
         for (size_t Index = 0; Index < Count; ++Index)
         {
-            Values.push_back(static_cast<int32>(NextRandom(State) % Modulus));
+            Values.Add(static_cast<int32>(NextRandom(State) % Modulus));
         }
 
         return Values;
@@ -53,8 +54,8 @@ namespace LuminaParallelSortTests
         ~FCounted() { --Alive; }
     };
 
-    // Sizes that cross the serial threshold and land on odd chunk counts, where a run has no partner.
-    const std::vector<size_t> kSizes = { 0, 1, 2, 17, 4095, 4096, 4097, 6143, 8192, 12345, 20000, 100000 };
+    // Sizes that cross the serial threshold and split into uneven halves, so a run has no equal partner.
+    const std::vector<size_t> kSizes = { 0, 1, 2, 17, 4095, 4096, 4097, 6143, 8192, 12345, 20000, 100000, 1000003 };
 
     TEST(ParallelSort, MatchesTheSerialSortAcrossSizes)
     {
@@ -66,8 +67,8 @@ namespace LuminaParallelSortTests
             Lumina::Task::ParallelSort(Ours.begin(), Ours.end());
             Algo::Sort(Reference);
 
-            ASSERT_EQ(Ours.size(), Reference.size()) << "count " << Count;
-            for (size_t Index = 0; Index < Ours.size(); ++Index)
+            ASSERT_EQ(Ours.Num(), Reference.Num()) << "count " << Count;
+            for (int32 Index = 0; Index < Ours.Num(); ++Index)
             {
                 ASSERT_EQ(Ours[Index], Reference[Index]) << "count " << Count << " at " << Index;
             }
@@ -79,24 +80,24 @@ namespace LuminaParallelSortTests
         constexpr size_t kCount = 50000;
 
         TVector<int32> Ascending;
-        Ascending.reserve(kCount);
+        Ascending.Reserve(kCount);
         for (size_t Index = 0; Index < kCount; ++Index)
         {
-            Ascending.push_back(static_cast<int32>(Index));
+            Ascending.Add(static_cast<int32>(Index));
         }
 
         TVector<int32> Descending;
-        Descending.reserve(kCount);
+        Descending.Reserve(kCount);
         for (size_t Index = 0; Index < kCount; ++Index)
         {
-            Descending.push_back(static_cast<int32>(kCount - Index));
+            Descending.Add(static_cast<int32>(kCount - Index));
         }
 
         TVector<int32> AllEqual;
-        AllEqual.reserve(kCount);
+        AllEqual.Reserve(kCount);
         for (size_t Index = 0; Index < kCount; ++Index)
         {
-            AllEqual.push_back(7);
+            AllEqual.Add(7);
         }
 
         TVector<int32> FewDistinct = MakeRandom(kCount, 3, 99);
@@ -107,7 +108,7 @@ namespace LuminaParallelSortTests
             Lumina::Task::ParallelSort(Case->begin(), Case->end());
             Algo::Sort(Reference);
 
-            for (size_t Index = 0; Index < Case->size(); ++Index)
+            for (int32 Index = 0; Index < Case->Num(); ++Index)
             {
                 ASSERT_EQ((*Case)[Index], Reference[Index]) << "at " << Index;
             }
@@ -121,7 +122,7 @@ namespace LuminaParallelSortTests
         Lumina::Task::ParallelSort(Values.begin(), Values.end(),
                                    [](int32 Left, int32 Right) { return Left > Right; });
 
-        for (size_t Index = 1; Index < Values.size(); ++Index)
+        for (int32 Index = 1; Index < Values.Num(); ++Index)
         {
             ASSERT_GE(Values[Index - 1], Values[Index]) << "at " << Index;
         }
@@ -134,12 +135,12 @@ namespace LuminaParallelSortTests
             constexpr size_t kCount = 30000;
 
             TVector<FCounted> Values;
-            Values.reserve(kCount);
+            Values.Reserve(kCount);
 
             uint64 State = 12345;
             for (size_t Index = 0; Index < kCount; ++Index)
             {
-                Values.push_back(FCounted(static_cast<int32>(NextRandom(State) % 10000)));
+                Values.Emplace(static_cast<int32>(NextRandom(State) % 10000));
             }
 
             EXPECT_EQ(FCounted::Alive.load(), static_cast<int32>(kCount));
@@ -151,7 +152,7 @@ namespace LuminaParallelSortTests
                                        });
 
             EXPECT_EQ(FCounted::Alive.load(), static_cast<int32>(kCount));
-            for (size_t Index = 1; Index < Values.size(); ++Index)
+            for (int32 Index = 1; Index < Values.Num(); ++Index)
             {
                 ASSERT_LE(Values[Index - 1].Key, Values[Index].Key) << "at " << Index;
             }
@@ -165,12 +166,12 @@ namespace LuminaParallelSortTests
         constexpr size_t kCount = 20000;
 
         TVector<FString> Values;
-        Values.reserve(kCount);
+        Values.Reserve(kCount);
 
         uint64 State = 777;
         for (size_t Index = 0; Index < kCount; ++Index)
         {
-            Values.push_back(Lumina::Format("a-fairly-long-key-that-heap-allocates-{:06}",
+            Values.Add(Lumina::Format("a-fairly-long-key-that-heap-allocates-{:06}",
                                             NextRandom(State) % 1000000));
         }
 
@@ -179,8 +180,8 @@ namespace LuminaParallelSortTests
         Lumina::Task::ParallelSort(Values.begin(), Values.end());
         Algo::Sort(Reference);
 
-        ASSERT_EQ(Values.size(), Reference.size());
-        for (size_t Index = 0; Index < Values.size(); ++Index)
+        ASSERT_EQ(Values.Num(), Reference.Num());
+        for (int32 Index = 0; Index < Values.Num(); ++Index)
         {
             ASSERT_EQ(Values[Index], Reference[Index]) << "at " << Index;
         }
@@ -194,9 +195,30 @@ namespace LuminaParallelSortTests
         Lumina::Task::ParallelSort(Values.begin(), Values.end());
         Algo::Sort(Reference);
 
-        for (size_t Index = 0; Index < Values.size(); ++Index)
+        for (int32 Index = 0; Index < Values.Num(); ++Index)
         {
             ASSERT_EQ(Values[Index], Reference[Index]) << "at " << Index;
         }
+    }
+
+    TEST(ParallelSort, RunsNestedInsideAParallelFor)
+    {
+        std::atomic<int32> Failures{ 0 };
+        Lumina::Jobs::ParallelFor(8u, [&Failures](uint32 Index)
+        {
+            TVector<int32> Values = MakeRandom(30000, 1000, Index + 100);
+            TVector<int32> Reference = Values;
+            Lumina::Task::ParallelSort(Values.begin(), Values.end());
+            Algo::Sort(Reference);
+            for (int32 At = 0; At < Values.Num(); ++At)
+            {
+                if (Values[At] != Reference[At])
+                {
+                    Failures.fetch_add(1);
+                    return;
+                }
+            }
+        }, 1);
+        EXPECT_EQ(Failures.load(), 0);
     }
 }

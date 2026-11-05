@@ -10,9 +10,9 @@
 
 namespace Lumina::VFS
 {
-    bool IFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    bool IFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size)
     {
-        Result.clear();
+        Result.Reset();
 
         TVector<uint8> Whole;
         if (!ReadFile(Whole, Path))
@@ -20,14 +20,14 @@ namespace Lumina::VFS
             return false;
         }
 
-        if (Offset >= Whole.size())
+        if (Offset < 0 || Size <= 0 || Offset >= Whole.Num())
         {
             return true;
         }
 
-        const uint64 Remaining = (uint64)Whole.size() - Offset;
-        const uint64 Available = Size < Remaining ? Size : Remaining;
-        Result.assign(Whole.begin() + (size_t)Offset, Whole.begin() + (size_t)(Offset + Available));
+        const int64 Remaining = Whole.Num() - Offset;
+        const int64 Available = Size < Remaining ? Size : Remaining;
+        Result.Append(Whole.GetData() + Offset, static_cast<int32>(Available));
         return true;
     }
 
@@ -38,26 +38,26 @@ namespace Lumina::VFS
 
         static FStringView ExtractAliasPrefix(FStringView Path)
         {
-            if (Path.empty() || Path[0] != '/')
+            if (Path.IsEmpty() || Path[0] != '/')
             {
                 return {};
             }
 
-            size_t SecondSlash = Path.find('/', 1);
-            return SecondSlash == FStringView::npos ? Path : Path.substr(0, SecondSlash);
+            int32 SecondSlash = Path.Find('/', 1);
+            return SecondSlash == Constants::kIndexNone ? Path : Path.Mid(0, SecondSlash);
         }
 
         static FMountList* FindMountList(FStringView Path)
         {
             FStringView Alias = ExtractAliasPrefix(Path);
-            if (Alias.empty())
+            if (Alias.IsEmpty())
             {
                 return nullptr;
             }
 
-            FFixedString Key(Alias.data(), Alias.size());
-            auto It = FileSystemStorage.find(Key);
-            return It == FileSystemStorage.end() ? nullptr : &It->second;
+            FFixedString Key(Alias.GetData(), Alias.Len());
+            auto It = FileSystemStorage.Find(Key);
+            return It == nullptr ? nullptr : &(*It);
         }
 
         template<typename TFunc>
@@ -106,8 +106,8 @@ namespace Lumina::VFS
         {
             FFixedString Normalized = Paths::Normalize(Alias);
             FMountList& List = FileSystemStorage[Normalized];
-            List.emplace_back(Move(System));
-            return *List.back();
+            List.Emplace(Move(System));
+            return *List.Last();
         }
     }
 
@@ -115,7 +115,7 @@ namespace Lumina::VFS
     {
         // Keyed by normalized FFixedString (e.g. "/Game"), same as AddFileSystemImpl.
         FFixedString Key = Paths::Normalize(Alias);
-        Detail::FileSystemStorage.erase(Key);
+        Detail::FileSystemStorage.Remove(Key);
     }
 
     bool DoesAliasExists(const FName& Alias)
@@ -123,37 +123,37 @@ namespace Lumina::VFS
         // FileSystemStorage is keyed by normalized FFixedString (e.g. "/Game").
         FStringView View = Alias.ToString();
         FFixedString Key = Paths::Normalize(View);
-        auto It = Detail::FileSystemStorage.find(Key);
-        return It != Detail::FileSystemStorage.end() && !It->second.empty();
+        auto It = Detail::FileSystemStorage.Find(Key);
+        return It != nullptr && !It->IsEmpty();
     }
 
     FStringView Extension(FStringView Path)
     {
-        size_t Dot = Path.find_last_of('.');
-        if (Dot == FString::npos)
+        int32 Dot = Path.FindLastOf('.');
+        if (Dot == Constants::kIndexNone)
         {
             return {};
         }
 
-        return Path.substr(Dot);
+        return Path.Mid(Dot);
     }
 
     FStringView FileName(FStringView Path, bool bRemoveExtension)
     {
-        size_t LastSlash = Path.find_last_of("/\\");
-        if (LastSlash == FString::npos)
+        int32 LastSlash = Path.FindLastOf("/\\");
+        if (LastSlash == Constants::kIndexNone)
         {
             return {};
         }
 
-        FStringView FilePart = Path.substr(LastSlash + 1);
+        FStringView FilePart = Path.Mid(LastSlash + 1);
 
         if (bRemoveExtension)
         {
-            size_t DotPos = FilePart.find_last_of('.');
-            if (DotPos != FString::npos)
+            int32 DotPos = FilePart.FindLastOf('.');
+            if (DotPos != Constants::kIndexNone)
             {
-                return FilePart.substr(0, DotPos);
+                return FilePart.Mid(0, DotPos);
             }
         }
 
@@ -168,7 +168,7 @@ namespace Lumina::VFS
         });
     }
 
-    size_t Size(FStringView Path)
+    int64 Size(FStringView Path)
     {
         return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
@@ -180,7 +180,7 @@ namespace Lumina::VFS
     {
         return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
-            return FS.RemoveAll(Path);
+            return FS.Remove(Path);
         });
     }
 
@@ -188,13 +188,13 @@ namespace Lumina::VFS
     bool IsReadOnlyOnDisk(FStringView Path)
     {
         const FPathString Disk = ResolvePath(Path);
-        return !Disk.empty() && Filesystem::Stat(FStringView(Disk.c_str(), Disk.size())).IsReadOnly();
+        return !Disk.IsEmpty() && Filesystem::Stat(FStringView(*Disk, Disk.Len())).IsReadOnly();
     }
 
     bool MakeWritable(FStringView Path)
     {
         const FPathString Disk = ResolvePath(Path);
-        return !Disk.empty() && Filesystem::SetReadOnly(FStringView(Disk.c_str(), Disk.size()), false);
+        return !Disk.IsEmpty() && Filesystem::SetReadOnly(FStringView(*Disk, Disk.Len()), false);
     }
 
     FPathString ResolvePath(FStringView Path)
@@ -210,7 +210,7 @@ namespace Lumina::VFS
         for (auto It = List->rbegin(); It != List->rend(); ++It)
         {
             FPathString Disk = (*It)->ResolveToDiskPath(Path);
-            if (Disk.empty())
+            if (Disk.IsEmpty())
             {
                 continue;
             }
@@ -220,7 +220,7 @@ namespace Lumina::VFS
                 return Disk;
             }
 
-            if (Candidate.empty())
+            if (Candidate.IsEmpty())
             {
                 Candidate = Move(Disk);
             }
@@ -239,14 +239,14 @@ namespace Lumina::VFS
 
     bool IsUnderDirectory(FStringView Parent, FStringView Path)
     {
-        if (!Path.starts_with(Parent))
+        if (!Path.StartsWith(Parent))
         {
             return false;
         }
 
-        return Path.length() == Parent.length() ||
-               Path[Parent.length()] == '/' ||
-               Path[Parent.length()] == '\\';
+        return Path.Len() == Parent.Len() ||
+               Path[Parent.Len()] == '/' ||
+               Path[Parent.Len()] == '\\';
     }
 
     bool IsDirectory(FStringView Path)
@@ -264,13 +264,13 @@ namespace Lumina::VFS
 
     FStringView Parent(FStringView Path, bool bRemoveTrailingSlash)
     {
-        size_t Pos = Path.find_last_of('/');
-        if (Pos == FString::npos)
+        int32 Pos = Path.FindLastOf('/');
+        if (Pos == Constants::kIndexNone)
         {
             return {};
         }
 
-        return Path.substr(0, bRemoveTrailingSlash ? Pos : Pos + 1);
+        return Path.Mid(0, bRemoveTrailingSlash ? Pos : Pos + 1);
     }
 
     bool ReadFile(TVector<uint8>& Result, FStringView Path)
@@ -286,6 +286,14 @@ namespace Lumina::VFS
             }
 
             return false;
+        });
+    }
+
+    bool ReadFile(TVector64<uint8>& Result, FStringView Path)
+    {
+        return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
+        {
+            return FS.Exists(Path) && FS.ReadFile(Result, Path);
         });
     }
 
@@ -305,7 +313,7 @@ namespace Lumina::VFS
         });
     }
 
-    bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    bool ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size)
     {
         return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
@@ -346,7 +354,7 @@ namespace Lumina::VFS
     }
 
     bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                 TSpan<const uint8> Suffix)
     {
         return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
@@ -408,10 +416,10 @@ namespace Lumina::VFS
 
     FStringView RemoveExtension(FStringView Path)
     {
-        size_t Dot = Path.find_last_of(".");
-        if (Dot != FString::npos)
+        int32 Dot = Path.FindLastOf(".");
+        if (Dot != Constants::kIndexNone)
         {
-            return Path.substr(0, Dot);
+            return Path.Mid(0, Dot);
         }
 
         return Path;
@@ -448,14 +456,14 @@ namespace Lumina::VFS
         int32 Counter = 1;
         while (Counter <= 25)
         {
-            ReturnPath.clear();
-            ReturnPath.append(NoExtensionPath.begin(), NoExtensionPath.end());
-            ReturnPath.append("_");
-            ReturnPath.append(Format("{}", Counter));
+            ReturnPath.Reset();
+            ReturnPath.Append(NoExtensionPath.begin(), NoExtensionPath.end());
+            ReturnPath.Append("_");
+            ReturnPath.Append(Format("{}", Counter));
 
-            if (!Ext.empty())
+            if (!Ext.IsEmpty())
             {
-                ReturnPath.append(Ext.begin(), Ext.end());
+                ReturnPath.Append(Ext.begin(), Ext.end());
             }
 
             if (!Exists(ReturnPath))
@@ -471,7 +479,7 @@ namespace Lumina::VFS
 
     FFixedString ResolveToVirtualPath(FStringView InputPath)
     {
-        if (InputPath.empty())
+        if (InputPath.IsEmpty())
         {
             return {};
         }
@@ -480,38 +488,38 @@ namespace Lumina::VFS
         FFixedString Normalized = Paths::Normalize(InputPath);
 
         // Already a virtual path.
-        if (!Normalized.empty() && Normalized.front() == '/')
+        if (!Normalized.IsEmpty() && Normalized[0] == '/')
         {
             return Normalized;
         }
 
         // Native mount base paths are absolute and normalized at construction time.
-        FStringView NormalizedView(Normalized.data(), Normalized.size());
+        FStringView NormalizedView(Normalized.GetData(), Normalized.Len());
 
         FFixedString Best;
-        size_t BestBaseLen = 0;
+        int32 BestBaseLen = 0;
 
         for (const auto& [Alias, MountList] : Detail::FileSystemStorage)
         {
             for (const TUniquePtr<IFileSystem>& FS : MountList)
             {
                 FStringView Base = FS->GetBasePath();
-                if (Base.empty() || Base.size() > NormalizedView.size())
+                if (Base.IsEmpty() || Base.Len() > NormalizedView.Len())
                 {
                     continue;
                 }
                 // The longest match wins, so a more specific nested mount beats its parent.
-                if (NormalizedView.starts_with(Base) && Base.size() > BestBaseLen)
+                if (NormalizedView.StartsWith(Base) && Base.Len() > BestBaseLen)
                 {
-                    FStringView Tail = NormalizedView.substr(Base.size());
-                    if (!Tail.empty() && Tail.front() != '/')
+                    FStringView Tail = NormalizedView.Mid(Base.Len());
+                    if (!Tail.IsEmpty() && Tail[0] != '/')
                     {
                         // The base is a prefix but not on a path boundary, so skip it.
                         continue;
                     }
-                    Best.assign(Alias.data(), Alias.size());
-                    Best.append(Tail.data(), Tail.size());
-                    BestBaseLen = Base.size();
+                    Best = FStringView(Alias.GetData(), Alias.Len());
+                    Best.Append(Tail.GetData(), Tail.Len());
+                    BestBaseLen = Base.Len();
                 }
             }
         }
@@ -524,12 +532,12 @@ namespace Lumina::VFS
         // Held by value, since a view of the normalized temporary would dangle.
         const FFixedString NormalPath = Paths::Normalize(Path);
         const FFixedString NormalExt  = Paths::Normalize(Ext);
-        const size_t Dot = NormalPath.find_last_of('.');
-        if (Dot == FString::npos)
+        const int32 Dot = NormalPath.FindLastOf('.');
+        if (Dot == Constants::kIndexNone)
         {
             return false;
         }
 
-        return FStringView(NormalPath.c_str() + Dot, NormalPath.size() - Dot) == FStringView(NormalExt.c_str(), NormalExt.size());
+        return FStringView(*NormalPath + Dot, NormalPath.Len() - Dot) == FStringView(*NormalExt, NormalExt.Len());
     }
 }

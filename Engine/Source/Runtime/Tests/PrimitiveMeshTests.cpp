@@ -10,12 +10,12 @@ TEST(PrimitiveMeshes, CubeFacesShowTexturesUprightAndUnmirrored)
     TVector<FSourceVertex> Vertices;
     TVector<uint32> Indices;
     PrimitiveMeshes::GenerateCube(Vertices, Indices);
-    ASSERT_EQ(Vertices.size(), 24u);
+    ASSERT_EQ(Vertices.Num(), 24);
 
-    for (size_t Face = 0; Face < 6; ++Face)
+    for (int32 Face = 0; Face < 6; ++Face)
     {
         FVector3 Center(0.0f);
-        for (size_t Corner = 0; Corner < 4; ++Corner)
+        for (int32 Corner = 0; Corner < 4; ++Corner)
         {
             Center += Vertices[Face * 4 + Corner].Position * 0.25f;
         }
@@ -26,7 +26,7 @@ TEST(PrimitiveMeshes, CubeFacesShowTexturesUprightAndUnmirrored)
         const FVector3 Up = Math::Abs(Normal.y) > 0.5f ? FVector3(0.0f, 0.0f, -1.0f) : FVector3(0.0f, 1.0f, 0.0f);
         const FVector3 Right = Math::Cross(Up, Forward);
 
-        for (size_t Corner = 0; Corner < 4; ++Corner)
+        for (int32 Corner = 0; Corner < 4; ++Corner)
         {
             const FSourceVertex& Vertex = Vertices[Face * 4 + Corner];
             const FVector2 UV = Math::UnpackHalf2x16(Vertex.UV);

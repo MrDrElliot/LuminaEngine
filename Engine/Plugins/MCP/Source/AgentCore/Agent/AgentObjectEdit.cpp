@@ -13,11 +13,11 @@
 
 namespace Lumina::Agent
 {
-    namespace
+    namespace AgentObjectEditInternal
     {
-        FString Dump(const nlohmann::json& Value)
+        FString Dump(const FJsonValue& Value)
         {
-            return FString(Value.dump().c_str());
+            return Value.ToString();
         }
 
         void CollectUnwritable(CStruct* Struct, FStringView Prefix, int32 Depth, TVector<FString>& OutPaths)
@@ -36,13 +36,13 @@ namespace Lumina::Agent
                         return;
                     }
 
-                    const FString Name(Property->GetPropertyName().ToString().c_str());
-                    const FString Path = Prefix.empty() ? Name : Lumina::Format("{}.{}", Prefix, Name);
+                    const FString Name(*Property->GetPropertyName().ToString());
+                    const FString Path = Prefix.IsEmpty() ? Name : Lumina::Format("{}.{}", Prefix, Name);
 
                     switch (Property->GetType())
                     {
                     case EPropertyTypeFlags::Delegate:
-                        OutPaths.push_back(Path);
+                        OutPaths.Add(Path);
                         break;
 
                     case EPropertyTypeFlags::Struct:
@@ -66,8 +66,10 @@ namespace Lumina::Agent
         }
     }
 
+    using namespace AgentObjectEditInternal;
+
     FObjectEditResult SetObjectProperty(CStruct* Root, void* RootData, CObject* Owner, FStringView Path,
-        const nlohmann::json& Value, FName Label)
+        const FJsonValue& Value, FName Label)
     {
         FObjectEditResult Result;
 
@@ -91,7 +93,7 @@ namespace Lumina::Agent
             return Result;
         }
 
-        nlohmann::json Before;
+        FJsonValue Before;
         if (WriteProperty(Target.Property, Target.ValuePtr, Before).IsValid())
         {
             Result.Previous = Dump(Before);
@@ -126,7 +128,7 @@ namespace Lumina::Agent
             Owner->GetPackage()->MarkDirty();
         }
 
-        nlohmann::json After;
+        FJsonValue After;
         if (WriteProperty(Target.Property, Target.ValuePtr, After).IsValid())
         {
             Result.Current = Dump(After);

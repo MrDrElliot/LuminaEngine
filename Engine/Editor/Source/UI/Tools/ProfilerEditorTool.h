@@ -3,7 +3,7 @@
 #include "Containers/Vector.h"
 #include "Core/Profiler/AssetLoadTracker.h"
 #include "Core/Profiler/GameplayProfiler.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "TaskSystem/Scheduler/JobProfiler.h"
 #include "World/World.h"
 
@@ -13,7 +13,6 @@
 
 namespace Lumina
 {
-    /** One window for every profiler the engine collects, a tab per domain. */
     class FProfilerEditorTool : public FEditorTool
     {
     public:
@@ -44,7 +43,6 @@ namespace Lumina
 
         void DrawWindow(bool bIsFocused);
 
-        /** Freeze and Smoothing live here, so they mean the same thing on every tab. */
         void DrawSharedControls();
 
         //~ GPU
@@ -55,7 +53,6 @@ namespace Lumina
         void DrawGPUFrameGraph();
         void DrawGPUFlameGraph();
 
-        /** Eases the displayed frame toward the live one, so bar edges glide instead of snapping. */
         void SmoothTowards(const FGPUProfileFrame& Live);
 
         FGPUProfileFrame  GPUFrame;
@@ -68,18 +65,11 @@ namespace Lumina
         //~ Task system
 
         void DrawTasks();
-        void DrawAdvisor();
-        void DrawDashboard();
-        void DrawCores();
-        void DrawFiberGrid();
-        void DrawTimeline();
-        void DrawCounters();
+        void DrawTaskStats();
+        void DrawTaskTimeline();
 
-        FJobProfFrame                   TaskFrame;
-        TVector<Jobs::FFiberState>      FiberStates;
-        TVector<Jobs::FCounterState>    Counters;
-        TVector<Jobs::FWorkerCoreState> WorkerCores;
-        bool   bByFiber  = false;
+        FJobProfFrame       TaskFrame;
+        Jobs::FRuntimeStats TaskStats;
         float  RowHeight = 18.0f;
         float  ZoomT     = 1.0f;
         float  PanT      = 0.0f;

@@ -16,7 +16,7 @@ namespace
     T* AddGridModule(CParticleEmitterStack* Stack, TVector<TStrongObjectPtr<CParticleModule>>& Modules)
     {
         T* Module = NewObject<T>(Stack->GetPackage());
-        Modules.push_back(Module);
+        Modules.Add(Module);
         return Module;
     }
 
@@ -35,7 +35,7 @@ namespace
 
     bool Contains(const FString& Source, const char* Text)
     {
-        return Source.find(Text) != FString::npos;
+        return Source.Find(Text) != Constants::kIndexNone;
     }
 
     // The real template lives under the engine's resource directory, which tests do not mount.
@@ -99,7 +99,7 @@ TEST(ParticleGridCompile, ADepositAloneDeclaresTheGrid)
     Stack->CompileStacks(Compiler);
 
     EXPECT_EQ(Compiler.GetGridChannelCount(), 1u);
-    EXPECT_TRUE(Compiler.GetGridStageIterations().empty());
+    EXPECT_TRUE(Compiler.GetGridStageIterations().IsEmpty());
     EXPECT_TRUE(Contains(Expand(Compiler), "DepositGrid(GRID_Density, P.Position"));
 }
 
@@ -137,7 +137,7 @@ TEST(ParticleGridCompile, ACellHoldsAtMostSixteenChannels)
     CParticleModule_CustomGrid* Custom = AddGridModule<CParticleModule_CustomGrid>(Stack, Stack->GridModules);
     for (int32 Channel = 0; Channel <= kParticleGridMaxChannels; ++Channel)
     {
-        Custom->GridChannels.push_back(FName(Format("Channel{}", Channel).c_str()));
+        Custom->GridChannels.Emplace(*Format("Channel{}", Channel));
     }
 
     FParticleCompiler Compiler;

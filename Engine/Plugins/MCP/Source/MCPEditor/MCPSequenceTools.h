@@ -9,6 +9,40 @@
 namespace Lumina
 {
     REFLECT()
+    enum class ESequenceBindingAction : uint8
+    {
+        Add,
+        Remove,
+    };
+
+    REFLECT()
+    enum class ESequenceTrackAction : uint8
+    {
+        Add,
+        Remove,
+    };
+
+    REFLECT()
+    enum class ESequencePlaybackAction : uint8
+    {
+        Play,
+        Pause,
+        Resume,
+        Stop,
+        Seek,
+        Restart,
+        State,
+    };
+
+    REFLECT()
+    enum class EMovieRenderAction : uint8
+    {
+        Start,
+        Status,
+        Stop,
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SSequenceRefParams
     {
         GENERATED_BODY()
@@ -30,14 +64,14 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        // Length in seconds. Adding a shot past the end lengthens it.
+        // Seconds. A shot past the end lengthens it.
         PROPERTY()
         float Duration = 10.0f;
 
         PROPERTY()
         int32 FrameRate = 30;
 
-        // Width over height between black bars for the whole sequence, such as 2.39. Zero shows none.
+        // Aspect between black bars, such as 2.39. Zero shows none.
         PROPERTY()
         float LetterboxAspect = 0.0f;
     };
@@ -113,7 +147,7 @@ namespace Lumina
         PROPERTY()
         bool bEnabled = true;
 
-        // Every field of the track as JSON, keys included unless the describe asked for a summary.
+        // Every field of the track as JSON, keys included unless bSummary was set.
         PROPERTY()
         FString Values;
     };
@@ -126,7 +160,7 @@ namespace Lumina
         PROPERTY()
         FString Sequence;
 
-        // Report each curve as its key count rather than every key, which keeps a long sequence readable.
+        // Report each curve as its key count and range rather than every key.
         PROPERTY()
         bool bSummary = false;
     };
@@ -160,18 +194,18 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Name to pass to sequence.add_track.
+        // Name to pass to sequence.track Add.
         PROPERTY()
         FString Name;
 
         PROPERTY()
         FString Description;
 
-        // Whether it needs a binding to drive, as opposed to acting on the whole sequence.
+        // Needs a binding to drive, rather than acting on the whole sequence.
         PROPERTY()
         bool bNeedsBinding = false;
 
-        // JSON Schema of the fields sequence.set_track_property and add_track's Settings accept.
+        // JSON Schema of the fields sequence.set_track_property and sequence.track Settings accept.
         PROPERTY()
         FString Schema;
     };
@@ -195,24 +229,31 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddSequenceBindingParams
+    struct MCPEDITOR_API SSequenceBindingParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        ESequenceBindingAction Action = ESequenceBindingAction::Add;
+
+        PROPERTY()
         FString Sequence;
 
-        // For Possess, the name of the entity in the world to drive.
+        // Add only. The binding's name; for Possess, the name of the world entity to drive.
         PROPERTY()
         FString Name;
 
-        // Possess an existing entity, Spawn one from a prefab for the sequence's length, or Camera for a bare cinematic camera.
+        // Add only. Possess an entity, Spawn a prefab for the sequence's length, or Camera for a cinematic camera.
         PROPERTY()
         FString Kind = "Possess";
 
-        // GUID of the prefab a Spawn binding creates.
+        // Add only. GUID of the prefab a Spawn binding creates.
         PROPERTY()
         FString Prefab;
+
+        // Remove only. Name or index; its tracks and cuts go with it.
+        PROPERTY()
+        FString Binding;
     };
 
     REFLECT()
@@ -225,48 +266,29 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SRemoveSequenceBindingParams
+    struct MCPEDITOR_API SSequenceTrackParams
     {
         GENERATED_BODY()
 
         PROPERTY()
-        FString Sequence;
-
-        // Name or index. Its tracks and cuts go with it.
-        PROPERTY()
-        FString Binding;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SAddSequenceTrackParams
-    {
-        GENERATED_BODY()
+        ESequenceTrackAction Action = ESequenceTrackAction::Add;
 
         PROPERTY()
         FString Sequence;
 
-        // From sequence.track_types, such as Transform, Property, Fade or LookAt.
+        // Add only. From sequence.track_types, such as Transform, Property, Fade or LookAt.
         PROPERTY()
         FString Type;
 
-        // Name or index of the binding to drive. Empty for a sequence-wide track such as Fade or Events.
+        // Add only. Name or index of the binding to drive; empty for a sequence-wide track.
         PROPERTY()
         FString Binding;
 
-        // Optional initial fields as a JSON object keyed by field name.
+        // Add only. Initial fields as a JSON object of property paths, such as {"PropertyPath":"FOV"}.
         PROPERTY(RawJson)
         FString Settings;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SRemoveSequenceTrackParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Sequence;
-
-        // Negative removes every track.
+        // Remove only. Track index; negative removes every track.
         PROPERTY()
         int32 Track = 0;
     };
@@ -317,7 +339,7 @@ namespace Lumina
         PROPERTY()
         FString Channel;
 
-        // Array of keys each with Time and Value, a number or for a vector channel an [x,y,z] array, and optionally its own Interp.
+        // Array of {Time, Value, Interp?}; Value is a number, or [x,y,z] for a vector channel.
         PROPERTY(RawJson)
         FString Keys;
 
@@ -419,7 +441,7 @@ namespace Lumina
         PROPERTY()
         FString Sequence;
 
-        // Camera binding for the shot, created as a Camera binding when missing. Empty names a new one after the shot count.
+        // Camera binding, created when missing. Empty names a new one after the shot count.
         PROPERTY()
         FString Camera;
 
@@ -429,7 +451,7 @@ namespace Lumina
         PROPERTY()
         float End = 3.0f;
 
-        // Array of camera keys, each with Time relative to Start and Location, plus any of Rotation, Target, FOV, Focus, FStop and Ground.
+        // Camera keys: Time (from Start) and Location, plus any of Rotation, Target, FOV, Focus, FStop, Ground.
         PROPERTY(RawJson)
         FString Keys;
 
@@ -437,15 +459,15 @@ namespace Lumina
         PROPERTY()
         FString LookAt;
 
-        // Fixed world point to aim at when there is no LookAt binding, as [x,y,z].
+        // Fixed [x,y,z] point to aim at when there is no LookAt binding.
         PROPERTY(RawJson)
         FString LookAtPoint;
 
-        // Added to the LookAt binding's position, so a shot frames a chest rather than the feet.
+        // [x,y,z] added to the LookAt binding's position, to frame a chest rather than the feet.
         PROPERTY(RawJson)
         FString LookAtOffset;
 
-        // Vertical field of view in degrees for the whole shot, unless keys say otherwise. Zero keeps the camera's.
+        // Vertical FOV in degrees for the shot unless keys say otherwise. Zero keeps the camera's.
         PROPERTY()
         float FOV = 0.0f;
 
@@ -457,7 +479,7 @@ namespace Lumina
         PROPERTY()
         bool bAutoFocus = true;
 
-        // Strength of a handheld drift, where 1 reads as a steady operator and 3 as running. Zero is a locked-off camera.
+        // Handheld drift: 1 is a steady operator, 3 running, 0 locked off.
         PROPERTY()
         float Handheld = 0.0f;
 
@@ -472,7 +494,7 @@ namespace Lumina
         PROPERTY()
         FString Interp = "Cubic";
 
-        // Read every height in the shot, keys, targets and LookAtPoint, as above the terrain. A key's own Ground overrides it.
+        // Read every height in the shot as above the terrain. A key's own Ground overrides it.
         PROPERTY()
         bool bGround = false;
     };
@@ -494,43 +516,36 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SSequencePlayParams
+    struct MCPEDITOR_API SSequencePlaybackParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        ESequencePlaybackAction Action = ESequencePlaybackAction::Play;
+
+        // The sequence to Play. For the control actions, which players; empty means all.
+        PROPERTY()
         FString Sequence;
 
+        // Play only.
         PROPERTY()
         bool bLoop = false;
 
+        // Play only.
         PROPERTY()
         float PlayRate = 1.0f;
 
+        // Play only.
         PROPERTY()
         float StartTime = 0.0f;
 
-        // Bind and show StartTime without advancing, for framing a shot.
+        // Play only. Bind and show StartTime without advancing, for framing a shot.
         PROPERTY()
         bool bPaused = false;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SSequenceControlParams
-    {
-        GENERATED_BODY()
-
-        // Pause, Resume, Stop, Seek or Restart.
-        PROPERTY()
-        FString Action;
-
-        // Seconds, for Seek.
+        // Seek only. Seconds.
         PROPERTY()
         float Time = 0.0f;
-
-        // Which sequence's player, empty for every player in the world.
-        PROPERTY()
-        FString Sequence;
     };
 
     REFLECT()
@@ -576,19 +591,22 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Sequence to play from its start for its whole length. Empty records whatever the game shows for Seconds.
+        PROPERTY()
+        EMovieRenderAction Action = EMovieRenderAction::Start;
+
+        // Start only. Sequence to play start to end. Empty records whatever the game shows for Seconds.
         PROPERTY()
         FString Sequence;
 
-        // MP4 to write. Empty with no PngDirectory writes to Saved/Movies under the engine.
+        // MP4 to write. Empty with no PngDirectory writes to the engine's Saved/Movies.
         PROPERTY()
         FString OutputPath;
 
-        // Folder for a numbered PNG per frame as well, for editing elsewhere.
+        // Folder for a numbered PNG per frame as well.
         PROPERTY()
         FString PngDirectory;
 
-        // Write a PNG for only one frame in this many, such as 15 for a review contact sheet of a long render.
+        // Write a PNG for one frame in this many, such as 15 for a contact sheet.
         PROPERTY()
         int32 PngEvery = 1;
 
@@ -605,15 +623,15 @@ namespace Lumina
         PROPERTY()
         int32 BitRate = 24000000;
 
-        // Length without a sequence, where zero records until movie.stop.
+        // Length without a sequence; zero records until Stop.
         PROPERTY()
         float Seconds = 0.0f;
 
-        // Frames thrown away first, so streaming and exposure settle before the first kept frame.
+        // Frames discarded first so streaming and exposure settle.
         PROPERTY()
         int32 WarmupFrames = 30;
 
-        // Record the game's sound into the MP4 as AAC, in step with the frames.
+        // Record the game's sound into the MP4 as AAC.
         PROPERTY()
         bool bAudio = true;
 
@@ -657,80 +675,6 @@ namespace Lumina
 
         PROPERTY()
         FString Error;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SCameraViewParams
-    {
-        GENERATED_BODY()
-
-        // Look at the editor's world even while a game is playing.
-        PROPERTY()
-        bool bEditorWorld = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SCameraViewResult
-    {
-        GENERATED_BODY()
-
-        // Game or Editor.
-        PROPERTY()
-        FString World;
-
-        PROPERTY()
-        TVector<float> Location;
-
-        // Pitch, yaw and roll in degrees, the order a Transform track's Rotation takes.
-        PROPERTY()
-        TVector<float> Rotation;
-
-        PROPERTY()
-        TVector<float> Forward;
-
-        PROPERTY()
-        float FOV = 0.0f;
-
-        // A ready shot key for this view, to paste into sequence.shot.
-        PROPERTY()
-        FString ShotKey;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSetCameraViewParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        TVector<float> Location;
-
-        // A point to face, used when given, otherwise Rotation applies.
-        PROPERTY()
-        TVector<float> Target;
-
-        // Pitch, yaw and roll in degrees, as camera.get_view reports them.
-        PROPERTY()
-        TVector<float> Rotation;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SGroundHeightParams
-    {
-        GENERATED_BODY()
-
-        // Array of [x,z] points to probe.
-        PROPERTY(RawJson)
-        FString Points;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SGroundHeightResult
-    {
-        GENERATED_BODY()
-
-        // Height of the first surface under each point, in the same order, or a large negative number over nothing.
-        PROPERTY()
-        TVector<float> Heights;
     };
 
     namespace MCP

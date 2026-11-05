@@ -50,7 +50,7 @@ TEST(AssetBundles, TheSaverRecordsEveryBundleThatNamesASoftReference)
 
     EXPECT_EQ(IconImport->Bundles, (TVector<FName>{ FName("Icon"), FName("UI"), FName("Visual") })) << "names are trimmed and a repeat is kept once";
     EXPECT_EQ(MeshImport->Bundles, (TVector<FName>{ FName("Visual") }));
-    EXPECT_TRUE(PlainImport->Bundles.empty()) << "restoring the outer scope stops tagging";
+    EXPECT_TRUE(PlainImport->Bundles.IsEmpty()) << "restoring the outer scope stops tagging";
 }
 
 TEST(AssetBundles, AnImportKeepsItsBundlesThroughASaveAndLoad)
@@ -87,8 +87,8 @@ TEST(AssetBundles, AnImportFromBeforeBundlesReadsWithNone)
     Reader << Read;
 
     EXPECT_EQ(Read.ObjectGUID, Written.ObjectGUID);
-    EXPECT_TRUE(Read.Bundles.empty());
-    EXPECT_EQ(Reader.Tell(), (int64)Bytes.size()) << "an older package has no bundle list to read past";
+    EXPECT_TRUE(Read.Bundles.IsEmpty());
+    EXPECT_EQ(Reader.Tell(), (int64)Bytes.Num()) << "an older package has no bundle list to read past";
 }
 
 TEST(AssetHandles, AnObjectStaysExactlyAsLongAsAHandleHoldsIt)

@@ -6,9 +6,9 @@
 
 namespace Lumina::ECS
 {
-    namespace
+    namespace SparseSetInternal
     {
-        constexpr size_t MinPackedCapacity = 8;
+        constexpr int32 MinPackedCapacity = 8;
 
         // A payload block under-aligned to its element straddles cache lines on every other store.
         constexpr size_t MinPayloadAlignment = 16;
@@ -37,12 +37,35 @@ namespace Lumina::ECS
             *Slot = 1;
             return Slot;
         }
+
+        uint64 AcquireWriteEpochBase()
+        {
+            static std::atomic<uint32> NextPool{ 1 };
+            return static_cast<uint64>(NextPool.fetch_add(1, std::memory_order_relaxed)) << 32;
+        }
+
+        std::atomic<uint32>& ChangeClock()
+        {
+            static std::atomic<uint32> Clock{ 1 };
+            return Clock;
+        }
+    }
+
+    uint32 FSparseSet::GetChangeTick()
+    {
+        return SparseSetInternal::ChangeClock().load(std::memory_order_relaxed);
+    }
+
+    uint32 FSparseSet::AdvanceChangeTick()
+    {
+        return SparseSetInternal::ChangeClock().fetch_add(1, std::memory_order_relaxed);
     }
 
     FSparseSet::FSparseSet(const FComponentTypeInfo& InTypeInfo)
     {
         ApplyLayout(InTypeInfo);
-        LayoutEpoch = AcquireLayoutEpochSlot();
+        WriteEpoch.store(SparseSetInternal::AcquireWriteEpochBase(), std::memory_order_relaxed);
+        LayoutEpoch = SparseSetInternal::AcquireLayoutEpochSlot();
         if (TypeInfo.bRuntimeLayout)
         {
             FComponentTypeRegistry::Get().TrackPool(this);
@@ -71,14 +94,14 @@ namespace Lumina::ECS
 
     uint32 FSparseSet::MaxLiveIndex() const
     {
-        const uint32* Packed = reinterpret_cast<const uint32*>(Dense.data());
-        const size_t  Count  = Dense.size();
+        const uint32* Packed = reinterpret_cast<const uint32*>(Dense.GetData());
+        const int32  Count  = Dense.Num();
 
         const __m256i IndexMask    = _mm256_set1_epi32((int32)FEntity::IndexMask);
         const __m256i TombstoneTag = _mm256_set1_epi32((int32)(FEntity::TombstoneVersion << FEntity::IndexBits));
         __m256i Highest = _mm256_setzero_si256();
 
-        size_t i = 0;
+        int32 i = 0;
         for (; i + 8 <= Count; i += 8)
         {
             const __m256i Handles     = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Packed + i));
@@ -110,11 +133,11 @@ namespace Lumina::ECS
         }
 
         const uintptr_t Address = reinterpret_cast<uintptr_t>(Payload);
-        size_t DenseIndex = Dense.size();
+        int32 DenseIndex = Dense.Num();
         if (bPaged)
         {
             const size_t PageBytes = static_cast<size_t>(PayloadPageMask + 1u) * ElementSize;
-            for (size_t Page = 0; Page < PayloadPages.size(); ++Page)
+            for (int32 Page = 0; Page < PayloadPages.Num(); ++Page)
             {
                 const uintptr_t Begin = reinterpret_cast<uintptr_t>(PayloadPages[Page]);
                 if (Begin != 0 && Address >= Begin && Address < Begin + PageBytes)
@@ -122,7 +145,7 @@ namespace Lumina::ECS
                     const size_t Offset = Address - Begin;
                     if (Offset % ElementSize == 0)
                     {
-                        DenseIndex = (Page << PayloadPageShift) + Offset / ElementSize;
+                        DenseIndex = (Page << PayloadPageShift) + static_cast<int32>(Offset / ElementSize);
                     }
                     break;
                 }
@@ -131,17 +154,17 @@ namespace Lumina::ECS
         else
         {
             const uintptr_t Begin = reinterpret_cast<uintptr_t>(PackedData);
-            if (Begin != 0 && Address >= Begin && Address < Begin + Dense.size() * ElementSize)
+            if (Begin != 0 && Address >= Begin && Address < Begin + Dense.Num() * ElementSize)
             {
                 const size_t Offset = Address - Begin;
                 if (Offset % ElementSize == 0)
                 {
-                    DenseIndex = Offset / ElementSize;
+                    DenseIndex = static_cast<int32>(Offset / ElementSize);
                 }
             }
         }
 
-        if (DenseIndex >= Dense.size() || Dense[DenseIndex].IsTombstone())
+        if (DenseIndex >= Dense.Num() || Dense[DenseIndex].IsTombstone())
         {
             return NullEntity;
         }
@@ -191,24 +214,24 @@ namespace Lumina::ECS
 
         PackedData = nullptr;
         PackedCapacity = 0;
-        PayloadPages.clear();
+        PayloadPages.Reset();
         ApplyLayout(NewInfo);
 
         // Allocated outright, since growing a packed block would relocate elements this payload does not hold yet.
-        if (ElementSize != 0 && !Dense.empty())
+        if (ElementSize != 0 && !Dense.IsEmpty())
         {
             if (bPaged)
             {
-                GrowPayloadTo(Dense.size());
+                GrowPayloadTo(Dense.Num());
             }
             else
             {
-                PackedCapacity = Dense.size() > MinPackedCapacity ? Dense.size() : MinPackedCapacity;
-                PackedData = static_cast<uint8*>(Memory::Malloc(PackedCapacity * ElementSize, PayloadAlignment(ElementAlignment)));
+                PackedCapacity = Math::Max(Dense.Num(), SparseSetInternal::MinPackedCapacity);
+                PackedData = static_cast<uint8*>(Memory::Malloc(static_cast<size_t>(PackedCapacity) * ElementSize, SparseSetInternal::PayloadAlignment(ElementAlignment)));
             }
         }
 
-        for (uint32 Index = 0; Index < static_cast<uint32>(Dense.size()); ++Index)
+        for (int32 Index = 0; Index < Dense.Num(); ++Index)
         {
             if (Dense[Index].IsTombstone())
             {
@@ -244,6 +267,60 @@ namespace Lumina::ECS
         }
 
         BumpLayoutEpoch();
+        BumpWriteEpoch();
+        if (bTrackChanges)
+        {
+            StampAllChanges(GetChangeTick());
+        }
+    }
+
+    void FSparseSet::TrackChanges()
+    {
+        if (bTrackChanges)
+        {
+            return;
+        }
+        bTrackChanges = true;
+        const uint32 Tick = GetChangeTick();
+        ChangeTicks.Reserve(Dense.Max());
+        ChangeTicks.Init(Tick, Dense.Num());
+        AddedTicks.Reserve(Dense.Max());
+        AddedTicks.Init(Tick, Dense.Num());
+        NoteStampTick(Tick);
+    }
+
+    void FSparseSet::StampChange(uint32 DenseIndex)
+    {
+        const uint32 Tick = GetChangeTick();
+        SetChangeTickAt(DenseIndex, Tick);
+        NoteStampTick(Tick);
+    }
+
+    void FSparseSet::StampEntity(FEntity Entity)
+    {
+        if (bTrackChanges && Contains(Entity))
+        {
+            StampChange(GetDenseIndex(Entity));
+        }
+    }
+
+    void FSparseSet::StampAllChanges(uint32 Tick)
+    {
+        NoteStampTick(Tick);
+        uint32* Ticks = ChangeTicks.GetData();
+        const int32 Count = ChangeTicks.Num();
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            std::atomic_ref<uint32>(Ticks[Index]).store(Tick, std::memory_order_relaxed);
+        }
+    }
+
+    void FSparseSet::ExpireEscapedPointers()
+    {
+        if (bTrackChanges && bPointersEscaped.load(std::memory_order_relaxed))
+        {
+            BumpLayoutEpoch();
+        }
     }
 
     void FSparseSet::FreePayload()
@@ -264,7 +341,7 @@ namespace Lumina::ECS
                 Memory::Free(Block);
             }
         }
-        PayloadPages.clear();
+        PayloadPages.Reset();
     }
 
     void FSparseSet::DestroyLiveElements()
@@ -274,7 +351,7 @@ namespace Lumina::ECS
             return;
         }
 
-        for (uint32 Index = 0; Index < static_cast<uint32>(Dense.size()); ++Index)
+        for (int32 Index = 0; Index < Dense.Num(); ++Index)
         {
             if (!Dense[Index].IsTombstone())
             {
@@ -286,9 +363,9 @@ namespace Lumina::ECS
     FEntity& FSparseSet::AssureSlot(uint32 EntityIndex)
     {
         const uint32 Page = EntityIndex / SparsePageSize;
-        if (Page >= SparsePages.size())
+        if (Page >= static_cast<uint32>(SparsePages.Num()))
         {
-            SparsePages.resize(Page + 1u, nullptr);
+            SparsePages.SetNum(Page + 1u, nullptr);
         }
 
         FEntity*& Slots = SparsePages[Page];
@@ -309,7 +386,7 @@ namespace Lumina::ECS
         *LayoutEpoch = Next == DeadLayoutEpoch ? 1u : Next;
     }
 
-    void FSparseSet::GrowPayloadTo(size_t ElementCount)
+    void FSparseSet::GrowPayloadTo(int32 ElementCount)
     {
         if (ElementSize == 0)
         {
@@ -318,12 +395,12 @@ namespace Lumina::ECS
 
         if (bPaged)
         {
-            const size_t PageSize = static_cast<size_t>(PayloadPageMask) + 1u;
-            const size_t NeededPages = (ElementCount + PageSize - 1u) / PageSize;
-            while (PayloadPages.size() < NeededPages)
+            const int32 PageSize = static_cast<int32>(PayloadPageMask) + 1;
+            const int32 NeededPages = (ElementCount + PageSize - 1) / PageSize;
+            while (PayloadPages.Num() < NeededPages)
             {
-                PayloadPages.push_back(static_cast<uint8*>(
-                    Memory::Malloc(static_cast<size_t>(ElementSize) * PageSize, PayloadAlignment(ElementAlignment))));
+                PayloadPages.Add(static_cast<uint8*>(
+                    Memory::Malloc(static_cast<size_t>(ElementSize) * PageSize, SparseSetInternal::PayloadAlignment(ElementAlignment))));
             }
             return;
         }
@@ -333,10 +410,10 @@ namespace Lumina::ECS
             return;
         }
 
-        size_t NewCapacity = PackedCapacity < MinPackedCapacity ? MinPackedCapacity : PackedCapacity;
+        int32 NewCapacity = Math::Max(PackedCapacity, SparseSetInternal::MinPackedCapacity);
         while (NewCapacity < ElementCount)
         {
-            NewCapacity *= 2u;
+            NewCapacity *= 2;
         }
 
         const uint8* PreviousBlock = PackedData;
@@ -345,14 +422,14 @@ namespace Lumina::ECS
         if (TypeInfo.bTriviallyRelocatable || TypeInfo.Relocate == nullptr)
         {
             PackedData = static_cast<uint8*>(
-                Memory::Realloc(PackedData, NewCapacity * ElementSize, PayloadAlignment(ElementAlignment)));
+                Memory::Realloc(PackedData, static_cast<size_t>(NewCapacity) * ElementSize, SparseSetInternal::PayloadAlignment(ElementAlignment)));
         }
         else
         {
-            uint8* NewBlock = static_cast<uint8*>(Memory::Malloc(NewCapacity * ElementSize, PayloadAlignment(ElementAlignment)));
+            uint8* NewBlock = static_cast<uint8*>(Memory::Malloc(static_cast<size_t>(NewCapacity) * ElementSize, SparseSetInternal::PayloadAlignment(ElementAlignment)));
 
-            // Dense.size() is the constructed count, which is why growth has to happen before a push.
-            for (size_t Index = 0; Index < Dense.size(); ++Index)
+            // Dense.Num() is the constructed count, which is why growth has to happen before a push.
+            for (int32 Index = 0; Index < Dense.Num(); ++Index)
             {
                 TypeInfo.Relocate(TypeInfo, NewBlock + Index * ElementSize, PackedData + Index * ElementSize);
             }
@@ -372,9 +449,14 @@ namespace Lumina::ECS
         PackedCapacity = NewCapacity;
     }
 
-    void FSparseSet::Reserve(size_t Count)
+    void FSparseSet::Reserve(int32 Count)
     {
-        Dense.reserve(Count);
+        Dense.Reserve(Count);
+        if (bTrackChanges)
+        {
+            ChangeTicks.Reserve(Count);
+            AddedTicks.Reserve(Count);
+        }
         GrowPayloadTo(Count);
     }
 
@@ -389,20 +471,143 @@ namespace Lumina::ECS
             DenseIndex = FreeDenseHead;
             FreeDenseHead = Dense[DenseIndex].GetIndex();
             Dense[DenseIndex] = Entity;
+            if (bTrackChanges)
+            {
+                const uint32 Tick = GetChangeTick();
+                ChangeTicks[static_cast<int32>(DenseIndex)] = Tick;
+                AddedTicks[static_cast<int32>(DenseIndex)] = Tick;
+            }
         }
         else
         {
-            DenseIndex = static_cast<uint32>(Dense.size());
+            DenseIndex = static_cast<uint32>(Dense.Num());
             ASSERT(DenseIndex <= MaxDenseIndex);
 
             // Grows before the push, so the relocation loop only ever sees constructed elements.
-            GrowPayloadTo(static_cast<size_t>(DenseIndex) + 1u);
-            Dense.push_back(Entity);
+            GrowPayloadTo(static_cast<int32>(DenseIndex) + 1);
+            Dense.Add(Entity);
+            if (bTrackChanges)
+            {
+                const uint32 Tick = GetChangeTick();
+                ChangeTicks.Add(Tick);
+                AddedTicks.Add(Tick);
+            }
         }
 
         Slot = FEntity(DenseIndex, Entity.GetVersion());
         ++LiveCount;
-        return DenseIndex;
+        return OwningGroup != nullptr ? JoinOwningGroup(Entity, DenseIndex) : DenseIndex;
+    }
+
+    void FSparseSet::RelocateElement(void* Target, void* Source) const
+    {
+        if (TypeInfo.Relocate != nullptr)
+        {
+            TypeInfo.Relocate(TypeInfo, Target, Source);
+        }
+        else
+        {
+            Memory::Memcpy(Target, Source, ElementSize);
+        }
+    }
+
+    void FSparseSet::SwapDenseSlots(uint32 A, uint32 B)
+    {
+        if (A == B)
+        {
+            return;
+        }
+
+        if (ElementSize != 0)
+        {
+            alignas(64) uint8 InlineTemp[256];
+            const bool bInline = ElementSize <= sizeof(InlineTemp) && ElementAlignment <= 64u;
+            void* Temp = bInline ? static_cast<void*>(InlineTemp)
+                : Memory::Malloc(ElementSize, SparseSetInternal::PayloadAlignment(ElementAlignment));
+            RelocateElement(Temp, GetRawAtDense(A));
+            RelocateElement(GetRawAtDense(A), GetRawAtDense(B));
+            RelocateElement(GetRawAtDense(B), Temp);
+            if (!bInline)
+            {
+                Memory::Free(Temp);
+            }
+        }
+
+        const FEntity EntityA = Dense[static_cast<int32>(A)];
+        const FEntity EntityB = Dense[static_cast<int32>(B)];
+        Dense[static_cast<int32>(A)] = EntityB;
+        Dense[static_cast<int32>(B)] = EntityA;
+        AssureSlot(EntityA.GetIndex()) = FEntity(B, EntityA.GetVersion());
+        AssureSlot(EntityB.GetIndex()) = FEntity(A, EntityB.GetVersion());
+        if (bTrackChanges)
+        {
+            ChangeTicks.Swap(static_cast<int32>(A), static_cast<int32>(B));
+            AddedTicks.Swap(static_cast<int32>(A), static_cast<int32>(B));
+        }
+        BumpLayoutEpoch();
+    }
+
+    void FSparseSet::MoveDenseSlot(uint32 From, uint32 To)
+    {
+        if (ElementSize != 0)
+        {
+            RelocateElement(GetRawAtDense(To), GetRawAtDense(From));
+        }
+
+        const FEntity Moved = Dense[static_cast<int32>(From)];
+        const FEntity Other = Dense[static_cast<int32>(To)];
+        Dense[static_cast<int32>(To)] = Moved;
+        Dense[static_cast<int32>(From)] = Other;
+        AssureSlot(Moved.GetIndex()) = FEntity(To, Moved.GetVersion());
+        AssureSlot(Other.GetIndex()) = FEntity(From, Other.GetVersion());
+        if (bTrackChanges)
+        {
+            ChangeTicks.Swap(static_cast<int32>(From), static_cast<int32>(To));
+            AddedTicks.Swap(static_cast<int32>(From), static_cast<int32>(To));
+        }
+        BumpLayoutEpoch();
+    }
+
+    uint32 FSparseSet::JoinOwningGroup(FEntity Entity, uint32 DenseIndex)
+    {
+        FOwningGroup& Group = *OwningGroup;
+        for (const FSparseSet* Set : Group.Owned)
+        {
+            if (Set != this && !Set->Contains(Entity))
+            {
+                return DenseIndex;
+            }
+        }
+
+        const uint32 Target = static_cast<uint32>(Group.Num++);
+        for (FSparseSet* Set : Group.Owned)
+        {
+            if (Set != this)
+            {
+                Set->SwapDenseSlots(Set->GetDenseIndex(Entity), Target);
+            }
+        }
+        if (Target == DenseIndex)
+        {
+            return DenseIndex;
+        }
+        MoveDenseSlot(Target, DenseIndex);
+        return Target;
+    }
+
+    void FSparseSet::LeaveOwningGroup(FEntity Entity)
+    {
+        FOwningGroup& Group = *OwningGroup;
+        if (static_cast<int32>(GetDenseIndex(Entity)) >= Group.Num)
+        {
+            return;
+        }
+
+        const uint32 Last = static_cast<uint32>(--Group.Num);
+        for (FSparseSet* Set : Group.Owned)
+        {
+            Set->SwapDenseSlots(Set->GetDenseIndex(Entity), Last);
+        }
     }
 
     uint32 FSparseSet::ReleaseSlot(FEntity Entity)
@@ -421,6 +626,11 @@ namespace Lumina::ECS
 
     bool FSparseSet::RemoveEntity(FEntity Entity)
     {
+        if (OwningGroup != nullptr && Contains(Entity))
+        {
+            LeaveOwningGroup(Entity);
+        }
+
         const uint32 DenseIndex = ReleaseSlot(Entity);
         if (DenseIndex == InvalidDenseIndex)
         {
@@ -428,6 +638,7 @@ namespace Lumina::ECS
         }
 
         BumpLayoutEpoch();
+        BumpWriteEpoch();
 
         // Only a stable pool leaves a hole. A paged pool that owes nobody a fixed address still swaps.
         if (bInPlaceDelete)
@@ -442,7 +653,7 @@ namespace Lumina::ECS
             return true;
         }
 
-        const uint32 LastIndex = static_cast<uint32>(Dense.size()) - 1u;
+        const uint32 LastIndex = static_cast<uint32>(Dense.Num()) - 1u;
 
         if (ElementSize != 0)
         {
@@ -472,9 +683,19 @@ namespace Lumina::ECS
             const FEntity Moved = Dense[LastIndex];
             Dense[DenseIndex] = Moved;
             AssureSlot(Moved.GetIndex()) = FEntity(DenseIndex, Moved.GetVersion());
+            if (bTrackChanges)
+            {
+                ChangeTicks[static_cast<int32>(DenseIndex)] = ChangeTicks[static_cast<int32>(LastIndex)];
+                AddedTicks[static_cast<int32>(DenseIndex)] = AddedTicks[static_cast<int32>(LastIndex)];
+            }
         }
 
-        Dense.pop_back();
+        Dense.Pop();
+        if (bTrackChanges)
+        {
+            ChangeTicks.Pop();
+            AddedTicks.Pop();
+        }
         return true;
     }
 
@@ -490,6 +711,7 @@ namespace Lumina::ECS
         {
             if (ElementSize == 0)
             {
+                MarkWritten(ExistingSlot.GetIndex());
                 return nullptr;
             }
 
@@ -499,6 +721,7 @@ namespace Lumina::ECS
                 TypeInfo.Destruct(TypeInfo, Target);
             }
             TypeInfo.DefaultConstruct(TypeInfo, Target);
+            MarkWritten(ExistingSlot.GetIndex());
             return Target;
         }
 
@@ -529,6 +752,7 @@ namespace Lumina::ECS
                 TypeInfo.Destruct(TypeInfo, Target);
             }
             TypeInfo.CopyConstruct(TypeInfo, Target, Source);
+            MarkWritten(ExistingSlot.GetIndex());
             return Target;
         }
 
@@ -541,6 +765,7 @@ namespace Lumina::ECS
     void FSparseSet::ClearAll()
     {
         BumpLayoutEpoch();
+        BumpWriteEpoch();
         DestroyLiveElements();
 
         for (FEntity* Page : SparsePages)
@@ -551,22 +776,30 @@ namespace Lumina::ECS
             }
         }
 
-        Dense.clear();
+        Dense.Reset();
+        ChangeTicks.Reset();
+        AddedTicks.Reset();
         LiveCount = 0;
         FreeDenseHead = InvalidDenseIndex;
+        if (OwningGroup != nullptr)
+        {
+            OwningGroup->Num = 0;
+        }
     }
 
     void FSparseSet::Compact()
     {
-        if (!bInPlaceDelete || !HasTombstones())
+        // A type that can neither be moved nor bit-copied keeps its tombstones, since closing the gaps would move it.
+        if (!bInPlaceDelete || !HasTombstones() || (!TypeInfo.bTriviallyRelocatable && TypeInfo.Relocate == nullptr))
         {
             return;
         }
 
         BumpLayoutEpoch();
+        BumpWriteEpoch();
 
-        uint32 Write = 0;
-        for (uint32 Read = 0; Read < static_cast<uint32>(Dense.size()); ++Read)
+        int32 Write = 0;
+        for (int32 Read = 0; Read < Dense.Num(); ++Read)
         {
             if (Dense[Read].IsTombstone())
             {
@@ -576,6 +809,11 @@ namespace Lumina::ECS
             if (Write != Read)
             {
                 Dense[Write] = Dense[Read];
+                if (bTrackChanges)
+                {
+                    ChangeTicks[Write] = ChangeTicks[Read];
+                    AddedTicks[Write] = AddedTicks[Read];
+                }
 
                 if (ElementSize != 0)
                 {
@@ -594,7 +832,12 @@ namespace Lumina::ECS
             ++Write;
         }
 
-        Dense.resize(Write);
+        Dense.SetNum(Write);
+        if (bTrackChanges)
+        {
+            ChangeTicks.SetNum(Write);
+            AddedTicks.SetNum(Write);
+        }
 
         for (FEntity* Page : SparsePages)
         {
@@ -604,12 +847,12 @@ namespace Lumina::ECS
             }
         }
 
-        for (uint32 Index = 0; Index < static_cast<uint32>(Dense.size()); ++Index)
+        for (int32 Index = 0; Index < Dense.Num(); ++Index)
         {
             AssureSlot(Dense[Index].GetIndex()) = FEntity(Index, Dense[Index].GetVersion());
         }
 
         FreeDenseHead = InvalidDenseIndex;
-        LiveCount = Dense.size();
+        LiveCount = Dense.Num();
     }
 }

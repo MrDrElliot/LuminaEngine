@@ -14,7 +14,7 @@
 
 namespace Lumina
 {
-    namespace Physics { class IPhysicsScene; }
+    namespace Physics { class IPhysicsQueries; }
 
     class CAnimationGraph;
     struct FSkeletonResource;
@@ -235,7 +235,7 @@ namespace Lumina
     // Per-entity scene state a GroundTrace queries; left invalid when there is no world, which traces flat.
     struct FAnimGraphSceneContext
     {
-        Physics::IPhysicsScene* Scene = nullptr;
+        Physics::IPhysicsQueries* Scene = nullptr;
 
         // Last update's skinning matrices, since this update's pose is what the graph is still building.
         const TVector<FMatrix4>* BoneTransforms = nullptr;

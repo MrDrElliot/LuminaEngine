@@ -9,25 +9,25 @@ namespace Lumina
     {
         if (Codepoint < 0x80)
         {
-            Out.push_back(static_cast<char>(Codepoint));
+            Out.AppendChar(static_cast<char>(Codepoint));
         }
         else if (Codepoint < 0x800)
         {
-            Out.push_back(static_cast<char>(0xC0 | (Codepoint >> 6)));
-            Out.push_back(static_cast<char>(0x80 | (Codepoint & 0x3F)));
+            Out.AppendChar(static_cast<char>(0xC0 | (Codepoint >> 6)));
+            Out.AppendChar(static_cast<char>(0x80 | (Codepoint & 0x3F)));
         }
         else if (Codepoint < 0x10000)
         {
-            Out.push_back(static_cast<char>(0xE0 | (Codepoint >> 12)));
-            Out.push_back(static_cast<char>(0x80 | ((Codepoint >> 6) & 0x3F)));
-            Out.push_back(static_cast<char>(0x80 | (Codepoint & 0x3F)));
+            Out.AppendChar(static_cast<char>(0xE0 | (Codepoint >> 12)));
+            Out.AppendChar(static_cast<char>(0x80 | ((Codepoint >> 6) & 0x3F)));
+            Out.AppendChar(static_cast<char>(0x80 | (Codepoint & 0x3F)));
         }
         else
         {
-            Out.push_back(static_cast<char>(0xF0 | (Codepoint >> 18)));
-            Out.push_back(static_cast<char>(0x80 | ((Codepoint >> 12) & 0x3F)));
-            Out.push_back(static_cast<char>(0x80 | ((Codepoint >> 6) & 0x3F)));
-            Out.push_back(static_cast<char>(0x80 | (Codepoint & 0x3F)));
+            Out.AppendChar(static_cast<char>(0xF0 | (Codepoint >> 18)));
+            Out.AppendChar(static_cast<char>(0x80 | ((Codepoint >> 12) & 0x3F)));
+            Out.AppendChar(static_cast<char>(0x80 | ((Codepoint >> 6) & 0x3F)));
+            Out.AppendChar(static_cast<char>(0x80 | (Codepoint & 0x3F)));
         }
     }
 
@@ -94,7 +94,7 @@ namespace Lumina
 
         bool ParseHexComponent(FStringView Text, uint32& OutValue)
         {
-            if (Text.empty() || Text.size() > 4)
+            if (Text.IsEmpty() || Text.Len() > 4)
             {
                 return false;
             }
@@ -112,7 +112,7 @@ namespace Lumina
             }
 
             // Every component width scales to eight bits, so 'rgb:f/f/f' and '#ffffff' agree.
-            switch (Text.size())
+            switch (Text.Len())
             {
             case 1:  OutValue = Value * 0x11; break;
             case 2:  OutValue = Value;        break;
@@ -125,9 +125,9 @@ namespace Lumina
 
         void TrimTrailingSpaces(FString& Text)
         {
-            while (!Text.empty() && Text.back() == ' ')
+            while (!Text.IsEmpty() && Text.Last() == ' ')
             {
-                Text.pop_back();
+                Text.LeftChopInline(1);
             }
         }
     }
@@ -208,18 +208,18 @@ namespace Lumina
     {
         uint32 Components[3] = {};
 
-        if (!Spec.empty() && Spec[0] == '#')
+        if (!Spec.IsEmpty() && Spec[0] == '#')
         {
-            const FStringView Digits = Spec.substr(1);
-            if (Digits.size() % 3 != 0 || Digits.empty() || Digits.size() > 12)
+            const FStringView Digits = Spec.Mid(1);
+            if (Digits.Len() % 3 != 0 || Digits.IsEmpty() || Digits.Len() > 12)
             {
                 return false;
             }
 
-            const size_t Width = Digits.size() / 3;
+            const size_t Width = Digits.Len() / 3;
             for (int32 Index = 0; Index < 3; ++Index)
             {
-                if (!ParseHexComponent(Digits.substr(static_cast<size_t>(Index) * Width, Width), Components[Index]))
+                if (!ParseHexComponent(Digits.Mid(IntCastChecked<int32>(static_cast<int64>(Index) * Width), IntCastChecked<int32>(Width)), Components[Index]))
                 {
                     return false;
                 }
@@ -229,16 +229,16 @@ namespace Lumina
             return true;
         }
 
-        if (Spec.size() > 4 && Spec.substr(0, 4) == "rgb:")
+        if (Spec.Len() > 4 && Spec.Mid(0, 4) == "rgb:")
         {
-            FStringView Rest = Spec.substr(4);
+            FStringView Rest = Spec.Mid(4);
 
             for (int32 Index = 0; Index < 3; ++Index)
             {
-                const size_t Slash = Rest.find('/');
-                const FStringView Part = (Index < 2) ? Rest.substr(0, Slash) : Rest;
+                const int32 Slash = Rest.Find('/');
+                const FStringView Part = (Index < 2) ? Rest.Mid(0, Slash) : Rest;
 
-                if (Index < 2 && Slash == FStringView::npos)
+                if (Index < 2 && Slash == Constants::kIndexNone)
                 {
                     return false;
                 }
@@ -250,7 +250,7 @@ namespace Lumina
 
                 if (Index < 2)
                 {
-                    Rest = Rest.substr(Slash + 1);
+                    Rest = Rest.Mid(Slash + 1);
                 }
             }
 
@@ -269,11 +269,11 @@ namespace Lumina
         Rows            = Math::Max(InRows, 1);
         ScrollbackLimit = Math::Max(InScrollbackLimit, 0);
 
-        Screen.clear();
-        Screen.resize(static_cast<size_t>(Rows));
+        Screen.Reset();
+        Screen.SetNum(static_cast<size_t>(Rows));
 
-        Scrollback.clear();
-        SavedScreen.clear();
+        Scrollback.Reset();
+        SavedScreen.Reset();
 
         Reset();
     }
@@ -308,7 +308,7 @@ namespace Lumina
         State = EParseState::Ground;
         bStringEscapePending = false;
 
-        Params.clear();
+        Params.Reset();
         CurrentParam    = 0;
         bParamPending   = false;
         bPrivateParams  = false;
@@ -317,18 +317,18 @@ namespace Lumina
         Utf8Accumulator = 0;
         Utf8Remaining   = 0;
 
-        OscBuffer.clear();
+        OscBuffer.Reset();
 
         for (FTerminalLine& Line : Screen)
         {
-            Line.Cells.clear();
+            Line.Cells.Reset();
             Line.bWrapped = false;
         }
     }
 
     void FTerminalScreen::ClearScrollback()
     {
-        Scrollback.clear();
+        Scrollback.Reset();
     }
 
     void FTerminalScreen::Resize(int32 InColumns, int32 InRows)
@@ -344,33 +344,33 @@ namespace Lumina
         Columns = InColumns;
 
         // Shrinking pushes the top of the screen into scrollback so the newest output stays put.
-        while (InRows < Rows && !Screen.empty())
+        while (InRows < Rows && !Screen.IsEmpty())
         {
             if (!bAlternateScreen)
             {
-                Scrollback.push_back(Move(Screen.front()));
-                while (static_cast<int32>(Scrollback.size()) > ScrollbackLimit)
+                Scrollback.PushLast(Move(Screen[0]));
+                while (Scrollback.Num() > ScrollbackLimit)
                 {
-                    Scrollback.pop_front();
+                    Scrollback.PopFirst();
                 }
             }
 
-            Screen.erase(Screen.begin());
+            Screen.RemoveAt(0);
             --Rows;
             --CursorRow;
         }
 
         while (InRows > Rows)
         {
-            if (!bAlternateScreen && !Scrollback.empty() && CursorRow < Rows)
+            if (!bAlternateScreen && !Scrollback.IsEmpty() && CursorRow < Rows)
             {
-                Screen.insert(Screen.begin(), Move(Scrollback.back()));
-                Scrollback.pop_back();
+                Screen.Insert(Move(Scrollback.Last()), 0);
+                Scrollback.PopLast();
                 ++CursorRow;
             }
             else
             {
-                Screen.push_back(FTerminalLine());
+                Screen.AddDefaulted();
             }
 
             ++Rows;
@@ -386,30 +386,30 @@ namespace Lumina
     {
         if (RowIndex >= 0)
         {
-            return RowIndex < static_cast<int32>(Screen.size()) ? Screen[static_cast<size_t>(RowIndex)] : BlankLine;
+            return RowIndex < Screen.Num() ? Screen[RowIndex] : BlankLine;
         }
 
-        const int32 Index = static_cast<int32>(Scrollback.size()) + RowIndex;
-        return (Index >= 0 && Index < static_cast<int32>(Scrollback.size()))
+        const int32 Index = Scrollback.Num() + RowIndex;
+        return (Index >= 0 && Index < Scrollback.Num())
             ? Scrollback[static_cast<size_t>(Index)]
             : BlankLine;
     }
 
     bool FTerminalScreen::ConsumePendingReply(FString& Out)
     {
-        if (PendingReply.empty())
+        if (PendingReply.IsEmpty())
         {
             return false;
         }
 
         Out = Move(PendingReply);
-        PendingReply.clear();
+        PendingReply.Reset();
         return true;
     }
 
     void FTerminalScreen::PushReply(const char* Text)
     {
-        PendingReply.append(Text);
+        PendingReply.Append(Text);
     }
 
     FTerminalCell FTerminalScreen::MakeBlankCell() const
@@ -425,29 +425,29 @@ namespace Lumina
     FTerminalLine& FTerminalScreen::LiveLine(int32 RowIndex)
     {
         RowIndex = Math::Clamp(RowIndex, 0, Rows - 1);
-        return Screen[static_cast<size_t>(RowIndex)];
+        return Screen[RowIndex];
     }
 
     void FTerminalScreen::EnsureLineWidth(FTerminalLine& Line, int32 Width) const
     {
-        if (static_cast<int32>(Line.Cells.size()) >= Width)
+        if (Line.Cells.Num() >= Width)
         {
             return;
         }
 
         FTerminalCell Blank;
         Blank.Codepoint = U' ';
-        Line.Cells.resize(static_cast<size_t>(Width), Blank);
+        Line.Cells.SetNum(static_cast<size_t>(Width), Blank);
     }
 
     int32 FTerminalScreen::ParamOr(int32 Index, int32 Fallback) const
     {
-        if (Index >= static_cast<int32>(Params.size()))
+        if (Index >= Params.Num())
         {
             return Fallback;
         }
 
-        const int32 Value = Params[static_cast<size_t>(Index)];
+        const int32 Value = Params[Index];
         return Value == 0 ? Fallback : Value;
     }
 
@@ -534,7 +534,7 @@ namespace Lumina
 
                 if (Byte == ';' || Byte == ':')
                 {
-                    Params.push_back(bParamPending ? CurrentParam : 0);
+                    Params.Add(bParamPending ? CurrentParam : 0);
                     CurrentParam  = 0;
                     bParamPending = false;
                     return;
@@ -557,7 +557,7 @@ namespace Lumina
                 {
                     if (bParamPending)
                     {
-                        Params.push_back(CurrentParam);
+                        Params.Add(CurrentParam);
                     }
                     HandleCsiFinal(Byte);
                     return;
@@ -610,9 +610,9 @@ namespace Lumina
                     return;
                 }
 
-                if (State == EParseState::OscString && OscBuffer.size() < 1024)
+                if (State == EParseState::OscString && OscBuffer.Len() < 1024)
                 {
-                    OscBuffer.push_back(static_cast<char>(Byte));
+                    OscBuffer.AppendChar(static_cast<char>(Byte));
                 }
                 return;
             }
@@ -641,7 +641,7 @@ namespace Lumina
         switch (Byte)
         {
         case '[':
-            Params.clear();
+            Params.Reset();
             CurrentParam    = 0;
             bParamPending   = false;
             bPrivateParams  = false;
@@ -650,7 +650,7 @@ namespace Lumina
             return;
 
         case ']':
-            OscBuffer.clear();
+            OscBuffer.Reset();
             bStringEscapePending = false;
             State = EParseState::OscString;
             return;
@@ -724,8 +724,8 @@ namespace Lumina
             SetCursor(ParamOr(1, 1) - 1, ParamOr(0, 1) - 1);
             break;
 
-        case 'J': EraseInDisplay(Params.empty() ? 0 : Params[0]); break;
-        case 'K': EraseInLine(Params.empty() ? 0 : Params[0]); break;
+        case 'J': EraseInDisplay(Params.IsEmpty() ? 0 : Params[0]); break;
+        case 'K': EraseInLine(Params.IsEmpty() ? 0 : Params[0]); break;
 
         case 'L': InsertLines(ParamOr(0, 1)); break;
         case 'M': DeleteLines(ParamOr(0, 1)); break;
@@ -745,7 +745,7 @@ namespace Lumina
         case 'r':
             {
                 const int32 Top    = ParamOr(0, 1) - 1;
-                const int32 Bottom = Params.size() >= 2 ? ParamOr(1, Rows) - 1 : Rows - 1;
+                const int32 Bottom = Params.Num() >= 2 ? ParamOr(1, Rows) - 1 : Rows - 1;
 
                 if (Top < Bottom)
                 {
@@ -767,13 +767,13 @@ namespace Lumina
 
         case 'n':
             {
-                if (!Params.empty() && Params[0] == 6)
+                if (!Params.IsEmpty() && Params[0] == 6)
                 {
                     char Report[32] = {};
                     snprintf(Report, sizeof(Report), "\x1b[%d;%dR", CursorRow + 1, CursorColumn + 1);
                     PushReply(Report);
                 }
-                else if (!Params.empty() && Params[0] == 5)
+                else if (!Params.IsEmpty() && Params[0] == 5)
                 {
                     PushReply("\x1b[0n");
                 }
@@ -788,7 +788,7 @@ namespace Lumina
         case 'q':
             if (CsiIntermediate == ' ')
             {
-                const int32 Style = Params.empty() ? 0 : Params[0];
+                const int32 Style = Params.IsEmpty() ? 0 : Params[0];
 
                 switch (Style)
                 {
@@ -850,13 +850,13 @@ namespace Lumina
 
     void FTerminalScreen::HandleSgr()
     {
-        if (Params.empty())
+        if (Params.IsEmpty())
         {
             Pen = FTerminalCell();
             return;
         }
 
-        for (size_t Index = 0; Index < Params.size(); ++Index)
+        for (int32 Index = 0; Index < Params.Num(); ++Index)
         {
             const int32 Code = Params[Index];
 
@@ -889,17 +889,17 @@ namespace Lumina
             {
                 uint32* Target = (Code == 38) ? &Pen.Foreground : &Pen.Background;
 
-                if (Index + 1 < Params.size() && Params[Index + 1] == 5)
+                if (Index + 1 < Params.Num() && Params[Index + 1] == 5)
                 {
-                    if (Index + 2 < Params.size())
+                    if (Index + 2 < Params.Num())
                     {
                         *Target = static_cast<uint32>(Math::Clamp(Params[Index + 2], 0, 255));
                     }
                     Index += 2;
                 }
-                else if (Index + 1 < Params.size() && Params[Index + 1] == 2)
+                else if (Index + 1 < Params.Num() && Params[Index + 1] == 2)
                 {
-                    if (Index + 4 < Params.size())
+                    if (Index + 4 < Params.Num())
                     {
                         *Target = EncodeTrueColor(
                             static_cast<uint32>(Math::Clamp(Params[Index + 2], 0, 255)),
@@ -917,14 +917,14 @@ namespace Lumina
         State = EParseState::Ground;
         bStringEscapePending = false;
 
-        const size_t Separator = OscBuffer.find(';');
+        const int32 Separator = OscBuffer.Find(';');
         const FStringView Whole(OscBuffer);
 
-        const FStringView CommandText = Whole.substr(0, Separator == FString::npos ? Whole.size() : Separator);
-        const FStringView Arguments   = Separator == FString::npos ? FStringView() : Whole.substr(Separator + 1);
+        const FStringView CommandText = Whole.Mid(0, Separator == Constants::kIndexNone ? Whole.Len() : Separator);
+        const FStringView Arguments   = Separator == Constants::kIndexNone ? FStringView() : Whole.Mid(Separator + 1);
 
         int32 Command = -1;
-        if (!CommandText.empty() && CommandText.size() <= 3)
+        if (!CommandText.IsEmpty() && CommandText.Len() <= 3)
         {
             Command = 0;
             for (char Character : CommandText)
@@ -941,36 +941,36 @@ namespace Lumina
         // Both the window title and the icon title land in the tab label.
         if (Command == 0 || Command == 1 || Command == 2)
         {
-            Title.assign(Arguments.data(), Arguments.size());
+            Title = FStringView(Arguments.GetData(), Arguments.Len());
         }
         else if (Command >= 0)
         {
             HandleOscColor(Command, Arguments);
         }
 
-        OscBuffer.clear();
+        OscBuffer.Reset();
     }
 
     void FTerminalScreen::HandleOscColor(int32 Command, FStringView Arguments)
     {
         const auto SplitNext = [](FStringView& Text) -> FStringView
         {
-            const size_t Separator = Text.find(';');
-            if (Separator == FStringView::npos)
+            const int32 Separator = Text.Find(';');
+            if (Separator == Constants::kIndexNone)
             {
                 const FStringView Whole = Text;
                 Text = FStringView();
                 return Whole;
             }
 
-            const FStringView Head = Text.substr(0, Separator);
-            Text = Text.substr(Separator + 1);
+            const FStringView Head = Text.Mid(0, Separator);
+            Text = Text.Mid(Separator + 1);
             return Head;
         };
 
         const auto ParseIndex = [](FStringView Text, int32& OutIndex) -> bool
         {
-            if (Text.empty() || Text.size() > 3)
+            if (Text.IsEmpty() || Text.Len() > 3)
             {
                 return false;
             }
@@ -994,7 +994,7 @@ namespace Lumina
         case 4:
             {
                 FStringView Rest = Arguments;
-                while (!Rest.empty())
+                while (!Rest.IsEmpty())
                 {
                     int32 Index = 0;
                     if (!ParseIndex(SplitNext(Rest), Index))
@@ -1015,14 +1015,14 @@ namespace Lumina
 
         case 104:
             {
-                if (Arguments.empty())
+                if (Arguments.IsEmpty())
                 {
                     ResetPalette();
                     return;
                 }
 
                 FStringView Rest = Arguments;
-                while (!Rest.empty())
+                while (!Rest.IsEmpty())
                 {
                     int32 Index = 0;
                     if (!ParseIndex(SplitNext(Rest), Index))
@@ -1074,7 +1074,7 @@ namespace Lumina
         FTerminalLine& Line = LiveLine(CursorRow);
         EnsureLineWidth(Line, CursorColumn + 1);
 
-        FTerminalCell& Cell = Line.Cells[static_cast<size_t>(CursorColumn)];
+        FTerminalCell& Cell = Line.Cells[CursorColumn];
         Cell.Codepoint  = Codepoint;
         Cell.Foreground = Pen.Foreground;
         Cell.Background = Pen.Background;
@@ -1151,15 +1151,15 @@ namespace Lumina
             // Only a full-height region on the primary screen contributes to history.
             if (!bAlternateScreen && ScrollTop == 0)
             {
-                Scrollback.push_back(Move(Screen[static_cast<size_t>(ScrollTop)]));
-                while (static_cast<int32>(Scrollback.size()) > ScrollbackLimit)
+                Scrollback.PushLast(Move(Screen[ScrollTop]));
+                while (Scrollback.Num() > ScrollbackLimit)
                 {
-                    Scrollback.pop_front();
+                    Scrollback.PopFirst();
                 }
             }
 
-            Screen.erase(Screen.begin() + ScrollTop);
-            Screen.insert(Screen.begin() + ScrollBottom, FTerminalLine());
+            Screen.RemoveAt(ScrollTop);
+            Screen.Insert(FTerminalLine(), ScrollBottom);
         }
     }
 
@@ -1169,8 +1169,8 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Screen.erase(Screen.begin() + ScrollBottom);
-            Screen.insert(Screen.begin() + ScrollTop, FTerminalLine());
+            Screen.RemoveAt(ScrollBottom);
+            Screen.Insert(FTerminalLine(), ScrollTop);
         }
     }
 
@@ -1178,7 +1178,7 @@ namespace Lumina
     {
         if (Mode == 3)
         {
-            Scrollback.clear();
+            Scrollback.Reset();
             return;
         }
 
@@ -1186,7 +1186,7 @@ namespace Lumina
         {
             for (FTerminalLine& Line : Screen)
             {
-                Line.Cells.clear();
+                Line.Cells.Reset();
                 Line.bWrapped = false;
             }
             return;
@@ -1197,8 +1197,8 @@ namespace Lumina
             EraseInLine(0);
             for (int32 Row = CursorRow + 1; Row < Rows; ++Row)
             {
-                Screen[static_cast<size_t>(Row)].Cells.clear();
-                Screen[static_cast<size_t>(Row)].bWrapped = false;
+                Screen[Row].Cells.Reset();
+                Screen[Row].bWrapped = false;
             }
             return;
         }
@@ -1206,8 +1206,8 @@ namespace Lumina
         EraseInLine(1);
         for (int32 Row = 0; Row < CursorRow; ++Row)
         {
-            Screen[static_cast<size_t>(Row)].Cells.clear();
-            Screen[static_cast<size_t>(Row)].bWrapped = false;
+            Screen[Row].Cells.Reset();
+            Screen[Row].bWrapped = false;
         }
     }
 
@@ -1217,9 +1217,9 @@ namespace Lumina
 
         if (Mode == 0)
         {
-            if (CursorColumn < static_cast<int32>(Line.Cells.size()))
+            if (CursorColumn < Line.Cells.Num())
             {
-                Line.Cells.resize(static_cast<size_t>(CursorColumn));
+                Line.Cells.SetNum(static_cast<size_t>(CursorColumn));
             }
 
             // A background set by the pen has to be painted rather than dropped.
@@ -1228,7 +1228,7 @@ namespace Lumina
                 EnsureLineWidth(Line, Columns);
                 for (int32 Column = CursorColumn; Column < Columns; ++Column)
                 {
-                    Line.Cells[static_cast<size_t>(Column)] = MakeBlankCell();
+                    Line.Cells[Column] = MakeBlankCell();
                 }
             }
 
@@ -1241,7 +1241,7 @@ namespace Lumina
         EnsureLineWidth(Line, Last + 1);
         for (int32 Column = 0; Column <= Last; ++Column)
         {
-            Line.Cells[static_cast<size_t>(Column)] = MakeBlankCell();
+            Line.Cells[Column] = MakeBlankCell();
         }
 
         if (Mode == 2)
@@ -1261,8 +1261,8 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Screen.erase(Screen.begin() + ScrollBottom);
-            Screen.insert(Screen.begin() + CursorRow, FTerminalLine());
+            Screen.RemoveAt(ScrollBottom);
+            Screen.Insert(FTerminalLine(), CursorRow);
         }
     }
 
@@ -1277,8 +1277,8 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Screen.erase(Screen.begin() + CursorRow);
-            Screen.insert(Screen.begin() + ScrollBottom, FTerminalLine());
+            Screen.RemoveAt(CursorRow);
+            Screen.Insert(FTerminalLine(), ScrollBottom);
         }
     }
 
@@ -1291,8 +1291,8 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Line.Cells.pop_back();
-            Line.Cells.insert(Line.Cells.begin() + CursorColumn, MakeBlankCell());
+            Line.Cells.Pop();
+            Line.Cells.Insert(MakeBlankCell(), CursorColumn);
         }
     }
 
@@ -1305,8 +1305,8 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Line.Cells.erase(Line.Cells.begin() + CursorColumn);
-            Line.Cells.push_back(MakeBlankCell());
+            Line.Cells.RemoveAt(CursorColumn);
+            Line.Cells.Add(MakeBlankCell());
         }
     }
 
@@ -1319,7 +1319,7 @@ namespace Lumina
 
         for (int32 Column = CursorColumn; Column < Last; ++Column)
         {
-            Line.Cells[static_cast<size_t>(Column)] = MakeBlankCell();
+            Line.Cells[Column] = MakeBlankCell();
         }
     }
 
@@ -1351,8 +1351,8 @@ namespace Lumina
         {
             SavedScreen = Move(Screen);
 
-            Screen.clear();
-            Screen.resize(static_cast<size_t>(Rows));
+            Screen.Reset();
+            Screen.SetNum(static_cast<size_t>(Rows));
 
             SavedCursorColumn = CursorColumn;
             SavedCursorRow    = CursorRow;
@@ -1362,10 +1362,10 @@ namespace Lumina
         else
         {
             Screen = Move(SavedScreen);
-            SavedScreen.clear();
+            SavedScreen.Reset();
 
             // A resize while the alternate screen was up leaves the saved one the wrong height.
-            Screen.resize(static_cast<size_t>(Rows));
+            Screen.SetNum(static_cast<size_t>(Rows));
 
             SetCursor(SavedCursorColumn, SavedCursorRow);
         }
@@ -1389,11 +1389,11 @@ namespace Lumina
             }
 
             TrimTrailingSpaces(LineText);
-            Out.append(LineText);
+            Out.Append(LineText);
 
             if (Row < LastRow && !Line.bWrapped)
             {
-                Out.push_back('\n');
+                Out.AppendChar('\n');
             }
         }
 
@@ -1418,7 +1418,7 @@ namespace Lumina
         for (int32 Row = StartRow; Row <= EndRow; ++Row)
         {
             const FTerminalLine& Line = GetLine(Row);
-            const int32 Width = static_cast<int32>(Line.Cells.size());
+            const int32 Width = Line.Cells.Num();
 
             const int32 First = (Row == StartRow) ? Math::Max(StartColumn, 0) : 0;
             const int32 Last  = (Row == EndRow) ? Math::Min(EndColumn, Width - 1) : Width - 1;
@@ -1426,15 +1426,15 @@ namespace Lumina
             FString LineText;
             for (int32 Column = First; Column <= Last; ++Column)
             {
-                TerminalAppendUtf8(LineText, Line.Cells[static_cast<size_t>(Column)].Codepoint);
+                TerminalAppendUtf8(LineText, Line.Cells[Column].Codepoint);
             }
 
             TrimTrailingSpaces(LineText);
-            Out.append(LineText);
+            Out.Append(LineText);
 
             if (Row < EndRow && !Line.bWrapped)
             {
-                Out.push_back('\n');
+                Out.AppendChar('\n');
             }
         }
 

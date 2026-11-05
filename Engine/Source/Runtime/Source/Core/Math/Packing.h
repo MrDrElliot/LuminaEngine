@@ -48,7 +48,7 @@ namespace Lumina::Math
 
         [[nodiscard]] constexpr float HalfToFloatConstant(uint16 H)
         {
-            const uint32 Sign = static_cast<uint32>(H & 0x8000u) << 16;
+            const uint32 Sign = (H & 0x8000u) << 16;
             uint32 Exp = (H >> 10) & 0x1Fu;
             uint32 Mant = H & 0x03FFu;
             uint32 Bits;

@@ -95,7 +95,7 @@ namespace Lumina::Physics
     {
         const Lumina::SDefaultWorldSettings& InitSettings = World->GetDefaultWorldSettings();
         MaxBodies = Math::Max(InitSettings.MaxPhysicsBodies, 1u);
-        ThreadBodyCommands.resize(Jobs::GetNumThreadSlots());
+        ThreadBodyCommands.SetNum(Jobs::GetNumThreadSlots());
 
         b3WorldDef Def = b3DefaultWorldDef();
         Def.workerCount = TaskBridge.GetWorkerCount();
@@ -123,8 +123,8 @@ namespace Lumina::Physics
         static TAtomic<uint64> NextSceneIdentity{ 1 };
         SceneIdentity = NextSceneIdentity.fetch_add(1, std::memory_order_relaxed);
 
-        BodyMaterials.resize(MaxBodies);
-        BodyHandles.reserve(MaxBodies);
+        BodyMaterials.SetNum(MaxBodies);
+        BodyHandles.Reserve(MaxBodies);
 
         ApplyWorldSettings(InitSettings);
 
@@ -175,19 +175,19 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::TrackOwnedHull(b3HullData* Hull)
     {
         FScopeLock Lock(OwnedGeometryMutex);
-        OwnedHulls.push_back(Hull);
+        OwnedHulls.Add(Hull);
     }
 
     void FBox3DPhysicsScene::TrackOwnedMesh(b3MeshData* Mesh)
     {
         FScopeLock Lock(OwnedGeometryMutex);
-        OwnedMeshes.push_back(Mesh);
+        OwnedMeshes.Add(Mesh);
     }
 
     void FBox3DPhysicsScene::TrackOwnedHeightField(b3HeightFieldData* Field)
     {
         FScopeLock Lock(OwnedGeometryMutex);
-        OwnedHeightFields.push_back(Field);
+        OwnedHeightFields.Add(Field);
     }
 
     void FBox3DPhysicsScene::DestroyGeometryCaches()
@@ -196,37 +196,37 @@ namespace Lumina::Physics
         {
             b3DestroyHull(Hull);
         }
-        HullCache.clear();
+        HullCache.Reset();
 
         for (auto& [Key, Box] : BoxHullCache)
         {
             Memory::Delete(Box);
         }
-        BoxHullCache.clear();
+        BoxHullCache.Reset();
 
         for (auto& [Key, Mesh] : MeshCache)
         {
             b3DestroyMesh(Mesh);
         }
-        MeshCache.clear();
+        MeshCache.Reset();
 
         for (b3HeightFieldData* Field : OwnedHeightFields)
         {
             b3DestroyHeightField(Field);
         }
-        OwnedHeightFields.clear();
+        OwnedHeightFields.Reset();
 
         for (b3HullData* Hull : OwnedHulls)
         {
             b3DestroyHull(Hull);
         }
-        OwnedHulls.clear();
+        OwnedHulls.Reset();
 
         for (b3MeshData* Mesh : OwnedMeshes)
         {
             b3DestroyMesh(Mesh);
         }
-        OwnedMeshes.clear();
+        OwnedMeshes.Reset();
     }
 
     bool FBox3DPhysicsScene::WorldSettingsChanged(const Lumina::SDefaultWorldSettings& Settings)
@@ -284,7 +284,7 @@ namespace Lumina::Physics
 
     b3BodyId FBox3DPhysicsScene::ResolveBody(uint32 BodyID) const
     {
-        if (BodyID >= BodyHandles.size())
+        if (BodyID >= static_cast<uint32>(BodyHandles.Num()))
         {
             return b3_nullBodyId;
         }
@@ -293,36 +293,36 @@ namespace Lumina::Physics
 
     uint32 FBox3DPhysicsScene::RegisterBody(b3BodyId BodyId)
     {
-        if (!FreeBodyHandles.empty())
+        if (!FreeBodyHandles.IsEmpty())
         {
-            const uint32 Handle = FreeBodyHandles.back();
-            FreeBodyHandles.pop_back();
+            const uint32 Handle = FreeBodyHandles.Last();
+            FreeBodyHandles.Pop();
             BodyHandles[Handle] = BodyId;
             ++BodyGenerations[Handle];
             return Handle;
         }
 
-        BodyHandles.push_back(BodyId);
-        BodyGenerations.push_back(1);
-        return (uint32)(BodyHandles.size() - 1);
+        BodyHandles.Add(BodyId);
+        BodyGenerations.Add(1);
+        return (uint32)(BodyHandles.Num() - 1);
     }
 
     void FBox3DPhysicsScene::UnregisterBody(uint32 BodyID)
     {
-        if (BodyID >= BodyHandles.size())
+        if (BodyID >= static_cast<uint32>(BodyHandles.Num()))
         {
             return;
         }
 
         BodyHandles[BodyID] = b3_nullBodyId;
-        FreeBodyHandles.push_back(BodyID);
+        FreeBodyHandles.Add(BodyID);
 
         // The handle can be reused this same frame, so it must not inherit the dead body's staging slot.
-        if (BodyID < BodyStagingSlot.size())
+        if (BodyID < static_cast<uint32>(BodyStagingSlot.Num()))
         {
             // Staged poses outlive a frame without a step, so the dead body's entry must stop drawing.
             const uint32 Slot = BodyStagingSlot[BodyID];
-            if (Slot < InterpStaging.Flags.size())
+            if (Slot < static_cast<uint32>(InterpStaging.Flags.Num()))
             {
                 InterpStaging.Flags[Slot] = EInterpFlag::Skip;
             }
@@ -346,12 +346,17 @@ namespace Lumina::Physics
 
     uint32 FBox3DPhysicsScene::GetBodyCount()
     {
-        return (uint32)(BodyHandles.size() - FreeBodyHandles.size());
+        return (uint32)(BodyHandles.Num() - FreeBodyHandles.Num());
     }
 
     uint32 FBox3DPhysicsScene::GetMaxBodyCount()
     {
         return MaxBodies;
+    }
+
+    uint32 FBox3DPhysicsScene::GetAwakeBodyCount()
+    {
+        return b3World_IsValid(WorldId) ? static_cast<uint32>(b3World_GetAwakeBodyCount(WorldId)) : 0u;
     }
 
     bool FBox3DPhysicsScene::IsBodyActive(ECS::FEntity Entity) const
@@ -504,9 +509,9 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::StoreBodyMaterial(uint32 BodyID, const FRigidBodyBuildResult& Build)
     {
-        if (BodyID >= BodyMaterials.size())
+        if (BodyID >= static_cast<uint32>(BodyMaterials.Num()))
         {
-            BodyMaterials.resize(BodyID + 1);
+            BodyMaterials.SetNum(BodyID + 1);
         }
 
         FBodyMaterialEntry& Entry = BodyMaterials[BodyID];
@@ -519,7 +524,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::ClearBodyMaterial(uint32 BodyID)
     {
-        if (BodyID < BodyMaterials.size())
+        if (BodyID < static_cast<uint32>(BodyMaterials.Num()))
         {
             BodyMaterials[BodyID] = FBodyMaterialEntry{};
         }

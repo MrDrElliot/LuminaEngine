@@ -14,7 +14,7 @@ namespace Lumina::RHI
         FPending Item;
         Item.Release    = Release;
         Item.Generation = ExtractGeneration;
-        Pending.push_back(Item);
+        Pending.Add(Item);
     }
 
     void FRenderReleaseQueue::BeginExtract()
@@ -26,7 +26,7 @@ namespace Lumina::RHI
     void FRenderReleaseQueue::EndRender()
     {
         static thread_local TVector<FRenderRelease> Ready;
-        Ready.clear();
+        Ready.Reset();
 
         {
             FScopeLock Lock(Mutex);
@@ -34,13 +34,13 @@ namespace Lumina::RHI
             // The extract that was just rendered is the one BeginExtract opened this frame.
             RenderedGeneration = ExtractGeneration;
 
-            for (size_t i = 0; i < Pending.size(); )
+            for (int32 i = 0; i < Pending.Num(); )
             {
                 if (Pending[i].Generation < RenderedGeneration)
                 {
-                    Ready.push_back(Pending[i].Release);
-                    Pending[i] = Pending.back();
-                    Pending.pop_back();
+                    Ready.Add(Pending[i].Release);
+                    Pending[i] = Pending.Last();
+                    Pending.Pop();
                 }
                 else
                 {
@@ -56,7 +56,7 @@ namespace Lumina::RHI
         }
 
         // Parked storage keeps its capacity, but the released records must not outlive this call.
-        Ready.clear();
+        Ready.Reset();
     }
 
     void FRenderReleaseQueue::FlushAll()
@@ -66,9 +66,9 @@ namespace Lumina::RHI
             FScopeLock Lock(Mutex);
             for (FPending& Item : Pending)
             {
-                Ready.push_back(Item.Release);
+                Ready.Add(Item.Release);
             }
-            Pending.clear();
+            Pending.Reset();
         }
 
         for (FRenderRelease& Item : Ready)
@@ -80,7 +80,7 @@ namespace Lumina::RHI
     uint32 FRenderReleaseQueue::NumPending() const
     {
         FScopeLock Lock(Mutex);
-        return (uint32)Pending.size();
+        return (uint32)Pending.Num();
     }
 
     void FRenderReleaseQueue::ReleaseNow(FRenderRelease& Item)

@@ -6,7 +6,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderCompiler.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
 
@@ -43,7 +43,7 @@ namespace Lumina
         FinishSettledJobs();
         LaunchJobs();
 
-        if (InFlight.empty() && AssetsNeedingSave > 0)
+        if (InFlight.IsEmpty() && AssetsNeedingSave > 0)
         {
             ImGuiX::Notifications::NotifyInfo("{0} particle asset(s) recompiled into the artifact cache. Save them once to drop the bytecode from their assets.", AssetsNeedingSave);
             AssetsNeedingSave = 0;
@@ -52,7 +52,7 @@ namespace Lumina
 
     void FParticleCompileScheduler::FinishSettledJobs()
     {
-        for (size_t i = 0; i < InFlight.size();)
+        for (int32 i = 0; i < InFlight.Num();)
         {
             const bool bSettled = Algo::AllOf(InFlight[i]->Emitters, [](const TUniquePtr<FParticleEmitterCompileJob>& Emitter)
             {
@@ -65,7 +65,7 @@ namespace Lumina
             }
 
             Finish(*InFlight[i]);
-            InFlight.erase(InFlight.begin() + i);
+            InFlight.RemoveAt(i);
         }
     }
 
@@ -75,7 +75,7 @@ namespace Lumina
         const uint32 Budget = Math::Max(1u, Jobs::GetNumWorkers() * 3u / 4u);
         FParticleCompileQueue& Queue = TryRender()->GetParticleCompileQueue();
 
-        while (InFlight.size() < Budget)
+        while (static_cast<uint32>(InFlight.Num()) < Budget)
         {
             TStrongObjectPtr<CParticleSystem> System = Queue.PopRecompile();
             if (!System.IsValid())
@@ -84,7 +84,7 @@ namespace Lumina
             }
 
             TUniquePtr<FJob> Job = MakeUnique<FJob>();
-            for (int32 Index = 0; Index < (int32)System->Emitters.size(); ++Index)
+            for (int32 Index = 0; Index < System->Emitters.Num(); ++Index)
             {
                 const CParticleEmitter* Emitter = System->Emitters[Index].Get();
                 if (Emitter == nullptr || !Emitter->NeedsShaderCompile())
@@ -95,29 +95,29 @@ namespace Lumina
                 // Without its saved stack the compile would author a starter one in its place.
                 if (ParticleOps::FindStack(System.Get(), Index) == nullptr)
                 {
-                    LOG_WARN("Particle emitter '{0}' in '{1}' has no saved module stack to recompile from", Emitter->EmitterName.c_str(), System->GetName().c_str());
+                    LOG_WARN("Particle emitter '{0}' in '{1}' has no saved module stack to recompile from", *Emitter->EmitterName, *System->GetName());
                     continue;
                 }
 
                 TUniquePtr<FParticleEmitterCompileJob> EmitterJob = MakeUnique<FParticleEmitterCompileJob>();
                 FParticleEmitterCompileOutput Output;
                 const uint64 CodeHashBefore = Emitter->CompiledCodeHash;
-                if (!ParticleOps::BeginCompileEmitter(System.Get(), Index, *EmitterJob, Output, ETaskPriority::Background))
+                if (!ParticleOps::BeginCompileEmitter(System.Get(), Index, *EmitterJob, Output, Jobs::EJobPriority::Background))
                 {
                     for (const FString& Error : Output.Errors)
                     {
-                        LOG_ERROR("Particle emitter '{0}' in '{1}' failed to recompile. {2}", Emitter->EmitterName.c_str(), System->GetName().c_str(), Error.c_str());
+                        LOG_ERROR("Particle emitter '{0}' in '{1}' failed to recompile. {2}", *Emitter->EmitterName, *System->GetName(), *Error);
                     }
                     continue;
                 }
-                Job->Emitters.push_back(Move(EmitterJob));
-                Job->CodeHashesBefore.push_back(CodeHashBefore);
+                Job->Emitters.Add(Move(EmitterJob));
+                Job->CodeHashesBefore.Add(CodeHashBefore);
             }
 
-            if (!Job->Emitters.empty())
+            if (!Job->Emitters.IsEmpty())
             {
                 Job->System = Move(System);
-                InFlight.push_back(Move(Job));
+                InFlight.Add(Move(Job));
             }
         }
     }
@@ -126,17 +126,17 @@ namespace Lumina
     {
         CParticleSystem* System = Job.System.Get();
         bool bFailed = false;
-        for (size_t i = 0; i < Job.Emitters.size(); ++i)
+        for (int32 i = 0; i < Job.Emitters.Num(); ++i)
         {
             FParticleEmitterCompileJob& EmitterJob = *Job.Emitters[i];
-            CParticleEmitter* Emitter = EmitterJob.EmitterIndex < (int32)System->Emitters.size() ? System->Emitters[EmitterJob.EmitterIndex].Get() : nullptr;
+            CParticleEmitter* Emitter = EmitterJob.EmitterIndex < System->Emitters.Num() ? System->Emitters[EmitterJob.EmitterIndex].Get() : nullptr;
 
             FParticleEmitterCompileOutput Output;
             if (!ParticleOps::FinishCompileEmitter(EmitterJob, Output))
             {
                 for (const FString& Error : Output.Errors)
                 {
-                    LOG_ERROR("Particle system '{0}' emitter {1} failed to recompile. {2}", System->GetName().c_str(), EmitterJob.EmitterIndex, Error.c_str());
+                    LOG_ERROR("Particle system '{0}' emitter {1} failed to recompile. {2}", *System->GetName(), EmitterJob.EmitterIndex, *Error);
                 }
                 bFailed = true;
                 continue;
@@ -153,7 +153,7 @@ namespace Lumina
 
         if (bFailed)
         {
-            ImGuiX::Notifications::NotifyError("Particle system '{0}' failed to recompile", System->GetName().c_str());
+            ImGuiX::Notifications::NotifyError("Particle system '{0}' failed to recompile", *System->GetName());
         }
     }
 }

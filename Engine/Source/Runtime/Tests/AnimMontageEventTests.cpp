@@ -17,9 +17,9 @@ namespace
         Montage->BlendInTime  = 0.1f;
         Montage->BlendOutTime = 0.2f;
 
-        SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
+        SAnimMontageSlotTrack& Track = Montage->SlotTracks.EmplaceGetRef();
         Track.SlotName = Slot;
-        Track.Segments.emplace_back().Animation = Clip;
+        Track.Segments.EmplaceGetRef().Animation = Clip;
         return Montage;
     }
 
@@ -45,19 +45,19 @@ TEST(AnimMontageEvents, PlayedThroughReportsStartBlendOutAndEndUninterrupted)
     FAnimMontagePlayer Player;
     Player.Play(Montage);
 
-    ASSERT_EQ(Player.Transitions.size(), 1u);
+    ASSERT_EQ(Player.Transitions.Num(), 1);
     ExpectTransition(Player.Transitions[0], Montage, EAnimMontageTransition::Started, false);
 
     Advance(Player, 0.7f);
-    EXPECT_EQ(Player.Transitions.size(), 1u);
+    EXPECT_EQ(Player.Transitions.Num(), 1);
 
     Advance(Player, 0.15f);
-    ASSERT_EQ(Player.Transitions.size(), 2u);
+    ASSERT_EQ(Player.Transitions.Num(), 2);
     ExpectTransition(Player.Transitions[1], Montage, EAnimMontageTransition::BlendingOut, false);
     EXPECT_GT(Player.GetWeight(Montage), 0.0f);
 
     Advance(Player, 0.5f);
-    ASSERT_EQ(Player.Transitions.size(), 3u);
+    ASSERT_EQ(Player.Transitions.Num(), 3);
     ExpectTransition(Player.Transitions[2], Montage, EAnimMontageTransition::Ended, false);
     EXPECT_FALSE(Player.HasActive());
 }
@@ -73,7 +73,7 @@ TEST(AnimMontageEvents, StopReportsInterruptedOnce)
     Player.Stop(Montage);
     Advance(Player, 0.5f);
 
-    ASSERT_EQ(Player.Transitions.size(), 3u);
+    ASSERT_EQ(Player.Transitions.Num(), 3);
     ExpectTransition(Player.Transitions[1], Montage, EAnimMontageTransition::BlendingOut, true);
     ExpectTransition(Player.Transitions[2], Montage, EAnimMontageTransition::Ended, true);
 }
@@ -87,16 +87,16 @@ TEST(AnimMontageEvents, MontageTakingTheSlotInterruptsTheOldOne)
     Player.Play(First);
     Player.Play(Other);
     Advance(Player, 0.2f);
-    Player.Transitions.clear();
+    Player.Transitions.Reset();
 
     Player.Play(Second);
 
-    ASSERT_EQ(Player.Transitions.size(), 2u);
+    ASSERT_EQ(Player.Transitions.Num(), 2);
     ExpectTransition(Player.Transitions[0], First, EAnimMontageTransition::BlendingOut, true);
     ExpectTransition(Player.Transitions[1], Second, EAnimMontageTransition::Started, false);
 
     Advance(Player, 0.3f);
-    ASSERT_EQ(Player.Transitions.size(), 3u);
+    ASSERT_EQ(Player.Transitions.Num(), 3);
     ExpectTransition(Player.Transitions[2], First, EAnimMontageTransition::Ended, true);
     EXPECT_TRUE(Player.IsPlaying(Other));
 }
@@ -106,10 +106,10 @@ TEST(AnimMontageEvents, ResetEndsActiveMontagesAsInterrupted)
     CAnimationMontage* Montage = MakeMontage("DefaultSlot", 1.0f);
     FAnimMontagePlayer Player;
     Player.Play(Montage);
-    Player.Transitions.clear();
+    Player.Transitions.Reset();
 
     Player.Reset();
 
-    ASSERT_EQ(Player.Transitions.size(), 1u);
+    ASSERT_EQ(Player.Transitions.Num(), 1);
     ExpectTransition(Player.Transitions[0], Montage, EAnimMontageTransition::Ended, true);
 }

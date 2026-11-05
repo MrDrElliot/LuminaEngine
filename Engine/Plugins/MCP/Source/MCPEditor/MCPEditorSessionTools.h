@@ -10,53 +10,104 @@
 namespace Lumina
 {
     REFLECT()
-    struct MCPEDITOR_API SUndoParams
+    enum class EEditorHistoryAction : uint8
+    {
+        Undo,
+        Redo,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorHistoryParams
     {
         GENERATED_BODY()
 
-        /** How many steps to take. Stops early when the stack runs out. */
+        PROPERTY()
+        EEditorHistoryAction Action = EEditorHistoryAction::Undo;
+
+        // How many steps to take. Stops early when the stack runs out.
         PROPERTY()
         int32 Steps = 1;
 
+        // Any open tab, such as a material or animation graph editor. Empty uses the scene target.
         PROPERTY()
         FString Tab;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SUndoResult
+    struct MCPEDITOR_API SEditorHistoryResult
     {
         GENERATED_BODY()
 
         PROPERTY()
         int32 Applied = 0;
 
-        /** Label of the step editor.undo would take next, or empty. */
+        // Label of the step Undo would take next, or empty.
         PROPERTY()
         FString NextUndo;
 
-        /** Label of the step editor.redo would take next, or empty. */
+        // Label of the step Redo would take next, or empty.
         PROPERTY()
         FString NextRedo;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPlayStateParams
+    enum class EEditorPlayAction : uint8
     {
-        GENERATED_BODY()
+        Start,
+        Stop,
+        Pause,
+        Resume,
+        State,
     };
 
     REFLECT()
-    struct MCPEDITOR_API SStartPlayParams
+    struct MCPEDITOR_API SEditorPlayParams
     {
         GENERATED_BODY()
 
-        // 0 keeps the current setting. Players past the first join player one as clients.
+        PROPERTY()
+        EEditorPlayAction Action = EEditorPlayAction::Start;
+
+        // Start only. 0 keeps the current setting. Players past the first join player one as clients.
         PROPERTY()
         int32 Players = 0;
 
-        // standalone, listen or dedicated. Empty keeps the current setting.
+        // Start only. standalone, listen or dedicated. Empty keeps the current setting.
         PROPERTY()
         FString NetMode;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SPlayState
+    {
+        GENERATED_BODY()
+
+        // True while a play or simulate session runs.
+        PROPERTY()
+        bool bPlaying = false;
+
+        PROPERTY()
+        bool bPaused = false;
+
+        // Path of the world the editor has open.
+        PROPERTY()
+        FString World;
+
+        // Detached to the editor's free camera with F8 while the game keeps running.
+        PROPERTY()
+        bool bEjected = false;
+
+        // False after Shift+F1 hands input back to the editor.
+        PROPERTY()
+        bool bGameInputFocused = false;
+
+        // Normal, Hidden or Captured.
+        PROPERTY()
+        FString MouseMode;
+
+        // The active viewport's input mode: Game, UI or GameAndUI.
+        PROPERTY()
+        FString InputMode;
     };
 
     REFLECT()
@@ -110,87 +161,272 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPauseParams
+    enum class EEditorTabsAction : uint8
     {
-        GENERATED_BODY()
-
-        /** True pauses the running session, false resumes it. */
-        PROPERTY()
-        bool bPaused = true;
+        List,
+        Focus,
+        Close,
+        Float,
+        Target,
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPlayState
+    struct MCPEDITOR_API SEditorTabsParams
     {
         GENERATED_BODY()
 
-        /** True while a play or simulate session runs. */
         PROPERTY()
-        bool bPlaying = false;
+        EEditorTabsAction Action = EEditorTabsAction::List;
+
+        // Tab id from List, or a unique part of its name. Target with an empty Tab restores the world editor.
+        PROPERTY()
+        FString Tab;
+
+        // Close only. Close even with unsaved changes, which are then lost.
+        PROPERTY()
+        bool bDiscardUnsaved = false;
+
+        // Float only. Screen position of the floating window's top-left corner.
+        PROPERTY()
+        int32 X = 100;
 
         PROPERTY()
-        bool bPaused = false;
+        int32 Y = 100;
 
-        /** Path of the world the editor has open. */
+        // Float only.
         PROPERTY()
-        FString World;
+        int32 Width = 800;
 
-        // Detached to the editor's free camera with F8 while the game keeps running.
         PROPERTY()
-        bool bEjected = false;
-
-        // False after Shift+F1 hands input back to the editor.
-        PROPERTY()
-        bool bGameInputFocused = false;
-
-        // The cursor the active window shows, Normal, Hidden or Captured.
-        PROPERTY()
-        FString MouseMode;
-
-        // The active viewport's input mode, Game, UI or GameAndUI.
-        PROPERTY()
-        FString InputMode;
+        int32 Height = 600;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SSendMouseParams
+    struct MCPEDITOR_API STabInfo
     {
         GENERATED_BODY()
 
-        // A pixel of the game view as editor.screenshot saves it, mapped onto the viewport wherever it is docked.
+        // Full window name, icon glyph included.
         PROPERTY()
-        float X = 0.0f;
+        FString Name;
+
+        // Short id to pass as Tab.
+        PROPERTY()
+        FString Id;
+
+        // GUID of the asset the tab edits, or empty for a panel such as the content browser.
+        PROPERTY()
+        FString AssetGuid;
 
         PROPERTY()
-        float Y = 0.0f;
+        bool bUnsaved = false;
 
-        /** Tap presses and releases across two frames; Press, Release or Move send only that part. */
+        PROPERTY()
+        bool bFocused = false;
+
+        // False for the world editor, which never closes.
+        PROPERTY()
+        bool bClosable = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorTabsResult
+    {
+        GENERATED_BODY()
+
+        // List only.
+        PROPERTY()
+        TVector<STabInfo> Tabs;
+
+        // True once Focus, Close, Float or Target was applied or queued.
+        PROPERTY()
+        bool bDone = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorOpenParams
+    {
+        GENERATED_BODY()
+
+        // Asset GUID or path to open in its editor tab. A world replaces what the world editor shows.
+        PROPERTY()
+        FString Asset;
+
+        // Virtual path of a text file with an editor of its own, such as an .rml or .rcss.
+        PROPERTY()
+        FString File;
+
+        // World path to travel the running game to, such as /Game/Content/Maps/Venezuela, with ?listen or ?port=N.
+        PROPERTY()
+        FString Level;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorOpenResult
+    {
+        GENERATED_BODY()
+
+        // Id of the tab now showing Asset or File.
+        PROPERTY()
+        FString Tab;
+
+        // The map Level is traveling to.
+        PROPERTY()
+        FString Map;
+    };
+
+    REFLECT()
+    enum class EEditorInputKind : uint8
+    {
+        Text,
+        Mouse,
+        Key,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorInputParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        EEditorInputKind Kind = EEditorInputKind::Text;
+
+        // Text only. Sent as character input, the way a keyboard layout delivers typed text to a focused field.
+        PROPERTY()
+        FString Text;
+
+        // Key only. EKey name such as I, Escape, F1 or Space.
+        PROPERTY()
+        EKey Key = EKey::Space;
+
+        // Tap presses and releases across two frames. Press or Release sends one half. Move is Mouse only.
         PROPERTY()
         FString Action = "Tap";
 
-        /** 0 is left, 1 is right, 2 is middle, matching EMouseKey. */
-        PROPERTY()
-        int32 Button = 0;
-
-        /** How long a Tap stays down, so a game polling button state sees at least one frame of it. */
-        PROPERTY()
-        int32 HoldMilliseconds = 40;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSendMouseResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bGameInputFocused = false;
-
-        /** Where the cursor was left, in viewport pixels. */
+        // Mouse only. A pixel of the game view as editor.screenshot saves it, wherever the viewport is docked.
         PROPERTY()
         float X = 0.0f;
 
         PROPERTY()
         float Y = 0.0f;
+
+        // Mouse only. 0 is left, 1 is right, 2 is middle.
+        PROPERTY()
+        int32 Button = 0;
+
+        // Key only.
+        PROPERTY()
+        bool bCtrl = false;
+
+        PROPERTY()
+        bool bShift = false;
+
+        PROPERTY()
+        bool bAlt = false;
+
+        // How long a Tap stays down so a polling game sees it. Zero uses 40 for Mouse and 100 for Key.
+        PROPERTY()
+        int32 HoldMilliseconds = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorInputResult
+    {
+        GENERATED_BODY()
+
+        // Whether the game viewport had input focus once the input went in.
+        PROPERTY()
+        bool bGameInputFocused = false;
+
+        // Mouse only. Where the cursor was left, in viewport pixels.
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
+    };
+
+    REFLECT()
+    enum class EEditorGraphAction : uint8
+    {
+        View,
+        Frame,
+        Arrange,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorGraphParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        EEditorGraphAction Action = EEditorGraphAction::View;
+
+        // Graph editor tab id from editor.tabs, or a unique part of its name.
+        PROPERTY()
+        FString Tab;
+
+        // Frame only. Node ids to frame and select. Empty frames every node.
+        PROPERTY()
+        TVector<int64> Nodes;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorGraphResult
+    {
+        GENERATED_BODY()
+
+        // Frame and Arrange: queued for the tab's next frame.
+        PROPERTY()
+        bool bDone = false;
+
+        // View only, as are the fields below. False until the canvas has been drawn once.
+        PROPERTY()
+        bool bDrawn = false;
+
+        PROPERTY()
+        float MinX = 0.0f;
+
+        PROPERTY()
+        float MinY = 0.0f;
+
+        PROPERTY()
+        float MaxX = 0.0f;
+
+        PROPERTY()
+        float MaxY = 0.0f;
+
+        PROPERTY()
+        float Zoom = 1.0f;
+
+        PROPERTY()
+        int32 NodeCount = 0;
+
+        PROPERTY()
+        TVector<int64> Offscreen;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SBrowseFolderParams
+    {
+        GENERATED_BODY()
+
+        // Content folder to show, such as /Game/Content/Items.
+        PROPERTY()
+        FString Folder;
+
+        // Typed into the search box. Empty clears it.
+        PROPERTY()
+        FString Search;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SBrowseFolderResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bDone = false;
     };
 
     REFLECT()
@@ -198,7 +434,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Seconds to wait for the reload to land before reporting back. Zero queues it and returns. */
+        // Seconds to wait for the reload to land. Zero queues it and returns.
         PROPERTY()
         float TimeoutSeconds = 30.0f;
     };
@@ -208,23 +444,22 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** True once a new generation is live; false when the wait ran out with the reload still queued. */
+        // False when the wait ran out with the reload still queued.
         PROPERTY()
         bool bReloaded = false;
 
-        /** Script generation before the request, so a caller can tell a reload from a no-op. */
         PROPERTY()
         int32 PreviousGeneration = 0;
 
-        /** Generation now live. It advances once per completed reload. */
+        // Advances once per completed reload.
         PROPERTY()
         int32 Generation = 0;
 
-        /** Collectible script contexts still loaded. One is healthy; more means an old one has not unloaded. */
+        // Collectible script contexts still loaded. More than one means an old one has not unloaded.
         PROPERTY()
         int32 AliveContexts = 0;
 
-        /** Entity script types the new generation registered, zero when compilation failed. */
+        // Entity script types the new generation registered, zero when compilation failed.
         PROPERTY()
         int32 LoadedTypes = 0;
     };
@@ -234,11 +469,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** FinalLDR writes a PNG of the tonemapped frame, SceneHDR a Radiance .hdr of scene color, and EditorUI a PNG of the whole editor window. */
+        // FinalLDR (tonemapped PNG), SceneHDR (Radiance .hdr) or EditorUI (PNG of the whole editor window).
         PROPERTY()
         FString Source = "FinalLDR";
 
-        /** Where to write it. Empty picks a timestamped name under Saved/Screenshots. */
+        // Empty picks a timestamped name under Saved/Screenshots.
         PROPERTY()
         FString OutputPath;
 
@@ -267,15 +502,15 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** How many of the newest lines to return. */
+        // How many of the newest lines to return.
         PROPERTY()
         int32 Count = 50;
 
-        /** Only lines containing this, case-insensitive. Empty keeps every line. */
+        // Only lines containing this, case-insensitive.
         PROPERTY()
         FString Contains;
 
-        /** Lowest level to include: Trace, Debug, Info, Warn, Error or Critical. */
+        // Trace, Debug, Info, Warn, Error or Critical.
         PROPERTY()
         FString MinLevel = "Info";
     };
@@ -303,11 +538,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Oldest first. */
+        // Oldest first.
         PROPERTY()
         TVector<SLogLine> Lines;
 
-        /** How many buffered lines the filter and Count left out. */
+        // How many buffered lines the filter and Count left out.
         PROPERTY()
         int32 Dropped = 0;
     };
@@ -317,7 +552,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** A console line: a command name, a variable name to read it, or "name value" to set it. */
+        // A command name, a variable name to read it, or "name value" to set it.
         PROPERTY()
         FString Line;
     };
@@ -327,227 +562,9 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** The variable's value after the call, or what ran. */
+        // The variable's value after the call, or "executed" for a command.
         PROPERTY()
         FString Output;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API STabInfo
-    {
-        GENERATED_BODY()
-
-        /** Full window name, icon glyph included. */
-        PROPERTY()
-        FString Name;
-
-        /** Short id to pass to editor.focus_tab and editor.close_tab. */
-        PROPERTY()
-        FString Id;
-
-        /** GUID of the asset the tab edits, or empty for a panel such as the content browser. */
-        PROPERTY()
-        FString AssetGuid;
-
-        PROPERTY()
-        bool bUnsaved = false;
-
-        PROPERTY()
-        bool bFocused = false;
-
-        /** False for the world editor, which never closes. */
-        PROPERTY()
-        bool bClosable = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SListTabsParams
-    {
-        GENERATED_BODY()
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SListTabsResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        TVector<STabInfo> Tabs;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SOpenAssetParams
-    {
-        GENERATED_BODY()
-
-        /** GUID of the asset to open, from assets.search. A world replaces what the world editor shows. */
-        PROPERTY()
-        FString Asset;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SOpenFileParams
-    {
-        GENERATED_BODY()
-
-        // Virtual path of a text file with an editor of its own, such as an .rml or .rcss.
-        PROPERTY()
-        FString Path;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SOpenAssetResult
-    {
-        GENERATED_BODY()
-
-        /** Id of the tab now showing it. */
-        PROPERTY()
-        FString Tab;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SBrowseFolderParams
-    {
-        GENERATED_BODY()
-
-        /** Content folder to show, such as /Game/Content/Items. */
-        PROPERTY()
-        FString Folder;
-
-        /** Typed into the search box, as a user filtering the folder would. Empty clears it. */
-        PROPERTY()
-        FString Search;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SBrowseFolderResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bDone = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API STabNameParams
-    {
-        GENERATED_BODY()
-
-        /** Tab id from editor.list_tabs, or a unique part of its name. */
-        PROPERTY()
-        FString Tab;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SCloseTabParams
-    {
-        GENERATED_BODY()
-
-        /** Tab id from editor.list_tabs, or a unique part of its name. */
-        PROPERTY()
-        FString Tab;
-
-        /** Close even when the tab has unsaved changes, which are then lost. */
-        PROPERTY()
-        bool bDiscardUnsaved = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API STabActionResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bDone = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SGraphFrameParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Tab;
-
-        PROPERTY()
-        TVector<int64> Nodes;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SGraphViewResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bDrawn = false;
-
-        PROPERTY()
-        float MinX = 0.0f;
-
-        PROPERTY()
-        float MinY = 0.0f;
-
-        PROPERTY()
-        float MaxX = 0.0f;
-
-        PROPERTY()
-        float MaxY = 0.0f;
-
-        PROPERTY()
-        float Zoom = 1.0f;
-
-        PROPERTY()
-        int32 NodeCount = 0;
-
-        PROPERTY()
-        TVector<int64> Offscreen;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSendKeyParams
-    {
-        GENERATED_BODY()
-
-        /** Key to send, by EKey name such as I, Escape, F1 or Space. */
-        PROPERTY()
-        EKey Key = EKey::Space;
-
-        /** Tap presses and releases across two frames; Press or Release sends only that half. */
-        PROPERTY()
-        FString Action = "Tap";
-
-        PROPERTY()
-        bool bCtrl = false;
-
-        PROPERTY()
-        bool bShift = false;
-
-        PROPERTY()
-        bool bAlt = false;
-
-        /** How long a Tap stays down, so a game polling key state sees at least one frame of it. */
-        PROPERTY()
-        int32 HoldMilliseconds = 100;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSendTextParams
-    {
-        GENERATED_BODY()
-
-        // Sent as character input, the way a keyboard layout delivers typed text to a focused field.
-        PROPERTY()
-        FString Text;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSendKeyResult
-    {
-        GENERATED_BODY()
-
-        /** Whether the game viewport had input focus once the key went in. */
-        PROPERTY()
-        bool bGameInputFocused = false;
     };
 
     REFLECT()
@@ -555,7 +572,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Query, Resize, Move, Minimize, Restore or Maximize, applied to the editor's main window.
+        // Query, Resize, Move, Minimize, Restore or Maximize.
         PROPERTY()
         FString Action = "Query";
 
@@ -598,41 +615,8 @@ namespace Lumina
         bool bMaximized = false;
     };
 
-    REFLECT()
-    struct MCPEDITOR_API SFloatTabParams
-    {
-        GENERATED_BODY()
-
-        // Tab id from editor.list_tabs, or a unique part of its name.
-        PROPERTY()
-        FString Tab;
-
-        // Screen position of the floating window's top-left corner.
-        PROPERTY()
-        int32 X = 100;
-
-        PROPERTY()
-        int32 Y = 100;
-
-        PROPERTY()
-        int32 Width = 800;
-
-        PROPERTY()
-        int32 Height = 600;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SFloatTabResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bQueued = false;
-    };
-
     namespace MCP
     {
-        // Undo, play control, tabs and observability: what an agent needs to see and steer the editor session.
         void RegisterEditorSessionTools(FStringView Owner);
         void UnregisterEditorSessionTools();
     }

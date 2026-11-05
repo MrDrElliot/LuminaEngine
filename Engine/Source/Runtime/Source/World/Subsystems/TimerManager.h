@@ -1,15 +1,14 @@
 #pragma once
 
+#include "World/Entity/Systems/SystemResources.h"
 #include "World/ECS/Registry.h"
 
-
 #include "Containers/Function.h"
+#include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 
 namespace Lumina
 {
-    namespace ECS { class FCommandBus; }
-
     // Opaque handle from FTimerManager::SetTimer; safe across frames. The underlying ECS::FEntity is
     // generational, so a stale handle reports invalid via IsTimerActive even after the slot is recycled.
     struct FTimerHandle
@@ -24,7 +23,7 @@ namespace Lumina
 
     // Per-world timer manager: one-shot + looping callbacks against the world's delta time, advancing
     // only while unpaused. Exposed to scripts as the "Timer" global (Delay/SetTimer/ClearTimer/Wait/...).
-    class RUNTIME_API FTimerManager
+    class RUNTIME_API FTimerManager : public ECS::FResource
     {
     public:
 
@@ -49,14 +48,17 @@ namespace Lumina
 
         void SetTimerPaused(FTimerHandle Handle, bool bPause);
 
-        // With a bus, due timers fire at its next flush instead of inside the tick, so the tick itself shares the frame.
-        void Tick(float DeltaTime, ECS::FCommandBus* Bus = nullptr);
+        // Counts down without running a callback, so it is safe beside other systems. Due timers wait for FireDue.
+        void Tick(float DeltaTime);
+
+        // Main thread. Runs the timers the last Tick found due, then re-arms or destroys each.
+        void FireDue();
+
+        NODISCARD bool HasDue() const { return !DueTimers.IsEmpty(); }
 
     private:
 
-        // Runs a due timer exactly as the tick used to, then re-arms or destroys it.
         void FireTimer(ECS::FEntity Entity);
-
 
         struct FTimer
         {
@@ -72,6 +74,6 @@ namespace Lumina
         ECS::FEntity CreateTimer(float Rate, bool bLoop, float FirstDelay, ECS::FEntity Owner, FTimerCallback NativeCallback);
 
         mutable ECS::FRegistry  Registry;
-        bool                    bTicking = false;
+        TVector<ECS::FEntity>   DueTimers;
     };
 }

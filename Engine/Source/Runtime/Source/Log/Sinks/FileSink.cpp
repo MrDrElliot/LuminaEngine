@@ -19,9 +19,9 @@ namespace Lumina
                 return BasePath;
             }
 
-            const size_t Dot = BasePath.find_last_of('.');
-            const FString Stem      = Dot == FString::npos ? BasePath : BasePath.substr(0, Dot);
-            const FString Extension = Dot == FString::npos ? FString(".log") : BasePath.substr(Dot);
+            const int32 Dot = BasePath.FindLastOf('.');
+            const FString Stem      = Dot == Constants::kIndexNone ? BasePath : BasePath.Mid(0, Dot);
+            const FString Extension = Dot == Constants::kIndexNone ? FString(".log") : BasePath.Mid(Dot);
 
             FString Result = Stem;
             Result += '.';
@@ -61,9 +61,9 @@ namespace Lumina
 
             if (Index == MaxFiles)
             {
-                std::remove(Target.c_str());
+                std::remove(*Target);
             }
-            std::rename(Source.c_str(), Target.c_str());
+            std::rename(*Source, *Target);
         }
     }
 
@@ -72,7 +72,7 @@ namespace Lumina
         // The Logs folder is ours to make; fopen won't create the directory.
         Filesystem::MakeParentDirectoryTree(BasePath);
 
-        Handle = std::fopen(BasePath.c_str(), Mode);
+        Handle = std::fopen(*BasePath, Mode);
         if (Handle != nullptr)
         {
             std::setvbuf(Handle, nullptr, _IOFBF, 64 * 1024);
@@ -95,7 +95,7 @@ namespace Lumina
 
     void FFileSink::Retarget(const FString& NewBasePath)
     {
-        if (NewBasePath.empty() || NewBasePath == BasePath)
+        if (NewBasePath.IsEmpty() || NewBasePath == BasePath)
         {
             return;
         }
@@ -116,7 +116,7 @@ namespace Lumina
         RotateExisting();
 
         // Carry the boot lines across. rename fails across volumes, so fall back to a copy.
-        if (std::rename(OldPath.c_str(), BasePath.c_str()) != 0)
+        if (std::rename(*OldPath, *BasePath) != 0)
         {
             Filesystem::Copy(OldPath, BasePath, true);
             Filesystem::RemoveFile(OldPath);
@@ -138,7 +138,7 @@ namespace Lumina
         Batch.AppendChar('[');
         Logging::AppendDateTime(Batch, *Record.Timestamp);
         Batch.AppendLiteral("] [");
-        Batch.Append(Descriptor.DisplayName.data(), static_cast<uint32>(Descriptor.DisplayName.size()));
+        Batch.Append(Descriptor.DisplayName.GetData(), static_cast<uint32>(Descriptor.DisplayName.Len()));
         Batch.AppendLiteral("] [");
         Batch.AppendUInt(Record.ThreadId);
         Batch.AppendLiteral("] ");

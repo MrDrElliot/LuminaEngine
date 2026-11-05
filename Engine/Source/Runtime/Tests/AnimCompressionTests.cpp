@@ -28,10 +28,10 @@ namespace
         FAnimationChannel Channel;
         Channel.TargetBone = Bone;
         Channel.TargetPath = Path;
-        Channel.Timestamps.reserve(NumKeys);
+        Channel.Timestamps.Reserve(NumKeys);
         for (uint32 i = 0; i < NumKeys; ++i)
         {
-            Channel.Timestamps.push_back(Duration * (float)i / (float)(NumKeys - 1));
+            Channel.Timestamps.Add(Duration * (float)i / (float)(NumKeys - 1));
         }
         return Channel;
     }
@@ -42,9 +42,9 @@ namespace
         for (uint32 i = 0; i < NumKeys; ++i)
         {
             const float Angle = SweepRadians * (float)i / (float)(NumKeys - 1);
-            Channel.Rotations.push_back(FQuat(FVector3(Angle, Angle * 0.5f, -Angle * 0.25f)));
+            Channel.Rotations.Emplace(FVector3(Angle, Angle * 0.5f, -Angle * 0.25f));
         }
-        Resource.Channels.push_back(Channel);
+        Resource.Channels.Add(Channel);
     }
 
     void AddTranslation(FAnimationResource& Resource, const FName& Bone, float Duration, uint32 NumKeys, const FVector3& Travel)
@@ -52,16 +52,16 @@ namespace
         FAnimationChannel Channel = MakeChannel(Bone, FAnimationChannel::ETargetPath::Translation, Duration, NumKeys);
         for (uint32 i = 0; i < NumKeys; ++i)
         {
-            Channel.Translations.push_back(Travel * ((float)i / (float)(NumKeys - 1)));
+            Channel.Translations.Add(Travel * ((float)i / (float)(NumKeys - 1)));
         }
-        Resource.Channels.push_back(Channel);
+        Resource.Channels.Add(Channel);
     }
 
     void AddConstantTranslation(FAnimationResource& Resource, const FName& Bone, float Duration, uint32 NumKeys, const FVector3& Value)
     {
         FAnimationChannel Channel = MakeChannel(Bone, FAnimationChannel::ETargetPath::Translation, Duration, NumKeys);
-        Channel.Translations.assign(NumKeys, Value);
-        Resource.Channels.push_back(Channel);
+        Channel.Translations.Init(Value, NumKeys);
+        Resource.Channels.Add(Channel);
     }
 
     void AddScale(FAnimationResource& Resource, const FName& Bone, float Duration, uint32 NumKeys, float From, float To)
@@ -70,9 +70,9 @@ namespace
         for (uint32 i = 0; i < NumKeys; ++i)
         {
             const float Value = Math::Mix(From, To, (float)i / (float)(NumKeys - 1));
-            Channel.Scales.push_back(FVector3(Value, Value, Value));
+            Channel.Scales.Emplace(Value, Value, Value);
         }
-        Resource.Channels.push_back(Channel);
+        Resource.Channels.Add(Channel);
     }
 
     const FCompressedAnimBone* FindBone(const FCompressedAnimData& Data, const FName& Name)
@@ -158,8 +158,8 @@ TEST(AnimCompression, CollapsesUnmovingTracks)
     EXPECT_EQ(Bone->Rotation.Format, EAnimTrackFormat::Quantized);
 
     // Only the rotation should own frame data, 31 frames of four lanes.
-    EXPECT_EQ(Resource.Compressed.QuantizedData.size(), 31u * 4u);
-    EXPECT_TRUE(Resource.Compressed.RawData.empty());
+    EXPECT_EQ(Resource.Compressed.QuantizedData.Num(), 31 * 4);
+    EXPECT_TRUE(Resource.Compressed.RawData.IsEmpty());
 }
 
 TEST(AnimCompression, RootTranslationKeepsFullPrecision)
@@ -205,16 +205,16 @@ TEST(AnimCompression, SingleKeyChannelsBecomeConstant)
     FAnimationChannel Channel;
     Channel.TargetBone = FName("Spine");
     Channel.TargetPath = FAnimationChannel::ETargetPath::Rotation;
-    Channel.Timestamps.push_back(0.0f);
-    Channel.Rotations.push_back(FQuat(FVector3(Math::Radians(20.0f), 0.0f, 0.0f)));
-    Resource.Channels.push_back(Channel);
+    Channel.Timestamps.Add(0.0f);
+    Channel.Rotations.Emplace(FVector3(Math::Radians(20.0f), 0.0f, 0.0f));
+    Resource.Channels.Add(Channel);
 
     AnimCompression::Build(Resource);
 
     const FCompressedAnimBone* Bone = FindBone(Resource.Compressed, FName("Spine"));
     ASSERT_NE(Bone, nullptr);
     EXPECT_EQ(Bone->Rotation.Format, EAnimTrackFormat::Constant);
-    EXPECT_TRUE(Resource.Compressed.QuantizedData.empty());
+    EXPECT_TRUE(Resource.Compressed.QuantizedData.IsEmpty());
 }
 
 // Sparse authoring resamples to a rate matching its own key spacing, so the keys still land on frames.
@@ -258,9 +258,9 @@ namespace
             Bone.InvBindMatrix  = FMatrix4::Identity();
             Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.0f, 0.25f, 0.0f), FQuat::Identity(), FVector3(1.0f));
 
-            Skeleton.BoneNameToIndex[Bone.Name] = (int32)Skeleton.Bones.size();
-            Parent = (int32)Skeleton.Bones.size();
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.BoneNameToIndex[Bone.Name] = Skeleton.Bones.Num();
+            Parent = Skeleton.Bones.Num();
+            Skeleton.Bones.Add(Bone);
         }
 
         Skeleton.BuildBindPoseCache();
@@ -315,7 +315,7 @@ TEST(AnimCompressionSampler, LocalPoseMatchesSourceKeys)
     CAnimation* Clip = MakeAnimatedClip();
     const FAnimationResource& Resource = *Clip->GetAnimationResource();
     ASSERT_TRUE(Resource.Compressed.IsValid());
-    ASSERT_FALSE(Resource.Channels.empty());
+    ASSERT_FALSE(Resource.Channels.IsEmpty());
 
     for (uint32 Step = 0; Step <= 120; ++Step)
     {
@@ -439,7 +439,7 @@ TEST(AnimCompressionSampler, SkinningMatricesMatchPoseChain)
             Expected[b] = Parent != Constants::kIndexNone ? Expected[Parent] * Local : Local;
         }
 
-        ASSERT_EQ(Skinning.size(), Expected.size());
+        ASSERT_EQ(Skinning.Num(), Expected.Num());
         for (int32 b = 0; b < Skeleton.GetNumBones(); ++b)
         {
             const FMatrix4 Reference = Expected[b] * Skeleton.GetBone(b).InvBindMatrix;
@@ -484,10 +484,10 @@ TEST(AnimCompressionSerialization, CurrentVersionDropsChannels)
     FAnimationResource Loaded;
     ReadResource(Bytes, Loaded, ELuminaEngineVersion::AUTOMATIC_VERSION);
 
-    EXPECT_TRUE(Loaded.Channels.empty());
+    EXPECT_TRUE(Loaded.Channels.IsEmpty());
     ASSERT_TRUE(Loaded.Compressed.IsValid());
     EXPECT_EQ(Loaded.Compressed.NumFrames, Source.Compressed.NumFrames);
-    EXPECT_EQ(Loaded.Compressed.Bones.size(), Source.Compressed.Bones.size());
+    EXPECT_EQ(Loaded.Compressed.Bones.Num(), Source.Compressed.Bones.Num());
     EXPECT_EQ(Loaded.Compressed.QuantizedData, Source.Compressed.QuantizedData);
     EXPECT_EQ(Loaded.Compressed.RawData, Source.Compressed.RawData);
 }
@@ -505,7 +505,7 @@ TEST(AnimCompressionSerialization, PreCutoverFileStillReadsAndUpgrades)
     FAnimationResource Loaded;
     ReadResource(Bytes, Loaded, ELuminaEngineVersion::ANIM_CURVES);
 
-    ASSERT_EQ(Loaded.Channels.size(), Source.Channels.size());
+    ASSERT_EQ(Loaded.Channels.Num(), Source.Channels.Num());
     EXPECT_FALSE(Loaded.Compressed.IsValid());
 
     AnimCompression::Build(Loaded);
@@ -563,7 +563,7 @@ TEST(AnimCompressionSampler, ConstantOverlayMatchesPerTrackDecodeBitForBit)
         Bone.InvBindMatrix  = FMatrix4::Identity();
         Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.01f * (float)i, 0.25f, -0.02f), FQuat(FVector3(0.03f * (float)i, 0.1f, 0.0f)), FVector3(1.0f + 0.01f * (float)(i % 5)));
         Skeleton.BoneNameToIndex[Bone.Name] = i;
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
     }
     Skeleton.BuildBindPoseCache();
 

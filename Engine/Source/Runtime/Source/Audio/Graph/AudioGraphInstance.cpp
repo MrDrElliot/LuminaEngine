@@ -56,8 +56,8 @@ namespace Lumina
 
         Arena.Initialize(Program.SlotCounts, kAudioGraphBlockFrames);
 
-        Operators.clear();
-        Operators.reserve(Program.Nodes.size());
+        Operators.Reset();
+        Operators.Reserve(Program.Nodes.Num());
 
         for (const FAudioGraphNodeInstance& Node : Program.Nodes)
         {
@@ -70,12 +70,12 @@ namespace Lumina
             TUniquePtr<IAudioGraphOperator> Operator = AudioGraph::CreateOperator(Params);
             if (!Operator)
             {
-                LOG_ERROR("AudioGraph: failed to build operator '{}'", Node.OperatorName.c_str());
-                Operators.clear();
+                LOG_ERROR("AudioGraph: failed to build operator '{}'", *Node.OperatorName);
+                Operators.Reset();
                 return false;
             }
 
-            Operators.push_back(Move(Operator));
+            Operators.Add(Move(Operator));
         }
 
         ParamQueue.Initialize(kParamQueueCapacity);
@@ -106,7 +106,7 @@ namespace Lumina
             case EAudioGraphType::Wave:
                 {
                     const FAudioGraphWaveResource* Resource = nullptr;
-                    if (Init.WaveIndex >= 0 && (size_t)Init.WaveIndex < Waves.size() && Waves[Init.WaveIndex])
+                    if (Init.WaveIndex >= 0 && (size_t)Init.WaveIndex < static_cast<size_t>(Waves.Num()) && Waves[Init.WaveIndex])
                     {
                         Resource = Waves[Init.WaveIndex].get();
                     }
@@ -191,7 +191,7 @@ namespace Lumina
         PublishedPeaks[0].store(PeakLeft, Atomic::MemoryOrderRelaxed);
         PublishedPeaks[1].store(PeakRight, Atomic::MemoryOrderRelaxed);
 
-        const uint32 Count = Math::Min((uint32)OutputDecls.size(), MaxPublishedOutputs);
+        const uint32 Count = Math::Min((uint32)OutputDecls.Num(), MaxPublishedOutputs);
 
         for (uint32 Index = 0; Index < Count; ++Index)
         {
@@ -393,7 +393,7 @@ namespace Lumina
 
     float FAudioGraphInstance::GetFloatOutput(const FName& Name) const
     {
-        const uint32 Count = Math::Min((uint32)OutputDecls.size(), MaxPublishedOutputs);
+        const uint32 Count = Math::Min((uint32)OutputDecls.Num(), MaxPublishedOutputs);
 
         for (uint32 Index = 0; Index < Count; ++Index)
         {
@@ -408,7 +408,7 @@ namespace Lumina
 
     uint32 FAudioGraphInstance::GetTriggerOutputCount(const FName& Name) const
     {
-        const uint32 Count = Math::Min((uint32)OutputDecls.size(), MaxPublishedOutputs);
+        const uint32 Count = Math::Min((uint32)OutputDecls.Num(), MaxPublishedOutputs);
 
         for (uint32 Index = 0; Index < Count; ++Index)
         {

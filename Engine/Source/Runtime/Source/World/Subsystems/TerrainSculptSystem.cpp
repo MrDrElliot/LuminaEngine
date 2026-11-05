@@ -64,7 +64,7 @@ namespace Lumina
     bool FTerrainSculptSystem::SampleHeight(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ, float& OutHeight)
     {
         const int32 Res = Terrain.Resolution;
-        if (Res < 2 || Terrain.Heightmap.size() < size_t(Res) * size_t(Res))
+        if (Res < 2 || static_cast<size_t>(Terrain.Heightmap.Num()) < size_t(Res) * size_t(Res))
         {
             return false;
         }
@@ -82,10 +82,10 @@ namespace Lumina
         const int X0 = int(Lx), Z0 = int(Lz);
         const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
         const float Tx = Lx - float(X0), Tz = Lz - float(Z0);
-        const float H00 = Terrain.Heightmap[size_t(Z0) * Res + X0];
-        const float H10 = Terrain.Heightmap[size_t(Z0) * Res + X1];
-        const float H01 = Terrain.Heightmap[size_t(Z1) * Res + X0];
-        const float H11 = Terrain.Heightmap[size_t(Z1) * Res + X1];
+        const float H00 = Terrain.Heightmap[Z0 * Res + X0];
+        const float H10 = Terrain.Heightmap[Z0 * Res + X1];
+        const float H01 = Terrain.Heightmap[Z1 * Res + X0];
+        const float H11 = Terrain.Heightmap[Z1 * Res + X1];
         const float H   = Math::Mix(Math::Mix(H00, H10, Tx), Math::Mix(H01, H11, Tx), Tz);
 
         OutHeight = TerrainOrigin.y + H * Terrain.MaxHeight;
@@ -133,10 +133,10 @@ namespace Lumina
             const int X0 = int(Fx), Z0 = int(Fz);
             const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
             const float Tx = Fx - float(X0), Tz = Fz - float(Z0);
-            const float H00 = Terrain.Heightmap[size_t(Z0) * Res + X0];
-            const float H10 = Terrain.Heightmap[size_t(Z0) * Res + X1];
-            const float H01 = Terrain.Heightmap[size_t(Z1) * Res + X0];
-            const float H11 = Terrain.Heightmap[size_t(Z1) * Res + X1];
+            const float H00 = Terrain.Heightmap[Z0 * Res + X0];
+            const float H10 = Terrain.Heightmap[Z0 * Res + X1];
+            const float H01 = Terrain.Heightmap[Z1 * Res + X0];
+            const float H11 = Terrain.Heightmap[Z1 * Res + X1];
             const float H   = Math::Mix(Math::Mix(H00, H10, Tx), Math::Mix(H01, H11, Tx), Tz);
             return BaseY + H * Terrain.MaxHeight;
         };
@@ -175,7 +175,7 @@ namespace Lumina
 
     void FTerrainSculptSystem::ApplyDab(STerrainComponent& Terrain, const FTerrainSculptDab& Dab)
     {
-        if (Terrain.Resolution <= 0 || Terrain.Heightmap.empty())
+        if (Terrain.Resolution <= 0 || Terrain.Heightmap.IsEmpty())
         {
             return;
         }
@@ -222,7 +222,7 @@ namespace Lumina
         if (Dab.Mode == ETerrainBrushMode::Paint)
         {
             const int32 Layer = Dab.ActiveLayer;
-            if (Layer >= 0 && Layer < (int32)Terrain.Layers.size())
+            if (Layer >= 0 && Layer < Terrain.Layers.Num())
             {
                 Terrain.MarkWeightsDirty((uint32)Layer,
                                          FIntVector2(Rect.x, Rect.y),
@@ -245,7 +245,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaVal, Stride, OriginXZ](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaVal, Stride, OriginXZ](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -279,7 +279,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Radius, Target, Speed, Stride, OriginXZ](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Target, Speed, Stride, OriginXZ](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -321,16 +321,16 @@ namespace Lumina
 
         // Heap rather than scratch, since a wide brush's apron can exceed one scratch block.
         TVector<float> Snapshot;
-        Snapshot.resize(size_t(SnapW) * size_t(SnapH));
+        Snapshot.SetNum(size_t(SnapW) * size_t(SnapH));
         for (int32 Y = 0; Y < SnapH; ++Y)
         {
-            const float* SrcRow = &Terrain.Heightmap[size_t(SnapMinY + Y) * size_t(Res) + size_t(SnapMinX)];
-            float*       DstRow = &Snapshot[size_t(Y) * size_t(SnapW)];
+            const float* SrcRow = &Terrain.Heightmap[(SnapMinY + Y) * Res + SnapMinX];
+            float*       DstRow = &Snapshot[Y * SnapW];
             std::memcpy(DstRow, SrcRow, size_t(SnapW) * sizeof(float));
         }
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, SnapMinX, SnapMinY, SnapW](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, SnapMinX, SnapMinY, SnapW](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -353,7 +353,7 @@ namespace Lumina
                     {
                         for (int XX = Math::Max(X - 1, 0); XX <= Math::Min(X + 1, Res - 1); ++XX)
                         {
-                            Sum += Snapshot[size_t(YY - SnapMinY) * size_t(SnapW) + size_t(XX - SnapMinX)];
+                            Sum += Snapshot[(YY - SnapMinY) * SnapW + (XX - SnapMinX)];
                             ++Count;
                         }
                     }
@@ -421,7 +421,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaPerSecond, Stride, OriginXZ, Freq, Octaves](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaPerSecond, Stride, OriginXZ, Freq, Octaves](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -476,7 +476,7 @@ namespace Lumina
         const float Feather   = Math::Clamp(Dab.Falloff, 0.0f, 1.0f);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Speed, Stride, OriginXZ, A, AB, ABLen2, StartN, EndN, HalfWidth, InvLen, Feather](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Speed, Stride, OriginXZ, A, AB, ABLen2, StartN, EndN, HalfWidth, InvLen, Feather](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -529,16 +529,16 @@ namespace Lumina
     void FTerrainSculptSystem::ApplyPaint(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const int32 Layer = Dab.ActiveLayer;
-        if (Layer < 0 || Layer >= (int32)Terrain.Layers.size())
+        if (Layer < 0 || Layer >= Terrain.Layers.Num())
             return;
 
         const int32 Res         = Terrain.Resolution;
-        const int32 LayerCount  = (int32)Terrain.Layers.size();
+        const int32 LayerCount  = Terrain.Layers.Num();
         const int32 LayerStride = Res * Res;
-        const size_t Needed = size_t(LayerCount) * size_t(LayerStride);
-        if (Terrain.LayerWeights.size() < Needed)
+        const int32 Needed      = LayerCount * LayerStride;
+        if (Terrain.LayerWeights.Num() < Needed)
         {
-            Terrain.LayerWeights.resize(Needed, 0u);
+            Terrain.LayerWeights.SetNum(Needed, 0u);
         }
 
         const float Stride = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
@@ -547,7 +547,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Task::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, Layer, LayerStride, Res](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, Layer, LayerStride, Res](const Jobs::FParallelRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -564,8 +564,8 @@ namespace Lumina
                         continue;
                     }
 
-                    const size_t Pixel = size_t(Y) * size_t(Res) + size_t(X);
-                    uint8& Target  = Terrain.LayerWeights[size_t(Layer) * LayerStride + Pixel];
+                    const int32 Pixel = Y * Res + X;
+                    uint8& Target  = Terrain.LayerWeights[Layer * LayerStride + Pixel];
                     float  Current = float(Target) / 255.0f;
                     float  Goal    = (Dab.SculptSign >= 0) ? 1.0f : 0.0f;
                     float  New     = Math::Mix(Current, Goal, Speed * W);

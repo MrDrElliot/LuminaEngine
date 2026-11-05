@@ -57,6 +57,10 @@ namespace Lumina
     CObject* CObject::Duplicate()
     {
         CObject* Duplicate = NewObject(GetClass(), GetPackage());
+        if (Duplicate == nullptr)
+        {
+            return nullptr;
+        }
         if (CClass* Class = GetClass())
         {
             for (FProperty* Current : Class->GetProperties())

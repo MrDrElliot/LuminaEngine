@@ -7,8 +7,8 @@ namespace ECSBench
 {
     namespace
     {
-        constexpr size_t EntityCount = 200000;
-        constexpr size_t Passes      = 5;
+        constexpr int32 EntityCount = 200000;
+        constexpr int32 Passes      = 5;
     }
 
     void ReportHeader()
@@ -17,9 +17,9 @@ namespace ECSBench
         std::printf("%s\n", "----------------------------------------------------------------");
     }
 
-    void ReportCase(const char* Name, size_t OpsPerPass, const FResult& Result)
+    void ReportCase(const char* Name, int32 OpsPerPass, const FResult& Result)
     {
-        std::printf("%-38s %10zu %14.3f\n", Name, OpsPerPass, Result.Nanos);
+        std::printf("%-38s %10d %14.3f\n", Name, OpsPerPass, Result.Nanos);
         std::fflush(stdout);
     }
 
@@ -31,10 +31,10 @@ namespace ECSBench
 
 namespace ECSBench
 {
-    void RunLayoutSweepCases(size_t EntityCount, size_t Passes);
-    void RunExcludeCostCases(size_t EntityCount, size_t Passes);
-    void RunEntityMapCases(size_t EntityCount, size_t Passes);
-    void RunGroupHeadroomCases(size_t EntityCount, size_t Passes);
+    void RunLayoutSweepCases(int32 EntityCount, int32 Passes);
+    void RunExcludeCostCases(int32 EntityCount, int32 Passes);
+    void RunEntityMapCases(int32 EntityCount, int32 Passes);
+    void RunGroupHeadroomCases(int32 EntityCount, int32 Passes);
 
     bool RunSelfCheck();
 }
@@ -46,17 +46,17 @@ int main(int Argc, char** Argv)
     // Unbuffered, so a crash mid-case still shows which case it died in.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-    size_t Count = EntityCount;
+    int32 Count = EntityCount;
     if (Argc > 1)
     {
-        Count = static_cast<size_t>(std::atoll(Argv[1]));
+        Count = static_cast<int32>(std::atoll(Argv[1]));
         if (Count == 0)
         {
             Count = EntityCount;
         }
     }
 
-    std::printf("Lumina ECS, %zu entities, best of %zu passes\n\n", Count, Passes);
+    std::printf("Lumina ECS, %d entities, best of %d passes\n\n", Count, Passes);
 
     if (!RunSelfCheck())
     {

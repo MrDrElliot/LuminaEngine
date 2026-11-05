@@ -77,8 +77,8 @@ namespace Lumina
         int32 qx = (int32)Math::Round(Math::Clamp(e.x, -1.0f, 1.0f) * 16383.0f);
         int32 qy = (int32)Math::Round(Math::Clamp(e.y, -1.0f, 1.0f) * 16383.0f);
         uint32 Hand = (Sign >= 0.0f) ? 1u : 0u;
-        return ((uint32)(qx & 0x7FFFu))
-             | (((uint32)(qy & 0x7FFFu)) << 15)
+        return (qx & 0x7FFFu)
+             | ((qy & 0x7FFFu) << 15)
              | (Hand << 30);
     }
 

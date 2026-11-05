@@ -90,8 +90,8 @@ namespace Lumina::Scripting
             {
                 return nullptr;
             }
-            const auto Found = Replaced->find(static_cast<CObject*>(const_cast<void*>(Original)));
-            return Found != Replaced->end() ? Found->second : nullptr;
+            const auto Found = Replaced->Find(static_cast<CObject*>(const_cast<void*>(Original)));
+            return Found != nullptr ? *Found : nullptr;
         }
     };
 
@@ -146,7 +146,7 @@ namespace Lumina::Scripting
         void BroadcastReload(int32 Generation, TSpan<const FManagedTypeDefinition> Types);
 
         /** Test seam: drops every registered stage. */
-        void ResetForTesting() { Stages.clear(); }
+        void ResetForTesting() { Stages.Reset(); }
 
     private:
 

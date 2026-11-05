@@ -4,7 +4,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 
 namespace Lumina::ECS
 {
@@ -33,7 +33,7 @@ namespace Lumina::ECS
     FCommandBus::FCommandBus(FRegistry& InRegistry)
         : Registry(InRegistry)
     {
-        Slots.resize(Math::Max(Jobs::GetNumThreadSlots(), 1u));
+        Slots.SetNum(Math::Max(Jobs::GetNumThreadSlots(), 1u));
     }
 
     FCommandBus::~FCommandBus()
@@ -62,21 +62,21 @@ namespace Lumina::ECS
 
     FCommandBus::FSlot& FCommandBus::LocalSlot()
     {
-        const uint32 Index = Jobs::GetWorkerIndex();
-        ASSERT(Index < Slots.size());
+        const uint32 Index = Jobs::GetThreadSlot();
+        ASSERT(Index < static_cast<uint32>(Slots.Num()));
         return Slots[Index];
     }
 
     FEntity FCommandBus::Create()
     {
         const FEntity Entity = Registry.ReserveEntity();
-        LocalSlot().Creates.push_back(Entity);
+        LocalSlot().Creates.Add(Entity);
         return Entity;
     }
 
     void FCommandBus::Destroy(FEntity Entity)
     {
-        LocalSlot().Destroys.push_back(Entity);
+        LocalSlot().Destroys.Add(Entity);
     }
 
     void* FCommandBus::AllocateCommand(FApplyFn Apply, size_t PayloadSize)
@@ -86,7 +86,7 @@ namespace Lumina::ECS
 
         for (;;)
         {
-            if (Slot.ActiveBlock < Slot.Blocks.size())
+            if (Slot.ActiveBlock < static_cast<uint32>(Slot.Blocks.Num()))
             {
                 FBlock& Block = Slot.Blocks[Slot.ActiveBlock];
                 if (Block.Capacity - Block.Used >= Stride)
@@ -107,7 +107,7 @@ namespace Lumina::ECS
             FBlock Fresh;
             Fresh.Capacity = Math::Max(BlockSize, Stride);
             Fresh.Data     = static_cast<uint8*>(Memory::Malloc(Fresh.Capacity, CommandAlignment));
-            Slot.Blocks.push_back(Fresh);
+            Slot.Blocks.Add(Fresh);
         }
     }
 
@@ -115,7 +115,7 @@ namespace Lumina::ECS
     {
         // Detached first, so a command that records more lands in fresh blocks instead of the ones being walked.
         TVector<FBlock> Running;
-        Running.swap(Slot.Blocks);
+        swap(Running, Slot.Blocks);
         Slot.ActiveBlock = 0;
         Slot.NumCommands = 0;
 
@@ -134,7 +134,7 @@ namespace Lumina::ECS
 
         for (const FBlock& Block : Running)
         {
-            Slot.Blocks.push_back(Block);
+            Slot.Blocks.Add(Block);
         }
     }
 
@@ -145,7 +145,7 @@ namespace Lumina::ECS
             void* Data = Block.Data;
             Memory::Free(Data);
         }
-        Slot.Blocks.clear();
+        Slot.Blocks.Reset();
         Slot.ActiveBlock = 0;
         Slot.NumCommands = 0;
     }
@@ -154,7 +154,7 @@ namespace Lumina::ECS
     {
         for (const FSlot& Slot : Slots)
         {
-            if (Slot.NumCommands != 0 || !Slot.Creates.empty() || !Slot.Destroys.empty())
+            if (Slot.NumCommands != 0 || !Slot.Creates.IsEmpty() || !Slot.Destroys.IsEmpty())
             {
                 return true;
             }
@@ -172,13 +172,13 @@ namespace Lumina::ECS
         {
             for (FSlot& Slot : Slots)
             {
-                Pending.clear();
-                Pending.swap(Slot.Creates);
+                Pending.Reset();
+                swap(Pending, Slot.Creates);
                 for (FEntity Entity : Pending)
                 {
                     Registry.MaterializeReserved(Entity);
                 }
-                Applied += static_cast<uint32>(Pending.size());
+                Applied += static_cast<uint32>(Pending.Num());
             }
 
             for (FSlot& Slot : Slots)
@@ -192,13 +192,13 @@ namespace Lumina::ECS
 
             for (FSlot& Slot : Slots)
             {
-                Pending.clear();
-                Pending.swap(Slot.Destroys);
+                Pending.Reset();
+                swap(Pending, Slot.Destroys);
                 for (FEntity Entity : Pending)
                 {
                     Registry.Destroy(Entity);
                 }
-                Applied += static_cast<uint32>(Pending.size());
+                Applied += static_cast<uint32>(Pending.Num());
             }
         }
 
@@ -217,8 +217,8 @@ namespace Lumina::ECS
             {
                 Registry.ReleaseReserved(Entity);
             }
-            Slot.Creates.clear();
-            Slot.Destroys.clear();
+            Slot.Creates.Reset();
+            Slot.Destroys.Reset();
             if (Slot.NumCommands != 0)
             {
                 RunCommands(Slot, nullptr);

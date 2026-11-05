@@ -14,7 +14,7 @@ namespace Lumina
             }
         }
 
-        Entries.push_back(FEntry{ Key, Value });
+        Entries.Emplace(Key, Value);
     }
 
     void* FPropertyEditContext::Find(const FName& Key) const

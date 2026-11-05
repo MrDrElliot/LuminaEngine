@@ -23,9 +23,9 @@ namespace Lumina::Reflection
         bool ParseSigned(FStringView Text, T& Out)
         {
             char* End = nullptr;
-            const FString Owned(Text.data(), Text.size());
-            const long long Parsed = std::strtoll(Owned.c_str(), &End, 10);
-            if (End == Owned.c_str() || *End != '\0')
+            const FString Owned(Text.GetData(), Text.Len());
+            const long long Parsed = std::strtoll(*Owned, &End, 10);
+            if (End == *Owned || *End != '\0')
             {
                 return false;
             }
@@ -37,9 +37,9 @@ namespace Lumina::Reflection
         bool ParseUnsigned(FStringView Text, T& Out)
         {
             char* End = nullptr;
-            const FString Owned(Text.data(), Text.size());
-            const unsigned long long Parsed = std::strtoull(Owned.c_str(), &End, 10);
-            if (End == Owned.c_str() || *End != '\0')
+            const FString Owned(Text.GetData(), Text.Len());
+            const unsigned long long Parsed = std::strtoull(*Owned, &End, 10);
+            if (End == *Owned || *End != '\0')
             {
                 return false;
             }
@@ -51,9 +51,9 @@ namespace Lumina::Reflection
         bool ParseFloating(FStringView Text, T& Out)
         {
             char* End = nullptr;
-            const FString Owned(Text.data(), Text.size());
-            const double Parsed = std::strtod(Owned.c_str(), &End);
-            if (End == Owned.c_str() || *End != '\0')
+            const FString Owned(Text.GetData(), Text.Len());
+            const double Parsed = std::strtod(*Owned, &End);
+            if (End == *Owned || *End != '\0')
             {
                 return false;
             }
@@ -63,7 +63,7 @@ namespace Lumina::Reflection
 
         bool ParseBool(FStringView Text, bool& Out)
         {
-            const FString Owned(Text.data(), Text.size());
+            const FString Owned(Text.GetData(), Text.Len());
             // Accept what a spreadsheet or a human is likely to have typed, not just one spelling.
             if (Owned == "1" || Owned == "true"  || Owned == "True"  || Owned == "TRUE")  { Out = true;  return true; }
             if (Owned == "0" || Owned == "false" || Owned == "False" || Owned == "FALSE") { Out = false; return true; }
@@ -73,7 +73,7 @@ namespace Lumina::Reflection
         // A struct reads as text when every member does, which covers the math types and plain data structs.
         bool IsStructTextConvertible(const CStruct* Struct)
         {
-            if (Struct == nullptr || Struct->GetProperties().empty())
+            if (Struct == nullptr || Struct->GetProperties().IsEmpty())
             {
                 return false;
             }
@@ -133,13 +133,13 @@ namespace Lumina::Reflection
 
         FStringView Trim(FStringView Text)
         {
-            while (!Text.empty() && IsBlank(Text.front()))
+            while (!Text.IsEmpty() && IsBlank(Text[0]))
             {
-                Text.remove_prefix(1);
+                Text.RemovePrefix(1);
             }
-            while (!Text.empty() && IsBlank(Text.back()))
+            while (!Text.IsEmpty() && IsBlank(Text.Last()))
             {
-                Text.remove_suffix(1);
+                Text.RemoveSuffix(1);
             }
             return Text;
         }
@@ -147,8 +147,8 @@ namespace Lumina::Reflection
         // An element that would otherwise read back differently is quoted, with an embedded quote doubled as CSV does.
         void AppendArrayElement(FString& Out, const FString& Element)
         {
-            const bool bNeedsQuotes = Element.empty() || IsBlank(Element.front()) || IsBlank(Element.back())
-                || Element.find_first_of(",()\"") != FString::npos;
+            const bool bNeedsQuotes = Element.IsEmpty() || IsBlank(Element[0]) || IsBlank(Element.Last())
+                || Element.FindFirstOf(",()\"") != Constants::kIndexNone;
             if (!bNeedsQuotes)
             {
                 Out += Element;
@@ -170,39 +170,39 @@ namespace Lumina::Reflection
         bool SplitArrayText(FStringView Text, TVector<FString>& OutElements)
         {
             Text = Trim(Text);
-            OutElements.clear();
-            if (Text.empty())
+            OutElements.Reset();
+            if (Text.IsEmpty())
             {
                 return true;
             }
-            if (Text.size() < 2 || Text.front() != '(' || Text.back() != ')')
+            if (Text.Len() < 2 || Text[0] != '(' || Text.Last() != ')')
             {
                 return false;
             }
-            Text = Text.substr(1, Text.size() - 2);
-            if (Trim(Text).empty())
+            Text = Text.Mid(1, Text.Len() - 2);
+            if (Trim(Text).IsEmpty())
             {
                 return true;
             }
 
-            size_t At = 0;
+            int32 At = 0;
             while (true)
             {
-                while (At < Text.size() && IsBlank(Text[At]))
+                while (At < Text.Len() && IsBlank(Text[At]))
                 {
                     ++At;
                 }
 
                 FString Element;
-                if (At < Text.size() && Text[At] == '"')
+                if (At < Text.Len() && Text[At] == '"')
                 {
                     ++At;
                     bool bClosed = false;
-                    while (At < Text.size())
+                    while (At < Text.Len())
                     {
                         if (Text[At] == '"')
                         {
-                            if (At + 1 < Text.size() && Text[At + 1] == '"')
+                            if (At + 1 < Text.Len() && Text[At + 1] == '"')
                             {
                                 Element += '"';
                                 At += 2;
@@ -218,7 +218,7 @@ namespace Lumina::Reflection
                     {
                         return false;
                     }
-                    while (At < Text.size() && IsBlank(Text[At]))
+                    while (At < Text.Len() && IsBlank(Text[At]))
                     {
                         ++At;
                     }
@@ -226,16 +226,16 @@ namespace Lumina::Reflection
                 else
                 {
                     const size_t Start = At;
-                    while (At < Text.size() && Text[At] != ',')
+                    while (At < Text.Len() && Text[At] != ',')
                     {
                         ++At;
                     }
-                    const FStringView Bare = Trim(Text.substr(Start, At - Start));
-                    Element.assign(Bare.data(), Bare.size());
+                    const FStringView Bare = Trim(Text.Mid(IntCastChecked<int32>(Start), IntCastChecked<int32>(At - Start)));
+                    Element = FStringView(Bare.GetData(), Bare.Len());
                 }
 
-                OutElements.push_back(Move(Element));
-                if (At >= Text.size())
+                OutElements.Add(Move(Element));
+                if (At >= Text.Len())
                 {
                     return true;
                 }
@@ -263,13 +263,13 @@ namespace Lumina::Reflection
 
         FProperty* FindNamedMember(TSpan<FProperty* const> Members, FStringView& InOutEntry)
         {
-            const size_t Equals = InOutEntry.find('=');
-            if (Equals == FStringView::npos)
+            const int32 Equals = InOutEntry.Find('=');
+            if (Equals == Constants::kIndexNone)
             {
                 return nullptr;
             }
 
-            const FStringView Name = Trim(InOutEntry.substr(0, Equals));
+            const FStringView Name = Trim(InOutEntry.Mid(0, Equals));
             for (char C : Name)
             {
                 if (!IsIdentifierChar(C))
@@ -281,9 +281,9 @@ namespace Lumina::Reflection
             for (FProperty* Member : Members)
             {
                 const FString MemberName = Member->GetPropertyName().ToString();
-                if (EqualsIgnoreCase(FStringView(MemberName.c_str(), MemberName.size()), Name))
+                if (EqualsIgnoreCase(FStringView(*MemberName, MemberName.Len()), Name))
                 {
-                    InOutEntry = Trim(InOutEntry.substr(Equals + 1));
+                    InOutEntry = Trim(InOutEntry.Mid(Equals + 1));
                     return Member;
                 }
             }
@@ -300,14 +300,14 @@ namespace Lumina::Reflection
             }
 
             const TSpan<FProperty* const> Members = Struct->GetProperties();
-            if (Entries.size() > Members.size())
+            if (Entries.Num() > Members.Num())
             {
                 return false;
             }
 
-            for (SIZE_T i = 0; i < Entries.size(); ++i)
+            for (int32 i = 0; i < Entries.Num(); ++i)
             {
-                FStringView Entry(Entries[i].c_str(), Entries[i].size());
+                FStringView Entry(*Entries[i], Entries[i].Len());
                 FProperty* Member = FindNamedMember(Members, Entry);
                 if (!FromText(Member != nullptr ? Member : Members[i], Value, Entry))
                 {
@@ -345,8 +345,8 @@ namespace Lumina::Reflection
         {
             const FArrayProperty* Array = static_cast<const FArrayProperty*>(Prop);
             FString Out = "(";
-            const SIZE_T Num = Array->GetNum(Value);
-            for (SIZE_T i = 0; i < Num; ++i)
+            const int32 Count = Array->Num(Value);
+            for (int32 i = 0; i < Count; ++i)
             {
                 if (i > 0)
                 {
@@ -385,22 +385,22 @@ namespace Lumina::Reflection
 
             // Parsed into a tail past the old elements, so one bad element is undone by trimming that tail.
             const FArrayProperty* Array = static_cast<const FArrayProperty*>(Prop);
-            const SIZE_T OldNum = Array->GetNum(Value);
-            const SIZE_T NewNum = Elements.size();
-            Array->Resize(Value, OldNum + NewNum);
-            for (SIZE_T i = 0; i < NewNum; ++i)
+            const int32 OldNum = Array->Num(Value);
+            const int32 NewNum = Elements.Num();
+            Array->SetNum(Value, OldNum + NewNum);
+            for (int32 i = 0; i < NewNum; ++i)
             {
-                if (!ValueFromText(Element, Array->GetAt(Value, OldNum + i), FStringView(Elements[i].c_str(), Elements[i].size())))
+                if (!ValueFromText(Element, Array->GetAt(Value, OldNum + i), FStringView(*Elements[i], Elements[i].Len())))
                 {
-                    Array->Resize(Value, OldNum);
+                    Array->SetNum(Value, OldNum);
                     return false;
                 }
             }
-            for (SIZE_T i = 0; i < NewNum && OldNum > 0; ++i)
+            for (int32 i = 0; i < NewNum && OldNum > 0; ++i)
             {
                 Array->Swap(Value, i, OldNum + i);
             }
-            Array->Resize(Value, NewNum);
+            Array->SetNum(Value, NewNum);
             return true;
         }
 
@@ -414,15 +414,15 @@ namespace Lumina::Reflection
 
         switch (Prop->GetType())
         {
-        case EPropertyTypeFlags::Int8:    return Format("{}", (int32)*static_cast<int8*>(Value)).c_str();
-        case EPropertyTypeFlags::Int16:   return Format("{}", (int32)*static_cast<int16*>(Value)).c_str();
-        case EPropertyTypeFlags::Int32:   return Format("{}", *static_cast<int32*>(Value)).c_str();
-        case EPropertyTypeFlags::Int64:   return Format("{}", *static_cast<int64*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt8:   return Format("{}", (uint32)*static_cast<uint8*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt16:  return Format("{}", (uint32)*static_cast<uint16*>(Value)).c_str();
+        case EPropertyTypeFlags::Int8:    return *Format("{}", (int32)*static_cast<int8*>(Value));
+        case EPropertyTypeFlags::Int16:   return *Format("{}", (int32)*static_cast<int16*>(Value));
+        case EPropertyTypeFlags::Int32:   return *Format("{}", *static_cast<int32*>(Value));
+        case EPropertyTypeFlags::Int64:   return *Format("{}", *static_cast<int64*>(Value));
+        case EPropertyTypeFlags::UInt8:   return *Format("{}", (uint32)*static_cast<uint8*>(Value));
+        case EPropertyTypeFlags::UInt16:  return *Format("{}", (uint32)*static_cast<uint16*>(Value));
         case EPropertyTypeFlags::UInt32:
-        case EPropertyTypeFlags::Entity:  return Format("{}", *static_cast<uint32*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt64:  return Format("{}", *static_cast<uint64*>(Value)).c_str();
+        case EPropertyTypeFlags::Entity:  return *Format("{}", *static_cast<uint32*>(Value));
+        case EPropertyTypeFlags::UInt64:  return *Format("{}", *static_cast<uint64*>(Value));
 
         // to_string on a float emits six trailing zeroes, making a table of whole numbers unreadable.
         case EPropertyTypeFlags::Float:
@@ -449,8 +449,8 @@ namespace Lumina::Reflection
 
                 // A spreadsheet column of qualified names is unreadable, and FromText accepts both forms.
                 const FString Qualified = Enum->GetNameAtValue(Raw).ToString();
-                const size_t Separator = Qualified.rfind("::");
-                return Separator == FString::npos ? Qualified : Qualified.substr(Separator + 2);
+                const int32 Separator = Qualified.FindLast("::");
+                return Separator == Constants::kIndexNone ? Qualified : Qualified.Mid(Separator + 2);
             }
 
         case EPropertyTypeFlags::Object:
@@ -466,7 +466,7 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::SoftObject:
             {
                 const FStringView Path = static_cast<const FSoftObjectPath*>(Value)->GetPath();
-                return FString(Path.data(), Path.size());
+                return FString(Path.GetData(), Path.Len());
             }
 
         // Members are written by name, so the text still reads back after the struct reorders or gains fields.
@@ -513,11 +513,11 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::Bool:    return ParseBool(Text, *static_cast<bool*>(Value));
 
         case EPropertyTypeFlags::Name:
-            *static_cast<FName*>(Value) = FName(FString(Text.data(), Text.size()));
+            *static_cast<FName*>(Value) = FName(FString(Text.GetData(), Text.Len()));
             return true;
 
         case EPropertyTypeFlags::String:
-            *static_cast<FString*>(Value) = FString(Text.data(), Text.size());
+            *static_cast<FString*>(Value) = FString(Text.GetData(), Text.Len());
             return true;
 
         case EPropertyTypeFlags::Enum:
@@ -531,7 +531,7 @@ namespace Lumina::Reflection
                 }
 
                 // Accepts the bare enumerator and the qualified form a re-export would produce.
-                const FString Typed(Text.data(), Text.size());
+                const FString Typed(Text.GetData(), Text.Len());
                 const FName Candidates[] =
                 {
                     FName(Typed),
@@ -558,7 +558,7 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::Object:
             {
                 auto* Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
-                if (Text.empty())
+                if (Text.IsEmpty())
                 {
                     *Ptr = nullptr;
                     return true;
@@ -584,7 +584,7 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::SoftObject:
             {
                 auto* Path = static_cast<FSoftObjectPath*>(Value);
-                if (Text.empty())
+                if (Text.IsEmpty())
                 {
                     Path->Reset();
                     return true;
@@ -610,7 +610,7 @@ namespace Lumina::Reflection
                 {
                     return true;
                 }
-                ParseStructText(Struct, Value, FStringView(Previous.c_str(), Previous.size()));
+                ParseStructText(Struct, Value, FStringView(*Previous, Previous.Len()));
                 return false;
             }
 

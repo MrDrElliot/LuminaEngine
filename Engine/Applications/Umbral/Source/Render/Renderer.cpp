@@ -103,8 +103,8 @@ namespace Umbral
         {
             return RHI::FShaderSource
             {
-                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                     Spirv.size() * sizeof(uint32)),
+                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                     Spirv.Num() * sizeof(uint32)),
                 .EntryPoint = EntryPoint,
             };
         }
@@ -135,7 +135,7 @@ namespace Umbral
                                      const TVector<uint32>& Pixel, const char* PixelEntry,
                                      EFormat Format, const RHI::FBlendDesc& Blend)
         {
-            if (Vertex.empty() || Pixel.empty())
+            if (Vertex.IsEmpty() || Pixel.IsEmpty())
             {
                 return {};
             }
@@ -165,7 +165,7 @@ namespace Umbral
 
         void PushQuad(TVector<FQuadInstance>& Out, const FBody& Body, const FVisual& Visual)
         {
-            FQuadInstance& Instance = Out.emplace_back();
+            FQuadInstance& Instance = Out.EmplaceGetRef();
             Instance.Center       = Body.Position;
             Instance.HalfSize     = Body.HalfSize;
             Instance.Rotation     = Body.Rotation;
@@ -194,7 +194,7 @@ namespace Umbral
 
         void PushDim(TVector<FQuadInstance>& Out, const FVector2& Center, float Strength)
         {
-            FQuadInstance& Instance = Out.emplace_back();
+            FQuadInstance& Instance = Out.EmplaceGetRef();
             Instance.Center       = { Center.x, Center.y + kViewHeight * 0.5f };
             Instance.HalfSize     = { kViewWidth * 1.4f, kViewHeight * 0.85f };
             Instance.Color        = { 0.005f, 0.006f, 0.014f, Strength };
@@ -207,7 +207,7 @@ namespace Umbral
         void PushPanel(TVector<FQuadInstance>& Out, const FVector2& Center, const FVector2& Half,
                        const FVector4& Border, float BodyOpacity)
         {
-            FQuadInstance& Instance = Out.emplace_back();
+            FQuadInstance& Instance = Out.EmplaceGetRef();
             Instance.Center       = Center;
             Instance.HalfSize     = Half;
             Instance.Color        = Border;
@@ -223,7 +223,7 @@ namespace Umbral
         void PushIcon(TVector<FQuadInstance>& Out, const FVector2& Center, float Radius, EWeapon Weapon,
                       const FVector4& Color, float Glow)
         {
-            FQuadInstance& Instance = Out.emplace_back();
+            FQuadInstance& Instance = Out.EmplaceGetRef();
             Instance.Center   = Center;
             Instance.HalfSize = { Radius, Radius };
             Instance.Rotation = Weapon == EWeapon::Blades ? 2.4f : 0.0f;
@@ -238,7 +238,7 @@ namespace Umbral
         void PushMeter(TVector<FQuadInstance>& Body, TVector<FQuadInstance>& Glow, const FVector2& Center,
                        float Width, float Height, float Fill, const FVector4& Color, int32 Segments)
         {
-            FQuadInstance& Track = Body.emplace_back();
+            FQuadInstance& Track = Body.EmplaceGetRef();
             Track.Center       = Center;
             Track.HalfSize     = { Width * 0.5f, Height };
             Track.Color        = { Color.x * 0.10f, Color.y * 0.10f, Color.z * 0.10f, 0.9f };
@@ -250,7 +250,7 @@ namespace Umbral
             const float Clamped = Math::Clamp(Fill, 0.0f, 1.0f);
             const float Filled = Math::Max(Width * Clamped, 2.0f);
 
-            FQuadInstance& Level = Glow.emplace_back();
+            FQuadInstance& Level = Glow.EmplaceGetRef();
             Level.Center       = { Center.x - Width * 0.5f + Filled * 0.5f, Center.y };
             Level.HalfSize     = { Filled * 0.5f, Height * 0.82f };
             Level.Color        = Color;
@@ -261,7 +261,7 @@ namespace Umbral
 
             for (int32 Tick = 1; Tick < Segments; ++Tick)
             {
-                FQuadInstance& Notch = Body.emplace_back();
+                FQuadInstance& Notch = Body.EmplaceGetRef();
                 Notch.Center       = { Center.x - Width * 0.5f + Width * float(Tick) / float(Segments), Center.y };
                 Notch.HalfSize     = { 1.0f, Height };
                 Notch.Color        = { 0.010f, 0.013f, 0.026f, 0.9f };
@@ -280,7 +280,7 @@ namespace Umbral
                 const bool bLit = Index < Filled;
                 TVector<FQuadInstance>& Target = bLit ? Glow : Body;
 
-                FQuadInstance& Pip = Target.emplace_back();
+                FQuadInstance& Pip = Target.EmplaceGetRef();
                 Pip.Center       = { Start.x + float(Index) * 32.0f, Start.y };
                 Pip.HalfSize     = { 11.0f, 5.0f };
                 Pip.Color        = bLit ? Color : FVector4{ Color.x * 0.16f, Color.y * 0.16f, Color.z * 0.16f, 0.9f };
@@ -294,7 +294,7 @@ namespace Umbral
         void PushBar(TVector<FQuadInstance>& Out, const FVector2& Center, float Width, float Height,
                      float Fill, const FVector4& Color)
         {
-            FQuadInstance& Track = Out.emplace_back();
+            FQuadInstance& Track = Out.EmplaceGetRef();
             Track.Center       = Center;
             Track.HalfSize     = { Width * 0.5f, Height };
             Track.Color        = { Color.x * 0.14f, Color.y * 0.14f, Color.z * 0.14f, 1.0f };
@@ -304,7 +304,7 @@ namespace Umbral
 
             const float Filled = Math::Max(Width * Math::Clamp(Fill, 0.0f, 1.0f), 1.0f);
 
-            FQuadInstance& Level = Out.emplace_back();
+            FQuadInstance& Level = Out.EmplaceGetRef();
             Level.Center       = { Center.x - Width * 0.5f + Filled * 0.5f, Center.y };
             Level.HalfSize     = { Filled * 0.5f, Height };
             Level.Color        = Color;
@@ -319,11 +319,11 @@ namespace Umbral
     {
         SwapchainFormat = InSwapchainFormat;
 
-        AlphaQuads.reserve(8192);
-        AdditiveQuads.reserve(8192);
-        UiQuads.reserve(4096);
-        UiGlowQuads.reserve(4096);
-        Lights.reserve(kMaxLights);
+        AlphaQuads.Reserve(8192);
+        AdditiveQuads.Reserve(8192);
+        UiQuads.Reserve(4096);
+        UiGlowQuads.Reserve(4096);
+        Lights.Reserve(kMaxLights);
 
         return CreatePipelines();
     }
@@ -477,11 +477,11 @@ namespace Umbral
 
     void FRenderer::Gather(FGame& Game, float RealTime)
     {
-        AlphaQuads.clear();
-        AdditiveQuads.clear();
-        UiQuads.clear();
-        UiGlowQuads.clear();
-        Lights.clear();
+        AlphaQuads.Reset();
+        AdditiveQuads.Reset();
+        UiQuads.Reset();
+        UiGlowQuads.Reset();
+        Lights.Reset();
 
         ECS::FRegistry& Registry = Game.GetRegistry();
         const FPlayerState& Player = Game.GetPlayer();
@@ -511,7 +511,7 @@ namespace Umbral
         //~ Player torch anchors the lighting.
 
         {
-            FLightInstance& Torch = Lights.emplace_back();
+            FLightInstance& Torch = Lights.EmplaceGetRef();
             Torch.Center = Player.Position;
             Torch.Radius = 620.0f + Pulse(RealTime, 3.0f) * 30.0f;
             Torch.Energy = 1.5f * Player.Torch;
@@ -520,7 +520,7 @@ namespace Umbral
 
         for (auto [Entity, Body, Light] : Registry.View<FBody, FLight>().Each())
         {
-            if (Lights.size() >= kMaxLights)
+            if (Lights.Num() >= kMaxLights)
             {
                 break;
             }
@@ -530,7 +530,7 @@ namespace Umbral
                 continue;
             }
 
-            FLightInstance& Instance = Lights.emplace_back();
+            FLightInstance& Instance = Lights.EmplaceGetRef();
             Instance.Center = Body.Position;
             Instance.Radius = Light.Radius;
             Instance.Energy = Light.Energy;
@@ -550,7 +550,7 @@ namespace Umbral
         for (auto [Entity, Body, Nova, Visual] : Registry.View<FBody, FNova, FVisual>().Each())
         {
             const float Alpha = Nova.Age / Math::Max(Nova.Duration, 0.001f);
-            FQuadInstance& Ring = AdditiveQuads.emplace_back();
+            FQuadInstance& Ring = AdditiveQuads.EmplaceGetRef();
             Ring.Center   = Body.Position;
             Ring.HalfSize = Body.HalfSize;
             Ring.Color    = { Visual.Color.x, Visual.Color.y, Visual.Color.z, (1.0f - Alpha) * (1.0f - Alpha) };
@@ -587,7 +587,7 @@ namespace Umbral
                 const FVector2 Leg { Node.x - Previous.x, Node.y - Previous.y };
                 const float LegLength = Math::Sqrt(Leg.x * Leg.x + Leg.y * Leg.y);
 
-                FQuadInstance& Bolt = AdditiveQuads.emplace_back();
+                FQuadInstance& Bolt = AdditiveQuads.EmplaceGetRef();
                 Bolt.Center   = { (Previous.x + Node.x) * 0.5f, (Previous.y + Node.y) * 0.5f };
                 Bolt.HalfSize = { LegLength * 0.5f + 3.0f, 4.5f * Strength + 1.0f };
                 Bolt.Rotation = Math::Atan2(Leg.y, Leg.x);
@@ -608,7 +608,7 @@ namespace Umbral
 
             for (int32 Ring = 0; Ring < 3; ++Ring)
             {
-                FQuadInstance& Vortex = AdditiveQuads.emplace_back();
+                FQuadInstance& Vortex = AdditiveQuads.EmplaceGetRef();
                 Vortex.Center   = Body.Position;
                 Vortex.HalfSize = Body.HalfSize * (1.0f - float(Ring) * 0.24f);
                 Vortex.Rotation = Maw.Spin * (Ring % 2 == 0 ? 1.0f : -1.0f);
@@ -626,7 +626,7 @@ namespace Umbral
                                          + Particle.Velocity.y * Particle.Velocity.y);
             const float Stretch = 1.0f + Math::Min(Speed / 340.0f, 2.6f);
 
-            FQuadInstance& Spark = AdditiveQuads.emplace_back();
+            FQuadInstance& Spark = AdditiveQuads.EmplaceGetRef();
             Spark.Center   = Body.Position;
             Spark.HalfSize = { Body.HalfSize.x * Stretch, Body.HalfSize.y / Math::Sqrt(Stretch) };
             Spark.Rotation = Speed > 1.0f ? Math::Atan2(Particle.Velocity.y, Particle.Velocity.x) : 0.0f;
@@ -639,7 +639,7 @@ namespace Umbral
         for (auto [Entity, Body, Mote, Visual] : Registry.View<FBody, FSoulMote, FVisual>().Each())
         {
             PushQuad(AdditiveQuads, Body, Visual);
-            AdditiveQuads.back().Param1 = float(Entity.GetIndex() % 64) * 0.4f;
+            AdditiveQuads.Last().Param1 = float(Entity.GetIndex() % 64) * 0.4f;
         }
 
         for (auto [Entity, Body, Projectile, Visual] : Registry.View<FBody, FProjectile, FVisual>().Each())
@@ -650,7 +650,7 @@ namespace Umbral
         //~ Player and orbiting blades.
 
         {
-            FQuadInstance& Core = AlphaQuads.emplace_back();
+            FQuadInstance& Core = AlphaQuads.EmplaceGetRef();
             Core.Center   = Player.Position;
             Core.HalfSize = { kPlayerRadius * 1.7f, kPlayerRadius * 1.7f };
             Core.Color    = { 0.55f + Player.HurtFlash * 1.6f, 1.05f, 1.60f, 1.0f };
@@ -664,7 +664,7 @@ namespace Umbral
 
                 for (int32 Ring = 0; Ring < 2; ++Ring)
                 {
-                    FQuadInstance& Tide = AdditiveQuads.emplace_back();
+                    FQuadInstance& Tide = AdditiveQuads.EmplaceGetRef();
                     Tide.Center   = Player.Position;
                     Tide.HalfSize = { Radius * (1.0f - float(Ring) * 0.12f), Radius * (1.0f - float(Ring) * 0.12f) };
                     Tide.Color    = { 0.10f, 0.30f, 0.22f, 1.0f };
@@ -683,7 +683,7 @@ namespace Umbral
             {
                 const float Angle = Player.BladePhase + 6.2831853f * float(Index) / float(Blades);
 
-                FQuadInstance& Blade = AdditiveQuads.emplace_back();
+                FQuadInstance& Blade = AdditiveQuads.EmplaceGetRef();
                 Blade.Center   = { Player.Position.x + Math::Cos(Angle) * Orbit,
                                    Player.Position.y + Math::Sin(Angle) * Orbit };
                 Blade.HalfSize = { 42.0f, 42.0f };
@@ -847,7 +847,7 @@ namespace Umbral
 
                 if (bHovered)
                 {
-                    FQuadInstance& Halo = UiGlowQuads.emplace_back();
+                    FQuadInstance& Halo = UiGlowQuads.EmplaceGetRef();
                     Halo.Center       = CardCenter;
                     Halo.HalfSize     = CardHalf;
                     Halo.Color        = { Base.x * 0.22f, Base.y * 0.22f, Base.z * 0.22f, Stagger };
@@ -980,14 +980,14 @@ namespace Umbral
         RHI::CmdBeginMarker(CL, "Umbral.Lights");
         RHI::Utils::BeginScreenPass(CL, { .Target = LightTarget.Texture, .Extent = LightExtent, });
 
-        if (!Lights.empty())
+        if (!Lights.IsEmpty())
         {
             const float ScaleX = 2.0f / Math::Max(ViewSize.x, 1.0f);
             const float ScaleY = 2.0f / Math::Max(ViewSize.y, 1.0f);
 
             const FLightArgs Args
             {
-                .Lights    = RHI::CopyTransientArray(Lights.data(), Lights.size()).Address,
+                .Lights    = RHI::CopyTransientArray(Lights.GetData(), Lights.Num()).Address,
                 .NdcScale  = { ScaleX, ScaleY },
                 .NdcOffset = { -1.0f, -1.0f },
                 .CameraMin = CameraMin,
@@ -995,7 +995,7 @@ namespace Umbral
             };
 
             RHI::CmdSetPipeline(CL, LightPipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(Lights.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(Lights.Num()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -1052,32 +1052,32 @@ namespace Umbral
             .LightID   = LightTarget.SampledSlot,
         };
 
-        if (!AlphaQuads.empty())
+        if (!AlphaQuads.IsEmpty())
         {
-            QuadArgs.Instances = RHI::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size()).Address;
+            QuadArgs.Instances = RHI::CopyTransientArray(AlphaQuads.GetData(), AlphaQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AlphaQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AlphaQuads.Num()), 0, 0);
         }
 
-        if (!AdditiveQuads.empty())
+        if (!AdditiveQuads.IsEmpty())
         {
-            QuadArgs.Instances = RHI::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size()).Address;
+            QuadArgs.Instances = RHI::CopyTransientArray(AdditiveQuads.GetData(), AdditiveQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AdditiveQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AdditiveQuads.Num()), 0, 0);
         }
 
-        if (!UiQuads.empty())
+        if (!UiQuads.IsEmpty())
         {
-            QuadArgs.Instances = RHI::CopyTransientArray(UiQuads.data(), UiQuads.size()).Address;
+            QuadArgs.Instances = RHI::CopyTransientArray(UiQuads.GetData(), UiQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiQuads.Num()), 0, 0);
         }
 
-        if (!UiGlowQuads.empty())
+        if (!UiGlowQuads.IsEmpty())
         {
-            QuadArgs.Instances = RHI::CopyTransientArray(UiGlowQuads.data(), UiGlowQuads.size()).Address;
+            QuadArgs.Instances = RHI::CopyTransientArray(UiGlowQuads.GetData(), UiGlowQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiGlowQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiGlowQuads.Num()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);

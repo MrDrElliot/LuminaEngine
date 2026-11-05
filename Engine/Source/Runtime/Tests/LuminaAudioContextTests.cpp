@@ -5,7 +5,7 @@
 #include "Audio/ProceduralAudioStream.h"
 #include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 
 using namespace Lumina;
 
@@ -13,27 +13,26 @@ namespace
 {
     void PushU16(TVector<uint8>& Bytes, uint16 Value)
     {
-        Bytes.push_back((uint8)(Value & 0xFF));
-        Bytes.push_back((uint8)(Value >> 8));
+        Bytes.Add((uint8)(Value & 0xFF));
+        Bytes.Add((uint8)(Value >> 8));
     }
 
     void PushU32(TVector<uint8>& Bytes, uint32 Value)
     {
-        Bytes.push_back((uint8)(Value & 0xFF));
-        Bytes.push_back((uint8)((Value >> 8) & 0xFF));
-        Bytes.push_back((uint8)((Value >> 16) & 0xFF));
-        Bytes.push_back((uint8)((Value >> 24) & 0xFF));
+        Bytes.Add((uint8)(Value & 0xFF));
+        Bytes.Add((uint8)((Value >> 8) & 0xFF));
+        Bytes.Add((uint8)((Value >> 16) & 0xFF));
+        Bytes.Add((uint8)((Value >> 24) & 0xFF));
     }
 
     void PushId(TVector<uint8>& Bytes, const char* Id)
     {
         for (uint32 i = 0; i < 4; ++i)
         {
-            Bytes.push_back((uint8)Id[i]);
+            Bytes.Add((uint8)Id[i]);
         }
     }
 
-    /** A mono 48 kHz sine as a complete wav image, so the context exercises its real decode path. */
     TSharedPtr<FAudioData> MakeSineClip(uint32 Frames)
     {
         TVector<int16> Samples(Frames);
@@ -61,12 +60,11 @@ namespace
         PushId(Bytes, "data");
         PushU32(Bytes, DataBytes);
 
-        const uint8* At = (const uint8*)Samples.data();
-        Bytes.insert(Bytes.end(), At, At + DataBytes);
+        const uint8* At = (const uint8*)Samples.GetData();
+        Bytes.Append(At, DataBytes);
         return Data;
     }
 
-    /** Drives the pump, which runs as a job, until the predicate holds or the budget runs out. */
     template <typename TPredicate>
     bool PumpUntil(FLuminaAudioContext& Context, TPredicate&& Predicate, uint32 MaxIterations = 200)
     {
@@ -87,7 +85,7 @@ namespace
 
 TEST(LuminaAudioContext, StartsSilentAndReportsItsFormat)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -105,7 +103,7 @@ TEST(LuminaAudioContext, StartsSilentAndReportsItsFormat)
 
 TEST(LuminaAudioContext, PlaysAClipThroughToCompletion)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -141,7 +139,7 @@ TEST(LuminaAudioContext, PlaysAClipThroughToCompletion)
 
 TEST(LuminaAudioContext, StopReleasesAVoiceAndItsSlot)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -173,7 +171,7 @@ TEST(LuminaAudioContext, StopReleasesAVoiceAndItsSlot)
 
 TEST(LuminaAudioContext, ChurnsVoicesWithoutLosingSlots)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -197,7 +195,7 @@ TEST(LuminaAudioContext, ChurnsVoicesWithoutLosingSlots)
             SAudioPlayParams Params;
             const SAudioHandle Handle = Context.PlayAudio(Clip, Params);
             EXPECT_TRUE(Handle.IsValid()) << "round " << Round << " voice " << i;
-            Handles.push_back(Handle);
+            Handles.Add(Handle);
         }
 
         Context.Update();
@@ -218,7 +216,7 @@ TEST(LuminaAudioContext, ChurnsVoicesWithoutLosingSlots)
 
 TEST(LuminaAudioContext, StealingPlayingVoicesKeepsSlotAccountingIntact)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -266,7 +264,7 @@ TEST(LuminaAudioContext, StealingPlayingVoicesKeepsSlotAccountingIntact)
 
 TEST(LuminaAudioContext, ProceduralStreamsPlayAndAreNeverAutoCollected)
 {
-    if (!Jobs::IsInitialized())
+    if (!Jobs::IsRuntimeRunning())
     {
         GTEST_SKIP() << "the job system is required for the audio pump";
     }
@@ -279,7 +277,7 @@ TEST(LuminaAudioContext, ProceduralStreamsPlayAndAreNeverAutoCollected)
     ASSERT_TRUE(Stream->IsValid());
 
     TVector<float> Block(1024, 0.25f);
-    EXPECT_GT(Stream->Write(Block.data(), 1024), 0u);
+    EXPECT_GT(Stream->Write(Block.GetData(), 1024), 0u);
 
     SAudioPlayParams Params;
     const SAudioHandle Handle = Context.PlayProceduralStream(Stream, Params);

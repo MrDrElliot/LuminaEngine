@@ -1,18 +1,506 @@
-﻿#include "Core/Threading/Thread.h"
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "MeshResolveCache.h"
 
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
-#include "Containers/Algorithm.h"
+#include "Containers/ConcurrentQueue.h"
+#include "Core/Threading/Thread.h"
+#include "Log/Log.h"
 #include "Renderer/MeshletHeaderSlab.h"
+#include "World/ECS/EntityMap.h"
+#include "World/ECS/Registry.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
+#include "World/Entity/Components/FoliageComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
 
 namespace Lumina
 {
+    namespace MeshResolveCacheInternal
+    {
+        constexpr uint32 kNoNode      = Constants::kIndexNoneU32;
+        constexpr uint32 kNumSources  = (uint32)EMeshResolveSource::Num;
+        constexpr uint32 kAllSources  = (1u << kNumSources) - 1u;
+
+        // Past this many queued entities a source sweeps instead, which bounds a queue whose renderer stopped draining it.
+        constexpr int32  kMaxDirtyPerSource = 1 << 16;
+
+        FORCEINLINE uint64 PackQueued(ECS::FEntity Entity, EMeshResolveSource Source)
+        {
+            return (uint64)Entity.GetPacked() | ((uint64)Source << 32);
+        }
+
+        // One entity's interest in one key, linked both into the key's list and into the entity's own chain.
+        struct FWatchNode
+        {
+            uint64              Key = 0;
+            ECS::FEntity        Entity;
+            EMeshResolveSource  Source{};
+            uint32              PrevInKey = kNoNode;
+            uint32              NextInKey = kNoNode;
+            uint32              NextOfOwner = kNoNode;
+        };
+
+        struct FWatchOwner
+        {
+            FWatchOwner()
+            {
+                for (uint32& Head : Heads)
+                {
+                    Head = kNoNode;
+                }
+            }
+
+            bool IsEmpty() const
+            {
+                for (uint32 Head : Heads)
+                {
+                    if (Head != kNoNode)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            uint32 Heads[kNumSources];
+        };
+
+        // Binds on every construct and replace, since a replaced value is a fresh copy that starts unbound.
+        template <typename TComponent, EMeshResolveSource Source>
+        void OnMeshComponentChanged(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            FMeshResolveQueue* Queue = FMeshResolveQueue::Find(Registry);
+            TComponent* Component = Registry.TryGet<TComponent>(Entity);
+            if (Queue == nullptr || Component == nullptr)
+            {
+                return;
+            }
+            Component->ResolveBinding.Bind(*Queue, Entity, Source);
+            Component->InvalidateRenderResolve();
+        }
+
+        template <EMeshResolveSource Source>
+        void OnMeshComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            if (FMeshResolveQueue* Queue = FMeshResolveQueue::Find(Registry))
+            {
+                Queue->Unwatch(Entity, Source);
+            }
+        }
+
+        void OnFoliageChanged(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            FMeshResolveQueue::MarkFoliageDirty(Registry, Entity);
+        }
+
+        template <typename TComponent, auto OnChanged, auto OnRemoved>
+        void ConnectSignals(ECS::FRegistry& Registry)
+        {
+            ECS::FComponentSignals& Signals = Registry.GetSignals<TComponent>();
+
+            // Disconnected first, so a queue recreated in the same registry never hears an event twice.
+            Signals.OnConstruct.Disconnect<OnChanged>();
+            Signals.OnUpdate.Disconnect<OnChanged>();
+            Signals.OnDestroy.Disconnect<OnRemoved>();
+
+            Signals.OnConstruct.Connect<OnChanged>();
+            Signals.OnUpdate.Connect<OnChanged>();
+            Signals.OnDestroy.Connect<OnRemoved>();
+        }
+
+        void AddDependency(FResolvedMesh& Out, const void* Dependency)
+        {
+            if (Dependency != nullptr)
+            {
+                Out.Dependencies.AddUnique(Dependency);
+            }
+        }
+    }
+
+    struct FMeshResolveQueue::FImpl
+    {
+        TConcurrentQueue<uint64>                                    Incoming;
+        std::atomic<bool>                                           bAnyIncoming{ false };
+        std::atomic<uint32>                                         FullSweepSources{ MeshResolveCacheInternal::kAllSources };
+        uint32                                                      SeenSweepGeneration = 0;
+
+        TVector<ECS::FEntity>                                       Dirty[MeshResolveCacheInternal::kNumSources];
+
+        TVector<MeshResolveCacheInternal::FWatchNode>               Nodes;
+        uint32                                                      FreeNodes = MeshResolveCacheInternal::kNoNode;
+        THashMap<uint64, uint32>                                    HeadByKey;
+        ECS::TEntityMap<MeshResolveCacheInternal::FWatchOwner>      Owners;
+
+        uint32 AllocateNode()
+        {
+            if (FreeNodes != MeshResolveCacheInternal::kNoNode)
+            {
+                const uint32 Node = FreeNodes;
+                FreeNodes = Nodes[Node].NextOfOwner;
+                return Node;
+            }
+            return (uint32)Nodes.Emplace();
+        }
+
+        void LinkIntoKey(uint32 Node)
+        {
+            MeshResolveCacheInternal::FWatchNode& Linked = Nodes[Node];
+            Linked.PrevInKey = MeshResolveCacheInternal::kNoNode;
+            if (uint32* Head = HeadByKey.Find(Linked.Key))
+            {
+                Linked.NextInKey = *Head;
+                Nodes[*Head].PrevInKey = Node;
+                *Head = Node;
+                return;
+            }
+            Linked.NextInKey = MeshResolveCacheInternal::kNoNode;
+            HeadByKey.Add(Linked.Key, Node);
+        }
+
+        void UnlinkFromKey(uint32 Node)
+        {
+            const MeshResolveCacheInternal::FWatchNode& Linked = Nodes[Node];
+            if (Linked.NextInKey != MeshResolveCacheInternal::kNoNode)
+            {
+                Nodes[Linked.NextInKey].PrevInKey = Linked.PrevInKey;
+            }
+
+            if (Linked.PrevInKey != MeshResolveCacheInternal::kNoNode)
+            {
+                Nodes[Linked.PrevInKey].NextInKey = Linked.NextInKey;
+            }
+            else if (Linked.NextInKey != MeshResolveCacheInternal::kNoNode)
+            {
+                HeadByKey.FindChecked(Linked.Key) = Linked.NextInKey;
+            }
+            else
+            {
+                HeadByKey.Remove(Linked.Key);
+            }
+        }
+
+        void ReleaseChain(uint32& Head)
+        {
+            for (uint32 Node = Head; Node != MeshResolveCacheInternal::kNoNode;)
+            {
+                const uint32 Next = Nodes[Node].NextOfOwner;
+                UnlinkFromKey(Node);
+                Nodes[Node].NextOfOwner = FreeNodes;
+                FreeNodes = Node;
+                Node = Next;
+            }
+            Head = MeshResolveCacheInternal::kNoNode;
+        }
+
+        bool ChainMatches(uint32 Head, TSpan<const uint64> Keys) const
+        {
+            uint32 Node = Head;
+            for (uint64 Key : Keys)
+            {
+                if (Node == MeshResolveCacheInternal::kNoNode || Nodes[Node].Key != Key)
+                {
+                    return false;
+                }
+                Node = Nodes[Node].NextOfOwner;
+            }
+            return Node == MeshResolveCacheInternal::kNoNode;
+        }
+
+        // Nothing queued matters while a sweep is pending, since the sweep visits every component anyway.
+        void AddDirty(uint32 Source, ECS::FEntity Entity)
+        {
+            const uint32 Bit = 1u << Source;
+            if ((FullSweepSources.load(std::memory_order_relaxed) & Bit) != 0u)
+            {
+                return;
+            }
+
+            TVector<ECS::FEntity>& List = Dirty[Source];
+            if (List.Num() >= MeshResolveCacheInternal::kMaxDirtyPerSource)
+            {
+                List.Reset();
+                FullSweepSources.fetch_or(Bit, std::memory_order_acq_rel);
+                return;
+            }
+            List.Add(Entity);
+        }
+
+        void DrainIncoming()
+        {
+            if (!bAnyIncoming.exchange(false, std::memory_order_acq_rel))
+            {
+                return;
+            }
+
+            uint64 Batch[256];
+            uint32 Count;
+            while ((Count = Incoming.DequeueBulk(Batch, 256)) != 0)
+            {
+                for (uint32 i = 0; i < Count; ++i)
+                {
+                    const uint32 Source = (uint32)(Batch[i] >> 32);
+                    if (Source < MeshResolveCacheInternal::kNumSources)
+                    {
+                        AddDirty(Source, ECS::FEntity::FromPacked((uint32)Batch[i]));
+                    }
+                }
+            }
+        }
+    };
+
+    std::atomic<FMeshResolveQueue*> FMeshResolveQueue::Slots[FMeshResolveQueue::kMaxQueues + 1] = {};
+
+    FMeshResolveQueue::FMeshResolveQueue()
+        : Impl(Memory::New<FImpl>())
+    {
+        Impl->SeenSweepGeneration = FMeshResolveCache::GetFullSweepGeneration();
+
+        for (uint32 Candidate = 1; Candidate <= kMaxQueues && Slot == 0u; ++Candidate)
+        {
+            FMeshResolveQueue* Expected = nullptr;
+            if (Slots[Candidate].compare_exchange_strong(Expected, this, std::memory_order_acq_rel))
+            {
+                Slot = (uint8)Candidate;
+            }
+        }
+        if (Slot == 0u)
+        {
+            LOG_ERROR("MeshResolve: more than {} registries hold a resolve queue; this one re-checks every mesh component every frame.", kMaxQueues);
+        }
+
+        // Get first, since it is what builds the singleton the liveness check reads.
+        FMeshResolveCache& Cache = FMeshResolveCache::Get();
+        if (FMeshResolveCache::IsAlive())
+        {
+            Cache.RegisterQueue(this);
+        }
+    }
+
+    // A registry outliving the cache at exit leaves nothing to unregister from, since the cache's queue list went with it.
+    FMeshResolveQueue::~FMeshResolveQueue()
+    {
+        if (FMeshResolveCache::IsAlive())
+        {
+            FMeshResolveCache::Get().UnregisterQueue(this);
+        }
+        if (Slot != 0u)
+        {
+            Slots[Slot].store(nullptr, std::memory_order_release);
+        }
+        Memory::Delete(Impl);
+    }
+
+    FMeshResolveQueue* FMeshResolveQueue::Find(ECS::FRegistry& Registry)
+    {
+        TUniquePtr<FMeshResolveQueue>* Holder = Registry.Ctx().Find<TUniquePtr<FMeshResolveQueue>>();
+        return Holder ? Holder->get() : nullptr;
+    }
+
+    FMeshResolveQueue& FMeshResolveQueue::Ensure(ECS::FRegistry& Registry)
+    {
+        if (FMeshResolveQueue* Existing = Find(Registry))
+        {
+            return *Existing;
+        }
+
+        FMeshResolveQueue& Queue = *Registry.Ctx().Emplace<TUniquePtr<FMeshResolveQueue>>(MakeUnique<FMeshResolveQueue>());
+
+        using namespace MeshResolveCacheInternal;
+        ConnectSignals<SStaticMeshComponent,
+            &OnMeshComponentChanged<SStaticMeshComponent, EMeshResolveSource::StaticMesh>,
+            &OnMeshComponentRemoved<EMeshResolveSource::StaticMesh>>(Registry);
+        ConnectSignals<SSkeletalMeshComponent,
+            &OnMeshComponentChanged<SSkeletalMeshComponent, EMeshResolveSource::SkeletalMesh>,
+            &OnMeshComponentRemoved<EMeshResolveSource::SkeletalMesh>>(Registry);
+        ConnectSignals<SDynamicMeshComponent,
+            &OnMeshComponentChanged<SDynamicMeshComponent, EMeshResolveSource::DynamicMesh>,
+            &OnMeshComponentRemoved<EMeshResolveSource::DynamicMesh>>(Registry);
+        ConnectSignals<SFoliageComponent, &OnFoliageChanged, &OnMeshComponentRemoved<EMeshResolveSource::Foliage>>(Registry);
+
+        return Queue;
+    }
+
+    void FMeshResolveQueue::MarkFoliageDirty(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        FMeshResolveQueue* Queue = Find(Registry);
+        SFoliageComponent* Foliage = Registry.TryGet<SFoliageComponent>(Entity);
+        if (Queue == nullptr || Foliage == nullptr)
+        {
+            return;
+        }
+
+        for (SFoliageType& Type : Foliage->Types)
+        {
+            Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
+        }
+        Queue->Enqueue(Entity, EMeshResolveSource::Foliage);
+    }
+
+    void FMeshResolveQueue::Enqueue(ECS::FEntity Entity, EMeshResolveSource Source)
+    {
+        if (Entity.IsNull())
+        {
+            return;
+        }
+        Impl->Incoming.Enqueue(MeshResolveCacheInternal::PackQueued(Entity, Source));
+        Impl->bAnyIncoming.store(true, std::memory_order_release);
+    }
+
+    void FMeshResolveQueue::RequestFullSweep()
+    {
+        Impl->FullSweepSources.fetch_or(MeshResolveCacheInternal::kAllSources, std::memory_order_acq_rel);
+    }
+
+    void FMeshResolveQueue::BeginFrame()
+    {
+        // Read before the invalidations apply, so a bump landing in between sweeps next frame instead of never.
+        const uint32 SweepGeneration = FMeshResolveCache::GetFullSweepGeneration();
+
+        if (FMeshResolveCache::IsAlive())
+        {
+            FMeshResolveCache::Get().ApplyPendingInvalidations();
+        }
+
+        if (SweepGeneration != Impl->SeenSweepGeneration || Slot == 0u)
+        {
+            Impl->SeenSweepGeneration = SweepGeneration;
+            RequestFullSweep();
+        }
+
+        Impl->DrainIncoming();
+    }
+
+    bool FMeshResolveQueue::ConsumeFullSweep(EMeshResolveSource Source)
+    {
+        const uint32 Bit = 1u << (uint32)Source;
+        return (Impl->FullSweepSources.fetch_and(~Bit, std::memory_order_acq_rel) & Bit) != 0u;
+    }
+
+    void FMeshResolveQueue::TakeDirty(EMeshResolveSource Source, TVector<ECS::FEntity>& Out)
+    {
+        Out.Reset();
+        swap(Out, Impl->Dirty[(uint32)Source]);
+    }
+
+    bool FMeshResolveQueue::HasDirty(EMeshResolveSource Source) const
+    {
+        return !Impl->Dirty[(uint32)Source].IsEmpty();
+    }
+
+    bool FMeshResolveQueue::HasPendingWork() const
+    {
+        if (Impl->bAnyIncoming.load(std::memory_order_acquire) || Impl->FullSweepSources.load(std::memory_order_acquire) != 0u)
+        {
+            return true;
+        }
+        for (const TVector<ECS::FEntity>& Dirty : Impl->Dirty)
+        {
+            if (!Dirty.IsEmpty())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FMeshResolveQueue::Watch(ECS::FEntity Entity, EMeshResolveSource Source, TSpan<const uint64> Keys)
+    {
+        if (Keys.IsEmpty())
+        {
+            Unwatch(Entity, Source);
+            return;
+        }
+
+        FImpl& State = *Impl;
+        uint32& Head = State.Owners.FindOrAdd(Entity).Heads[(uint32)Source];
+        if (State.ChainMatches(Head, Keys))
+        {
+            return;
+        }
+
+        State.ReleaseChain(Head);
+
+        uint32 Tail = MeshResolveCacheInternal::kNoNode;
+        for (uint64 Key : Keys)
+        {
+            const uint32 Node = State.AllocateNode();
+            MeshResolveCacheInternal::FWatchNode& Watched = State.Nodes[Node];
+            Watched.Key         = Key;
+            Watched.Entity      = Entity;
+            Watched.Source      = Source;
+            Watched.NextOfOwner = MeshResolveCacheInternal::kNoNode;
+            State.LinkIntoKey(Node);
+
+            if (Tail == MeshResolveCacheInternal::kNoNode)
+            {
+                Head = Node;
+            }
+            else
+            {
+                State.Nodes[Tail].NextOfOwner = Node;
+            }
+            Tail = Node;
+        }
+    }
+
+    void FMeshResolveQueue::Unwatch(ECS::FEntity Entity, EMeshResolveSource Source)
+    {
+        FImpl& State = *Impl;
+        MeshResolveCacheInternal::FWatchOwner* Owner = State.Owners.Find(Entity);
+        if (Owner == nullptr)
+        {
+            return;
+        }
+
+        State.ReleaseChain(Owner->Heads[(uint32)Source]);
+        if (Owner->IsEmpty())
+        {
+            State.Owners.Remove(Entity);
+        }
+    }
+
+    bool FMeshResolveQueue::IsWatching(ECS::FEntity Entity, EMeshResolveSource Source, uint64 Key) const
+    {
+        const MeshResolveCacheInternal::FWatchOwner* Owner = Impl->Owners.Find(Entity);
+        if (Owner == nullptr)
+        {
+            return false;
+        }
+
+        for (uint32 Node = Owner->Heads[(uint32)Source]; Node != MeshResolveCacheInternal::kNoNode; Node = Impl->Nodes[Node].NextOfOwner)
+        {
+            if (Impl->Nodes[Node].Key == Key)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FMeshResolveQueue::Wake(uint64 Key)
+    {
+        FImpl& State = *Impl;
+        const uint32* Head = State.HeadByKey.Find(Key);
+        if (Head == nullptr)
+        {
+            return;
+        }
+
+        for (uint32 Node = *Head; Node != MeshResolveCacheInternal::kNoNode; Node = State.Nodes[Node].NextInKey)
+        {
+            const MeshResolveCacheInternal::FWatchNode& Watched = State.Nodes[Node];
+            State.AddDirty((uint32)Watched.Source, Watched.Entity);
+        }
+    }
+
     std::atomic<uint32> FMeshResolveCache::Epoch{1};
     std::atomic<uint32> FMeshResolveCache::PendingGeneration{1};
-    FMutex           FMeshResolveCache::PendingMutex;
+    std::atomic<uint32> FMeshResolveCache::FullSweepGeneration{1};
+    std::atomic<bool>   FMeshResolveCache::bHasPendingInvalidations{false};
+    constinit std::atomic<bool> FMeshResolveCache::bAlive{false};
+    FMutex               FMeshResolveCache::PendingMutex;
     TVector<const void*> FMeshResolveCache::PendingInvalidations;
 
     FMeshResolveCache& FMeshResolveCache::Get()
@@ -21,48 +509,68 @@ namespace Lumina
         return Instance;
     }
 
+    FMeshResolveCache::FMeshResolveCache()
+    {
+        bAlive.store(true, std::memory_order_release);
+    }
+
+    FMeshResolveCache::~FMeshResolveCache()
+    {
+        bAlive.store(false, std::memory_order_release);
+        Flush();
+    }
+
     void FMeshResolveCache::BumpEpoch()
     {
         Epoch.fetch_add(1, std::memory_order_acq_rel);
-        MarkPendingWork();
+        RequestFullSweep();
+    }
+
+    void FMeshResolveCache::RequestFullSweep()
+    {
+        FullSweepGeneration.fetch_add(1, std::memory_order_acq_rel);
+        PendingGeneration.fetch_add(1, std::memory_order_acq_rel);
     }
 
     void FMeshResolveCache::InvalidateDependency(const void* Asset)
     {
-        if (Asset == nullptr)
+        // Before the cache exists no entry or queue can read the asset, and after it is gone the pending list may be too.
+        if (Asset == nullptr || !IsAlive())
         {
             return;
         }
 
         {
             FScopeLock Lock(PendingMutex);
-            PendingInvalidations.push_back(Asset);
+            PendingInvalidations.Add(Asset);
+            bHasPendingInvalidations.store(true, std::memory_order_release);
 
-            const uint64 Bit = DependencyBit(Asset);
-            for (std::atomic<uint64>* Sink : Get().InvalidationSinks)
-            {
-                Sink->fetch_or(Bit, std::memory_order_release);
-            }
         }
 
-        MarkPendingWork();
+        PendingGeneration.fetch_add(1, std::memory_order_acq_rel);
     }
 
-    void FMeshResolveCache::AddInvalidationSink(std::atomic<uint64>* Sink)
+    void FMeshResolveCache::RegisterQueue(FMeshResolveQueue* Queue)
     {
-        FScopeLock Lock(PendingMutex);
-        InvalidationSinks.push_back(Sink);
+        Queues.AddUnique(Queue);
     }
 
-    void FMeshResolveCache::RemoveInvalidationSink(std::atomic<uint64>* Sink)
+    void FMeshResolveCache::UnregisterQueue(FMeshResolveQueue* Queue)
     {
-        FScopeLock Lock(PendingMutex);
-        InvalidationSinks.erase(Algo::Remove(InvalidationSinks, Sink), InvalidationSinks.end());
+        Queues.RemoveSingleSwap(Queue);
+    }
+
+    void FMeshResolveCache::WakeQueues(uint64 Key)
+    {
+        for (FMeshResolveQueue* Queue : Queues)
+        {
+            Queue->Wake(Key);
+        }
     }
 
     void FMeshResolveCache::MarkEntryStale(uint32 Handle)
     {
-        if (Handle >= (uint32)Entries.size())
+        if (Handle >= (uint32)Entries.Num())
         {
             return;
         }
@@ -74,7 +582,7 @@ namespace Lumina
     {
         for (const void* Dependency : Entry.Dependencies)
         {
-            HandlesByDependency[Dependency].push_back(Handle);
+            HandlesByDependency.FindOrAdd(Dependency).Add(Handle);
         }
     }
 
@@ -82,21 +590,9 @@ namespace Lumina
     {
         for (const void* Dependency : Entry.Dependencies)
         {
-            auto It = HandlesByDependency.find(Dependency);
-            if (It == HandlesByDependency.end())
+            if (TVector<uint32>* Bucket = HandlesByDependency.Find(Dependency))
             {
-                continue;
-            }
-
-            TVector<uint32>& Bucket = It->second;
-            for (SIZE_T i = 0; i < Bucket.size(); ++i)
-            {
-                if (Bucket[i] == Handle)
-                {
-                    Bucket[i] = Bucket.back();
-                    Bucket.pop_back();
-                    break;
-                }
+                Bucket->RemoveSingleSwap(Handle);
             }
         }
     }
@@ -116,37 +612,46 @@ namespace Lumina
 
     void FMeshResolveCache::ApplyPendingInvalidations()
     {
-        TVector<const void*> Keys;
-        {
-            FScopeLock Lock(PendingMutex);
-            Keys.swap(PendingInvalidations);
-        }
-
-        // BumpEpoch is applied here rather than inside itself so that it stays callable from any thread.
+        // An epoch stales everything and every registry sweeps, so the per-asset wakes below would only repeat that.
         const uint32 CurrentEpoch = GetEpoch();
-        if (CurrentEpoch != AppliedEpoch)
+        const bool bEpochChanged = CurrentEpoch != AppliedEpoch;
+        if (bEpochChanged)
         {
             AppliedEpoch = CurrentEpoch;
-            for (uint32 Handle = 0, N = (uint32)Entries.size(); Handle < N; ++Handle)
+            for (uint32 Handle = 0, N = (uint32)Entries.Num(); Handle < N; ++Handle)
             {
                 MarkEntryStale(Handle);
             }
         }
-        else
+
+        if (!bHasPendingInvalidations.exchange(false, std::memory_order_acq_rel))
         {
-            for (const void* Key : Keys)
+            return;
+        }
+
+        InvalidationScratch.Reset();
+        {
+            FScopeLock Lock(PendingMutex);
+            swap(InvalidationScratch, PendingInvalidations);
+        }
+
+        if (!bEpochChanged)
+        {
+            for (const void* Asset : InvalidationScratch)
             {
-                auto It = HandlesByDependency.find(Key);
-                if (It == HandlesByDependency.end())
+                if (const TVector<uint32>* Handles = HandlesByDependency.Find(Asset))
                 {
-                    continue;
+                    for (uint32 Handle : *Handles)
+                    {
+                        MarkEntryStale(Handle);
+                        WakeQueues(FMeshResolveQueue::HandleKey(Handle));
+                    }
                 }
-                for (uint32 Handle : It->second)
-                {
-                    MarkEntryStale(Handle);
-                }
+                WakeQueues(FMeshResolveQueue::DependencyKey(Asset));
             }
         }
+
+        InvalidationScratch.Reset();
     }
 
     uint64 FMeshResolveCache::HashKey(const void* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -166,12 +671,48 @@ namespace Lumina
         {
             Memory::Delete(Entry);
         }
-        Entries.clear();
-        EntryStates.clear();
-        ResolvedAtGeneration.clear();
-        HandlesByHash.clear();
-        HandlesByDependency.clear();
+        Entries.Reset();
+        EntryStates.Reset();
+        ResolvedAtGeneration.Reset();
+        HandlesByHash.Reset();
+        HandlesByDependency.Reset();
         ++TableGeneration;
+        RequestFullSweep();
+    }
+
+    uint32 FMeshResolveCache::FindEntry(uint64 KeyHash, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides) const
+    {
+        const TVector<uint32>* Bucket = HandlesByHash.Find(KeyHash);
+        if (Bucket == nullptr)
+        {
+            return INVALID_MESH_RESOLVE_HANDLE;
+        }
+
+        for (uint32 Handle : *Bucket)
+        {
+            const FResolvedMesh& Candidate = *Entries[Handle];
+            if (Candidate.MeshKey != Mesh || Candidate.MeshGuid != Mesh->GetGUID()
+                || Candidate.OverrideKey.Num() != Overrides.Num())
+            {
+                continue;
+            }
+
+            bool bSame = true;
+            for (int32 i = 0; i < Overrides.Num(); ++i)
+            {
+                if (Candidate.OverrideKey[i] != (const void*)Overrides[i])
+                {
+                    bSame = false;
+                    break;
+                }
+            }
+
+            if (bSame)
+            {
+                return Handle;
+            }
+        }
+        return INVALID_MESH_RESOLVE_HANDLE;
     }
 
     uint32 FMeshResolveCache::Resolve(CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -183,67 +724,43 @@ namespace Lumina
 
         const uint64 KeyHash = HashKey(Mesh, Overrides);
 
-        auto It = HandlesByHash.find(KeyHash);
-        if (It != HandlesByHash.end())
+        const uint32 Existing = FindEntry(KeyHash, Mesh, Overrides);
+        if (Existing != INVALID_MESH_RESOLVE_HANDLE)
         {
-            for (uint32 Handle : It->second)
+            if (Entries[Existing]->bNeedsResolve)
             {
-                const FResolvedMesh& Candidate = *Entries[Handle];
+                RebuildEntry(Existing, Mesh, Overrides);
 
-                if (Candidate.MeshKey != Mesh || Candidate.MeshGuid != Mesh->GetGUID()
-                    || Candidate.OverrideKey.size() != Overrides.size())
+                if (Entries[Existing]->bResolved)
                 {
-                    continue;
-                }
-
-                bool bSame = true;
-                for (size_t i = 0; i < Overrides.size(); ++i)
-                {
-                    if (Candidate.OverrideKey[i] != (const void*)Overrides[i])
-                    {
-                        bSame = false;
-                        break;
-                    }
-                }
-
-                if (bSame)
-                {
-                    if (Candidate.bNeedsResolve)
-                    {
-                        RebuildEntry(Handle, Mesh, Overrides);
-
-                        if (Entries[Handle]->bResolved)
-                        {
-                            ++TableGeneration;
-                            ResolvedAtGeneration[Handle] = TableGeneration;
-                        }
-                    }
-                    return Handle;
+                    ++TableGeneration;
+                    ResolvedAtGeneration[Existing] = TableGeneration;
                 }
             }
+            return Existing;
         }
 
-        const uint32 NewHandle = (uint32)Entries.size();
-        Entries.push_back(Memory::New<FResolvedMesh>());
-        EntryStates.push_back(MESH_RESOLVE_STATE_STALE);
-        ResolvedAtGeneration.push_back(0u);
-        FResolvedMesh& Entry = *Entries.back();
+        const uint32 NewHandle = (uint32)Entries.Num();
+        Entries.Add(Memory::New<FResolvedMesh>());
+        EntryStates.Add(MESH_RESOLVE_STATE_STALE);
+        ResolvedAtGeneration.Add(0u);
+        FResolvedMesh& Entry = *Entries.Last();
 
         Entry.MeshKey  = Mesh;
         Entry.MeshGuid = Mesh->GetGUID();
-        Entry.OverrideKey.reserve(Overrides.size());
+        Entry.OverrideKey.Reserve(Overrides.Num());
         for (CMaterialInterface* Override : Overrides)
         {
-            Entry.OverrideKey.push_back((const void*)Override);
+            Entry.OverrideKey.Add((const void*)Override);
         }
 
         RebuildEntry(NewHandle, Mesh, Overrides);
 
-        HandlesByHash[KeyHash].push_back(NewHandle);
+        HandlesByHash.FindOrAdd(KeyHash).Add(NewHandle);
         return NewHandle;
     }
 
-    namespace
+    namespace MeshResolveCacheInternal
     {
         // Shaders a surface must actually have to be VISIBLE, as opposed to merely compiled.
         bool HasRequiredPassShaders(CMaterialInterface* Material)
@@ -311,7 +828,7 @@ namespace Lumina
         }
 
         // Second gate. IsReadyForRender reports that the material finished COMPILING.
-        if (!HasRequiredPassShaders(Material))
+        if (!MeshResolveCacheInternal::HasRequiredPassShaders(Material))
         {
             bReady   = false;
             Material = CMaterial::GetDefaultMaterial();
@@ -397,35 +914,16 @@ namespace Lumina
         return bReady;
     }
 
-    namespace
-    {
-        void AddDependency(FResolvedMesh& Out, const void* Dependency)
-        {
-            if (Dependency == nullptr)
-            {
-                return;
-            }
-            for (const void* Existing : Out.Dependencies)
-            {
-                if (Existing == Dependency)
-                {
-                    return;
-                }
-            }
-            Out.Dependencies.push_back(Dependency);
-        }
-    }
-
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
     {
         ++Out.Generation;
 
-        Out.Dependencies.clear();
-        Out.Dependencies.push_back((const void*)Mesh);
+        Out.Dependencies.Reset();
+        Out.Dependencies.Add((const void*)Mesh);
 
         if (Mesh->HasAnyFlag(OF_NeedsLoad))
         {
-            Out.Surfaces.clear();
+            Out.Surfaces.Reset();
             Out.MeshletHeaderSlot = 0;
             Out.bAllMaterialsReady   = false;
             Out.bResolved            = false;
@@ -444,12 +942,12 @@ namespace Lumina
         Out.MeshletHeaderSlot = Mesh->GetMeshBuffers().MeshletHeaderSlot;
         Out.bAllMaterialsReady   = true;
 
-        Out.Surfaces.clear();
-        Out.Surfaces.reserve(Resource.GeometrySurfaces.size());
+        Out.Surfaces.Reset();
+        Out.Surfaces.Reserve(Resource.GeometrySurfaces.Num());
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            FResolvedSurface& R = Out.Surfaces.emplace_back();
+            FResolvedSurface& R = Out.Surfaces.EmplaceGetRef();
 
             R.NumLODs     = Surface.NumLODs;
             R.TexelFactor = Surface.TexelFactor;
@@ -461,10 +959,10 @@ namespace Lumina
                 R.LODError[LOD]         = Surface.LODError[LOD] * Mesh->LODDistanceScale;
             }
 
-            // -1 means unassigned; widening keeps it out of range so it falls through to the default.
-            const size_t Slot = (size_t)Surface.MaterialIndex;
+            // -1 means unassigned, which IsValidIndex rejects so the slot falls through to the default.
+            const int32 Slot = Surface.MaterialIndex;
             CMaterialInterface* RawMaterial = nullptr;
-            if (Slot < Overrides.size())
+            if (Overrides.IsValidIndex(Slot))
             {
                 RawMaterial = Overrides[Slot];
             }
@@ -482,13 +980,13 @@ namespace Lumina
                 R.MaterialFlags |= EInstanceFlags::HasDistanceField;
             }
 
-            AddDependency(Out, (const void*)RawMaterial);
-            AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
+            MeshResolveCacheInternal::AddDependency(Out, (const void*)RawMaterial);
+            MeshResolveCacheInternal::AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
 
             // MaterialID names the SUBSTITUTED material, so a fallback surface is not keyed on its real master.
             if (IsValid(RawMaterial))
             {
-                AddDependency(Out, (const void*)RawMaterial->GetMaterial());
+                MeshResolveCacheInternal::AddDependency(Out, (const void*)RawMaterial->GetMaterial());
             }
         }
 

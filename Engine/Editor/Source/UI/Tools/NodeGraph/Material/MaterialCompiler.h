@@ -148,7 +148,7 @@ namespace Lumina
 
         // True when the graph fed any chunks into the vertex stage. Equivalent
         // to "WorldPositionOffset pin had a connection."
-        bool UsesVertexStage() const { return !VertexChunks.empty() || !VertexOutputChunks.empty(); }
+        bool UsesVertexStage() const { return !VertexChunks.IsEmpty() || !VertexOutputChunks.IsEmpty(); }
 
         // The body substituted for $MATERIAL_VERTEX_INPUTS. Always assigns WorldPositionOffset, and emits
         // NOTHING else when the graph has no WPO, so every such material generates an identical stage.
@@ -158,14 +158,14 @@ namespace Lumina
         // the two-root walk (WPO->vertex, pixel pins->pixel); shared nodes are visited once per stage.
         // Clears the parameter-fetch dedupe map: the two stages emit into separate scopes, so a variable
         // hoisted in one is not reachable from the other.
-        void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; EmittedParamFetches.clear(); }
+        void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; EmittedParamFetches.Reset(); }
         EMaterialCompileStage GetStage() const { return CurrentStage; }
         FString& GetActiveChunk() { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
         const FString& GetActiveChunk() const { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
 
         // Output-node-direct emission helpers (bypass the stage cursor).
-        void AddPixelOutput(const FString& Raw) { PixelOutputChunks.append(Raw); }
-        void AddVertexOutput(const FString& Raw) { VertexOutputChunks.append(Raw); }
+        void AddPixelOutput(const FString& Raw) { PixelOutputChunks.Append(Raw); }
+        void AddVertexOutput(const FString& Raw) { VertexOutputChunks.Append(Raw); }
 
         // Stage gate for pixel-only nodes (ScreenPosition, FragmentDepth, ...). Returns true when emission
         // may proceed; on a vertex-stage call pushes an error at Node and returns false. Call first in GenerateDefinition.
@@ -500,22 +500,22 @@ namespace Lumina
         // The same weighting GetStats uses, for any slice of generated code such as one node's share.
         static uint32 EstimateCost(const FString& PixelCode, const FString& VertexCode);
 
-        FORCEINLINE bool HasErrors() const { return !Errors.empty(); }
-        FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.push_back(Error); }
+        FORCEINLINE bool HasErrors() const { return !Errors.IsEmpty(); }
+        FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.Add(Error); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetErrors() const { return Errors; }
 
         // True when an error already names Node, so a vaguer follow-up error can stand down.
         NODISCARD bool HasErrorForNode(const CEdGraphNode* Node) const;
 
         // Moves diagnostics raised since the given counts from nodes outside CallNode's graph onto CallNode.
-        void RetargetDiagnosticsToCallNode(size_t FirstError, size_t FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName);
+        void RetargetDiagnosticsToCallNode(int32 FirstError, int32 FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName);
 
         // Warnings: the graph compiled, but something about it will cost quality or performance at runtime.
         //
         // A SEPARATE vector rather than a severity flag on FError, because HasErrors() is what decides
         // whether the compile succeeded -- every caller of CompileMaterialGraph branches on it. A warning
         // pushed into Errors would fail the material outright, which is the opposite of what a warning is.
-        FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.push_back(Warning); }
+        FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.Add(Warning); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetWarnings() const { return Warnings; }
 
         FInputValue GetTypedInputValue(CMaterialInput* Input, float DefaultValue = 0.0f);
@@ -600,8 +600,8 @@ namespace Lumina
 
         // Inlined function nodes get variable-name prefixes so repeated/nested calls never collide;
         // a call node pushes a per-call prefix (composed with the current one, so nesting accumulates).
-        void PushInlinePrefix(const FString& Prefix) { InlinePrefixStack.push_back(Prefix); }
-        void PopInlinePrefix() { if (!InlinePrefixStack.empty()) { InlinePrefixStack.pop_back(); } }
+        void PushInlinePrefix(const FString& Prefix) { InlinePrefixStack.Add(Prefix); }
+        void PopInlinePrefix() { if (!InlinePrefixStack.IsEmpty()) { InlinePrefixStack.Pop(); } }
         const FString& GetCurrentInlinePrefix() const;
 
         // Recursion guard: returns false when Function is already inlined higher on the stack (self-call);

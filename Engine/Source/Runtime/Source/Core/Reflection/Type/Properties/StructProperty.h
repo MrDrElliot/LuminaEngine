@@ -8,10 +8,10 @@ namespace Lumina
     class FStructProperty : public FProperty
     {
     public:
-        explicit FStructProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FStructProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            CStruct* InternalStruct = Desc.Type->GetStruct();
+            CStruct* InternalStruct = InDesc.Type->GetStruct();
             ASSERT(InternalStruct);
             SetStruct(InternalStruct);
             SetElementSize(Struct->GetAlignedSize());
@@ -37,6 +37,7 @@ namespace Lumina
         void ConstructValue(void* Value) const override { if (Struct) { Struct->InitializeStruct(Value); } }
         void DestructValue(void* Value) const override  { if (Struct) { Struct->DestroyStruct(Value); } }
         bool OwnsStorage() const override { return Struct != nullptr && Struct->RequiresValueLifecycle(); }
+        void RelocateValue(void* Dest, void* Source) const override { if (Struct) { Struct->RelocateStruct(Dest, Source); } }
 
 
         CStruct* Struct = nullptr;

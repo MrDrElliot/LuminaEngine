@@ -32,7 +32,7 @@ TEST(MaterialStaticSwitch, AnUnnamedSwitchTakesItsDefaultAndClaimsNoKeyBit)
 
     TVector<SMaterialStaticSwitch> Switches;
     Compiler.GetStaticSwitches(Switches);
-    EXPECT_TRUE(Switches.empty());
+    EXPECT_TRUE(Switches.IsEmpty());
     EXPECT_FALSE(Compiler.HasErrors());
 }
 
@@ -59,7 +59,7 @@ TEST(MaterialStaticSwitch, TheManifestIsOrderedByNameSoTheKeySurvivesANodeReorde
     TVector<SMaterialStaticSwitch> Switches;
     Compiler.GetStaticSwitches(Switches);
 
-    ASSERT_EQ(Switches.size(), (size_t)3);
+    ASSERT_EQ(Switches.Num(), 3);
     EXPECT_EQ(Switches[0].ParameterName, FName("Alpha"));
     EXPECT_EQ(Switches[1].ParameterName, FName("Mid"));
     EXPECT_EQ(Switches[2].ParameterName, FName("Zeta"));
@@ -80,7 +80,7 @@ TEST(MaterialStaticSwitch, TwoSwitchesSharingANameMustAgreeOnTheirDefault)
 
     TVector<SMaterialStaticSwitch> Switches;
     Compiler.GetStaticSwitches(Switches);
-    EXPECT_EQ(Switches.size(), (size_t)1);
+    EXPECT_EQ(Switches.Num(), 1);
 }
 
 TEST(MaterialStaticSwitch, TheKeyIsAUint64SoTheSixtyFifthSwitchIsRefused)
@@ -97,7 +97,7 @@ TEST(MaterialStaticSwitch, TheKeyIsAUint64SoTheSixtyFifthSwitchIsRefused)
 
     TVector<SMaterialStaticSwitch> Switches;
     Compiler.GetStaticSwitches(Switches);
-    EXPECT_EQ(Switches.size(), (size_t)kMaxStaticSwitches);
+    EXPECT_EQ(Switches.Num(), kMaxStaticSwitches);
 }
 
 TEST(MaterialStaticSwitch, ReachabilityDropsTheBranchTheSwitchDidNotTake)
@@ -120,12 +120,12 @@ TEST(MaterialStaticSwitch, ReachabilityDropsTheBranchTheSwitchDidNotTake)
     Switch->SetResolvedValue(true);
     THashSet<CEdGraphNode*> Reachable;
     GraphAlgorithms::CollectReachableFromRoot(Switch, Reachable);
-    EXPECT_NE(Reachable.find(OnTrue), Reachable.end());
-    EXPECT_EQ(Reachable.find(OnFalse), Reachable.end());
+    EXPECT_TRUE(Reachable.Contains(OnTrue));
+    EXPECT_FALSE(Reachable.Contains(OnFalse));
 
     Switch->SetResolvedValue(false);
-    Reachable.clear();
+    Reachable.Reset();
     GraphAlgorithms::CollectReachableFromRoot(Switch, Reachable);
-    EXPECT_NE(Reachable.find(OnFalse), Reachable.end());
-    EXPECT_EQ(Reachable.find(OnTrue), Reachable.end());
+    EXPECT_TRUE(Reachable.Contains(OnFalse));
+    EXPECT_FALSE(Reachable.Contains(OnTrue));
 }

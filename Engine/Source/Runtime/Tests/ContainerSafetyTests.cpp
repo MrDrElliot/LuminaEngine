@@ -40,7 +40,7 @@ namespace ContainerSafetyTestsInternal
         Field.Type = std::move(List);
 
         Scripting::FScriptExportSchema Schema;
-        Schema.Fields.push_back(std::move(Field));
+        Schema.Fields.Add(std::move(Field));
 
         CScriptClass* Class = ScriptTest::MintWith(ClassName, Schema);
         if (Class == nullptr)
@@ -97,7 +97,7 @@ TEST(ScriptContainerGrowth, InlineInstancedStructsSurviveAReallocation)
     using namespace ContainerSafetyTestsInternal;
 
     Scripting::FScriptExportSchema PayloadSchema;
-    PayloadSchema.Fields.push_back(ScriptTest::ScalarField("Value", EPropertyTypeFlags::Int32));
+    PayloadSchema.Fields.Add(ScriptTest::ScalarField("Value", EPropertyTypeFlags::Int32));
     ScriptTest::PublishStructs({ ScriptTest::StructDefinition("GrowTest_Payload", std::move(PayloadSchema)) });
 
     CStruct* Payload = FScriptStructRegistry::Get().Find(FName("GrowTest_Payload"));
@@ -124,11 +124,11 @@ TEST(ScriptContainerGrowth, InlineInstancedStructsSurviveAReallocation)
     {
         FInstancedStruct Source(Payload);
         *ValueProperty->GetValuePtr<int32>(Source.GetMutableMemory()) = Index;
-        Ops->PushBack(Array, &Source);
+        Ops->Add(Array, &Source);
     }
-    ASSERT_EQ(Ops->Size(Array), (SIZE_T)Count);
+    ASSERT_EQ(Ops->Num(Array), Count);
 
-    const FInstancedStruct* Elements = static_cast<const FInstancedStruct*>(Ops->Data(Array));
+    const FInstancedStruct* Elements = static_cast<const FInstancedStruct*>(Ops->GetData(Array));
     for (int32 Index = 0; Index < Count; ++Index)
     {
         const uint8* Begin = reinterpret_cast<const uint8*>(&Elements[Index]);
@@ -137,7 +137,7 @@ TEST(ScriptContainerGrowth, InlineInstancedStructsSurviveAReallocation)
         EXPECT_EQ(*ValueProperty->GetValuePtr<int32>(const_cast<uint8*>(Memory)), Index);
     }
 
-    Ops->Clear(Array);
+    Ops->Reset(Array);
 }
 
 TEST(ScriptContainerGrowth, PushingAnElementOfTheSameListCopiesItBeforeTheOldBlockGoes)
@@ -153,19 +153,19 @@ TEST(ScriptContainerGrowth, PushingAnElementOfTheSameListCopiesItBeforeTheOldBlo
     void* Array = Items->GetValuePtr<void>(Object);
 
     const FString Text = "long enough that the characters live on the heap rather than inline";
-    Ops->PushBack(Array, &Text);
+    Ops->Add(Array, &Text);
     for (int32 Index = 0; Index < 40; ++Index)
     {
-        Ops->PushBack(Array, Ops->Data(Array));
+        Ops->Add(Array, Ops->GetData(Array));
     }
 
-    const FString* Strings = static_cast<const FString*>(Ops->Data(Array));
-    for (SIZE_T Index = 0; Index < Ops->Size(Array); ++Index)
+    const FString* Strings = static_cast<const FString*>(Ops->GetData(Array));
+    for (int32 Index = 0; Index < Ops->Num(Array); ++Index)
     {
         EXPECT_EQ(Strings[Index], Text) << "element " << Index;
     }
 
-    Ops->Clear(Array);
+    Ops->Reset(Array);
 }
 
 TEST(ComponentSignalReentrancy, AListenerThatDisconnectsItselfDoesNotSkipTheNext)
@@ -227,7 +227,7 @@ TEST(ComponentTypeRegistryThreads, TypesFirstTouchedTogetherGetDistinctIds)
         FName Names[ThreadCount];
         for (int32 Index = 0; Index < ThreadCount; ++Index)
         {
-            Names[Index] = FName(Format("ThreadedAcquire_{}_{}", Round, Index).c_str());
+            Names[Index] = FName(*Format("ThreadedAcquire_{}_{}", Round, Index));
         }
 
         ECS::FComponentTypeID Ids[ThreadCount] = {};

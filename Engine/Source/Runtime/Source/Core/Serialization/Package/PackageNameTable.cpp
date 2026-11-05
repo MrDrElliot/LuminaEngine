@@ -13,21 +13,21 @@ namespace Lumina
         const FName Base = Name.GetBaseName();
         const uint32 Key = Base.GetID();
 
-        if (const auto It = BaseToSlot.find(Key); It != BaseToSlot.end())
+        if (const auto It = BaseToSlot.Find(Key); It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
-        const uint32 NewSlot = (uint32)Slots.size();
+        const uint32 NewSlot = (uint32)Slots.Num();
         DEBUG_ASSERT(NewSlot < kPackageNameNumberBit);
-        BaseToSlot.emplace(Key, NewSlot);
-        Slots.push_back(Base);
+        BaseToSlot.TryAdd(Key, NewSlot);
+        Slots.Add(Base);
         return NewSlot;
     }
 
     void FPackageNameMap::Serialize(FArchive& Ar) const
     {
-        uint32 Count = (uint32)Slots.size();
+        uint32 Count = (uint32)Slots.Num();
         Ar << Count;
 
         // length then bytes, the encoding an FString writes, without building one per name
@@ -35,7 +35,7 @@ namespace Lumina
         {
             // none renders as the text "NAME_None", so it goes on the wire empty, as FArchive spells it
             const bool  bNone  = Name.IsNone();
-            const char* Text   = bNone ? "" : Name.c_str();
+            const char* Text   = bNone ? "" : *Name;
             uint64      Length = bNone ? 0 : strlen(Text);
 
             Ar << Length;
@@ -48,19 +48,19 @@ namespace Lumina
 
     void FPackageNameTable::Serialize(FArchive& Ar)
     {
-        Slots.clear();
+        Slots.Reset();
 
         uint32 Count = 0;
         Ar << Count;
 
-        if (Count > Ar.GetMaxSerializeSize())
+        if (Count > Ar.GetMaxSerializeSize() || !Ar.CanHoldCount(Count, 64))
         {
             LOG_ERROR("Package name table claims {} entries (max {}); the package is corrupt", Count, Ar.GetMaxSerializeSize());
             Ar.SetHasError(true);
             return;
         }
 
-        Slots.reserve(Count);
+        Slots.Reserve(Count);
 
         // straight into the stack and interned once, an FString here cost three allocator calls per name
         char Stack[512];
@@ -70,17 +70,17 @@ namespace Lumina
             uint64 Length = 0;
             Ar << Length;
 
-            if (Length > Ar.GetMaxSerializeSize())
+            if (Length > Ar.GetMaxSerializeSize() || !Ar.CanHoldCount(Length, 8))
             {
                 LOG_ERROR("Package name {} claims {} bytes; the name table is corrupt", Index, Length);
                 Ar.SetHasError(true);
-                Slots.clear();
+                Slots.Reset();
                 return;
             }
 
             if (Length == 0)
             {
-                Slots.push_back(NAME_None);
+                Slots.Add(NAME_None);
                 continue;
             }
 
@@ -90,34 +90,34 @@ namespace Lumina
                 Ar.Serialize(Stack, (int64)Length);
                 if (Ar.HasError())
                 {
-                    Slots.clear();
+                    Slots.Reset();
                     return;
                 }
 
                 Stack[Length] = '\0';
-                Slots.push_back(FName(Stack, 0).GetBaseName());
+                Slots.Add(FName(Stack, 0).GetBaseName());
             }
             else
             {
                 FString Heap;
-                Heap.resize(Length);
-                Ar.Serialize(Heap.data(), (int64)Length);
+                Heap.SetLen(IntCastChecked<int32>(Length));
+                Ar.Serialize(Heap.GetData(), (int64)Length);
                 if (Ar.HasError())
                 {
-                    Slots.clear();
+                    Slots.Reset();
                     return;
                 }
 
-                Slots.push_back(FName(Heap.c_str(), 0).GetBaseName());
+                Slots.Add(FName(*Heap, 0).GetBaseName());
             }
         }
     }
 
     FName FPackageNameTable::Resolve(uint32 Slot, bool bHasNumber, uint32 ExternalNumber) const
     {
-        if (Slot >= Slots.size())
+        if (Slot >= static_cast<uint32>(Slots.Num()))
         {
-            LOG_ERROR("Package name slot {} is outside the {}-entry name table", Slot, Slots.size());
+            LOG_ERROR("Package name slot {} is outside the {}-entry name table", Slot, Slots.Num());
             return NAME_None;
         }
 
@@ -159,7 +159,7 @@ namespace Lumina
         }
 
         // One bad slot means the stream is misaligned, so the archive fails rather than logging every name after it.
-        if ((Packed & kPackageNameSlotMask) >= Table->Num())
+        if ((Packed & kPackageNameSlotMask) >= static_cast<uint32>(Table->Num()))
         {
             if (!Ar.HasError())
             {

@@ -37,12 +37,12 @@ namespace Lumina::CrashReporting
         // A truncated path attaches the wrong file, so anything oversized is dropped rather than cut.
         bool Widen(FStringView In, wchar_t* Out, uint32 OutChars)
         {
-            if (In.empty() || In.size() >= OutChars)
+            if (In.IsEmpty() || static_cast<uint32>(In.Len()) >= OutChars)
             {
                 return false;
             }
 
-            const int Written = MultiByteToWideChar(CP_UTF8, 0, In.data(), static_cast<int>(In.size()),
+            const int Written = MultiByteToWideChar(CP_UTF8, 0, In.GetData(), In.Len(),
                 Out, static_cast<int>(OutChars - 1));
             if (Written <= 0)
             {
@@ -65,8 +65,8 @@ namespace Lumina::CrashReporting
         {
             auto ParentOf = [](FStringView Path) -> FString
             {
-                const size_t Slash = Path.find_last_of("/\\");
-                return Slash == FStringView::npos ? FString() : FString(Path.data(), Slash);
+                const int32 Slash = Path.FindLastOf("/\\");
+                return Slash == Constants::kIndexNone ? FString() : FString(Path.GetData(), Slash);
             };
 
             // Paths is not initialized this early, so the exe-relative walk is repeated here rather than shared.
@@ -80,16 +80,16 @@ namespace Lumina::CrashReporting
                 return {};
             }
 
-            while (!Head.empty() && (Head.back() == '\n' || Head.back() == '\r' || Head.back() == ' '))
+            while (!Head.IsEmpty() && (Head.Last() == '\n' || Head.Last() == '\r' || Head.Last() == ' '))
             {
-                Head.pop_back();
+                Head.LeftChopInline(1);
             }
 
             // Attached HEAD points at a ref; detached HEAD is the hash itself.
             constexpr FStringView RefPrefix = "ref: ";
-            if (FStringView(Head).starts_with(RefPrefix))
+            if (FStringView(Head).StartsWith(RefPrefix))
             {
-                const FString RefName = Head.substr(RefPrefix.size());
+                const FString RefName = Head.Mid(RefPrefix.Len());
 
                 FString Resolved;
                 if (!Filesystem::ReadFile(Resolved, GitDir + "/" + RefName))
@@ -102,57 +102,57 @@ namespace Lumina::CrashReporting
                     }
 
                     // Lines are "<sha> <refname>". '#' is the header, '^' a peeled tag target.
-                    size_t LineStart = 0;
-                    while (LineStart < Packed.size())
+                    int32 LineStart = 0;
+                    while (LineStart < Packed.Len())
                     {
-                        size_t LineEnd = Packed.find('\n', LineStart);
-                        if (LineEnd == FString::npos)
+                        int32 LineEnd = Packed.Find('\n', LineStart);
+                        if (LineEnd == Constants::kIndexNone)
                         {
-                            LineEnd = Packed.size();
+                            LineEnd = Packed.Len();
                         }
 
-                        const FStringView Line(Packed.data() + LineStart, LineEnd - LineStart);
+                        const FStringView Line(Packed.GetData() + LineStart, LineEnd - LineStart);
                         LineStart = LineEnd + 1;
 
-                        if (Line.empty() || Line.front() == '#' || Line.front() == '^')
+                        if (Line.IsEmpty() || Line[0] == '#' || Line[0] == '^')
                         {
                             continue;
                         }
 
-                        const size_t Space = Line.find(' ');
-                        if (Space == FStringView::npos)
+                        const int32 Space = Line.Find(' ');
+                        if (Space == Constants::kIndexNone)
                         {
                             continue;
                         }
 
-                        FStringView Name = Line.substr(Space + 1);
-                        while (!Name.empty() && (Name.back() == '\r' || Name.back() == ' '))
+                        FStringView Name = Line.Mid(Space + 1);
+                        while (!Name.IsEmpty() && (Name.Last() == '\r' || Name.Last() == ' '))
                         {
-                            Name = Name.substr(0, Name.size() - 1);
+                            Name = Name.Mid(0, Name.Len() - 1);
                         }
 
                         if (Name == FStringView(RefName))
                         {
-                            Resolved.assign(Line.data(), Space);
+                            Resolved = Line.Left(Space);
                             break;
                         }
                     }
 
-                    if (Resolved.empty())
+                    if (Resolved.IsEmpty())
                     {
                         return {};
                     }
                 }
 
                 Head = Resolved;
-                while (!Head.empty() && (Head.back() == '\n' || Head.back() == '\r'))
+                while (!Head.IsEmpty() && (Head.Last() == '\n' || Head.Last() == '\r'))
                 {
-                    Head.pop_back();
+                    Head.LeftChopInline(1);
                 }
             }
 
             // Enough to identify the commit, short enough to read in a version column.
-            return Head.size() >= 8 ? Head.substr(0, 8) : FString();
+            return Head.Len() >= 8 ? Head.Mid(0, 8) : FString();
         }
         #endif
     }
@@ -169,7 +169,7 @@ namespace Lumina::CrashReporting
         // An editor built from source is only identifiable by the tree it came from.
         FString VersionString = FString(LUMINA_VERSION) + "-" + LUMINA_CONFIGURATION_NAME;
 
-        if (const FString Commit = ReadGitCommit(); !Commit.empty())
+        if (const FString Commit = ReadGitCommit(); !Commit.IsEmpty())
         {
             VersionString += "-";
             VersionString += Commit;
@@ -232,7 +232,7 @@ namespace Lumina::CrashReporting
     {
         if (IsEnabled())
         {
-            LOG_DISPLAY("Crash reporting active ({}).", GStatusLine.c_str());
+            LOG_DISPLAY("Crash reporting active ({}).", *GStatusLine);
         }
         else
         {
@@ -303,7 +303,7 @@ namespace Lumina::CrashReporting
         // The SDK reads the file when a report is built, so it only has to exist at crash time.
         if (BugSplat_AddAttachment(WidePath) != 0)
         {
-            GAttachments.emplace_back(WidePath);
+            GAttachments.Emplace(WidePath);
         }
         #else
         (void)Path;
@@ -324,10 +324,10 @@ namespace Lumina::CrashReporting
         // One at a time, since the C API exposes RemoveAttachment but not ClearAttachments.
         for (const FWString& Attachment : GAttachments)
         {
-            BugSplat_RemoveAttachment(Attachment.c_str());
+            BugSplat_RemoveAttachment(*Attachment);
         }
 
-        GAttachments.clear();
+        GAttachments.Reset();
         #endif
     }
 

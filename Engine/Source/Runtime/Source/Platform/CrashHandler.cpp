@@ -45,7 +45,7 @@ namespace Lumina::CrashHandler
             CallOnce(Once, []
             {
                 const FString Default = Paths::GetGameDataDirectory() + "/CrashDumps";
-                Publish(Default.c_str(), static_cast<uint32>(Default.size()));
+                Publish(*Default, static_cast<uint32>(Default.Len()));
             });
         }
     }
@@ -53,13 +53,13 @@ namespace Lumina::CrashHandler
 
     void SetCrashDumpDirectory(FStringView Directory)
     {
-        if (Directory.empty())
+        if (Directory.IsEmpty())
         {
             return;
         }
 
         EnsureDefault();
-        Publish(Directory.data(), static_cast<uint32>(Directory.size()));
+        Publish(Directory.GetData(), static_cast<uint32>(Directory.Len()));
     }
 
 

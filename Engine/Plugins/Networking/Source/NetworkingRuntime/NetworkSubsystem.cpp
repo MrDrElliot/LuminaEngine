@@ -56,15 +56,15 @@ namespace Lumina
             delete GNetwork;
             GNetwork = nullptr;
 
-            GFrameEvents.clear();
-            GFrameEvents.shrink_to_fit();
+            GFrameEvents.Reset();
+            GFrameEvents.Shrink();
 
             enet_deinitialize();
         }
 
         void Update()
         {
-            GFrameEvents.clear();
+            GFrameEvents.Reset();
 
             if (GNetwork != nullptr)
             {

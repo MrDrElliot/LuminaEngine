@@ -2,10 +2,10 @@
 
 #include "Containers/HashPrimitives.h"
 #include "Containers/Vector.h"
-#include "Containers/VectorOps.h"
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
+#include "Core/Math/Hash/XXHashCore.h"
 #include <string.h>
 
 
@@ -29,16 +29,19 @@ namespace Lumina::Hash
 	/** Mixes Value into Seed. */
 	FORCEINLINE void HashCombine(size_t& Seed, size_t Value) noexcept
 	{
-		Seed = static_cast<size_t>(Containers::CombineHash(Seed, Value));
+		Seed = Containers::CombineHash(Seed, Value);
 	}
 
 	namespace XXHash
 	{
-		RUNTIME_API uint32 GetHash32(const void* Data, size_t Size, uint32 Seed = 0);
+		FORCEINLINE uint32 GetHash32(const void* Data, size_t Size, uint32 Seed = 0)
+		{
+			return XXHashCore::Hash32(Data, Size, Seed);
+		}
 
 		inline uint32 GetHash32(const FString& string, uint32 Seed = 0)
 		{
-			return GetHash32(string.c_str(), string.length(), Seed);
+			return GetHash32(*string, string.Len(), Seed);
 		}
 		
 		inline uint32 GetHash32(const char* String)
@@ -53,14 +56,17 @@ namespace Lumina::Hash
 
 		inline uint32 GetHash32(const TVector<uint8>& data, uint32 Seed = 0)
 		{
-			return GetHash32(data.data(), data.size(), Seed);
+			return GetHash32(data.GetData(), data.Num(), Seed);
 		}
 
-		RUNTIME_API uint64 GetHash64(void const* Data, size_t Size, uint64 Seed = 0);
+		FORCEINLINE uint64 GetHash64(const void* Data, size_t Size, uint64 Seed = 0)
+		{
+			return XXHashCore::Hash64(Data, Size, Seed);
+		}
 
 		inline uint64 GetHash64(const FString& String, uint64 Seed = 0)
 		{
-			return GetHash64(String.c_str(), String.length(), Seed);
+			return GetHash64(*String, String.Len(), Seed);
 		}
 
 		// Unseeded for the same reason as GetHash32(const char*) above.
@@ -71,7 +77,7 @@ namespace Lumina::Hash
 
 		inline uint64 GetHash64(const TVector<uint8>& data, uint64 Seed = 0)
 		{
-			return GetHash64(data.data(), data.size(), Seed);
+			return GetHash64(data.GetData(), data.Num(), Seed);
 		}
 	}
 
@@ -103,13 +109,13 @@ namespace Lumina::Hash
 	// const char* forms below take none: a seed there makes every GetHash32(Ptr, Length) ambiguous.
 	FORCEINLINE uint32 GetHash32(const FString& string, uint32 Seed = 0)
 	{
-		return XXHash::GetHash32(string.c_str(), string.length(), Seed);
+		return XXHash::GetHash32(*string, string.Len(), Seed);
 	}
 
 	template<size_t S>
 	FORCEINLINE uint32 GetHash32(const TFixedString<S>& string, uint32 Seed = 0)
 	{
-		return XXHash::GetHash32(string.c_str(), string.length(), Seed);
+		return XXHash::GetHash32(*string, string.Len(), Seed);
 	}
 
 	FORCEINLINE uint32 GetHash32(const char* String)
@@ -124,18 +130,18 @@ namespace Lumina::Hash
 
 	FORCEINLINE uint32 GetHash32(const TVector<uint8>& data, uint32 Seed = 0)
 	{
-		return XXHash::GetHash32(data.data(), data.size(), Seed);
+		return XXHash::GetHash32(data.GetData(), data.Num(), Seed);
 	}
 
 	FORCEINLINE uint64 GetHash64(const FString& string, uint64 Seed = 0)
 	{
-		return XXHash::GetHash64(string.c_str(), string.length(), Seed);
+		return XXHash::GetHash64(*string, string.Len(), Seed);
 	}
 
 	template<size_t S>
 	FORCEINLINE uint64 GetHash64(const TFixedString<S>& string, uint64 Seed = 0)
 	{
-		return XXHash::GetHash64(string.c_str(), string.length(), Seed);
+		return XXHash::GetHash64(*string, string.Len(), Seed);
 	}
 
 	FORCEINLINE uint64 GetHash64(const char* String)
@@ -150,7 +156,7 @@ namespace Lumina::Hash
 
 	FORCEINLINE uint64 GetHash64(const TVector<uint8>& Data, uint64 Seed = 0)
 	{
-		return XXHash::GetHash64(Data.data(), Data.size(), Seed);
+		return XXHash::GetHash64(Data.GetData(), Data.Num(), Seed);
 	}
 
 	template<ContiguousContainer T>
@@ -160,7 +166,7 @@ namespace Lumina::Hash
 			"GetHash64(container) hashes raw element bytes; the element type must be trivially copyable. "
 			"For anything else, loop and HashCombine each element.");
 
-		return XXHash::GetHash64(Array.data(), Array.size() * sizeof(typename T::value_type));
+		return XXHash::GetHash64(Array.GetData(), Array.Num() * sizeof(typename T::value_type));
 	}
 
 	template<typename T>

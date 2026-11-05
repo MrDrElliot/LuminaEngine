@@ -14,10 +14,10 @@ namespace Lumina
         // The engine's own passes write targets that cannot blend, such as the visibility buffer.
         const RHI::FBlendDesc Blend = bEnginePass ? RHI::FBlendDesc{} : Desc.Blend;
 
-        TFixedVector<RHI::FColorTarget, 4> Targets;
+        TInlineVector<RHI::FColorTarget, 4> Targets;
         for (const EFormat Format : PassColorFormats)
         {
-            Targets.push_back({ Format, Blend });
+            Targets.Emplace(Format, Blend);
         }
 
         FRenderPipelineDesc Resolved = Desc;
@@ -26,7 +26,7 @@ namespace Lumina
             Resolved.PixelShader = PassDefaultPixelShader;
         }
 
-        return GetPipeline(Resolved, TSpan<const RHI::FColorTarget>(Targets.data(), Targets.size()), PassDepthFormat);
+        return GetPipeline(Resolved, TSpan<const RHI::FColorTarget>(Targets.GetData(), Targets.Num()), PassDepthFormat);
     }
 
     RHI::FPipelineH FRenderContext::GetPipeline(const FRenderPipelineDesc& Desc, TSpan<const RHI::FColorTarget> ColorTargets, EFormat DepthFormat) const
@@ -79,8 +79,8 @@ namespace Lumina
         }
         RHI::CmdSetDepthStencil(CmdList, DepthDesc);
 
-        PassColorFormats.clear();
-        PassColorFormats.push_back(Target.Format);
+        PassColorFormats.Reset();
+        PassColorFormats.Add(Target.Format);
         PassDepthFormat        = bUseDepth ? SceneDepth.Format : EFormat::UNKNOWN;
         PassDefaultPixelShader = {};
         bPassOpen              = true;
@@ -94,7 +94,7 @@ namespace Lumina
         RHI::CmdEndRenderPass(CmdList);
         RHI::Barriers::RasterToRead(CmdList);
 
-        PassColorFormats.clear();
+        PassColorFormats.Reset();
         PassDepthFormat = EFormat::UNKNOWN;
         bPassOpen       = false;
     }
@@ -146,10 +146,10 @@ namespace Lumina
 
     void FRenderContext::AdoptEnginePass(TSpan<const EFormat> ColorFormats, EFormat DepthFormat, FShaderH DefaultPixelShader)
     {
-        PassColorFormats.clear();
+        PassColorFormats.Reset();
         for (const EFormat Format : ColorFormats)
         {
-            PassColorFormats.push_back(Format);
+            PassColorFormats.Add(Format);
         }
         PassDepthFormat        = DepthFormat;
         PassDefaultPixelShader = DefaultPixelShader;
@@ -173,11 +173,11 @@ namespace Lumina
         // Entries must not grow while Invoke walks them, so an add from a callback lands afterwards.
         if (bInvoking)
         {
-            PendingAdds.push_back(Move(Entry));
+            PendingAdds.Add(Move(Entry));
         }
         else
         {
-            Entries.push_back(Move(Entry));
+            Entries.Add(Move(Entry));
             ActiveStages |= Stages;
         }
 
@@ -196,16 +196,16 @@ namespace Lumina
         const uint64 Id = Handle.Id;
         Handle = {};
 
-        for (SIZE_T i = 0; i < PendingAdds.size(); ++i)
+        for (int32 i = 0; i < PendingAdds.Num(); ++i)
         {
             if (PendingAdds[i].Id == Id)
             {
-                PendingAdds.erase(PendingAdds.begin() + i);
+                PendingAdds.RemoveAt(i);
                 return;
             }
         }
 
-        for (SIZE_T i = 0; i < Entries.size(); ++i)
+        for (int32 i = 0; i < Entries.Num(); ++i)
         {
             if (Entries[i].Id != Id)
             {
@@ -220,7 +220,7 @@ namespace Lumina
             }
             else
             {
-                Entries.erase(Entries.begin() + i);
+                Entries.RemoveAt(i);
                 RefreshActiveStages();
             }
             return;
@@ -236,14 +236,14 @@ namespace Lumina
 
         bInvoking = true;
 
-        for (SIZE_T i = 0; i < Entries.size(); ++i)
+        for (int32 i = 0; i < Entries.Num(); ++i)
         {
             if (Entries[i].bRemoved || !EnumHasAnyFlags(Entries[i].Stages, Context.Stage))
             {
                 continue;
             }
 
-            const char* Label = Entries[i].Name.c_str();
+            const char* Label = *Entries[i].Name;
             LUMINA_PROFILE_SECTION_DYNAMIC(Label);
             const bool bMarker = RHI::IsValid(Context.CmdList);
             if (bMarker)
@@ -275,20 +275,20 @@ namespace Lumina
         if (bHasRemoved)
         {
             bHasRemoved = false;
-            for (SIZE_T i = Entries.size(); i-- > 0;)
+            for (int32 i = Entries.Num(); i-- > 0;)
             {
                 if (Entries[i].bRemoved)
                 {
-                    Entries.erase(Entries.begin() + i);
+                    Entries.RemoveAt(i);
                 }
             }
         }
 
         for (FEntry& Entry : PendingAdds)
         {
-            Entries.push_back(Move(Entry));
+            Entries.Add(Move(Entry));
         }
-        PendingAdds.clear();
+        PendingAdds.Reset();
 
         RefreshActiveStages();
     }

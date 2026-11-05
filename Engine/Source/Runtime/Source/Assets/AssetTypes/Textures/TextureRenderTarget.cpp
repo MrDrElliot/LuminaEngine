@@ -38,7 +38,7 @@ namespace Lumina
         }
 
         // No CPU mip data, since the target is GPU-only.
-        TextureResource->Mips.clear();
+        TextureResource->Mips.Reset();
 
         const uint32 W = Width  > 0 ? Width  : 1u;
         const uint32 H = Height > 0 ? Height : 1u;

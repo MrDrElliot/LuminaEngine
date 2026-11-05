@@ -10,7 +10,7 @@ namespace Lumina
         // Re-init when the parameter count drifts, since an edit can add a new parameter to address.
         if (!VMState.bInitialized ||
             VMState.SourceGraph != Graph.Get() ||
-            (Graph.IsValid() && VMState.Parameters.size() != Graph->Parameters.size()))
+            (Graph.IsValid() && VMState.Parameters.Num() != Graph->Parameters.Num()))
         {
             FAnimationGraphVM::InitState(Graph.Get(), VMState);
         }
@@ -59,7 +59,7 @@ namespace Lumina
         }
 
         const int32 Index = Graph->FindParameterIndex(ParameterName);
-        if (Index == Constants::kIndexNone || Index >= (int32)VMState.Parameters.size())
+        if (Index == Constants::kIndexNone || Index >= VMState.Parameters.Num())
         {
             return Default;
         }
@@ -80,7 +80,7 @@ namespace Lumina
         }
 
         const int32 Index = Graph->FindCurveIndex(CurveName);
-        if (Index == Constants::kIndexNone || Index >= (int32)VMState.CurveValues.size())
+        if (Index == Constants::kIndexNone || Index >= VMState.CurveValues.Num())
         {
             return Default;
         }

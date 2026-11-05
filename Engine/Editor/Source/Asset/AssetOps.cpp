@@ -26,8 +26,8 @@ namespace Lumina::AssetOps
                 return (Character >= 'A' && Character <= 'Z') ? (char)(Character + 32) : Character;
             };
 
-            size_t Index = 0;
-            for (; Index < A.size() && B[Index] != 0; ++Index)
+            int32 Index = 0;
+            for (; Index < A.Len() && B[Index] != 0; ++Index)
             {
                 if (Lower(A[Index]) != Lower(B[Index]))
                 {
@@ -35,19 +35,19 @@ namespace Lumina::AssetOps
                 }
             }
 
-            return Index == A.size() && B[Index] == 0;
+            return Index == A.Len() && B[Index] == 0;
         }
 
         bool IsAtOrUnder(FStringView VirtualPath, const char* RootLiteral)
         {
             const FStringView Root(RootLiteral);
-            if (VirtualPath.size() < Root.size() || !IEquals(VirtualPath.substr(0, Root.size()), RootLiteral))
+            if (VirtualPath.Len() < Root.Len() || !IEquals(VirtualPath.Mid(0, Root.Len()), RootLiteral))
             {
                 return false;
             }
 
             // A prefix match is only real on a path boundary, or "/Game/ContentPacks" would pass.
-            return VirtualPath.size() == Root.size() || VirtualPath[Root.size()] == '/';
+            return VirtualPath.Len() == Root.Len() || VirtualPath[Root.Len()] == '/';
         }
 
         FPathOpResult MoveAssetPackage(FStringView OldPath, FStringView NewPath)
@@ -82,16 +82,16 @@ namespace Lumina::AssetOps
                     return;
                 }
 
-                FStringView Old(FileInfo.VirtualPath.data(), FileInfo.VirtualPath.size());
-                if (!Old.starts_with(OldFolder))
+                FStringView Old(FileInfo.VirtualPath.GetData(), FileInfo.VirtualPath.Len());
+                if (!Old.StartsWith(OldFolder))
                 {
                     return;
                 }
 
-                FFixedString NewPath(NewFolder.data(), NewFolder.size());
-                NewPath.append(Old.data() + OldFolder.size(), Old.size() - OldFolder.size());
+                FFixedString NewPath(NewFolder.GetData(), NewFolder.Len());
+                NewPath.Append(Old.GetData() + OldFolder.Len(), Old.Len() - OldFolder.Len());
 
-                Entries.push_back({ FFixedString(Old.data(), Old.size()), Move(NewPath) });
+                Entries.Emplace(FFixedString(Old.GetData(), Old.Len()), Move(NewPath));
             });
 
             if (!VFS::Rename(OldFolder, NewFolder))
@@ -109,7 +109,7 @@ namespace Lumina::AssetOps
 
             FAssetRegistry::Get().TextAssetFolderRenamed(OldFolder, NewFolder);
 
-            return FPathOpResult::Ok((uint32)Entries.size());
+            return FPathOpResult::Ok((uint32)Entries.Num());
         }
 
         FPathOpResult MoveLooseFile(FStringView OldPath, FStringView NewPath)
@@ -153,7 +153,7 @@ namespace Lumina::AssetOps
         {
             if (VFS::IsReadOnlyOnDisk(VirtualPath))
             {
-                ReadOnly.emplace_back(VirtualPath.data(), VirtualPath.size());
+                ReadOnly.Emplace(VirtualPath.GetData(), VirtualPath.Len());
             }
             return ReadOnly;
         }
@@ -162,7 +162,7 @@ namespace Lumina::AssetOps
         {
             if (!Info.IsDirectory() && Info.IsReadOnly())
             {
-                ReadOnly.emplace_back(Info.VirtualPath.c_str(), Info.VirtualPath.size());
+                ReadOnly.Emplace(*Info.VirtualPath, Info.VirtualPath.Len());
             }
         });
         return ReadOnly;
@@ -172,9 +172,9 @@ namespace Lumina::AssetOps
     {
         FString DescribeReadOnly(const TVector<FString>& ReadOnly, const char* Verb)
         {
-            return ReadOnly.size() == 1
-                ? Lumina::Format("{} is read-only, so it was not {}. Make it writable first.", ReadOnly.front(), Verb)
-                : Lumina::Format("{} files are read-only, including {}, so nothing was {}. Make them writable first.", ReadOnly.size(), ReadOnly.front(), Verb);
+            return ReadOnly.Num() == 1
+                ? Lumina::Format("{} is read-only, so it was not {}. Make it writable first.", ReadOnly[0], Verb)
+                : Lumina::Format("{} files are read-only, including {}, so nothing was {}. Make them writable first.", ReadOnly.Num(), ReadOnly[0], Verb);
         }
     }
 
@@ -189,7 +189,7 @@ namespace Lumina::AssetOps
             return false;
         };
 
-        if (Name.empty())
+        if (Name.IsEmpty())
         {
             return Fail("A name cannot be empty.");
         }
@@ -201,13 +201,13 @@ namespace Lumina::AssetOps
 
         for (const char Character : Name)
         {
-            if (static_cast<unsigned char>(Character) < 0x20 || FStringView("<>:\"/\\|?*").find(Character) != FStringView::npos)
+            if (static_cast<unsigned char>(Character) < 0x20 || FStringView("<>:\"/\\|?*").Find(Character) != Constants::kIndexNone)
             {
                 return Fail("A name cannot contain a path separator or any of < > : \" | ? *.");
             }
         }
 
-        if (Name.back() == '.' || Name.back() == ' ' || Name.front() == ' ')
+        if (Name.Last() == '.' || Name.Last() == ' ' || Name[0] == ' ')
         {
             return Fail("A name cannot start with a space or end with a space or a dot.");
         }
@@ -217,7 +217,7 @@ namespace Lumina::AssetOps
 
     FPathOpResult MovePath(FStringView OldPath, FStringView NewPath)
     {
-        if (OldPath.empty() || NewPath.empty())
+        if (OldPath.IsEmpty() || NewPath.IsEmpty())
         {
             return FPathOpResult::Fail("A move needs both a source and a destination.");
         }
@@ -229,7 +229,7 @@ namespace Lumina::AssetOps
         {
             return FPathOpResult::Fail(Lumina::Format("'{}' is not a valid name. {}", Leaf, LeafReason));
         }
-        if (!VFS::IsDirectory(OldPath) && VFS::FileName(NewPath, true).empty())
+        if (!VFS::IsDirectory(OldPath) && VFS::FileName(NewPath, true).IsEmpty())
         {
             return FPathOpResult::Fail("A file needs a name before its extension.");
         }
@@ -249,7 +249,7 @@ namespace Lumina::AssetOps
             return FPathOpResult::Fail(Lumina::Format("{} is a mount root and cannot be moved.", OldPath));
         }
 
-        if (const TVector<FString> ReadOnly = FindReadOnlyFiles(OldPath); !ReadOnly.empty())
+        if (const TVector<FString> ReadOnly = FindReadOnlyFiles(OldPath); !ReadOnly.IsEmpty())
         {
             return FPathOpResult::Fail(DescribeReadOnly(ReadOnly, "moved"));
         }
@@ -260,13 +260,13 @@ namespace Lumina::AssetOps
         }
 
         // Moving a folder into itself would recurse forever, and the walk below cannot detect it after the fact.
-        if (VFS::IsDirectory(OldPath) && IsAtOrUnder(NewPath, FString(OldPath.data(), OldPath.size()).c_str()))
+        if (VFS::IsDirectory(OldPath) && IsAtOrUnder(NewPath, *FString(OldPath.GetData(), OldPath.Len())))
         {
             return FPathOpResult::Fail("A folder cannot be moved inside itself.");
         }
 
         const FStringView Parent = VFS::Parent(NewPath, true);
-        if (!Parent.empty() && !VFS::Exists(Parent))
+        if (!Parent.IsEmpty() && !VFS::Exists(Parent))
         {
             return FPathOpResult::Fail(Lumina::Format("{} does not exist, so nothing can be moved into it.", Parent));
         }
@@ -278,7 +278,7 @@ namespace Lumina::AssetOps
             return MoveAssetPackage(OldPath, NewPath);
         }
 
-        if (Extension.empty())
+        if (Extension.IsEmpty())
         {
             return MoveFolder(OldPath, NewPath);
         }
@@ -288,7 +288,7 @@ namespace Lumina::AssetOps
 
     FPathOpResult CreateFolder(FStringView VirtualPath)
     {
-        if (VirtualPath.empty())
+        if (VirtualPath.IsEmpty())
         {
             return FPathOpResult::Fail("A folder needs a path.");
         }
@@ -299,7 +299,7 @@ namespace Lumina::AssetOps
         }
 
         const FStringView Parent = VFS::Parent(VirtualPath, true);
-        if (!Parent.empty() && !VFS::Exists(Parent))
+        if (!Parent.IsEmpty() && !VFS::Exists(Parent))
         {
             return FPathOpResult::Fail(Lumina::Format("{} does not exist, so nothing can be created in it.", Parent));
         }
@@ -371,11 +371,11 @@ namespace Lumina::AssetOps
         FString Variants;
         for (CPrefab* Variant : Prefab->FindDirectVariants())
         {
-            if (!Variants.empty())
+            if (!Variants.IsEmpty())
             {
                 Variants += ", ";
             }
-            Variants += Variant->GetName().c_str();
+            Variants += *Variant->GetName();
         }
         return Variants;
     }
@@ -390,7 +390,7 @@ namespace Lumina::AssetOps
             return Result;
         }
 
-        if (const TVector<FString> ReadOnly = FindReadOnlyFiles(AssetPath); !ReadOnly.empty())
+        if (const TVector<FString> ReadOnly = FindReadOnlyFiles(AssetPath); !ReadOnly.IsEmpty())
         {
             Result.Error = DescribeReadOnly(ReadOnly, "deleted");
             return Result;
@@ -403,7 +403,7 @@ namespace Lumina::AssetOps
         }
 
         // Refused rather than cascaded, since a variant is defined by its parent and resolves to nothing without it.
-        if (const FString Variants = FindDependentPrefabVariants(AssetPath); !Variants.empty())
+        if (const FString Variants = FindDependentPrefabVariants(AssetPath); !Variants.IsEmpty())
         {
             Result.Error = Lumina::Format("{} is the parent of {}. Delete or reparent those first.", AssetPath, Variants);
             return Result;

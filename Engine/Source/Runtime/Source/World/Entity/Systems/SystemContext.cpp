@@ -2,32 +2,90 @@
 #include "SystemContext.h"
 #include "World/ECS/Registry.h"
 #include "World/World.h"
+#include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/LifetimeComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 
 namespace Lumina
 {
-    namespace
+    namespace SystemContextInternal
     {
-        // Honest-access checks for the access-implying context helpers (no-op in Shipping / outside a system).
-        void CheckTransformWrite()
+        // A parallel system's spawn reserves the handle now and builds the entity at the flush, so it never resizes a pool another system reads.
+        template<typename TSetTransform>
+        ECS::FEntity CreateEntity(ECS::FRegistry& Registry, ECS::FCommandBus& Commands, FName EntityName, TSetTransform SetTransform)
         {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
+            auto Build = [EntityName, SetTransform](ECS::FRegistry& InRegistry, ECS::FEntity Entity)
+            {
+                SetTransform(InRegistry.EmplaceOrReplace<STransformComponent>(Entity));
+                InRegistry.EmplaceOrReplace<SNameComponent>(Entity, EntityName);
+                InRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            };
+
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                const ECS::FEntity Entity = Commands.Create();
+                Commands.Enqueue([Entity, Build](ECS::FRegistry& InRegistry)
+                {
+                    if (InRegistry.IsValid(Entity))
+                    {
+                        Build(InRegistry, Entity);
+                    }
+                });
+                return Entity;
+            }
+
+            const ECS::FEntity Entity = Registry.Create();
+            Build(Registry, Entity);
+            return Entity;
         }
-        void CheckPhysics(bool bWrite)
+
+        // A component value a parallel C# system fills now and the flush copies into the pool, freed either way.
+        struct FStagedComponent
         {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::PhysicsQuery>()), bWrite,
-                bWrite ? "Write<SystemResource::PhysicsQuery>" : "Read<SystemResource::PhysicsQuery>");
-        }
-        void CheckHierarchyRead()
+            const FComponentOps* Ops;
+            void* Value;
+
+            explicit FStagedComponent(const FComponentOps* InOps) : Ops(InOps), Value(InOps->New()) {}
+            FStagedComponent(FStagedComponent&& Other) noexcept : Ops(Other.Ops), Value(Other.Value) { Other.Value = nullptr; }
+            ~FStagedComponent() { if (Value != nullptr) { Ops->Delete(Value); } }
+
+            FStagedComponent(const FStagedComponent&) = delete;
+            FStagedComponent& operator=(const FStagedComponent&) = delete;
+            FStagedComponent& operator=(FStagedComponent&&) = delete;
+        };
+
+        void EnqueueStaged(ECS::FCommandBus& Commands, ECS::FEntity Entity, FStagedComponent&& Staged)
         {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::Hierarchy>()), false, "Read<SystemResource::Hierarchy>");
+            Commands.Enqueue([Entity, Staged = std::move(Staged)](ECS::FRegistry& InRegistry)
+            {
+                if (InRegistry.IsValid(Entity))
+                {
+                    Staged.Ops->EmplaceCopy(InRegistry, Entity, Staged.Value);
+                }
+            });
         }
-        void CheckStructure()
+
+        // Owns a one-shot C# callback until it runs, so a discarded command still frees its handle.
+        struct FDeferredScriptCallback
         {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
-        }
+            SScriptCallback Callback;
+
+            explicit FDeferredScriptCallback(SScriptCallback InCallback) : Callback(InCallback) {}
+            FDeferredScriptCallback(FDeferredScriptCallback&& Other) noexcept : Callback(Other.Callback) { Other.Callback.Token = 0; }
+            ~FDeferredScriptCallback() { Scripting::ReleaseScriptCallback(Callback); }
+
+            FDeferredScriptCallback(const FDeferredScriptCallback&) = delete;
+            FDeferredScriptCallback& operator=(const FDeferredScriptCallback&) = delete;
+            FDeferredScriptCallback& operator=(FDeferredScriptCallback&&) = delete;
+
+            void Invoke(uint64 Payload)
+            {
+                const SScriptCallback Once = Callback;
+                Callback.Token = 0;
+                Scripting::InvokeScriptCallback(Once, Payload);
+            }
+        };
     }
 
     SSystemContext::SSystemContext(CWorld* InWorld)
@@ -40,123 +98,34 @@ namespace Lumina
 
     const ECS::FHierarchy& SSystemContext::GetHierarchy() const
     {
-        CheckHierarchyRead();
         return Registry->GetHierarchy();
     }
 
     void SSystemContext::SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const
     {
+        if (ECS::FCommandBus::ShouldDefer())
+        {
+            CommandBus->Enqueue([Entity, Lifetime](ECS::FRegistry& InRegistry)
+            {
+                if (InRegistry.IsValid(Entity))
+                {
+                    InRegistry.GetOrEmplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
+                }
+            });
+            return;
+        }
         Registry->GetOrEmplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
     }
 
     // Read, not write, since a declared Write satisfies it and only a total absence is caught.
-    Physics::IPhysicsScene* SSystemContext::GetPhysicsScene() const
+    Physics::IPhysicsQueries* SSystemContext::GetPhysics() const
     {
-        CheckPhysics(false);
         return World ? World->GetPhysicsScene() : nullptr;
     }
 
-    void SSystemContext::ActivateBody(ECS::FEntity Entity)
+    Physics::IPhysicsScene* SExclusiveContext::GetPhysicsScene() const
     {
-        CheckPhysics(true);
-        World->PhysicsScene->ActivateBody(Entity);
-    }
-
-    void SSystemContext::DeactivateBody(ECS::FEntity Entity)
-    {
-        CheckPhysics(true);
-        World->PhysicsScene->DeactivateBody(Entity);
-    }
-
-    void SSystemContext::ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType)
-    {
-        CheckPhysics(true);
-        World->PhysicsScene->ChangeBodyMotionType(Entity, NewType);
-    }
-
-    FVector3 SSystemContext::GetBodyPosition(ECS::FEntity Entity) const
-    {
-        CheckPhysics(false);
-        return World->PhysicsScene ? World->PhysicsScene->GetBodyPosition(Entity) : FVector3(0.0f);
-    }
-
-    FQuat SSystemContext::GetBodyRotation(ECS::FEntity Entity) const
-    {
-        CheckPhysics(false);
-        return World->PhysicsScene ? World->PhysicsScene->GetBodyRotation(Entity) : FQuat();
-    }
-
-    FVector3 SSystemContext::GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const
-    {
-        CheckPhysics(false);
-        return World->PhysicsScene ? World->PhysicsScene->GetVelocityAtPoint(Entity, Point) : FVector3(0.0f);
-    }
-
-    void SSystemContext::AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) const
-    {
-        CheckPhysics(true);
-        if (World->PhysicsScene)
-        {
-            World->PhysicsScene->AddForceAtPosition(Entity, Force, Position);
-        }
-    }
-
-    void SSystemContext::ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
-        float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float InDeltaTime) const
-    {
-        CheckPhysics(true);
-        if (World->PhysicsScene)
-        {
-            World->PhysicsScene->ApplyBuoyancyImpulse(Entity, SurfacePosition, SurfaceNormal, Buoyancy, LinearDrag, AngularDrag, FluidVelocity, InDeltaTime);
-        }
-    }
-
-
-    void SSystemContext::CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) const
-    {
-        CheckPhysics(false);
-        OutHits.clear();
-        if (World->PhysicsScene)
-        {
-            World->PhysicsScene->CastSphere(Settings, OutHits);
-        }
-    }
-
-    TOptional<SRayResult> SSystemContext::CastSphereClosest(const SSphereCastSettings& Settings) const
-    {
-        CheckPhysics(false);
-        return World->PhysicsScene ? World->PhysicsScene->CastSphereClosest(Settings) : NullOpt;
-    }
-
-    STransformComponent& SSystemContext::GetEntityTransform(ECS::FEntity Entity) const
-    {
-        CheckTransformWrite(); // returns a mutable ref -> caller may write
-        return Get<STransformComponent>(Entity);
-    }
-
-    FVector3 SSystemContext::TranslateEntity(ECS::FEntity Entity, const FVector3& Translation)
-    {
-        CheckTransformWrite();
-        FVector3 NewLocation = Registry->Get<STransformComponent>(Entity).Translate(Translation);
-        return NewLocation;
-    }
-
-    void SSystemContext::SetEntityLocation(ECS::FEntity Entity, const FVector3& Location)
-    {
-        CheckTransformWrite();
-        Registry->Get<STransformComponent>(Entity).SetLocation(Location);
-    }
-
-    void SSystemContext::SetEntityRotation(ECS::FEntity Entity, const FQuat& Rotation)
-    {
-        CheckTransformWrite();
-        Registry->Get<STransformComponent>(Entity).SetRotation(Rotation);
-    }
-
-    void SSystemContext::SetEntityScale(ECS::FEntity Entity, const FVector3& Scale)
-    {
-        CheckTransformWrite();
-        Registry->Get<STransformComponent>(Entity).SetScale(Scale);
+        return World ? World->GetPhysicsScene() : nullptr;
     }
 
     void SSystemContext::DrawDebugLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, float Duration) const
@@ -197,58 +166,19 @@ namespace Lumina
     ECS::FEntity SSystemContext::Create(const FTransform& Transform, FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
-        CheckStructure();
-
-        ECS::FEntity EntityID = Registry->Create();
-        Registry->Emplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
-        Registry->Emplace<SNameComponent>(EntityID, EntityName);
-        Registry->EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
-        return EntityID;
+        return SystemContextInternal::CreateEntity(*Registry, *CommandBus, EntityName, [Transform](STransformComponent& Component) { Component.SetLocalTransform(Transform); });
     }
-    
+
     ECS::FEntity SSystemContext::Create(FVector3 Location, FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
-        CheckStructure();
-
-        ECS::FEntity EntityID = Registry->Create();
-        Registry->Emplace<STransformComponent>(EntityID).SetLocation(Location);
-        Registry->Emplace<SNameComponent>(EntityID, EntityName);
-        Registry->EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
-        return EntityID;
+        return SystemContextInternal::CreateEntity(*Registry, *CommandBus, EntityName, [Location](STransformComponent& Component) { Component.SetLocation(Location); });
     }
-    
+
     ECS::FEntity SSystemContext::Create(FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
-        CheckStructure();
-
-        ECS::FEntity EntityID = Registry->Create();
-        Registry->Emplace<STransformComponent>(EntityID);
-        Registry->Emplace<SNameComponent>(EntityID, EntityName);
-        Registry->EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
-        return EntityID;
-    }
-
-    ECS::FEntity SSystemContext::CreateDeferred(const FTransform& Transform, FName EntityName) const
-    {
-        const ECS::FEntity EntityID = CommandBus->Create();
-        CommandBus->Enqueue([EntityID, Transform, EntityName](ECS::FRegistry& InRegistry)
-        {
-            if (!InRegistry.IsValid(EntityID))
-            {
-                return;
-            }
-            InRegistry.EmplaceOrReplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
-            InRegistry.EmplaceOrReplace<SNameComponent>(EntityID, EntityName);
-            InRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
-        });
-        return EntityID;
-    }
-
-    size_t SSystemContext::GetNumEntities() const
-    {
-        return Registry->NumEntities();
+        return SystemContextInternal::CreateEntity(*Registry, *CommandBus, EntityName, [](STransformComponent&) {});
     }
 
     bool SSystemContext::IsValidEntity(ECS::FEntity Entity) const
@@ -259,5 +189,94 @@ namespace Lumina
     EWorldType SSystemContext::GetWorldType() const
     {
         return World->GetWorldType();
+    }
+
+    ECS::FEntity SSystemContext::ScriptCreate(const FTransform& Transform, FName EntityName) const
+    {
+        return Create(Transform, EntityName);
+    }
+
+    void* SSystemContext::ScriptEmplace(ECS::FEntity Entity, void* Ops) const
+    {
+        const FComponentOps* Component = static_cast<const FComponentOps*>(Ops);
+        if (Component == nullptr)
+        {
+            return nullptr;
+        }
+
+        const bool bTag = ECS::FComponentTypeRegistry::Get().GetInfo(Component->GetTypeID()).bEmpty;
+        if (ECS::FCommandBus::ShouldDefer())
+        {
+            SystemContextInternal::FStagedComponent Staged(Component);
+            void* Value = Staged.Value;
+            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, std::move(Staged));
+            return bTag ? nullptr : Value;
+        }
+
+        void* Value = Component->EmplaceDefault(*Registry, Entity);
+        if (bTag)
+        {
+            return nullptr;
+        }
+        Registry->AssureStorage(Component->GetTypeID()).MarkPointersEscaped();
+        return Value;
+    }
+
+    void SSystemContext::ScriptEmplaceCopy(ECS::FEntity Entity, void* Ops, void* Source) const
+    {
+        const FComponentOps* Component = static_cast<const FComponentOps*>(Ops);
+        if (Component == nullptr || Source == nullptr)
+        {
+            return;
+        }
+
+        SystemContextInternal::FStagedComponent Staged(Component);
+        const ECS::FComponentTypeInfo& Info = ECS::FComponentTypeRegistry::Get().GetInfo(Component->GetTypeID());
+        if (CStruct* Struct = Info.GetBoundStruct(); Struct != nullptr && !Info.bEmpty)
+        {
+            Struct->CopyStruct(Staged.Value, Source);
+        }
+
+        if (ECS::FCommandBus::ShouldDefer())
+        {
+            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, std::move(Staged));
+            return;
+        }
+        Component->EmplaceCopy(*Registry, Entity, Staged.Value);
+    }
+
+    void SSystemContext::ScriptRemove(ECS::FEntity Entity, void* Ops) const
+    {
+        const FComponentOps* Component = static_cast<const FComponentOps*>(Ops);
+        if (Component == nullptr)
+        {
+            return;
+        }
+
+        if (ECS::FCommandBus::ShouldDefer())
+        {
+            CommandBus->Enqueue([Entity, Component](ECS::FRegistry& InRegistry)
+            {
+                if (InRegistry.IsValid(Entity))
+                {
+                    Component->Remove(InRegistry, Entity);
+                }
+            });
+            return;
+        }
+        Component->Remove(*Registry, Entity);
+    }
+
+    void SSystemContext::ScriptDefer(SScriptCallback Callback) const
+    {
+        Defer([Owned = SystemContextInternal::FDeferredScriptCallback(Callback)](const SExclusiveContext& Exclusive) mutable
+        {
+            Owned.Invoke(reinterpret_cast<uint64>(&Exclusive));
+        });
+    }
+
+    bool SSystemContext::CanReachWorld()
+    {
+        return !ECS::FCommandBus::ShouldDefer();
     }
 }

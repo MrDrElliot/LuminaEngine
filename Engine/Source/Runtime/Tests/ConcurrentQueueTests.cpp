@@ -138,18 +138,18 @@ TEST(ConcurrentQueue, LosesNothingUnderContentionThatOverflowsTheRing)
 
     for (uint32 p = 0; p < kProducers; ++p)
     {
-        Threads.push_back(FThread([&Queue, p]()
+        Threads.Emplace([&Queue, p]()
         {
             for (uint32 i = 0; i < kPerProducer; ++i)
             {
                 Queue.Enqueue(p * kPerProducer + i);
             }
-        }));
+        });
     }
 
     for (uint32 c = 0; c < kConsumers; ++c)
     {
-        Threads.push_back(FThread([&Queue, &Seen, &Consumed]()
+        Threads.Emplace([&Queue, &Seen, &Consumed]()
         {
             uint32 Value = 0;
             while (Consumed.load(Atomic::MemoryOrderAcquire) < kTotal)
@@ -164,7 +164,7 @@ TEST(ConcurrentQueue, LosesNothingUnderContentionThatOverflowsTheRing)
                     Threading::ThreadYield();
                 }
             }
-        }));
+        });
     }
 
     for (FThread& Thread : Threads)
@@ -195,14 +195,14 @@ TEST(ConcurrentQueue, SurvivesADrainRaceWithoutLosingItems)
 
     for (uint32 p = 0; p < kProducers; ++p)
     {
-        Threads.push_back(FThread([&Queue, &Produced, p]()
+        Threads.Emplace([&Queue, &Produced, p]()
         {
             for (uint32 i = 0; i < kPerProducer; ++i)
             {
                 Queue.Enqueue(p * kPerProducer + i);
                 Produced.fetch_add(1, Atomic::MemoryOrderRelease);
             }
-        }));
+        });
     }
 
     // A single drainer racing the producers, the shape a per-frame drain actually has.

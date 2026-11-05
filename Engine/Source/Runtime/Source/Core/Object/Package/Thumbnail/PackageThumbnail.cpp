@@ -31,7 +31,7 @@ namespace Lumina
             if (Magic != kThumbnailMagic)
             {
                 // An unrecognized thumbnail block is left empty and regenerates on the next save.
-                ImageData.clear();
+                ImageData.Reset();
                 ImageWidth  = 0;
                 ImageHeight = 0;
                 return;
@@ -48,20 +48,21 @@ namespace Lumina
             TVector<uint8> Stored;
             Ar << Stored;
 
-            if ((EThumbnailStorage)Storage == EThumbnailStorage::PNG && !Stored.empty())
+            if ((EThumbnailStorage)Storage == EThumbnailStorage::PNG && !Stored.IsEmpty())
             {
                 int W = 0, H = 0, Channels = 0;
-                stbi_uc* Decoded = stbi_load_from_memory(Stored.data(), (int)Stored.size(), &W, &H, &Channels, 4);
+                stbi_uc* Decoded = stbi_load_from_memory(Stored.GetData(), Stored.Num(), &W, &H, &Channels, 4);
                 if (Decoded != nullptr)
                 {
                     ImageWidth  = (uint32)W;
                     ImageHeight = (uint32)H;
-                    ImageData.assign(Decoded, Decoded + (size_t)W * (size_t)H * 4);
+                    ImageData.Reset();
+                    ImageData.Append(Decoded, Decoded + (size_t)W * (size_t)H * 4);
                     stbi_image_free(Decoded);
                 }
                 else
                 {
-                    ImageData.clear();
+                    ImageData.Reset();
                 }
             }
             else
@@ -81,13 +82,13 @@ namespace Lumina
             // Encode RGBA8 -> PNG (lossless); fall back to raw if there's nothing valid to encode.
             TVector<uint8> Encoded;
             uint8 Storage = (uint8)EThumbnailStorage::Raw;
-            const bool bValidRGBA = !ImageData.empty()
+            const bool bValidRGBA = !ImageData.IsEmpty()
                 && ImageWidth > 0 && ImageHeight > 0
-                && ImageData.size() == (size_t)ImageWidth * (size_t)ImageHeight * 4;
+                && static_cast<size_t>(ImageData.Num()) == (size_t)ImageWidth * (size_t)ImageHeight * 4;
 
             if (bValidRGBA)
             {
-                if (ImageWrite::EncodePng(Encoded, ImageWidth, ImageHeight, 4, ImageData.data(), ImageWidth * 4))
+                if (ImageWrite::EncodePng(Encoded, ImageWidth, ImageHeight, 4, ImageData.GetData(), ImageWidth * 4))
                 {
                     Storage = (uint8)EThumbnailStorage::PNG;
                 }

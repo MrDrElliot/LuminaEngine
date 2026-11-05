@@ -38,9 +38,9 @@ namespace Lumina
         bool TryEnqueue(T&& Item) { EnqueueInternal(Move(Item)); return true; }
 
         // Whatever the ring cannot take spills under one lock, since a per-item lock is the whole cost of a large burst.
-        void EnqueueBulk(const T* Items, size_t Count)
+        void EnqueueBulk(const T* Items, uint32 Count)
         {
-            size_t Index = 0;
+            uint32 Index = 0;
             if (SpillCount.load(Atomic::MemoryOrderAcquire) == 0)
             {
                 while (Index < Count && Ring.TryEnqueue(Items[Index]))
@@ -54,8 +54,8 @@ namespace Lumina
             }
 
             FScopeLock Lock(SpillLock);
-            Spill.insert(Spill.end(), Items + Index, Items + Count);
-            SpillCount.store((uint32)(Spill.size() - SpillHead), Atomic::MemoryOrderRelease);
+            Spill.Append(Items + Index, static_cast<int32>(Count - Index));
+            SpillCount.store((uint32)(Spill.Num() - SpillHead), Atomic::MemoryOrderRelease);
         }
 
         bool TryDequeue(T& Out)
@@ -74,9 +74,9 @@ namespace Lumina
         }
 
         // The ring holds the older items, so it drains first and the spill follows under a single lock.
-        size_t DequeueBulk(T* Out, size_t MaxCount)
+        uint32 DequeueBulk(T* Out, uint32 MaxCount)
         {
-            size_t Count = 0;
+            uint32 Count = 0;
             while (Count < MaxCount && Ring.TryDequeue(Out[Count]))
             {
                 ++Count;
@@ -87,13 +87,13 @@ namespace Lumina
             }
 
             FScopeLock Lock(SpillLock);
-            const size_t Available = Spill.size() - SpillHead;
-            const size_t Take = (MaxCount - Count) < Available ? (MaxCount - Count) : Available;
-            for (size_t i = 0; i < Take; ++i)
+            const uint32 Available = static_cast<uint32>(Spill.Num() - SpillHead);
+            const uint32 Take = (MaxCount - Count) < Available ? (MaxCount - Count) : Available;
+            for (uint32 i = 0; i < Take; ++i)
             {
-                Out[Count + i] = Move(Spill[SpillHead + i]);
+                Out[Count + i] = Move(Spill[SpillHead + static_cast<int32>(i)]);
             }
-            SpillHead += Take;
+            SpillHead += static_cast<int32>(Take);
             Count += Take;
             CompactSpill();
             return Count;
@@ -120,8 +120,8 @@ namespace Lumina
             }
 
             FScopeLock Lock(SpillLock);
-            Spill.push_back(std::forward<TItem>(Item));
-            SpillCount.store((uint32)(Spill.size() - SpillHead), Atomic::MemoryOrderRelease);
+            Spill.Add(std::forward<TItem>(Item));
+            SpillCount.store((uint32)(Spill.Num() - SpillHead), Atomic::MemoryOrderRelease);
         }
 
         /** Taken straight off the spill rather than refilled into the ring, so producers keep the ring. */
@@ -129,7 +129,7 @@ namespace Lumina
         {
             FScopeLock Lock(SpillLock);
 
-            if (SpillHead >= Spill.size())
+            if (SpillHead >= Spill.Num())
             {
                 return false;
             }
@@ -143,25 +143,25 @@ namespace Lumina
         // Compacted by index rather than erased from the front, which would be a copy per dequeue. Caller holds SpillLock.
         void CompactSpill()
         {
-            if (SpillHead >= Spill.size())
+            if (SpillHead >= Spill.Num())
             {
-                Spill.clear();
+                Spill.Reset();
                 SpillHead = 0;
             }
-            else if (SpillHead >= 1024 && SpillHead * 2 >= Spill.size())
+            else if (SpillHead >= 1024 && SpillHead * 2 >= Spill.Num())
             {
-                Spill.erase(Spill.begin(), Spill.begin() + (ptrdiff_t)SpillHead);
+                Spill.RemoveAt(0, SpillHead);
                 SpillHead = 0;
             }
 
-            SpillCount.store((uint32)(Spill.size() - SpillHead), Atomic::MemoryOrderRelease);
+            SpillCount.store((uint32)(Spill.Num() - SpillHead), Atomic::MemoryOrderRelease);
         }
 
         TBoundedQueue<T, EQueueConcurrency::MPMC> Ring;
 
         mutable FMutex  SpillLock;
         TVector<T>      Spill;
-        size_t          SpillHead = 0;
+        int32           SpillHead = 0;
         TAtomic<uint32> SpillCount{0};
     };
 }

@@ -17,15 +17,15 @@ namespace Lumina::Scripting
                                   const FScriptExportMeta& Meta)
     {
         TVector<FProperty*> Params;
-        Params.reserve(ParamSchema.Fields.size());
+        Params.Reserve(ParamSchema.Fields.Num());
 
         const CScriptStruct::FEmittedLayout Layout = LayoutRecord.EmitLayoutInto(&Class, 0, ParamSchema, &Params);
 
         // A field the emitter could not describe is dropped, which would shift every parameter after it.
-        if (Params.size() != ParamSchema.Fields.size())
+        if (Params.Num() != ParamSchema.Fields.Num())
         {
             LOG_ERROR("Script function '{}' on '{}': {} of {} parameters could be described, so it is not minted",
-                Name, Class.GetName(), Params.size(), ParamSchema.Fields.size());
+                Name, Class.GetName(), Params.Num(), ParamSchema.Fields.Num());
             return nullptr;
         }
 
@@ -39,17 +39,17 @@ namespace Lumina::Scripting
         // Viewing the schema's strings is enough, since the builder copies them into the class's arena.
         TVector<FString> Keys;
         TVector<FMetadataEntry> Metadata;
-        Keys.reserve(Meta.Entries.size());
-        Metadata.reserve(Meta.Entries.size());
+        Keys.Reserve(Meta.Entries.Num());
+        Metadata.Reserve(Meta.Entries.Num());
         for (const FScriptExportMetaArg& Entry : Meta.Entries)
         {
-            Keys.push_back(Entry.Key.ToString());
-            Metadata.push_back(FMetadataEntry{ Keys.back().c_str(), Entry.Value.c_str() });
+            Keys.Add(Entry.Key.ToString());
+            Metadata.Emplace(*Keys.Last(), *Entry.Value);
         }
 
         FFunction* Function = FFunctionBuilder::BuildMinted(Class.GetPropertyArena(), &Class, Name,
             EFunctionFlags::ScriptCallable | ExtraFlags, Params, ReturnIndex, (uint16)Layout.EndOffset, Thunk,
-            TSpan<const FMetadataEntry>(Metadata.data(), Metadata.size()));
+            TSpan<const FMetadataEntry>(Metadata.GetData(), Metadata.Num()));
 
         if (Function == nullptr)
         {
@@ -69,7 +69,7 @@ namespace Lumina::Scripting
         FFunction* Override = FFunctionBuilder::BuildMinted(Class.GetPropertyArena(), &Class,
             Base.GetFunctionName(),
             Base.GetFunctionFlags() | EFunctionFlags::ScriptImplemented | EFunctionFlags::ScriptCallable,
-            Base.GetParams(), Base.HasReturn() ? (int32)Base.GetParams().size() - 1 : -1,
+            Base.GetParams(), Base.HasReturn() ? Base.GetParams().Num() - 1 : -1,
             Base.GetParmsSize(), Thunk);
 
         if (Override == nullptr)
@@ -78,7 +78,7 @@ namespace Lumina::Scripting
         }
 
         Class.AddFunction(Override);
-        Class.ScriptOverrideFunctions.insert_or_assign(Base.GetFunctionName(), Override);
+        Class.ScriptOverrideFunctions.Add(Base.GetFunctionName(), Override);
         return Override;
     }
 
@@ -135,7 +135,7 @@ namespace Lumina::Scripting
     {
         if (Function.GetManagedInvoker() == nullptr)
         {
-            GPublishedInvokers.push_back(&Function);
+            GPublishedInvokers.Add(&Function);
         }
         Function.SetManagedInvoker(Invoker, Offsets);
     }
@@ -146,6 +146,6 @@ namespace Lumina::Scripting
         {
             Function->SetManagedInvoker(nullptr, nullptr);
         }
-        GPublishedInvokers.clear();
+        GPublishedInvokers.Reset();
     }
 }

@@ -10,7 +10,7 @@ namespace Lumina
     class LUMINA_VISIBLE_TYPE FComponentRefProperty : public FProperty
     {
     public:
-        RUNTIME_API explicit FComponentRefProperty(const FPropertyDesc& Desc);
+        RUNTIME_API explicit FComponentRefProperty(const FPropertyDesc& InDesc);
 
         // Runtime state, so two of them never differ in a way an override, an undo step or a reset arrow should see.
         bool Identical(const void* ValueA, const void* ValueB) const override { return true; }

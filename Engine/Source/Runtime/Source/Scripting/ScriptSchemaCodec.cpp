@@ -85,17 +85,17 @@ namespace Lumina::Scripting
             for (int32 i = 0; i < N; ++i)
             {
                 const FString Alias = R.Str();
-                if (Alias.empty())
+                if (Alias.IsEmpty())
                 {
                     continue;
                 }
-                if (!Joined.empty())
+                if (!Joined.IsEmpty())
                 {
                     Joined += ";";
                 }
                 Joined += Alias;
             }
-            if (!Joined.empty())
+            if (!Joined.IsEmpty())
             {
                 Meta.Set("Aliases", Joined);
             }
@@ -109,9 +109,9 @@ namespace Lumina::Scripting
             const FString Category = R.Str();
             const FString Tooltip  = R.Str();
             const FString Units    = R.Str();
-            if (!Category.empty()) { Meta.Set("Category", Category); }
-            if (!Tooltip.empty())  { Meta.Set("ToolTip", Tooltip); }
-            if (!Units.empty())    { Meta.Set("Units", Units); }
+            if (!Category.IsEmpty()) { Meta.Set("Category", Category); }
+            if (!Tooltip.IsEmpty())  { Meta.Set("ToolTip", Tooltip); }
+            if (!Units.IsEmpty())    { Meta.Set("Units", Units); }
             if (R.U8()) { Meta.Set("ClampMin", NumberToString(R.F64())); }
             if (R.U8()) { Meta.Set("ClampMax", NumberToString(R.F64())); }
             if (R.U8()) { Meta.Set("Color", FString()); }
@@ -133,7 +133,7 @@ namespace Lumina::Scripting
             {
                 const FString Key = R.Str();
                 const FString Value = R.Str();
-                Meta.Set(FName(Key.c_str()), Value);
+                Meta.Set(FName(*Key), Value);
             }
         }
 
@@ -150,20 +150,20 @@ namespace Lumina::Scripting
             {
                 case EPropertyTypeFlags::Enum:
                 {
-                    Type->EnumName = FName(R.Str().c_str());
+                    Type->EnumName = FName(*R.Str());
                     Type->EnumUnderlying = static_cast<EPropertyTypeFlags>(R.U8());
                     break;
                 }
                 case EPropertyTypeFlags::Struct:
                 case EPropertyTypeFlags::ComponentRef:
                 {
-                    Type->NativeName = FName(R.Str().c_str());
+                    Type->NativeName = FName(*R.Str());
                     break;
                 }
                 case EPropertyTypeFlags::Object:
                 case EPropertyTypeFlags::SoftObject:
                 {
-                    Type->TargetClass = FName(R.Str().c_str());
+                    Type->TargetClass = FName(*R.Str());
                     break;
                 }
                 case EPropertyTypeFlags::Vector:
@@ -180,7 +180,7 @@ namespace Lumina::Scripting
                 }
                 case EPropertyTypeFlags::InstancedStruct:
                 {
-                    Type->BaseName = FName(R.Str().c_str());
+                    Type->BaseName = FName(*R.Str());
                     break;
                 }
                 default: break;
@@ -194,7 +194,7 @@ namespace Lumina::Scripting
             const FRecordScope Scope(R, EScriptSchemaRecord::Field);
 
             FScriptExportField Field;
-            Field.Name = FName(R.Str().c_str());
+            Field.Name = FName(*R.Str());
             ReadAliasesInto(R, Field.Meta);
             ReadMetaInto(R, Field.Meta, Field.Flags);
 
@@ -223,7 +223,7 @@ namespace Lumina::Scripting
             const int32 Count = R.I32();
             for (int32 i = 0; i < Count && !R.bError; ++i)
             {
-                Out.Params.push_back(ReadField(R, /*bTopLevel*/ false));
+                Out.Params.Add(ReadField(R, /*bTopLevel*/ false));
             }
             Out.Flags = R.P < Scope.RecordEnd ? R.U32() : 0u;
 
@@ -231,7 +231,7 @@ namespace Lumina::Scripting
             for (int32 i = 0; i < MetaCount && !R.bError; ++i)
             {
                 const FString Key = R.Str();
-                Out.Meta.Set(FName(Key.c_str()), R.Str());
+                Out.Meta.Set(FName(*Key), R.Str());
             }
 
             return !R.bError && !Out.Name.IsNone();
@@ -239,12 +239,12 @@ namespace Lumina::Scripting
 
         bool ParseSchemaBlobInternal(const TVector<uint8>& Blob, FScriptExportSchema& OutSchema)
         {
-            if (Blob.empty())
+            if (Blob.IsEmpty())
             {
                 return false;
             }
 
-            FBlobReader R{ Blob.data(), Blob.data() + Blob.size() };
+            FBlobReader R{ Blob.GetData(), Blob.GetData() + Blob.Num() };
 
             // Checked before a byte of payload is read, so a stale or foreign buffer is refused by name.
             const uint32 Magic = R.U32();
@@ -264,7 +264,7 @@ namespace Lumina::Scripting
             const int32 Count = R.I32();
             for (int32 i = 0; i < Count; ++i)
             {
-                OutSchema.Fields.push_back(ReadField(R, /*bTopLevel*/ true));
+                OutSchema.Fields.Add(ReadField(R, /*bTopLevel*/ true));
             }
 
             // Written after the fields, so an older buffer without them leaves the list empty.
@@ -276,7 +276,7 @@ namespace Lumina::Scripting
                     FScriptExportFunction Function;
                     if (ReadFunction(R, Function))
                     {
-                        OutSchema.Functions.push_back(std::move(Function));
+                        OutSchema.Functions.Add(std::move(Function));
                     }
                 }
             }
@@ -298,10 +298,10 @@ namespace Lumina::Scripting
     bool ParseTypeManifest(const TVector<uint8>& Blob, TVector<FManagedTypeDefinition>& OutTypes,
         TVector<FManagedTypeAlias>& OutAliases)
     {
-        OutTypes.clear();
-        OutAliases.clear();
+        OutTypes.Reset();
+        OutAliases.Reset();
 
-        FBlobReader R{ Blob.data(), Blob.data() + Blob.size() };
+        FBlobReader R{ Blob.GetData(), Blob.GetData() + Blob.Num() };
         if (R.U32() != kTypeManifestMagic || R.U16() != kTypeManifestVersion)
         {
             LOG_ERROR("Script type manifest has a bad header; the managed and native halves are out of date with each other.");
@@ -311,9 +311,9 @@ namespace Lumina::Scripting
         const int32 TypeCount = R.I32();
         for (int32 Index = 0; Index < TypeCount && !R.bError; ++Index)
         {
-            FManagedTypeDefinition& Type = OutTypes.emplace_back();
+            FManagedTypeDefinition& Type = OutTypes.EmplaceGetRef();
             Type.Kind = static_cast<EManagedTypeKind>(R.U8());
-            Type.TypeName = FName(R.Str().c_str());
+            Type.TypeName = FName(*R.Str());
             Type.NativeBaseName = R.Str();
 
             constexpr uint8 AbstractFlag = 1;
@@ -322,7 +322,7 @@ namespace Lumina::Scripting
             const int32 OverrideCount = R.I32();
             for (int32 Override = 0; Override < OverrideCount && !R.bError; ++Override)
             {
-                Type.OverriddenEvents.push_back(R.Str());
+                Type.OverriddenEvents.Add(R.Str());
             }
 
             const int32 MetaCount = R.I32();
@@ -330,7 +330,7 @@ namespace Lumina::Scripting
             {
                 FString Key = R.Str();
                 FString Value = R.Str();
-                Type.Meta.emplace_back(std::move(Key), std::move(Value));
+                Type.Meta.Emplace(std::move(Key), std::move(Value));
             }
 
             if (Type.Kind == EManagedTypeKind::Enum)
@@ -339,8 +339,8 @@ namespace Lumina::Scripting
                 const int32 EntryCount = R.I32();
                 for (int32 Entry = 0; Entry < EntryCount && !R.bError; ++Entry)
                 {
-                    FScriptEnumEntry& Added = Type.EnumEntries.emplace_back();
-                    Added.Name = FName(R.Str().c_str());
+                    FScriptEnumEntry& Added = Type.EnumEntries.EmplaceGetRef();
+                    Added.Name = FName(*R.Str());
                     Added.Value = R.I64();
                 }
                 continue;
@@ -360,7 +360,7 @@ namespace Lumina::Scripting
         const int32 AliasCount = R.bError ? 0 : R.I32();
         for (int32 Index = 0; Index < AliasCount && !R.bError; ++Index)
         {
-            FManagedTypeAlias& Alias = OutAliases.emplace_back();
+            FManagedTypeAlias& Alias = OutAliases.EmplaceGetRef();
             Alias.OldName = R.Str();
             Alias.NewName = R.Str();
         }
@@ -368,8 +368,8 @@ namespace Lumina::Scripting
         if (R.bError)
         {
             LOG_ERROR("Script type manifest is truncated; no script types were published this load.");
-            OutTypes.clear();
-            OutAliases.clear();
+            OutTypes.Reset();
+            OutAliases.Reset();
             return false;
         }
         return true;

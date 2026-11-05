@@ -15,13 +15,14 @@ public sealed class ProcessResult
 
 public static class ProcessRunner
 {
-    /// <summary>Runs a tool to completion, merging its standard output and error in arrival order.</summary>
+    /// <summary>Runs a tool to completion, merging its standard output and error in arrival order; StandardInput, when set, is written to the tool and then closed.</summary>
     public static async Task<ProcessResult> RunAsync(
         string ToolPath,
         string Arguments,
         string WorkingDirectory,
         IReadOnlyDictionary<string, string>? EnvironmentOverrides,
-        CancellationToken Cancellation)
+        CancellationToken Cancellation,
+        string? StandardInput = null)
     {
         ProcessStartInfo StartInfo = new(ToolPath)
         {
@@ -33,7 +34,13 @@ public static class ProcessRunner
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
+            RedirectStandardInput = StandardInput is not null,
         };
+
+        if (StandardInput is not null)
+        {
+            StartInfo.StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        }
 
         if (EnvironmentOverrides is not null)
         {
@@ -80,6 +87,19 @@ public static class ProcessRunner
 
         Runner.BeginOutputReadLine();
         Runner.BeginErrorReadLine();
+
+        if (StandardInput is not null)
+        {
+            try
+            {
+                await Runner.StandardInput.WriteAsync(StandardInput.AsMemory(), Cancellation).ConfigureAwait(false);
+                Runner.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+                // The tool exited before reading everything; its exit code and output say why.
+            }
+        }
 
         try
         {

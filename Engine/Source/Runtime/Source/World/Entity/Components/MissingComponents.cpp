@@ -17,9 +17,9 @@ namespace Lumina
             {
                 continue;
             }
-            if (const auto It = Map.find(ECS::FEntity(To)); It != Map.end())
+            if (const auto It = Map.Find(ECS::FEntity(To)); It != nullptr)
             {
-                To = It->second.Value;
+                To = It->Value;
             }
             else if (bClearUnmapped)
             {
@@ -31,13 +31,13 @@ namespace Lumina
         if (!bClearUnmappedEntities)
         {
             THashSet<uint32> Remapped;
-            Remapped.insert(RemapFrom.begin(), RemapFrom.end());
+            Remapped.Append(RemapFrom);
             for (const auto& [From, To] : Map)
             {
-                if (Remapped.find(From.Value) == Remapped.end())
+                if (!Remapped.Contains(From.Value))
                 {
-                    RemapFrom.push_back(From.Value);
-                    RemapTo.push_back(To.Value);
+                    RemapFrom.Add(From.Value);
+                    RemapTo.Add(To.Value);
                 }
             }
             bClearUnmappedEntities = bClearUnmapped;
@@ -46,14 +46,15 @@ namespace Lumina
 
     void SHeldValue::ApplyEntityRemap(const CStruct* Struct, void* Value) const
     {
-        if (RemapFrom.empty() && !bClearUnmappedEntities)
+        if (RemapFrom.IsEmpty() && !bClearUnmappedEntities)
         {
             return;
         }
         THashMap<ECS::FEntity, ECS::FEntity> Map;
-        for (size_t Index = 0; Index < RemapFrom.size(); ++Index)
+        const int32 Pairs = Math::Min(RemapFrom.Num(), RemapTo.Num());
+        for (int32 Index = 0; Index < Pairs; ++Index)
         {
-            Map.emplace(ECS::FEntity(RemapFrom[Index]), ECS::FEntity(RemapTo[Index]));
+            Map.TryAdd(ECS::FEntity(RemapFrom[Index]), ECS::FEntity(RemapTo[Index]));
         }
         ECS::Utils::RemapEntityReferences(Struct, Value, Map, bClearUnmappedEntities);
     }
@@ -72,7 +73,7 @@ namespace Lumina::MissingComponents
                 return;
             }
         }
-        Holder.Entries.push_back(Move(Held));
+        Holder.Entries.Add(Move(Held));
     }
 
     int32 Restore(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -86,7 +87,7 @@ namespace Lumina::MissingComponents
         // Moved out first, since emplacing fires construct signals that may touch the holder.
         TVector<SHeldValue> Holding = Move(Holder->Entries);
         int32 Restored = 0;
-        Holding.RemoveAllBy([&](const SHeldValue& Held)
+        Holding.RemoveAll([&](const SHeldValue& Held)
         {
             CStruct* Struct = ResolveStructByName(Held.TypeName);
             const FComponentOps* Ops = Struct != nullptr ? Struct->GetComponentOps() : nullptr;
@@ -107,7 +108,7 @@ namespace Lumina::MissingComponents
             return true;
         });
 
-        if (Holding.empty())
+        if (Holding.IsEmpty())
         {
             Registry.Remove<SMissingComponents>(Entity);
         }
@@ -123,7 +124,7 @@ namespace Lumina::MissingComponents
         TVector<ECS::FEntity> Entities;
         for (ECS::FEntity Entity : Registry.View<SMissingComponents>())
         {
-            Entities.push_back(Entity);
+            Entities.Add(Entity);
         }
 
         int32 Restored = 0;
@@ -147,7 +148,7 @@ namespace Lumina::MissingComponents
             const CScriptStruct* Script = Info.bRuntimeLayout ? Cast<CScriptStruct>(Info.GetBoundStruct()) : nullptr;
             if (Script != nullptr && Script->IsSuperseded() && Set->Num() > 0)
             {
-                Orphaned.push_back(Set);
+                Orphaned.Add(Set);
             }
         }
 
@@ -162,7 +163,7 @@ namespace Lumina::MissingComponents
             TVector<ECS::FEntity> Entities;
             for (ECS::FEntity Entity : *Set)
             {
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
             for (ECS::FEntity Entity : Entities)
             {
@@ -173,7 +174,7 @@ namespace Lumina::MissingComponents
                 Hold(Registry, Entity, Move(Value));
                 ++Held;
             }
-            LOG_WARN("[ECS] '{}' no longer exists, so {} live component(s) are held until it comes back.", TypeName, Entities.size());
+            LOG_WARN("[ECS] '{}' no longer exists, so {} live component(s) are held until it comes back.", TypeName, Entities.Num());
         }
         return Held;
     }

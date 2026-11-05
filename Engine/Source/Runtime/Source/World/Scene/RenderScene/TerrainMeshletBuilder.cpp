@@ -1,7 +1,6 @@
-﻿#include "Core/Templates/NumericLimits.h"
-#include "RuntimePCH.h"
-#include <limits>
+﻿#include "RuntimePCH.h"
 #include "TerrainMeshletBuilder.h"
+#include "Core/Templates/NumericLimits.h"
 #include "Core/Math/SIMD/SIMD.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -37,7 +36,7 @@ namespace Lumina::TerrainMeshletBuilder
             {
                 return false;
             }
-            if ((int32)Terrain.Heightmap.size() != Resolution * Resolution)
+            if (Terrain.Heightmap.Num() != Resolution * Resolution)
             {
                 return false;
             }
@@ -70,8 +69,7 @@ namespace Lumina::TerrainMeshletBuilder
             const int32 NVertsX  = Meshlet.QuadExtent.x + 1;
             const int32 NVertsY  = Meshlet.QuadExtent.y + 1;
 
-            // Clamped samples only ever repeat an endpoint, so the extremes over the clamped span are the
-            // same ones the per-sample clamp would find, and each row becomes one contiguous read.
+            // Clamped samples only repeat an endpoint, so extremes over the clamped span match per-sample clamping and each row is one read.
             const int32 X0 = Math::Clamp(SampleX0, 0, L.Resolution - 1);
             const int32 X1 = Math::Clamp(SampleX0 + NVertsX - 1, 0, L.Resolution - 1);
             const int32 Y0 = Math::Clamp(SampleY0, 0, L.Resolution - 1);
@@ -86,7 +84,7 @@ namespace Lumina::TerrainMeshletBuilder
 
             for (int32 Y = Y0; Y <= Y1; ++Y)
             {
-                const float* RESTRICT Row = Heightmap.data() + (size_t)Y * (size_t)L.Resolution + (size_t)X0;
+                const float* RESTRICT Row = Heightmap.GetData() + (size_t)Y * (size_t)L.Resolution + (size_t)X0;
 
                 int32 x = 0;
                 for (; x + 8 <= Span; x += 8)
@@ -176,7 +174,7 @@ namespace Lumina::TerrainMeshletBuilder
 
             // A chunk is thousands of heightmap samples, so the dispatch pays for itself at a handful.
             constexpr uint32 kParallelThreshold = 4;
-            Task::ParallelForOrSerial((uint32)Count, kParallelThreshold, [&](uint32 Index)
+            Jobs::ParallelForOrSerial((uint32)Count, kParallelThreshold, [&](uint32 Index)
             {
                 const int32 i = (int32)Index;
                 RebuildChunk(State, CxMin + (i % Width), CyMin + (i / Width), Heightmap, L);
@@ -187,8 +185,9 @@ namespace Lumina::TerrainMeshletBuilder
     void Build(STerrainComponent& Terrain, const FVector3& WorldOrigin)
     {
         FTerrainCPUState& State = Terrain.CPUState;
-        State.Chunks.clear();
-        State.Meshlets.clear();
+        State.PreparedOrigin = WorldOrigin;
+        State.Chunks.Reset();
+        State.Meshlets.Reset();
 
         FLayout L;
         if (!ComputeLayout(Terrain, WorldOrigin, L))
@@ -197,8 +196,8 @@ namespace Lumina::TerrainMeshletBuilder
             return;
         }
 
-        State.Chunks.resize(L.NumChunks);
-        State.Meshlets.resize(L.NumMeshlets);
+        State.Chunks.SetNum(L.NumChunks);
+        State.Meshlets.SetNum(L.NumMeshlets);
 
         RebuildChunkRect(State, 0, L.ChunksPerSide - 1, 0, L.ChunksPerSide - 1, Terrain.Heightmap, L);
     }
@@ -214,18 +213,34 @@ namespace Lumina::TerrainMeshletBuilder
         }
 
         // Structure must already match; otherwise fall back to a full build so indices stay valid.
-        if ((int32)State.Chunks.size() != L.NumChunks || (int32)State.Meshlets.size() != L.NumMeshlets)
+        if (State.Chunks.Num() != L.NumChunks || State.Meshlets.Num() != L.NumMeshlets)
         {
             Build(Terrain, WorldOrigin);
             return;
         }
 
-        // Only chunks overlapping the dirty sample rect need their bounds recomputed.
-        const int32 CxMin = Math::Clamp(SampleMin.x / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
+        // A sample on a chunk seam is the last of the chunk before it too, so the low edge reaches one sample back.
+        const int32 CxMin = Math::Clamp((SampleMin.x - 1) / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
         const int32 CxMax = Math::Clamp(SampleMax.x / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
-        const int32 CyMin = Math::Clamp(SampleMin.y / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
+        const int32 CyMin = Math::Clamp((SampleMin.y - 1) / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
         const int32 CyMax = Math::Clamp(SampleMax.y / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
 
         RebuildChunkRect(State, CxMin, CxMax, CyMin, CyMax, Terrain.Heightmap, L);
+    }
+
+    void Translate(STerrainComponent& Terrain, const FVector3& Delta)
+    {
+        FTerrainCPUState& State = Terrain.CPUState;
+        State.PreparedOrigin += Delta;
+        for (FTerrainChunkInfo& Chunk : State.Chunks)
+        {
+            Chunk.BoundsMin += Delta;
+            Chunk.BoundsMax += Delta;
+        }
+        for (FTerrainMeshletInfo& Meshlet : State.Meshlets)
+        {
+            Meshlet.BoundsMin += Delta;
+            Meshlet.BoundsMax += Delta;
+        }
     }
 }

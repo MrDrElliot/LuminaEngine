@@ -54,14 +54,17 @@ internal static class ScriptDelegateArgs
         }
 
         FKey Key = new FKey { Property = DelegateProperty, Declared = Declared };
-        if (Cache.TryGetValue(Key, out FrameMarshal.FSlot[]? Cached))
+        lock (Cache)
         {
-            return Cached;
-        }
+            if (Cache.TryGetValue(Key, out FrameMarshal.FSlot[]? Cached))
+            {
+                return Cached;
+            }
 
-        FrameMarshal.FSlot[]? Slots = Bind(DelegateProperty, Declared, Where);
-        Cache[Key] = Slots;
-        return Slots;
+            FrameMarshal.FSlot[]? Slots = Bind(DelegateProperty, Declared, Where);
+            Cache[Key] = Slots;
+            return Slots;
+        }
     }
 
     private static FrameMarshal.FSlot[]? Bind(IntPtr DelegateProperty, Type[] Declared, string Where)
@@ -85,7 +88,13 @@ internal static class ScriptDelegateArgs
         return Slots;
     }
 
-    internal static void PurgeAll() => Cache.Clear();
+    internal static void PurgeAll()
+    {
+        lock (Cache)
+        {
+            Cache.Clear();
+        }
+    }
 
     // A blittable slot is the argument's own bytes, so reading it as T skips the box FrameMarshal.Read returns.
     // IsReferenceOrContainsReferences is folded by the JIT, so the branch costs nothing per instantiation.

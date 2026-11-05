@@ -39,14 +39,14 @@ namespace Lumina::Dialogs
     void Info(const FString& Title, Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
     {
         const FString Msg = Format(fmt, std::forward<TArgs>(Args)...);
-        ShowInternal(ESeverity::Info, EType::Ok, Title, Msg.c_str());
+        ShowInternal(ESeverity::Info, EType::Ok, Title, *Msg);
     }
 
     template <typename... TArgs>
     void Warning(const FString& Title, Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
     {
         const FString Msg = Format(fmt, std::forward<TArgs>(Args)...);
-        ShowInternal(ESeverity::Warning, EType::Ok, Title, Msg.c_str());
+        ShowInternal(ESeverity::Warning, EType::Ok, Title, *Msg);
     }
 
     template <typename... TArgs>
@@ -54,7 +54,7 @@ namespace Lumina::Dialogs
     {
         const FString Msg = Format(fmt, std::forward<TArgs>(Args)...);
 
-        ShowInternal(ESeverity::Error, EType::Ok, Title, Msg.c_str());
+        ShowInternal(ESeverity::Error, EType::Ok, Title, *Msg);
     }
     
     template <typename... TArgs>
@@ -62,7 +62,7 @@ namespace Lumina::Dialogs
     {
         const FString Msg = Format(fmt, std::forward<TArgs>(Args)...);
 
-        ShowInternal(ESeverity::FatalError, EType::Ok, Title, Msg.c_str());
+        ShowInternal(ESeverity::FatalError, EType::Ok, Title, *Msg);
     }
 
     template <typename... TArgs>
@@ -70,7 +70,7 @@ namespace Lumina::Dialogs
     {
         const FString Msg = Format(fmt, std::forward<TArgs>(Args)...);
 
-        return ShowInternal(ESeverity::Info, EType::YesNo, Title, Msg.c_str()) == EResult::Yes;
+        return ShowInternal(ESeverity::Info, EType::YesNo, Title, *Msg) == EResult::Yes;
     }
 
     

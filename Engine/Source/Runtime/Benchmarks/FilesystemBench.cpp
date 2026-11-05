@@ -58,10 +58,10 @@ namespace
     {
         FWalkResult Result;
 
-        Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Root.size()),
+        Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Lumina::IntCastChecked<Lumina::int32>(Root.size())),
             [&Result](const Filesystem::FDirectoryEntry& Entry)
             {
-                Result.Paths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                Result.Paths.emplace_back(Entry.FullPath.GetData(), Entry.FullPath.Len());
 
                 if (!Entry.IsDirectory())
                 {
@@ -75,9 +75,9 @@ namespace
     std::string FindWalkRoot()
     {
         Lumina::Paths::InitializePaths();
-        if (const Lumina::FString& EngineDir = Lumina::Paths::GetEngineInstallDirectory(); !EngineDir.empty())
+        if (const Lumina::FString& EngineDir = Lumina::Paths::GetEngineInstallDirectory(); !EngineDir.IsEmpty())
         {
-            std::string Candidate = std::string(EngineDir.c_str()) + "/Engine/Source";
+            std::string Candidate = std::string(*EngineDir) + "/Engine/Source";
             if (std::filesystem::is_directory(Candidate))
             {
                 return Candidate;
@@ -148,12 +148,12 @@ TEST(FilesystemBench, SmallFileReadsBeatIfstream)
     }
 
     std::vector<std::string> Files;
-    Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Root.size()),
+    Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Lumina::IntCastChecked<Lumina::int32>(Root.size())),
         [&Files](const Filesystem::FDirectoryEntry& Entry)
         {
             if (!Entry.IsDirectory() && Entry.GetExtension() == FStringView(".h") && Files.size() < 400)
             {
-                Files.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                Files.emplace_back(Entry.FullPath.GetData(), Entry.FullPath.Len());
             }
         });
 
@@ -186,9 +186,9 @@ TEST(FilesystemBench, SmallFileReadsBeatIfstream)
     for (const std::string& Path : Files)
     {
         TVector<uint8> Data;
-        if (Filesystem::ReadFile(Data, FStringView(Path.data(), Path.size())))
+        if (Filesystem::ReadFile(Data, FStringView(Path.data(), Lumina::IntCastChecked<Lumina::int32>(Path.size()))))
         {
-            NativeBytes += Data.size();
+            NativeBytes += Data.Num();
         }
     }
     const double NativeMillis = Millis(NativeStart, Lumina::PlatformTime::Cycles());
@@ -209,12 +209,12 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
     }
 
     std::vector<std::string> Files;
-    Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Root.size()),
+    Filesystem::IterateDirectoryRecursive(FStringView(Root.data(), Lumina::IntCastChecked<Lumina::int32>(Root.size())),
         [&Files](const Filesystem::FDirectoryEntry& Entry)
         {
             if (!Entry.IsDirectory() && Files.size() < 2000)
             {
-                Files.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                Files.emplace_back(Entry.FullPath.GetData(), Entry.FullPath.Len());
             }
         });
 
@@ -239,7 +239,7 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
     const Lumina::uint64 OurStart = Lumina::PlatformTime::Cycles();
     for (const std::string& Path : Files)
     {
-        const Filesystem::FFileStat Info = Filesystem::Stat(FStringView(Path.data(), Path.size()));
+        const Filesystem::FFileStat Info = Filesystem::Stat(FStringView(Path.data(), Lumina::IntCastChecked<Lumina::int32>(Path.size())));
         if (Info.IsFile())
         {
             OurTotal += Info.Size;
@@ -273,9 +273,9 @@ TEST(FilesystemBench, ResolveVirtualPathCost)
     FString Long = "/Game/Content";
     for (int32 Index = 0; Index < 10; ++Index)
     {
-        Long.append("/SegmentOfMeaningfulLength");
+        Long.Append("/SegmentOfMeaningfulLength");
     }
-    Long.append("/Asset.lasset");
+    Long.Append("/Asset.lasset");
 
     constexpr size_t kIterations = 1000000;
     size_t Sink = 0;
@@ -283,21 +283,21 @@ TEST(FilesystemBench, ResolveVirtualPathCost)
     const Lumina::uint64 ShortStart = Lumina::PlatformTime::Cycles();
     for (size_t Index = 0; Index < kIterations; ++Index)
     {
-        Sink += Mount.ResolveVirtualPath(FStringView(Short.data(), Short.size())).size();
+        Sink += Mount.ResolveVirtualPath(FStringView(Short.GetData(), Short.Len())).Len();
     }
     const double ShortNanos = NanosPerOp(ShortStart, Lumina::PlatformTime::Cycles(), kIterations);
 
     const Lumina::uint64 LongStart = Lumina::PlatformTime::Cycles();
     for (size_t Index = 0; Index < kIterations; ++Index)
     {
-        Sink += Mount.ResolveVirtualPath(FStringView(Long.data(), Long.size())).size();
+        Sink += Mount.ResolveVirtualPath(FStringView(Long.GetData(), Long.Len())).Len();
     }
     const double LongNanos = NanosPerOp(LongStart, Lumina::PlatformTime::Cycles(), kIterations);
 
     EXPECT_GT(Sink, 0u);
 
-    std::printf("[ RESOLVE  ] short path (%zu chars total) %7.2f ns/op\n",
-        Mount.ResolveVirtualPath(FStringView(Short.data(), Short.size())).size(), ShortNanos);
-    std::printf("[ RESOLVE  ] long path  (%zu chars total) %7.2f ns/op\n",
-        Mount.ResolveVirtualPath(FStringView(Long.data(), Long.size())).size(), LongNanos);
+    std::printf("[ RESOLVE  ] short path (%d chars total) %7.2f ns/op\n",
+        Mount.ResolveVirtualPath(FStringView(Short.GetData(), Short.Len())).Len(), ShortNanos);
+    std::printf("[ RESOLVE  ] long path  (%d chars total) %7.2f ns/op\n",
+        Mount.ResolveVirtualPath(FStringView(Long.GetData(), Long.Len())).Len(), LongNanos);
 }

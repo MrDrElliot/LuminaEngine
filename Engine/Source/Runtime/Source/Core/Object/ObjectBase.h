@@ -219,8 +219,8 @@ namespace Lumina
     // Runs RegisterPendingTypes unless it is already running, for a caller that may be inside that pass.
     RUNTIME_API void SettlePendingTypes();
 
-    RUNTIME_API size_t SnapshotPendingTypes();
+    RUNTIME_API int32 SnapshotPendingTypes();
 
     // Drops modules queued since the snapshot, whose constructors point into a DLL that is about to be freed.
-    RUNTIME_API void RollbackPendingTypes(size_t Snapshot);
+    RUNTIME_API void RollbackPendingTypes(int32 Snapshot);
 }

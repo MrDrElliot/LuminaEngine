@@ -5,11 +5,12 @@
 #include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Threading/Sync.h"
+#include "World/Entity/Systems/SystemResources.h"
 
 namespace Lumina
 {
     // Per-world scheduler for latent coroutine waits and script waits, ticked once a frame by SCoroutineSystem.
-    class RUNTIME_API FCoroutineManager
+    class RUNTIME_API FCoroutineManager : public ECS::FResource
     {
     public:
 

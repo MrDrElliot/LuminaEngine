@@ -22,6 +22,9 @@ namespace Lumina
         GENERATED_BODY()
     
         friend class CWorld;
+
+        // World reads and writes walk the parent chain, so a query filter never proves two transform writers apart.
+        static constexpr bool ReachesOtherEntities = true;
     
         STransformComponent() = default;
         explicit STransformComponent(const FTransform& InTransform)

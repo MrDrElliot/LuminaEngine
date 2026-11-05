@@ -11,10 +11,10 @@ namespace Lumina
     class FArrayProperty : public FProperty
     {
     public:
-        explicit FArrayProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FArrayProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            Ops = Desc.Type->GetVectorOps();
+            Ops = InDesc.Type->GetVectorOps();
             SetElementSize(Ops != nullptr ? Ops->ContainerSize : 0);
         }
         
@@ -44,52 +44,52 @@ namespace Lumina
         /** The element ops table. Exposed so C# can build a Lumina.TVector<T> view over any array property. */
         const FVectorOps* GetOps() const { return Ops; }
         
-        SIZE_T GetNum(const void* InContainer) const
+        int32 Num(const void* InContainer) const
         {
-            return Ops->Size(InContainer);
+            return Ops->Num(InContainer);
         }
 
-        void PushBack(void* InContainer, const void* InValue) const
+        void Add(void* InContainer, const void* InValue) const
         {
-            Ops->PushBack(InContainer, InValue);
+            Ops->Add(InContainer, InValue);
         }
 
-        void RemoveAt(void* InContainer, size_t Index) const
+        void RemoveAt(void* InContainer, int32 Index) const
         {
             Ops->RemoveAt(InContainer, Index);
         }
 
-        void Clear(void* InContainer) const
+        void Reset(void* InContainer) const
         {
-            Ops->Clear(InContainer);
+            Ops->Reset(InContainer);
         }
 
-        // The vector is contiguous, so element i is Data() + i * ElementSize (no per-element fn-ptr needed).
-        void* GetAt(void* InContainer, size_t Index) const
+        // The vector is contiguous, so element i is GetData() + i * ElementSize (no per-element fn-ptr needed).
+        void* GetAt(void* InContainer, int32 Index) const
         {
-            return static_cast<uint8*>(Ops->Data(InContainer)) + Index * Ops->ElementSize;
+            return static_cast<uint8*>(Ops->GetData(InContainer)) + static_cast<int64>(Index) * Ops->ElementSize;
         }
 
-        void Resize(void* InContainer, size_t Size) const
+        void SetNum(void* InContainer, int32 NewNum) const
         {
-            Ops->Resize(InContainer, Size);
+            Ops->SetNum(InContainer, NewNum);
         }
 
-        void Reserve(void* InContainer, size_t Size) const
+        void Reserve(void* InContainer, int32 Number) const
         {
-            Ops->Reserve(InContainer, Size);
+            Ops->Reserve(InContainer, Number);
         }
 
-        void Swap(void* InContainer, size_t LHS, size_t RHS) const
+        void Swap(void* InContainer, int32 A, int32 B) const
         {
-            Ops->Swap(InContainer, LHS, RHS);
+            Ops->Swap(InContainer, A, B);
         }
 
         template<typename T = void, typename TFunc>
         void ForEach(void* InContainer, TFunc&& Func) const
         {
-            SIZE_T Num = GetNum(InContainer);
-            for (SIZE_T i = 0; i < Num; ++i)
+            const int32 Count = Num(InContainer);
+            for (int32 i = 0; i < Count; ++i)
             {
                 if constexpr (std::is_same_v<T, void>)
                 {

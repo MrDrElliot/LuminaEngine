@@ -6,6 +6,7 @@
 #include <cstring>
 #include <pthread.h>
 #include <linux/futex.h>
+#include <linux/membarrier.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -89,6 +90,22 @@ namespace Lumina::Threading
         ::syscall(SYS_futex, (uint32*)Address, FUTEX_WAKE_PRIVATE, INT32_MAX, nullptr, nullptr, 0);
     }
 
+    void WakeOneOnAddress32(const volatile uint32* Address)
+    {
+        ::syscall(SYS_futex, (uint32*)Address, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+    }
+
+    bool ProcessWideMemoryBarrier()
+    {
+        static const bool bRegistered = ::syscall(SYS_membarrier, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0, 0) == 0;
+        if (bRegistered && ::syscall(SYS_membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0, 0) == 0)
+        {
+            return true;
+        }
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        return false;
+    }
+
     // Without it the scheduler treats every worker as equidistant, as it did before topology existed.
     uint32 GetCpuTopology(FCpuTopology* /*Out*/, uint32 /*MaxCount*/)
     {
@@ -112,6 +129,8 @@ namespace Lumina
             int32                       Group = Threading::ThreadGroup_Other;
             EThreadPriority             Priority = EThreadPriority::Normal;
             TMoveOnlyFunction<void()>*  Body = nullptr;
+            std::atomic<uint32>         KernelId{ 0 };
+            std::atomic<uint32>         References{ 2 };
 
             FThreadStart(const FThreadOptions& Options, TMoveOnlyFunction<void()>* InBody)
                 : Group(Options.Group), Priority(Options.Priority), Body(InBody)
@@ -138,13 +157,23 @@ namespace Lumina
                 (*Body)();
                 delete Body;
             }
+
+            void Release()
+            {
+                if (References.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                {
+                    delete this;
+                }
+            }
         };
 
         void* ThreadEntry(void* Parameter)
         {
             FThreadStart* Start = static_cast<FThreadStart*>(Parameter);
+            Start->KernelId.store(static_cast<uint32>(Threading::GetThreadID()), std::memory_order_release);
+            Threading::WakeAllOnAddress32(reinterpret_cast<const volatile uint32*>(&Start->KernelId));
             Start->Run();
-            delete Start;
+            Start->Release();
             return nullptr;
         }
     }
@@ -169,8 +198,16 @@ namespace Lumina
             return;
         }
 
+        uint32 KernelId = Begin->KernelId.load(std::memory_order_acquire);
+        while (KernelId == 0)
+        {
+            Threading::WaitOnAddress32(reinterpret_cast<const volatile uint32*>(&Begin->KernelId), 0, 100);
+            KernelId = Begin->KernelId.load(std::memory_order_acquire);
+        }
+        Begin->Release();
+
         Handle = reinterpret_cast<void*>(Thread);
-        Id = static_cast<uint64>(Thread);
+        Id = static_cast<uint64>(KernelId);
     }
 
     void FThread::Join() noexcept

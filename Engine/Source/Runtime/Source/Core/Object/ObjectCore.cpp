@@ -53,7 +53,7 @@ namespace Lumina
     {
         const int32 Unique = std::atomic_ref<int32>(Class->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
         const FName ClassName = Class->GetName();
-        return ClassName.HasNumber() ? FName(ClassName.c_str(), (uint32)Unique) : FName::FromIndexAndNumber(ClassName.GetID(), (uint32)Unique);
+        return ClassName.HasNumber() ? FName(*ClassName, (uint32)Unique) : FName::FromIndexAndNumber(ClassName.GetID(), (uint32)Unique);
     }
 
     /** Seeds a new object's reflected properties from its archetype, which is the class CDO unless one was named. */
@@ -66,7 +66,7 @@ namespace Lumina
         }
 
         const TSpan<FProperty* const> Properties = Params.Class->GetProperties();
-        if (Properties.empty())
+        if (Properties.IsEmpty())
         {
             return;
         }
@@ -188,11 +188,11 @@ namespace Lumina
         constexpr FStringView PackageExt = ".lasset";
         if (VFS::HasExtension(Name, PackageExt))
         {
-            Name = Name.substr(0, Name.size() - PackageExt.size());
+            Name = Name.Mid(0, Name.Len() - PackageExt.Len());
         }
 
         FFixedString Result;
-        Result.reserve(Name.size());
+        Result.Reserve(Name.Len());
 
         for (char c : Name)
         {
@@ -203,15 +203,15 @@ namespace Lumina
                 c == '|' || c == '?' ||
                 c == '*';
 
-            Result.push_back(bInvalid ? '_' : c);
+            Result.AppendChar(bInvalid ? '_' : c);
         }
 
-        while (!Result.empty() && (Result.back() == ' ' || Result.back() == '.'))
+        while (!Result.IsEmpty() && (Result.Last() == ' ' || Result.Last() == '.'))
         {
-            Result.pop_back();
+            Result.LeftChopInline(1);
         }
 
-        if (Result.empty())
+        if (Result.IsEmpty())
         {
             Result = "Object";
         }
@@ -234,12 +234,12 @@ namespace Lumina
     {
         if (InClass != nullptr && InClass->IsAbstract())
         {
-            LOG_ERROR("NewObject: '{}' is abstract, so only its subclasses can be created.", InClass->GetName().c_str());
+            LOG_ERROR("NewObject: '{}' is abstract, so only its subclasses can be created.", *InClass->GetName());
             return nullptr;
         }
         if (InClass != nullptr && InClass->IsSuperseded())
         {
-            LOG_WARN("NewObject: '{}' was replaced or removed by a script reload, so nothing new is built on it.", InClass->GetName().c_str());
+            LOG_WARN("NewObject: '{}' was replaced or removed by a script reload, so nothing new is built on it.", *InClass->GetName());
             return nullptr;
         }
 
@@ -283,7 +283,7 @@ namespace Lumina
             CObjectBase* Object = *It;
             if (Object && Object->GetPackage() == Package)
             {
-                OutObjects.push_back(static_cast<CObject*>(Object));
+                OutObjects.Add(static_cast<CObject*>(Object));
             }
         }
     }
@@ -567,7 +567,7 @@ namespace Lumina
         {
             const FFunctionDesc& Desc = Functions[FunctionIndex];
 
-            Params.clear();
+            Params.Reset();
             const FPropertyOwner Owner{ &Arena, nullptr, nullptr, &Params };
             for (uint16 ParamIndex = 0; ParamIndex < Desc.NumParams; ++ParamIndex)
             {

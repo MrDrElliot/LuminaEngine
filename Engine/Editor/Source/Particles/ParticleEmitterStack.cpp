@@ -82,7 +82,7 @@ namespace Lumina
             return nullptr;
         }
 
-        GetStack(Module->GetStage()).push_back(Module);
+        GetStack(Module->GetStage()).Add(Module);
         return Module;
     }
 
@@ -94,11 +94,11 @@ namespace Lumina
         }
 
         TVector<TStrongObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
-        for (auto It = Stack.begin(); It != Stack.end(); ++It)
+        for (int32 i = 0; i < Stack.Num(); ++i)
         {
-            if (It->Get() == Module)
+            if (Stack[i].Get() == Module)
             {
-                Stack.erase(It);
+                Stack.RemoveAt(i);
                 return;
             }
         }
@@ -112,12 +112,12 @@ namespace Lumina
         }
 
         TVector<TStrongObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
-        for (int32 i = 0; i < (int32)Stack.size(); ++i)
+        for (int32 i = 0; i < Stack.Num(); ++i)
         {
             if (Stack[i].Get() == Module)
             {
                 const int32 Target = i + (Direction < 0 ? -1 : 1);
-                if (Target >= 0 && Target < (int32)Stack.size())
+                if (Target >= 0 && Target < Stack.Num())
                 {
                     TStrongObjectPtr<CParticleModule> Tmp = Stack[i];
                     Stack[i] = Stack[Target];
@@ -130,7 +130,7 @@ namespace Lumina
 
     void CParticleEmitterStack::EnsureDefaultStack()
     {
-        if (!SpawnModules.empty() || !UpdateModules.empty())
+        if (!SpawnModules.IsEmpty() || !UpdateModules.IsEmpty())
         {
             return;
         }

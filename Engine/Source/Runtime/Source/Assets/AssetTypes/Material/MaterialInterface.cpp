@@ -41,7 +41,7 @@ namespace Lumina
         FScopeLock Lock(ChildrenMutex);
         if (!Algo::Contains(Children, Child))
         {
-            Children.push_back(Child);
+            Children.Add(Child);
         }
     }
 
@@ -50,7 +50,7 @@ namespace Lumina
         FScopeLock Lock(ChildrenMutex);
         if (auto It = Algo::Find(Children, Child); It != Children.end())
         {
-            Children.erase(It);
+            Children.RemoveAt(static_cast<int32>(It - Children.begin()));
         }
     }
 

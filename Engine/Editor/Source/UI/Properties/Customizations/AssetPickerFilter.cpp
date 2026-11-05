@@ -12,12 +12,12 @@ namespace Lumina::AssetPickerFilter
         // The boundary test stops a plugin path like /GameplayAbilities from reading as /Game content.
         bool HasRoot(FStringView Path, FStringView Root)
         {
-            if (Path.size() < Root.size())
+            if (Path.Len() < Root.Len())
             {
                 return false;
             }
 
-            for (size_t i = 0; i < Root.size(); ++i)
+            for (int32 i = 0; i < Root.Len(); ++i)
             {
                 char A = Path[i];
                 char B = Root[i];
@@ -29,7 +29,7 @@ namespace Lumina::AssetPickerFilter
                 }
             }
 
-            return Path.size() == Root.size() || Path[Root.size()] == '/';
+            return Path.Len() == Root.Len() || Path[Root.Len()] == '/';
         }
     }
 

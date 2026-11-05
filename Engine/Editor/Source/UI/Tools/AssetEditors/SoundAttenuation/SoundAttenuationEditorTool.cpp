@@ -9,7 +9,7 @@ namespace Lumina
     static const char* SoundAttenuationWindowName = "Sound Attenuation";
 
     FSoundAttenuationEditorTool::FSoundAttenuationEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -26,6 +26,6 @@ namespace Lumina
     void FSoundAttenuationEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& /*InDockspaceSize*/) const
     {
         ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SoundAttenuationWindowName).c_str(), InDockspaceID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(SoundAttenuationWindowName), InDockspaceID);
     }
 }

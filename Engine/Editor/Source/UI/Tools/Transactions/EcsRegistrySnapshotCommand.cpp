@@ -27,7 +27,7 @@ namespace Lumina
         // It used to run inline with no zone, so a long gizmo-grab stall showed as unattributed self time.
         LUMINA_PROFILE_SCOPE();
 
-        Out.clear();
+        Out.Reset();
         CWorld* W = World.Get();
         if (W == nullptr)
         {
@@ -44,7 +44,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         CWorld* W = World.Get();   // null once the map is closed/swapped -> a stale undo safely no-ops
-        if (W == nullptr || In.empty())
+        if (W == nullptr || In.IsEmpty())
         {
             return;
         }
@@ -57,14 +57,14 @@ namespace Lumina
         {
             if (Object != nullptr)
             {
-                Pinned.emplace_back(Object);
+                Pinned.Emplace(Object);
             }
             return Object;
         });
 
         // Editor entities and the settings singleton stay, since their unreflected components would dangle.
         TVector<ECS::FEntity> ToDestroy;
-        Registry.ForEachEntityExcept<FEditorComponent, FSingletonEntityTag>([&](ECS::FEntity E) { ToDestroy.push_back(E); });
+        Registry.ForEachEntityExcept<FEditorComponent, FSingletonEntityTag>([&](ECS::FEntity E) { ToDestroy.Add(E); });
         for (ECS::FEntity E : ToDestroy)
         {
             Registry.Destroy(E);

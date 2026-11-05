@@ -4,7 +4,7 @@ namespace Lumina
 {
     int32 CPhysicsAsset::FindBodyIndex(const FName& BoneName) const
     {
-        for (int32 i = 0; i < (int32)Bodies.size(); ++i)
+        for (int32 i = 0; i < Bodies.Num(); ++i)
         {
             if (Bodies[i].BoneName == BoneName)
             {

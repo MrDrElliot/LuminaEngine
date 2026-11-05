@@ -36,7 +36,7 @@ namespace Lumina::Import::PathReservations
         FScopedReservation& operator=(FScopedReservation&&) = delete;
 
         const FFixedString& Get() const { return Reserved; }
-        bool IsValid() const { return !Reserved.empty(); }
+        bool IsValid() const { return !Reserved.IsEmpty(); }
 
         /** Keeps the reservation past this scope, for a name the caller now owns. */
         void Commit() { bCommitted = true; }

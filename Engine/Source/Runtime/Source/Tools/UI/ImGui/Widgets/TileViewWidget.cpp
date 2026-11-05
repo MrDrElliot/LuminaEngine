@@ -27,7 +27,7 @@ namespace Lumina
         // Consumed either way, so a target that no longer exists simply lapses.
         int32 RevealIndex = PendingRevealIndex;
         PendingRevealIndex = -1;
-        if (RevealIndex >= 0 && RevealIndex < (int32)ListItems.size())
+        if (RevealIndex >= 0 && RevealIndex < ListItems.Num())
         {
             ClearSelections();
             ToggleSelection(ListItems[RevealIndex], Context);
@@ -37,7 +37,7 @@ namespace Lumina
             RevealIndex = -1;
         }
 
-        const int ItemCount = (int)ListItems.size();
+        const int ItemCount = ListItems.Num();
         if (ItemCount == 0)
         {
             return;
@@ -113,8 +113,8 @@ namespace Lumina
 
         // A raw draw-list primitive, so the cell's logical height stays fixed regardless of name length.
         const FStringView Name = Item->GetCachedDisplayName();
-        const char* NameBegin  = Name.data();
-        const char* NameEnd    = Name.data() + Name.size();
+        const char* NameBegin  = Name.GetData();
+        const char* NameEnd    = Name.GetData() + Name.Len();
 
         // The buffer must outlive the draw call, so it lives out here rather than in the branch.
         char Truncated[256];
@@ -131,7 +131,7 @@ namespace Lumina
 
             // Measured through ImGui's own text sizing, since reproducing its line breaks by hand gets it wrong.
             size_t Low  = 0;
-            size_t High = Math::Min(Name.size(), sizeof(Truncated) - EllipsisLen - 1);
+            size_t High = Math::Min((size_t)Name.Len(), sizeof(Truncated) - EllipsisLen - 1);
             while (Low < High)
             {
                 const size_t Mid = (Low + High + 1) / 2;
@@ -186,12 +186,12 @@ namespace Lumina
             const float TypeBandHeight = TypeFontSize + GTypeLabelPad;
 
             // An interned label keeps whichever spelling of the name was seen first, so its case is set here.
-            FFixedString TypeLabel(Item->GetTypeLabel().data(), Item->GetTypeLabel().size());
+            FFixedString TypeLabel(Item->GetTypeLabel().GetData(), Item->GetTypeLabel().Len());
             for (char& Character : TypeLabel)
             {
                 Character = (char)std::toupper((unsigned char)Character);
             }
-            if (!TypeLabel.empty())
+            if (!TypeLabel.IsEmpty())
             {
                 ImDrawList* DrawList   = ImGui::GetWindowDrawList();
                 const ImU32 TypeColor  = ImGui::GetColorU32(ImVec4(0.52f, 0.55f, 0.62f, 1.0f));
@@ -213,8 +213,8 @@ namespace Lumina
                     ImGui::PopStyleColor();
                 };
 
-                const char* TypeBegin = TypeLabel.c_str();
-                const char* TypeEnd   = TypeBegin + TypeLabel.size();
+                const char* TypeBegin = *TypeLabel;
+                const char* TypeEnd   = TypeBegin + TypeLabel.Len();
 
                 const char* Split = nullptr;
                 if (ImGui::CalcTextSize(TypeBegin, TypeEnd).x > TileSize && TypeTop + TypeFontSize * 2.0f <= BandBottom)
@@ -325,7 +325,7 @@ namespace Lumina
     void FTileViewWidget::BeginInlineRename(FTileViewItem* Item)
     {
         // A rename over a multi-selection renames the wrong thing, so refusing is the only safe reading.
-        if (Item != nullptr && Selections.size() > 1)
+        if (Item != nullptr && Selections.Num() > 1)
         {
             return;
         }
@@ -338,8 +338,8 @@ namespace Lumina
         if (Item != nullptr)
         {
             const FStringView Name = Item->GetCachedDisplayName();
-            const size_t Length = Math::Min(Name.size(), sizeof(RenameBuffer) - 1);
-            memcpy(RenameBuffer, Name.data(), Length);
+            const size_t Length = Math::Min((size_t)Name.Len(), sizeof(RenameBuffer) - 1);
+            memcpy(RenameBuffer, Name.GetData(), Length);
             RenameBuffer[Length] = 0;
         }
     }
@@ -378,7 +378,7 @@ namespace Lumina
             return;
         }
 
-        for (int32 Index = 0; Index < (int32)ListItems.size(); ++Index)
+        for (int32 Index = 0; Index < ListItems.Num(); ++Index)
         {
             if (ListItems[Index] == Item)
             {
@@ -403,7 +403,7 @@ namespace Lumina
             Item->~FTileViewItem();
         }
         Allocator.Reset();
-        ListItems.clear();
+        ListItems.Reset();
     }
 
     bool FTileViewWidget::HandleKeyPressed(const FTileViewContext& Context, FTileViewItem& Item, ImGuiKey Key)
@@ -437,12 +437,12 @@ namespace Lumina
             return;
         }
 
-        if (Selections.empty())
+        if (Selections.IsEmpty())
         {
             return;
         }
 
-        FTileViewItem* Target = Selections.front();
+        FTileViewItem* Target = Selections[0];
         if (Target == nullptr)
         {
             return;
@@ -575,7 +575,7 @@ namespace Lumina
                 }
                 else
                 {
-                    SelectionsToDraw.push_back(ItemToDraw);
+                    SelectionsToDraw.Add(ItemToDraw);
                 }
 
                 Context.DrawItemContextMenuFunction(SelectionsToDraw);
@@ -630,7 +630,7 @@ namespace Lumina
             bMarqueeAdditive     = IO.KeyCtrl || IO.KeyShift;
             MarqueeAnchorContent = ImVec2(Pressed.x - ContentOrigin.x, Pressed.y - ContentOrigin.y);
 
-            MarqueeBaseSelection.clear();
+            MarqueeBaseSelection.Reset();
             if (bMarqueeAdditive)
             {
                 MarqueeBaseSelection = Selections;
@@ -653,7 +653,7 @@ namespace Lumina
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
             bMarqueeActive = false;
-            MarqueeBaseSelection.clear();
+            MarqueeBaseSelection.Reset();
         }
     }
 
@@ -664,14 +664,13 @@ namespace Lumina
         if (!bWasSelected)
         {
             DEBUG_ASSERT(!Algo::Contains(Selections, Item));
-            Selections.push_back(Item);
+            Selections.Add(Item);
             Context.ItemSelectedFunction(Item);
             Item->bSelected = true;
         }
         else
         {
-            auto It = Algo::Remove(Selections, Item);
-            Selections.erase(It);
+            Selections.Remove(Item);
             Item->bSelected = false;
         }
 
@@ -695,7 +694,7 @@ namespace Lumina
         const int32 To = (int32)std::distance(ListItems.begin(), Found);
 
         // With no anchor, a shift-click behaves as a plain click and becomes the anchor.
-        if (SelectionAnchorIndex < 0 || SelectionAnchorIndex >= (int32)ListItems.size())
+        if (SelectionAnchorIndex < 0 || SelectionAnchorIndex >= ListItems.Num())
         {
             ClearSelections();
             ToggleSelection(Item, Context);
@@ -736,6 +735,6 @@ namespace Lumina
             Item->OnSelectionStateChanged();    
         }
 
-        Selections.clear();
+        Selections.Reset();
     }
 }

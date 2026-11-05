@@ -8,8 +8,8 @@ namespace Lumina::RHITests
     RHI_TEST(Device, DeviceInfoIsPopulated)
     {
         const RHI::FGPUDeviceInfo Info = RHI::GetDeviceInfo();
-        RHI_CHECK(!Info.Name.empty());
-        RHI_CHECK(!Info.APIName.empty());
+        RHI_CHECK(!Info.Name.IsEmpty());
+        RHI_CHECK(!Info.APIName.IsEmpty());
         RHI_CHECK(Info.VendorID != 0);
     }
 

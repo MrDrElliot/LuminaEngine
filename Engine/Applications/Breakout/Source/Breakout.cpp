@@ -97,7 +97,7 @@ namespace
         {
             Sound.Post(Request);
         }
-        Pending.clear();
+        Pending.Reset();
 
         const FGameState& State = Game.GetState();
         Sound.SetMusic(true, MusicIntensityFor(State, Game.IsPaused()), State.Level, MusicMoodFor(State));
@@ -208,14 +208,14 @@ namespace
                 if (State.Phase == EPhase::Playing && Frame % 450 == 300)
                 {
                     TVector<ECS::FEntity> Doomed;
-                    for (const ECS::FEntity Entity : Registry.View<FBrick>()) { Doomed.push_back(Entity); }
-                    for (const ECS::FEntity Entity : Registry.View<FBoss>()) { Doomed.push_back(Entity); }
+                    for (const ECS::FEntity Entity : Registry.View<FBrick>()) { Doomed.Add(Entity); }
+                    for (const ECS::FEntity Entity : Registry.View<FBoss>()) { Doomed.Add(Entity); }
                     for (const ECS::FEntity Entity : Doomed) { Registry.Destroy(Entity); }
                     Registry.GetSingleton<FGameState>().BricksAlive = 0;
                 }
 
                 Game.Advance(Frame % 5 == 0 ? 0.05f : 1.0f / 60.0f);
-                Game.GetPendingSounds().clear();
+                Game.GetPendingSounds().Reset();
 
             }
 
@@ -287,7 +287,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("Breakout Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
@@ -295,7 +295,7 @@ int main(int ArgC, char** ArgV)
     if (ParsedCommandLine.Has("soak"))
     {
         const int Result = RunSoak();
-        Task::Shutdown();
+        Jobs::Shutdown();
         GCommandLine = nullptr;
         return Result;
     }
@@ -340,7 +340,7 @@ int main(int ArgC, char** ArgV)
     GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     return bReady ? 0 : 1;

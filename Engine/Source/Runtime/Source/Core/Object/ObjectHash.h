@@ -1,7 +1,6 @@
 #pragma once
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
-#include "Core/Singleton/Singleton.h"
 #include "Core/Threading/Thread.h"
 #include "GUID/GUID.h"
 
@@ -35,13 +34,13 @@ namespace Lumina
         template<typename TVisit>
         CObjectBase* FindFirst(uint64 Hash, TVisit&& Visit) const
         {
-            if (Slots.empty())
+            if (Slots.IsEmpty())
             {
                 return nullptr;
             }
 
-            const uint64 Mask = Slots.size() - 1;
-            for (uint64 Index = Hash & Mask; Slots[Index].Object != nullptr; Index = (Index + 1) & Mask)
+            const int32 Mask = Slots.Num() - 1;
+            for (int32 Index = static_cast<int32>(Hash & Mask); Slots[Index].Object != nullptr; Index = (Index + 1) & Mask)
             {
                 if (Slots[Index].Hash == Hash && Visit(Slots[Index].Object))
                 {
@@ -53,7 +52,7 @@ namespace Lumina
 
         void Clear();
 
-        size_t GetAllocatedBytes() const { return Slots.capacity() * sizeof(FSlot); }
+        size_t GetAllocatedBytes() const { return Slots.Max() * sizeof(FSlot); }
 
     private:
 
@@ -63,9 +62,16 @@ namespace Lumina
         uint32         Count = 0;
     };
 
-    class FObjectHashTables : public TSingleton<FObjectHashTables>
+    // Get() lives in Runtime so every module reaches the one table set.
+    class RUNTIME_API FObjectHashTables
     {
     public:
+
+        static FObjectHashTables& Get();
+
+        FObjectHashTables() = default;
+        FObjectHashTables(const FObjectHashTables&) = delete;
+        FObjectHashTables& operator=(const FObjectHashTables&) = delete;
 
         void AddObject(CObjectBase* Object);
 

@@ -14,7 +14,7 @@ namespace Lumina
         LUMINA_EDITOR_TOOL(FTextureEditorTool)
         
         FTextureEditorTool(IEditorToolContext* Context, CObject* InAsset)
-            : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+            : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
         {}
 
         

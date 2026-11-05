@@ -25,31 +25,31 @@ namespace Lumina
         Compiler.Emit(Context, "{");
         for (const SParticleCustomInput& Input : Inputs)
         {
-            const FString Name(Input.Name.ToString().c_str());
+            const FString Name(*Input.Name.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Custom Code", "Input '" + Name + "' is not a valid identifier." });
                 continue;
             }
-            Compiler.Emit(Context, FString("\tconst ") + SlangTypeFor(Input.Value.Type) + " " + Name + " = " + Compiler.Param(Name.c_str(), Input.Value) + ";");
+            Compiler.Emit(Context, FString("\tconst ") + SlangTypeFor(Input.Value.Type) + " " + Name + " = " + Compiler.Param(*Name, Input.Value) + ";");
         }
 
         const bool bOnCell = Context == EParticleContext::Grid || Context == EParticleContext::Target;
-        if (bOnCell && !Attributes.empty())
+        if (bOnCell && !Attributes.IsEmpty())
         {
             Compiler.AddError({ "Custom Code", "Grid and render target code runs on cells, which have no particle attributes." });
         }
 
         for (const FName& Attribute : Attributes)
         {
-            const FString Name(Attribute.ToString().c_str());
+            const FString Name(*Attribute.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Custom Code", "Attribute '" + Name + "' is not a valid identifier." });
                 continue;
             }
-            Compiler.Emit(Context, FString(Directive) + "define " + Name + " " + Compiler.Attribute(Name.c_str()));
-            Macros.push_back(Name);
+            Compiler.Emit(Context, FString(Directive) + "define " + Name + " " + Compiler.Attribute(*Name));
+            Macros.Add(Name);
         }
 
         for (const FName& Array : Arrays)
@@ -63,51 +63,51 @@ namespace Lumina
 
         for (const FName& Channel : GridChannels)
         {
-            const FString Name(Channel.ToString().c_str());
+            const FString Name(*Channel.ToString());
             const FString Slot = Compiler.GridChannel(Channel);
             if (!IsIdentifier(Name))
             {
                 continue;
             }
             Compiler.Emit(Context, FString(Directive) + "define " + Name + (bOnCell ? " Cell[" + Slot + "]" : " SampleGrid(" + Slot + ", P.Position)"));
-            Macros.push_back(Name);
+            Macros.Add(Name);
         }
 
         for (const SParticleCustomCurve& Input : Curves)
         {
-            const FString Name(Input.Name.ToString().c_str());
+            const FString Name(*Input.Name.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Custom Code", "Curve '" + Name + "' is not a valid identifier." });
                 continue;
             }
-            Compiler.Emit(Context, FString(Directive) + "define " + Name + "(T) SampleCurveLUT(" + Compiler.ParamCurve(Name.c_str(), Input.Curve) + ", (T))");
-            Macros.push_back(Name);
+            Compiler.Emit(Context, FString(Directive) + "define " + Name + "(T) SampleCurveLUT(" + Compiler.ParamCurve(*Name, Input.Curve) + ", (T))");
+            Macros.Add(Name);
         }
 
         for (const SParticleCustomGradient& Input : Gradients)
         {
-            const FString Name(Input.Name.ToString().c_str());
+            const FString Name(*Input.Name.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Custom Code", "Gradient '" + Name + "' is not a valid identifier." });
                 continue;
             }
-            Compiler.Emit(Context, FString(Directive) + "define " + Name + "(T) SampleGradientLUT(" + Compiler.ParamGradient(Name.c_str(), Input.Gradient) + ", (T))");
-            Macros.push_back(Name);
+            Compiler.Emit(Context, FString(Directive) + "define " + Name + "(T) SampleGradientLUT(" + Compiler.ParamGradient(*Name, Input.Gradient) + ", (T))");
+            Macros.Add(Name);
         }
 
-        size_t Start = 0;
-        while (Start <= Code.size())
+        int32 Start = 0;
+        while (Start <= Code.Len())
         {
-            const size_t End = Code.find('\n', Start);
-            FString Line = Code.substr(Start, End == FString::npos ? FString::npos : End - Start);
-            if (!Line.empty() && Line.back() == '\r')
+            const int32 End = Code.Find('\n', Start);
+            FString Line = Code.Mid(Start, End == Constants::kIndexNone ? Constants::kIndexNone : End - Start);
+            if (!Line.IsEmpty() && Line.Last() == '\r')
             {
-                Line.pop_back();
+                Line.LeftChopInline(1);
             }
             Compiler.Emit(Context, "\t" + Line);
-            if (End == FString::npos)
+            if (End == Constants::kIndexNone)
             {
                 break;
             }

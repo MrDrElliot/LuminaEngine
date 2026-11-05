@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "Platform/Time/PlatformTime.h"
 #include "Containers/Vector.h"
+#include "Lumina.h"
 #include "Containers/String.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Memory/Allocators/ScratchArray.h"
@@ -39,7 +40,7 @@ static_assert(!ScratchElement<FString>);
 TEST(ScratchArray, DefaultIsEmptyAndHoldsNothing)
 {
     TScratchArray<float> Array;
-    EXPECT_EQ(Array.Num(), 0u);
+    EXPECT_EQ(Array.Num(), 0);
     EXPECT_TRUE(Array.IsEmpty());
     EXPECT_EQ(Array.GetData(), nullptr);
 }
@@ -105,7 +106,7 @@ TEST(ScratchArray, ResetKeepsABlockThatAlreadyFits)
     const void* Original = Array.GetData();
 
     Array.Reset(1024);
-    EXPECT_EQ(Array.Num(), 1024u);
+    EXPECT_EQ(Array.Num(), 1024);
     EXPECT_EQ((const void*)Array.GetData(), Original);
 
     Array.Reset(262144);
@@ -132,7 +133,7 @@ TEST(ScratchArray, MoveTransfersOwnershipExactlyOnce)
 
         TScratchArray<float> Moved = Move(Source);
         EXPECT_EQ((const void*)Moved.GetData(), Data);
-        EXPECT_EQ(Moved.Num(), 4096u);
+        EXPECT_EQ(Moved.Num(), 4096);
         EXPECT_TRUE(Source.IsEmpty());
         EXPECT_EQ(Source.GetData(), nullptr);
     }
@@ -150,7 +151,7 @@ TEST(ScratchArray, MoveAssignReleasesTheOverwrittenBlock)
         TScratchArray<float> B(4096);
 
         A = Move(B);
-        EXPECT_EQ(A.Num(), 4096u);
+        EXPECT_EQ(A.Num(), 4096);
     }
 
     EXPECT_EQ(ScratchPool::GetStats().LiveBlocks, 0u);
@@ -194,7 +195,7 @@ TEST(ScratchArray, ConcurrentAcquireReleaseBalances)
     constexpr uint32 Iterations = 512;
     std::atomic<uint64> Checksum{0};
 
-    Task::ParallelFor(Iterations, [&](uint32 Index)
+    Jobs::ParallelFor(Iterations, [&](uint32 Index)
     {
         const SIZE_T Count = 1024u + (Index % 16u) * 4096u;
 
@@ -230,7 +231,7 @@ TEST(ScratchArray, BlockCrossesThreadsBetweenAcquireAndRelease)
     std::vector<TScratchArray<float>> Arrays;
     Arrays.resize(32);
 
-    Task::ParallelFor(32u, [&](uint32 Index)
+    Jobs::ParallelFor(32u, [&](uint32 Index)
     {
         Arrays[Index] = TScratchArray<float>(65536);
         Arrays[Index].Fill((float)Index);
@@ -240,7 +241,7 @@ TEST(ScratchArray, BlockCrossesThreadsBetweenAcquireAndRelease)
 
     for (uint32 Index = 0; Index < 32u; ++Index)
     {
-        ASSERT_EQ(Arrays[Index].Num(), 65536u);
+        ASSERT_EQ(Arrays[Index].Num(), 65536);
         EXPECT_FLOAT_EQ(Arrays[Index][0], (float)Index);
     }
 

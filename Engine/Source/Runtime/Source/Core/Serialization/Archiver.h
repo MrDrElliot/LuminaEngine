@@ -259,24 +259,24 @@ namespace Lumina
             
                 if (SaveNum)
                 {
-                    Str.clear();
-                    Str.shrink_to_fit();
-                    Str.resize(SaveNum);
-                    Serialize(Str.data(), SaveNum);
+                    Str.Reset();
+                    Str.Shrink();
+                    Str.SetLen(IntCastChecked<int32>(SaveNum));
+                    Serialize(Str.GetData(), SaveNum);
                 }
                 else
                 {
-                    Str.clear();
+                    Str.Reset();
                 }
             }
             else
             {
-                uint64 SaveNum = Str.size();
+                uint64 SaveNum = static_cast<uint64>(Str.Len());
                 *this << SaveNum;
 
                 if (SaveNum)
                 {
-                    Serialize(Str.data(), SaveNum);
+                    Serialize(Str.GetData(), SaveNum);
                 }
             }
         
@@ -299,24 +299,24 @@ namespace Lumina
             
                 if (SaveNum)
                 {
-                    Str.clear();
-                    Str.shrink_to_fit();
-                    Str.resize(SaveNum);
-                    Serialize(Str.data(), SaveNum);
+                    Str.Reset();
+                    Str.Shrink();
+                    Str.SetLen(IntCastChecked<int32>(SaveNum));
+                    Serialize(Str.GetData(), SaveNum);
                 }
                 else
                 {
-                    Str.clear();
+                    Str.Reset();
                 }
             }
             else
             {
-                uint64 SaveNum = Str.size();
+                uint64 SaveNum = static_cast<uint64>(Str.Len());
                 *this << SaveNum;
 
                 if (SaveNum)
                 {
-                    Serialize(Str.data(), SaveNum);
+                    Serialize(Str.GetData(), SaveNum);
                 }
             }
         
@@ -343,9 +343,9 @@ namespace Lumina
             }
             else
             {
-                // None's wire form is the empty string; c_str() renders "NAME_None", which is a
+                // None's wire form is the empty string; operator* renders "NAME_None", which is a
                 // display string and must not round-trip into a real name.
-                FString SavedString(Name.IsNone() ? "" : Name.c_str());
+                FString SavedString(Name.IsNone() ? "" : *Name);
                 *this << SavedString;
             }
 
@@ -358,19 +358,19 @@ namespace Lumina
             // A stream that already failed reports garbage sizes forever, so the first report is the one.
             if (IsReading() && HasError())
             {
-                Array.clear();
+                Array.Reset();
                 return *this;
             }
 
-            uint64 SerializeNum = IsReading() ? 0 : Array.size();
+            uint64 SerializeNum = IsReading() ? 0 : Array.Num();
             *this << SerializeNum;
         
             if (SerializeNum == 0)
             {
                 if (IsReading())
                 {
-                    Array.clear();
-                    Array.shrink_to_fit();
+                    Array.Reset();
+                    Array.Shrink();
                 }
             
                 return *this;
@@ -387,23 +387,23 @@ namespace Lumina
             {
                 if (IsReading())
                 {
-                    Array.clear();
-                    Array.shrink_to_fit();
-                    Array.resize(SerializeNum);
+                    Array.Reset();
+                    Array.Shrink();
+                    Array.SetNum(IntCastChecked<int32>(SerializeNum));
                 }
             
-                Serialize(Array.data(), SerializeNum * sizeof(ValueType));
+                Serialize(Array.GetData(), SerializeNum * sizeof(ValueType));
             }
             else
             {
                 if (IsReading())
                 {
-                    Array.clear();
-                    Array.shrink_to_fit();
-                    Array.resize(SerializeNum);
+                    Array.Reset();
+                    Array.Shrink();
+                    Array.SetNum(IntCastChecked<int32>(SerializeNum));
                 }
 
-                for (size_t i = 0; i < SerializeNum && !HasError(); i++)
+                for (int32 i = 0, Limit = IntCastChecked<int32>(SerializeNum); i < Limit && !HasError(); i++)
                 {
                     *this << Array[i];
                 }
@@ -415,8 +415,8 @@ namespace Lumina
         template<typename K, typename V>
         FArchive& operator << (TPair<K, V>& Pair)
         {
-            *this << Pair.first;
-            *this << Pair.second;
+            *this << Pair.Key;
+            *this << Pair.Value;
             
             return *this;
         }
@@ -424,11 +424,11 @@ namespace Lumina
         template<typename K, typename V>
         FArchive& operator<<(THashMap<K, V>& Map)
         {
-            uint32 Count;
+            uint32 Count = 0;
 
             if (IsWriting())
             {
-                Count = static_cast<uint32>(Map.size());
+                Count = static_cast<uint32>(Map.Num());
                 *this << Count;
 
                 for (TPair<K, V> Pair : Map)
@@ -440,21 +440,21 @@ namespace Lumina
             {
                 *this << Count;
 
-                if (Count > GetMaxSerializeSize())
+                if (HasError() || Count > GetMaxSerializeSize() || !CanHoldCount(Count, 8))
                 {
                     SetHasError(true);
                     LOG_ERROR("Archiver is corrupted, attempted to serialize {} map entries. Max is: {}", Count, GetMaxSerializeSize());
                     return *this;
                 }
 
-                Map.clear();
-                Map.reserve(Count);
+                Map.Reset();
+                Map.Reserve(Count);
 
-                for (uint32 i = 0; i < Count; ++i)
+                for (uint32 i = 0; i < Count && !HasError(); ++i)
                 {
                     TPair<K, V> Pair;
                     *this << Pair;
-                    Map.emplace(Pair.first, std::move(Pair.second));
+                    Map.TryAdd(Pair.Key, std::move(Pair.Value));
                 }
             }
 

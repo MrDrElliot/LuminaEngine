@@ -158,7 +158,7 @@ namespace LuminaHashMapBench
             Built.reserve(kElementCount);
             for (int Index = 0; Index < kElementCount; ++Index)
             {
-                Built.push_back(FName(Lumina::Format("Entity_{}_Component", Index).c_str()));
+                Built.push_back(FName(*Lumina::Format("Entity_{}_Component", Index)));
             }
             return Built;
         }();
@@ -208,18 +208,18 @@ namespace LuminaHashMapBench
             Baseline[Key] = Key;
         }
 
-        const double LuminaBytes = static_cast<double>(Lumina.GetAllocatedBytes());
+        const double LuminaBytes = static_cast<double>(Lumina.GetAllocatedSize());
         const double BaselineEstimate = static_cast<double>(BaselineBytes(Baseline));
 
         std::printf("\nfootprint for %d live uint32 to uint32 entries\n", kElementCount);
         std::printf("  %-26s %12s %14s %12s\n", "implementation", "total KB", "bytes/element", "allocations");
         std::printf("  %-26s %12.1f %14.2f %12s\n", "Lumina THashMap",
-            LuminaBytes / 1024.0, LuminaBytes / Lumina.size(), "1");
+            LuminaBytes / 1024.0, LuminaBytes / Lumina.Num(), "1");
         std::printf("  %-26s %12.1f %14.2f %12s\n", "THashMap (computed)",
             BaselineEstimate / 1024.0, BaselineEstimate / Baseline.size(), "1 + one per element");
 
         std::printf("\n  %-26s %10zu\n", "sizeof Lumina THashMap", sizeof(TLuminaMap<uint32, uint32>));
-        std::printf("  %-26s %10zu\n", "sizeof THashMap", sizeof(TBaselineMap<uint32, uint32>));
+        std::printf("  %-26s %10zu\n", "sizeof std::unordered_map", sizeof(TBaselineMap<uint32, uint32>));
         SUCCEED();
     }
 
@@ -244,11 +244,11 @@ namespace LuminaHashMapBench
             {
                 Map[Key] = Key;
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         ReportHeader("insert 200,000 random uint32, no reserve");
-        ReportRow("THashMap", Baseline, 0.0);
+        ReportRow("std::unordered_map", Baseline, 0.0);
         ReportRow("Lumina THashMap", Lumina, Baseline);
         SUCCEED();
     }
@@ -271,16 +271,16 @@ namespace LuminaHashMapBench
         const double Lumina = BestMillisOf(kRepeats, [&Keys]
         {
             TLuminaMap<uint32, uint32> Map;
-            Map.reserve(Keys.size());
+            Map.Reserve(Lumina::IntCastChecked<Lumina::int32>(Keys.size()));
             for (uint32 Key : Keys)
             {
                 Map[Key] = Key;
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         ReportHeader("insert 200,000 random uint32, reserved");
-        ReportRow("THashMap", Baseline, 0.0);
+        ReportRow("std::unordered_map", Baseline, 0.0);
         ReportRow("Lumina THashMap", Lumina, Baseline);
         SUCCEED();
     }
@@ -317,14 +317,14 @@ namespace LuminaHashMapBench
             {
                 for (uint32 Key : Keys)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 successful uint32 lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -363,14 +363,14 @@ namespace LuminaHashMapBench
             {
                 for (uint32 Key : Missing)
                 {
-                    Hits += Lumina.find(Key) != Lumina.end() ? 1 : 0;
+                    Hits += Lumina.Contains(Key) ? 1 : 0;
                 }
             }
             GBenchSink += Hits;
         });
 
         ReportHeader("1,000,000 failed uint32 lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -398,11 +398,11 @@ namespace LuminaHashMapBench
             {
                 Map[Key] = Value++;
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         ReportHeader("insert 200,000 FName keys, no reserve");
-        ReportRow("THashMap", Baseline, 0.0);
+        ReportRow("std::unordered_map", Baseline, 0.0);
         ReportRow("Lumina THashMap", Lumina, Baseline);
         SUCCEED();
     }
@@ -441,14 +441,14 @@ namespace LuminaHashMapBench
             {
                 for (const FName& Key : Keys)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 successful FName lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -487,14 +487,14 @@ namespace LuminaHashMapBench
             {
                 for (void* Key : Keys)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 successful pointer lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -508,7 +508,7 @@ namespace LuminaHashMapBench
         FBenchRandom Random;
         for (size_t Index = Probe.size(); Index > 1; --Index)
         {
-            const size_t Swap = static_cast<size_t>(Random.Next() % Index);
+            const size_t Swap = Random.Next() % Index;
             std::swap(Probe[Index - 1], Probe[Swap]);
         }
 
@@ -542,14 +542,14 @@ namespace LuminaHashMapBench
             {
                 for (void* Key : Probe)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 pointer lookups over 200,000 entries, shuffled probe order");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -562,7 +562,7 @@ namespace LuminaHashMapBench
         FBenchRandom Random;
         for (size_t Index = Probe.size(); Index > 1; --Index)
         {
-            const size_t Swap = static_cast<size_t>(Random.Next() % Index);
+            const size_t Swap = Random.Next() % Index;
             std::swap(Probe[Index - 1], Probe[Swap]);
         }
 
@@ -594,14 +594,14 @@ namespace LuminaHashMapBench
             {
                 for (uint32 Key : Probe)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 uint32 lookups over 200,000 entries, shuffled probe order");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -644,14 +644,14 @@ namespace LuminaHashMapBench
             {
                 for (uint32 Key : Keys)
                 {
-                    Sum += Lumina.find(Key)->second;
+                    Sum += (*Lumina.Find(Key));
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("1,000,000 sequential uint32 lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -666,6 +666,13 @@ namespace LuminaHashMapBench
             const uint64 Product = static_cast<uint64>(Key) * 0x9e3779b97f4a7c15ull;
             return Product ^ (Product >> 32);
         }
+    };
+
+    struct FSplitmixHash
+    {
+        using is_transparent = void;
+
+        uint64 operator()(uint32 Key) const noexcept { return Lumina::Containers::MixHash64(Key); }
     };
 
     TEST(HashMapBench, MixCostOnLookup)
@@ -694,30 +701,36 @@ namespace LuminaHashMapBench
                 {
                     for (uint32 Key : Keys)
                     {
-                        Sum += Map.find(Key)->second;
+                        Sum += (*Map.Find(Key));
                     }
                 }
                 GBenchSink += Sum;
             });
         };
 
-        TLuminaMap<uint32, uint32> SplitmixRandom;
+        Lumina::Containers::THashMap<uint32, uint32, FSplitmixHash> SplitmixRandom;
         Lumina::Containers::THashMap<uint32, uint32, FCheapMixHash> CheapRandom;
+        TLuminaMap<uint32, uint32> WideRandom;
         const double SplitmixRandomMillis = Measure(Random, SplitmixRandom);
         const double CheapRandomMillis = Measure(Random, CheapRandom);
+        const double WideRandomMillis = Measure(Random, WideRandom);
 
-        TLuminaMap<uint32, uint32> SplitmixSequential;
+        Lumina::Containers::THashMap<uint32, uint32, FSplitmixHash> SplitmixSequential;
         Lumina::Containers::THashMap<uint32, uint32, FCheapMixHash> CheapSequential;
+        TLuminaMap<uint32, uint32> WideSequential;
         const double SplitmixSequentialMillis = Measure(Sequential, SplitmixSequential);
         const double CheapSequentialMillis = Measure(Sequential, CheapSequential);
+        const double WideSequentialMillis = Measure(Sequential, WideSequential);
 
         ReportHeader("1,000,000 random uint32 lookups, hash function swapped");
         ReportRow("splitmix64 finalizer", SplitmixRandomMillis, 0.0);
         ReportRow("single multiply fold", CheapRandomMillis, SplitmixRandomMillis);
+        ReportRow("128-bit fold (the default)", WideRandomMillis, SplitmixRandomMillis);
 
         ReportHeader("1,000,000 sequential uint32 lookups, hash function swapped");
         ReportRow("splitmix64 finalizer", SplitmixSequentialMillis, 0.0);
         ReportRow("single multiply fold", CheapSequentialMillis, SplitmixSequentialMillis);
+        ReportRow("128-bit fold (the default)", WideSequentialMillis, SplitmixSequentialMillis);
         SUCCEED();
     }
 
@@ -750,13 +763,13 @@ namespace LuminaHashMapBench
             uint64 Sum = 0;
             for (const FString& Key : Keys)
             {
-                Sum += Lumina.find(Key)->second;
+                Sum += (*Lumina.Find(Key));
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("200,000 successful FString lookups over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -780,7 +793,7 @@ namespace LuminaHashMapBench
         Views.reserve(Keys.size());
         for (const FString& Key : Keys)
         {
-            Views.push_back(FStringView(Key.data(), Key.size()));
+            Views.push_back(FStringView(Key.GetData(), Key.Len()));
         }
 
         const double BaselineMillis = BestMillisOf(kRepeats, [&Views, &Baseline]
@@ -788,7 +801,7 @@ namespace LuminaHashMapBench
             uint64 Sum = 0;
             for (FStringView View : Views)
             {
-                Sum += Baseline.find(FString(View.data(), View.size()))->second;
+                Sum += Baseline.find(FString(View.GetData(), View.Len()))->second;
             }
             GBenchSink += Sum;
         });
@@ -798,7 +811,7 @@ namespace LuminaHashMapBench
             uint64 Sum = 0;
             for (FStringView View : Views)
             {
-                Sum += Lumina.find(View)->second;
+                Sum += (*Lumina.Find(View));
             }
             GBenchSink += Sum;
         });
@@ -832,7 +845,14 @@ namespace LuminaHashMapBench
                 {
                     for (uint32 Key : Keys)
                     {
-                        Sum += Map.find(Key)->second;
+                        if constexpr (requires { Map.find(Key)->second; })
+                        {
+                            Sum += Map.find(Key)->second;
+                        }
+                        else
+                        {
+                            Sum += *Map.Find(Key);
+                        }
                     }
                 }
                 GBenchSink += Sum;
@@ -844,7 +864,7 @@ namespace LuminaHashMapBench
         const double NodeMillis = Probe(Node);
 
         ReportHeader("1,000,000 uint32 lookups, flat against pointer-stable node storage");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina flat", FlatMillis, BaselineMillis);
         ReportRow("Lumina node", NodeMillis, BaselineMillis);
         SUCCEED();
@@ -871,7 +891,7 @@ namespace LuminaHashMapBench
             {
                 Map[Key] = Key;
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         const double NodeMillis = BestMillisOf(kRepeats, [&Keys]
@@ -881,11 +901,11 @@ namespace LuminaHashMapBench
             {
                 Map[Key] = Key;
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         ReportHeader("insert 200,000 uint32, flat against pointer-stable node storage");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina flat", FlatMillis, BaselineMillis);
         ReportRow("Lumina node", NodeMillis, BaselineMillis);
         SUCCEED();
@@ -922,7 +942,7 @@ namespace LuminaHashMapBench
                 {
                     Map[static_cast<uint32>(Index)] = static_cast<uint32>(Index);
                 }
-                Sum += Map.find(static_cast<uint32>(Table % kEntries))->second;
+                Sum += (*Map.Find(static_cast<uint32>(Table % kEntries)));
             }
             GBenchSink += Sum;
         });
@@ -937,13 +957,13 @@ namespace LuminaHashMapBench
                 {
                     Map[static_cast<uint32>(Index)] = static_cast<uint32>(Index);
                 }
-                Sum += Map.find(static_cast<uint32>(Table % kEntries))->second;
+                Sum += (*Map.Find(static_cast<uint32>(Table % kEntries)));
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("build, probe and destroy 200,000 maps of 12 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina flat", FlatMillis, BaselineMillis);
         ReportRow("Lumina inline 15", InlineMillis, BaselineMillis);
         SUCCEED();
@@ -983,15 +1003,15 @@ namespace LuminaHashMapBench
             {
                 for (int Index = 0; Index < kLiveCount; ++Index)
                 {
-                    Map.erase(static_cast<uint32>(Round * kLiveCount + Index));
+                    Map.Remove(static_cast<uint32>(Round * kLiveCount + Index));
                     Map[static_cast<uint32>((Round + 1) * kLiveCount + Index)] = 0;
                 }
             }
-            GBenchSink += Map.size();
+            GBenchSink += Map.Num();
         });
 
         ReportHeader("erase and reinsert 100,000 entries, 20 rounds, steady size");
-        ReportRow("THashMap", Baseline, 0.0);
+        ReportRow("std::unordered_map", Baseline, 0.0);
         ReportRow("Lumina THashMap", Lumina, Baseline);
         SUCCEED();
     }
@@ -1028,14 +1048,14 @@ namespace LuminaHashMapBench
             {
                 for (const auto& Pair : Lumina)
                 {
-                    Sum += Pair.second;
+                    Sum += Pair.Value;
                 }
             }
             GBenchSink += Sum;
         });
 
         ReportHeader("5 full iterations over 200,000 entries");
-        ReportRow("THashMap", BaselineMillis, 0.0);
+        ReportRow("std::unordered_map", BaselineMillis, 0.0);
         ReportRow("Lumina THashMap", LuminaMillis, BaselineMillis);
         SUCCEED();
     }
@@ -1060,9 +1080,9 @@ namespace LuminaHashMapBench
             TLuminaSet<uint32> Set;
             for (uint32 Key : Keys)
             {
-                Set.insert(Key);
+                Set.Add(Key);
             }
-            GBenchSink += Set.size();
+            GBenchSink += Set.Num();
         });
 
         TBaselineSet<uint32> BaselineSet;
@@ -1070,7 +1090,7 @@ namespace LuminaHashMapBench
         for (uint32 Key : Keys)
         {
             BaselineSet.insert(Key);
-            LuminaSet.insert(Key);
+            LuminaSet.Add(Key);
         }
 
         const double BaselineProbe = BestMillisOf(kRepeats, [&Missing, &BaselineSet]
@@ -1093,18 +1113,18 @@ namespace LuminaHashMapBench
             {
                 for (uint32 Key : Missing)
                 {
-                    Hits += LuminaSet.contains(Key) ? 1 : 0;
+                    Hits += LuminaSet.Contains(Key) ? 1 : 0;
                 }
             }
             GBenchSink += Hits;
         });
 
         ReportHeader("insert 200,000 uint32 into a set");
-        ReportRow("THashSet", BaselineInsert, 0.0);
+        ReportRow("std::unordered_set", BaselineInsert, 0.0);
         ReportRow("Lumina THashSet", LuminaInsert, BaselineInsert);
 
         ReportHeader("1,000,000 failed set probes over 200,000 entries");
-        ReportRow("THashSet", BaselineProbe, 0.0);
+        ReportRow("std::unordered_set", BaselineProbe, 0.0);
         ReportRow("Lumina THashSet", LuminaProbe, BaselineProbe);
         SUCCEED();
     }

@@ -21,21 +21,21 @@ namespace Grain
         OriginVoxels = { float(BaseX), float(BaseY), float(BaseZ) };
 
         TVector<uint32> Grid;
-        Grid.resize(size_t(kSimSide) * size_t(kSimSide) * size_t(kSimSide));
+        Grid.SetNum(kSimSide * kSimSide * kSimSide);
 
-        Task::ParallelFor(uint32(kSimSide), [&](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kSimSide), [&](const Jobs::FParallelRange& Range)
         {
             for (uint32 Y = Range.Start; Y < Range.End; ++Y)
             {
                 for (int32 Z = 0; Z < kSimSide; ++Z)
                 {
-                    const size_t RowBase = (size_t(Y) * size_t(kSimSide) + size_t(Z)) * size_t(kSimSide);
+                    const int32 RowBase = (Y * kSimSide + Z) * kSimSide;
                     for (int32 X = 0; X < kSimSide; ++X)
                     {
                         const uint32 Material = World.SampleVoxelPublic(BaseX + X, BaseY + int32(Y), BaseZ + Z);
 
                         // Water seeds as volume rather than material, so it can flow and half fill a cell.
-                        Grid[RowBase + size_t(X)] = Material == uint32(EMaterial::Water)
+                        Grid[RowBase + X] = Material == uint32(EMaterial::Water)
                             ? (kMassFull << 8)
                             : Material;
                     }
@@ -80,7 +80,7 @@ namespace Grain
         SourceVoxels = { float(BestX), float(SourceY), float(BestZ) };
         SourceMaterial = uint32(EMaterial::Water);
 
-        const uint64 GridBytes = Grid.size() * sizeof(uint32);
+        const uint64 GridBytes = Grid.Num() * sizeof(uint32);
         const uint64 CoarseBytes = uint64(kSimCoarseSide) * kSimCoarseSide * kSimCoarseSide * sizeof(uint32);
 
         GridAlloc = RHI::Malloc(GridBytes, RHI::EMemoryType::Default);
@@ -102,7 +102,7 @@ namespace Grain
             return false;
         }
 
-        std::memcpy(Staging.Cpu, Grid.data(), size_t(GridBytes));
+        std::memcpy(Staging.Cpu, Grid.GetData(), size_t(GridBytes));
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdMemcpy(CL, { GridAlloc.Gpu, size_t(GridBytes) }, { Staging.Gpu, size_t(GridBytes) });

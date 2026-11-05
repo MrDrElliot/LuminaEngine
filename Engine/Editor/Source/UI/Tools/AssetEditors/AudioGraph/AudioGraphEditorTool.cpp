@@ -21,7 +21,7 @@ namespace Lumina
     static const char* GAudioNodeGraphObjectName = "AudioNodeGraph";
 
     FAudioGraphEditorTool::FAudioGraphEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -151,9 +151,9 @@ namespace Lumina
 
         ImGui::SameLine();
         ImGui::TextDisabled("%u nodes, %u inputs, %u outputs",
-            (uint32)Graph->GetProgram().Nodes.size(),
-            (uint32)Graph->GetInputs().size(),
-            (uint32)Graph->GetOutputs().size());
+            (uint32)Graph->GetProgram().Nodes.Num(),
+            (uint32)Graph->GetInputs().Num(),
+            (uint32)Graph->GetOutputs().Num());
 
         ImGui::Separator();
 
@@ -164,7 +164,7 @@ namespace Lumina
 
         for (const FString& Message : CompileMessages)
         {
-            ImGui::TextWrapped("%s", Message.c_str());
+            ImGui::TextWrapped("%s", *Message);
         }
 
         if (bHasErrors)
@@ -186,12 +186,12 @@ namespace Lumina
         {
             ImGui::PushID(&Parameter);
 
-            const FString Label = FString(Parameter.Name.c_str());
+            const FString Label = FString(*Parameter.Name);
 
             switch (Parameter.Type)
             {
             case EAudioGraphType::Trigger:
-                if (ImGui::Button(Label.c_str(), ImVec2(140.0f, 0.0f)))
+                if (ImGui::Button(*Label, ImVec2(140.0f, 0.0f)))
                 {
                     PreviewInstance->TriggerParameter(Parameter.Name);
                 }
@@ -199,7 +199,7 @@ namespace Lumina
 
             case EAudioGraphType::Float:
                 ImGui::SetNextItemWidth(160.0f);
-                if (ImGui::DragFloat(Label.c_str(), &Parameter.FloatValue, 0.01f))
+                if (ImGui::DragFloat(*Label, &Parameter.FloatValue, 0.01f))
                 {
                     PreviewInstance->SetFloatParameter(Parameter.Name, Parameter.FloatValue);
                 }
@@ -207,35 +207,35 @@ namespace Lumina
 
             case EAudioGraphType::Int32:
                 ImGui::SetNextItemWidth(160.0f);
-                if (ImGui::DragInt(Label.c_str(), &Parameter.IntValue))
+                if (ImGui::DragInt(*Label, &Parameter.IntValue))
                 {
                     PreviewInstance->SetIntParameter(Parameter.Name, Parameter.IntValue);
                 }
                 break;
 
             case EAudioGraphType::Bool:
-                if (ImGui::Checkbox(Label.c_str(), &Parameter.BoolValue))
+                if (ImGui::Checkbox(*Label, &Parameter.BoolValue))
                 {
                     PreviewInstance->SetBoolParameter(Parameter.Name, Parameter.BoolValue);
                 }
                 break;
 
             default:
-                ImGui::TextDisabled("%s", Label.c_str());
+                ImGui::TextDisabled("%s", *Label);
                 break;
             }
 
             ImGui::PopID();
         }
 
-        if (!PreviewInstance->GetOutputs().empty())
+        if (!PreviewInstance->GetOutputs().IsEmpty())
         {
             ImGui::Separator();
             ImGui::TextUnformatted("Outputs");
 
             for (const FAudioGraphParameterDecl& Output : PreviewInstance->GetOutputs())
             {
-                ImGui::Text("%s  %.3f", Output.Name.c_str(), PreviewInstance->GetFloatOutput(Output.Name));
+                ImGui::Text("%s  %.3f", *Output.Name, PreviewInstance->GetFloatOutput(Output.Name));
             }
         }
     }
@@ -260,7 +260,7 @@ namespace Lumina
             {
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.9f, 0.25f, 0.2f, 1.0f));
             }
-            ImGui::ProgressBar(Math::Min(MeterLevels[Channel], 1.0f), ImVec2(-1.0f, 0.0f), Overlay.c_str());
+            ImGui::ProgressBar(Math::Min(MeterLevels[Channel], 1.0f), ImVec2(-1.0f, 0.0f), *Overlay);
             if (bClipping)
             {
                 ImGui::PopStyleColor();
@@ -278,14 +278,14 @@ namespace Lumina
 
         FAudioGraphCompileResult Result = FAudioGraphCompiler::Compile(NodeGraph.Get());
 
-        CompileMessages.clear();
+        CompileMessages.Reset();
         for (const FString& Error : Result.Errors)
         {
-            CompileMessages.push_back(Error);
+            CompileMessages.Add(Error);
         }
         for (const FString& Warning : Result.Warnings)
         {
-            CompileMessages.push_back(Warning);
+            CompileMessages.Add(Warning);
         }
 
         bHasErrors = !Result.bSuccess;
@@ -338,7 +338,7 @@ namespace Lumina
             return;
         }
 
-        PreviewParameters.clear();
+        PreviewParameters.Reset();
         for (const FAudioGraphParameterDecl& Input : PreviewInstance->GetInputs())
         {
             FPreviewParameter Parameter;
@@ -366,7 +366,7 @@ namespace Lumina
                 }
                 break;
             }
-            PreviewParameters.push_back(Parameter);
+            PreviewParameters.Add(Parameter);
         }
     }
 
@@ -379,7 +379,7 @@ namespace Lumina
 
         PreviewHandle = SAudioHandle::Invalid();
         PreviewInstance.reset();
-        PreviewParameters.clear();
+        PreviewParameters.Reset();
         MeterLevels[0] = 0.0f;
         MeterLevels[1] = 0.0f;
     }
@@ -401,9 +401,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.30f, &RightDockID, &LeftDockID);
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Down, 0.45f, &RightBottomDockID, &RightDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AudioGraphWindowName).c_str(),      LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AudioPropertiesWindowName).c_str(), RightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AudioTransportWindowName).c_str(),  RightBottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AudioGraphWindowName),      LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AudioPropertiesWindowName), RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AudioTransportWindowName),  RightBottomDockID);
     }
 
     CEdNodeGraph* FAudioGraphEditorTool::GetActiveNodeGraph()

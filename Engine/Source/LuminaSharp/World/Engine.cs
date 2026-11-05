@@ -4,9 +4,10 @@ namespace LuminaSharp;
 
 /// <summary>
 /// Ambient access to the world the current gameplay callback belongs to. The runtime sets this around every
-/// CEntityScript and CEntitySystem callback, so the static engine APIs (<see cref="Time"/>, <see cref="Sound"/>,
+/// CEntityScript, CWorldSubsystem and CExclusiveSystem callback, so the static engine APIs (<see cref="Time"/>, <see cref="Sound"/>,
 /// <see cref="Trace"/>, <see cref="Gizmo"/>) and the Entity extension methods resolve their world without you
-/// threading one through. Game-thread only, never touch it from a worker Task body.
+/// threading one through. A parallel CEntitySystem runs beside other systems, so it has no world here.
+/// Game-thread only, never touch it from a worker Task body.
 /// </summary>
 public static partial class Engine
 {
@@ -55,7 +56,7 @@ public static partial class Engine
 
     /// <summary>The world the current callback runs in. Throws if accessed outside a gameplay callback.</summary>
     public static Lumina.CWorld World => ActiveWorld ?? EventWorld() ?? throw new InvalidOperationException(
-        "No active world: Engine.World / Time / Sound / Trace / Gizmo are only valid inside a script or system callback.");
+        "No active world: Engine.World / Time / Sound / Trace / Gizmo are only valid inside a script, world subsystem or exclusive system callback.");
 
     /// <summary>True while a gameplay callback is running (so <see cref="World"/> is available).</summary>
     public static bool InWorld => ActiveWorld != null || EventWorld() != null;
@@ -73,6 +74,7 @@ public static partial class Engine
         {
             Lumina.CEntityScript Script => Script.World,
             Lumina.CWorldSubsystem Subsystem => Subsystem.World,
+            Lumina.CExclusiveSystem System => System.GetWorld(),
             _ => null,
         };
     }

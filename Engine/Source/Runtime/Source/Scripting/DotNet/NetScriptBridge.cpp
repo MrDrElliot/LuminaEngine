@@ -54,7 +54,7 @@ namespace Lumina::NetScripts
             {
                 if (Script.Get() != nullptr && Script->IsReady())
                 {
-                    Scripts.push_back(Script);
+                    Scripts.Add(Script);
                 }
             }
         }

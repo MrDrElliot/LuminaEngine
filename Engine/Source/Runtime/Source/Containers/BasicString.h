@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <compare>
 #include <cstring>
 #include <iterator>
@@ -8,7 +9,6 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
-#include "ElementOps.h"
 #include "StringView.h"
 
 namespace Lumina::Containers
@@ -22,7 +22,7 @@ namespace Lumina::Containers
         struct FHeapLayout
         {
             TChar* Data;
-            uint32 Size;
+            int32  Size;
             uint32 Capacity;
         };
 
@@ -39,6 +39,7 @@ namespace Lumina::Containers
 
         static_assert(SsoCapacity >= 1 && SsoCapacity <= kCapacityMask);
         static_assert(bPackedSize || (SsoCapacity + 1) * sizeof(TChar) <= kSizeOffset);
+        static_assert(std::endian::native == std::endian::little, "The mode byte is the top byte of the heap capacity.");
 
         union FStorage
         {
@@ -46,13 +47,16 @@ namespace Lumina::Containers
             TChar       Inline[kStorageBytes / sizeof(TChar)];
             uint8       Bytes[kStorageBytes];
 
-            FStorage() : Bytes{} {}
+            // Zeroed only while small, since a whole-union copy then reads every byte; larger ones are copied by length.
+            FStorage() noexcept requires (kStorageBytes <= 32) : Bytes{} {}
+            FStorage() noexcept requires (kStorageBytes > 32) {}
         };
 
     public:
 
+        using ElementType            = TChar;
         using value_type             = TChar;
-        using size_type              = size_t;
+        using size_type              = int32;
         using difference_type        = ptrdiff_t;
         using reference              = TChar&;
         using const_reference        = const TChar&;
@@ -65,34 +69,33 @@ namespace Lumina::Containers
         using view_type              = TStringView<TChar>;
         using cview_type             = TCStringView<TChar>;
 
-        static constexpr size_t npos                = ~static_cast<size_t>(0);
-        static constexpr size_t MaxCapacity         = kCapacityMask;
-        static constexpr size_t InlineCapacityChars = SsoCapacity;
+        static constexpr int32 MaxLength           = static_cast<int32>(kCapacityMask);
+        static constexpr int32 InlineCapacityChars = static_cast<int32>(SsoCapacity);
 
         TBasicString() noexcept { InitializeEmpty(); }
 
         TBasicString(const TChar* Text)
         {
             InitializeEmpty();
-            Assign(Text, Text != nullptr ? TraitsLength(Text) : 0);
+            AssignRaw(Text, Text != nullptr ? TraitsLength(Text) : 0);
         }
 
-        TBasicString(const TChar* Text, size_t Length)
+        TBasicString(const TChar* Text, int32 Length)
         {
             InitializeEmpty();
-            Assign(Text, Length);
+            AssignRaw(Text, CheckedCount(static_cast<uint32>(Length)));
         }
 
         TBasicString(view_type Text)
         {
             InitializeEmpty();
-            Assign(Text.data(), Text.size());
+            AssignRaw(Text.GetData(), static_cast<uint32>(Text.Len()));
         }
 
-        TBasicString(size_t Count, TChar Character)
+        TBasicString(int32 Count, TChar Character)
         {
             InitializeEmpty();
-            resize(Count, Character);
+            SetLen(Count, Character);
         }
 
         template <typename TIter>
@@ -100,16 +103,21 @@ namespace Lumina::Containers
         TBasicString(TIter First, TIter Last)
         {
             InitializeEmpty();
-            for (; First != Last; ++First)
-            {
-                push_back(*First);
-            }
+            Append(First, Last);
         }
 
         TBasicString(const TBasicString& Other)
         {
+            if constexpr (kStorageBytes <= 32)
+            {
+                if (!Other.IsHeap())
+                {
+                    Store = Other.Store;
+                    return;
+                }
+            }
             InitializeEmpty();
-            Assign(Other.GetData(), Other.GetSize());
+            AssignRaw(Other.GetData(), Other.GetSize());
         }
 
         TBasicString(TBasicString&& Other) noexcept
@@ -124,7 +132,15 @@ namespace Lumina::Containers
         {
             if (this != &Other)
             {
-                Assign(Other.GetData(), Other.GetSize());
+                if constexpr (kStorageBytes <= 32)
+                {
+                    if (!IsHeap() && !Other.IsHeap())
+                    {
+                        Store = Other.Store;
+                        return *this;
+                    }
+                }
+                AssignRaw(Other.GetData(), Other.GetSize());
             }
             return *this;
         }
@@ -140,90 +156,80 @@ namespace Lumina::Containers
             return *this;
         }
 
-        TBasicString& operator=(const TChar* Text) { Assign(Text, Text != nullptr ? TraitsLength(Text) : 0); return *this; }
-        TBasicString& operator=(view_type Text) { Assign(Text.data(), Text.size()); return *this; }
+        TBasicString& operator=(const TChar* Text) { AssignRaw(Text, Text != nullptr ? TraitsLength(Text) : 0); return *this; }
+        TBasicString& operator=(view_type Text) { AssignRaw(Text.GetData(), static_cast<uint32>(Text.Len())); return *this; }
 
-        NODISCARD FORCEINLINE const TChar* c_str() const noexcept { return GetData(); }
-        NODISCARD FORCEINLINE TChar* data() noexcept { return GetData(); }
-        NODISCARD FORCEINLINE const TChar* data() const noexcept { return GetData(); }
+        NODISCARD static TBasicString ChrN(int32 Count, TChar Character) { return TBasicString(Count, Character); }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return GetSize(); }
-        NODISCARD FORCEINLINE size_t length() const noexcept { return GetSize(); }
-        NODISCARD FORCEINLINE size_t capacity() const noexcept { return GetCapacity(); }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return GetSize() == 0; }
-        NODISCARD static constexpr size_t max_size() noexcept { return MaxCapacity; }
+        NODISCARD FORCEINLINE const TChar* operator*() const noexcept { return GetData(); }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto GetData(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, TChar>*
+        {
+            return Self.IsHeap() ? Self.Store.Heap.Data : Self.Store.Inline;
+        }
+
+        NODISCARD FORCEINLINE int32 Len() const noexcept { return static_cast<int32>(GetSize()); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return GetSize() == 0; }
+        NODISCARD FORCEINLINE int32 GetCapacity() const noexcept { return static_cast<int32>(GetCapacityRaw()); }
+        NODISCARD FORCEINLINE size_t GetAllocatedSize() const noexcept { return IsHeap() ? (static_cast<size_t>(GetCapacityRaw()) + 1) * sizeof(TChar) : 0; }
+        NODISCARD FORCEINLINE bool IsValidIndex(int32 Index) const noexcept { return static_cast<uint32>(Index) < GetSize(); }
 
         /** True while the characters live in the packed buffer rather than a heap block. */
         NODISCARD FORCEINLINE bool IsInline() const noexcept { return !IsHeap(); }
 
-        NODISCARD FORCEINLINE operator view_type() const noexcept { return view_type(GetData(), GetSize()); }
-        NODISCARD FORCEINLINE view_type View() const noexcept { return view_type(GetData(), GetSize()); }
-        NODISCARD FORCEINLINE cview_type CView() const noexcept { return cview_type::FromTerminated(GetData(), GetSize()); }
+        NODISCARD FORCEINLINE operator view_type() const noexcept { return view_type(GetData(), Len()); }
+        NODISCARD FORCEINLINE view_type View() const noexcept { return view_type(GetData(), Len()); }
+        NODISCARD FORCEINLINE cview_type CView() const noexcept { return cview_type::FromTerminated(GetData(), Len()); }
 
-        NODISCARD FORCEINLINE TChar* begin() noexcept { return GetData(); }
-        NODISCARD FORCEINLINE const TChar* begin() const noexcept { return GetData(); }
-        NODISCARD FORCEINLINE const TChar* cbegin() const noexcept { return GetData(); }
-        NODISCARD FORCEINLINE TChar* end() noexcept { return GetData() + GetSize(); }
-        NODISCARD FORCEINLINE const TChar* end() const noexcept { return GetData() + GetSize(); }
-        NODISCARD FORCEINLINE const TChar* cend() const noexcept { return GetData() + GetSize(); }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto begin(this TSelf&& Self) noexcept { return Self.GetData(); }
 
-        NODISCARD FORCEINLINE reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
-        NODISCARD FORCEINLINE const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
-        NODISCARD FORCEINLINE reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
-        NODISCARD FORCEINLINE const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto end(this TSelf&& Self) noexcept { return Self.GetData() + Self.GetSize(); }
 
-        NODISCARD FORCEINLINE TChar& operator[](size_t Index) noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto rbegin(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.end()); }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto rend(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.begin()); }
+
+        // Strictly below Len: the terminator of a full inline string is the mode byte, and writing it corrupts the string.
+        NODISCARD FORCEINLINE TChar& operator[](int32 Index) noexcept
+        {
+            LUMINA_CONTAINER_CHECK_INDEX(Index, GetSize());
+            return GetData()[Index];
+        }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Last(this TSelf&& Self, int32 IndexFromEnd = 0) noexcept -> TLikeSelf<TSelf, TChar>&
+        {
+            return Self[Self.Len() - IndexFromEnd - 1];
+        }
+
+        NODISCARD FORCEINLINE const TChar& operator[](int32 Index) const noexcept
         {
             LUMINA_CONTAINER_CHECK_WITHIN(Index, GetSize());
             return GetData()[Index];
         }
 
-        NODISCARD FORCEINLINE const TChar& operator[](size_t Index) const noexcept
+        void Reserve(int32 InNewCapacity)
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Index, GetSize());
-            return GetData()[Index];
+            ReserveExact(CheckedCount(static_cast<uint32>(InNewCapacity)));
         }
 
-        NODISCARD FORCEINLINE TChar& at(size_t Index) noexcept { return (*this)[Index]; }
-        NODISCARD FORCEINLINE const TChar& at(size_t Index) const noexcept { return (*this)[Index]; }
-
-        NODISCARD FORCEINLINE TChar& front() noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE const TChar& front() const noexcept { return (*this)[0]; }
-
-        NODISCARD FORCEINLINE TChar& back() noexcept
-        {
-            LUMINA_CONTAINER_CHECK(GetSize() != 0);
-            return GetData()[GetSize() - 1];
-        }
-
-        NODISCARD FORCEINLINE const TChar& back() const noexcept
-        {
-            LUMINA_CONTAINER_CHECK(GetSize() != 0);
-            return GetData()[GetSize() - 1];
-        }
-
-        void reserve(size_t NewCapacity)
-        {
-            if (NewCapacity > GetCapacity())
-            {
-                ReallocateTo(NewCapacity);
-            }
-        }
-
-        FORCEINLINE void Reserve(size_t NewCapacity) { reserve(NewCapacity); }
-
-        void shrink_to_fit()
+        void Shrink()
         {
             if (!IsHeap())
             {
                 return;
             }
 
-            const size_t Size = GetSize();
+            const uint32 Size = GetSize();
             if (Size <= SsoCapacity)
             {
                 TChar* Old = Store.Heap.Data;
-                const size_t OldBytes = (static_cast<size_t>(GetCapacity()) + 1) * sizeof(TChar);
+                const size_t OldBytes = (static_cast<size_t>(GetCapacityRaw()) + 1) * sizeof(TChar);
                 InitializeEmpty();
                 Memory::Memcpy(Store.Inline, Old, Size * sizeof(TChar));
                 SetSize(Size);
@@ -231,254 +237,251 @@ namespace Lumina::Containers
                 return;
             }
 
-            if (Size < GetCapacity())
+            if (Size < GetCapacityRaw())
             {
                 ReallocateTo(Size);
             }
         }
 
-        FORCEINLINE void clear() noexcept { SetSize(0); }
-
-        void resize(size_t NewSize)
+        /** Drops the characters and the block, keeping room for Slack. */
+        void Empty(int32 Slack = 0)
         {
-            resize(NewSize, TChar(0));
+            ReleaseHeapBlock();
+            InitializeEmpty();
+            if (Slack > 0)
+            {
+                Reserve(Slack);
+            }
         }
 
-        void resize(size_t NewSize, TChar Character)
+        /** Drops the characters but keeps the block, so refilling it does not reallocate. */
+        void Reset(int32 NewReservedSize = 0)
         {
-            const size_t Size = GetSize();
-            if (NewSize > Size)
+            SetSize(0);
+            if (NewReservedSize > 0)
             {
-                ReserveForGrowth(NewSize);
-                TChar* Write = GetData();
-                for (size_t Index = Size; Index < NewSize; ++Index)
+                Reserve(NewReservedSize);
+            }
+        }
+
+        void SetLen(int32 NewLen, TChar Fill = TChar(0))
+        {
+            ResizeTo(static_cast<uint32>(NewLen), Fill);
+        }
+
+        // Growing always ends on the heap, so both full cases reallocate and fall through to the heap store.
+        FORCEINLINE void AppendChar(TChar Character)
+        {
+            uint32 Size;
+            if (IsHeap())
+            {
+                Size = static_cast<uint32>(Store.Heap.Size);
+                if (Size == (Store.Heap.Capacity & kCapacityMask)) [[unlikely]]
                 {
-                    Write[Index] = Character;
+                    ReallocateTo(CalculateGrowth(Size, static_cast<uint64>(Size) + 1));
                 }
             }
-            SetSize(NewSize);
-        }
-
-        FORCEINLINE void push_back(TChar Character)
-        {
-            const size_t Size = GetSize();
-            if (Size == GetCapacity()) [[unlikely]]
+            else
             {
-                ReserveForGrowth(Size + 1);
+                Size = GetInlineSize();
+                if (Size != SsoCapacity) [[likely]]
+                {
+                    Store.Inline[Size] = Character;
+                    SetInlineSize(Size + 1);
+                    return;
+                }
+                ReallocateTo(CalculateGrowth(Size, static_cast<uint64>(Size) + 1));
             }
-            GetData()[Size] = Character;
-            SetSize(Size + 1);
+
+            TChar* Data = Store.Heap.Data;
+            Data[Size] = Character;
+            Data[Size + 1] = TChar(0);
+            Store.Heap.Size = static_cast<int32>(Size + 1);
         }
 
-        FORCEINLINE void pop_back() noexcept
+        TBasicString& AppendChars(TChar Character, int32 Count)
         {
-            LUMINA_CONTAINER_CHECK(GetSize() != 0);
-            SetSize(GetSize() - 1);
+            ResizeTo(CheckedCount(static_cast<uint64>(GetSize()) + static_cast<uint32>(Count)), Character);
+            return *this;
         }
 
-        TBasicString& append(const TChar* Text, size_t Length)
+        TBasicString& Append(const TChar* Text, int32 Length) { return AppendRaw(Text, static_cast<uint32>(Length)); }
+        TBasicString& Append(view_type Text) { return AppendRaw(Text.GetData(), static_cast<uint32>(Text.Len())); }
+        TBasicString& Append(const TChar* Text) { return AppendRaw(Text, LengthOrZero(Text)); }
+
+        template <typename TIter>
+        requires std::input_iterator<TIter>
+        TBasicString& Append(TIter First, TIter Last)
         {
-            if (Length == 0)
+            if constexpr (std::contiguous_iterator<TIter> && std::is_same_v<std::remove_cv_t<std::iter_value_t<TIter>>, TChar>)
+            {
+                return AppendRaw(std::to_address(First), CheckedCount(static_cast<uint64>(Last - First)));
+            }
+            else
+            {
+                // Iterators over our own characters, such as reverse ones, are copied out before growth frees them.
+                if constexpr (std::forward_iterator<TIter> && std::is_lvalue_reference_v<std::iter_reference_t<TIter>>)
+                {
+                    if (First != Last && OwnsAddress(std::addressof(*First)))
+                    {
+                        const TBasicString Staged(First, Last);
+                        return AppendRaw(Staged.GetData(), Staged.GetSize());
+                    }
+                }
+                if constexpr (std::forward_iterator<TIter>)
+                {
+                    ReserveForGrowth(static_cast<uint64>(GetSize()) + static_cast<uint64>(std::distance(First, Last)));
+                }
+                for (; First != Last; ++First)
+                {
+                    AppendChar(static_cast<TChar>(*First));
+                }
+                return *this;
+            }
+        }
+
+        TBasicString& operator+=(view_type Text) { return AppendRaw(Text.GetData(), static_cast<uint32>(Text.Len())); }
+        TBasicString& operator+=(const TChar* Text) { return AppendRaw(Text, LengthOrZero(Text)); }
+        TBasicString& operator+=(const TBasicString& Other) { return AppendRaw(Other.GetData(), Other.GetSize()); }
+        TBasicString& operator+=(TChar Character) { AppendChar(Character); return *this; }
+
+        TBasicString& InsertAt(int32 InIndex, view_type Text)
+        {
+            const uint32 Index = static_cast<uint32>(InIndex);
+            const uint32 Size = GetSize();
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Size);
+
+            if (Text.IsEmpty())
             {
                 return *this;
             }
 
-            const size_t Size = GetSize();
-            const TChar* Current = GetData();
+            // Text pointing into us is copied first, since both the growth and the shift below would move it.
+            if (OwnsAddress(Text.GetData()))
+            {
+                const TBasicString Staged(Text);
+                return InsertAt(InIndex, Staged.View());
+            }
 
-            // Growth frees the buffer Text may point into, so re-derive it from the new one afterwards.
-            const bool bAliasesSelf = Text >= Current && Text <= Current + Size;
-            const size_t Offset = bAliasesSelf ? static_cast<size_t>(Text - Current) : 0;
-
-            ReserveForGrowth(Size + Length);
+            const uint32 Length = static_cast<uint32>(Text.Len());
+            ReserveForGrowth(static_cast<uint64>(Size) + Length);
 
             TChar* Write = GetData();
-            Memory::Memcpy(Write + Size, bAliasesSelf ? Write + Offset : Text, Length * sizeof(TChar));
+            std::memmove(Write + Index + Length, Write + Index, static_cast<size_t>(Size - Index) * sizeof(TChar));
+            Memory::Memcpy(Write + Index, Text.GetData(), static_cast<size_t>(Length) * sizeof(TChar));
             SetSize(Size + Length);
             return *this;
         }
 
-        TBasicString& append(view_type Text) { return append(Text.data(), Text.size()); }
-        TBasicString& append(const TChar* Text) { return append(Text, TraitsLength(Text)); }
-        TBasicString& append(size_t Count, TChar Character) { resize(GetSize() + Count, Character); return *this; }
+        TBasicString& InsertAt(int32 Index, TChar Character) { return InsertAt(Index, view_type(&Character, 1)); }
 
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        TBasicString& append(TIter First, TIter Last)
+        // Clamped like Mid, so a range running past the end removes to the end.
+        TBasicString& RemoveAt(int32 InIndex, int32 InCount = 1)
         {
-            for (; First != Last; ++First)
-            {
-                push_back(static_cast<TChar>(*First));
-            }
-            return *this;
-        }
-
-        TBasicString& operator+=(view_type Text) { return append(Text.data(), Text.size()); }
-        TBasicString& operator+=(const TChar* Text) { return append(Text, TraitsLength(Text)); }
-        TBasicString& operator+=(const TBasicString& Other) { return append(Other.GetData(), Other.GetSize()); }
-        TBasicString& operator+=(TChar Character) { push_back(Character); return *this; }
-
-        TBasicString& assign(const TChar* Text, size_t Length) { Assign(Text, Length); return *this; }
-        TBasicString& assign(view_type Text) { Assign(Text.data(), Text.size()); return *this; }
-        TBasicString& assign(const TChar* Text) { Assign(Text, TraitsLength(Text)); return *this; }
-        TBasicString& assign(size_t Count, TChar Character) { clear(); resize(Count, Character); return *this; }
-
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        TBasicString& assign(TIter First, TIter Last)
-        {
-            clear();
-            return append(First, Last);
-        }
-
-        TBasicString& insert(size_t Position, size_t Count, TChar Character)
-        {
-            return insert(Position, TBasicString(Count, Character).View());
-        }
-
-        TChar* insert(const TChar* Position, TChar Character)
-        {
-            const size_t Index = static_cast<size_t>(Position - GetData());
-            insert(Index, view_type(&Character, 1));
-            return GetData() + Index;
-        }
-
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        TChar* insert(const TChar* Position, TIter First, TIter Last)
-        {
-            const size_t Index = static_cast<size_t>(Position - GetData());
-            TBasicString Staged;
-            Staged.append(First, Last);
-            insert(Index, Staged.View());
-            return GetData() + Index;
-        }
-
-        TBasicString& insert(size_t Position, view_type Text)
-        {
-            const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
-
-            if (Text.empty())
-            {
-                return *this;
-            }
-
-            // Copy first: the source may alias our own buffer, which the growth below would invalidate.
-            TBasicString Staged(Text.data(), Text.size());
-            ReserveForGrowth(Size + Staged.GetSize());
-
-            TChar* Write = GetData();
-            std::memmove(Write + Position + Staged.GetSize(), Write + Position, (Size - Position) * sizeof(TChar));
-            Memory::Memcpy(Write + Position, Staged.GetData(), Staged.GetSize() * sizeof(TChar));
-            SetSize(Size + Staged.GetSize());
-            return *this;
-        }
-
-        TBasicString& erase(size_t Position = 0, size_t Count = npos)
-        {
-            const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
-
-            const size_t Removed = Count < Size - Position ? Count : Size - Position;
+            const uint32 Size = GetSize();
+            const uint32 Index = static_cast<uint32>(InIndex);
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Size);
+            const uint32 Count = InCount < 0 ? 0u : static_cast<uint32>(InCount);
+            const uint32 Removed = Count < Size - Index ? Count : Size - Index;
             if (Removed != 0)
             {
                 TChar* Write = GetData();
-                std::memmove(Write + Position, Write + Position + Removed, (Size - Position - Removed) * sizeof(TChar));
+                std::memmove(Write + Index, Write + Index + Removed, static_cast<size_t>(Size - Index - Removed) * sizeof(TChar));
                 SetSize(Size - Removed);
             }
             return *this;
         }
 
-        TChar* erase(const TChar* Position)
-        {
-            const size_t Index = static_cast<size_t>(Position - GetData());
-            erase(Index, 1);
-            return GetData() + Index;
-        }
+        NODISCARD TBasicString Mid(int32 Start, int32 Count = MaxLength) const { return TBasicString(View().Mid(Start, Count)); }
+        NODISCARD TBasicString Left(int32 Count) const { return TBasicString(View().Left(Count)); }
+        NODISCARD TBasicString Right(int32 Count) const { return TBasicString(View().Right(Count)); }
+        NODISCARD TBasicString LeftChop(int32 Count) const { return TBasicString(View().LeftChop(Count)); }
+        NODISCARD TBasicString RightChop(int32 Count) const { return TBasicString(View().RightChop(Count)); }
 
-        TChar* erase(const TChar* First, const TChar* Last)
-        {
-            const size_t Index = static_cast<size_t>(First - GetData());
-            erase(Index, static_cast<size_t>(Last - First));
-            return GetData() + Index;
-        }
+        void MidInline(int32 Start, int32 Count = MaxLength) { *this = Mid(Start, Count); }
+        void LeftInline(int32 Count) { SetSize(static_cast<uint32>(View().Left(Count).Len())); }
+        void LeftChopInline(int32 Count) { SetSize(static_cast<uint32>(View().LeftChop(Count).Len())); }
+        void RightChopInline(int32 Count) { RemoveAt(0, Len() - View().RightChop(Count).Len()); }
 
-        TBasicString& replace(size_t Position, size_t Count, view_type Text)
-        {
-            erase(Position, Count);
-            return insert(Position, Text);
-        }
+        NODISCARD int32 Find(view_type Text, int32 StartPosition = 0) const noexcept { return View().Find(Text, StartPosition); }
+        NODISCARD int32 Find(TChar Character, int32 StartPosition = 0) const noexcept { return View().Find(Character, StartPosition); }
+        NODISCARD int32 FindLast(view_type Text, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLast(Text, StartPosition); }
+        NODISCARD int32 FindLast(TChar Character, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLast(Character, StartPosition); }
+        NODISCARD bool FindChar(TChar Character, int32& OutIndex) const noexcept { return View().FindChar(Character, OutIndex); }
+        NODISCARD bool FindLastChar(TChar Character, int32& OutIndex) const noexcept { return View().FindLastChar(Character, OutIndex); }
+        NODISCARD int32 FindFirstOf(view_type Set, int32 StartPosition = 0) const noexcept { return View().FindFirstOf(Set, StartPosition); }
+        NODISCARD int32 FindLastOf(view_type Set, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLastOf(Set, StartPosition); }
+        NODISCARD int32 FindFirstOf(TChar Character, int32 StartPosition = 0) const noexcept { return View().Find(Character, StartPosition); }
+        NODISCARD int32 FindLastOf(TChar Character, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLast(Character, StartPosition); }
+        NODISCARD int32 FindFirstNotOf(view_type Set, int32 StartPosition = 0) const noexcept { return View().FindFirstNotOf(Set, StartPosition); }
+        NODISCARD int32 FindLastNotOf(view_type Set, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLastNotOf(Set, StartPosition); }
 
-        NODISCARD TBasicString substr(size_t Position = 0, size_t Count = npos) const
-        {
-            const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
-            const size_t Taken = Count < Size - Position ? Count : Size - Position;
-            return TBasicString(GetData() + Position, Taken);
-        }
-
-        NODISCARD size_t find(view_type Text, size_t Position = 0) const noexcept { return View().find(Text, Position); }
-        NODISCARD size_t find(TChar Character, size_t Position = 0) const noexcept { return View().find(Character, Position); }
-        NODISCARD size_t rfind(view_type Text, size_t Position = npos) const noexcept { return View().rfind(Text, Position); }
-        NODISCARD size_t rfind(TChar Character, size_t Position = npos) const noexcept { return View().rfind(Character, Position); }
-        NODISCARD size_t find_first_of(view_type Set, size_t Position = 0) const noexcept { return View().find_first_of(Set, Position); }
-        NODISCARD size_t find_first_of(TChar Character, size_t Position = 0) const noexcept { return View().find_first_of(Character, Position); }
-        NODISCARD size_t find_last_of(view_type Set, size_t Position = npos) const noexcept { return View().find_last_of(Set, Position); }
-        NODISCARD size_t find_last_of(TChar Character, size_t Position = npos) const noexcept { return View().find_last_of(Character, Position); }
-        NODISCARD size_t find_first_not_of(view_type Set, size_t Position = 0) const noexcept { return View().find_first_not_of(Set, Position); }
-        NODISCARD size_t find_first_not_of(TChar Character, size_t Position = 0) const noexcept { return View().find_first_not_of(Character, Position); }
-        NODISCARD size_t find_last_not_of(view_type Set, size_t Position = npos) const noexcept { return View().find_last_not_of(Set, Position); }
-        NODISCARD size_t find_last_not_of(TChar Character, size_t Position = npos) const noexcept { return View().find_last_not_of(Character, Position); }
-
-        NODISCARD int compare(view_type Text) const noexcept { return View().compare(Text); }
-        NODISCARD int compare(size_t Position, size_t Count, view_type Text) const noexcept { return View().compare(Position, Count, Text); }
-
-        /** Ordering that folds ASCII case, for identifiers and paths that are compared case-insensitively. */
+        NODISCARD int Compare(view_type Text) const noexcept { return View().Compare(Text); }
         NODISCARD int CompareIgnoreCase(view_type Text) const noexcept { return Containers::CompareIgnoreCase(View(), Text); }
-        NODISCARD bool starts_with(view_type Text) const noexcept { return View().starts_with(Text); }
-        NODISCARD bool ends_with(view_type Text) const noexcept { return View().ends_with(Text); }
-        NODISCARD bool contains(view_type Text) const noexcept { return View().find(Text) != npos; }
-        NODISCARD bool contains(TChar Character) const noexcept { return View().find(Character) != npos; }
-
-        /** ASCII-only case folding, which is what asset paths and identifiers need. */
-        void ToLower() noexcept
-        {
-            TChar* Write = GetData();
-            for (size_t Index = 0, Size = GetSize(); Index < Size; ++Index)
-            {
-                if (Write[Index] >= TChar('A') && Write[Index] <= TChar('Z'))
-                {
-                    Write[Index] = static_cast<TChar>(Write[Index] - TChar('A') + TChar('a'));
-                }
-            }
-        }
-
-        void ToUpper() noexcept
-        {
-            TChar* Write = GetData();
-            for (size_t Index = 0, Size = GetSize(); Index < Size; ++Index)
-            {
-                if (Write[Index] >= TChar('a') && Write[Index] <= TChar('z'))
-                {
-                    Write[Index] = static_cast<TChar>(Write[Index] - TChar('a') + TChar('A'));
-                }
-            }
-        }
-
+        NODISCARD bool Equals(view_type Text) const noexcept { return View() == Text; }
         NODISCARD bool EqualsIgnoreCase(view_type Text) const noexcept { return Containers::EqualsIgnoreCase(View(), Text); }
+        NODISCARD bool StartsWith(view_type Text) const noexcept { return View().StartsWith(Text); }
+        NODISCARD bool StartsWith(TChar Character) const noexcept { return View().StartsWith(Character); }
+        NODISCARD bool EndsWith(view_type Text) const noexcept { return View().EndsWith(Text); }
+        NODISCARD bool EndsWith(TChar Character) const noexcept { return View().EndsWith(Character); }
+        NODISCARD bool Contains(view_type Text) const noexcept { return View().Find(Text) != Constants::kIndexNone; }
+        NODISCARD bool Contains(TChar Character) const noexcept { return View().Find(Character) != Constants::kIndexNone; }
 
-        void TrimStart() noexcept
+        /** Replaces every occurrence of From in place and returns how many there were. */
+        int32 ReplaceInline(view_type From, view_type To)
         {
-            const size_t First = View().find_first_not_of(WhitespaceSet());
-            erase(0, First == npos ? GetSize() : First);
+            const int32 First = From.IsEmpty() ? Constants::kIndexNone : Find(From);
+            if (First == Constants::kIndexNone)
+            {
+                return 0;
+            }
+
+            // Not growing, the write cursor never passes the read one, so the characters still to be searched are untouched.
+            if (To.Len() <= From.Len() && !OwnsAddress(From.GetData()) && !OwnsAddress(To.GetData()))
+            {
+                TChar* Data = GetData();
+                const int32 Size = Len();
+                int32 Read = 0;
+                int32 Write = 0;
+                int32 Replaced = 0;
+                for (int32 Hit = First; Hit != Constants::kIndexNone; Hit = View().Find(From, Read))
+                {
+                    std::memmove(Data + Write, Data + Read, static_cast<size_t>(Hit - Read) * sizeof(TChar));
+                    Write += Hit - Read;
+                    Memory::Memcpy(Data + Write, To.GetData(), static_cast<size_t>(To.Len()) * sizeof(TChar));
+                    Write += To.Len();
+                    Read = Hit + From.Len();
+                    ++Replaced;
+                }
+                std::memmove(Data + Write, Data + Read, static_cast<size_t>(Size - Read) * sizeof(TChar));
+                SetSize(static_cast<uint32>(Write + Size - Read));
+                return Replaced;
+            }
+
+            TBasicString Result;
+            const int32 Replaced = BuildReplaced(Result, From, To, First);
+            *this = std::move(Result);
+            return Replaced;
         }
 
-        void TrimEnd() noexcept
+        NODISCARD TBasicString Replace(view_type From, view_type To) const
         {
-            const size_t Last = View().find_last_not_of(WhitespaceSet());
-            SetSize(Last == npos ? 0 : Last + 1);
+            const int32 First = From.IsEmpty() ? Constants::kIndexNone : Find(From);
+            if (First == Constants::kIndexNone)
+            {
+                return *this;
+            }
+            TBasicString Result;
+            BuildReplaced(Result, From, To, First);
+            return Result;
         }
+
+        /** ASCII-only case folding in place, which is what asset paths and identifiers need. */
+        void ToLower() noexcept { FoldCase<'A'>(); }
+        void ToUpper() noexcept { FoldCase<'a'>(); }
+
+        void TrimStart() noexcept { RemoveAt(0, Len() - View().TrimStart().Len()); }
+        void TrimEnd() noexcept { SetSize(static_cast<uint32>(View().TrimEnd().Len())); }
 
         void Trim() noexcept
         {
@@ -486,11 +489,11 @@ namespace Lumina::Containers
             TrimStart();
         }
 
-        void swap(TBasicString& Other) noexcept
+        friend void swap(TBasicString& A, TBasicString& B) noexcept
         {
-            TBasicString Staged(std::move(*this));
-            *this = std::move(Other);
-            Other = std::move(Staged);
+            TBasicString Staged(std::move(A));
+            A = std::move(B);
+            B = std::move(Staged);
         }
 
         NODISCARD friend bool operator==(const TBasicString& A, const TBasicString& B) noexcept { return A.View() == B.View(); }
@@ -501,60 +504,156 @@ namespace Lumina::Containers
         NODISCARD friend auto operator<=>(const TBasicString& A, const TChar* B) noexcept { return A.View() <=> view_type(B); }
         NODISCARD friend auto operator<=>(const TBasicString& A, view_type B) noexcept { return A.View() <=> B; }
 
-        NODISCARD friend TBasicString operator+(const TBasicString& A, const TBasicString& B)
-        {
-            TBasicString Result(A);
-            Result.append(B.GetData(), B.GetSize());
-            return Result;
-        }
+        // A temporary on the left appends into its own buffer, so a chain of + allocates about once.
+        NODISCARD friend TBasicString operator+(const TBasicString& A, const TBasicString& B) { return Concat(A.View(), B.View()); }
+        NODISCARD friend TBasicString operator+(const TBasicString& A, view_type B) { return Concat(A.View(), B); }
+        NODISCARD friend TBasicString operator+(const TBasicString& A, const TChar* B) { return Concat(A.View(), ViewOf(B)); }
+        NODISCARD friend TBasicString operator+(const TBasicString& A, TChar B) { return Concat(A.View(), view_type(&B, 1)); }
+        // Only an actual view on the left, or FString + FFixedString would tie with this overload of the other capacity.
+        template <std::same_as<view_type> TView>
+        NODISCARD friend TBasicString operator+(TView A, const TBasicString& B) { return Concat(A, B.View()); }
+        NODISCARD friend TBasicString operator+(const TChar* A, const TBasicString& B) { return Concat(ViewOf(A), B.View()); }
 
-        NODISCARD friend TBasicString operator+(const TBasicString& A, view_type B)
-        {
-            TBasicString Result(A);
-            Result.append(B.data(), B.size());
-            return Result;
-        }
-
-        NODISCARD friend TBasicString operator+(const TBasicString& A, const TChar* B)
-        {
-            TBasicString Result(A);
-            Result.append(B);
-            return Result;
-        }
-
-        NODISCARD friend TBasicString operator+(const TChar* A, const TBasicString& B)
-        {
-            TBasicString Result(A);
-            Result.append(B.GetData(), B.GetSize());
-            return Result;
-        }
-
-
-        NODISCARD friend TBasicString operator+(const TBasicString& A, TChar B)
-        {
-            TBasicString Result(A);
-            Result.push_back(B);
-            return Result;
-        }
+        NODISCARD friend TBasicString operator+(TBasicString&& A, const TBasicString& B) { A.AppendRaw(B.GetData(), B.GetSize()); return std::move(A); }
+        NODISCARD friend TBasicString operator+(TBasicString&& A, view_type B) { A.Append(B); return std::move(A); }
+        NODISCARD friend TBasicString operator+(TBasicString&& A, const TChar* B) { A.Append(B); return std::move(A); }
+        NODISCARD friend TBasicString operator+(TBasicString&& A, TChar B) { A.AppendChar(B); return std::move(A); }
 
     private:
 
-        NODISCARD static size_t TraitsLength(const TChar* Text) noexcept
+        NODISCARD static uint32 TraitsLength(const TChar* Text) noexcept
         {
-            return std::char_traits<TChar>::length(Text);
+            return CheckedCount(std::char_traits<TChar>::length(Text));
         }
 
-        NODISCARD static constexpr view_type WhitespaceSet() noexcept
+        NODISCARD static uint32 LengthOrZero(const TChar* Text) noexcept
         {
-            if constexpr (sizeof(TChar) == 1)
+            return Text != nullptr ? TraitsLength(Text) : 0;
+        }
+
+        NODISCARD static view_type ViewOf(const TChar* Text) noexcept
+        {
+            return view_type(Text, static_cast<int32>(LengthOrZero(Text)));
+        }
+
+        // Compared as integers, since ordering pointers into unrelated objects is unspecified.
+        NODISCARD FORCEINLINE bool OwnsAddress(const void* Address) const noexcept
+        {
+            const uintptr_t Value = reinterpret_cast<uintptr_t>(Address);
+            const uintptr_t Begin = reinterpret_cast<uintptr_t>(GetData());
+            return Value >= Begin && Value <= Begin + static_cast<uintptr_t>(GetSize()) * sizeof(TChar);
+        }
+
+        NODISCARD static TBasicString Concat(view_type A, view_type B)
+        {
+            TBasicString Result;
+            Result.ReserveExact(CheckedCount(static_cast<uint64>(A.Len()) + static_cast<uint64>(B.Len())));
+            Result.AppendRaw(A.GetData(), static_cast<uint32>(A.Len()));
+            Result.AppendRaw(B.GetData(), static_cast<uint32>(B.Len()));
+            return Result;
+        }
+
+        // Counts the hits first, so Out is sized once; it only reads this string, so From and To may point into it.
+        int32 BuildReplaced(TBasicString& Out, view_type From, view_type To, int32 First) const
+        {
+            int32 Count = 0;
+            for (int32 Hit = First; Hit != Constants::kIndexNone; Hit = Find(From, Hit + From.Len()))
             {
-                return view_type(reinterpret_cast<const TChar*>(" \t\n\r\f\v"), 6);
+                ++Count;
             }
-            else
+
+            const int64 NewSize = static_cast<int64>(GetSize()) + static_cast<int64>(Count) * (static_cast<int64>(To.Len()) - From.Len());
+            Out.ReserveExact(CheckedCount(static_cast<uint64>(NewSize)));
+
+            const TChar* Data = GetData();
+            int32 Cursor = 0;
+            for (int32 Hit = First; Hit != Constants::kIndexNone; Hit = Find(From, Cursor))
             {
-                static constexpr TChar Set[] = { TChar(' '), TChar('\t'), TChar('\n'), TChar('\r'), TChar('\f'), TChar('\v'), TChar(0) };
-                return view_type(Set, 6);
+                Out.AppendRaw(Data + Cursor, static_cast<uint32>(Hit - Cursor));
+                Out.AppendRaw(To.GetData(), static_cast<uint32>(To.Len()));
+                Cursor = Hit + From.Len();
             }
+            Out.AppendRaw(Data + Cursor, GetSize() - static_cast<uint32>(Cursor));
+            return Count;
+        }
+
+        // A select rather than a branch, so the loop vectorizes.
+        template <char kFirst>
+        FORCEINLINE void FoldCase() noexcept
+        {
+            TChar* Write = GetData();
+            for (uint32 Index = 0, Size = GetSize(); Index < Size; ++Index)
+            {
+                const uint32 Code = static_cast<uint32>(static_cast<std::make_unsigned_t<TChar>>(Write[Index]));
+                Write[Index] = Code - static_cast<uint32>(kFirst) < 26u ? static_cast<TChar>(Code ^ 0x20u) : Write[Index];
+            }
+        }
+
+        NODISCARD static uint32 CheckedCount(uint64 Count)
+        {
+            return static_cast<uint32>(Private::CheckCapacity(Count, kCapacityMask));
+        }
+
+        void ResizeTo(uint32 NewSize, TChar Character)
+        {
+            const uint32 Size = GetSize();
+            if (NewSize > Size)
+            {
+                ReserveForGrowth(NewSize);
+                TChar* Write = GetData();
+                for (uint32 Index = Size; Index < NewSize; ++Index)
+                {
+                    Write[Index] = Character;
+                }
+            }
+            SetSize(NewSize);
+        }
+
+        // Without growth the bytes written start past the end, so Text cannot overlap them even when it points into us.
+        TBasicString& AppendRaw(const TChar* Text, uint32 Length)
+        {
+            if (Length == 0)
+            {
+                return *this;
+            }
+
+            if (IsHeap())
+            {
+                const uint32 Size = static_cast<uint32>(Store.Heap.Size);
+                if (static_cast<uint64>(Size) + Length > (Store.Heap.Capacity & kCapacityMask)) [[unlikely]]
+                {
+                    return AppendGrowing(Text, Length);
+                }
+                TChar* Data = Store.Heap.Data;
+                Memory::Memcpy(Data + Size, Text, static_cast<size_t>(Length) * sizeof(TChar));
+                Data[Size + Length] = TChar(0);
+                Store.Heap.Size = static_cast<int32>(Size + Length);
+                return *this;
+            }
+
+            const uint32 Size = GetInlineSize();
+            if (static_cast<uint64>(Size) + Length > SsoCapacity) [[unlikely]]
+            {
+                return AppendGrowing(Text, Length);
+            }
+            Memory::Memcpy(Store.Inline + Size, Text, static_cast<size_t>(Length) * sizeof(TChar));
+            SetInlineSize(Size + Length);
+            return *this;
+        }
+
+        // Growth frees the block Text may point into, so it is re-derived from the new one afterwards.
+        FORCENOINLINE TBasicString& AppendGrowing(const TChar* Text, uint32 Length)
+        {
+            const uint32 Size = GetSize();
+            const bool bAliasesSelf = OwnsAddress(Text);
+            const size_t Offset = bAliasesSelf ? static_cast<size_t>(Text - GetData()) : 0;
+
+            ReserveForGrowth(static_cast<uint64>(Size) + Length);
+
+            TChar* Write = GetData();
+            Memory::Memcpy(Write + Size, bAliasesSelf ? Write + Offset : Text, static_cast<size_t>(Length) * sizeof(TChar));
+            SetSize(Size + Length);
+            return *this;
         }
 
         FORCEINLINE void InitializeEmpty() noexcept
@@ -574,45 +673,34 @@ namespace Lumina::Containers
             return Value;
         }
 
-        FORCEINLINE void WriteInlineSize(size_t NewSize) noexcept
+        FORCEINLINE void WriteInlineSize(uint32 NewSize) noexcept
         {
-            const uint32 Value = static_cast<uint32>(NewSize);
-            std::memcpy(Store.Bytes + kSizeOffset, &Value, sizeof(Value));
+            std::memcpy(Store.Bytes + kSizeOffset, &NewSize, sizeof(NewSize));
         }
 
         NODISCARD FORCEINLINE bool IsHeap() const noexcept { return (Store.Bytes[kModeByte] & kHeapFlag) != 0; }
 
-        NODISCARD FORCEINLINE TChar* GetData() noexcept { return IsHeap() ? Store.Heap.Data : Store.Inline; }
-        NODISCARD FORCEINLINE const TChar* GetData() const noexcept { return IsHeap() ? Store.Heap.Data : Store.Inline; }
-
-        NODISCARD FORCEINLINE size_t GetSize() const noexcept
+        // The bound is what lets the compiler size every inline copy, and it is an invariant of the representation.
+        NODISCARD FORCEINLINE uint32 GetInlineSize() const noexcept
         {
-            if (IsHeap())
-            {
-                return Store.Heap.Size;
-            }
+            uint32 Size;
             if constexpr (bPackedSize)
             {
-                return SsoCapacity - Store.Bytes[kModeByte];
+                Size = static_cast<uint32>(SsoCapacity - Store.Bytes[kModeByte]);
             }
             else
             {
-                return ReadInlineSize();
+                Size = ReadInlineSize();
             }
+            [[assume(Size <= SsoCapacity)]];
+            return Size;
         }
 
-        NODISCARD FORCEINLINE size_t GetCapacity() const noexcept
+        // The mode byte goes first: at full capacity the terminator is that same byte, and zero is its right value.
+        FORCEINLINE void SetInlineSize(uint32 NewSize) noexcept
         {
-            return IsHeap() ? (Store.Heap.Capacity & kCapacityMask) : SsoCapacity;
-        }
-
-        FORCEINLINE void SetSize(size_t NewSize) noexcept
-        {
-            if (IsHeap())
-            {
-                Store.Heap.Size = static_cast<uint32>(NewSize);
-            }
-            else if constexpr (bPackedSize)
+            [[assume(NewSize <= SsoCapacity)]];
+            if constexpr (bPackedSize)
             {
                 Store.Bytes[kModeByte] = static_cast<uint8>(SsoCapacity - NewSize);
             }
@@ -620,15 +708,38 @@ namespace Lumina::Containers
             {
                 WriteInlineSize(NewSize);
             }
-            GetData()[NewSize] = TChar(0);
+            Store.Inline[NewSize] = TChar(0);
+        }
+
+        NODISCARD FORCEINLINE uint32 GetSize() const noexcept
+        {
+            return IsHeap() ? static_cast<uint32>(Store.Heap.Size) : GetInlineSize();
+        }
+
+        NODISCARD FORCEINLINE uint32 GetCapacityRaw() const noexcept
+        {
+            return IsHeap() ? (Store.Heap.Capacity & kCapacityMask) : static_cast<uint32>(SsoCapacity);
+        }
+
+        FORCEINLINE void SetSize(uint32 NewSize) noexcept
+        {
+            if (IsHeap())
+            {
+                Store.Heap.Size = static_cast<int32>(NewSize);
+                Store.Heap.Data[NewSize] = TChar(0);
+            }
+            else
+            {
+                SetInlineSize(NewSize);
+            }
         }
 
         // Capacity's top bit is the mode flag whenever the union is exactly the heap header, so mask it always.
-        FORCEINLINE void MarkHeap(TChar* Data, size_t Size, size_t Capacity) noexcept
+        FORCEINLINE void MarkHeap(TChar* Data, uint32 Size, uint32 Capacity) noexcept
         {
             Store.Heap.Data     = Data;
-            Store.Heap.Size     = static_cast<uint32>(Size);
-            Store.Heap.Capacity = static_cast<uint32>(Capacity) & kCapacityMask;
+            Store.Heap.Size     = static_cast<int32>(Size);
+            Store.Heap.Capacity = Capacity & kCapacityMask;
             Store.Bytes[kModeByte] |= kHeapFlag;
         }
 
@@ -636,95 +747,128 @@ namespace Lumina::Containers
         {
             if (IsHeap())
             {
-                TAllocator::Deallocate(Store.Heap.Data, (GetCapacity() + 1) * sizeof(TChar), alignof(TChar));
+                TAllocator::Deallocate(Store.Heap.Data, (static_cast<size_t>(GetCapacityRaw()) + 1) * sizeof(TChar), alignof(TChar));
             }
         }
 
-        NODISCARD static size_t CalculateGrowth(size_t CurrentCapacity, size_t Required)
+        NODISCARD static uint32 CalculateGrowth(uint32 CurrentCapacity, uint64 Required)
         {
-            size_t Grown = CurrentCapacity < SsoCapacity ? SsoCapacity : CurrentCapacity * 2;
+            uint64 Grown = CurrentCapacity < SsoCapacity ? SsoCapacity : static_cast<uint64>(CurrentCapacity) * 2;
+            if (Grown > kCapacityMask)
+            {
+                Grown = kCapacityMask;
+            }
             if (Grown < Required)
             {
                 Grown = Required;
             }
-            LUMINA_CONTAINER_CHECK_WITHIN(Grown, MaxCapacity);
-            return Grown;
+            return CheckedCount(Grown);
         }
 
-        FORCEINLINE void ReserveForGrowth(size_t Required)
+        FORCEINLINE void ReserveForGrowth(uint64 Required)
         {
-            if (Required > GetCapacity())
+            if (Required > GetCapacityRaw())
             {
-                ReallocateTo(CalculateGrowth(GetCapacity(), Required));
+                ReallocateTo(CalculateGrowth(GetCapacityRaw(), Required));
             }
         }
 
-        void ReallocateTo(size_t NewCapacity)
+        FORCEINLINE void ReserveExact(uint32 NewCapacity)
         {
-            const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK(NewCapacity >= Size && NewCapacity <= MaxCapacity);
+            if (NewCapacity > GetCapacityRaw())
+            {
+                ReallocateTo(NewCapacity);
+            }
+        }
 
-            const size_t NewBytes = (NewCapacity + 1) * sizeof(TChar);
+        // The heap hands out 16-byte classes, so rounding a block up to one is room the capacity gets for free.
+        NODISCARD static uint32 RoundedCapacity(uint32 Capacity) noexcept
+        {
+            const size_t Bytes = ((static_cast<size_t>(Capacity) + 1) * sizeof(TChar) + 15) & ~static_cast<size_t>(15);
+            const size_t Rounded = Bytes / sizeof(TChar) - 1;
+            return Rounded > kCapacityMask ? kCapacityMask : static_cast<uint32>(Rounded);
+        }
+
+        FORCENOINLINE void ReallocateTo(uint32 RequestedCapacity)
+        {
+            const uint32 Size = GetSize();
+            LUMINA_CONTAINER_CHECK(RequestedCapacity >= Size && RequestedCapacity <= kCapacityMask);
+
+            const uint32 NewCapacity = RoundedCapacity(RequestedCapacity);
+            const size_t NewBytes = (static_cast<size_t>(NewCapacity) + 1) * sizeof(TChar);
 
             if (IsHeap())
             {
-                const size_t OldBytes = (GetCapacity() + 1) * sizeof(TChar);
-                if (NewCapacity > GetCapacity() && TAllocator::TryExpand(Store.Heap.Data, OldBytes, NewBytes))
+                const size_t OldBytes = (static_cast<size_t>(GetCapacityRaw()) + 1) * sizeof(TChar);
+                if (NewCapacity > GetCapacityRaw() && TAllocator::TryExpand(Store.Heap.Data, OldBytes, NewBytes))
                 {
-                    Store.Heap.Capacity = static_cast<uint32>(NewCapacity) & kCapacityMask;
+                    Store.Heap.Capacity = NewCapacity & kCapacityMask;
                     Store.Bytes[kModeByte] |= kHeapFlag;
                     return;
                 }
 
                 TChar* NewData = static_cast<TChar*>(TAllocator::Allocate(NewBytes, alignof(TChar)));
-                Memory::Memcpy(NewData, Store.Heap.Data, (Size + 1) * sizeof(TChar));
+                Memory::Memcpy(NewData, Store.Heap.Data, (static_cast<size_t>(Size) + 1) * sizeof(TChar));
                 TAllocator::Deallocate(Store.Heap.Data, OldBytes, alignof(TChar));
                 MarkHeap(NewData, Size, NewCapacity);
                 return;
             }
 
+            // Leaving the inline buffer always asks for more than it holds, so a packed one copies whole in one fixed-size move.
             TChar* NewData = static_cast<TChar*>(TAllocator::Allocate(NewBytes, alignof(TChar)));
-            Memory::Memcpy(NewData, Store.Inline, (Size + 1) * sizeof(TChar));
+            if constexpr (bPackedSize)
+            {
+                Memory::Memcpy(NewData, Store.Inline, (SsoCapacity + 1) * sizeof(TChar));
+            }
+            else
+            {
+                Memory::Memcpy(NewData, Store.Inline, (static_cast<size_t>(Size) + 1) * sizeof(TChar));
+            }
             MarkHeap(NewData, Size, NewCapacity);
         }
 
-        void Assign(const TChar* Text, size_t Length)
+        void AssignRaw(const TChar* Text, uint32 Length)
         {
-            if (Length <= GetCapacity())
+            if (Length <= GetCapacityRaw())
             {
                 if (Length != 0)
                 {
-                    std::memmove(GetData(), Text, Length * sizeof(TChar));
+                    std::memmove(GetData(), Text, static_cast<size_t>(Length) * sizeof(TChar));
                 }
                 SetSize(Length);
                 return;
             }
 
-            LUMINA_CONTAINER_CHECK_WITHIN(Length, MaxCapacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Length, kCapacityMask);
 
             // Fill the new block before releasing the old one, since Text may point into it.
-            TChar* NewData = static_cast<TChar*>(TAllocator::Allocate((Length + 1) * sizeof(TChar), alignof(TChar)));
-            Memory::Memcpy(NewData, Text, Length * sizeof(TChar));
+            const uint32 NewCapacity = RoundedCapacity(Length);
+            TChar* NewData = static_cast<TChar*>(TAllocator::Allocate((static_cast<size_t>(NewCapacity) + 1) * sizeof(TChar), alignof(TChar)));
+            Memory::Memcpy(NewData, Text, static_cast<size_t>(Length) * sizeof(TChar));
             NewData[Length] = TChar(0);
 
             ReleaseHeapBlock();
-            MarkHeap(NewData, Length, Length);
+            MarkHeap(NewData, Length, NewCapacity);
         }
 
+        // A small union moves as one fixed-size copy, which also carries the heap header and mode byte across.
         void AdoptOrCopy(TBasicString& Other) noexcept
         {
-            if (Other.IsHeap())
+            if constexpr (kStorageBytes <= 32)
             {
-                MarkHeap(Other.Store.Heap.Data, Other.GetSize(), Other.GetCapacity());
-                Other.InitializeEmpty();
+                Store = Other.Store;
+            }
+            else if (Other.IsHeap())
+            {
+                MarkHeap(Other.Store.Heap.Data, Other.GetSize(), Other.GetCapacityRaw());
             }
             else
             {
-                const size_t Size = Other.GetSize();
-                Memory::Memcpy(Store.Inline, Other.Store.Inline, (Size + 1) * sizeof(TChar));
+                const uint32 Size = Other.GetSize();
+                Memory::Memcpy(Store.Inline, Other.Store.Inline, (static_cast<size_t>(Size) + 1) * sizeof(TChar));
                 SetSize(Size);
-                Other.InitializeEmpty();
             }
+            Other.InitializeEmpty();
         }
 
         FStorage Store;
@@ -735,18 +879,25 @@ namespace Lumina::Containers
 
     template <size_t N>
     using TFixedString = TBasicString<char, N>;
+}
+
+namespace Lumina
+{
+    // Neither representation points into the object itself, since GetData recomputes the inline address.
+    template <typename TChar, size_t N, typename TAllocator>
+    struct TIsTriviallyRelocatable<Containers::TBasicString<TChar, N, TAllocator>>
+    {
+        static constexpr bool Value = true;
+    };
+}
+
+namespace Lumina::Containers
+{
 
     // Matches the view hashers byte for byte, which is what makes heterogeneous string lookup work.
     template <typename TChar, size_t N, typename TAllocator>
     NODISCARD inline uint64 GetTypeHash(const TBasicString<TChar, N, TAllocator>& Str) noexcept
     {
-        return HashBytes(Str.data(), Str.size() * sizeof(TChar));
-    }
-
-    template <typename TChar, size_t N, typename TAllocator>
-    FORCEINLINE void swap(TBasicString<TChar, N, TAllocator>& A, TBasicString<TChar, N, TAllocator>& B) noexcept
-    {
-        A.swap(B);
+        return HashBytes(Str.GetData(), static_cast<size_t>(Str.Len()) * sizeof(TChar));
     }
 }
-

@@ -16,7 +16,6 @@ public class MCPEditor : LuminaModuleRules
         {
             "AgentCore",
             "Editor",
-            "NlohmannJson",
             "RPMalloc",
         });
     }

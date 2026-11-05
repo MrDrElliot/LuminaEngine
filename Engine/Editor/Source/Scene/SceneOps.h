@@ -27,7 +27,7 @@ namespace Lumina::SceneOps
         // Null when the name resolved to nothing, which leaves prefabs unaware of the add.
         CStruct* Component = nullptr;
 
-        NODISCARD bool HasWork() const { return !Missing.empty(); }
+        NODISCARD bool HasWork() const { return !Missing.IsEmpty(); }
     };
 
     NODISCARD EDITOR_API FAddComponentPlan PlanAddComponent(ECS::FRegistry& Registry,

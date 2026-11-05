@@ -81,9 +81,9 @@ namespace Lumina::ImGuiX
         for (int K = ImGuiKey_NamedKey_BEGIN; K < ImGuiKey_NamedKey_END; ++K)
         {
             const EKey Mapped = ImGuiKeyToEKey(static_cast<ImGuiKey>(K));
-            if (Mapped != EKey::Num && Table[(size_t)Mapped] == ImGuiKey_None)
+            if (Mapped != EKey::Num && Table[std::to_underlying(Mapped)] == ImGuiKey_None)
             {
-                Table[(size_t)Mapped] = static_cast<ImGuiKey>(K);
+                Table[std::to_underlying(Mapped)] = static_cast<ImGuiKey>(K);
             }
         }
         return Table;
@@ -92,7 +92,7 @@ namespace Lumina::ImGuiX
     // ImGuiKey for an engine EKey, or ImGuiKey_None when ImGui has no equivalent.
     constexpr ImGuiKey EKeyToImGuiKey(EKey Key)
     {
-        return (size_t)Key < EKeyToImGuiKeyTable.size() ? EKeyToImGuiKeyTable[(size_t)Key] : ImGuiKey_None;
+        return std::to_underlying(Key) < EKeyToImGuiKeyTable.Num() ? EKeyToImGuiKeyTable[std::to_underlying(Key)] : ImGuiKey_None;
     }
 
     // The ImGui chord for a keyboard SKey with its modifiers, or ImGuiKey_None for any other device.

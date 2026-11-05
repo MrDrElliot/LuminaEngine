@@ -16,11 +16,11 @@ namespace Lumina::CodeEditorPreferences
         CCodeEditorSettings* Settings = GetMutableDefault<CCodeEditorSettings>();
         bool bSave = false;
 
-        if (ImGui::BeginCombo("Theme", Settings->Theme.Name.c_str()))
+        if (ImGui::BeginCombo("Theme", *Settings->Theme.Name))
         {
             for (const FString& Theme : CodeEditorThemes::List())
             {
-                if (ImGui::Selectable(Theme.c_str(), Theme == Settings->Theme.Name))
+                if (ImGui::Selectable(*Theme, Theme == Settings->Theme.Name))
                 {
                     Settings->Theme.Name = Theme;
                     bSave = true;
@@ -69,32 +69,32 @@ namespace Lumina::CodeEditorPreferences
         for (FProperty* Property : CCodeEditorShortcuts::StaticClass()->GetOwnProperties())
         {
             const FCStringView PropertyCategory = Property->GetMetadata("Category");
-            if (Category != PropertyCategory.c_str())
+            if (Category != *PropertyCategory)
             {
-                Category = PropertyCategory.c_str();
+                Category = *PropertyCategory;
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(EditorColors::SectionHeader(), "%s", Category.c_str());
+                ImGui::TextColored(EditorColors::SectionHeader(), "%s", *Category);
             }
 
             const SShortcut* Shortcut = Property->GetValuePtr<SShortcut>(Keys);
             FString Bound = Shortcut->Primary.IsValid() ? Shortcut->Primary.GetDisplayName() : FString();
             if (Shortcut->Alternate.IsValid())
             {
-                Bound += (Bound.empty() ? FString() : FString(", ")) + Shortcut->Alternate.GetDisplayName();
+                Bound += (Bound.IsEmpty() ? FString() : FString(", ")) + Shortcut->Alternate.GetDisplayName();
             }
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Property->GetPropertyDisplayName().c_str());
+            ImGui::TextUnformatted(*Property->GetPropertyDisplayName());
             ImGui::TableNextColumn();
-            if (Bound.empty())
+            if (Bound.IsEmpty())
             {
                 ImGui::TextColored(EditorColors::TextMuted(), "Unbound");
             }
             else
             {
-                ImGui::TextColored(EditorColors::Accent(), "%s", Bound.c_str());
+                ImGui::TextColored(EditorColors::Accent(), "%s", *Bound);
             }
         }
         ImGui::EndTable();

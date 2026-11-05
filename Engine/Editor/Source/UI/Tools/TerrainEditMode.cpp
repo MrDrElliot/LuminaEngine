@@ -77,20 +77,19 @@ namespace Lumina
         Terrain.MaxHeight       = 256.0f;
 
         const int32 Res = Terrain.Resolution;
-        const size_t N = static_cast<size_t>(Res) * static_cast<size_t>(Res);
         // Start dead flat; the user sculpts from a clean slate.
-        Terrain.Heightmap.assign(N, 0.0f);
+        Terrain.Heightmap.Init(0.0f, Res * Res);
 
         // Weights start at zero, painting raises them, and the shader normalizes at sample time.
         static const char* LayerNames[4] = { "Layer0", "Layer1", "Layer2", "Layer3" };
         for (int i = 0; i < 4; ++i)
         {
-            STerrainLayer& L = Terrain.Layers.emplace_back();
+            STerrainLayer& L = Terrain.Layers.EmplaceGetRef();
             L.Name    = LayerNames[i];
             L.UVScale = 1.0f / 16.0f;
         }
 
-        Terrain.LayerWeights.assign(N * Terrain.Layers.size(), uint8(0));
+        Terrain.LayerWeights.Init(uint8(0), Res * Res * Terrain.Layers.Num());
         Terrain.CPUState.bFullHeightmapDirty = true;
         Terrain.CPUState.bFullWeightsDirty   = true;
         return Entity;
@@ -109,7 +108,7 @@ namespace Lumina
 
         // Read as-is with no flip and no sRGB curve, so the stored sample maps directly to height.
         TOptional<Import::Textures::FTextureImportResult> Decoded = Import::Textures::ImportTexture(FStringView(FilePath), /*bFlipVertical*/ false);
-        if (!Decoded.has_value() || Decoded->Pixels.empty())
+        if (!Decoded.IsSet() || Decoded->Pixels.IsEmpty())
         {
             OutError = "Could not decode image (unsupported, corrupt, or empty file).";
             return false;
@@ -148,18 +147,18 @@ namespace Lumina
                 return false;
         }
 
-        const size_t ElemSize  = (Kind == EKind::U8) ? 1 : (Kind == EKind::U16 ? 2 : 4);
-        const size_t Stride    = (size_t)W * (size_t)Channels * ElemSize;
-        if (Img.Pixels.size() < Stride * (size_t)H)
+        const int64 ElemSize  = (Kind == EKind::U8) ? 1 : (Kind == EKind::U16 ? 2 : 4);
+        const int64 Stride    = static_cast<int64>(W) * Channels * ElemSize;
+        if (Img.Pixels.Num() < Stride * H)
         {
             OutError = "Decoded pixel buffer is smaller than its reported dimensions.";
             return false;
         }
 
-        const uint8* Base = Img.Pixels.data();
+        const uint8* Base = Img.Pixels.GetData();
         auto ReadHeight = [&](int32 px, int32 py) -> float
         {
-            const size_t Sample = ((size_t)py * (size_t)W + (size_t)px) * (size_t)Channels;
+            const int64 Sample = (static_cast<int64>(py) * W + px) * Channels;
             switch (Kind)
             {
                 case EKind::U8:  return (float)Base[Sample] / 255.0f;
@@ -177,8 +176,7 @@ namespace Lumina
             return false;
         }
 
-        const size_t N = (size_t)Res * (size_t)Res;
-        Terrain.Heightmap.assign(N, 0.0f);
+        Terrain.Heightmap.Init(0.0f, Res * Res);
 
         for (int32 ty = 0; ty < Res; ++ty)
         {
@@ -202,7 +200,7 @@ namespace Lumina
                 const float H11 = ReadHeight(X1, Y1);
                 const float Height = Math::Mix(Math::Mix(H00, H10, Dx), Math::Mix(H01, H11, Dx), Dy);
 
-                Terrain.Heightmap[(size_t)ty * (size_t)Res + (size_t)tx] = Math::Clamp(Height, 0.0f, 1.0f);
+                Terrain.Heightmap[ty * Res + tx] = Math::Clamp(Height, 0.0f, 1.0f);
             }
         }
 
@@ -273,7 +271,7 @@ namespace Lumina
                 FString Error;
                 int32 SrcW = 0;
                 int32 SrcH = 0;
-                const bool bOk = ImportHeightmap(Terrain, File.c_str(), Error, SrcW, SrcH);
+                const bool bOk = ImportHeightmap(Terrain, *File, Error, SrcW, SrcH);
 
                 if (bTransaction)
                 {
@@ -286,7 +284,7 @@ namespace Lumina
                 }
                 else
                 {
-                    ImGuiX::Notifications::NotifyError("Heightmap import failed: {}", Error.c_str());
+                    ImGuiX::Notifications::NotifyError("Heightmap import failed: {}", *Error);
                 }
             }
         }
@@ -395,7 +393,7 @@ namespace Lumina
 
     void FTerrainEditMode::DrawLayerPanel(STerrainComponent& Terrain)
     {
-        const int32 LayerCount = (int32)Terrain.Layers.size();
+        const int32 LayerCount = Terrain.Layers.Num();
 
         ImGui::Separator();
         ImGui::TextUnformatted("Layers");
@@ -426,9 +424,9 @@ namespace Lumina
             Dl->AddRectFilled(Pos, ImVec2(Pos.x + SwatchSize.x, Pos.y + SwatchSize.y), Fill, 4.0f);
             Dl->AddRect(Pos, ImVec2(Pos.x + SwatchSize.x, Pos.y + SwatchSize.y), Border, 4.0f, bSelected ? 2.5f : 1.0f, 0);
 
-            if (ImGui::IsItemHovered() && !Terrain.Layers[i].Name.empty())
+            if (ImGui::IsItemHovered() && !Terrain.Layers[i].Name.IsEmpty())
             {
-                ImGui::SetTooltip("%s", Terrain.Layers[i].Name.c_str());
+                ImGui::SetTooltip("%s", *Terrain.Layers[i].Name);
             }
             ImGui::PopID();
             if (i + 1 < LayerCount)
@@ -442,7 +440,7 @@ namespace Lumina
             if (LayerCount > 0) ImGui::SameLine();
             if (ImGui::Button("+", SwatchSize))
             {
-                STerrainLayer& L = Terrain.Layers.emplace_back();
+                STerrainLayer& L = Terrain.Layers.EmplaceGetRef();
                 L.Name = Format("Layer{}", LayerCount);
                 L.UVScale = 1.0f / 16.0f;
                 EnsureLayerWeightStorage(Terrain);
@@ -464,7 +462,7 @@ namespace Lumina
 
             char NameBuf[128];
             const FString& Cur = L.Name;
-            std::strncpy(NameBuf, Cur.c_str(), sizeof(NameBuf) - 1);
+            std::strncpy(NameBuf, *Cur, sizeof(NameBuf) - 1);
             NameBuf[sizeof(NameBuf) - 1] = '\0';
             ImGui::SetNextItemWidth(140.0f);
             if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf), ImGuiInputTextFlags_AutoSelectAll))
@@ -500,7 +498,7 @@ namespace Lumina
             if (ImGui::Button("Remove"))
             {
                 RemoveLayer(Terrain, ActiveLayer);
-                ActiveLayer = Math::Min(ActiveLayer, (int32)Terrain.Layers.size() - 1);
+                ActiveLayer = Math::Min(ActiveLayer, Terrain.Layers.Num() - 1);
             }
             ImGui::EndDisabled();
         }
@@ -508,51 +506,51 @@ namespace Lumina
 
     void FTerrainEditMode::EnsureLayerWeightStorage(STerrainComponent& Terrain)
     {
-        const size_t LayerStride = size_t(Terrain.Resolution) * size_t(Terrain.Resolution);
-        const size_t Need = LayerStride * size_t(std::max<size_t>(Terrain.Layers.size(), 1));
-        if (Terrain.LayerWeights.size() != Need)
+        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
+        const int32 Need = LayerStride * Math::Max(Terrain.Layers.Num(), 1);
+        if (Terrain.LayerWeights.Num() != Need)
         {
-            Terrain.LayerWeights.resize(Need, uint8(0));
+            Terrain.LayerWeights.SetNum(Need, uint8(0));
         }
     }
 
     void FTerrainEditMode::SwapLayers(STerrainComponent& Terrain, int32 A, int32 B)
     {
         if (A == B) return;
-        const int32 LayerCount = (int32)Terrain.Layers.size();
+        const int32 LayerCount = Terrain.Layers.Num();
         if (A < 0 || B < 0 || A >= LayerCount || B >= LayerCount) return;
 
         EnsureLayerWeightStorage(Terrain);
-        std::swap(Terrain.Layers[A], Terrain.Layers[B]);
+        Terrain.Layers.Swap(A, B);
 
-        const size_t LayerStride = size_t(Terrain.Resolution) * size_t(Terrain.Resolution);
+        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
         TVector<uint8> Tmp(LayerStride);
-        uint8* PA = &Terrain.LayerWeights[size_t(A) * LayerStride];
-        uint8* PB = &Terrain.LayerWeights[size_t(B) * LayerStride];
-        std::memcpy(Tmp.data(), PA, LayerStride);
+        uint8* PA = &Terrain.LayerWeights[A * LayerStride];
+        uint8* PB = &Terrain.LayerWeights[B * LayerStride];
+        std::memcpy(Tmp.GetData(), PA, LayerStride);
         std::memcpy(PA,         PB, LayerStride);
-        std::memcpy(PB, Tmp.data(), LayerStride);
+        std::memcpy(PB, Tmp.GetData(), LayerStride);
 
         Terrain.CPUState.bFullWeightsDirty = true;
     }
 
     void FTerrainEditMode::RemoveLayer(STerrainComponent& Terrain, int32 Index)
     {
-        const int32 LayerCount = (int32)Terrain.Layers.size();
+        const int32 LayerCount = Terrain.Layers.Num();
         if (Index < 0 || Index >= LayerCount || LayerCount <= 1) return;
 
         EnsureLayerWeightStorage(Terrain);
-        const size_t LayerStride = size_t(Terrain.Resolution) * size_t(Terrain.Resolution);
+        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
 
         // Pack remaining layers down, then resize the trailing slot away.
         for (int32 i = Index; i + 1 < LayerCount; ++i)
         {
-            uint8* Dst = &Terrain.LayerWeights[size_t(i)     * LayerStride];
-            uint8* Src = &Terrain.LayerWeights[size_t(i + 1) * LayerStride];
+            uint8* Dst = &Terrain.LayerWeights[i     * LayerStride];
+            uint8* Src = &Terrain.LayerWeights[(i + 1) * LayerStride];
             std::memcpy(Dst, Src, LayerStride);
         }
-        Terrain.LayerWeights.resize(size_t(LayerCount - 1) * LayerStride);
-        Terrain.Layers.erase(Terrain.Layers.begin() + Index);
+        Terrain.LayerWeights.SetNum((LayerCount - 1) * LayerStride);
+        Terrain.Layers.RemoveAt(Index);
         Terrain.CPUState.bFullWeightsDirty = true;
     }
 

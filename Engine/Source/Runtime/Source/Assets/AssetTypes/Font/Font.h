@@ -54,10 +54,10 @@ namespace Lumina
         bool IsAsset() const override { return true; }
 
         const TVector<uint8>& GetFontData() const { return FontData; }
-        bool IsValid() const { return !FontData.empty(); }
+        bool IsValid() const { return !FontData.IsEmpty(); }
 
         // True once a usable MSDF atlas is baked (pixels + glyph table present).
-        bool HasAtlas() const { return !AtlasPixels.empty() && AtlasWidth > 0 && AtlasHeight > 0 && !Glyphs.empty(); }
+        bool HasAtlas() const { return !AtlasPixels.IsEmpty() && AtlasWidth > 0 && AtlasHeight > 0 && !Glyphs.IsEmpty(); }
 
         // Lazily uploads AtlasPixels into the global texture heap; safe to call repeatedly.
         // Returns the heap ResourceID world text samples by, or -1 if no atlas is baked.

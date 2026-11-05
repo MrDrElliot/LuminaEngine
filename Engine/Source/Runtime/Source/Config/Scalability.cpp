@@ -7,8 +7,6 @@
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 
-using Json = nlohmann::json;
-
 namespace Lumina::Scalability
 {
     namespace
@@ -54,33 +52,37 @@ namespace Lumina::Scalability
         })json";
 
         // Each settings class as the project configured it, captured before the first group overrode any of it.
-        THashMap<CClass*, Json> ProjectValues;
+        THashMap<CClass*, FJsonValue> ProjectValues;
 
-        Json BuildTable()
+        FJsonValue BuildTable()
         {
-            Json Table = Json::parse(EngineTable);
+            FJsonValue Table;
+            const bool bEngineTable = FJsonValue::Parse(EngineTable, Table);
+            LUMINA_CONTAINER_CHECK(bEngineTable);
 
             FString Text;
             if (VFS::Exists("/Config/Scalability.json") && VFS::ReadFile(Text, "/Config/Scalability.json"))
             {
-                try
+                FJsonValue Project;
+                FJsonParseError Error;
+                if (FJsonValue::Parse(Text.View(), Project, &Error))
                 {
-                    for (const auto& [Group, Levels] : Json::parse(Text.c_str()).items())
+                    for (const auto& [Group, Levels] : Project.Members())
                     {
-                        Table[Group] = Levels;
+                        Table.Set(Group.View(), Levels);
                     }
                 }
-                catch (const std::exception& Ex)
+                else
                 {
-                    LOG_WARN("Scalability: /Config/Scalability.json could not be read ({}); using the engine's table.", Ex.what());
+                    LOG_WARN("Scalability: /Config/Scalability.json could not be read ({}); using the engine's table.", Error.Message);
                 }
             }
             return Table;
         }
 
-        const Json& GetTable()
+        const FJsonValue& GetTable()
         {
-            static const Json Table = BuildTable();
+            static const FJsonValue Table = BuildTable();
             return Table;
         }
 
@@ -113,34 +115,35 @@ namespace Lumina::Scalability
         }
 
         // Splits "Section.Property" keys into one JSON object per settings class, the shape LoadStruct reads.
-        THashMap<FString, Json> BySection(const Json& Values)
+        THashMap<FString, FJsonValue> BySection(const FJsonValue& Values)
         {
-            THashMap<FString, Json> Sections;
-            for (const auto& [Key, Value] : Values.items())
+            THashMap<FString, FJsonValue> Sections;
+            for (const auto& [Key, Value] : Values.Members())
             {
-                const size_t Dot = Key.find('.');
-                if (Dot == std::string::npos)
+                const FStringView Full = Key.View();
+                const int32 Dot = Full.Find('.');
+                if (Dot == Constants::kIndexNone)
                 {
-                    LOG_WARN("Scalability: '{}' does not name a settings section, as Section.Property.", Key.c_str());
+                    LOG_WARN("Scalability: '{}' does not name a settings section, as Section.Property.", Full);
                     continue;
                 }
-                Sections[FString(Key.substr(0, Dot).c_str())][Key.substr(Dot + 1)] = Value;
+                Sections.FindOrAdd(FString(Full.Left(Dot))).Set(Full.RightChop(Dot + 1), Value);
             }
             return Sections;
         }
 
-        void Write(const FString& Section, Json& Values)
+        void Write(const FString& Section, FJsonValue& Values)
         {
             CClass* Class = FindSettingsClass(Section);
             if (Class == nullptr || Class->GetDefaultObject() == nullptr)
             {
-                LOG_WARN("Scalability: no settings class has the section '{}'.", Section.c_str());
+                LOG_WARN("Scalability: no settings class has the section '{}'.", *Section);
                 return;
             }
 
-            if (ProjectValues.find(Class) == ProjectValues.end())
+            if (!ProjectValues.Contains(Class))
             {
-                FJsonStructuredArchive::SaveStruct(ProjectValues[Class], Class, Class->GetDefaultObject());
+                FJsonStructuredArchive::SaveStruct(ProjectValues.Add(Class), Class, Class->GetDefaultObject());
             }
             FJsonStructuredArchive::LoadStruct(Values, Class, Class->GetDefaultObject());
         }
@@ -162,9 +165,9 @@ namespace Lumina::Scalability
 
     void ApplyGroup(EScalabilityGroup Group, EQualityLevel Level)
     {
-        const Json& Table = GetTable();
-        const auto GroupIt = Table.find(GetGroupName(Group).c_str());
-        if (GroupIt == Table.end())
+        const FJsonValue& Table = GetTable();
+        const FJsonValue* GroupIt = Table.Find(GetGroupName(Group).View());
+        if (GroupIt == nullptr)
         {
             return;
         }
@@ -172,35 +175,35 @@ namespace Lumina::Scalability
         // Default hands every property this group can touch back to the project's value.
         if (Level == EQualityLevel::Default || Level == EQualityLevel::Custom)
         {
-            Json Restore = Json::object();
-            for (const auto& [LevelKey, Values] : GroupIt->items())
+            FJsonValue Restore = FJsonValue::MakeObject();
+            for (const auto& [LevelKey, Values] : GroupIt->Members())
             {
                 for (const auto& [Key, Value] : BySection(Values))
                 {
                     CClass* Class = FindSettingsClass(Key);
-                    auto Saved = Class != nullptr ? ProjectValues.find(Class) : ProjectValues.end();
-                    if (Saved == ProjectValues.end())
+                    const FJsonValue* Saved = Class != nullptr ? ProjectValues.Find(Class) : nullptr;
+                    if (Saved == nullptr)
                     {
                         continue;
                     }
-                    for (const auto& [Property, Ignored] : Value.items())
+                    for (const auto& [Property, Ignored] : Value.Members())
                     {
-                        if (Saved->second.contains(Property))
+                        if (const FJsonValue* Original = Saved->Find(Property.View()))
                         {
-                            Restore[Key.c_str()][Property] = Saved->second[Property];
+                            Restore.FindOrAdd(Key.View()).Set(Property.View(), *Original);
                         }
                     }
                 }
             }
-            for (auto& [Section, Values] : Restore.items())
+            for (auto& [Section, Values] : Restore.Members())
             {
-                Write(FString(Section.c_str()), Values);
+                Write(Section.ToString(), Values);
             }
             return;
         }
 
-        const auto LevelIt = GroupIt->find(LevelName(Level));
-        if (LevelIt == GroupIt->end())
+        const FJsonValue* LevelIt = GroupIt->Find(LevelName(Level));
+        if (LevelIt == nullptr)
         {
             return;
         }
@@ -213,16 +216,15 @@ namespace Lumina::Scalability
 
     void OverrideSetting(FStringView Key, FStringView JsonValue)
     {
-        Json Values = Json::object();
-        try
+        FJsonValue Parsed;
+        FJsonParseError Error;
+        if (!FJsonValue::Parse(JsonValue, Parsed, &Error))
         {
-            Values[std::string(Key.data(), Key.size())] = Json::parse(std::string(JsonValue.data(), JsonValue.size()));
-        }
-        catch (const std::exception& Ex)
-        {
-            LOG_WARN("Scalability: '{}' is not a JSON value for {} ({}).", JsonValue, Key, Ex.what());
+            LOG_WARN("Scalability: '{}' is not a JSON value for {} ({}).", JsonValue, Key, Error.Message);
             return;
         }
+        FJsonValue Values = FJsonValue::MakeObject();
+        Values.Set(Key, Move(Parsed));
 
         for (auto& [Section, SectionValues] : BySection(Values))
         {
@@ -232,24 +234,24 @@ namespace Lumina::Scalability
 
     void RestoreSetting(FStringView Key)
     {
-        const std::string Full(Key.data(), Key.size());
-        const size_t Dot = Full.find('.');
-        if (Dot == std::string::npos)
+        const int32 Dot = Key.Find('.');
+        if (Dot == Constants::kIndexNone)
         {
             return;
         }
 
-        CClass* Class = FindSettingsClass(FStringView(Full.data(), Dot));
-        const auto Saved = Class != nullptr ? ProjectValues.find(Class) : ProjectValues.end();
-        const std::string Property = Full.substr(Dot + 1);
-        if (Saved == ProjectValues.end() || !Saved->second.contains(Property))
+        CClass* Class = FindSettingsClass(Key.Left(Dot));
+        const FJsonValue* const Saved = Class != nullptr ? ProjectValues.Find(Class) : nullptr;
+        const FStringView Property = Key.RightChop(Dot + 1);
+        const FJsonValue* const Original = Saved != nullptr ? Saved->Find(Property) : nullptr;
+        if (Original == nullptr)
         {
             return;
         }
 
-        Json Values = Json::object();
-        Values[Property] = Saved->second[Property];
-        Write(FString(Full.substr(0, Dot).c_str()), Values);
+        FJsonValue Values = FJsonValue::MakeObject();
+        Values.Set(Property, *Original);
+        Write(FString(Key.Left(Dot)), Values);
     }
 
     void RestoreProjectValues()
@@ -261,6 +263,6 @@ namespace Lumina::Scalability
                 FJsonStructuredArchive::LoadStruct(Values, Class, Class->GetDefaultObject());
             }
         }
-        ProjectValues.clear();
+        ProjectValues.Reset();
     }
 }

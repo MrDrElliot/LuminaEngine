@@ -7,7 +7,7 @@ namespace Lumina
 {
     static FString ShapeId(EParticleEmitterShape Shape)
     {
-        return FString(Format("{}", (uint32)Shape)) + "u";
+        return Format("{}", (uint32)Shape) + "u";
     }
 
     // Spawn modules

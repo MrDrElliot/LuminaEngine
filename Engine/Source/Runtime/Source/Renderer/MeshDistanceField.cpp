@@ -99,9 +99,9 @@ namespace Lumina::DistanceField
                     return (A.V0[Axis] + A.V1[Axis] + A.V2[Axis]) < (B.V0[Axis] + B.V1[Axis] + B.V2[Axis]);
                 });
 
-            const uint32 LeftIndex = (uint32)BVH.Nodes.size();
-            BVH.Nodes.push_back(FBVHNode{});
-            BVH.Nodes.push_back(FBVHNode{});
+            const uint32 LeftIndex = (uint32)BVH.Nodes.Num();
+            BVH.Nodes.AddDefaulted();
+            BVH.Nodes.AddDefaulted();
 
             // Re-fetched by index, since the two pushes above can reallocate and invalidate the node.
             BVH.Nodes[NodeIndex].First = LeftIndex;
@@ -116,9 +116,9 @@ namespace Lumina::DistanceField
             LUMINA_PROFILE_SCOPE();
 
             // Worst case for a median-split binary tree over N leaves of kLeafTriangles.
-            BVH.Nodes.reserve((BVH.Triangles.size() / kLeafTriangles + 1u) * 4u);
-            BVH.Nodes.push_back(FBVHNode{});
-            BuildNode(BVH, 0u, 0u, (uint32)BVH.Triangles.size());
+            BVH.Nodes.Reserve((BVH.Triangles.Num() / kLeafTriangles + 1u) * 4u);
+            BVH.Nodes.AddDefaulted();
+            BuildNode(BVH, 0u, 0u, (uint32)BVH.Triangles.Num());
         }
 
         // Squared distance from P to an AABB; 0 when inside. The traversal prune.
@@ -283,7 +283,7 @@ namespace Lumina::DistanceField
             return Near <= Far;
         }
 
-        /** True when the first surface the ray meets is a backface, i.e. this ray votes "inside". */
+        // True when the first surface the ray meets is a backface, i.e. this ray votes "inside".
         bool RayHitsBackface(const FBVH& BVH, const FVector3& Origin, const FVector3& Dir)
         {
             const FVector3 InvDir(1.0f / Dir.x, 1.0f / Dir.y, 1.0f / Dir.z);
@@ -346,8 +346,8 @@ namespace Lumina::DistanceField
             const FMeshletData& MD = Resource.MeshletData;
             const bool bSkinned    = Resource.bSkinnedMesh;
 
-            const size_t VertexCount = bSkinned ? MD.MeshletSkinnedVertices.size() : MD.VertexPositions.size();
-            if (MD.Meshlets.empty() || VertexCount == 0)
+            const size_t VertexCount = bSkinned ? MD.MeshletSkinnedVertices.Num() : MD.VertexPositions.Num();
+            if (MD.Meshlets.IsEmpty() || VertexCount == 0)
             {
                 return;
             }
@@ -365,7 +365,7 @@ namespace Lumina::DistanceField
 
                 for (uint32 m = 0; m < Count; ++m)
                 {
-                    if (Offset + m >= MD.Meshlets.size())
+                    if (Offset + m >= static_cast<unsigned int>(MD.Meshlets.Num()))
                     {
                         break;
                     }
@@ -373,8 +373,8 @@ namespace Lumina::DistanceField
                     const FMeshlet& Meshlet = MD.Meshlets[Offset + m];
                     for (uint32 t = 0; t < Meshlet.TriangleCount; ++t)
                     {
-                        const size_t DwordIndex = (size_t)Meshlet.TriangleOffset + t;
-                        if (DwordIndex >= MD.MeshletTriangles.size())
+                        const uint32 DwordIndex = Meshlet.TriangleOffset + t;
+                        if (DwordIndex >= static_cast<uint32>(MD.MeshletTriangles.Num()))
                         {
                             break;
                         }
@@ -389,9 +389,9 @@ namespace Lumina::DistanceField
                             continue;
                         }
 
-                        Out.push_back(FTriangle{ GetMeshletVertexPosition(MD, Meshlet, L0, bSkinned),
-                                                 GetMeshletVertexPosition(MD, Meshlet, L1, bSkinned),
-                                                 GetMeshletVertexPosition(MD, Meshlet, L2, bSkinned) });
+                        Out.Emplace(GetMeshletVertexPosition(MD, Meshlet, L0, bSkinned),
+                                    GetMeshletVertexPosition(MD, Meshlet, L1, bSkinned),
+                                    GetMeshletVertexPosition(MD, Meshlet, L2, bSkinned));
                     }
                 }
             }
@@ -415,7 +415,7 @@ namespace Lumina::DistanceField
         {
             LOG_WARN("Distance field skipped for skeletal mesh '{}': a baked field cannot follow skinning, "
                      "so it would describe the bind pose regardless of the current animation.",
-                     Resource.Name.c_str());
+                     *Resource.Name);
             return false;
         }
 
@@ -426,10 +426,10 @@ namespace Lumina::DistanceField
 
         FBVH BVH;
         GatherTriangles(Resource, Settings.SourceLOD, BVH.Triangles);
-        if (BVH.Triangles.empty())
+        if (BVH.Triangles.IsEmpty())
         {
             LOG_WARN("Distance field skipped for mesh '{}': no triangles at LOD {}.",
-                     Resource.Name.c_str(), Settings.SourceLOD);
+                     *Resource.Name, Settings.SourceLOD);
             return false;
         }
 
@@ -446,7 +446,7 @@ namespace Lumina::DistanceField
         const float    MaxExtent = Math::Max(MeshSize.x, Math::Max(MeshSize.y, MeshSize.z));
         if (!(MaxExtent > 0.0f))
         {
-            LOG_WARN("Distance field skipped for mesh '{}': degenerate bounds.", Resource.Name.c_str());
+            LOG_WARN("Distance field skipped for mesh '{}': degenerate bounds.", *Resource.Name);
             return false;
         }
 
@@ -481,13 +481,13 @@ namespace Lumina::DistanceField
         OutVolume.VolumeSize  = VolumeSize;
         OutVolume.MaxDistance = MaxDistance;
         OutVolume.bTwoSided   = Settings.bTwoSided;
-        OutVolume.Distances.resize(VoxelCount);
+        OutVolume.Distances.SetNum(IntCastChecked<int32>(VoxelCount));
 
         const bool  bTwoSided  = Settings.bTwoSided;
         const float EncodeRcp  = 1.0f / MaxDistance;
-        uint8* const Distances = OutVolume.Distances.data();
+        uint8* const Distances = OutVolume.Distances.GetData();
 
-        Task::ParallelFor(Dimensions.z, [&](uint32 Z)
+        Jobs::ParallelFor(Dimensions.z, [&](uint32 Z)
         {
             LUMINA_PROFILE_SECTION("Distance Field Slice");
 
@@ -535,8 +535,8 @@ namespace Lumina::DistanceField
         });
 
         LOG_INFO("Built distance field for mesh '{}': {}x{}x{} ({} KB) from {} triangles at LOD {}.",
-                 Resource.Name.c_str(), Dimensions.x, Dimensions.y, Dimensions.z,
-                 VoxelCount / 1024, BVH.Triangles.size(), Settings.SourceLOD);
+                 *Resource.Name, Dimensions.x, Dimensions.y, Dimensions.z,
+                 VoxelCount / 1024, BVH.Triangles.Num(), Settings.SourceLOD);
 
         return true;
     }

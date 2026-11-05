@@ -34,31 +34,31 @@ namespace LuminaLowLevelContractTests
                 Values.Emplace(Index);
             }
             Values.Reserve(1024);
-            Values.ShrinkToFit();
+            Values.Shrink();
             for (const auto& Value : Values)
             {
                 EXPECT_EQ(Value.Self, &Value);
             }
             EXPECT_EQ(FTrackedElement::Live, 128);
-            Values.Erase(0);
-            Values.Erase(63);
-            Values.Erase(127);
+            Values.RemoveAt(0);
+            Values.RemoveAt(63);
+            Values.RemoveAt(127);
             auto Copy = Values;
-            EXPECT_EQ(Copy.Size(), 125u);
-            EXPECT_EQ(Copy.Capacity(), Values.Capacity());
-            EXPECT_EQ(Copy.Get(0), nullptr);
-            EXPECT_EQ(Copy.Get(63), nullptr);
-            EXPECT_EQ(Copy.Get(127), nullptr);
-            EXPECT_EQ(Copy.Emplace(999), 127u);
+            EXPECT_EQ(Copy.Num(), 125);
+            EXPECT_EQ(Copy.GetMaxIndex(), Values.GetMaxIndex());
+            EXPECT_EQ(Copy.TryGet(0), nullptr);
+            EXPECT_EQ(Copy.TryGet(63), nullptr);
+            EXPECT_EQ(Copy.TryGet(127), nullptr);
+            EXPECT_EQ(Copy.Emplace(999), 127);
             EXPECT_EQ(Copy[127].Value, 999);
-            Values.Defragment();
-            EXPECT_EQ(Values.Size(), 125u);
-            EXPECT_EQ(Values.FreeCount(), 0u);
+            Values.Compact();
+            EXPECT_EQ(Values.Num(), 125);
+            EXPECT_EQ(Values.NumFree(), 0);
             EXPECT_EQ(Values[0].Value, 1);
             Lumina::TSparseArray<FTrackedElement>::const_iterator Iterator = Values.begin();
             EXPECT_EQ(Iterator->Value, 1);
             auto Moved = std::move(Copy);
-            EXPECT_TRUE(Copy.Empty());
+            EXPECT_TRUE(Copy.IsEmpty());
             EXPECT_EQ(Moved[127].Value, 999);
         }
         EXPECT_EQ(FTrackedElement::Live, 0);
@@ -68,11 +68,11 @@ namespace LuminaLowLevelContractTests
     {
         Lumina::TSparseArray<int> Values;
         Values.Emplace(42);
-        Values.Erase(0);
+        Values.RemoveAt(0);
         auto Copy = Values;
-        EXPECT_TRUE(Copy.Empty());
-        EXPECT_EQ(Copy.Capacity(), 1u);
-        EXPECT_EQ(Copy.Emplace(7), 0u);
+        EXPECT_TRUE(Copy.IsEmpty());
+        EXPECT_EQ(Copy.GetMaxIndex(), 1);
+        EXPECT_EQ(Copy.Emplace(7), 0);
         EXPECT_EQ(Copy[0], 7);
     }
 
@@ -91,7 +91,7 @@ namespace LuminaLowLevelContractTests
 
     TEST(LowLevelContracts, ThrowingAllocationRejectsAllocatorFailure)
     {
-        constexpr auto UnsupportedAlignment = std::align_val_t(1u << 20);
+        constexpr auto UnsupportedAlignment = std::align_val_t(size_t(1) << 30);
         EXPECT_THROW((void)::operator new(16, UnsupportedAlignment), std::bad_alloc);
         EXPECT_THROW((void)::operator new[](16, UnsupportedAlignment), std::bad_alloc);
         void* Allocation = ::operator new(0);
@@ -180,7 +180,7 @@ namespace LuminaLowLevelContractTests
         Lumina::TVector<std::thread> Workers;
         for (int Index = 0; Index < 8; ++Index)
         {
-            Workers.emplace_back([]
+            Workers.Emplace([]
             {
                 for (int Iteration = 0; Iteration < 100; ++Iteration)
                 {

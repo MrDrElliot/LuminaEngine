@@ -19,7 +19,10 @@ internal sealed class EntityScriptRuntime
     internal void Adopt(Lumina.CEntityScript Script, GCHandle Handle)
     {
         Script.Description = Library.Describe(Script.GetType());
-        LiveHandles.Add(Handle);
+        lock (LiveHandles)
+        {
+            LiveHandles.Add(Handle);
+        }
 
         // The driver sets the owner before the dispatch that creates the instance, so a null entity is only a defensive case.
         if (Script.Entity.IsNull)
@@ -46,7 +49,10 @@ internal sealed class EntityScriptRuntime
         }
 
         GCHandle Handle = GCHandle.FromIntPtr(Pointer);
-        LiveHandles.Remove(Handle);
+        lock (LiveHandles)
+        {
+            LiveHandles.Remove(Handle);
+        }
 
         // Every destruction path releases the handle here, so this is where the script's awaits learn it is gone.
         if (Handle.Target is Lumina.CEntityScript Script)
@@ -59,24 +65,31 @@ internal sealed class EntityScriptRuntime
     public void FreeAll()
     {
         // Snapshot, because cancelling a token can run a continuation that mutates LiveHandles.
-        foreach (GCHandle Handle in new List<GCHandle>(LiveHandles))
+        List<GCHandle> Snapshot;
+        lock (LiveHandles)
+        {
+            Snapshot = new List<GCHandle>(LiveHandles);
+        }
+        foreach (GCHandle Handle in Snapshot)
         {
             // Already dropped by an earlier entry's continuation; don't touch it twice.
-            if (!LiveHandles.Contains(Handle))
+            lock (LiveHandles)
             {
-                continue;
+                if (!LiveHandles.Remove(Handle))
+                {
+                    continue;
+                }
             }
 
-            // No OnDetach: the script is not detaching, its load context is being replaced. The native
-            // driver delivers OnReloaded once the next generation is live.
+            // No OnDetach, since only the load context is being replaced; the native table still owns and frees the handle.
             if (Handle.Target is Lumina.CEntityScript Script)
             {
                 Script.ReleaseLifetime();
             }
-
-            // Not freed here; the native instance table owns these handles and frees them as it drains.
-            LiveHandles.Remove(Handle);
         }
-        LiveHandles.Clear();
+        lock (LiveHandles)
+        {
+            LiveHandles.Clear();
+        }
     }
 }

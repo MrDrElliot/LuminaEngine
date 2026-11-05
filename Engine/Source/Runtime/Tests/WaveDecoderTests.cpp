@@ -22,30 +22,30 @@ namespace
 
         void PushU16(uint16 Value)
         {
-            Bytes.push_back((uint8)(Value & 0xFF));
-            Bytes.push_back((uint8)(Value >> 8));
+            Bytes.Add((uint8)(Value & 0xFF));
+            Bytes.Add((uint8)(Value >> 8));
         }
 
         void PushU32(uint32 Value)
         {
-            Bytes.push_back((uint8)(Value & 0xFF));
-            Bytes.push_back((uint8)((Value >> 8) & 0xFF));
-            Bytes.push_back((uint8)((Value >> 16) & 0xFF));
-            Bytes.push_back((uint8)((Value >> 24) & 0xFF));
+            Bytes.Add((uint8)(Value & 0xFF));
+            Bytes.Add((uint8)((Value >> 8) & 0xFF));
+            Bytes.Add((uint8)((Value >> 16) & 0xFF));
+            Bytes.Add((uint8)((Value >> 24) & 0xFF));
         }
 
         void PushId(const char* Id)
         {
             for (uint32 i = 0; i < 4; ++i)
             {
-                Bytes.push_back((uint8)Id[i]);
+                Bytes.Add((uint8)Id[i]);
             }
         }
 
         void PushRaw(const void* Data, size_t Size)
         {
             const uint8* At = (const uint8*)Data;
-            Bytes.insert(Bytes.end(), At, At + Size);
+            Bytes.Append(At, Lumina::IntCastChecked<Lumina::int32>(Size));
         }
 
         void BeginRiff()
@@ -58,7 +58,7 @@ namespace
         // Patches the RIFF size field now that every chunk has been appended.
         void FinishRiff()
         {
-            const uint32 Size = (uint32)(Bytes.size() - 8);
+            const uint32 Size = (uint32)(Bytes.Num() - 8);
             Bytes[4] = (uint8)(Size & 0xFF);
             Bytes[5] = (uint8)((Size >> 8) & 0xFF);
             Bytes[6] = (uint8)((Size >> 16) & 0xFF);
@@ -108,7 +108,7 @@ namespace
             PushRaw(Data, Size);
             if (Size & 1)
             {
-                Bytes.push_back(0);
+                Bytes.Add(0);
             }
         }
 
@@ -119,7 +119,7 @@ namespace
             PushRaw(Data, Size);
             if (Size & 1)
             {
-                Bytes.push_back(0);
+                Bytes.Add(0);
             }
         }
     };
@@ -137,8 +137,8 @@ namespace
     TVector<float> ReadAll(const FWaveReader& Reader)
     {
         const FAudioInfo& Info = Reader.GetInfo();
-        TVector<float> Samples((size_t)(Info.NumFrames * Info.NumChannels));
-        const uint64 Read = Reader.ReadFrames(0, Info.NumFrames, Samples.data());
+        TVector<float> Samples(Lumina::IntCastChecked<Lumina::int32>(Info.NumFrames * Info.NumChannels));
+        const uint64 Read = Reader.ReadFrames(0, Info.NumFrames, Samples.GetData());
         EXPECT_EQ(Read, Info.NumFrames);
         return Samples;
     }
@@ -162,7 +162,7 @@ TEST(WaveDecoder, RejectsGarbage)
     Builder.BeginRiff();
     Builder.PushFmt(kTagPCM, 1, 44100, 16);
     Builder.FinishRiff();
-    EXPECT_FALSE(Reader.Open(Builder.Bytes.data(), Builder.Bytes.size()));
+    EXPECT_FALSE(Reader.Open(Builder.Bytes.GetData(), Builder.Bytes.Num()));
 }
 
 TEST(WaveDecoder, RejectsUnsupportedCodec)
@@ -171,7 +171,7 @@ TEST(WaveDecoder, RejectsUnsupportedCodec)
     const TVector<uint8> File = MakeWave(kTagMSADPCM, 1, 44100, 4, Payload, sizeof(Payload));
 
     FWaveReader Reader;
-    EXPECT_FALSE(Reader.Open(File.data(), File.size()));
+    EXPECT_FALSE(Reader.Open(File.GetData(), File.Num()));
 }
 
 TEST(WaveDecoder, DecodesPCM16Mono)
@@ -180,7 +180,7 @@ TEST(WaveDecoder, DecodesPCM16Mono)
     const TVector<uint8> File = MakeWave(kTagPCM, 1, 44100, 16, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
 
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::PCM16);
     EXPECT_EQ(Reader.GetInfo().SampleRate, 44100u);
@@ -188,7 +188,7 @@ TEST(WaveDecoder, DecodesPCM16Mono)
     EXPECT_EQ(Reader.GetInfo().NumFrames, 4u);
 
     const TVector<float> Samples = ReadAll(Reader);
-    ASSERT_EQ(Samples.size(), 4u);
+    ASSERT_EQ(Samples.Num(), 4);
     EXPECT_FLOAT_EQ(Samples[0], 0.0f);
     EXPECT_NEAR(Samples[1], 1.0f, 1.0f / 32768.0f);
     EXPECT_FLOAT_EQ(Samples[2], -1.0f);
@@ -201,13 +201,13 @@ TEST(WaveDecoder, DecodesPCM16StereoInterleaved)
     const TVector<uint8> File = MakeWave(kTagPCM, 2, 48000, 16, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
 
     EXPECT_EQ(Reader.GetInfo().NumChannels, 2u);
     EXPECT_EQ(Reader.GetInfo().NumFrames, 3u);
 
     const TVector<float> Samples = ReadAll(Reader);
-    ASSERT_EQ(Samples.size(), 6u);
+    ASSERT_EQ(Samples.Num(), 6);
     for (uint32 Frame = 0; Frame < 3; ++Frame)
     {
         EXPECT_FLOAT_EQ(Samples[Frame * 2 + 0], -Samples[Frame * 2 + 1]);
@@ -222,11 +222,11 @@ TEST(WaveDecoder, DecodesPCM8AsUnsigned)
     const TVector<uint8> File = MakeWave(kTagPCM, 1, 22050, 8, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::PCM8);
 
     const TVector<float> Samples = ReadAll(Reader);
-    ASSERT_EQ(Samples.size(), 4u);
+    ASSERT_EQ(Samples.Num(), 4);
     EXPECT_FLOAT_EQ(Samples[0], 0.0f);
     EXPECT_FLOAT_EQ(Samples[1], 127.0f / 128.0f);
     EXPECT_FLOAT_EQ(Samples[2], -1.0f);
@@ -245,7 +245,7 @@ TEST(WaveDecoder, DecodesPCM24WithSignExtension)
     const TVector<uint8> File = MakeWave(kTagPCM, 1, 96000, 24, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::PCM24);
     EXPECT_EQ(Reader.GetInfo().NumFrames, 4u);
 
@@ -262,7 +262,7 @@ TEST(WaveDecoder, DecodesPCM32)
     const TVector<uint8> File = MakeWave(kTagPCM, 1, 44100, 32, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::PCM32);
 
     const TVector<float> Samples = ReadAll(Reader);
@@ -277,12 +277,12 @@ TEST(WaveDecoder, DecodesFloat32Verbatim)
     const TVector<uint8> File = MakeWave(kTagIEEEFloat, 1, 48000, 32, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::Float32);
 
     const TVector<float> Samples = ReadAll(Reader);
-    ASSERT_EQ(Samples.size(), 5u);
-    for (size_t i = 0; i < Samples.size(); ++i)
+    ASSERT_EQ(Samples.Num(), 5);
+    for (int32 i = 0; i < Samples.Num(); ++i)
     {
         EXPECT_FLOAT_EQ(Samples[i], Source[i]);
     }
@@ -294,7 +294,7 @@ TEST(WaveDecoder, DecodesFloat64)
     const TVector<uint8> File = MakeWave(kTagIEEEFloat, 1, 48000, 64, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::Float64);
 
     const TVector<float> Samples = ReadAll(Reader);
@@ -309,7 +309,7 @@ TEST(WaveDecoder, DecodesCompandedFormats)
     const TVector<uint8> MuLawFile = MakeWave(kTagMuLaw, 1, 8000, 8, MuLawSource, sizeof(MuLawSource));
 
     FWaveReader MuLawReader;
-    ASSERT_TRUE(MuLawReader.Open(MuLawFile.data(), MuLawFile.size()));
+    ASSERT_TRUE(MuLawReader.Open(MuLawFile.GetData(), MuLawFile.Num()));
     EXPECT_EQ(MuLawReader.GetSampleFormat(), EWaveSampleFormat::MuLaw);
 
     const TVector<float> MuLawSamples = ReadAll(MuLawReader);
@@ -321,7 +321,7 @@ TEST(WaveDecoder, DecodesCompandedFormats)
     const TVector<uint8> ALawFile = MakeWave(kTagALaw, 1, 8000, 8, ALawSource, sizeof(ALawSource));
 
     FWaveReader ALawReader;
-    ASSERT_TRUE(ALawReader.Open(ALawFile.data(), ALawFile.size()));
+    ASSERT_TRUE(ALawReader.Open(ALawFile.GetData(), ALawFile.Num()));
     EXPECT_EQ(ALawReader.GetSampleFormat(), EWaveSampleFormat::ALaw);
 
     const TVector<float> ALawSamples = ReadAll(ALawReader);
@@ -340,7 +340,7 @@ TEST(WaveDecoder, ResolvesExtensibleSubFormat)
     Builder.FinishRiff();
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(Builder.Bytes.data(), Builder.Bytes.size()));
+    ASSERT_TRUE(Reader.Open(Builder.Bytes.GetData(), Builder.Bytes.Num()));
 
     EXPECT_EQ(Reader.GetSampleFormat(), EWaveSampleFormat::PCM16);
     EXPECT_EQ(Reader.GetInfo().NumChannels, 2u);
@@ -365,7 +365,7 @@ TEST(WaveDecoder, SkipsUnknownAndOddSizedChunks)
     Builder.FinishRiff();
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(Builder.Bytes.data(), Builder.Bytes.size()));
+    ASSERT_TRUE(Reader.Open(Builder.Bytes.GetData(), Builder.Bytes.Num()));
     EXPECT_EQ(Reader.GetInfo().NumFrames, 4u);
 
     const TVector<float> Samples = ReadAll(Reader);
@@ -379,14 +379,14 @@ TEST(WaveDecoder, ClampsTruncatedDataChunk)
     TVector<uint8> File = MakeWave(kTagPCM, 1, 44100, 16, Source, sizeof(Source));
 
     // Lop off half the samples while leaving the declared data size intact.
-    File.resize(File.size() - 8);
+    File.SetNum(File.Num() - 8);
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     EXPECT_EQ(Reader.GetInfo().NumFrames, 4u);
 
     const TVector<float> Samples = ReadAll(Reader);
-    ASSERT_EQ(Samples.size(), 4u);
+    ASSERT_EQ(Samples.Num(), 4);
     EXPECT_FLOAT_EQ(Samples[3], 4.0f / 32768.0f);
 }
 
@@ -396,7 +396,7 @@ TEST(WaveDecoder, ReadsFromAnOffsetAndStopsAtEnd)
     const TVector<uint8> File = MakeWave(kTagPCM, 1, 44100, 16, Source, sizeof(Source));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
 
     float Block[4] = {};
     EXPECT_EQ(Reader.ReadFrames(2, 4, Block), 4u);
@@ -415,30 +415,30 @@ TEST(WaveDecoder, ReadsFromAnOffsetAndStopsAtEnd)
 TEST(WaveDecoder, ChunkedReadsMatchOneShotRead)
 {
     TVector<int16> Source(1000);
-    for (size_t i = 0; i < Source.size(); ++i)
+    for (int32 i = 0; i < Source.Num(); ++i)
     {
         Source[i] = (int16)((i * 37) % 30000 - 15000);
     }
 
-    const TVector<uint8> File = MakeWave(kTagPCM, 2, 48000, 16, Source.data(), Source.size() * sizeof(int16));
+    const TVector<uint8> File = MakeWave(kTagPCM, 2, 48000, 16, Source.GetData(), Source.Num() * sizeof(int16));
 
     FWaveReader Reader;
-    ASSERT_TRUE(Reader.Open(File.data(), File.size()));
+    ASSERT_TRUE(Reader.Open(File.GetData(), File.Num()));
     ASSERT_EQ(Reader.GetInfo().NumFrames, 500u);
 
     const TVector<float> OneShot = ReadAll(Reader);
 
-    TVector<float> Chunked(OneShot.size());
+    TVector<float> Chunked(OneShot.Num());
     uint64 Frame = 0;
     while (Frame < Reader.GetInfo().NumFrames)
     {
-        const uint64 Read = Reader.ReadFrames(Frame, 37, Chunked.data() + Frame * 2);
+        const uint64 Read = Reader.ReadFrames(Frame, 37, Chunked.GetData() + Frame * 2);
         ASSERT_NE(Read, 0u);
         Frame += Read;
     }
 
     EXPECT_EQ(Frame, 500u);
-    for (size_t i = 0; i < OneShot.size(); ++i)
+    for (int32 i = 0; i < OneShot.Num(); ++i)
     {
         ASSERT_FLOAT_EQ(Chunked[i], OneShot[i]) << "sample " << i;
     }
@@ -450,7 +450,7 @@ TEST(WaveDecoder, ProbeMatchesDecode)
     const TVector<uint8> File = MakeWave(kTagPCM, 3, 32000, 16, Source, sizeof(Source));
 
     FAudioInfo Probed;
-    ASSERT_TRUE(Probe(File.data(), File.size(), Probed));
+    ASSERT_TRUE(Probe(File.GetData(), File.Num(), Probed));
     EXPECT_EQ(Probed.SampleRate, 32000u);
     EXPECT_EQ(Probed.NumChannels, 3u);
     EXPECT_EQ(Probed.NumFrames, 2u);
@@ -458,12 +458,12 @@ TEST(WaveDecoder, ProbeMatchesDecode)
 
     FAudioInfo Decoded;
     TVector<float> Samples;
-    ASSERT_TRUE(DecodePCM(File.data(), File.size(), Decoded, Samples));
+    ASSERT_TRUE(DecodePCM(File.GetData(), File.Num(), Decoded, Samples));
 
     EXPECT_EQ(Decoded.SampleRate, Probed.SampleRate);
     EXPECT_EQ(Decoded.NumChannels, Probed.NumChannels);
     EXPECT_EQ(Decoded.NumFrames, Probed.NumFrames);
-    ASSERT_EQ(Samples.size(), 6u);
+    ASSERT_EQ(Samples.Num(), 6);
     EXPECT_FLOAT_EQ(Samples[1], 1000.0f / 32768.0f);
 }
 
@@ -476,10 +476,10 @@ TEST(WaveDecoder, DecodeRejectsEmptyAndInvalidInput)
 
     const uint8 Empty[2] = {};
     const TVector<uint8> NoFrames = MakeWave(kTagPCM, 1, 44100, 16, Empty, 0);
-    EXPECT_FALSE(DecodePCM(NoFrames.data(), NoFrames.size(), Info, Samples));
+    EXPECT_FALSE(DecodePCM(NoFrames.GetData(), NoFrames.Num(), Info, Samples));
 
     // Probe still reports the format of a zero length clip.
-    EXPECT_TRUE(Probe(NoFrames.data(), NoFrames.size(), Info));
+    EXPECT_TRUE(Probe(NoFrames.GetData(), NoFrames.Num(), Info));
     EXPECT_EQ(Info.NumFrames, 0u);
     EXPECT_EQ(Info.SampleRate, 44100u);
 }

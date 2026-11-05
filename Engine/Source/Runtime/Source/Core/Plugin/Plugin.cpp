@@ -15,7 +15,7 @@ namespace Lumina
     FString FPlugin::GetMountAlias() const
     {
         FString Result = "/";
-        Result.append(Descriptor.Name.c_str(), Descriptor.Name.size());
+        Result.Append(*Descriptor.Name, Descriptor.Name.Len());
         return Result;
     }
 
@@ -33,7 +33,7 @@ namespace Lumina
         Result += "/Binaries/";
         Result += LUMINA_PLATFORM_NAME;
         Result += "/";
-        Result += Paths::MakeModuleFileName(ModuleName).c_str();
+        Result += *Paths::MakeModuleFileName(ModuleName);
         return Result;
     }
 }

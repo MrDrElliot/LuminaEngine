@@ -161,13 +161,13 @@ namespace Lumina
         virtual void DrawNodeTitleBar();
 
         void SetError(const EdNodeGraph::FError& InError) { Error = InError; }
-        const EdNodeGraph::FError& GetError() const { return Error.value(); }
-        bool HasError() const { return Error.has_value(); }
+        const EdNodeGraph::FError& GetError() const { return Error.GetValue(); }
+        bool HasError() const { return Error.IsSet(); }
         void ClearError() { Error = NullOpt; }
 
         void SetWarning(const EdNodeGraph::FError& InWarning) { Warning = InWarning; }
-        const EdNodeGraph::FError& GetWarning() const { return Warning.value(); }
-        bool HasWarning() const { return Warning.has_value(); }
+        const EdNodeGraph::FError& GetWarning() const { return Warning.GetValue(); }
+        bool HasWarning() const { return Warning.IsSet(); }
         void ClearWarning() { Warning = NullOpt; }
         
         CEdNodeGraphPin* GetPin(uint32 ID, ENodePinDirection Direction);

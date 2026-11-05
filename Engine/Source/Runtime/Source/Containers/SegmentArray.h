@@ -1,6 +1,8 @@
 #pragma once
+#include <atomic>
 #include <bit>
 
+#include "ContainerTraits.h"
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
@@ -33,6 +35,7 @@ namespace Lumina
         
         TSegmentMap() = default;
         TSegmentMap(FDtorFn Fn): DtorFn(Fn) {}
+        ~TSegmentMap() { Clear(); }
         
         void SetDtor(FDtorFn Fn)
         {
@@ -83,7 +86,8 @@ namespace Lumina
         
         void Clear()
         {
-            for (uint32 SegmentIndex = 0; SegmentIndex < UsedSegments; ++SegmentIndex)
+            const uint32 Used = UsedSegments.load(std::memory_order_relaxed);
+            for (uint32 SegmentIndex = 0; SegmentIndex < Used; ++SegmentIndex)
             {
                 uint32 SegmentSize = SlotsInSegments(SegmentIndex);
                 FEntry* Segment = Segments[SegmentIndex];
@@ -100,7 +104,7 @@ namespace Lumina
                 Segments[SegmentIndex] = nullptr;
             }
 
-            UsedSegments = 0;
+            UsedSegments.store(0, std::memory_order_relaxed);
             
             Head = kEndOfList;
         }
@@ -108,7 +112,8 @@ namespace Lumina
         template<typename TFn>
         void ForEachLive(TFn&& Fn)
         {
-            for (uint32 SegmentIndex = 0; SegmentIndex < UsedSegments; ++SegmentIndex)
+            const uint32 Used = UsedSegments.load(std::memory_order_acquire);
+            for (uint32 SegmentIndex = 0; SegmentIndex < Used; ++SegmentIndex)
             {
                 const uint32 SegmentSize = SlotsInSegments(SegmentIndex);
                 FEntry* Segment = Segments[SegmentIndex];
@@ -123,32 +128,19 @@ namespace Lumina
             }
         }
 
-        T* TryGet(HandleT Handle)
+        template <typename TSelf>
+        auto TryGet(this TSelf&& Self, HandleT Handle) -> TLikeSelf<TSelf, T>*
         {
-            const FEntry* Entry = FindLive(Handle);
-            return Entry != nullptr ? const_cast<T*>(&Entry->Data) : nullptr;
-        }
-
-        const T* TryGet(HandleT Handle) const
-        {
-            const FEntry* Entry = FindLive(Handle);
-            return Entry != nullptr ? &Entry->Data : nullptr;
+            const FEntry* Entry = Self.FindLive(Handle);
+            return Entry != nullptr ? const_cast<TLikeSelf<TSelf, T>*>(&Entry->Data) : nullptr;
         }
 
         bool IsLive(HandleT Handle) const { return FindLive(Handle) != nullptr; }
 
-        T& operator[](HandleT Handle)
+        template <typename TSelf>
+        auto operator[](this TSelf&& Self, HandleT Handle) -> TLikeSelf<TSelf, T>&
         {
-            auto&& [I, G] = FromHandle(Handle);
-            FEntry* Entry = Get(I);
-            return Entry->Data;
-        }
-        
-        const T& operator[](HandleT Handle) const
-        {
-            auto&& [I, G] = FromHandle(Handle);
-            FEntry* Entry = Get(I);
-            return Entry->Data;
+            return Self.Get(FromHandle(Handle).Index)->Data;
         }
         
         
@@ -181,17 +173,19 @@ namespace Lumina
             return ((1 << kSmallSegmentsToSkip) << SegmentCount) - (1 << kSmallSegmentsToSkip);
         }
         
+        // Published with release, so a reader that sees the new count also sees the segment pointer behind it.
         void AddSegment()
         {
-            DEBUG_ASSERT(UsedSegments < 26, "TSegmentMap segment table exhausted.");
+            const uint32 Used = UsedSegments.load(std::memory_order_relaxed);
+            DEBUG_ASSERT(Used < 26, "TSegmentMap segment table exhausted.");
 
-            uint64 SegmentSize = SlotsInSegments(UsedSegments);
+            uint64 SegmentSize = SlotsInSegments(Used);
             auto* Entry = Memory::Malloc(sizeof(FEntry) * SegmentSize);
             auto* Segment = static_cast<FEntry*>(Entry);
 
-            Segments[UsedSegments++] = Segment;
+            Segments[Used] = Segment;
 
-            uint32 SegmentOffset = CapacityForSegmentCount(UsedSegments - 1);
+            uint32 SegmentOffset = CapacityForSegmentCount(Used);
             for (uint64 i = SegmentSize; i > 0; --i)
             {
                 Segment[i - 1].Gen      = 0;
@@ -200,6 +194,8 @@ namespace Lumina
 
                 Head                    = static_cast<uint32>(i - 1) + SegmentOffset;
             }
+
+            UsedSegments.store(Used + 1, std::memory_order_release);
         }
         
         // The one place the three failure modes are checked, so TryGet/IsLive cannot drift apart.
@@ -212,7 +208,7 @@ namespace Lumina
 
             auto&& [I, G] = FromHandle(Handle);
             
-            if (I >= CapacityForSegmentCount(UsedSegments))
+            if (I >= CapacityForSegmentCount(UsedSegments.load(std::memory_order_acquire)))
             {
                 return nullptr;
             }
@@ -227,20 +223,13 @@ namespace Lumina
             return Entry;
         }
 
-        FEntry* Get(uint32 Index)
+        template <typename TSelf>
+        auto Get(this TSelf&& Self, uint32 Index) -> TLikeSelf<TSelf, FEntry>*
         {
-            uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));
-            uint32 Slot = Index - CapacityForSegmentCount((uint32)Segment);
+            const uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));
+            const uint32 Slot = Index - CapacityForSegmentCount(static_cast<uint32>(Segment));
 
-            return &Segments[Segment][Slot];
-        }
-
-        const FEntry* Get(uint32 Index) const
-        {
-            uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));
-            uint32 Slot = Index - CapacityForSegmentCount((uint32)Segment);
-
-            return &Segments[Segment][Slot];
+            return &Self.Segments[Segment][Slot];
         }
         
         static constexpr HandleT ToHandle(uint32 Index, uint32 Generation)
@@ -257,11 +246,13 @@ namespace Lumina
             };
         }
         
+        static void DestroyEntry(T* Value) { Memory::DestroyAt(Value); }
+
     private:
         
-        FDtorFn     DtorFn          = nullptr;
-        uint32      UsedSegments    = 0;
-        uint32      Head            = kEndOfList;
+        FDtorFn                 DtorFn          = &DestroyEntry;
+        std::atomic<uint32>     UsedSegments    = 0;
+        uint32                  Head            = kEndOfList;
         FEntry*     Segments[26]    {nullptr};
         FMutex      Mutex;
     };

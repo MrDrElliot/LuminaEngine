@@ -21,11 +21,11 @@ namespace Lumina
     {
         // Rebuilt into an inline-storage member so the returned view stays valid after this returns.
         CachedDisplayName = "ComponentMask_";
-        if (R) CachedDisplayName.append("R");
-        if (G) CachedDisplayName.append("G");
-        if (B) CachedDisplayName.append("B");
-        if (A) CachedDisplayName.append("A");
-        return FStringView(CachedDisplayName.c_str(), CachedDisplayName.size());
+        if (R) CachedDisplayName.Append("R");
+        if (G) CachedDisplayName.Append("G");
+        if (B) CachedDisplayName.Append("B");
+        if (A) CachedDisplayName.Append("A");
+        return FStringView(*CachedDisplayName, CachedDisplayName.Len());
     }
 
     void CMaterialExpression_ComponentMask::GenerateDefinition(FMaterialCompiler& Compiler) { Compiler.ComponentMask(InputPin); }

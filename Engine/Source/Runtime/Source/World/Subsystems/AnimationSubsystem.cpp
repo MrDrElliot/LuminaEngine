@@ -24,7 +24,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            SAnimationGraphComponent* Comp = World->TryGetComponent<SAnimationGraphComponent>(Entity);
+            SAnimationGraphComponent* Comp = World->TryGetComponent<ECS::Write<SAnimationGraphComponent>>(Entity);
             if (Comp == nullptr || !Comp->Graph.IsValid())
             {
                 return nullptr;
@@ -68,12 +68,22 @@ namespace Lumina
 
         SSimpleAnimationComponent* SimpleOf(CWorld* World, ECS::FEntity Entity)
         {
-            return World != nullptr ? World->TryGetComponent<SSimpleAnimationComponent>(Entity) : nullptr;
+            return World != nullptr ? World->TryGetComponent<ECS::Write<SSimpleAnimationComponent>>(Entity) : nullptr;
+        }
+
+        const SSimpleAnimationComponent* ReadSimpleOf(CWorld* World, ECS::FEntity Entity)
+        {
+            return World != nullptr ? World->TryGetComponent<ECS::Read<SSimpleAnimationComponent>>(Entity) : nullptr;
         }
 
         SAnimationGraphComponent* GraphOf(CWorld* World, ECS::FEntity Entity)
         {
-            return World != nullptr ? World->TryGetComponent<SAnimationGraphComponent>(Entity) : nullptr;
+            return World != nullptr ? World->TryGetComponent<ECS::Write<SAnimationGraphComponent>>(Entity) : nullptr;
+        }
+
+        const SAnimationGraphComponent* ReadGraphOf(CWorld* World, ECS::FEntity Entity)
+        {
+            return World != nullptr ? World->TryGetComponent<ECS::Read<SAnimationGraphComponent>>(Entity) : nullptr;
         }
     }
 
@@ -105,13 +115,13 @@ namespace Lumina
 
     bool CAnimationSubsystem::IsPlaying(ECS::FEntity Entity)
     {
-        const SSimpleAnimationComponent* Comp = SimpleOf(GetWorld(), Entity);
+        const SSimpleAnimationComponent* Comp = ReadSimpleOf(GetWorld(), Entity);
         return Comp != nullptr && Comp->IsPlaying();
     }
 
     bool CAnimationSubsystem::IsFinished(ECS::FEntity Entity)
     {
-        const SSimpleAnimationComponent* Comp = SimpleOf(GetWorld(), Entity);
+        const SSimpleAnimationComponent* Comp = ReadSimpleOf(GetWorld(), Entity);
         return Comp != nullptr && Comp->IsFinished();
     }
 
@@ -131,7 +141,7 @@ namespace Lumina
 
     float CAnimationSubsystem::GetTime(ECS::FEntity Entity)
     {
-        const SSimpleAnimationComponent* Comp = SimpleOf(GetWorld(), Entity);
+        const SSimpleAnimationComponent* Comp = ReadSimpleOf(GetWorld(), Entity);
         return Comp != nullptr ? Comp->CurrentTime : 0.0f;
     }
 
@@ -173,7 +183,7 @@ namespace Lumina
 
     bool CAnimationSubsystem::HasParameter(ECS::FEntity Entity, const FName& Name)
     {
-        const SAnimationGraphComponent* Comp = GraphOf(GetWorld(), Entity);
+        const SAnimationGraphComponent* Comp = ReadGraphOf(GetWorld(), Entity);
         return Comp != nullptr && Comp->HasParameter(Name);
     }
 
@@ -223,7 +233,7 @@ namespace Lumina
 
     bool CAnimationSubsystem::IsMontagePlaying(ECS::FEntity Entity, CAnimationMontage* Montage)
     {
-        const SAnimationGraphComponent* Comp = GraphOf(GetWorld(), Entity);
+        const SAnimationGraphComponent* Comp = ReadGraphOf(GetWorld(), Entity);
         if (Comp == nullptr)
         {
             return false;
@@ -233,13 +243,13 @@ namespace Lumina
 
     float CAnimationSubsystem::GetMontagePosition(ECS::FEntity Entity, CAnimationMontage* Montage)
     {
-        const SAnimationGraphComponent* Comp = GraphOf(GetWorld(), Entity);
+        const SAnimationGraphComponent* Comp = ReadGraphOf(GetWorld(), Entity);
         return (Comp != nullptr && Montage != nullptr) ? Comp->Montages.GetPosition(Montage) : 0.0f;
     }
 
     float CAnimationSubsystem::GetMontageWeight(ECS::FEntity Entity, CAnimationMontage* Montage)
     {
-        const SAnimationGraphComponent* Comp = GraphOf(GetWorld(), Entity);
+        const SAnimationGraphComponent* Comp = ReadGraphOf(GetWorld(), Entity);
         return (Comp != nullptr && Montage != nullptr) ? Comp->Montages.GetWeight(Montage) : 0.0f;
     }
 
@@ -255,7 +265,7 @@ namespace Lumina
 
     FName CAnimationSubsystem::GetMontageSection(ECS::FEntity Entity, CAnimationMontage* Montage)
     {
-        const SAnimationGraphComponent* Comp = GraphOf(GetWorld(), Entity);
+        const SAnimationGraphComponent* Comp = ReadGraphOf(GetWorld(), Entity);
         return (Comp != nullptr && Montage != nullptr) ? Comp->Montages.GetCurrentSection(Montage) : FName();
     }
 }

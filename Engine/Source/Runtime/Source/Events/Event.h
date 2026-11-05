@@ -383,7 +383,7 @@ namespace Lumina
         {}
         
         const TVector<FFixedString>& GetPaths() const { return Paths; }
-        size_t GetCount() const { return Paths.size(); }
+        int32 GetCount() const { return Paths.Num(); }
         float GetMouseX() const { return MouseX; }
         float GetMouseY() const { return MouseY; }
         

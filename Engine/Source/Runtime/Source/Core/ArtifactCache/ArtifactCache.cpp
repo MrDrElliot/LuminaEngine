@@ -28,22 +28,22 @@ namespace Lumina
 
         FString EntryPath(const FString& Root, uint64 Key)
         {
-            const FString Hex = Format("{:016x}", Key).c_str();
-            return FString(Paths::Combine(Root, Hex.substr(0, 2), Hex + ".lart").c_str());
+            const FString Hex = *Format("{:016x}", Key);
+            return FString(*Paths::Combine(Root, Hex.Mid(0, 2), Hex + ".lart"));
         }
 
         bool ReadEntry(const FString& Path, uint64 Key, TVector<uint8>& OutData)
         {
             TVector<uint8> Bytes;
-            if (!Filesystem::IsFile(Path) || !Filesystem::ReadFile(Bytes, Path) || Bytes.size() < sizeof(FEntryHeader))
+            if (!Filesystem::IsFile(Path) || !Filesystem::ReadFile(Bytes, Path) || static_cast<size_t>(Bytes.Num()) < sizeof(FEntryHeader))
             {
                 return false;
             }
 
             FEntryHeader Header;
-            Memory::Memcpy(&Header, Bytes.data(), sizeof(Header));
-            const uint8* Payload = Bytes.data() + sizeof(FEntryHeader);
-            const uint64 PayloadSize = Bytes.size() - sizeof(FEntryHeader);
+            Memory::Memcpy(&Header, Bytes.GetData(), sizeof(Header));
+            const uint8* Payload = Bytes.GetData() + sizeof(FEntryHeader);
+            const uint64 PayloadSize = Bytes.Num() - sizeof(FEntryHeader);
 
             // A torn copy from a sync tool or a half-written share looks like any other file, so the payload is verified.
             if (Header.Magic != kMagic || Header.Version != kVersion || Header.Key != Key || Header.Size != PayloadSize
@@ -53,7 +53,8 @@ namespace Lumina
                 return false;
             }
 
-            OutData.assign(Payload, Payload + PayloadSize);
+            OutData.Reset();
+            OutData.Append(Payload, Payload + PayloadSize);
             return true;
         }
 
@@ -64,12 +65,12 @@ namespace Lumina
                 return true;
             }
 
-            const FEntryHeader Header{ kMagic, kVersion, Key, (uint64)Data.size(), Hash::GetHash64(Data.data(), Data.size()) };
-            TVector<uint8> Bytes(sizeof(FEntryHeader) + Data.size());
-            Memory::Memcpy(Bytes.data(), &Header, sizeof(Header));
-            if (!Data.empty())
+            const FEntryHeader Header{ kMagic, kVersion, Key, (uint64)Data.Num(), Hash::GetHash64(Data.GetData(), Data.Num()) };
+            TVector<uint8> Bytes(sizeof(FEntryHeader) + Data.Num());
+            Memory::Memcpy(Bytes.GetData(), &Header, sizeof(Header));
+            if (!Data.IsEmpty())
             {
-                Memory::Memcpy(Bytes.data() + sizeof(FEntryHeader), Data.data(), Data.size());
+                Memory::Memcpy(Bytes.GetData() + sizeof(FEntryHeader), Data.GetData(), Data.Num());
             }
 
             return Filesystem::MakeParentDirectoryTree(Path) && Filesystem::AtomicWriteFile(Path, Bytes);
@@ -78,8 +79,8 @@ namespace Lumina
         FString GetLocalDirectory()
         {
             const FStringView Project = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
-            const FString Base = !Project.empty() ? FString(Project.data(), Project.size()) : Paths::GetEngineInstallDirectory();
-            return FString(Paths::Combine(Base, "Saved", "ArtifactCache").c_str());
+            const FString Base = !Project.IsEmpty() ? FString(Project.GetData(), Project.Len()) : Paths::GetEngineInstallDirectory();
+            return FString(*Paths::Combine(Base, "Saved", "ArtifactCache"));
         }
 
         FString GetSharedDirectory()
@@ -90,16 +91,16 @@ namespace Lumina
             }
 
             const FString& Setting = GetDefault<CProjectSettings>()->SharedArtifactCachePath;
-            if (Setting.empty())
+            if (Setting.IsEmpty())
             {
                 return {};
             }
 
             const FStringView Project = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
-            const bool bRelative = Setting[0] != '/' && Setting[0] != '\\' && Setting.find(':') == FString::npos;
-            if (bRelative && !Project.empty())
+            const bool bRelative = Setting[0] != '/' && Setting[0] != '\\' && Setting.Find(':') == Constants::kIndexNone;
+            if (bRelative && !Project.IsEmpty())
             {
-                return FString(Paths::Combine(FString(Project.data(), Project.size()), Setting).c_str());
+                return FString(*Paths::Combine(FString(Project.GetData(), Project.Len()), Setting));
             }
             return Setting;
         }
@@ -113,7 +114,7 @@ namespace Lumina
         }
 
         const FString Shared = GetSharedDirectory();
-        if (Shared.empty() || !ReadEntry(EntryPath(Shared, Key), Key, OutData))
+        if (Shared.IsEmpty() || !ReadEntry(EntryPath(Shared, Key), Key, OutData))
         {
             return false;
         }
@@ -132,7 +133,7 @@ namespace Lumina
         }
 
         const FString Shared = GetSharedDirectory();
-        if (!Shared.empty() && !WriteEntry(EntryPath(Shared, Key), Key, Data) && !bReportedReadOnlyShare.exchange(true))
+        if (!Shared.IsEmpty() && !WriteEntry(EntryPath(Shared, Key), Key, Data) && !bReportedReadOnlyShare.exchange(true))
         {
             LOG_WARN("The shared artifact cache '{}' is not writable, so compiles only reach the local cache.", Shared);
         }

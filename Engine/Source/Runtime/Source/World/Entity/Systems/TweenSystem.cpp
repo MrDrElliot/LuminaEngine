@@ -1,9 +1,6 @@
 #include "RuntimePCH.h"
 #include "TweenSystem.h"
 
-#include "World/Subsystems/TweenSubsystem.h"
-#include "World/World.h"
-
 namespace Lumina
 {
     void STweenSystem::Configure()
@@ -14,17 +11,19 @@ namespace Lumina
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    bool STweenSystem::HasWork(const SSystemContext& Context)
+    void STweenSystem::OnStartup(const SExclusiveContext& Context)
     {
-        return GetWorld() != nullptr && GetWorld()->GetTweens()->GetTweenManager().HasTweens();
+        Tweens->SetWorldRegistry(&Context.GetRegistry());
     }
 
-    void STweenSystem::OnUpdate(const SSystemContext& Context)
+    bool STweenSystem::HasWork(const SSystemContext&)
     {
-        LUMINA_PROFILE_SCOPE();
+        return Tweens->HasTweens();
+    }
 
-        CWorld* World = Context.GetWorld();
+    void STweenSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    {
         const bool bPaused = Context.GetUpdateStage() == EUpdateStage::Paused;
-        World->GetTweens()->GetTweenManager().Tick(bPaused ? 0.0f : (float)Context.GetDeltaTime(), (float)World->GetRealDeltaTime());
+        Tweens->Tick(bPaused ? 0.0f : Context.GetDeltaTime(), Context.GetRealDeltaTime());
     }
 }

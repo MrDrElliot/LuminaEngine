@@ -28,8 +28,8 @@ namespace Lumina
         bool DrawNameField(const char* Id, FString& Name, float Width)
         {
             char Buffer[GNameBufferSize];
-            const size_t Length = Name.size() < GNameBufferSize - 1 ? Name.size() : GNameBufferSize - 1;
-            memcpy(Buffer, Name.c_str(), Length);
+            const size_t Length = static_cast<size_t>(Name.Len()) < GNameBufferSize - 1 ? Name.Len() : GNameBufferSize - 1;
+            memcpy(Buffer, *Name, Length);
             Buffer[Length] = '\0';
 
             ImGui::SetNextItemWidth(Width);
@@ -87,7 +87,7 @@ namespace Lumina
     CMaterialNamedRerouteDeclaration* CMaterialNamedRerouteUsage::FindDeclaration() const
     {
         CEdNodeGraph* Graph = GetOwningGraph();
-        if (Graph == nullptr || Name.empty())
+        if (Graph == nullptr || Name.IsEmpty())
         {
             return nullptr;
         }
@@ -120,7 +120,7 @@ namespace Lumina
     {
         CEdNodeGraph* Graph = GetOwningGraph();
 
-        const char* Preview = Name.empty() ? "(none)" : Name.c_str();
+        const char* Preview = Name.IsEmpty() ? "(none)" : *Name;
 
         ImGui::PushID(this);
 
@@ -132,10 +132,10 @@ namespace Lumina
             for (const auto& NodeRef : Graph->Nodes)
             {
                 const CMaterialNamedRerouteDeclaration* Declaration = Cast<CMaterialNamedRerouteDeclaration>(NodeRef.Get());
-                if (Declaration != nullptr && !Declaration->Name.empty())
+                if (Declaration != nullptr && !Declaration->Name.IsEmpty())
                 {
-                    Current = Declaration->Name == Name ? (int32)Declared.size() : Current;
-                    Declared.push_back(Declaration->Name);
+                    Current = Declaration->Name == Name ? Declared.Num() : Current;
+                    Declared.Add(Declaration->Name);
                 }
             }
 

@@ -9,7 +9,7 @@ namespace
     TVector<uint32> CollectAllocated(const FHandleAllocator& A)
     {
         TVector<uint32> Out;
-        A.ForEachAllocated([&](uint32 Slot) { Out.push_back(Slot); });
+        A.ForEachAllocated([&](uint32 Slot) { Out.Add(Slot); });
         return Out;
     }
 }
@@ -90,7 +90,7 @@ TEST(HandleAllocator, NeverHandsOutPaddingPastCapacity)
     }
 
     EXPECT_EQ(Count, 100u);
-    EXPECT_EQ(CollectAllocated(A).size(), 100u);
+    EXPECT_EQ(CollectAllocated(A).Num(), 100);
 }
 
 TEST(HandleAllocator, MarkAllocatedClaimsAPublishedSlot)
@@ -132,9 +132,9 @@ TEST(HandleAllocator, ForEachAllocatedVisitsExactlyTheLiveSlotsInOrder)
     }
 
     const TVector<uint32> Live = CollectAllocated(A);
-    ASSERT_EQ(Live.size(), A.GetNumAllocated());
+    ASSERT_EQ(Live.Num(), A.GetNumAllocated());
 
-    for (size_t i = 1; i < Live.size(); ++i)
+    for (int32 i = 1; i < Live.Num(); ++i)
     {
         EXPECT_LT(Live[i - 1], Live[i]);         // ascending
     }
@@ -185,17 +185,17 @@ TEST(HandleAllocator, ChurnKeepsSlotsUniqueAndInRange)
 
     for (uint32 i = 0; i < 900; ++i)
     {
-        Held.push_back(A.Alloc());
+        Held.Add(A.Alloc());
     }
 
     for (uint32 Round = 0; Round < 50; ++Round)
     {
-        for (size_t i = Round % 7; i < Held.size(); i += 7)
+        for (int32 i = Round % 7; i < Held.Num(); i += 7)
         {
             A.Free(Held[i]);
             Held[i] = FHandleAllocator::kInvalidHandle;
         }
-        for (size_t i = 0; i < Held.size(); ++i)
+        for (int32 i = 0; i < Held.Num(); ++i)
         {
             if (Held[i] == FHandleAllocator::kInvalidHandle)
             {
@@ -212,5 +212,5 @@ TEST(HandleAllocator, ChurnKeepsSlotsUniqueAndInRange)
         EXPECT_FALSE(Seen[Slot]);
         Seen[Slot] = true;
     }
-    EXPECT_EQ(A.GetNumAllocated(), (uint32)Held.size());
+    EXPECT_EQ(A.GetNumAllocated(), (uint32)Held.Num());
 }

@@ -1,5 +1,9 @@
 ﻿#include "RuntimePCH.h"
 #include "Name.h"
+
+#include <atomic>
+#include <charconv>
+
 #include "Memory/Construct.h"
 
 #include "Core/Threading/Thread.h"
@@ -23,11 +27,6 @@ namespace Lumina
 
         const char* AllocateString(const char* Str, size_t Length);
 
-        // Bytes handed out (sum of string lengths + null terminators); excludes chunk headers and slack.
-        size_t GetUsedBytes() const { return TotalUsed; }
-        // Bytes reserved from the allocator (chunk headers + capacities).
-        size_t GetReservedBytes() const { return TotalReserved; }
-
         ~FStringPool();
         FStringPool() = default;
         FStringPool(const FStringPool&) = delete;
@@ -50,155 +49,163 @@ namespace Lumina
         Chunk* AllocateChunk(size_t Capacity);
 
         Chunk* Head = nullptr;
-        size_t TotalUsed = 0;
-        size_t TotalReserved = 0;
     };
 
-    /**
-     * Interns names and hands out a DENSE INDEX as the identity.
-     *
-     * The index is what makes an FName 8 bytes instead of 16: a 64-bit hash needs all its bits to stay
-     * collision-free, an index needs only as many as there are distinct names. Resolving one is an array
-     * subscript rather than a hash lookup, so c_str() got cheaper too.
-     *
-     * The content hash is kept alongside, because it -- not the index -- is what is stable across runs, and
-     * a couple of callers legitimately want that (a per-class colour, an ImGui dock class).
-     */
     struct FPrehashedNameHash
     {
         NODISCARD FORCEINLINE static uint64 operator()(uint64 Hash) noexcept { return Hash; }
     };
 
+    // One interned name, written once before its index is published and never moved after.
+    struct FNameEntry
+    {
+        const char* Text;
+        uint64      StableHash;
+        int32       Length;
+    };
+
+    // Dense indices into blocks that never move, so a name resolves without the lock; the content hash is the run-stable identity.
     class FNameTable
     {
     public:
-        
+
         FNameTable();
-        
-        uint32 GetOrCreateIndex(const char* Str, size_t Length);
-        
-        const char* GetString(uint32 Index) const;
-        uint64 GetStableHash(uint32 Index) const;
-        size_t GetMemoryUsage() const;
-        
-    private:
-        
-        size_t GetStringPoolUsage() const;
-        
-    private:
-        
-        FMutex Mutex;
 
-        //~ Parallel, indexed by the name's index: its interned text and the hash it was found by.
-        TVector<const char*> Strings;
-        TVector<uint64>      Hashes;
+        uint32 GetOrCreateIndex(const char* Str, int32 Length);
 
+        NODISCARD FORCEINLINE const FNameEntry* FindEntry(uint32 Index) const noexcept
+        {
+            if (Index >= NumEntries.load(std::memory_order_acquire))
+            {
+                return nullptr;
+            }
+            return &Blocks[Index >> kBlockShift].load(std::memory_order_acquire)[Index & (kBlockSize - 1)];
+        }
+
+    private:
+
+        static constexpr uint32 kBlockShift = 12;
+        static constexpr uint32 kBlockSize  = 1u << kBlockShift;
+        static constexpr uint32 kMaxBlocks  = 1u << 12;
+        static constexpr uint32 kNotFound   = ~0u;
+
+        NODISCARD uint32 Probe(const char* Lower, int32 Length, uint64 Hash, uint64& OutFreeKey) const;
+        uint32 Publish(const char* Str, int32 Length, uint64 StableHash);
+
+        mutable FSharedMutex Mutex;
         THashMap<uint64, uint32, FPrehashedNameHash> HashToIndex;
         FStringPool Pool;
-        
-        static constexpr size_t INITIAL_CAPACITY = 16384;
-        
+        std::atomic<FNameEntry*> Blocks[kMaxBlocks] = {};
+        std::atomic<uint32> NumEntries = 0;
     };
-    
-    
+
     FNameTable::FNameTable()
     {
-        HashToIndex.reserve(INITIAL_CAPACITY);
-        Strings.reserve(INITIAL_CAPACITY);
-        Hashes.reserve(INITIAL_CAPACITY);
+        HashToIndex.Reserve(16384);
 
         // Index 0 is the empty name, so a default-constructed FName resolves without touching the table.
-        Strings.push_back("NAME_None");
-        Hashes.push_back(0);
+        Publish("NAME_None", 9, 0);
     }
 
-    uint32 FNameTable::GetOrCreateIndex(const char* Str, size_t Length)
+    // Probes on a hash hit whose text differs, so two names that collide stay two names; the key after the chain is OutFreeKey.
+    uint32 FNameTable::Probe(const char* Lower, int32 Length, uint64 Hash, uint64& OutFreeKey) const
     {
-        if (!Str || Length == 0)
+        for (uint64 Key = Hash; ; ++Key)
+        {
+            const uint32* Found = HashToIndex.Find(Key);
+            if (Found == nullptr)
+            {
+                OutFreeKey = Key;
+                return kNotFound;
+            }
+
+            const FNameEntry* Entry = FindEntry(*Found);
+            if (Entry->Length != Length)
+            {
+                continue;
+            }
+
+            int32 Index = 0;
+            for (; Index < Length; ++Index)
+            {
+                const char C = Entry->Text[Index];
+                const char Folded = (C >= 'A' && C <= 'Z') ? char(C + ('a' - 'A')) : C;
+                if (Folded != Lower[Index])
+                {
+                    break;
+                }
+            }
+            if (Index == Length)
+            {
+                return *Found;
+            }
+        }
+    }
+
+    uint32 FNameTable::Publish(const char* Str, int32 Length, uint64 StableHash)
+    {
+        const uint32 Index = NumEntries.load(std::memory_order_relaxed);
+        LUMINA_CONTAINER_CHECK(Index < kMaxBlocks * kBlockSize);
+
+        std::atomic<FNameEntry*>& Slot = Blocks[Index >> kBlockShift];
+        FNameEntry* Block = Slot.load(std::memory_order_relaxed);
+        if (Block == nullptr)
+        {
+            LUMINA_MEMORY_SCOPE("FName");
+            Block = static_cast<FNameEntry*>(Memory::Malloc(sizeof(FNameEntry) * kBlockSize, alignof(FNameEntry)));
+            Slot.store(Block, std::memory_order_release);
+        }
+
+        Block[Index & (kBlockSize - 1)] = FNameEntry{ Pool.AllocateString(Str, static_cast<size_t>(Length)), StableHash, Length };
+        NumEntries.store(Index + 1, std::memory_order_release);
+        return Index;
+    }
+
+    uint32 FNameTable::GetOrCreateIndex(const char* Str, int32 Length)
+    {
+        if (!Str || Length <= 0)
         {
             return 0;
         }
-        
+
         char StackBuffer[256];
         char* Lower = StackBuffer;
         FString HeapBuffer;
-        if (Length >= sizeof(StackBuffer))
+        if (Length >= static_cast<int32>(sizeof(StackBuffer)))
         {
-            HeapBuffer.resize(Length);
-            Lower = HeapBuffer.data();
+            HeapBuffer.SetLen(Length);
+            Lower = HeapBuffer.GetData();
         }
 
-        for (size_t i = 0; i < Length; ++i)
+        for (int32 i = 0; i < Length; ++i)
         {
             const char C = Str[i];
             Lower[i] = (C >= 'A' && C <= 'Z') ? char(C + ('a' - 'A')) : C;
         }
 
-        const uint64 Hash = Hash::XXHash::GetHash64(Lower, Length);
+        const uint64 Hash = Hash::XXHash::GetHash64(Lower, static_cast<size_t>(Length));
 
-        FScopeLock Lock(Mutex);
-
-        // Probes on a hash hit whose text differs. The old table returned on the hash alone, so two unrelated
-        // names that collided became the SAME name silently; at 64 bits that is vanishingly unlikely, but it
-        // is the kind of unlikely that is impossible to diagnose when it happens.
-        for (uint64 Key = Hash; ; ++Key)
+        // Nearly every lookup after start-up is a hit, so those share the lock and only a new name takes it alone.
+        uint64 FreeKey = 0;
         {
-            auto It = HashToIndex.find(Key);
-            if (It == HashToIndex.end())
+            FReadScopeLock Lock(Mutex);
+            if (const uint32 Found = Probe(Lower, Length, Hash, FreeKey); Found != kNotFound)
             {
-                const char* PermanentStr = Pool.AllocateString(Str, Length);
-
-                const uint32 Index = (uint32)Strings.size();
-                Strings.push_back(PermanentStr);
-                Hashes.push_back(Hash);
-                HashToIndex.insert_or_assign(Key, Index);
-                return Index;
-            }
-
-            const char* Existing = Strings[It->second];
-            size_t i = 0;
-            for (; i < Length; ++i)
-            {
-                const char C = Existing[i];
-                if (C == '\0')
-                {
-                    break;
-                }
-                const char Folded = (C >= 'A' && C <= 'Z') ? char(C + ('a' - 'A')) : C;
-                if (Folded != Lower[i])
-                {
-                    break;
-                }
-            }
-            if (i == Length && Existing[i] == '\0')
-            {
-                return It->second;
+                return Found;
             }
         }
+
+        FWriteScopeLock Lock(Mutex);
+        if (const uint32 Found = Probe(Lower, Length, Hash, FreeKey); Found != kNotFound)
+        {
+            return Found;
+        }
+
+        const uint32 Index = Publish(Str, Length, Hash);
+        HashToIndex.Add(FreeKey, Index);
+        return Index;
     }
 
-    const char* FNameTable::GetString(uint32 Index) const
-    {
-        return Index < Strings.size() ? Strings[Index] : nullptr;
-    }
-
-    uint64 FNameTable::GetStableHash(uint32 Index) const
-    {
-        return Index < Hashes.size() ? Hashes[Index] : 0;
-    }
-
-    size_t FNameTable::GetMemoryUsage() const
-    {
-        return HashToIndex.size() * (sizeof(uint64) + sizeof(uint32))
-             + Strings.size() * (sizeof(const char*) + sizeof(uint64))
-             + GetStringPoolUsage();
-    }
-
-    size_t FNameTable::GetStringPoolUsage() const
-    {
-        return Pool.GetUsedBytes();
-    }
-    
     static FNameTable& GetNameTable()
     {
         alignas(FNameTable) static uint8 Storage[sizeof(FNameTable)];
@@ -217,7 +224,6 @@ namespace Lumina
         NewChunk->Capacity = Capacity;
 
         Head = NewChunk;
-        TotalReserved += BlockSize;
 
         return NewChunk;
     }
@@ -238,7 +244,6 @@ namespace Lumina
         Result[Length] = '\0';
 
         Head->Used += Need;
-        TotalUsed += Need;
 
         return Result;
     }
@@ -259,14 +264,14 @@ namespace Lumina
     namespace
     {
         // Split a trailing "_<digits>" suffix off Str.
-        bool TrySplitNumber(const char* Str, size_t Length, size_t& OutBaseLength, uint32& OutExternalNumber)
+        bool TrySplitNumber(const char* Str, int32 Length, int32& OutBaseLength, uint32& OutExternalNumber)
         {
             if (Length < 3)
             {
                 return false;
             }
 
-            size_t DigitStart = Length;
+            int32 DigitStart = Length;
             while (DigitStart > 0 && Str[DigitStart - 1] >= '0' && Str[DigitStart - 1] <= '9')
             {
                 --DigitStart;
@@ -278,7 +283,7 @@ namespace Lumina
                 return false;
             }
 
-            const size_t DigitCount = Length - DigitStart;
+            const int32 DigitCount = Length - DigitStart;
 
             // Reject leading zeros ("_05") but allow the single-digit "_0".
             if (DigitCount > 1 && Str[DigitStart] == '0')
@@ -286,9 +291,8 @@ namespace Lumina
                 return false;
             }
 
-            // Parse with overflow guard against uint32.
             uint64 Value = 0;
-            for (size_t i = DigitStart; i < Length; ++i)
+            for (int32 i = DigitStart; i < Length; ++i)
             {
                 Value = Value * 10 + uint64(Str[i] - '0');
                 if (Value > 0xFFFFFFFFull)
@@ -298,139 +302,159 @@ namespace Lumina
             }
 
             OutExternalNumber = uint32(Value);
-            OutBaseLength = DigitStart - 1; // drop the underscore too
+            OutBaseLength = DigitStart - 1;
             return true;
+        }
+
+        // A uint32 is at most ten digits.
+        int32 WriteNumber(char* Out, uint32 Value) noexcept
+        {
+            return static_cast<int32>(std::to_chars(Out, Out + 10, Value).ptr - Out);
         }
     }
 
     FName::FName(const char* Str)
+        : FName(FStringView(Str))
     {
-        if (!Str || !Str[0])
-        {
-            return;
-        }
-
-        size_t Length = strlen(Str);
-        uint32 ExternalNumber = 0;
-        if (TrySplitNumber(Str, Length, Length, ExternalNumber))
-        {
-            Number = ExternalNumber + 1;
-        }
-
-        Index = GetNameTable().GetOrCreateIndex(Str, Length);
     }
 
     FName::FName(FStringView Str)
     {
-        if (Str.empty())
+        if (Str.IsEmpty())
         {
             return;
         }
 
-        size_t Length = Str.size();
+        int32 Length = Str.Len();
         uint32 ExternalNumber = 0;
-        if (TrySplitNumber(Str.data(), Length, Length, ExternalNumber))
+        if (TrySplitNumber(Str.GetData(), Length, Length, ExternalNumber))
         {
             Number = ExternalNumber + 1;
         }
 
-        Index = GetNameTable().GetOrCreateIndex(Str.data(), Length);
+        Index = GetNameTable().GetOrCreateIndex(Str.GetData(), Length);
     }
 
     FName::FName(const char* Str, uint32 InNumber)
     {
-        if (Str && Str[0])
+        const FStringView Text(Str);
+        if (!Text.IsEmpty())
         {
-            Index = GetNameTable().GetOrCreateIndex(Str, strlen(Str));
+            Index = GetNameTable().GetOrCreateIndex(Text.GetData(), Text.Len());
         }
 
         Number = InNumber + 1;
     }
 
-    const char* FName::c_str() const
+    const char* FName::operator*() const
     {
-        const char* Base = GetNameTable().GetString(Index);
-
+        const FNameEntry* Entry = GetNameTable().FindEntry(Index);
         if (Number == FName::kNoNumber)
         {
-            return Base ? Base : "";
+            return Entry != nullptr ? Entry->Text : "";
         }
 
-        // A handful of overlapping c_str() calls in one format expression stay valid.
-        static constexpr int BufferCount = 4;
-        static constexpr int BufferSize = 256;
+        // A handful of overlapping operator* calls in one format expression stay valid.
+        static constexpr int32 BufferCount = 4;
+        static constexpr int32 BufferSize = 256;
         static thread_local char Buffers[BufferCount][BufferSize];
-        static thread_local int Next = 0;
+        static thread_local int32 Next = 0;
 
         char* Out = Buffers[Next];
         Next = (Next + 1) % BufferCount;
 
-        snprintf(Out, BufferSize, "%s_%u", Base ? Base : "", Number - 1);
+        // Room is kept for the underscore, ten digits and the terminator, so only an overlong base is cut short.
+        const uint32 FullLength = Entry != nullptr ? static_cast<uint32>(Entry->Length) : 0u;
+        constexpr uint32 MaxBase = static_cast<uint32>(BufferSize - 12);
+        const int32 BaseLength = static_cast<int32>(FullLength < MaxBase ? FullLength : MaxBase);
+        if (BaseLength != 0)
+        {
+            Memory::Memcpy(Out, Entry->Text, static_cast<size_t>(BaseLength));
+        }
+        Out[BaseLength] = '_';
+        const int32 Digits = WriteNumber(Out + BaseLength + 1, Number - 1);
+        Out[BaseLength + 1 + Digits] = '\0';
         return Out;
     }
 
     void FName::AppendString(FString& Out) const
     {
-        const char* Base = GetNameTable().GetString(Index);
-        if (Base)
+        if (const FNameEntry* Entry = GetNameTable().FindEntry(Index))
         {
-            Out.append(Base);
+            Out.Append(Entry->Text, Entry->Length);
         }
 
         if (Number != FName::kNoNumber)
         {
-            Out.push_back('_');
-            Out.append(Format("{}", Number - 1));
+            char Suffix[11];
+            Suffix[0] = '_';
+            Out.Append(Suffix, 1 + WriteNumber(Suffix + 1, Number - 1));
         }
     }
 
     void FName::ToString(FString& Out) const
     {
-        Out.clear();
+        Out.Reset();
         AppendString(Out);
     }
 
     FString FName::ToString() const
     {
         FString Out;
+        Out.Reserve(Len());
         AppendString(Out);
         return Out;
     }
 
-    size_t FName::Length() const
+    int32 FName::Len() const
     {
-        const char* Base = GetNameTable().GetString(Index);
-        size_t Len = Base ? strlen(Base) : 0;
+        const FNameEntry* Entry = GetNameTable().FindEntry(Index);
+        int32 Length = Entry != nullptr ? Entry->Length : 0;
 
         if (Number != FName::kNoNumber)
         {
             uint32 Display = Number - 1;
-            Len += 2; // underscore + at least one digit
+            Length += 2;
             while (Display >= 10)
             {
                 Display /= 10;
-                ++Len;
+                ++Length;
             }
         }
 
-        return Len;
+        return Length;
     }
 
     uint64 FName::GetStableHash() const
     {
-        return GetNameTable().GetStableHash(Index);
+        const FNameEntry* Entry = GetNameTable().FindEntry(Index);
+        return Entry != nullptr ? Entry->StableHash : 0;
     }
 
-    char FName::At(size_t Pos) const
+    char FName::At(int32 Pos) const
     {
+        const FNameEntry* Entry = GetNameTable().FindEntry(Index);
+        const int32 BaseLength = Entry != nullptr ? Entry->Length : 0;
+        if (Pos < 0)
+        {
+            return '\0';
+        }
+        if (Pos < BaseLength)
+        {
+            return Entry->Text[Pos];
+        }
         if (Number == FName::kNoNumber)
         {
-            const char* Str = GetNameTable().GetString(Index);
-            size_t Len = Str ? strlen(Str) : 0;
-            return (Pos < Len) ? Str[Pos] : '\0';
+            return '\0';
+        }
+        if (Pos == BaseLength)
+        {
+            return '_';
         }
 
-        FString Str = ToString();
-        return (Pos < Str.size()) ? Str[Pos] : '\0';
+        char Digits[10];
+        const int32 Count = WriteNumber(Digits, Number - 1);
+        const int32 Digit = Pos - BaseLength - 1;
+        return Digit < Count ? Digits[Digit] : '\0';
     }
 }

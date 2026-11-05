@@ -23,88 +23,139 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPPrefabToolsInternal
     {
         // Class names in the registry are strings, so each distinct one is resolved once per call.
         bool IsPrefabClassName(const FName& ClassName, THashMap<FName, bool>& Cache)
         {
-            const auto Found = Cache.find(ClassName);
-            if (Found != Cache.end())
+            const auto Found = Cache.Find(ClassName);
+            if (Found != nullptr)
             {
-                return Found->second;
+                return (*Found);
             }
 
             CClass* Class = FindObject<CClass>(ClassName);
             const bool bPrefab = Class != nullptr && Class->IsChildOf(CPrefab::StaticClass());
-            Cache.emplace(ClassName, bPrefab);
+            Cache.TryAdd(ClassName, bPrefab);
             return bPrefab;
         }
 
-        void RegisterInstanceActions(FStringView Owner)
+        Agent::FToolResult PrefabEditInstance(const SPrefabInstanceParams& In, SPrefabInstanceResult& Out)
         {
-            using FInstanceAction = bool (*)(ECS::FEntity, FString&);
-            auto RegisterAction = [Owner](const char* Name, const char* Description, FInstanceAction Action)
+            FString Error;
+            ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
+            ECS::FEntity Root = ECS::NullEntity;
+            if (Registry == nullptr || !Agent::FEntityTokens::Resolve(*Registry, FStringView(In.Entity), Root, Error))
             {
-                Agent::FToolRegistry::Get().Register<SPrefabInstanceParams, SPrefabInstanceResult>(
-                    Owner, Name, Description, Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                    [Action](const SPrefabInstanceParams& In, SPrefabInstanceResult& Out)
-                    {
-                        FString Error;
-                        ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
-                        ECS::FEntity Root = ECS::NullEntity;
-                        if (Registry == nullptr || !Agent::FEntityTokens::Resolve(*Registry, FStringView(In.Entity), Root, Error))
-                        {
-                            return Agent::FToolResult::Error(Error);
-                        }
-                        Out.bDone = Action(Root, Error);
-                        return Out.bDone ? Agent::FToolResult::Ok("Done.") : Agent::FToolResult::Error(Error);
-                    });
-            };
+                return Agent::FToolResult::Error(Error);
+            }
+            Out.bDone = In.Action == EPrefabInstanceAction::Detach
+                ? SessionOps::DetachPrefabInstance(Root, Error)
+                : SessionOps::ResyncPrefabInstance(Root, Error);
+            return Out.bDone ? Agent::FToolResult::Ok("Done.") : Agent::FToolResult::Error(Error);
+        }
 
-            RegisterAction("prefab.resync", "Resync a placed instance from its prefab, as the outliner's Resync from Prefab does.",
-                &SessionOps::ResyncPrefabInstance);
-            RegisterAction("prefab.detach", "Unlink a placed instance from its prefab, as the outliner's Detach from Prefab does.",
-                &SessionOps::DetachPrefabInstance);
-
-            Agent::FToolRegistry::Get().Register<SCreatePrefabFromEntitiesParams, SCreateVariantResult>(
-                Owner, "prefab.create_from_selection",
-                "Select world entities and save them as a new prefab, as Create Prefab from Selected does.",
+        void RegisterPrefabInstance(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SPrefabInstanceParams, SPrefabInstanceResult>(
+                Owner, "prefab.instance",
+                "Resync a placed instance from its prefab, or Detach it from the prefab, as the outliner's menu does.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SCreatePrefabFromEntitiesParams& In, SCreateVariantResult& Out)
+                [](const SPrefabInstanceParams& In, SPrefabInstanceResult& Out) { return PrefabEditInstance(In, Out); });
+        }
+
+        Agent::FToolResult PrefabCreateFromEntities(const SCreatePrefabParams& In, SCreatePrefabResult& Out)
+        {
+            FString Error;
+            ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
+            if (Registry == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            TVector<ECS::FEntity> Entities;
+            for (const FString& Token : In.Entities)
+            {
+                ECS::FEntity Entity = ECS::NullEntity;
+                if (!Agent::FEntityTokens::Resolve(*Registry, FStringView(Token), Entity, Error))
                 {
-                    FString Error;
-                    ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
-                    if (Registry == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    TVector<ECS::FEntity> Entities;
-                    for (const FString& Token : In.Entities)
-                    {
-                        ECS::FEntity Entity = ECS::NullEntity;
-                        if (!Agent::FEntityTokens::Resolve(*Registry, FStringView(Token), Entity, Error))
-                        {
-                            return Agent::FToolResult::Error(Error);
-                        }
-                        Entities.push_back(Entity);
-                    }
-                    if (!SessionOps::SelectEntities(Entities, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    CPrefab* Prefab = SessionOps::CreatePrefabFromSelection(FStringView(In.Folder.empty() ? FString("/Game/Content") : In.Folder),
-                        FStringView(In.Name), Error);
-                    if (Prefab == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    Out.Guid = FString(Prefab->GetGUID().ToString().c_str());
-                    Out.Path = FString(Prefab->GetPackage()->GetPackagePath().c_str());
-                    return Agent::FToolResult::Ok(Lumina::Format("Created {}.", Out.Path));
+                    return Agent::FToolResult::Error(Error);
+                }
+                Entities.Add(Entity);
+            }
+            if (!SessionOps::SelectEntities(Entities, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            CPrefab* Prefab = SessionOps::CreatePrefabFromSelection(FStringView(In.Folder.IsEmpty() ? FString("/Game/Content") : In.Folder),
+                FStringView(In.Name), Error);
+            if (Prefab == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            Out.Guid = FString(*Prefab->GetGUID().ToString());
+            Out.Path = FString(*Prefab->GetPackage()->GetPackagePath());
+            return Agent::FToolResult::Ok(Lumina::Format("Created {}.", Out.Path));
+        }
+
+        Agent::FToolResult PrefabCreateVariant(const SCreatePrefabParams& In, SCreatePrefabResult& Out)
+        {
+            CPrefab* Parent = nullptr;
+            FString Error;
+            if (!Agent::ResolveAsset<CPrefab>(FStringView(In.VariantOf), Parent, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            CPackage* ParentPackage = Parent->GetPackage();
+            if (ParentPackage == nullptr)
+            {
+                return Agent::FToolResult::Error("That prefab has no package to sit beside.");
+            }
+
+            const FFixedString ParentPath = ParentPackage->GetPackagePath();
+            const FString Folder = Paths::Parent(FStringView(*ParentPath, ParentPath.Len()));
+            const FString Name = In.Name.IsEmpty() ? FString(*Parent->GetName().ToString()) + "_Variant" : In.Name;
+
+            FFixedString Path = Paths::Combine(FStringView(Folder), FStringView(Name));
+            CPackage::AddPackageExt(Path);
+            if (VFS::Exists(Path))
+            {
+                return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
+            }
+
+            CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(*Path, Path.Len()));
+            if (Variant == nullptr)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", Path));
+            }
+
+            Variant->ParentPrefab = Parent;
+            Variant->ResolveVariant();
+
+            if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(*Path, Path.Len())))
+            {
+                return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
+            }
+            FAssetRegistry::Get().AssetCreated(Variant);
+
+            Out.Path = FString(*Path);
+            Out.Guid = FString(*Variant->GetGUID().ToString());
+            return Agent::FToolResult::Ok(Lumina::Format("Created variant {} of {}.", Out.Path, Parent->GetName().ToString()));
+        }
+
+        void RegisterPrefabCreate(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SCreatePrefabParams, SCreatePrefabResult>(
+                Owner, "prefab.create",
+                "Save world entities as a new prefab (this selects them). With VariantOf set, instead create a variant saved beside that prefab.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SCreatePrefabParams& In, SCreatePrefabResult& Out)
+                {
+                    return In.VariantOf.IsEmpty() ? PrefabCreateFromEntities(In, Out) : PrefabCreateVariant(In, Out);
                 });
         }
 
-        void RegisterList(FStringView Owner)
+        void RegisterPrefabList(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SListPrefabsParams, SListPrefabsResult>(
                 Owner, "prefab.list",
@@ -124,8 +175,8 @@ namespace Lumina::MCP
                             return false;
                         }
 
-                        const FString Name(Data.AssetName.ToString().c_str());
-                        const FString Path(Data.Path.c_str());
+                        const FString Name(*Data.AssetName.ToString());
+                        const FString Path(*Data.Path);
                         if (!ContainsTextFold(FStringView(Name), In.Contains) && !ContainsTextFold(FStringView(Path), In.Contains))
                         {
                             return false;
@@ -133,25 +184,25 @@ namespace Lumina::MCP
 
                         ++Out.Matched;
 
-                        if (Out.Matched > Offset && static_cast<int32>(Out.Results.size()) < Limit)
+                        if (Out.Matched > Offset && Out.Results.Num() < Limit)
                         {
                             SAssetInfo Info;
                             Info.Name       = Name;
                             Info.Path       = Path;
-                            Info.AssetClass = FString(Data.AssetClass.ToString().c_str());
-                            Info.Guid       = FString(Data.AssetGUID.ToString().c_str());
-                            Out.Results.push_back(Move(Info));
+                            Info.AssetClass = FString(*Data.AssetClass.ToString());
+                            Info.Guid       = FString(*Data.AssetGUID.ToString());
+                            Out.Results.Add(Move(Info));
                         }
 
                         return false;
                     });
 
                     return Agent::FToolResult::Ok(Lumina::Format("{} of {} matching prefab(s).",
-                        Out.Results.size(), Out.Matched));
+                        Out.Results.Num(), Out.Matched));
                 });
         }
 
-        void RegisterDescribePrefab(FStringView Owner)
+        void RegisterPrefabDescribe(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SDescribePrefabParams, SDescribePrefabResult>(
                 Owner, "prefab.describe",
@@ -166,17 +217,17 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name  = FString(Prefab->GetName().ToString().c_str());
-                    Out.ClassName = FString(Prefab->GetClass()->GetName().ToString().c_str());
+                    Out.Name  = FString(*Prefab->GetName().ToString());
+                    Out.ClassName = FString(*Prefab->GetClass()->GetName().ToString());
 
                     if (CPackage* Package = Prefab->GetPackage())
                     {
-                        Out.Path = FString(Package->GetPackagePath().c_str());
+                        Out.Path = FString(*Package->GetPackagePath());
                     }
 
                     if (Prefab->ParentPrefab != nullptr)
                     {
-                        Out.ParentPrefab = FString(Prefab->ParentPrefab->GetGUID().ToString().c_str());
+                        Out.ParentPrefab = FString(*Prefab->ParentPrefab->GetGUID().ToString());
                     }
 
                     ECS::FRegistry& Registry = Prefab->Registry;
@@ -184,36 +235,36 @@ namespace Lumina::MCP
                     auto StableIDOf = [&Registry](ECS::FEntity Entity)
                     {
                         const SPrefabComponent* Node = Registry.IsValid(Entity) ? Registry.TryGet<SPrefabComponent>(Entity) : nullptr;
-                        return Node != nullptr ? FString(Node->StableID.c_str()) : FString();
+                        return Node != nullptr ? FString(*Node->StableID) : FString();
                     };
 
                     Registry.ForEachEntity([&](ECS::FEntity Entity)
                     {
                         ++Out.EntityCount;
 
-                        SPrefabNodeInfo& Node = Out.Nodes.emplace_back();
+                        SPrefabNodeInfo& Node = Out.Nodes.EmplaceGetRef();
                         Node.StableID = StableIDOf(Entity);
                         Node.ParentStableID = StableIDOf(Registry.GetHierarchy().GetParent(Entity));
                         if (const SNameComponent* Named = Registry.TryGet<SNameComponent>(Entity))
                         {
-                            Node.Name = FString(Named->Name.ToString().c_str());
+                            Node.Name = FString(*Named->Name.ToString());
                         }
                         ForEachComponentStruct([&](CStruct* Reflected)
                         {
                             if (ECS::Utils::HasComponent(Registry, Entity, Reflected))
                             {
-                                Node.Components.push_back(FString(Reflected->GetName().ToString().c_str()));
+                                Node.Components.Emplace(*Reflected->GetName().ToString());
                             }
                         });
                         if (const SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
                         {
                             for (const TStrongObjectPtr<CEntityScript>& Script : Scripts->Scripts)
                             {
-                                Node.Scripts.push_back(Script.Get() != nullptr ? FString(Script->GetClass()->GetName().c_str()) : FString("<null>"));
+                                Node.Scripts.Add(Script.Get() != nullptr ? FString(*Script->GetClass()->GetName()) : FString("<null>"));
                             }
                             for (const SHeldValue& Held : Scripts->Pending)
                             {
-                                Node.Scripts.push_back(FString("held:") + Held.TypeName.c_str());
+                                Node.Scripts.Add(FString("held:") + *Held.TypeName);
                             }
                         }
 
@@ -225,27 +276,27 @@ namespace Lumina::MCP
                         SPrefabEntityInfo Info;
                         if (const SNameComponent* Named = Registry.TryGet<SNameComponent>(Entity))
                         {
-                            Info.Name = FString(Named->Name.ToString().c_str());
+                            Info.Name = FString(*Named->Name.ToString());
                         }
 
                         ForEachComponentStruct([&](CStruct* Reflected)
                         {
                             if (ECS::Utils::HasComponent(Registry, Entity, Reflected))
                             {
-                                Info.Components.push_back(FString(Reflected->GetName().ToString().c_str()));
+                                Info.Components.Emplace(*Reflected->GetName().ToString());
                             }
                         });
 
-                        Out.RootEntities.push_back(Move(Info));
+                        Out.RootEntities.Add(Move(Info));
                     });
 
                     return Agent::FToolResult::Ok(Lumina::Format("'{}' holds {} entit{} with {} root(s).{}",
-                        Out.Name, Out.EntityCount, Out.EntityCount == 1 ? "y" : "ies", Out.RootEntities.size(),
-                        Out.ParentPrefab.empty() ? "" : " It is a variant."));
+                        Out.Name, Out.EntityCount, Out.EntityCount == 1 ? "y" : "ies", Out.RootEntities.Num(),
+                        Out.ParentPrefab.IsEmpty() ? "" : " It is a variant."));
                 });
         }
 
-        void RegisterSpawn(FStringView Owner)
+        void RegisterPrefabSpawn(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSpawnPrefabParams, SSpawnPrefabResult>(
                 Owner, "prefab.spawn",
@@ -276,7 +327,7 @@ namespace Lumina::MCP
                     ECS::FRegistry& Registry = *ScenePtr;
 
                     ECS::FEntity Parent = ECS::NullEntity;
-                    if (!In.Parent.empty() && !Agent::FEntityTokens::Resolve(Registry, FStringView(In.Parent), Parent, Error))
+                    if (!In.Parent.IsEmpty() && !Agent::FEntityTokens::Resolve(Registry, FStringView(In.Parent), Parent, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -289,7 +340,7 @@ namespace Lumina::MCP
                     TSoftObjectPtr<CPrefab> Ref;
                     if (CPackage* Package = Prefab->GetPackage())
                     {
-                        Ref.SetPath(Package->GetPackagePath().c_str());
+                        Ref.SetPath(*Package->GetPackagePath());
                     }
 
                     ECS::FEntity Root = ECS::NullEntity;
@@ -301,7 +352,7 @@ namespace Lumina::MCP
                             SessionOps::AdoptSpawnedSubtree(Root);
                         }
 
-                        if (Root != ECS::NullEntity && !In.Name.empty())
+                        if (Root != ECS::NullEntity && !In.Name.IsEmpty())
                         {
                             if (SNameComponent* Named = Registry.TryGet<SNameComponent>(Root))
                             {
@@ -318,20 +369,18 @@ namespace Lumina::MCP
                     Out.Entity = Agent::FEntityTokens::Mint(Registry, Root);
                     if (const SNameComponent* Named = Registry.TryGet<SNameComponent>(Root))
                     {
-                        Out.Name = FString(Named->Name.ToString().c_str());
+                        Out.Name = FString(*Named->Name.ToString());
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Spawned '{}' as {}.", Out.Name, Out.Entity));
                 });
         }
 
-        // How you add components to a prefab through MCP: the entity tools only reach the main world, so
-        // edit a placed instance there and write it back over the asset.
-        void RegisterCapture(FStringView Owner)
+        void RegisterPrefabCapture(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SCapturePrefabParams, SCapturePrefabResult>(
                 Owner, "prefab.capture",
-                "Overwrite a prefab asset with a placed instance's entities, save it, and refresh every other instance.",
+                "Overwrite a prefab with a placed instance's entities, save it and refresh other instances. This is how to edit a prefab: change an instance, then capture.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCapturePrefabParams& In, SCapturePrefabResult& Out)
                 {
@@ -435,72 +484,21 @@ namespace Lumina::MCP
                     Prefab->RefreshInstancesInLoadedWorlds();
                     Prefab->PropagateToVariants();
 
-                    Out.Path = FString(Path.c_str());
+                    Out.Path = FString(*Path);
                     return Agent::FToolResult::Ok(Lumina::Format("Captured {} into {}.", In.Entity, Out.Path));
                 });
         }
     }
 
-    void RegisterCreateVariant(FStringView Owner)
-    {
-        Agent::FToolRegistry::Get().Register<SCreateVariantParams, SCreateVariantResult>(
-            Owner, "prefab.create_variant",
-            "Create a variant of the prefab whose GUID is Asset, as the content browser's Create Variant does, saved beside it as Name or as the parent's name plus _Variant.",
-            Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-            [](const SCreateVariantParams& In, SCreateVariantResult& Out)
-            {
-                CPrefab* Parent = nullptr;
-                FString Error;
-                if (!Agent::ResolveAsset<CPrefab>(FStringView(In.Asset), Parent, Error))
-                {
-                    return Agent::FToolResult::Error(Error);
-                }
-
-                CPackage* ParentPackage = Parent->GetPackage();
-                if (ParentPackage == nullptr)
-                {
-                    return Agent::FToolResult::Error("That prefab has no package to sit beside.");
-                }
-
-                const FFixedString ParentPath = ParentPackage->GetPackagePath();
-                const FString Folder = Paths::Parent(FStringView(ParentPath.c_str(), ParentPath.size()));
-                const FString Name = In.Name.empty() ? FString(Parent->GetName().ToString().c_str()) + "_Variant" : In.Name;
-
-                FFixedString Path = Paths::Combine(FStringView(Folder), FStringView(Name));
-                CPackage::AddPackageExt(Path);
-                if (VFS::Exists(Path))
-                {
-                    return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
-                }
-
-                CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(Path.c_str(), Path.size()));
-                if (Variant == nullptr)
-                {
-                    return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", Path));
-                }
-
-                Variant->ParentPrefab = Parent;
-                Variant->ResolveVariant();
-
-                if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(Path.c_str(), Path.size())))
-                {
-                    return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
-                }
-                FAssetRegistry::Get().AssetCreated(Variant);
-
-                Out.Path = FString(Path.c_str());
-                Out.Guid = FString(Variant->GetGUID().ToString().c_str());
-                return Agent::FToolResult::Ok(Lumina::Format("Created variant {} of {}.", Out.Path, Parent->GetName().ToString()));
-            });
-    }
+    using namespace MCPPrefabToolsInternal;
 
     void RegisterPrefabTools(FStringView Owner)
     {
-        RegisterInstanceActions(Owner);
-        RegisterList(Owner);
-        RegisterDescribePrefab(Owner);
-        RegisterSpawn(Owner);
-        RegisterCapture(Owner);
-        RegisterCreateVariant(Owner);
+        RegisterPrefabList(Owner);
+        RegisterPrefabDescribe(Owner);
+        RegisterPrefabSpawn(Owner);
+        RegisterPrefabCapture(Owner);
+        RegisterPrefabCreate(Owner);
+        RegisterPrefabInstance(Owner);
     }
 }

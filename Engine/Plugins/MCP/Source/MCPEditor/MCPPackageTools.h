@@ -70,7 +70,7 @@ namespace Lumina
         PROPERTY()
         bool bExtractScriptsAsLooseFiles = false;
 
-        // Builds the headless dedicated server target as <ProjectName>Server.exe instead of the game.
+        // Builds the headless dedicated server target, <ProjectName>Server, instead of the game.
         PROPERTY()
         bool bServer = false;
     };
@@ -159,23 +159,28 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPackageLaunchParams
+    enum class EPackageRunAction : uint8
     {
-        GENERATED_BODY()
-
-        // Empty runs the executable the last package.build produced.
-        PROPERTY()
-        FString Executable;
-
-        // Command line for the game, such as -benchmark -frames=600 to run a timed pass and quit.
-        PROPERTY()
-        FString Arguments;
+        Launch,
+        Stop,
+        Status,
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPackageGameStatusParams
+    struct MCPEDITOR_API SPackageRunParams
     {
         GENERATED_BODY()
+
+        PROPERTY()
+        EPackageRunAction Action = EPackageRunAction::Status;
+
+        // Launch only. Empty runs the executable the last package.build produced.
+        PROPERTY()
+        FString Executable;
+
+        // Launch only. Game command line, such as -benchmark -frames=600 to run a timed pass and quit.
+        PROPERTY()
+        FString Arguments;
 
         // Most lines of the game's log to return, newest kept.
         PROPERTY()
@@ -187,7 +192,7 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SPackageGameStatusResult
+    struct MCPEDITOR_API SPackageRunResult
     {
         GENERATED_BODY()
 

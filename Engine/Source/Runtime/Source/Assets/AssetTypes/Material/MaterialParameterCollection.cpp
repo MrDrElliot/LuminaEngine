@@ -21,7 +21,7 @@ namespace Lumina
 
     int32 CMaterialParameterCollection::FindScalarIndex(const FName& Name) const
     {
-        for (uint32 i = 0; i < (uint32)ScalarParameters.size() && i < MAX_COLLECTION_SCALARS; ++i)
+        for (int32 i = 0; i < ScalarParameters.Num() && i < MAX_COLLECTION_SCALARS; ++i)
         {
             if (ScalarParameters[i].ParameterName == Name)
             {
@@ -33,7 +33,7 @@ namespace Lumina
 
     int32 CMaterialParameterCollection::FindVectorIndex(const FName& Name) const
     {
-        for (uint32 i = 0; i < (uint32)VectorParameters.size() && i < MAX_COLLECTION_VECTORS; ++i)
+        for (int32 i = 0; i < VectorParameters.Num() && i < MAX_COLLECTION_VECTORS; ++i)
         {
             if (VectorParameters[i].ParameterName == Name)
             {
@@ -47,20 +47,20 @@ namespace Lumina
     {
         Uniforms = FMaterialCollectionUniforms{};
 
-        if (ScalarParameters.size() > MAX_COLLECTION_SCALARS)
+        if (ScalarParameters.Num() > MAX_COLLECTION_SCALARS)
         {
-            WarnOverBudget(this, "scalar", (uint32)ScalarParameters.size(), MAX_COLLECTION_SCALARS);
+            WarnOverBudget(this, "scalar", (uint32)ScalarParameters.Num(), MAX_COLLECTION_SCALARS);
         }
-        if (VectorParameters.size() > MAX_COLLECTION_VECTORS)
+        if (VectorParameters.Num() > MAX_COLLECTION_VECTORS)
         {
-            WarnOverBudget(this, "vector", (uint32)VectorParameters.size(), MAX_COLLECTION_VECTORS);
+            WarnOverBudget(this, "vector", (uint32)VectorParameters.Num(), MAX_COLLECTION_VECTORS);
         }
 
-        for (uint32 i = 0; i < (uint32)ScalarParameters.size() && i < MAX_COLLECTION_SCALARS; ++i)
+        for (int32 i = 0; i < ScalarParameters.Num() && i < MAX_COLLECTION_SCALARS; ++i)
         {
             Uniforms.Scalars[i] = ScalarParameters[i].DefaultValue;
         }
-        for (uint32 i = 0; i < (uint32)VectorParameters.size() && i < MAX_COLLECTION_VECTORS; ++i)
+        for (int32 i = 0; i < VectorParameters.Num() && i < MAX_COLLECTION_VECTORS; ++i)
         {
             Uniforms.Vectors[i] = VectorParameters[i].DefaultValue;
         }

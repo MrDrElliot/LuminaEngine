@@ -1,9 +1,9 @@
 #include "CodeEditorThemes.h"
 
-#include <nlohmann/json.hpp>
 #include "CodeEditor.h"
 #include "Containers/Algorithm.h"
 #include "Containers/StringFormat.h"
+#include "Core/Json/Json.h"
 #include "FileSystem/FileInfo.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
@@ -59,16 +59,15 @@ namespace Lumina::CodeEditorThemes
             return CodeLanguageUtil::FormatHexColor(Color, ((Color >> IM_COL32_A_SHIFT) & 0xFF) != 0xFF);
         }
 
-        void ReadColor(const nlohmann::json& Section, const char* Key, FStringView Theme, ImU32& Out)
+        void ReadColor(const FJsonValue& Section, const char* Key, FStringView Theme, ImU32& Out)
         {
-            const auto It = Section.find(Key);
-            if (It == Section.end())
+            const FJsonValue* Value = Section.Find(Key);
+            if (Value == nullptr)
             {
                 return;
             }
             uint32 Color = 0;
-            const std::string Text = It->is_string() ? It->get<std::string>() : std::string();
-            if (CodeLanguageUtil::ParseHexColor(FStringView(Text.data(), Text.size()), Color))
+            if (CodeLanguageUtil::ParseHexColor(Value->AsString(), Color))
             {
                 Out = Color;
             }
@@ -86,10 +85,10 @@ namespace Lumina::CodeEditorThemes
         {
             if (!Info.IsDirectory() && Info.GetExt() == Extension)
             {
-                Names.push_back(Info.Name.substr(0, Info.Name.size() - FStringView(Extension).size()));
+                Names.Add(Info.Name.Mid(0, Info.Name.Len() - FStringView(Extension).Len()));
             }
         });
-        Algo::Sort(Names, [](const FString& A, const FString& B) { return strcmp(A.c_str(), B.c_str()) < 0; });
+        Algo::Sort(Names, [](const FString& A, const FString& B) { return strcmp(*A, *B) < 0; });
         return Names;
     }
 
@@ -101,26 +100,26 @@ namespace Lumina::CodeEditorThemes
     bool Load(FStringView Name, FCodeEditorPalette& Palette)
     {
         FString Text;
-        if (Name.empty() || !VFS::ReadFile(Text, PathOf(Name).View()))
+        if (Name.IsEmpty() || !VFS::ReadFile(Text, PathOf(Name).View()))
         {
             return false;
         }
 
-        const nlohmann::json Root = nlohmann::json::parse(Text.c_str(), Text.c_str() + Text.size(), nullptr, false, true);
-        if (!Root.is_object())
+        FJsonValue Root;
+        if (!FJsonValue::Parse(Text.View(), Root, nullptr, EJsonParseFlags::AllowComments) || !Root.IsObject())
         {
             LOG_WARN("Code theme '{}' is not a JSON object, so the built-in colors stay.", Name);
             return false;
         }
 
-        if (const auto Syntax = Root.find(SyntaxSection); Syntax != Root.end() && Syntax->is_object())
+        if (const FJsonValue* Syntax = Root.Find(SyntaxSection); Syntax != nullptr && Syntax->IsObject())
         {
             for (int32 Token = 0; Token < (int32)ECodeToken::Count; ++Token)
             {
                 ReadColor(*Syntax, TokenKeys[Token], Name, Palette.Tokens[Token]);
             }
         }
-        if (const auto Editor = Root.find(EditorSection); Editor != Root.end() && Editor->is_object())
+        if (const FJsonValue* Editor = Root.Find(EditorSection); Editor != nullptr && Editor->IsObject())
         {
             for (const FEditorKey& Key : EditorKeys)
             {
@@ -132,18 +131,19 @@ namespace Lumina::CodeEditorThemes
 
     bool Save(FStringView Name, const FCodeEditorPalette& Palette)
     {
-        nlohmann::ordered_json Root;
-        nlohmann::ordered_json& Syntax = Root[SyntaxSection];
+        FJsonValue Root = FJsonValue::MakeObject();
+        FJsonValue& Syntax = Root.FindOrAdd(SyntaxSection);
         for (int32 Token = 0; Token < (int32)ECodeToken::Count; ++Token)
         {
-            Syntax[TokenKeys[Token]] = ColorText(Palette.Tokens[Token]).c_str();
+            Syntax.Set(TokenKeys[Token], ColorText(Palette.Tokens[Token]));
         }
-        nlohmann::ordered_json& Editor = Root[EditorSection];
+        FJsonValue& Editor = Root.FindOrAdd(EditorSection);
         for (const FEditorKey& Key : EditorKeys)
         {
-            Editor[Key.Name] = ColorText(Palette.*Key.Field).c_str();
+            Editor.Set(Key.Name, ColorText(Palette.*Key.Field));
         }
-        const std::string Text = Root.dump(4) + "\n";
-        return VFS::WriteFile(PathOf(Name).View(), FStringView(Text.data(), Text.size()));
+        FString Text = Root.ToString(4);
+        Text += "\n";
+        return VFS::WriteFile(PathOf(Name).View(), Text.View());
     }
 }

@@ -31,19 +31,19 @@ namespace Lumina::FShaderCache
             Ar << StageRaw;
             R.ShaderType = (ERHIShaderType)StageRaw;
 
-            size_t Count = Ar.IsReading() ? 0 : R.Bindings.size();
+            size_t Count = Ar.IsReading() ? 0 : R.Bindings.Num();
             Ar << Count;
             if (Ar.IsReading())
             {
-                R.Bindings.clear();
+                R.Bindings.Reset();
                 if (!Ar.CanHoldCount(Count))
                 {
                     Ar.SetHasError(true);
                     return Ar;
                 }
-                R.Bindings.resize(Count);
+                R.Bindings.SetNum(IntCastChecked<int32>(Count));
             }
-            for (size_t i = 0; i < Count && !Ar.HasError(); ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Count); i < Limit && !Ar.HasError(); ++i)
             {
                 SerializeBinding(Ar, R.Bindings[i]);
             }
@@ -79,7 +79,7 @@ namespace Lumina::FShaderCache
             if (bIsImport)
             {
                 // import path uses dots; map to slashes + .slang.
-                Candidate.assign(Token.data(), Token.size());
+                Candidate = FStringView(Token.GetData(), Token.Len());
                 for (char& C : Candidate)
                 {
                     if (C == '.')
@@ -91,13 +91,13 @@ namespace Lumina::FShaderCache
             }
             else
             {
-                Candidate.assign(Token.data(), Token.size());
+                Candidate = FStringView(Token.GetData(), Token.Len());
             }
             
-            if (!IncludingDir.empty())
+            if (!IncludingDir.IsEmpty())
             {
-                FString Sibling(IncludingDir.data(), IncludingDir.size());
-                if (!Sibling.empty() && Sibling.back() != '/')
+                FString Sibling(IncludingDir.GetData(), IncludingDir.Len());
+                if (!Sibling.IsEmpty() && Sibling.Last() != '/')
                 {
                     Sibling += '/';
                 }
@@ -111,7 +111,7 @@ namespace Lumina::FShaderCache
             for (const FString& SearchRoot : SearchRoots)
             {
                 FString Root = SearchRoot;
-                if (!Root.empty() && Root.back() != '/')
+                if (!Root.IsEmpty() && Root.Last() != '/')
                 {
                     Root += '/';
                 }
@@ -126,12 +126,12 @@ namespace Lumina::FShaderCache
 
         FStringView ParentDir(FStringView Path)
         {
-            size_t Slash = Path.find_last_of('/');
-            if (Slash == FStringView::npos)
+            int32 Slash = Path.FindLastOf('/');
+            if (Slash == Constants::kIndexNone)
             {
                 return {};
             }
-            return Path.substr(0, Slash);
+            return Path.Mid(0, Slash);
         }
 
         bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash);
@@ -139,49 +139,49 @@ namespace Lumina::FShaderCache
         void GatherIncludeHashes(const FString& Source, FStringView Dir, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
         {
             // Walk lines; cheap enough for shader sizes and keeps us off a regex dep.
-            size_t Pos = 0;
-            while (Pos < Source.size())
+            int32 Pos = 0;
+            while (Pos < Source.Len())
             {
-                size_t LineEnd = Source.find('\n', Pos);
-                if (LineEnd == FString::npos) LineEnd = Source.size();
-                FStringView Line(Source.data() + Pos, LineEnd - Pos);
+                int32 LineEnd = Source.Find('\n', Pos);
+                if (LineEnd == Constants::kIndexNone) LineEnd = Source.Len();
+                FStringView Line(Source.GetData() + Pos, LineEnd - Pos);
                 Pos = LineEnd + 1;
 
                 // Skip leading whitespace.
-                size_t i = 0;
-                while (i < Line.size() && (Line[i] == ' ' || Line[i] == '\t')) ++i;
-                if (i >= Line.size()) continue;
+                int32 i = 0;
+                while (i < Line.Len() && (Line[i] == ' ' || Line[i] == '\t')) ++i;
+                if (i >= Line.Len()) continue;
 
-                FStringView Trim = Line.substr(i);
+                FStringView Trim = Line.Mid(i);
 
-                if (Trim.size() > 7 && Trim.substr(0, 7) == "import ")
+                if (Trim.Len() > 7 && Trim.Mid(0, 7) == "import ")
                 {
                     // The import statement form, a keyword followed by a dotted module name.
-                    size_t j = 7;
-                    while (j < Trim.size() && (Trim[j] == ' ' || Trim[j] == '\t')) ++j;
-                    size_t Start = j;
-                    while (j < Trim.size() && Trim[j] != ';' && Trim[j] != ' ' && Trim[j] != '\t' && Trim[j] != '\r') ++j;
+                    int32 j = 7;
+                    while (j < Trim.Len() && (Trim[j] == ' ' || Trim[j] == '\t')) ++j;
+                    int32 Start = j;
+                    while (j < Trim.Len() && Trim[j] != ';' && Trim[j] != ' ' && Trim[j] != '\t' && Trim[j] != '\r') ++j;
                     if (j > Start)
                     {
-                        FStringView Name = Trim.substr(Start, j - Start);
+                        FStringView Name = Trim.Mid(Start, j - Start);
                         FString Resolved = ResolveInclude(Name, true, Dir, SearchRoots);
-                        if (!Resolved.empty())
+                        if (!Resolved.IsEmpty())
                         {
                             GatherSourceHash(Resolved, SearchRoots, Visited, Hash);
                         }
                     }
                 }
-                else if (Trim.size() > 9 && Trim.substr(0, 8) == "#include")
+                else if (Trim.Len() > 9 && Trim.Mid(0, 8) == "#include")
                 {
-                    size_t Quote = Trim.find('"', 8);
-                    if (Quote != FString::npos)
+                    int32 Quote = Trim.Find('"', 8);
+                    if (Quote != Constants::kIndexNone)
                     {
-                        size_t Close = Trim.find('"', Quote + 1);
-                        if (Close != FString::npos)
+                        int32 Close = Trim.Find('"', Quote + 1);
+                        if (Close != Constants::kIndexNone)
                         {
-                            FStringView Name = Trim.substr(Quote + 1, Close - Quote - 1);
+                            FStringView Name = Trim.Mid(Quote + 1, Close - Quote - 1);
                             FString Resolved = ResolveInclude(Name, false, Dir, SearchRoots);
-                            if (!Resolved.empty())
+                            if (!Resolved.IsEmpty())
                             {
                                 GatherSourceHash(Resolved, SearchRoots, Visited, Hash);
                             }
@@ -195,12 +195,12 @@ namespace Lumina::FShaderCache
         // False when the file could not be read, and the caller turns that into do-not-cache.
         bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
         {
-            FString PathStr(VirtualPath.data(), VirtualPath.size());
-            if (Visited.find(PathStr) != Visited.end())
+            FString PathStr(VirtualPath.GetData(), VirtualPath.Len());
+            if (Visited.Contains(PathStr))
             {
                 return true;
             }
-            Visited.insert(PathStr);
+            Visited.Add(PathStr);
 
             FString Source;
             if (!VFS::ReadFile(Source, VirtualPath))
@@ -241,7 +241,7 @@ namespace Lumina::FShaderCache
     uint64 ComputeRawSourceHash(FStringView Source, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView TemplateVirtualPath, FStringView EntryPoint)
     {
         // Without the template a relative include cannot resolve, so an edited header would not invalidate.
-        if (TemplateVirtualPath.empty())
+        if (TemplateVirtualPath.IsEmpty())
         {
             return 0;
         }
@@ -250,7 +250,7 @@ namespace Lumina::FShaderCache
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 
-        const FString SourceText(Source.data(), Source.size());
+        const FString SourceText(Source.GetData(), Source.Len());
         Hash ^= Hash::GetHash64(SourceText) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
         Hash ^= Hash::GetHash64(EntryPoint) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 
@@ -304,14 +304,14 @@ namespace Lumina::FShaderCache
 
         SerializeHeader(Writer, const_cast<FShaderHeader&>(Header));
 
-        return VFS::AtomicWriteFile(CachePathForKey(KeyHash), TSpan<const uint8>(Bytes.data(), Bytes.size()));
+        return VFS::AtomicWriteFile(CachePathForKey(KeyHash), TSpan<const uint8>(Bytes.GetData(), Bytes.Num()));
     }
 
     FString CachePathFor(FStringView ShaderVirtualPath, const TVector<FString>& Defines, FStringView EntryPoint)
     {
-        FString Key(ShaderVirtualPath.data(), ShaderVirtualPath.size());
+        FString Key(ShaderVirtualPath.GetData(), ShaderVirtualPath.Len());
         Key += '|';
-        Key.append(EntryPoint.data(), EntryPoint.size());
+        Key.Append(EntryPoint.GetData(), EntryPoint.Len());
         Key += '|';
         Key += JoinSortedDefines(Defines);
         const uint64 KeyHash = Hash::GetHash64(Key);
@@ -350,7 +350,7 @@ namespace Lumina::FShaderCache
 
         Spirv::StripDebugInfo(Header.Binaries);
 
-        Out.clear();
+        Out.Reset();
         FMemoryWriter Writer(Out);
         Writer << Magic;
         Writer << Version;
@@ -367,7 +367,7 @@ namespace Lumina::FShaderCache
         {
             return false;
         }
-        if (Bytes.size() < sizeof(uint32) * 2 + sizeof(uint64))
+        if (static_cast<size_t>(Bytes.Num()) < sizeof(uint32) * 2 + sizeof(uint64))
         {
             return false;
         }
@@ -424,6 +424,6 @@ namespace Lumina::FShaderCache
         SerializeHeader(Writer, const_cast<FShaderHeader&>(Header));
 
         const FString CachePath = CachePathFor(ShaderVirtualPath, Defines, EntryPoint);
-        return VFS::AtomicWriteFile(CachePath, TSpan<const uint8>(Bytes.data(), Bytes.size()));
+        return VFS::AtomicWriteFile(CachePath, TSpan<const uint8>(Bytes.GetData(), Bytes.Num()));
     }
 }

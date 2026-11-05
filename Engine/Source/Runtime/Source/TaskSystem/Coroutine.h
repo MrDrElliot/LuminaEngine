@@ -1,6 +1,5 @@
 #pragma once
 
-#include "TaskTypes.h"
 #include "Containers/Function.h"
 #include "Containers/Vector.h"
 #include "Core/Assertions/Assert.h"
@@ -11,6 +10,7 @@
 #include "Core/Templates/Optional.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Sync.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 
 #include <coroutine>
 #include <type_traits>
@@ -265,7 +265,7 @@ namespace Lumina
             }
         };
 
-        RUNTIME_API void ScheduleOnTask(FResumeTarget Target, ETaskPriority Priority);
+        RUNTIME_API void ScheduleOnTask(FResumeTarget Target, Jobs::EJobPriority Priority);
         RUNTIME_API void ScheduleOnGameThread(FResumeTarget Target);
         RUNTIME_API bool IsOnGameThread();
 
@@ -543,7 +543,7 @@ namespace Lumina
 
             struct FMoveToTaskAwaiter
             {
-                ETaskPriority Priority;
+                Jobs::EJobPriority Priority;
 
                 bool await_ready() const noexcept { return false; }
 
@@ -663,7 +663,7 @@ namespace Lumina
             });
         }
 
-        inline auto MoveToTask(ETaskPriority Priority = ETaskPriority::Medium) { return Detail::FMoveToTaskAwaiter{ Priority }; }
+        inline auto MoveToTask(Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal) { return Detail::FMoveToTaskAwaiter{ Priority }; }
 
         inline auto MoveToGameThread() { return Detail::FMoveToGameThreadAwaiter{}; }
 
@@ -703,7 +703,7 @@ namespace Lumina
 
                 bool await_ready() const noexcept
                 {
-                    if (Children.empty())
+                    if (Children.IsEmpty())
                     {
                         return true;
                     }
@@ -721,20 +721,20 @@ namespace Lumina
                 {
                     Shared = new FShared();
                     Shared->Target = CoroDetail::FResumeTarget::For(Caller);
-                    Shared->Refs.store((int32)Children.size() + 1);
+                    Shared->Refs.store((int32)Children.Num() + 1);
 
                     // One count per child it waits on plus one held here, so no child wakes the caller mid-registration.
-                    const int32 Needed = Mode == EJoin::All ? (int32)Children.size() : 1;
+                    const int32 Needed = Mode == EJoin::All ? (int32)Children.Num() : 1;
                     Shared->Remaining.store(Needed + 1);
                     if (Shared->Target.State)
                     {
                         TVector<CoroDetail::FCoroutineState*> States;
-                        for (const TCoroutine<>& Child : Children) { States.push_back(Child.GetStateRef().Get()); }
+                        for (const TCoroutine<>& Child : Children) { States.Add(Child.GetStateRef().Get()); }
                         Shared->Target.State->AwaitChildren(std::move(States));
                     }
 
                     FShared* Local = Shared;
-                    for (int32 Index = 0; Index < (int32)Children.size(); ++Index)
+                    for (int32 Index = 0; Index < (int32)Children.Num(); ++Index)
                     {
                         Children[Index].ContinueWith([Local, Index]()
                         {
@@ -762,7 +762,7 @@ namespace Lumina
                 int32 await_resume()
                 {
                     int32 Winner = Shared != nullptr ? Shared->Winner.load() : -1;
-                    for (int32 Index = 0; Winner < 0 && Index < (int32)Children.size(); ++Index)
+                    for (int32 Index = 0; Winner < 0 && Index < Children.Num(); ++Index)
                     {
                         if (Children[Index].IsDone()) { Winner = Index; }
                     }
@@ -778,8 +778,8 @@ namespace Lumina
             TVector<TCoroutine<>> Collect(const TCoroutine<Ts>&... Coroutines)
             {
                 TVector<TCoroutine<>> Out;
-                Out.reserve(sizeof...(Ts));
-                (Out.push_back(TCoroutine<>(Coroutines)), ...);
+                Out.Reserve(sizeof...(Ts));
+                (Out.EmplaceGetRef(Coroutines), ...);
                 return Out;
             }
         }

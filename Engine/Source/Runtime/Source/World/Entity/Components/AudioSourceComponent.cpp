@@ -74,7 +74,7 @@ namespace Lumina
 		bPlaying = false;
 		bPaused  = false;
 		GraphInstance.reset();
-		TriggerOutputCursors.clear();
+		TriggerOutputCursors.Reset();
 	}
 
 	void SAudioSourceComponent::SetPaused(bool bInPaused)
@@ -191,16 +191,16 @@ namespace Lumina
 
 		for (TPair<FName, uint32>& Seen : TriggerOutputCursors)
 		{
-			if (Seen.first == Name)
+			if (Seen.Key == Name)
 			{
-				const uint32 Fired = Total - Seen.second;
-				Seen.second = Total;
+				const uint32 Fired = Total - Seen.Value;
+				Seen.Value = Total;
 				return (int32)Fired;
 			}
 		}
 
 		// First ask reports nothing, so a script that starts watching midway does not get a backlog.
-		TriggerOutputCursors.push_back(TPair<FName, uint32>(Name, Total));
+		TriggerOutputCursors.Emplace(Name, Total);
 		return 0;
 	}
 }

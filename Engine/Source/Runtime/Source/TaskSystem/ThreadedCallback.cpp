@@ -5,8 +5,11 @@
 
 namespace Lumina::MainThread
 {
-    static TConcurrentQueue<TMoveOnlyFunction<void()>> Callbacks;
-    static std::atomic<uint64> ProgressStamp{0};
+    namespace
+    {
+        TConcurrentQueue<TMoveOnlyFunction<void()>> Callbacks;
+        std::atomic<uint64> ProgressStamp{0};
+    }
 
     void ProcessQueue()
     {

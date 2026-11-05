@@ -46,7 +46,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     // A package keeps third-party DLLs in its data folder, and slang is delay-loaded so its first load comes after this.
     if (const FString PluginsDir = Paths::GetGameDataDirectory() + "/Plugins"; Filesystem::Exists(PluginsDir))
     {
-        Platform::PushDLLDirectory(UTF8_TO_TCHAR(PluginsDir.c_str()));
+        Platform::PushDLLDirectory(UTF8_TO_TCHAR(*PluginsDir));
     }
 
     Benchmark::ParseCommandLine(Parsed);
@@ -80,7 +80,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     // Named so a standalone run stops rotating the log the editor that launched it is still writing.
     if (TOptional<FFixedString> LogName = Parsed.Get("logfile"))
     {
-        Logging::SetLogFileName(LogName.value());
+        Logging::SetLogFileName(LogName.GetValue());
         CrashReporting::ClearAttachments();
         CrashReporting::AddAttachment(Logging::GetLogFilePath());
     }

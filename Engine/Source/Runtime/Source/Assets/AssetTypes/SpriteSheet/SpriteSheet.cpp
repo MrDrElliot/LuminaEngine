@@ -57,6 +57,6 @@ namespace Lumina
 
     const SSpriteAnimation* CSpriteSheet::GetDefaultAnimation() const
     {
-        return Animations.empty() ? nullptr : &Animations[0];
+        return Animations.IsEmpty() ? nullptr : &Animations[0];
     }
 }

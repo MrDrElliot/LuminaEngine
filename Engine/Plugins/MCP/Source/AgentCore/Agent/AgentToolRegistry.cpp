@@ -51,7 +51,7 @@ namespace Lumina::Agent
 
     bool FToolRegistry::RegisterInternal(FStringView Owner, FStringView Name, FStringView Description, FTool&& Tool)
     {
-        if (Name.empty())
+        if (Name.IsEmpty())
         {
             LOG_WARN("[AgentTools] Refused a tool with no name.");
             return false;
@@ -87,53 +87,43 @@ namespace Lumina::Agent
             }
         }
 
-        Tool.Owner       = FString(Owner.data(), Owner.size());
-        Tool.Name        = FString(Name.data(), Name.size());
-        Tool.Description = FString(Description.data(), Description.size());
+        Tool.Owner       = FString(Owner.GetData(), Owner.Len());
+        Tool.Name        = FString(Name.GetData(), Name.Len());
+        Tool.Description = FString(Description.GetData(), Description.Len());
 
         const FString Key = Tool.Name;
 
         FWriteScopeLock Lock(ToolsMutex);
 
         // A silent replacement would leave two owners believing they own the name.
-        if (Tools.find(Key) != Tools.end())
+        if (!Tools.TryAdd(Key, Move(Tool)))
         {
             LOG_WARN("[AgentTools] '{}' is already registered and was not replaced.", Name);
             return false;
         }
-
-        Tools[Key] = Move(Tool);
         return true;
     }
 
     bool FToolRegistry::Unregister(FStringView Name)
     {
-        const FString Key(Name.data(), Name.size());
+        const FString Key(Name.GetData(), Name.Len());
 
         FWriteScopeLock Lock(ToolsMutex);
-
-        const auto Found = Tools.find(Key);
-        if (Found == Tools.end())
-        {
-            return false;
-        }
-
-        Tools.erase(Found);
-        return true;
+        return Tools.Remove(Key) > 0;
     }
 
     int32 FToolRegistry::UnregisterOwner(FStringView Owner)
     {
-        const FString Match(Owner.data(), Owner.size());
+        const FString Match(Owner.GetData(), Owner.Len());
 
         FWriteScopeLock Lock(ToolsMutex);
 
         int32 Removed = 0;
         for (auto It = Tools.begin(); It != Tools.end(); )
         {
-            if (It->second.Owner == Match)
+            if (It->Value.Owner == Match)
             {
-                It = Tools.erase(It);
+                It = Tools.Remove(It);
                 ++Removed;
             }
             else
@@ -147,31 +137,31 @@ namespace Lumina::Agent
 
     bool FToolRegistry::Contains(FStringView Name) const
     {
-        const FString Key(Name.data(), Name.size());
+        const FString Key(Name.GetData(), Name.Len());
 
         FReadScopeLock Lock(ToolsMutex);
-        return Tools.find(Key) != Tools.end();
+        return Tools.Contains(Key);
     }
 
     int32 FToolRegistry::GetToolCount() const
     {
         FReadScopeLock Lock(ToolsMutex);
-        return static_cast<int32>(Tools.size());
+        return Tools.Num();
     }
 
     bool FToolRegistry::TryGetTool(FStringView Name, FTool& OutTool) const
     {
-        const FString Key(Name.data(), Name.size());
+        const FString Key(Name.GetData(), Name.Len());
 
         FReadScopeLock Lock(ToolsMutex);
 
-        const auto Found = Tools.find(Key);
-        if (Found == Tools.end())
+        const auto Found = Tools.Find(Key);
+        if (Found == nullptr)
         {
             return false;
         }
 
-        OutTool = Found->second;
+        OutTool = (*Found);
         return true;
     }
 
@@ -183,9 +173,9 @@ namespace Lumina::Agent
         }
 
         FReadScopeLock Lock(ToolsMutex);
-        for (const auto& Pair : Tools)
+        for (const auto& [Name, Tool] : Tools)
         {
-            Functor(Pair.second);
+            Functor(Tool);
         }
     }
 }

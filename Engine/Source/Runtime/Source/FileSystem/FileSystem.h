@@ -43,7 +43,7 @@ namespace Lumina::VFS
     RUNTIME_API FStringView Extension(FStringView Path);
     RUNTIME_API FStringView FileName(FStringView Path, bool bRemoveExtension = false);
     RUNTIME_API bool Remove(FStringView Path);
-    RUNTIME_API size_t Size(FStringView Path);
+    RUNTIME_API int64 Size(FStringView Path);
     RUNTIME_API bool RemoveAll(FStringView Path);
     RUNTIME_API FPathString ResolvePath(FStringView Path);
     RUNTIME_API bool DoesAliasExists(const FName& Alias);
@@ -54,11 +54,12 @@ namespace Lumina::VFS
     RUNTIME_API FStringView Parent(FStringView Path, bool bRemoveTrailingSlash = false);
 
     RUNTIME_API bool ReadFile(TVector<uint8>& Result, FStringView Path);
+    RUNTIME_API bool ReadFile(TVector64<uint8>& Result, FStringView Path);
     RUNTIME_API bool ReadFile(FString& OutString, FStringView Path);
 
     /** Read [Offset, Offset + Size) of Path; clamped at EOF, so Result can be shorter than Size.
      *  False only when no mount could supply the file at all. */
-    RUNTIME_API bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size);
+    RUNTIME_API bool ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size);
     RUNTIME_API bool WriteFile(FStringView Path, FStringView Data);
     RUNTIME_API bool WriteFile(FStringView Path, TSpan<const uint8> Data);
     RUNTIME_API bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data);
@@ -67,7 +68,7 @@ namespace Lumina::VFS
      *  middle streamed in chunks rather than buffered. False means the backend cannot do it or the copy
      *  failed, and nothing was written -- callers must have a path that does not depend on it. */
     RUNTIME_API bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                            FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                            FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                             TSpan<const uint8> Suffix);
 
     RUNTIME_API void PlatformOpen(FStringView Path);

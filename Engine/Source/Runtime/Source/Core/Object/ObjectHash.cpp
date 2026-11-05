@@ -6,16 +6,22 @@
 
 namespace Lumina
 {
+    FObjectHashTables& FObjectHashTables::Get()
+    {
+        static FObjectHashTables Instance;
+        return Instance;
+    }
+
     void FObjectIndexTable::Insert(CObjectBase* Object, uint64 Hash)
     {
         // Three quarters full at most, which keeps the linear probe runs short.
-        if ((uint64)(Count + 1) * 4 > (uint64)Slots.size() * 3)
+        if ((uint64)(Count + 1) * 4 > (uint64)Slots.Num() * 3)
         {
             Grow();
         }
 
-        const uint64 Mask = Slots.size() - 1;
-        uint64 Index = Hash & Mask;
+        const int32 Mask = Slots.Num() - 1;
+        int32 Index = static_cast<int32>(Hash & Mask);
         while (Slots[Index].Object != nullptr)
         {
             Index = (Index + 1) & Mask;
@@ -27,13 +33,13 @@ namespace Lumina
 
     bool FObjectIndexTable::Remove(const CObjectBase* Object, uint64 Hash)
     {
-        if (Slots.empty())
+        if (Slots.IsEmpty())
         {
             return false;
         }
 
-        const uint64 Mask = Slots.size() - 1;
-        uint64 Hole = Hash & Mask;
+        const int32 Mask = Slots.Num() - 1;
+        int32 Hole = static_cast<int32>(Hash & Mask);
         while (Slots[Hole].Object != Object)
         {
             if (Slots[Hole].Object == nullptr)
@@ -44,9 +50,9 @@ namespace Lumina
         }
 
         // Shifting the run back instead of leaving a tombstone keeps every probe ending at the first empty slot.
-        for (uint64 Next = (Hole + 1) & Mask; Slots[Next].Object != nullptr; Next = (Next + 1) & Mask)
+        for (int32 Next = (Hole + 1) & Mask; Slots[Next].Object != nullptr; Next = (Next + 1) & Mask)
         {
-            const uint64 Home = Slots[Next].Hash & Mask;
+            const int32 Home = static_cast<int32>(Slots[Next].Hash & Mask);
             if (((Next - Home) & Mask) >= ((Next - Hole) & Mask))
             {
                 Slots[Hole] = Slots[Next];
@@ -62,10 +68,10 @@ namespace Lumina
     void FObjectIndexTable::Grow()
     {
         TVector<FSlot> Old = Move(Slots);
-        Slots.clear();
-        Slots.resize(Old.empty() ? 16 : Old.size() * 2);
+        Slots.Reset();
+        Slots.SetNum(Old.IsEmpty() ? 16 : Old.Num() * 2);
 
-        const uint64 Mask = Slots.size() - 1;
+        const int32 Mask = Slots.Num() - 1;
         for (const FSlot& Slot : Old)
         {
             if (Slot.Object == nullptr)
@@ -73,7 +79,7 @@ namespace Lumina
                 continue;
             }
 
-            uint64 Index = Slot.Hash & Mask;
+            int32 Index = static_cast<int32>(Slot.Hash & Mask);
             while (Slots[Index].Object != nullptr)
             {
                 Index = (Index + 1) & Mask;

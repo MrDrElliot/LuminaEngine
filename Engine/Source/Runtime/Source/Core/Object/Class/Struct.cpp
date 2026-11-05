@@ -13,6 +13,21 @@
 
 IMPLEMENT_INTRINSIC_CLASS(CStruct, CField, RUNTIME_API)
 
+namespace Lumina::StructInternal
+{
+    bool IsHeaderSizeValid(FArchive& Ar, const FPropertyHeader& Header, int64 DataStartPos)
+    {
+        const int64 Total = Ar.TotalSize();
+        if (Header.Size >= 0 && (Total <= 0 || Header.Size <= Total - DataStartPos))
+        {
+            return true;
+        }
+        LOG_ERROR("Archiver corrupted: property '{}' claims {} bytes with {} left", Header.Name, Header.Size, Total - DataStartPos);
+        Ar.SetHasError(true);
+        return false;
+    }
+}
+
 namespace Lumina
 {
     bool CStruct::RequiresValueLifecycle() const
@@ -51,6 +66,18 @@ namespace Lumina
         CopyProperties(Dest, Src);
     }
 
+    void CStruct::RelocateStruct(void* Dest, void* Source) const
+    {
+        if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasRelocate())
+        {
+            Ops->Relocate(Dest, Source);
+            return;
+        }
+        InitializeStruct(Dest);
+        CopyStruct(Dest, Source);
+        DestroyStruct(Source);
+    }
+
     bool CStruct::CompareStruct(const void* A, const void* B) const
     {
         if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasEquality())
@@ -77,16 +104,16 @@ namespace Lumina
     void CStruct::RebuildBaseChain()
     {
         // Relies on a type always being registered after the type it derives from.
-        const SIZE_T SuperDepth = SuperStruct != nullptr ? SuperStruct->BaseChain.size() : 0;
+        const SIZE_T SuperDepth = SuperStruct != nullptr ? SuperStruct->BaseChain.Num() : 0;
 
-        BaseChain.clear();
-        BaseChain.reserve(SuperDepth + 1);
+        BaseChain.Reset();
+        BaseChain.Reserve(IntCastChecked<int32>(SuperDepth + 1));
 
         if (SuperStruct != nullptr)
         {
-            BaseChain.insert(BaseChain.end(), SuperStruct->BaseChain.begin(), SuperStruct->BaseChain.end());
+            BaseChain.Append(SuperStruct->BaseChain);
         }
-        BaseChain.push_back(this);
+        BaseChain.Add(this);
     }
 
     void CStruct::RegisterDependencies()
@@ -132,39 +159,37 @@ namespace Lumina
         AllProperties = OwnProperties;
         if (SuperStruct != nullptr)
         {
-            AllProperties.insert(AllProperties.end(),
-                SuperStruct->AllProperties.begin(), SuperStruct->AllProperties.end());
+            AllProperties.Append(SuperStruct->AllProperties);
         }
 
         // Derived first, so FindFunction reaches an override before the declaration it replaces.
         AllFunctions = OwnFunctions;
         if (SuperStruct != nullptr)
         {
-            AllFunctions.insert(AllFunctions.end(),
-                SuperStruct->AllFunctions.begin(), SuperStruct->AllFunctions.end());
+            AllFunctions.Append(SuperStruct->AllFunctions);
         }
 
-        TrivialCopyRuns.clear();
-        NonTrivialProperties.clear();
+        TrivialCopyRuns.Reset();
+        NonTrivialProperties.Reset();
 
         TVector<FProperty*> Trivial;
         for (FProperty* Property : AllProperties)
         {
             // An enum's own size is only known once its inner arrives, so one without it copies through its call.
             const bool bRawCopy = Property->IsTrivial() && Property->GetElementSize() != 0;
-            (bRawCopy ? Trivial : NonTrivialProperties).push_back(Property);
+            (bRawCopy ? Trivial : NonTrivialProperties).Add(Property);
         }
 
         Algo::Sort(Trivial, [](const FProperty* A, const FProperty* B) { return A->Offset < B->Offset; });
         for (const FProperty* Property : Trivial)
         {
-            if (!TrivialCopyRuns.empty() && TrivialCopyRuns.back().Offset + TrivialCopyRuns.back().Size == Property->Offset)
+            if (!TrivialCopyRuns.IsEmpty() && TrivialCopyRuns.Last().Offset + TrivialCopyRuns.Last().Size == Property->Offset)
             {
-                TrivialCopyRuns.back().Size += (uint32)Property->GetElementSize();
+                TrivialCopyRuns.Last().Size += (uint32)Property->GetElementSize();
             }
             else
             {
-                TrivialCopyRuns.push_back({ Property->Offset, (uint32)Property->GetElementSize() });
+                TrivialCopyRuns.Emplace(Property->Offset, (uint32)Property->GetElementSize());
             }
         }
     }
@@ -183,19 +208,19 @@ namespace Lumina
 
     void CStruct::Unlink()
     {
-        OwnProperties.clear();
-        AllProperties.clear();
-        OwnFunctions.clear();
-        AllFunctions.clear();
-        TrivialCopyRuns.clear();
-        NonTrivialProperties.clear();
+        OwnProperties.Reset();
+        AllProperties.Reset();
+        OwnFunctions.Reset();
+        AllFunctions.Reset();
+        TrivialCopyRuns.Reset();
+        NonTrivialProperties.Reset();
         bLinked = false;
     }
 
     FFixedString CStruct::MakeDisplayName() const
     {
-        FFixedString DisplayName = GetName().c_str();
-        DisplayName.erase(0, 1);
+        FFixedString DisplayName = *GetName();
+        DisplayName.RemoveAt(0, 1);
         return DisplayName;
     }
     
@@ -214,7 +239,7 @@ namespace Lumina
 
     void CStruct::AddProperty(FProperty* Property)
     {
-        OwnProperties.push_back(Property);
+        OwnProperties.Add(Property);
 
         // Link caches the flattened list, so a member arriving after it would otherwise never be seen.
         if (bLinked)
@@ -225,7 +250,7 @@ namespace Lumina
 
     void CStruct::AddFunction(FFunction* Function)
     {
-        OwnFunctions.push_back(Function);
+        OwnFunctions.Add(Function);
 
         if (bLinked)
         {
@@ -332,9 +357,9 @@ namespace Lumina
                 void* ValuePtr = Current->GetValuePtr<void>(Data);
 
                 const FCStringView Bundles = Current->GetMetadata("Bundle");
-                const FStringView OuterBundles = Bundles.empty() ? FStringView() : Ar.SetSoftReferenceBundles(FStringView(Bundles.data(), Bundles.size()));
+                const FStringView OuterBundles = Bundles.IsEmpty() ? FStringView() : Ar.SetSoftReferenceBundles(FStringView(Bundles.GetData(), Bundles.Len()));
                 Current->Serialize(Ar, ValuePtr);
-                if (!Bundles.empty())
+                if (!Bundles.IsEmpty())
                 {
                     Ar.SetSoftReferenceBundles(OuterBundles);
                 }
@@ -361,25 +386,29 @@ namespace Lumina
             uint32 NumProperties = 0;
             Ar << NumProperties;
 
-            if (NumProperties > Ar.GetMaxSerializeSize())
+            if (NumProperties > Ar.GetMaxSerializeSize() || !Ar.CanHoldCount(NumProperties))
             {
                 LOG_ERROR("Archiver corrupted: struct claims {} serialized properties (max {})", NumProperties, Ar.GetMaxSerializeSize());
                 Ar.SetHasError(true);
                 return;
             }
 
-            size_t NextInOrder = 0;
-            for (uint32 i = 0; i < NumProperties; ++i)
+            int32 NextInOrder = 0;
+            for (uint32 i = 0; i < NumProperties && !Ar.HasError(); ++i)
             {
                 FPropertyHeader Header;
                 Ar << Header;
         
                 int64 DataStartPos = Ar.Tell();
+                if (!StructInternal::IsHeaderSizeValid(Ar, Header, DataStartPos))
+                {
+                    return;
+                }
         
                 FProperty* FoundProperty = nullptr;
 
                 // O(1) fast path assuming order is unchanged.
-                if (NextInOrder < AllProperties.size() && AllProperties[NextInOrder]->GetPropertyName() == Header.Name)
+                if (NextInOrder < AllProperties.Num() && AllProperties[NextInOrder]->GetPropertyName() == Header.Name)
                 {
                     FoundProperty = AllProperties[NextInOrder];
                     ++NextInOrder;
@@ -408,15 +437,15 @@ namespace Lumina
                             continue;
                         }
                         const FCStringView Aliases = Search->GetMetadata("Aliases");
-                        for (size_t Start = 0; Start <= Aliases.size(); )
+                        for (int32 Start = 0; Start <= Aliases.Len(); )
                         {
-                            size_t End = Aliases.find(';', Start);
-                            if (End == FString::npos)
+                            int32 End = Aliases.Find(';', Start);
+                            if (End == Constants::kIndexNone)
                             {
-                                End = Aliases.size();
+                                End = Aliases.Len();
                             }
                             // FName's two-arg ctor takes a NUMBER, not a length, so that spelling never matched an alias.
-                            if (End > Start && FName(FStringView(Aliases.data() + Start, End - Start)) == Header.Name)
+                            if (End > Start && FName(FStringView(Aliases.GetData() + Start, End - Start)) == Header.Name)
                             {
                                 FoundProperty = Search;
                                 break;
@@ -481,6 +510,30 @@ namespace Lumina
         
                 Ar.Seek(DataStartPos + Header.Size);
             }
+        }
+    }
+
+    void CStruct::SkipSerializedProperties(FArchive& Ar)
+    {
+        uint32 NumProperties = 0;
+        Ar << NumProperties;
+        if (NumProperties > Ar.GetMaxSerializeSize() || !Ar.CanHoldCount(NumProperties))
+        {
+            LOG_ERROR("Archiver corrupted: skipped struct claims {} serialized properties", NumProperties);
+            Ar.SetHasError(true);
+            return;
+        }
+
+        for (uint32 Index = 0; Index < NumProperties && !Ar.HasError(); ++Index)
+        {
+            FPropertyHeader Header;
+            Ar << Header;
+            const int64 DataStartPos = Ar.Tell();
+            if (!StructInternal::IsHeaderSizeValid(Ar, Header, DataStartPos))
+            {
+                return;
+            }
+            Ar.Seek(DataStartPos + Header.Size);
         }
     }
 
@@ -555,12 +608,12 @@ namespace Lumina
 
     void CStruct::GetNetReplicatedProperties(TVector<FProperty*>& Out) const
     {
-        Out.clear();
+        Out.Reset();
         for (FProperty* Current : AllProperties)
         {
             if (IsNetReplicatedField(Current))
             {
-                Out.push_back(Current);
+                Out.Add(Current);
             }
         }
     }
@@ -568,9 +621,9 @@ namespace Lumina
     void CStruct::NetSerializeReplicatedFlat(const FNetArchive& HookSource, void* Data,
                                              TVector<uint8>& OutBytes, TVector<uint32>& OutOffsets) const
     {
-        OutBytes.clear();
-        OutOffsets.clear();
-        OutOffsets.push_back(0u);
+        OutBytes.Reset();
+        OutOffsets.Reset();
+        OutOffsets.Add(0u);
 
         FNetArchive Tmp(OutBytes);
 
@@ -595,7 +648,7 @@ namespace Lumina
 
             // Each field ends whole-byte, which is exactly what NetReadReplicatedMasked skips to.
             Tmp.AlignToByte();
-            OutOffsets.push_back(static_cast<uint32>(Tmp.Tell()));
+            OutOffsets.Add(static_cast<uint32>(Tmp.Tell()));
         }
     }
 
@@ -611,8 +664,8 @@ namespace Lumina
         static thread_local TVector<uint8> Changed;
         static thread_local TVector<uint8> Current;
         static thread_local TVector<uint8> Default;
-        Mask.clear();
-        Changed.clear();
+        Mask.Reset();
+        Changed.Reset();
 
         uint32 Index = 0;
         for (FProperty* Property : AllProperties)
@@ -624,7 +677,7 @@ namespace Lumina
 
             auto Flatten = [&Ar, Property](void* Source, TVector<uint8>& Out)
             {
-                Out.clear();
+                Out.Reset();
                 FNetArchive Tmp(Out);
                 Tmp.EntityToNetGUID    = Ar.EntityToNetGUID;
                 Tmp.NetGUIDToEntity    = Ar.NetGUIDToEntity;
@@ -640,26 +693,26 @@ namespace Lumina
             Flatten(Data, Current);
             Flatten(Defaults, Default);
 
-            if ((Index >> 3) >= Mask.size())
+            if ((Index >> 3) >= static_cast<uint32>(Mask.Num()))
             {
-                Mask.push_back(0);
+                Mask.Add(0);
             }
-            if (Current.size() != Default.size() || Memory::Memcmp(Current.data(), Default.data(), Current.size()) != 0)
+            if (Current.Num() != Default.Num() || Memory::Memcmp(Current.GetData(), Default.GetData(), Current.Num()) != 0)
             {
                 Mask[Index >> 3] |= static_cast<uint8>(1u << (Index & 7));
-                Changed.insert(Changed.end(), Current.begin(), Current.end());
+                Changed.Append(Current);
             }
             ++Index;
         }
 
         Ar.AlignToByte();
-        if (!Mask.empty())
+        if (!Mask.IsEmpty())
         {
-            Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+            Ar.Serialize(Mask.GetData(), static_cast<int64>(Mask.Num()));
         }
-        if (!Changed.empty())
+        if (!Changed.IsEmpty())
         {
-            Ar.Serialize(Changed.data(), static_cast<int64>(Changed.size()));
+            Ar.Serialize(Changed.GetData(), static_cast<int64>(Changed.Num()));
         }
     }
 
@@ -678,11 +731,11 @@ namespace Lumina
         }
 
         static thread_local TVector<uint8> Mask;
-        Mask.assign((Fields + 7) / 8, 0);
+        Mask.Init(0, (Fields + 7) / 8);
         Ar.AlignToByte();
-        if (!Mask.empty())
+        if (!Mask.IsEmpty())
         {
-            Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+            Ar.Serialize(Mask.GetData(), static_cast<int64>(Mask.Num()));
         }
 
         uint32 Index = 0;

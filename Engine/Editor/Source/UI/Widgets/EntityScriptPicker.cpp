@@ -16,7 +16,7 @@ namespace Lumina::EntityScriptPicker
     {
         FString NormalizeSourceKey(FStringView Text)
         {
-            FString Lower(Text.data(), Text.size());
+            FString Lower(Text.GetData(), Text.Len());
             for (char& Character : Lower)
             {
                 Character = Character == '\\' ? '/' : (char)std::tolower((unsigned char)Character);
@@ -38,8 +38,8 @@ namespace Lumina::EntityScriptPicker
         DotNet::GatherScriptSourceFolders(Sources);
         for (const DotNet::FScriptSourceFolder& Source : Sources)
         {
-            ByStem.emplace(NormalizeSourceKey(Source.Stem), &Source);
-            ByPath.emplace(NormalizeSourceKey(Source.Path), &Source);
+            ByStem.TryAdd(NormalizeSourceKey(Source.Stem), &Source);
+            ByPath.TryAdd(NormalizeSourceKey(Source.Path), &Source);
         }
     }
 
@@ -47,19 +47,19 @@ namespace Lumina::EntityScriptPicker
     {
         if (Type->HasMeta("SourceFile"))
         {
-            auto Found = ByPath.find(NormalizeSourceKey(Type->GetMeta("SourceFile")));
-            if (Found != ByPath.end())
+            auto Found = ByPath.Find(NormalizeSourceKey(Type->GetMeta("SourceFile")));
+            if (Found != nullptr)
             {
-                return Found->second;
+                return (*Found);
             }
         }
-        auto Found = ByStem.find(NormalizeSourceKey(ShortName));
-        return Found != ByStem.end() ? Found->second : nullptr;
+        auto Found = ByStem.Find(NormalizeSourceKey(ShortName));
+        return Found != nullptr ? (*Found) : nullptr;
     }
 
     void GatherItems(TVector<FPickerItem>& Out)
     {
-        Out.clear();
+        Out.Reset();
         const FScriptSourceIndex SourceIndex;
 
         for (TObjectIterator<CClass> It; It; ++It)
@@ -74,8 +74,8 @@ namespace Lumina::EntityScriptPicker
             const FStringView Short = ShortTypeName(FullName);
             const bool bManaged = ToScriptClass(Class) != nullptr;
 
-            FPickerItem& Item = Out.emplace_back();
-            Item.Name = Class->HasMeta("DisplayName") ? Class->GetMeta("DisplayName") : FString(Short.data(), Short.size());
+            FPickerItem& Item = Out.EmplaceGetRef();
+            Item.Name = Class->HasMeta("DisplayName") ? Class->GetMeta("DisplayName") : FString(Short.GetData(), Short.Len());
             Item.Key  = FullName;
             Item.Icon = bManaged ? LE_ICON_LANGUAGE_CSHARP : LE_ICON_LANGUAGE_CPP;
 
@@ -107,7 +107,7 @@ namespace Lumina::EntityScriptPicker
     CClass* FindScriptClassForSource(FStringView VirtualPath)
     {
         const FPathString Resolved = VFS::ResolvePath(VirtualPath);
-        const FString DiskKey = NormalizeSourceKey(FStringView(Resolved.c_str(), Resolved.size()));
+        const FString DiskKey = NormalizeSourceKey(FStringView(*Resolved, Resolved.Len()));
         const FString StemKey = NormalizeSourceKey(VFS::FileName(VirtualPath, true));
         const FScriptSourceIndex SourceIndex;
 

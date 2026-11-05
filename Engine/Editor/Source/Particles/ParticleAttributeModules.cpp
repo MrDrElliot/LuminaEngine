@@ -53,13 +53,13 @@ namespace Lumina
         FString Field = TargetField(Target);
         if (Target == EParticleValueTarget::Attribute)
         {
-            const FString Name(AttributeName.ToString().c_str());
+            const FString Name(*AttributeName.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Set Particle Value", "Attribute Name '" + Name + "' is not a valid identifier." });
                 return;
             }
-            Field = Compiler.Attribute(Name.c_str());
+            Field = Compiler.Attribute(*Name);
         }
 
         const bool bSpawn = Context == EParticleContext::Spawn;
@@ -73,7 +73,7 @@ namespace Lumina
             // Spawn draws from the particle's seed, and update code has none, so it hashes the particle's own seed instead.
             const auto Random = [&](uint32 Salt) -> FString
             {
-                return bSpawn ? FString("RandUnit(Seed)") : FString(Format("StableRandom(P.Seed, {}u)", (uint32)ModuleIndex * 4u + Salt));
+                return bSpawn ? FString("RandUnit(Seed)") : Format("StableRandom(P.Seed, {}u)", (uint32)ModuleIndex * 4u + Salt);
             };
             FString T = Random(0);
             if (Width == 3)
@@ -91,7 +91,7 @@ namespace Lumina
         {
             Expr = "EmitterToWorld(" + Expr + ")";
         }
-        if (!Scale.empty())
+        if (!Scale.IsEmpty())
         {
             Expr = "(" + Expr + ") * " + Scale;
         }

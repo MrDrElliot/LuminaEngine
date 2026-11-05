@@ -157,7 +157,7 @@ namespace Lumina
         SParticleSystemComponent Component;
         Component.SetMaterialForEmitter(Override, 3);
 
-        EXPECT_EQ(Component.MaterialOverrides.size(), 4u);
+        EXPECT_EQ(Component.MaterialOverrides.Num(), 4);
         EXPECT_EQ(Component.GetMaterialForEmitter(3), Override);
         EXPECT_EQ(Component.GetMaterialForEmitter(0), nullptr);
     }
@@ -181,7 +181,7 @@ namespace Lumina
         Component.ParticleSystem = MakeSystemWithMaterial(nullptr);
 
         EXPECT_EQ(Component.CreateDynamicMaterialInstance(0), nullptr);
-        EXPECT_TRUE(Component.MaterialOverrides.empty());
+        EXPECT_TRUE(Component.MaterialOverrides.IsEmpty());
     }
 
     TEST(ParticleComponentMaterial, ADynamicInstanceIsInstalledOverTheEmitterAndLeavesTheAssetAlone)

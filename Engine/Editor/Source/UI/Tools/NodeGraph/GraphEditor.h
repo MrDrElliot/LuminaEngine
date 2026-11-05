@@ -174,19 +174,19 @@ namespace Lumina
         void  ClearSelection();
         void  SelectNode(int64 NodeID, bool bAppend);
         void  DeselectNode(int64 NodeID);
-        bool  IsNodeSelected(int64 NodeID) const { return SelectedNodes.find(NodeID) != SelectedNodes.end(); }
-        int32 GetSelectedNodeCount() const { return (int32)SelectedNodes.size(); }
+        bool  IsNodeSelected(int64 NodeID) const { return SelectedNodes.Contains(NodeID); }
+        int32 GetSelectedNodeCount() const { return SelectedNodes.Num(); }
         TVector<int64> GetSelectedNodes() const;
 
         void SelectLink(uint64 LinkID, bool bAppend);
-        bool IsLinkSelected(uint64 LinkID) const { return SelectedLinks.find(LinkID) != SelectedLinks.end(); }
+        bool IsLinkSelected(uint64 LinkID) const { return SelectedLinks.Contains(LinkID); }
         TVector<uint64> GetSelectedLinks() const;
 
         void SelectZipTie(uint64 TieID, bool bAppend);
-        bool IsZipTieSelected(uint64 TieID) const { return SelectedTies.find(TieID) != SelectedTies.end(); }
+        bool IsZipTieSelected(uint64 TieID) const { return SelectedTies.Contains(TieID); }
         TVector<uint64> GetSelectedZipTies() const;
 
-        bool HasSelection() const { return !SelectedNodes.empty() || !SelectedLinks.empty() || !SelectedTies.empty(); }
+        bool HasSelection() const { return !SelectedNodes.IsEmpty() || !SelectedLinks.IsEmpty() || !SelectedTies.IsEmpty(); }
 
         int64  GetHoveredNode() const { return HoveredNode; }
         uint32 GetHoveredPin() const { return HoveredPin; }
@@ -224,7 +224,7 @@ namespace Lumina
         EGraphStroke GetFinishedStroke(TVector<FGraphStrokeHit>& OutHits) const;
 
         // A node cannot open a tooltip window from inside the canvas, so it hands the text here to show after End.
-        void SetTooltip(FStringView Text) { Tooltip.assign(Text.data(), Text.size()); }
+        void SetTooltip(FStringView Text) { Tooltip = FStringView(Text.GetData(), Text.Len()); }
         const FString& GetTooltip() const { return Tooltip; }
 
     private:

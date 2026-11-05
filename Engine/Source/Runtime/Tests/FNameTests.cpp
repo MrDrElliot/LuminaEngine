@@ -135,8 +135,7 @@ TEST(FNameTests, LengthConsistency)
 {
     FName a("Transform");
 
-    EXPECT_EQ(a.Length(), strlen(a.c_str()));
-    EXPECT_EQ(a.length(), a.Length());
+    EXPECT_EQ(a.Len(), static_cast<int32>(strlen(*a)));
 }
 
 TEST(FNameTests, HashStability)
@@ -236,8 +235,8 @@ TEST(FNameTests, NumberedCStrIncludesSuffix)
 {
     FName a("Light", 7);
 
-    EXPECT_STREQ(a.c_str(), "Light_7");
-    EXPECT_EQ(a.Length(), strlen("Light_7"));
+    EXPECT_STREQ(*a, "Light_7");
+    EXPECT_EQ(a.Len(), static_cast<int32>(strlen("Light_7")));
 }
 
 TEST(FNameTests, NumberedRoundTrip)
@@ -293,5 +292,5 @@ TEST(FNameTests, LongCaseFoldedNamesShareAnIndex)
     const std::string Lower(300, 'a');
     const std::string Upper(300, 'A');
 
-    EXPECT_EQ(FName(FStringView(Lower.data(), Lower.size())), FName(FStringView(Upper.data(), Upper.size())));
+    EXPECT_EQ(FName(FStringView(Lower.data(), Lumina::IntCastChecked<Lumina::int32>(Lower.size()))), FName(FStringView(Upper.data(), Lumina::IntCastChecked<Lumina::int32>(Upper.size()))));
 }

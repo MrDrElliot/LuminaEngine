@@ -19,10 +19,22 @@ namespace Lumina::VFS
         virtual bool ReadFile(TVector<uint8>& Result, FStringView Path) = 0;
         virtual bool ReadFile(FString& OutString, FStringView Path) = 0;
 
+        // Only the native backend reads past one int32-counted buffer; the rest go through it and hand the block over.
+        virtual bool ReadFile(TVector64<uint8>& Result, FStringView Path)
+        {
+            TVector<uint8> Bytes;
+            if (!ReadFile(Bytes, Path))
+            {
+                return false;
+            }
+            Result = Move(Bytes);
+            return true;
+        }
+
         /** Read [Offset, Offset + Size) of Path. A read that runs past EOF is clamped, so Result may come
          *  back shorter than Size; only a missing/unreadable file returns false. The default pulls the whole
          *  file and slices it -- correct, but it defeats the point, so backends that can seek override it. */
-        virtual bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size);
+        virtual bool ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size);
 
         virtual bool WriteFile(FStringView Path, FStringView Data) = 0;
         virtual bool WriteFile(FStringView Path, TSpan<const uint8> Data) = 0;
@@ -38,13 +50,13 @@ namespace Lumina::VFS
          *  Returns false when the backend cannot do it OR the copy failed, so every caller needs a path
          *  that does not depend on it. Nothing is written unless the whole thing succeeds. */
         virtual bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                            FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                            FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                             TSpan<const uint8> Suffix) { return false; }
 
         virtual bool Exists(FStringView Path) const = 0;
         virtual bool IsDirectory(FStringView Path) const = 0;
         virtual bool IsEmpty(FStringView Path) const = 0;
-        virtual size_t Size(FStringView Path) const = 0;
+        virtual int64 Size(FStringView Path) const = 0;
 
         virtual bool CreateDir(FStringView Path) = 0;
         virtual bool Remove(FStringView Path) = 0;

@@ -5,10 +5,10 @@ namespace Lumina
 {
     FNavBuildPool::FNavBuildPool(uint32 NumThreads)
     {
-        Threads.reserve(NumThreads);
+        Threads.Reserve(NumThreads);
         for (uint32 i = 0; i < NumThreads; ++i)
         {
-            Threads.emplace_back(FThreadOptions{ "NavBuild", Threading::ThreadGroup_Other, EThreadPriority::Background }, [this] { ThreadLoop(); });
+            Threads.Emplace(FThreadOptions{ "NavBuild", Threading::ThreadGroup_Other, EThreadPriority::Background }, [this] { ThreadLoop(); });
         }
     }
 
@@ -29,7 +29,7 @@ namespace Lumina
     {
         {
             FScopeLock Lock(QueueLock);
-            Queue.push_back(std::move(Job));
+            Queue.PushLast(std::move(Job));
         }
         QueueWake.NotifyOne();
     }
@@ -39,12 +39,12 @@ namespace Lumina
         TMoveOnlyFunction<void()> Job;
         {
             FScopeLock Lock(QueueLock);
-            if (Queue.empty())
+            if (Queue.IsEmpty())
             {
                 return false;
             }
-            Job = std::move(Queue.front());
-            Queue.pop_front();
+            Job = std::move(Queue[0]);
+            Queue.PopFirst();
         }
         Job();
         return true;
@@ -57,13 +57,13 @@ namespace Lumina
             TMoveOnlyFunction<void()> Job;
             {
                 FUniqueLock Lock(QueueLock);
-                QueueWake.Wait(Lock, [this] { return bStopping || !Queue.empty(); });
-                if (Queue.empty())
+                QueueWake.Wait(Lock, [this] { return bStopping || !Queue.IsEmpty(); });
+                if (Queue.IsEmpty())
                 {
                     return;
                 }
-                Job = std::move(Queue.front());
-                Queue.pop_front();
+                Job = std::move(Queue[0]);
+                Queue.PopFirst();
             }
             Job();
         }

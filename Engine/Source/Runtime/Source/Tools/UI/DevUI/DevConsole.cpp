@@ -43,11 +43,11 @@ namespace Lumina
 
         bool StartsWithIgnoreCase(FStringView Text, FStringView Prefix)
         {
-            if (Prefix.size() > Text.size())
+            if (Prefix.Len() > Text.Len())
             {
                 return false;
             }
-            for (size_t Index = 0; Index < Prefix.size(); ++Index)
+            for (int32 Index = 0; Index < Prefix.Len(); ++Index)
             {
                 if (std::tolower((unsigned char)Text[Index]) != std::tolower((unsigned char)Prefix[Index]))
                 {
@@ -60,8 +60,8 @@ namespace Lumina
         FStringView FirstWord(const char* Line)
         {
             const FStringView View(Line);
-            const size_t Space = View.find_first_of(' ');
-            return Space == FStringView::npos ? View : View.substr(0, Space);
+            const int32 Space = View.FindFirstOf(' ');
+            return Space == Constants::kIndexNone ? View : View.Mid(0, Space);
         }
     }
 
@@ -95,16 +95,16 @@ namespace Lumina
 
             const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
             ImGuiListClipper Clipper;
-            Clipper.Begin((int)Messages.size());
+            Clipper.Begin(Messages.Num());
             while (Clipper.Step())
             {
                 for (int Row = Clipper.DisplayStart; Row < Clipper.DisplayEnd; ++Row)
                 {
                     const FConsoleMessage& Message = Messages[Row];
-                    ImGui::TextDisabled("%s", Message.Time.c_str());
+                    ImGui::TextDisabled("%s", *Message.Time);
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(Message.Level));
-                    ImGui::TextUnformatted(Message.Message.c_str());
+                    ImGui::TextUnformatted(*Message.Message);
                     ImGui::PopStyleColor();
                 }
             }
@@ -138,14 +138,14 @@ namespace Lumina
     void FDevConsole::DrawSuggestions()
     {
         const FStringView Word = FirstWord(InputBuffer);
-        if (Word.empty() || FStringView(InputBuffer).find(' ') != FStringView::npos || !ImGui::IsItemActive())
+        if (Word.IsEmpty() || FStringView(InputBuffer).Find(' ') != Constants::kIndexNone || !ImGui::IsItemActive())
         {
             return;
         }
 
         TVector<FString> Matches;
         GatherMatches(Word, Matches);
-        if (Matches.empty())
+        if (Matches.IsEmpty())
         {
             return;
         }
@@ -156,24 +156,24 @@ namespace Lumina
         if (ImGui::BeginTooltip())
         {
             FConsoleRegistry& Registry = FConsoleRegistry::Get();
-            for (int32 Index = 0; Index < (int32)Matches.size() && Index < kMaxSuggestions; ++Index)
+            for (int32 Index = 0; Index < Matches.Num() && Index < kMaxSuggestions; ++Index)
             {
                 const FString& Name = Matches[Index];
                 if (Registry.FindCommand(Name) != nullptr)
                 {
-                    ImGui::Text("%s", Name.c_str());
+                    ImGui::Text("%s", *Name);
                     ImGui::SameLine();
                     ImGui::TextDisabled("command");
                     continue;
                 }
                 const TOptional<FString> Value = Registry.GetValueAsString(Name);
-                ImGui::Text("%s", Name.c_str());
+                ImGui::Text("%s", *Name);
                 ImGui::SameLine();
-                ImGui::TextDisabled("= %s", Value.has_value() ? Value->c_str() : "?");
+                ImGui::TextDisabled("= %s", Value.IsSet() ? *(*Value) : "?");
             }
-            if ((int32)Matches.size() > kMaxSuggestions)
+            if (Matches.Num() > kMaxSuggestions)
             {
-                ImGui::TextDisabled("%d more", (int)Matches.size() - kMaxSuggestions);
+                ImGui::TextDisabled("%d more", Matches.Num() - kMaxSuggestions);
             }
             ImGui::EndTooltip();
         }
@@ -182,9 +182,9 @@ namespace Lumina
     void FDevConsole::Submit()
     {
         const FStringView Line(InputBuffer);
-        if (!Line.empty() && (History.empty() || History.back() != Line))
+        if (!Line.IsEmpty() && (History.IsEmpty() || History.Last() != Line))
         {
-            History.emplace_back(Line.data(), Line.size());
+            History.Emplace(Line.GetData(), Line.Len());
         }
         HistoryPosition = -1;
 
@@ -205,9 +205,9 @@ namespace Lumina
             return IsToggleCharacter(Data->EventChar) ? 1 : 0;
         }
 
-        if (Data->EventFlag == ImGuiInputTextFlags_CallbackHistory && !History.empty())
+        if (Data->EventFlag == ImGuiInputTextFlags_CallbackHistory && !History.IsEmpty())
         {
-            const int32 Last = (int32)History.size() - 1;
+            const int32 Last = History.Num() - 1;
             if (Data->EventKey == ImGuiKey_UpArrow)
             {
                 HistoryPosition = HistoryPosition < 0 ? Last : Math::Max(HistoryPosition - 1, 0);
@@ -220,7 +220,7 @@ namespace Lumina
             Data->DeleteChars(0, Data->BufTextLen);
             if (HistoryPosition >= 0)
             {
-                Data->InsertChars(0, History[HistoryPosition].c_str());
+                Data->InsertChars(0, *History[HistoryPosition]);
             }
             return 0;
         }
@@ -228,24 +228,24 @@ namespace Lumina
         if (Data->EventFlag == ImGuiInputTextFlags_CallbackCompletion)
         {
             const FStringView Typed(Data->Buf, Data->BufTextLen);
-            if (Typed.empty() || Typed.find(' ') != FStringView::npos)
+            if (Typed.IsEmpty() || Typed.Find(' ') != Constants::kIndexNone)
             {
                 return 0;
             }
 
             TVector<FString> Matches;
             GatherMatches(Typed, Matches);
-            if (Matches.empty())
+            if (Matches.IsEmpty())
             {
                 return 0;
             }
 
             // Extends to the longest prefix every match shares, and a single match gets a space ready for its value.
-            size_t Common = Matches[0].size();
+            int32 Common = Matches[0].Len();
             for (const FString& Match : Matches)
             {
-                size_t Shared = 0;
-                while (Shared < Common && Shared < Match.size()
+                int32 Shared = 0;
+                while (Shared < Common && Shared < Match.Len()
                     && std::tolower((unsigned char)Match[Shared]) == std::tolower((unsigned char)Matches[0][Shared]))
                 {
                     ++Shared;
@@ -253,33 +253,33 @@ namespace Lumina
                 Common = Shared;
             }
 
-            FString Completed = Matches[0].substr(0, Common);
-            if (Matches.size() == 1)
+            FString Completed = Matches[0].Mid(0, Common);
+            if (Matches.Num() == 1)
             {
                 Completed += " ";
             }
             Data->DeleteChars(0, Data->BufTextLen);
-            Data->InsertChars(0, Completed.c_str());
+            Data->InsertChars(0, *Completed);
         }
         return 0;
     }
 
     void FDevConsole::GatherMatches(FStringView Prefix, TVector<FString>& Out) const
     {
-        Out.clear();
+        Out.Reset();
         FConsoleRegistry& Registry = FConsoleRegistry::Get();
         for (const auto& [Name, Variable] : Registry.GetAll())
         {
             if (StartsWithIgnoreCase(Name, Prefix))
             {
-                Out.emplace_back(Name.data(), Name.size());
+                Out.Emplace(Name.GetData(), Name.Len());
             }
         }
         for (const auto& [Name, Command] : Registry.GetAllCommands())
         {
             if (StartsWithIgnoreCase(Name, Prefix))
             {
-                Out.emplace_back(Name.data(), Name.size());
+                Out.Emplace(Name.GetData(), Name.Len());
             }
         }
         Algo::Sort(Out);

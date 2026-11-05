@@ -69,14 +69,14 @@ namespace Lumina
                     continue;
                 }
 
-                auto [It, bInserted] = SkeletonVerdicts.try_emplace(Dependency.TargetGUID, false);
-                if (bInserted)
+                const bool* bVerdict = SkeletonVerdicts.Find(Dependency.TargetGUID);
+                if (bVerdict == nullptr)
                 {
                     const CSkeleton* Candidate = Cast<CSkeleton>(LoadObject<CObject>(Dependency.TargetGUID));
-                    It->second = Candidate != nullptr && AreSkeletonsCompatible(*Candidate, Skeleton);
+                    bVerdict = &SkeletonVerdicts.Add(Dependency.TargetGUID, Candidate != nullptr && AreSkeletonsCompatible(*Candidate, Skeleton));
                 }
 
-                if (It->second)
+                if (*bVerdict)
                 {
                     return true;
                 }
@@ -113,7 +113,7 @@ namespace Lumina
             return Entries;
         }
 
-        Entries.clear();
+        Entries.Reset();
         if (Skeleton == nullptr || AssetClass == nullptr)
         {
             return Entries;
@@ -130,7 +130,7 @@ namespace Lumina
         {
             if (AnimPreview::IsAssetCompatible(*Data, *Skeleton, SkeletonVerdicts))
             {
-                Entries.push_back(FEntry{ Data->AssetGUID, Data->AssetName.ToString() });
+                Entries.Emplace(Data->AssetGUID, Data->AssetName.ToString());
             }
         }
 
@@ -170,9 +170,9 @@ namespace Lumina
         CSkeletalMesh* const SkeletonDefault = Skeleton->PreviewMesh.Get();
 
         const FString DefaultLabel = SkeletonDefault != nullptr
-            ? Format("Skeleton Default ({})", SkeletonDefault->GetName().c_str())
+            ? Format("Skeleton Default ({})", *SkeletonDefault->GetName())
             : FString("Skeleton Default (none)");
-        if (ImGui::MenuItem(DefaultLabel.c_str(), nullptr, !Override.IsValid()))
+        if (ImGui::MenuItem(*DefaultLabel, nullptr, !Override.IsValid()))
         {
             Override = nullptr;
         }
@@ -180,7 +180,7 @@ namespace Lumina
         ImGui::Separator();
 
         const TVector<FCompatibleAssetList::FEntry>& Entries = Meshes.Get(Skeleton);
-        if (Entries.empty())
+        if (Entries.IsEmpty())
         {
             ImGui::TextDisabled("No skeletal meshes match this skeleton's bones.");
         }
@@ -188,7 +188,7 @@ namespace Lumina
         for (const FCompatibleAssetList::FEntry& Entry : Entries)
         {
             const bool bSelected = Override.IsValid() && Override->GetGUID() == Entry.GUID;
-            if (ImGui::MenuItem(Entry.Name.c_str(), nullptr, bSelected) && !bSelected)
+            if (ImGui::MenuItem(*Entry.Name, nullptr, bSelected) && !bSelected)
             {
                 if (CSkeletalMesh* Picked = Cast<CSkeletalMesh>(LoadObject<CObject>(Entry.GUID)))
                 {

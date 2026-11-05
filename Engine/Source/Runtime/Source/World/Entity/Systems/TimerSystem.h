@@ -1,10 +1,11 @@
 #pragma once
 #include "EntitySystem.h"
+#include "World/Subsystems/TimerManager.h"
 #include "TimerSystem.generated.h"
 
 namespace Lumina
 {
-    // Advances the timer subsystem's manager first at FrameStart, so timer callbacks fire before gameplay systems.
+    // Advances the world's timers first at FrameStart, so timer callbacks fire at the first flush, before gameplay systems.
     REFLECT()
     class STimerSystem : public CEntitySystem
     {
@@ -14,5 +15,9 @@ namespace Lumina
         void Configure() override;
 
         void OnUpdate(const SSystemContext& Context) override;
+
+    private:
+
+        TResMut<FTimerManager> Timers;
     };
 }

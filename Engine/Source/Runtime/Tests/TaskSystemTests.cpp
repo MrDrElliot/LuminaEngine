@@ -1,31 +1,242 @@
-#include "Core/Threading/Thread.h"
 #include <gtest/gtest.h>
 
+#include "Containers/Vector.h"
+#include "Core/Threading/Thread.h"
+#include "Log/Log.h"
 #include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
-#include "TaskSystem/TaskGraph.h"
-#include "TaskSystem/Task.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
-#include "TaskSystem/FiberSync.h"
-#include "TaskSystem/Future.h"
-#include "Containers/Vector.h"
-#include "Log/Log.h"
 
 #include <algorithm>
 #include <atomic>
+#include <thread>
 #include <vector>
 
 using namespace Lumina;
 
-// ParallelFor
+namespace
+{
+    Jobs::TTask<int64> Fib(int32 N)
+    {
+        if (N < 2)
+        {
+            co_return N;
+        }
+        int64 Left = 0;
+        co_await Jobs::Fork(&Left, Fib(N - 1));
+        const int64 Right = co_await Jobs::Call(Fib(N - 2));
+        co_await Jobs::Join();
+        co_return Left + Right;
+    }
+
+    Jobs::TTask<int64> SumRange(const int32* Data, uint32 Count)
+    {
+        if (Count <= 64)
+        {
+            int64 Sum = 0;
+            for (uint32 Index = 0; Index < Count; ++Index)
+            {
+                Sum += Data[Index];
+            }
+            co_return Sum;
+        }
+        const uint32 Half = Count / 2;
+        int64 Left  = 0;
+        int64 Right = 0;
+        co_await Jobs::Fork(&Left, SumRange(Data, Half));
+        co_await Jobs::Fork(&Right, SumRange(Data + Half, Count - Half));
+        co_await Jobs::Join();
+        co_return Left + Right;
+    }
+
+    Jobs::TTask<int32> Square(int32 Value)
+    {
+        co_return Value * Value;
+    }
+
+    Jobs::TTask<void> FanOutSquares(int32* Out, int32 Count)
+    {
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            co_await Jobs::Fork(&Out[Index], Square(Index));
+        }
+        co_await Jobs::Join();
+    }
+
+    Jobs::TTask<int64> NestedSyncWait(int32 N)
+    {
+        co_return Jobs::SyncWait(&Fib, N);
+    }
+
+    Jobs::TTask<int64> ForkNestedSyncWaits(int32 Count, int32 N)
+    {
+        TVector<int64> Results;
+        Results.SetNum(Count, 0);
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            co_await Jobs::Fork(&Results[Index], NestedSyncWait(N));
+        }
+        co_await Jobs::Join();
+        int64 Total = 0;
+        for (int64 Value : Results)
+        {
+            Total += Value;
+        }
+        co_return Total;
+    }
+
+    Jobs::TTask<void> ForEachInTask(std::atomic<uint32>* Hits, uint32 Num)
+    {
+        co_await Jobs::Call(Jobs::ForEach(Num, [Hits](uint32 Index) { Hits[Index].fetch_add(1, std::memory_order_relaxed); }, 16));
+    }
+
+    Jobs::TTask<void> ForEachSlotsInTask(std::atomic<uint32>* BadSlots, uint32 Num)
+    {
+        const uint32 Slots = Jobs::GetNumThreadSlots();
+        co_await Jobs::Call(Jobs::ForEach(Num, [BadSlots, Slots](uint32, uint32 Thread)
+        {
+            if (Thread >= Slots)
+            {
+                BadSlots->fetch_add(1, std::memory_order_relaxed);
+            }
+        }, 8));
+    }
+
+    Jobs::TTask<void> FillAndSignal(int32* Out, int32 Value, Jobs::FTaskEvent* Done)
+    {
+        *Out = Value;
+        Done->Signal();
+        co_return;
+    }
+
+    Jobs::TTask<void> CountAndSignal(std::atomic<int32>* Count, Jobs::FTaskEvent* Done)
+    {
+        Count->fetch_add(1, std::memory_order_relaxed);
+        Done->Signal();
+        co_return;
+    }
+
+    Jobs::TTask<void> AwaitThenCount(Jobs::FTaskEvent* Gate, std::atomic<int32>* Resumed)
+    {
+        co_await *Gate;
+        Resumed->fetch_add(1, std::memory_order_relaxed);
+    }
+
+    Jobs::TTask<void> ForkWaiters(Jobs::FTaskEvent* Gate, std::atomic<int32>* Resumed, int32 Count, Jobs::FTaskEvent* Done)
+    {
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            co_await Jobs::Fork(AwaitThenCount(Gate, Resumed));
+        }
+        co_await Jobs::Join();
+        Done->Signal();
+    }
+
+    Jobs::TTask<void> CountUp(std::atomic<int32>* Counter, Jobs::FLatch* Latch)
+    {
+        Counter->fetch_add(1, std::memory_order_acq_rel);
+        Latch->CountDown();
+        co_return;
+    }
+
+    Jobs::TTask<void> ObserveAfterLatch(Jobs::FLatch* Latch, std::atomic<int32>* Counter, std::atomic<int32>* Observed, Jobs::FTaskEvent* Done)
+    {
+        co_await *Latch;
+        Observed->store(Counter->load(std::memory_order_acquire), std::memory_order_release);
+        Done->Signal();
+    }
+
+    Jobs::TTask<void> AwaitAdd(Jobs::FTaskEvent* Gate, std::atomic<int32>* Sum, int32 Value)
+    {
+        co_await *Gate;
+        Sum->fetch_add(Value, std::memory_order_relaxed);
+    }
+
+    Jobs::TTask<void> ForkAndAwaitSelf(Jobs::FTaskEvent* Gate, std::atomic<int32>* Sum, Jobs::FTaskEvent* Done)
+    {
+        co_await Jobs::Fork(AwaitAdd(Gate, Sum, 1));
+        co_await *Gate;
+        Sum->fetch_add(10, std::memory_order_relaxed);
+        co_await Jobs::Join();
+        Done->Signal();
+    }
+
+    Jobs::TTask<void> ReportWorkerThread(std::atomic<int32>* State)
+    {
+        State->store(Jobs::IsWorkerThread() && Jobs::GetThreadSlot() < Jobs::GetNumWorkers() ? 1 : 2, std::memory_order_release);
+        co_return;
+    }
+
+    Jobs::TTask<int32> PriorityValue(int32 Value)
+    {
+        co_return Value;
+    }
+
+    Jobs::TTask<void> BumpAndSignal(std::atomic<int32>* Count, int32 Total, Jobs::FTaskEvent* Done)
+    {
+        if (Count->fetch_add(1, std::memory_order_acq_rel) + 1 == Total)
+        {
+            Done->Signal();
+        }
+        co_return;
+    }
+
+    struct FAssistProbe
+    {
+        std::thread::id     WaitingThread;
+        std::atomic<uint32> RanTotal{0};
+        std::atomic<uint32> RanOnWaitingThread{0};
+
+        void Run()
+        {
+            RanTotal.fetch_add(1, std::memory_order_relaxed);
+            if (std::this_thread::get_id() == WaitingThread)
+            {
+                RanOnWaitingThread.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    };
+
+    constexpr uint32 kAssistProbeCount = 2048;
+
+    Jobs::TTask<void> RunProbe(FAssistProbe* Probe)
+    {
+        Probe->Run();
+        co_return;
+    }
+
+    Jobs::TTask<void> ProbeFanOut(FAssistProbe* Probe)
+    {
+        co_await Jobs::Call(Jobs::ForEach(kAssistProbeCount, [Probe](uint32) { Probe->Run(); }, 1));
+    }
+
+    bool WaitForCount(const std::atomic<uint32>& Counter, uint32 Target, double TimeoutSeconds)
+    {
+        const double Deadline = PlatformTime::Seconds() + TimeoutSeconds;
+        while (Counter.load(std::memory_order_relaxed) < Target)
+        {
+            if (PlatformTime::Seconds() >= Deadline)
+            {
+                return false;
+            }
+            PlatformTime::YieldThread();
+        }
+        return true;
+    }
+
+    uint32 FreeExternalSlots()
+    {
+        (void)Jobs::GetThreadSlot();
+        return Jobs::GetNumThreadSlots() - Jobs::GetNumWorkers() - 1;
+    }
+}
 
 TEST(TaskSystem, ParallelFor_RunsEachIndexExactlyOnce)
 {
     constexpr uint32 N = 100000;
     TVector<int> Visited;
-    Visited.resize(N, 0);
+    Visited.SetNum(N, 0);
 
-    Task::ParallelFor(N, [&](uint32 Index)
+    Jobs::ParallelFor(N, [&](uint32 Index)
     {
         Visited[Index] += 1;
     }, 256);
@@ -40,11 +251,11 @@ TEST(TaskSystem, ParallelFor_RangeOverloadCoversContiguously)
 {
     constexpr uint32 N = 65536;
     TVector<int> Visited;
-    Visited.resize(N, 0);
+    Visited.SetNum(N, 0);
 
     std::atomic<uint32> RangeCount{0};
 
-    Task::ParallelFor(N, [&](const Task::FParallelRange& Range)
+    Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& Range)
     {
         RangeCount.fetch_add(1, std::memory_order_relaxed);
         ASSERT_LE(Range.Start, Range.End);
@@ -64,14 +275,14 @@ TEST(TaskSystem, ParallelFor_RangeOverloadCoversContiguously)
 TEST(TaskSystem, ParallelFor_ZeroIsNoOp)
 {
     std::atomic<int> Calls{0};
-    Task::ParallelFor(0u, [&](uint32) { Calls.fetch_add(1); });
+    Jobs::ParallelFor(0u, [&](uint32) { Calls.fetch_add(1); });
     EXPECT_EQ(Calls.load(), 0);
 }
 
 TEST(TaskSystem, ParallelFor_SingleRunsOnce)
 {
     std::atomic<int> Calls{0};
-    Task::ParallelFor(1u, [&](uint32 Index)
+    Jobs::ParallelFor(1u, [&](uint32 Index)
     {
         EXPECT_EQ(Index, 0u);
         Calls.fetch_add(1);
@@ -79,32 +290,45 @@ TEST(TaskSystem, ParallelFor_SingleRunsOnce)
     EXPECT_EQ(Calls.load(), 1);
 }
 
-TEST(TaskSystem, ParallelFor_WorkerIndexInRange)
+TEST(TaskSystem, ParallelFor_ThreadSlotInRange)
 {
-    const uint32 Slots = GTaskSystem->GetNumTaskThreads();
+    const uint32 Slots = Jobs::GetNumThreadSlots();
     std::atomic<int> Bad{0};
-    Task::ParallelFor(50000u, [&](uint32, uint32 Thread)
+    Jobs::ParallelFor(50000u, [&](uint32, uint32 Thread)
     {
-        if (Thread >= Slots)
+        if (Thread >= Slots || Thread != Jobs::GetThreadSlot())
         {
             Bad.fetch_add(1, std::memory_order_relaxed);
         }
     }, 64);
-    EXPECT_EQ(Bad.load(), 0) << "a chunk reported a worker index >= GetNumTaskThreads()";
+    EXPECT_EQ(Bad.load(), 0);
+}
+
+TEST(TaskSystem, ParallelFor_RunsOnEveryBand)
+{
+    for (Jobs::EJobPriority Band : { Jobs::EJobPriority::High, Jobs::EJobPriority::Normal, Jobs::EJobPriority::Low, Jobs::EJobPriority::Background })
+    {
+        std::atomic<uint32> Count{0};
+        Jobs::ParallelFor(5000u, [&](uint32) { Count.fetch_add(1, std::memory_order_relaxed); }, 32, Band);
+        EXPECT_EQ(Count.load(), 5000u) << "band " << static_cast<uint32>(Band);
+    }
 }
 
 TEST(TaskSystem, ParallelForEach_VisitsAndMutates)
 {
     TVector<int> Data;
-    Data.resize(20000);
-    for (int i = 0; i < (int)Data.size(); ++i) Data[i] = i;
+    Data.SetNum(20000);
+    for (int i = 0; i < Data.Num(); ++i)
+    {
+        Data[i] = i;
+    }
 
-    Task::ParallelForEach(Data.begin(), Data.end(), [](int& Value)
+    Jobs::ParallelForEach(Data.begin(), Data.end(), [](int& Value)
     {
         Value *= 2;
     });
 
-    for (int i = 0; i < (int)Data.size(); ++i)
+    for (int i = 0; i < Data.Num(); ++i)
     {
         ASSERT_EQ(Data[i], i * 2);
     }
@@ -115,12 +339,13 @@ TEST(TaskSystem, ParallelForOrSerial_BelowThresholdRunsOneInlineRange)
     const std::thread::id Caller = std::this_thread::get_id();
     uint32 Calls = 0;
     bool bOffThread = false;
-    Task::ParallelForOrSerial(100, 1000, [&](const Task::FParallelRange& Range)
+    Jobs::ParallelForOrSerial(100, 1000, [&](const Jobs::FParallelRange& Range)
     {
         ++Calls;
         bOffThread |= std::this_thread::get_id() != Caller;
         EXPECT_EQ(Range.Start, 0u);
         EXPECT_EQ(Range.End, 100u);
+        EXPECT_EQ(Range.Thread, Jobs::GetThreadSlot());
     });
     EXPECT_EQ(Calls, 1u);
     EXPECT_FALSE(bOffThread);
@@ -131,7 +356,7 @@ TEST(TaskSystem, ParallelForOrSerial_VisitsEveryIndexOnBothSidesOfThreshold)
     for (uint32 Num : { 10u, 50000u })
     {
         std::vector<std::atomic<int>> Visits(Num);
-        Task::ParallelForOrSerial(Num, 1000, [&](uint32 Index)
+        Jobs::ParallelForOrSerial(Num, 1000, [&](uint32 Index)
         {
             Visits[Index].fetch_add(1, std::memory_order_relaxed);
         }, 64);
@@ -143,124 +368,24 @@ TEST(TaskSystem, ParallelForOrSerial_VisitsEveryIndexOnBothSidesOfThreshold)
     }
 }
 
-// AsyncTask
-
-TEST(TaskSystem, AsyncTask_CompletesAndRunsBody)
+TEST(TaskSystem, ForEach_InsideATaskCoversEveryIndex)
 {
-    std::atomic<uint32> Sum{0};
-    constexpr uint32 N = 1000;
+    constexpr uint32 Num = 30000;
+    std::vector<std::atomic<uint32>> Hits(Num);
+    Jobs::SyncWait(&ForEachInTask, Hits.data(), Num);
 
-    FTaskHandle Handle = Task::AsyncTask(N, 64, [&](uint32 Start, uint32 End, uint32)
+    for (uint32 i = 0; i < Num; ++i)
     {
-        uint32 Local = 0;
-        for (uint32 i = Start; i < End; ++i)
-        {
-            Local += 1;
-        }
-        Sum.fetch_add(Local, std::memory_order_relaxed);
-    });
-
-    ASSERT_NE(Handle, nullptr);
-    Handle->Wait();
-    EXPECT_TRUE(Handle->IsCompleted());
-    EXPECT_EQ(Sum.load(), N);
-}
-
-// TaskGraph dependency ordering
-
-TEST(TaskSystem, TaskGraph_LinearChainRunsInOrder)
-{
-    std::atomic<int> Seq{0};
-    int OrderA = -1, OrderB = -1, OrderC = -1;
-
-    FTaskGraph Graph;
-    auto A = Graph.Add([&] { OrderA = Seq.fetch_add(1); });
-    auto B = Graph.Add([&] { OrderB = Seq.fetch_add(1); });
-    auto C = Graph.Add([&] { OrderC = Seq.fetch_add(1); });
-    Graph.AddDependency(B, A);
-    Graph.AddDependency(C, B);
-    Graph.Dispatch();
-    Graph.Wait();
-
-    EXPECT_LT(OrderA, OrderB);
-    EXPECT_LT(OrderB, OrderC);
-}
-
-TEST(TaskSystem, TaskGraph_DiamondFanInWaitsForBothParents)
-{
-    std::atomic<int> Seq{0};
-    std::atomic<int> OrderB{-1}, OrderC{-1}, OrderD{-1};
-
-    FTaskGraph Graph;
-    auto A = Graph.Add([&] { Seq.fetch_add(1); });
-    auto B = Graph.Add([&] { OrderB.store(Seq.fetch_add(1)); });
-    auto C = Graph.Add([&] { OrderC.store(Seq.fetch_add(1)); });
-    auto D = Graph.Add([&] { OrderD.store(Seq.fetch_add(1)); });
-    Graph.AddDependency(B, A);
-    Graph.AddDependency(C, A);
-    Graph.AddDependency(D, B);
-    Graph.AddDependency(D, C);
-    Graph.Dispatch();
-    Graph.Wait();
-
-    // D must come after both B and C.
-    EXPECT_GT(OrderD.load(), OrderB.load());
-    EXPECT_GT(OrderD.load(), OrderC.load());
-}
-
-// Mirrors the render-extract topology that exposed the root double-scheduling race.
-TEST(TaskSystem, TaskGraph_FanOutMerge_Stress)
-{
-    constexpr int Iterations = 5000;
-    FTaskGraph Graph; // reused via Reset() each iteration
-
-    for (int Iter = 0; Iter < Iterations; ++Iter)
-    {
-        Graph.Reset();
-
-        std::atomic<uint32> ProducedA{0};
-        std::atomic<uint32> ProducedB{0};
-        std::atomic<int>    MergeRuns{0};
-        std::atomic<int>    IndependentRuns{0};
-        uint32 SeenA = 0, SeenB = 0;
-
-        // Vary sizes (including empty, like an empty entity view) to exercise edge cases.
-        const uint32 CountA = (Iter % 4 == 0) ? 0u : (uint32)(200 + Iter % 500);
-        const uint32 CountB = (Iter % 7 == 0) ? 0u : (uint32)(100 + Iter % 300);
-
-        auto NodeA = Graph.AddParallelFor(CountA, 32, [&](const Task::FParallelRange& R)
-        {
-            ProducedA.fetch_add(R.End - R.Start, std::memory_order_relaxed);
-        });
-        auto NodeB = Graph.AddParallelFor(CountB, 16, [&](const Task::FParallelRange& R)
-        {
-            ProducedB.fetch_add(R.End - R.Start, std::memory_order_relaxed);
-        });
-        Graph.Add([&] { IndependentRuns.fetch_add(1); });
-        auto Merge = Graph.Add([&]
-        {
-            MergeRuns.fetch_add(1);
-            SeenA = ProducedA.load(std::memory_order_relaxed);
-            SeenB = ProducedB.load(std::memory_order_relaxed);
-        });
-
-        Graph.AddDependency(Merge, NodeA);
-        Graph.AddDependency(Merge, NodeB);
-
-        Graph.Dispatch();
-        Graph.Wait();
-
-        ASSERT_EQ(MergeRuns.load(), 1)        << "merge ran " << MergeRuns.load() << " times at iter " << Iter;
-        ASSERT_EQ(IndependentRuns.load(), 1)  << "independent node ran wrong count at iter " << Iter;
-        ASSERT_EQ(ProducedA.load(), CountA)   << "producer A miscount at iter " << Iter;
-        ASSERT_EQ(ProducedB.load(), CountB)   << "producer B miscount at iter " << Iter;
-        // Merge observed fully-produced inputs (dependency honored).
-        ASSERT_EQ(SeenA, CountA)              << "merge saw partial A at iter " << Iter;
-        ASSERT_EQ(SeenB, CountB)              << "merge saw partial B at iter " << Iter;
+        ASSERT_EQ(Hits[i].load(), 1u) << "index " << i;
     }
 }
 
-// Nested parallelism, where fiber yielding must not deadlock or lose work
+TEST(TaskSystem, ForEach_ThreadSlotsStayInRange)
+{
+    std::atomic<uint32> BadSlots{0};
+    Jobs::SyncWait(&ForEachSlotsInTask, &BadSlots, 20000u);
+    EXPECT_EQ(BadSlots.load(), 0u);
+}
 
 TEST(TaskSystem, NestedParallelFor)
 {
@@ -269,9 +394,9 @@ TEST(TaskSystem, NestedParallelFor)
     for (int Round = 0; Round < 50; ++Round)
     {
         std::atomic<uint64> Total{0};
-        Task::ParallelFor(Outer, [&](uint32)
+        Jobs::ParallelFor(Outer, [&](uint32)
         {
-            Task::ParallelFor(Inner, [&](uint32)
+            Jobs::ParallelFor(Inner, [&](uint32)
             {
                 Total.fetch_add(1, std::memory_order_relaxed);
             }, 16);
@@ -280,112 +405,17 @@ TEST(TaskSystem, NestedParallelFor)
     }
 }
 
-TEST(TaskSystem, ManyConcurrentParallelFors_Stress)
-{
-    constexpr int Rounds = 2000;
-    for (int r = 0; r < Rounds; ++r)
-    {
-        const uint32 N = 1u + (uint32)(r % 4096);
-        std::atomic<uint32> Count{0};
-        Task::ParallelFor(N, [&](uint32) { Count.fetch_add(1, std::memory_order_relaxed); }, 1u + (r % 64));
-        ASSERT_EQ(Count.load(), N) << "round " << r;
-    }
-}
-
-// Performance smoke tests, reporting numbers and asserting only loose bounds
-
-TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
-{
-    const uint32 Chunks = GTaskSystem->GetNumWorkers() * 4u;
-    auto Empty = [](uint32) {};
-
-    for (int i = 0; i < 2000; ++i)
-    {
-        Task::ParallelFor(Chunks, Empty, 1); // warmup
-    }
-
-    constexpr int Iters = 20000;
-    auto T0 = Lumina::PlatformTime::Cycles();
-    for (int i = 0; i < Iters; ++i)
-    {
-        Task::ParallelFor(Chunks, Empty, 1);
-    }
-    auto T1 = Lumina::PlatformTime::Cycles();
-
-    const double NsPerCall = (Lumina::PlatformTime::ToSeconds(T1 - T0) * 1e9) / Iters;
-    LOG_DISPLAY("[JobBench] Empty ParallelFor ({} chunks): {:.0f} ns/call", Chunks, NsPerCall);
-
-    // Generous bound so CI noise doesn't flake; real numbers are far lower.
-    EXPECT_LT(NsPerCall, 200000.0);
-}
-
-TEST(TaskSystem, Perf_ParallelForScalesWithWork)
-{
-    constexpr uint32 N = 4'000'000;
-    TVector<float> Data;
-    Data.resize(N);
-    for (uint32 i = 0; i < N; ++i) Data[i] = (float)(i & 1023);
-
-    auto Heavy = [](float x) -> float
-    {
-        // A few FMAs so each element costs enough to amortize scheduling.
-        float a = x;
-        for (int k = 0; k < 16; ++k) a = a * 1.0000001f + 0.5f;
-        return a;
-    };
-
-    // Serial baseline.
-    volatile float SerialSink = 0.0f;
-    auto S0 = Lumina::PlatformTime::Cycles();
-    {
-        float acc = 0.0f;
-        for (uint32 i = 0; i < N; ++i) acc += Heavy(Data[i]);
-        SerialSink = acc;
-    }
-    auto S1 = Lumina::PlatformTime::Cycles();
-    (void)SerialSink;
-    const double SerialMs = Lumina::PlatformTime::ToMilliseconds(S1 - S0);
-
-    // Parallel, with per-worker partials to avoid contention.
-    TVector<double> Partials;
-    Partials.resize(GTaskSystem->GetNumTaskThreads(), 0.0);
-
-    auto P0 = Lumina::PlatformTime::Cycles();
-    Task::ParallelFor(N, [&](const Task::FParallelRange& R)
-    {
-        float acc = 0.0f;
-        for (uint32 i = R.Start; i < R.End; ++i) acc += Heavy(Data[i]);
-        Partials[R.Thread] += acc;
-    }, 8192);
-    auto P1 = Lumina::PlatformTime::Cycles();
-    const double ParallelMs = Lumina::PlatformTime::ToMilliseconds(P1 - P0);
-
-    double Combined = 0.0;
-    for (double p : Partials) Combined += p;
-
-    const double Speedup = SerialMs / ParallelMs;
-    LOG_DISPLAY("[JobBench] ParallelFor scaling: serial={:.2f}ms parallel={:.2f}ms speedup={:.2f}x (workers={})",
-        SerialMs, ParallelMs, Speedup, GTaskSystem->GetNumWorkers());
-
-    EXPECT_GT(Combined, 0.0);
-    // With many workers we expect a clear win; keep the bar low to avoid flakiness on busy CI.
-    EXPECT_GT(Speedup, 1.5);
-}
-
-// Fiber scheduler specifics, park and resume, migration, multi-waiter wakeups
-
-// Three nesting levels, so every level above the leaf parks its fiber on the one below.
 TEST(TaskSystem, DeepNestedParallelFor)
 {
     constexpr uint32 L0 = 16, L1 = 16, L2 = 16;
     for (int Round = 0; Round < 30; ++Round)
     {
         std::atomic<uint64> Total{0};
-        Task::ParallelFor(L0, [&](uint32)
+        Jobs::ParallelFor(L0, [&](uint32)
         {
-            Task::ParallelFor(L1, [&](uint32)
+            Jobs::ParallelFor(L1, [&](uint32)
             {
-                Task::ParallelFor(L2, [&](uint32)
+                Jobs::ParallelFor(L2, [&](uint32)
                 {
                     Total.fetch_add(1, std::memory_order_relaxed);
                 }, 4);
@@ -395,954 +425,613 @@ TEST(TaskSystem, DeepNestedParallelFor)
     }
 }
 
-// A job that parks may resume on a different worker, so the slot must be re-read after.
-TEST(TaskSystem, WorkerIndexValidAcrossNestedWait)
+TEST(TaskSystem, ManyParallelFors_Stress)
 {
-    const uint32 Slots = GTaskSystem->GetNumTaskThreads();
+    for (int r = 0; r < 2000; ++r)
+    {
+        const uint32 N = 1u + (uint32)(r % 4096);
+        std::atomic<uint32> Count{0};
+        Jobs::ParallelFor(N, [&](uint32) { Count.fetch_add(1, std::memory_order_relaxed); }, 1u + (r % 64));
+        ASSERT_EQ(Count.load(), N) << "round " << r;
+    }
+}
+
+TEST(TaskSystem, ThreadSlotValidAfterNestedWait)
+{
+    const uint32 Slots = Jobs::GetNumThreadSlots();
     std::atomic<int> Bad{0};
     std::atomic<int> Ran{0};
 
-    Task::ParallelFor(256u, [&](uint32)
+    Jobs::ParallelFor(256u, [&](uint32)
     {
-        // Force this fiber to park on inner work, then re-read the slot afterwards.
-        Task::ParallelFor(64u, [&](uint32) {}, 4);
+        Jobs::ParallelFor(64u, [&](uint32) {}, 4);
 
-        const uint32 After = Jobs::GetWorkerIndex();
-        if (After >= Slots)
+        if (Jobs::GetThreadSlot() >= Slots)
         {
             Bad.fetch_add(1, std::memory_order_relaxed);
         }
         Ran.fetch_add(1, std::memory_order_relaxed);
     }, 1);
 
-    EXPECT_EQ(Bad.load(), 0) << "GetWorkerIndex() out of range after a nested wait/migration";
+    EXPECT_EQ(Bad.load(), 0);
     EXPECT_EQ(Ran.load(), 256);
 }
 
-// Wide fan-in, so the root's completion must wake every dependent through one counter.
-TEST(TaskSystem, TaskGraph_WideFanIn_Stress)
+TEST(TaskSystem, ForkJoin_FibonacciResults)
 {
-    constexpr int Iterations = 2000;
-    constexpr int Width = 32;
-    FTaskGraph Graph;
+    EXPECT_EQ(Jobs::SyncWait(&Fib, 0), 0);
+    EXPECT_EQ(Jobs::SyncWait(&Fib, 1), 1);
+    EXPECT_EQ(Jobs::SyncWait(&Fib, 2), 1);
+    EXPECT_EQ(Jobs::SyncWait(&Fib, 20), 6765);
+    EXPECT_EQ(Jobs::SyncWait(&Fib, 27), 196418);
+}
 
-    for (int Iter = 0; Iter < Iterations; ++Iter)
+TEST(TaskSystem, ForkJoin_RepeatedFibonacciStress)
+{
+    for (int Round = 0; Round < 300; ++Round)
     {
-        Graph.Reset();
+        ASSERT_EQ(Jobs::SyncWait(&Fib, 16), 987) << "round " << Round;
+    }
+}
 
-        std::atomic<int> RootRuns{0};
-        std::atomic<int> LeafRuns{0};
-        std::atomic<int> SinkRuns{0};
-        std::atomic<bool> RootDoneBeforeLeaf{true};
+TEST(TaskSystem, ForkJoin_TreeReductionMatchesSerial)
+{
+    TVector<int32> Data;
+    Data.SetNum(200003);
+    int64 Expected = 0;
+    for (int32 i = 0; i < Data.Num(); ++i)
+    {
+        Data[i] = (i * 7) % 1000 - 500;
+        Expected += Data[i];
+    }
 
-        auto Root = Graph.Add([&] { RootRuns.fetch_add(1); });
+    EXPECT_EQ(Jobs::SyncWait(&SumRange, Data.GetData(), static_cast<uint32>(Data.Num())), Expected);
+}
 
-        FTaskGraph::FNodeHandle Leaves[Width];
-        for (int i = 0; i < Width; ++i)
+TEST(TaskSystem, ForkJoin_FanOutWritesEveryResult)
+{
+    constexpr int32 Count = 512;
+    TVector<int32> Out;
+    Out.SetNum(Count, -1);
+    Jobs::SyncWait(&FanOutSquares, Out.GetData(), Count);
+
+    for (int32 i = 0; i < Count; ++i)
+    {
+        ASSERT_EQ(Out[i], i * i) << "index " << i;
+    }
+}
+
+TEST(TaskSystem, SyncWait_NestedInsideATask)
+{
+    EXPECT_EQ(Jobs::SyncWait(&NestedSyncWait, 18), 2584);
+    EXPECT_EQ(Jobs::SyncWait(&ForkNestedSyncWaits, 16, 15), 16 * 610);
+}
+
+TEST(TaskSystem, SyncWait_InsideAParallelForBody)
+{
+    std::atomic<int64> Total{0};
+    Jobs::ParallelFor(64u, [&](uint32)
+    {
+        Total.fetch_add(Jobs::SyncWait(&Fib, 12), std::memory_order_relaxed);
+    }, 1);
+    EXPECT_EQ(Total.load(), 64 * 144);
+}
+
+TEST(TaskSystem, SyncWait_RunsOnEveryBandAndReturnsValue)
+{
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::High, &PriorityValue, 1), 1);
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::Normal, &PriorityValue, 2), 2);
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::Low, &PriorityValue, 3), 3);
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::Background, &PriorityValue, 4), 4);
+}
+
+TEST(TaskSystem, Spawn_RunsOnAWorkerThread)
+{
+    std::atomic<int32> State{0};
+    Jobs::Spawn(Jobs::EJobPriority::Normal, &ReportWorkerThread, &State);
+    const double Deadline = PlatformTime::Seconds() + 10.0;
+    while (State.load(std::memory_order_acquire) == 0 && PlatformTime::Seconds() < Deadline)
+    {
+        PlatformTime::YieldThread();
+    }
+    EXPECT_EQ(State.load(), 1);
+    EXPECT_FALSE(Jobs::IsWorkerThread());
+    Jobs::WaitForSpawned();
+}
+
+TEST(TaskSystem, Spawn_WithAnEventDeliversTheResult)
+{
+    int32 Out = 0;
+    Jobs::FTaskEvent Done;
+    Jobs::Spawn(Jobs::EJobPriority::Normal, &FillAndSignal, &Out, 42, &Done);
+    Done.Wait();
+
+    EXPECT_TRUE(Done.IsSignaled());
+    EXPECT_EQ(Out, 42);
+}
+
+TEST(TaskSystem, Spawn_ManyTasksAllRunBeforeWaitForSpawnedReturns)
+{
+    constexpr int32 Total = 5000;
+    std::atomic<int32> Count{0};
+    Jobs::FTaskEvent Done;
+    for (int32 i = 0; i < Total; ++i)
+    {
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &BumpAndSignal, &Count, Total, &Done);
+    }
+    Jobs::WaitForSpawned();
+
+    EXPECT_EQ(Count.load(), Total);
+    EXPECT_TRUE(Done.IsSignaled());
+}
+
+TEST(TaskSystem, Spawn_RunsOnEveryBand)
+{
+    constexpr int32 PerBand = 200;
+    std::atomic<int32> Count{0};
+    Jobs::FTaskEvent Done;
+    for (int32 i = 0; i < PerBand; ++i)
+    {
+        Jobs::Spawn(Jobs::EJobPriority::High, &BumpAndSignal, &Count, PerBand * 4, &Done);
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &BumpAndSignal, &Count, PerBand * 4, &Done);
+        Jobs::Spawn(Jobs::EJobPriority::Low, &BumpAndSignal, &Count, PerBand * 4, &Done);
+        Jobs::Spawn(Jobs::EJobPriority::Background, &BumpAndSignal, &Count, PerBand * 4, &Done);
+    }
+    Jobs::WaitForSpawned();
+    EXPECT_EQ(Count.load(), PerBand * 4);
+}
+
+TEST(TaskSystem, Event_SignalResetAndIsSignaled)
+{
+    Jobs::FTaskEvent Event;
+    EXPECT_FALSE(Event.IsSignaled());
+    Event.Signal();
+    EXPECT_TRUE(Event.IsSignaled());
+    Event.Wait();
+    Event.Reset();
+    EXPECT_FALSE(Event.IsSignaled());
+    Event.Signal();
+    EXPECT_TRUE(Event.IsSignaled());
+}
+
+TEST(TaskSystem, Event_AlreadySignaledDoesNotSuspendATask)
+{
+    Jobs::FTaskEvent Gate;
+    Gate.Signal();
+    std::atomic<int32> Resumed{0};
+    Jobs::SyncWait(&AwaitThenCount, &Gate, &Resumed);
+    EXPECT_EQ(Resumed.load(), 1);
+}
+
+TEST(TaskSystem, Event_ResumesEveryTaskParkedOnIt)
+{
+    constexpr int32 Waiters = 32;
+    Jobs::FTaskEvent Gate;
+    Jobs::FTaskEvent Done;
+    std::atomic<int32> Resumed{0};
+
+    Jobs::Spawn(Jobs::EJobPriority::Normal, &ForkWaiters, &Gate, &Resumed, Waiters, &Done);
+    PlatformTime::SleepMilliseconds(20);
+    EXPECT_EQ(Resumed.load(), 0);
+    EXPECT_FALSE(Done.IsSignaled());
+
+    Gate.Signal();
+    Done.Wait();
+    EXPECT_EQ(Resumed.load(), Waiters);
+}
+
+TEST(TaskSystem, Event_SignaledFromAnExternalThreadResumesATask)
+{
+    Jobs::FTaskEvent Gate;
+    Jobs::FTaskEvent Done;
+    std::atomic<int32> Resumed{0};
+
+    Jobs::Spawn(Jobs::EJobPriority::Normal, &ForkWaiters, &Gate, &Resumed, 4, &Done);
+    FThread Signaler([&Gate]
+    {
+        PlatformTime::SleepMilliseconds(30);
+        Gate.Signal();
+        Jobs::ReleaseThreadSlot();
+    });
+    Done.Wait();
+    Signaler.join();
+    EXPECT_EQ(Resumed.load(), 4);
+}
+
+TEST(TaskSystem, Event_ParentAndForkedChildBothParkOnTheSameEvent)
+{
+    for (int Round = 0; Round < 50; ++Round)
+    {
+        Jobs::FTaskEvent Gate;
+        Jobs::FTaskEvent Done;
+        std::atomic<int32> Sum{0};
+
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &ForkAndAwaitSelf, &Gate, &Sum, &Done);
+        PlatformTime::SleepMilliseconds(1);
+        Gate.Signal();
+        Done.Wait();
+        ASSERT_EQ(Sum.load(), 11) << "round " << Round;
+    }
+}
+
+TEST(TaskSystem, Latch_ReleasesTasksAfterTheLastCountDown)
+{
+    constexpr int32 Counters = 64;
+    constexpr int32 Waiters  = 4;
+    Jobs::FLatch Latch(Counters);
+    std::atomic<int32> Counter{0};
+    std::atomic<int32> Observed[Waiters];
+    Jobs::FTaskEvent Done[Waiters];
+
+    for (int32 i = 0; i < Waiters; ++i)
+    {
+        Observed[i].store(-1);
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &ObserveAfterLatch, &Latch, &Counter, &Observed[i], &Done[i]);
+    }
+    for (int32 i = 0; i < Counters; ++i)
+    {
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &CountUp, &Counter, &Latch);
+    }
+
+    for (int32 i = 0; i < Waiters; ++i)
+    {
+        Done[i].Wait();
+        EXPECT_EQ(Observed[i].load(), Counters) << "waiter " << i;
+    }
+    Latch.Wait();
+    EXPECT_TRUE(Latch.IsDone());
+}
+
+TEST(TaskSystem, Latch_ZeroCountIsAlreadyDone)
+{
+    Jobs::FLatch Latch(0);
+    EXPECT_TRUE(Latch.IsDone());
+    Latch.Wait();
+}
+
+TEST(TaskSystem, Priority_BackgroundIsNeverRunByAForegroundWait)
+{
+    FAssistProbe Probe;
+    Probe.WaitingThread = std::this_thread::get_id();
+
+    for (uint32 i = 0; i < kAssistProbeCount; ++i)
+    {
+        Jobs::Spawn(Jobs::EJobPriority::Background, &RunProbe, &Probe);
+    }
+
+    Jobs::FTaskEvent Gate;
+    FThread Releaser([&Gate]
+    {
+        PlatformTime::SleepMilliseconds(50);
+        Gate.Signal();
+        Jobs::ReleaseThreadSlot();
+    });
+    Gate.Wait();
+    Releaser.join();
+
+    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u);
+    EXPECT_TRUE(WaitForCount(Probe.RanTotal, kAssistProbeCount, 10.0));
+    Jobs::WaitForSpawned();
+    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u);
+}
+
+TEST(TaskSystem, Priority_WaitRunsTheBackgroundWorkItIsBlockedOn)
+{
+    FAssistProbe Probe;
+    Probe.WaitingThread = std::this_thread::get_id();
+
+    Jobs::SyncWait(Jobs::EJobPriority::Background, &ProbeFanOut, &Probe);
+
+    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount);
+    EXPECT_GT(Probe.RanOnWaitingThread.load(), 0u);
+}
+
+TEST(TaskSystem, Priority_WaitStillRunsForegroundWork)
+{
+    FAssistProbe Probe;
+    Probe.WaitingThread = std::this_thread::get_id();
+
+    Jobs::SyncWait(Jobs::EJobPriority::Normal, &ProbeFanOut, &Probe);
+
+    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount);
+    EXPECT_GT(Probe.RanOnWaitingThread.load(), 0u);
+}
+
+TEST(TaskSystem, ExternalThreads_ManyRunTasksConcurrently)
+{
+    const uint32 Threads = std::min(FreeExternalSlots(), 6u);
+    if (Threads < 2)
+    {
+        GTEST_SKIP() << "not enough external thread slots";
+    }
+
+    std::atomic<uint32> Failures{0};
+    std::vector<FThread> Pool;
+    for (uint32 t = 0; t < Threads; ++t)
+    {
+        Pool.emplace_back([&Failures]
         {
-            Leaves[i] = Graph.Add([&]
+            for (int Round = 0; Round < 40; ++Round)
             {
-                if (RootRuns.load() < 1) RootDoneBeforeLeaf.store(false);
-                LeafRuns.fetch_add(1);
-            });
-            Graph.AddDependency(Leaves[i], Root);
-        }
+                if (Jobs::SyncWait(&Fib, 15) != 610)
+                {
+                    Failures.fetch_add(1);
+                }
 
-        auto Sink = Graph.Add([&]
-        {
-            if (LeafRuns.load() != Width) RootDoneBeforeLeaf.store(false);
-            SinkRuns.fetch_add(1);
+                std::atomic<uint32> Count{0};
+                Jobs::ParallelFor(2000u, [&](uint32) { Count.fetch_add(1, std::memory_order_relaxed); }, 16);
+                if (Count.load() != 2000u)
+                {
+                    Failures.fetch_add(1);
+                }
+
+                int32 Out = 0;
+                Jobs::FTaskEvent Done;
+                Jobs::Spawn(Jobs::EJobPriority::Normal, &FillAndSignal, &Out, Round, &Done);
+                Done.Wait();
+                if (Out != Round)
+                {
+                    Failures.fetch_add(1);
+                }
+            }
+            Jobs::ReleaseThreadSlot();
         });
-        for (int i = 0; i < Width; ++i)
+    }
+    for (FThread& Thread : Pool)
+    {
+        Thread.join();
+    }
+    EXPECT_EQ(Failures.load(), 0u);
+}
+
+TEST(TaskSystem, ExternalThreads_SlotsAreRecycled)
+{
+    const uint32 Workers  = Jobs::GetNumWorkers();
+    const uint32 Externals = FreeExternalSlots();
+    ASSERT_GT(Externals, 0u);
+
+    for (uint32 Round = 0; Round < (Externals + 1) * 4; ++Round)
+    {
+        FThread Thread([Workers]
         {
-            Graph.AddDependency(Sink, Leaves[i]);
+            const uint32 Slot = Jobs::GetThreadSlot();
+            EXPECT_GE(Slot, Workers);
+            EXPECT_LT(Slot, Jobs::GetNumThreadSlots());
+            Jobs::ReleaseThreadSlot();
+        });
+        Thread.join();
+    }
+
+    std::vector<uint32> Slots(Externals, ~0u);
+    std::vector<FThread> Pool;
+    std::atomic<uint32> Arrived{0};
+    for (uint32 i = 0; i < Externals; ++i)
+    {
+        Pool.emplace_back([&, i]
+        {
+            Slots[i] = Jobs::GetThreadSlot();
+            Arrived.fetch_add(1, std::memory_order_acq_rel);
+            while (Arrived.load(std::memory_order_acquire) < Externals)
+            {
+                PlatformTime::YieldThread();
+            }
+            Jobs::ReleaseThreadSlot();
+        });
+    }
+    for (FThread& Thread : Pool)
+    {
+        Thread.join();
+    }
+
+    std::vector<uint32> Sorted = Slots;
+    std::sort(Sorted.begin(), Sorted.end());
+    for (uint32 i = 0; i < Externals; ++i)
+    {
+        EXPECT_LT(Sorted[i], Jobs::GetNumThreadSlots());
+        if (i > 0)
+        {
+            EXPECT_NE(Sorted[i], Sorted[i - 1]) << "two live threads shared a slot";
         }
-
-        Graph.Dispatch();
-        Graph.Wait();
-
-        ASSERT_EQ(RootRuns.load(), 1)  << "iter " << Iter;
-        ASSERT_EQ(LeafRuns.load(), Width) << "iter " << Iter;
-        ASSERT_EQ(SinkRuns.load(), 1)  << "iter " << Iter;
-        ASSERT_TRUE(RootDoneBeforeLeaf.load()) << "dependency ordering violated at iter " << Iter;
     }
 }
 
-// Fiber-aware mutex
-
-TEST(FiberSync, Mutex_MutualExclusionUnderContention)
+TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
 {
-    // If the lock leaks, the non-atomic increment loses updates under contention.
-    FFiberMutex Mutex;
-    int64 Shared = 0;
-    constexpr uint32 N = 20000;
+    const uint32 Chunks = Jobs::GetNumWorkers() * 4u;
+    auto Empty = [](uint32) {};
 
-    Task::ParallelFor(N, [&](uint32)
+    for (int i = 0; i < 2000; ++i)
     {
-        FFiberScopeLock Lock(Mutex);
-        Shared += 1; // deliberately non-atomic, correctness comes from the lock
-    }, 1);
-
-    EXPECT_EQ(Shared, static_cast<int64>(N));
-}
-
-TEST(FiberSync, Mutex_TryLockReflectsState)
-{
-    FFiberMutex Mutex;
-    ASSERT_TRUE(Mutex.TryLock());
-    EXPECT_FALSE(Mutex.TryLock());
-    Mutex.Unlock();
-    ASSERT_TRUE(Mutex.TryLock());
-    Mutex.Unlock();
-}
-
-// Fiber-aware semaphore
-
-TEST(FiberSync, Semaphore_BoundsConcurrency)
-{
-    // Permit at most K holders at once; track the live count and assert it never exceeds K.
-    constexpr int32 K = 3;
-    FFiberSemaphore Sem(K);
-    std::atomic<int32> Live{0};
-    std::atomic<int32> MaxLive{0};
-    std::atomic<int32> Bad{0};
-
-    Task::ParallelFor(4000u, [&](uint32)
-    {
-        Sem.Acquire();
-        const int32 Now = Live.fetch_add(1, std::memory_order_acq_rel) + 1;
-        if (Now > K) Bad.fetch_add(1, std::memory_order_relaxed);
-        int32 Prev = MaxLive.load(std::memory_order_relaxed);
-        while (Now > Prev && !MaxLive.compare_exchange_weak(Prev, Now)) {}
-        Live.fetch_sub(1, std::memory_order_acq_rel);
-        Sem.Release();
-    }, 1);
-
-    EXPECT_EQ(Bad.load(), 0) << "semaphore allowed more than " << K << " concurrent holders";
-    EXPECT_LE(MaxLive.load(), K);
-}
-
-// Fiber-aware shared reader/writer mutex
-
-TEST(FiberSync, SharedMutex_NoReaderWriterOverlap)
-{
-    FFiberSharedMutex Mutex;
-    std::atomic<int32> ActiveReaders{0};
-    std::atomic<int32> ActiveWriters{0};
-    std::atomic<int32> Bad{0};
-    int64 Protected = 0;
-
-    Task::ParallelFor(8000u, [&](uint32 Index)
-    {
-        if ((Index % 8) == 0)
-        {
-            FFiberWriteScopeLock Lock(Mutex);
-            const int32 W = ActiveWriters.fetch_add(1, std::memory_order_acq_rel) + 1;
-            if (W != 1 || ActiveReaders.load(std::memory_order_acquire) != 0)
-            {
-                Bad.fetch_add(1, std::memory_order_relaxed);
-            }
-            Protected += 1;
-            ActiveWriters.fetch_sub(1, std::memory_order_acq_rel);
-        }
-        else
-        {
-            FFiberReadScopeLock Lock(Mutex);
-            ActiveReaders.fetch_add(1, std::memory_order_acq_rel);
-            if (ActiveWriters.load(std::memory_order_acquire) != 0)
-            {
-                Bad.fetch_add(1, std::memory_order_relaxed);
-            }
-            ActiveReaders.fetch_sub(1, std::memory_order_acq_rel);
-        }
-    }, 1);
-
-    EXPECT_EQ(Bad.load(), 0) << "reader/writer exclusivity violated";
-    EXPECT_EQ(Protected, 1000) << "8000/8 writer sections expected";
-}
-
-// Fiber-aware condition variable
-
-TEST(FiberSync, ConditionVariable_ProducerConsumerHandoff)
-{
-    FFiberMutex Mutex;
-    FFiberConditionVariable CV;
-    int Value = 0;
-    bool Ready = false;
-    std::atomic<int> Observed{-1};
-
-    FTaskHandle Consumer = GTaskSystem->ScheduleLambda(1, 0, [&](uint32, uint32, uint32)
-    {
-        FFiberScopeLock Lock(Mutex);
-        CV.Wait(Mutex, [&] { return Ready; });
-        Observed.store(Value, std::memory_order_release);
-    });
-
-    // Give the consumer time to park, then produce.
-    Threading::Sleep(5);
-    {
-        FFiberScopeLock Lock(Mutex);
-        Value = 42;
-        Ready = true;
+        Jobs::ParallelFor(Chunks, Empty, 1);
     }
-    CV.NotifyOne();
 
-    Consumer->Wait();
-    EXPECT_EQ(Observed.load(), 42);
-}
-
-// Futures and promises
-
-TEST(Future, PromiseSetValue_FutureGetsIt)
-{
-    TPromise<int> Promise;
-    TFuture<int> Future = Promise.GetFuture();
-    EXPECT_FALSE(Future.IsReady());
-
-    Promise.SetValue(7);
-    EXPECT_TRUE(Future.IsReady());
-    EXPECT_EQ(Future.Get(), 7);
-}
-
-TEST(Future, WaitIsFiberAware_SetFromAnotherJob)
-{
-    // A worker fiber waits on a future that a sibling job fulfills, exercises the park-on-future path.
-    TPromise<int> Promise;
-    TFuture<int> Future = Promise.GetFuture();
-
-    GTaskSystem->ScheduleLambda(1, 0, [Promise = Move(Promise)](uint32, uint32, uint32) mutable
+    constexpr int Iters = 20000;
+    auto T0 = PlatformTime::Cycles();
+    for (int i = 0; i < Iters; ++i)
     {
-        Threading::Sleep(2);
-        Promise.SetValue(99);
-    });
+        Jobs::ParallelFor(Chunks, Empty, 1);
+    }
+    auto T1 = PlatformTime::Cycles();
 
-    EXPECT_EQ(Future.Get(), 99); // blocks (assist-waits) on the main thread until set
+    const double NsPerCall = (PlatformTime::ToSeconds(T1 - T0) * 1e9) / Iters;
+    LOG_DISPLAY("[JobBench] Empty ParallelFor ({} chunks): {:.0f} ns/call", Chunks, NsPerCall);
+    EXPECT_LT(NsPerCall, 200000.0);
 }
 
-TEST(Future, Async_ReturnsResult)
+TEST(TaskSystem, Perf_ParallelForScalesWithWork)
 {
-    TFuture<int> F = Task::Async([] { return 11 * 11; });
-    EXPECT_EQ(F.Get(), 121);
+    constexpr uint32 N = 4'000'000;
+    TVector<float> Data;
+    Data.SetNum(N);
+    for (uint32 i = 0; i < N; ++i)
+    {
+        Data[i] = (float)(i & 1023);
+    }
+
+    auto Heavy = [](float x) -> float
+    {
+        float a = x;
+        for (int k = 0; k < 16; ++k)
+        {
+            a = a * 1.0000001f + 0.5f;
+        }
+        return a;
+    };
+
+    volatile float SerialSink = 0.0f;
+    auto S0 = PlatformTime::Cycles();
+    {
+        float acc = 0.0f;
+        for (uint32 i = 0; i < N; ++i)
+        {
+            acc += Heavy(Data[i]);
+        }
+        SerialSink = acc;
+    }
+    auto S1 = PlatformTime::Cycles();
+    (void)SerialSink;
+    const double SerialMs = PlatformTime::ToMilliseconds(S1 - S0);
+
+    TVector<double> Partials;
+    Partials.SetNum(Jobs::GetNumThreadSlots(), 0.0);
+
+    auto P0 = PlatformTime::Cycles();
+    Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
+    {
+        float acc = 0.0f;
+        for (uint32 i = R.Start; i < R.End; ++i)
+        {
+            acc += Heavy(Data[i]);
+        }
+        Partials[R.Thread] += acc;
+    }, 8192);
+    auto P1 = PlatformTime::Cycles();
+    const double ParallelMs = PlatformTime::ToMilliseconds(P1 - P0);
+
+    double Combined = 0.0;
+    for (double p : Partials)
+    {
+        Combined += p;
+    }
+
+    const double Speedup = SerialMs / ParallelMs;
+    LOG_DISPLAY("[JobBench] ParallelFor scaling: serial={:.2f}ms parallel={:.2f}ms speedup={:.2f}x (workers={})",
+        SerialMs, ParallelMs, Speedup, Jobs::GetNumWorkers());
+
+    EXPECT_GT(Combined, 0.0);
+    EXPECT_GT(Speedup, 1.5);
 }
 
-TEST(Future, Then_ChainsValue)
+TEST(JobsCallable, SpawnOwnsCapturingLambda)
 {
-    TFuture<int> F = Task::Async([] { return 10; })
-        .Then([](int& V) { return V + 5; })
-        .Then([](int& V) { return V * 2; });
-    EXPECT_EQ(F.Get(), 30);
+    std::atomic<int> Sum{0};
+    Jobs::FTaskEvent Done;
+    {
+        const int Base = 40;
+        TVector<int> Values = { 1, 1 };
+        Jobs::Spawn(Jobs::EJobPriority::Normal, Done, [&Sum, Base, Values]() -> Jobs::TTask<void>
+        {
+            Sum.fetch_add(Base + Values[0] + Values[1]);
+            co_return;
+        });
+    }
+    Done.Wait();
+    EXPECT_EQ(Sum.load(), 42);
 }
 
-TEST(Future, VoidPromiseAndThen)
+TEST(JobsCallable, SpawnRunsPlainLambda)
 {
-    TPromise<void> Promise;
     std::atomic<int> Ran{0};
-    TFuture<int> F = Promise.GetFuture().Then([&] { Ran.fetch_add(1); return 5; });
-    Promise.SetValue();
-    EXPECT_EQ(F.Get(), 5);
+    Jobs::FTaskEvent Done;
+    Jobs::Spawn(Jobs::EJobPriority::Normal, Done, [&Ran] { Ran.fetch_add(1); });
+    Done.Wait();
     EXPECT_EQ(Ran.load(), 1);
 }
 
-TEST(Future, MakeReadyFuture_IsImmediatelyReady)
+TEST(JobsCallable, SyncWaitReturnsFromPlainAndTaskLambdas)
 {
-    TFuture<int> F = MakeReadyFuture(3);
-    EXPECT_TRUE(F.IsReady());
-    EXPECT_EQ(F.Get(), 3);
+    const int Factor = 6;
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::Normal, [Factor] { return Factor * 7; }), 42);
+    EXPECT_EQ(Jobs::SyncWait(Jobs::EJobPriority::Normal, [Factor]() -> Jobs::TTask<int> { co_return Factor * 7; }), 42);
 }
 
-TEST(Future, WhenAll_CompletesAfterAll)
+TEST(JobsCallable, ForkAndCallTakePlainLambdas)
 {
-    TVector<TFuture<int>> Futures;
-    for (int i = 0; i < 16; ++i)
+    const int Result = Jobs::SyncWait(Jobs::EJobPriority::Normal, []() -> Jobs::TTask<int>
     {
-        Futures.push_back(Task::Async([i] { Threading::Sleep((i % 4)); return i; }));
-    }
-    TFuture<void> All = WhenAll(Futures);
-    All.Get();
-    for (int i = 0; i < 16; ++i)
-    {
-        EXPECT_TRUE(Futures[i].IsReady()) << "future " << i << " not ready after WhenAll";
-    }
+        int Left  = 0;
+        int Right = 0;
+        co_await Jobs::Fork(&Left, [] { return 20; });
+        co_await Jobs::Fork([&Right] { Right = 20; });
+        co_await Jobs::Join();
+        const int Extra = co_await Jobs::Call([] { return 2; });
+        co_return Left + Right + Extra;
+    });
+    EXPECT_EQ(Result, 42);
 }
 
-namespace
-{
-    TTask<int> CoConst()
-    {
-        co_return 42;
-    }
-
-    TTask<int> CoAdd(int A, int B)
-    {
-        co_return A + B;
-    }
-
-    // Deep recursive chain, unwound via symmetric transfer.
-    TTask<uint64> CoSumTo(uint32 N)
-    {
-        if (N == 0)
-        {
-            co_return 0;
-        }
-        const uint64 Rest = co_await CoSumTo(N - 1);
-        co_return Rest + N;
-    }
-
-    TTask<void> CoIncrement(std::atomic<int>* Counter)
-    {
-        Counter->fetch_add(1, std::memory_order_relaxed);
-        co_return;
-    }
-
-    TTask<int> CoWhenAllFan(std::atomic<int>* Counter, int N)
-    {
-        TVector<TTask<void>> Tasks;
-        for (int i = 0; i < N; ++i)
-        {
-            Tasks.push_back(CoIncrement(Counter));
-        }
-        co_await WhenAll(Move(Tasks));
-        co_return Counter->load(std::memory_order_relaxed);
-    }
-
-    TTask<int> CoAwaitFuture(TFuture<int> F)
-    {
-        const int V = co_await Move(F);
-        co_return V * 2;
-    }
-
-    TTask<uint64> CoParallelSum(uint32 N)
-    {
-        std::atomic<uint64> Sum{0};
-        co_await Task::ParallelForAsync(N, 64, [&](uint32 i)
-        {
-            Sum.fetch_add(i, std::memory_order_relaxed);
-        });
-        co_return Sum.load(std::memory_order_relaxed);
-    }
-
-    TTask<void> CoSetPromise(TPromise<int> P, int Value)
-    {
-        P.SetValue(Value);
-        co_return;
-    }
-}
-
-TEST(Coro, SyncWait_ReturnsResult)
-{
-    EXPECT_EQ(SyncWait(CoConst()), 42);
-    EXPECT_EQ(SyncWait(CoAdd(20, 22)), 42);
-}
-
-TEST(Coro, DeepChain_SymmetricTransfer)
-{
-    constexpr uint32 N = 4000;
-    const uint64 Expected = (uint64)N * (N + 1) / 2;
-    EXPECT_EQ(SyncWait(CoSumTo(N)), Expected);
-}
-
-TEST(Coro, WhenAll_RunsEveryChild)
-{
-    std::atomic<int> Counter{0};
-    const int Result = SyncWait(CoWhenAllFan(&Counter, 128));
-    EXPECT_EQ(Result, 128);
-    EXPECT_EQ(Counter.load(), 128);
-}
-
-TEST(Coro, AwaitFuture_BridgesFuturesLayer)
-{
-    TPromise<int> Promise;
-    TFuture<int>  Future = Promise.GetFuture();
-
-    // Fulfil on a worker while the coroutine (driven by SyncWait) awaits the future.
-    Task::Async([P = Move(Promise)]() mutable { P.SetValue(21); });
-
-    EXPECT_EQ(SyncWait(CoAwaitFuture(Move(Future))), 42);
-}
-
-TEST(Coro, ParallelForAsync_SumsRange)
-{
-    constexpr uint32 N = 10000;
-    const uint64 Expected = (uint64)(N - 1) * N / 2;
-    EXPECT_EQ(SyncWait(CoParallelSum(N)), Expected);
-}
-
-TEST(Coro, ParallelForAsync_ZeroIsNoOp)
-{
-    EXPECT_EQ(SyncWait(CoParallelSum(0)), 0u);
-}
-
-TEST(Coro, LaunchDetached_RunsToCompletion)
-{
-    TPromise<int> Promise;
-    TFuture<int>  Future = Promise.GetFuture();
-
-    Launch(CoSetPromise(Move(Promise), 7));
-
-    EXPECT_EQ(Future.Get(), 7);
-}
-
-// SyncWait from inside a worker fiber must not deadlock.
-TEST(Coro, SyncWait_FromWorkerFiber)
+TEST(JobsCallable, LatchSpawnHoldsUntilEveryTreeEnds)
 {
     std::atomic<int> Ran{0};
-    Task::ParallelFor(8u, [&](uint32)
+    Jobs::FLatch Done(1);
+    for (int Index = 0; Index < 64; ++Index)
     {
-        if (SyncWait(CoConst()) == 42)
+        Jobs::Spawn(Jobs::EJobPriority::Normal, Done, [&Ran]() -> Jobs::TTask<void>
         {
-            Ran.fetch_add(1, std::memory_order_relaxed);
-        }
-    }, 1);
-    EXPECT_EQ(Ran.load(), 8);
-}
-
-TEST(Coro, ManyConcurrentWhenAll_Stress)
-{
-    for (int Round = 0; Round < 200; ++Round)
-    {
-        std::atomic<int> Counter{0};
-        const int Result = SyncWait(CoWhenAllFan(&Counter, 64));
-        ASSERT_EQ(Result, 64) << "round " << Round;
+            co_await Jobs::Call(Jobs::ForEach(16, [&Ran](uint32) { Ran.fetch_add(1); }));
+        });
     }
+    Done.CountDown();
+    Done.Wait();
+    EXPECT_EQ(Ran.load(), 64 * 16);
 }
 
-// An assisting thread must never run Background work and must still run everything else.
-
-namespace
+TEST(JobsCallable, WaitForSpawnedInsideATaskReturns)
 {
-    struct FAssistProbe
-    {
-        Lumina::uint64  WaitingThread = 0;
-        std::atomic<uint32> RanOnWaitingThread{0};
-        std::atomic<uint32> RanTotal{0};
-    };
+    Jobs::FTaskEvent Done;
+    Jobs::Spawn(Jobs::EJobPriority::Normal, Done, [] { Jobs::WaitForSpawned(); });
+    Done.Wait();
+    EXPECT_TRUE(Done.IsSignaled());
+}
 
-    // Real work, so the queue stays deep enough for an assisting thread to steal from it.
-    void AssistProbeJob(void* Arg, uint32)
-    {
-        FAssistProbe& P = *static_cast<FAssistProbe*>(Arg);
+namespace TaskSystemTestsInternal
+{
+    thread_local bool GtInIsolatedRegion = false;
+}
 
-        const double End = Lumina::PlatformTime::Seconds() + 0.0001;
-        while (Lumina::PlatformTime::Seconds() < End)
+TEST(JobsCallable, IsolatedWaitNeverRunsUnrelatedTasks)
+{
+    using namespace TaskSystemTestsInternal;
+    std::atomic<int> RanInside{0};
+    std::atomic<int> Ran{0};
+    Jobs::FLatch Done(1);
+    for (int Index = 0; Index < 512; ++Index)
+    {
+        Jobs::Spawn(Jobs::EJobPriority::Low, Done, [&RanInside, &Ran]
         {
-        }
-
-        if (Threading::GetThreadID() == P.WaitingThread)
-        {
-            P.RanOnWaitingThread.fetch_add(1, std::memory_order_relaxed);
-        }
-        P.RanTotal.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    constexpr uint32 kAssistProbeCount = 2048;
-}
-
-// The mirror of the exclusion above, and the reason it cannot be a blanket one. A thread waiting on its own
-// Background fan-out is the only thread that may run it, so refusing the band leaves the wait resting
-// entirely on worker wake-ups. EnkiTS clamps a wait's assist floor to the awaited task's own priority; this
-// is that clamp.
-TEST(TaskSystem, ExternalWaitRunsTheBackgroundWorkItIsBlockedOn)
-{
-    FAssistProbe Probe;
-    Probe.WaitingThread = Threading::GetThreadID();
-
-    Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-    for (uint32 i = 0; i < kAssistProbeCount; ++i)
-    {
-        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, Counter, "AssistTest.OwnBackground");
-    }
-
-    Jobs::WaitForCounter(Counter, 0);
-
-    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount);
-    EXPECT_GT(Probe.RanOnWaitingThread.load(), 0u)
-        << "a thread waiting on a Background counter adopted none of that counter's work, so the assist "
-           "ceiling is not being clamped to the awaited band and the wait depends entirely on worker wake-ups";
-
-    Jobs::FreeCounter(Counter);
-}
-
-TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
-{
-    FAssistProbe Probe;
-    Probe.WaitingThread = Threading::GetThreadID();
-
-    Jobs::FCounter* ProbeCounter = Jobs::AllocCounter(0);
-    for (uint32 i = 0; i < kAssistProbeCount; ++i)
-    {
-        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, ProbeCounter, "AssistTest.Background");
-    }
-
-    // The wait is gated by an OS thread, not by the Background work it must not run.
-    Jobs::FCounter* Gate = Jobs::AllocCounter(1);
-    FThread Releaser([Gate]
-    {
-        Lumina::PlatformTime::SleepMilliseconds(50);
-        Jobs::DecrementCounter(Gate, 1);
-    });
-
-    // Assist-waits with a deep Background queue alongside, which used to drain onto this thread.
-    Jobs::WaitForCounter(Gate, 0);
-    Releaser.join();
-
-    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u)
-        << "an assist-waiting thread executed Background work; the exclusion in TryStealAny is not holding, "
-           "so a frame-critical wait can again inline an unrelated background build";
-
-    // Drained by polling and bounded, so a stalled pool fails instead of hanging the suite.
-    const double Deadline = Lumina::PlatformTime::Seconds() + 10.0;
-    while (Probe.RanTotal.load(std::memory_order_relaxed) < kAssistProbeCount
-        && Lumina::PlatformTime::Seconds() < Deadline)
-    {
-        Lumina::PlatformTime::YieldThread();
-    }
-
-    // Proves the assertion above did not pass vacuously, since the work was there to steal.
-    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount) << "Background work never drained onto workers";
-    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u);
-
-    Jobs::FreeCounter(Gate);
-    if (Probe.RanTotal.load() == kAssistProbeCount)
-    {
-        // Only once every job that references it has finished.
-        Jobs::FreeCounter(ProbeCounter);
-    }
-}
-
-namespace
-{
-    void EmptyBackgroundJob(void*, uint32)
-    {
-    }
-}
-
-// Every pooled counter carries a Background job first, so the gate below is guaranteed to be a recycled one.
-TEST(TaskSystem, RecycledCounterDoesNotInheritBackgroundBand)
-{
-    constexpr uint32 kCountersToCycle = 8192 + 64;
-    TVector<Jobs::FCounter*> Cycled;
-    Cycled.reserve(kCountersToCycle);
-    for (uint32 i = 0; i < kCountersToCycle; ++i)
-    {
-        Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-        Jobs::RunJob(&EmptyBackgroundJob, nullptr, Jobs::EJobPriority::Background, Counter, "AssistTest.Recycle");
-        Cycled.push_back(Counter);
-    }
-    for (Jobs::FCounter* Counter : Cycled)
-    {
-        Jobs::WaitForCounter(Counter, 0);
-        Jobs::FreeCounter(Counter);
-    }
-
-    FAssistProbe Probe;
-    Probe.WaitingThread = Threading::GetThreadID();
-
-    Jobs::FCounter* ProbeCounter = Jobs::AllocCounter(0);
-    for (uint32 i = 0; i < kAssistProbeCount; ++i)
-    {
-        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, ProbeCounter, "AssistTest.Background");
-    }
-
-    Jobs::FCounter* Gate = Jobs::AllocCounter(1);
-    FThread Releaser([Gate]
-    {
-        Lumina::PlatformTime::SleepMilliseconds(50);
-        Jobs::DecrementCounter(Gate, 1);
-    });
-
-    Jobs::WaitForCounter(Gate, 0);
-    Releaser.join();
-
-    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u)
-        << "a wait on a recycled counter adopted unrelated Background work, so AllocCounter is leaving the "
-           "previous owner's WaitBand in place";
-
-    Jobs::WaitForCounter(ProbeCounter, 0);
-    Jobs::FreeCounter(ProbeCounter);
-    Jobs::FreeCounter(Gate);
-}
-TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
-{
-    // The complement, guarding against over-correcting this into assisting with nothing.
-    FAssistProbe Probe;
-    Probe.WaitingThread = Threading::GetThreadID();
-
-    Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-    for (uint32 i = 0; i < kAssistProbeCount; ++i)
-    {
-        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Normal, Counter, "AssistTest.Normal");
-    }
-
-    Jobs::WaitForCounter(Counter, 0);
-
-    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount);
-    EXPECT_GT(Probe.RanOnWaitingThread.load(), 0u)
-        << "the assist path ran no work inline during a fan-out-and-wait; an external wait can now starve";
-
-    Jobs::FreeCounter(Counter);
-}
-
-// A fiber is held while its job is BLOCKED, so the pool must grow on demand or deadlock.
-
-namespace
-{
-    struct FSaturateProbe
-    {
-        Jobs::FCounter*     Gate = nullptr;
-        std::atomic<uint32> Entered{0};
-        std::atomic<uint32> Finished{0};
-    };
-
-    void SaturateBlockingJob(void* Arg, uint32 /*Worker*/)
-    {
-        FSaturateProbe* P = static_cast<FSaturateProbe*>(Arg);
-        P->Entered.fetch_add(1, std::memory_order_relaxed);
-        Jobs::WaitForCounter(P->Gate, 0); // parks this fiber and holds it until the gate opens
-        P->Finished.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Polls a predicate to a deadline and never assists, so a wedged pool fails visibly.
-    template<typename FPred>
-    bool PollUntil(FPred&& Pred, double TimeoutSeconds)
-    {
-        const double Deadline = Lumina::PlatformTime::Seconds() + TimeoutSeconds;
-        while (!Pred())
-        {
-            if (Lumina::PlatformTime::Seconds() >= Deadline)
+            RanInside.fetch_add(GtInIsolatedRegion ? 1 : 0);
+            const uint64 Start = PlatformTime::Cycles();
+            while (PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) < 0.1)
             {
-                return false;
             }
-            Lumina::PlatformTime::SleepMilliseconds(1);
-        }
-        return true;
-    }
-}
-
-TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
-{
-    Jobs::FJobLiveStats Stats;
-    Jobs::GetLiveStats(Stats);
-
-    // Past the pool by more than the workers could hold, so the excess needs the pool to grow.
-    const uint32 Blockers = Stats.NumWorkFibers + Stats.NumWorkers * 2 + 64;
-
-    // Static so a timed-out run cannot leave jobs pointing at a dead stack frame.
-    static FSaturateProbe Probe;
-    Probe.Entered.store(0);
-    Probe.Finished.store(0);
-    Probe.Gate = Jobs::AllocCounter(1);
-
-    for (uint32 i = 0; i < Blockers; ++i)
-    {
-        // Park-capable, since this test is about the FIBER pool and a native job takes no fiber.
-        Jobs::RunJob(&SaturateBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Saturate.Block",
-            /*bMayPark*/ true);
-    }
-
-    // Every job must get a fiber even with more blocked at once than the pool started with.
-    const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Blockers; },
-        10.0);
-    EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Blockers
-        << " blocking jobs ever started; the fiber pool wedged instead of growing";
-
-    Jobs::DecrementCounter(Probe.Gate, 1);
-
-    const bool AllFinished = PollUntil([&] { return Probe.Finished.load() == Blockers; },
-        10.0);
-    EXPECT_TRUE(AllFinished) << "only " << Probe.Finished.load() << " of " << Blockers
-        << " parked fibers resumed after the gate opened";
-
-    if (AllFinished)
-    {
-        Jobs::FreeCounter(Probe.Gate); // only once nothing references it
-    }
-
-    Jobs::GetLiveStats(Stats);
-    EXPECT_GE(Stats.NumWorkFibers, Blockers)
-        << "the pool did not grow to cover the blocked set";
-}
-
-TEST(TaskSystem, ManyBlockingAsyncTasks_AllComplete)
-{
-    // The gate holds every task at one barrier, so the pool is provably exceeded, not raced.
-    constexpr uint32 Outer = 400;
-    constexpr uint32 Inner = 256;
-
-    struct FProbe
-    {
-        Jobs::FCounter*     Gate = nullptr;
-        std::atomic<uint32> Entered{0};
-        std::atomic<uint32> Done{0};
-        std::atomic<uint64> Sum{0};
-    };
-    static FProbe Probe;
-    Probe.Entered.store(0);
-    Probe.Done.store(0);
-    Probe.Sum.store(0);
-    Probe.Gate = Jobs::AllocCounter(1);
-
-    for (uint32 i = 0; i < Outer; ++i)
-    {
-        Task::AsyncTask(1, 1, [](uint32, uint32, uint32)
-        {
-            Probe.Entered.fetch_add(1, std::memory_order_relaxed);
-            Jobs::WaitForCounter(Probe.Gate, 0);
-
-            Task::ParallelFor(Inner, [](uint32)
-            {
-                Probe.Sum.fetch_add(1, std::memory_order_relaxed);
-            }, 8);
-            Probe.Done.fetch_add(1, std::memory_order_relaxed);
+            Ran.fetch_add(1);
         });
     }
 
-    const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Outer; },
-        10.0);
-    EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Outer
-        << " async tasks ever started; the fiber pool wedged instead of growing";
-
-    Jobs::DecrementCounter(Probe.Gate, 1);
-
-    const bool AllDone = PollUntil([&] { return Probe.Done.load() == Outer; }, 20.0);
-    EXPECT_TRUE(AllDone) << "only " << Probe.Done.load() << " of " << Outer
-        << " blocking async tasks completed";
-    EXPECT_EQ(Probe.Sum.load(), (uint64)Outer * Inner);
-
-    if (AllDone)
+    std::atomic<uint64> Sum{0};
     {
-        Jobs::FreeCounter(Probe.Gate);
-    }
-}
-
-// External thread slots
-
-TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
-{
-    const uint32 Workers = Jobs::GetNumWorkers();
-    const uint32 Slots   = Jobs::GetNumThreadSlots() - Workers;
-    ASSERT_GT(Slots, 1u);
-
-    // Churn well past the supply, since a monotonic counter leaked one slot per cycle.
-    for (uint32 Round = 0; Round < Slots * 4; ++Round)
-    {
-        FThread T([&]
+        Jobs::FTaskIsolation Isolation;
+        GtInIsolatedRegion = true;
+        for (int Round = 0; Round < 32; ++Round)
         {
-            const uint32 Index = Jobs::RegisterExternalThread();
-            EXPECT_GE(Index, Workers);
-            EXPECT_LT(Index, Jobs::GetNumThreadSlots());
-            Jobs::UnregisterExternalThread();
-        });
-        T.join();
-    }
-
-    // Concurrently live external threads must still get distinct slots, minus the main one.
-    const uint32 Concurrent = Slots - 1;
-    std::vector<uint32>      Indices(Concurrent, Lumina::Constants::kIndexNoneU32);
-    std::vector<FThread> Threads;
-    std::atomic<uint32>      Arrived{0};
-
-    Threads.reserve(Concurrent);
-    for (uint32 i = 0; i < Concurrent; ++i)
-    {
-        Threads.emplace_back([&, i]
-        {
-            Indices[i] = Jobs::RegisterExternalThread();
-            // Hold the slot until every thread has one, so the claims genuinely overlap.
-            Arrived.fetch_add(1, std::memory_order_acq_rel);
-            while (Arrived.load(std::memory_order_acquire) < Concurrent)
-            {
-                Lumina::PlatformTime::YieldThread();
-            }
-            Jobs::UnregisterExternalThread();
-        });
-    }
-    for (FThread& T : Threads)
-    {
-        T.join();
-    }
-
-    std::vector<uint32> Sorted = Indices;
-    std::sort(Sorted.begin(), Sorted.end());
-    EXPECT_EQ(std::adjacent_find(Sorted.begin(), Sorted.end()), Sorted.end())
-        << "two concurrently live external threads were handed the same slot; per-thread arrays "
-           "indexed by GetWorkerIndex() are racing";
-}
-
-// Wedged pool recovery, where workers now drain the backlog inline on the scheduler fiber.
-namespace
-{
-    struct FWedgeProbe
-    {
-        Jobs::FCounter*     Gate = nullptr;
-        std::atomic<uint32> Finished{0};
-        std::atomic<bool>   Released{false};
-    };
-
-    void WedgeBlockingJob(void* Arg, uint32 /*Worker*/)
-    {
-        FWedgeProbe* P = static_cast<FWedgeProbe*>(Arg);
-        Jobs::WaitForCounter(P->Gate, 0);
-        P->Finished.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void WedgeReleaseJob(void* Arg, uint32 /*Worker*/)
-    {
-        FWedgeProbe* P = static_cast<FWedgeProbe*>(Arg);
-        P->Released.store(true, std::memory_order_relaxed);
-        Jobs::DecrementCounter(P->Gate, 1);
-    }
-
-    // The wedge needs the ceiling reachable, so these tests cycle the scheduler to a tiny FIXED pool.
-    void CycleToWedgeScheduler(uint32& SavedWorkers, uint32& SavedExternal)
-    {
-        SavedWorkers  = Jobs::GetNumWorkers();
-        SavedExternal = Jobs::GetNumThreadSlots() - SavedWorkers;
-        Jobs::WaitForAll();
-        Jobs::UnregisterExternalThread();
-        Jobs::Shutdown();
-
-        Jobs::FConfig Small;
-        Small.NumWorkerThreads   = 4;
-        Small.NumExternalThreads = SavedExternal;
-        Small.NumWorkFibers      = 8;
-        Small.MaxWorkFibers      = 8;
-        Jobs::Initialize(Small);
-        Jobs::RegisterExternalThread();
-    }
-
-    void RestoreSchedulerAfterWedge(uint32 SavedWorkers, uint32 SavedExternal)
-    {
-        Jobs::WaitForAll();
-        Jobs::UnregisterExternalThread();
-        Jobs::Shutdown();
-
-        Jobs::FConfig Config;
-        Config.NumWorkerThreads   = SavedWorkers;
-        Config.NumExternalThreads = SavedExternal;
-        Jobs::Initialize(Config);
-        Jobs::RegisterExternalThread();
-    }
-
-    void RunWedgeRecoveryScenario(FWedgeProbe& Probe, Jobs::EJobPriority ReleaserPriority)
-    {
-        Probe.Finished.store(0);
-        Probe.Released.store(false);
-        Probe.Gate = Jobs::AllocCounter(1);
-
-        // Far more blocked jobs than the 8-fiber ceiling, so the pool provably wedges before the fix.
-        constexpr uint32 Blockers = 32;
-        for (uint32 i = 0; i < Blockers; ++i)
-        {
-            Jobs::RunJob(&WedgeBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Wedge.Block");
+            Jobs::ParallelFor(4096, [&Sum](uint32 Index) { Sum.fetch_add(Index, std::memory_order_relaxed); }, 16);
         }
-        Jobs::RunJob(&WedgeReleaseJob, &Probe, ReleaserPriority, nullptr, "Wedge.Release");
-
-        // Nobody opens the gate from outside; recovery must come from workers running queued jobs inline.
-        const bool Recovered = PollUntil([&] { return Probe.Finished.load() == Blockers; },
-            15.0);
-        EXPECT_TRUE(Recovered) << "only " << Probe.Finished.load() << " of " << Blockers
-            << " blocked jobs completed; the wedged pool never ran the queued release job inline";
-
-        if (!Recovered)
-        {
-            Jobs::DecrementCounter(Probe.Gate, 1);
-            PollUntil([&] { return Probe.Finished.load() == Blockers; }, 10.0);
-        }
-        Jobs::WaitForAll();
-        Jobs::FreeCounter(Probe.Gate);
-    }
-}
-
-TEST(TaskSystem, WedgedFiberPool_RecoversByRunningJobsInline)
-{
-    uint32 SavedWorkers = 0, SavedExternal = 0;
-    CycleToWedgeScheduler(SavedWorkers, SavedExternal);
-
-    static FWedgeProbe Probe;
-    RunWedgeRecoveryScenario(Probe, Jobs::EJobPriority::Normal);
-
-    RestoreSchedulerAfterWedge(SavedWorkers, SavedExternal);
-}
-
-TEST(TaskSystem, WedgedFiberPool_BackgroundReleaseJobStillRuns)
-{
-    uint32 SavedWorkers = 0, SavedExternal = 0;
-    CycleToWedgeScheduler(SavedWorkers, SavedExternal);
-
-    // Assist waits normally refuse Background; wedge recovery must take it anyway or the wedge is permanent.
-    static FWedgeProbe Probe;
-    RunWedgeRecoveryScenario(Probe, Jobs::EJobPriority::Background);
-
-    RestoreSchedulerAfterWedge(SavedWorkers, SavedExternal);
-}
-
-namespace
-{
-    constexpr uint32 kNestProbeSlots = 64;
-
-    struct FNestProbe
-    {
-        std::atomic<uint32> Finished{0};
-        std::atomic<uint32> MaxNativeDepth{0};
-        std::atomic<uint32> NativeDepth[kNestProbeSlots]{};
-    };
-
-    // Slow enough that a waiting parent goes looking for queued work to adopt.
-    void NestLeafJob(void* /*Arg*/, uint32 /*Worker*/)
-    {
-        const double Until = Lumina::PlatformTime::Seconds() + 0.00005;
-        while (Lumina::PlatformTime::Seconds() < Until)
-        {
-        }
+        GtInIsolatedRegion = false;
     }
 
-    // Native runs never migrate threads, so the per-slot count is the nesting on that one stack.
-    void NestParkableJob(void* Arg, uint32 Worker)
-    {
-        FNestProbe* P = static_cast<FNestProbe*>(Arg);
-        const bool bTracked = !Jobs::GetCurrentFiberHandle() && Worker < kNestProbeSlots;
-        if (bTracked)
-        {
-            const uint32 Depth = P->NativeDepth[Worker].fetch_add(1) + 1;
-            uint32 Seen = P->MaxNativeDepth.load();
-            while (Depth > Seen && !P->MaxNativeDepth.compare_exchange_weak(Seen, Depth))
-            {
-            }
-        }
-
-        Jobs::FCounter* Children = Jobs::AllocCounter(0);
-        for (uint32 i = 0; i < 4; ++i)
-        {
-            Jobs::RunJob(&NestLeafJob, nullptr, Jobs::EJobPriority::Normal, Children, "Nest.Leaf");
-        }
-        Jobs::WaitForCounter(Children, 0);
-        Jobs::FreeCounter(Children);
-
-        if (bTracked)
-        {
-            P->NativeDepth[Worker].fetch_sub(1);
-        }
-        P->Finished.fetch_add(1);
-    }
-}
-
-TEST(TaskSystem, WedgedFiberPool_BoundsNativeNestingOfParkableJobs)
-{
-    uint32 SavedWorkers = 0, SavedExternal = 0;
-    CycleToWedgeScheduler(SavedWorkers, SavedExternal);
-
-    // Far past the 8-fiber ceiling, so most of these run inline and wait there, adopting the rest.
-    static FNestProbe Probe;
-    constexpr uint32 Parkable = 400;
-    for (uint32 i = 0; i < Parkable; ++i)
-    {
-        Jobs::RunJob(&NestParkableJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Nest.Parkable", true);
-    }
-
-    EXPECT_TRUE(PollUntil([&] { return Probe.Finished.load() == Parkable; }, 30.0))
-        << "only " << Probe.Finished.load() << " of " << Parkable << " parkable jobs completed";
-    EXPECT_LE(Probe.MaxNativeDepth.load(), 4u) << "park-capable jobs nested past the inline cap on one stack";
-
-    Jobs::WaitForAll();
-    RestoreSchedulerAfterWedge(SavedWorkers, SavedExternal);
+    Done.CountDown();
+    Done.Wait();
+    EXPECT_EQ(Ran.load(), 512);
+    EXPECT_EQ(RanInside.load(), 0);
+    EXPECT_EQ(Sum.load(), 32ull * (4095ull * 4096ull / 2ull));
 }

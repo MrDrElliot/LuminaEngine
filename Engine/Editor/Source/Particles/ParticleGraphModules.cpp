@@ -24,10 +24,10 @@ namespace Lumina
     {
         if (Graph.IsValid())
         {
-            OutObjects.push_back(Graph.Get());
+            OutObjects.Add(Graph.Get());
             for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
             {
-                OutObjects.push_back(Node.Get());
+                OutObjects.Add(Node.Get());
             }
         }
     }

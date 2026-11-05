@@ -1,11 +1,11 @@
 #include "Reflector/Utils/StringOps.h"
 #include <fstream>
 #include "StringHash.h"
-#include "nlohmann/json.hpp"
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/HeaderIncludeGraph.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ProjectSolution.h"
+#include "Reflector/ReflectorInput.h"
 #include "Reflector/Clang/ClangParser.h"
 #include "Reflector/CodeGeneration/CodeGenerator.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
@@ -14,10 +14,18 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <iostream>
 #include <thread>
 
+#if defined(_WIN32)
+    #include <io.h>
+    #define LUMINA_STDIN_IS_TERMINAL() (_isatty(_fileno(stdin)) != 0)
+#else
+    #include <unistd.h>
+    #define LUMINA_STDIN_IS_TERMINAL() (isatty(fileno(stdin)) != 0)
+#endif
 
-using json = nlohmann::json;
+
 using namespace Lumina::Reflection;
 
 namespace
@@ -98,121 +106,111 @@ int main(int argc, char* argv[])
     std::puts("======== Lumina Reflection Tool (LRT) =========");
     std::puts("===============================================");
     
-#if 0
-    
-    std::string InputFile = "H:/LuminaEngine/Reflection_Files.json";
-    
-#else
-    if (argc < 2)
+    // The build tool streams the module description over stdin; a file holding the same text can be named instead, to rerun one by hand.
+    std::string InputPath;
+    for (int i = 1; i < argc; ++i)
     {
-        FDiagnostics::Get().Errorf({}, EDiagId::DriverMissingInput,
-            "Missing command line argument: a Reflection_Files.json path is required.");
-        FDiagnostics::Get().PrintSummary();
-        return 1;
+        if (argv[i][0] != '-')
+        {
+            InputPath = argv[i];
+            break;
+        }
     }
 
-    std::string InputFile = argv[1];
-#endif
-
-    std::ifstream File(InputFile.c_str());
-    if (!File.is_open())
+    FReflectorInput Input;
+    std::string InputError;
+    uint32_t InputLine = 0;
+    bool bInputRead;
+    if (!InputPath.empty())
     {
-        // Anchoring at the JSON path lets a double-click on the build log open the missing file.
+        std::ifstream File(InputPath.c_str(), std::ios::binary);
+        if (!File.is_open())
+        {
+            FDiagLocation Loc;
+            Loc.File = InputPath;
+            FDiagnostics::Get().Errorf(Loc, EDiagId::DriverInputUnreadable,
+                "Failed to open Reflector input file '%s'.", InputPath.c_str());
+            FDiagnostics::Get().PrintSummary();
+            return 1;
+        }
+        bInputRead = ReadReflectorInput(File, Input, InputError, InputLine);
+    }
+    else
+    {
+        if (LUMINA_STDIN_IS_TERMINAL())
+        {
+            FDiagnostics::Get().Errorf({}, EDiagId::DriverMissingInput,
+                "No input: the build tool pipes the module description to stdin, or name a file holding one.");
+            FDiagnostics::Get().PrintSummary();
+            return 1;
+        }
+        bInputRead = ReadReflectorInput(std::cin, Input, InputError, InputLine);
+    }
+
+    if (!bInputRead)
+    {
         FDiagLocation Loc;
-        Loc.File = InputFile;
-        FDiagnostics::Get().Errorf(Loc, EDiagId::DriverInputUnreadable,
-            "Failed to open Reflector input file '%s'.", InputFile.c_str());
+        Loc.File = InputPath.empty() ? std::string("<stdin>") : InputPath;
+        Loc.Line = InputLine;
+        FDiagnostics::Get().Errorf(Loc, EDiagId::DriverInputUnreadable, "Malformed Reflector input: %s.", InputError.c_str());
         FDiagnostics::Get().PrintSummary();
         return 1;
     }
-    
-    
-    json Data = json::parse(File);
-    
-    std::string WorkspaceName     = Data["WorkspaceName"].get<std::string>().c_str();
-    std::string WorkspacePath     = Data["WorkspacePath"].get<std::string>().c_str();
-    
-    FReflectedWorkspace Workspace(WorkspacePath.c_str());
+
+    FReflectedWorkspace Workspace(Input.WorkspacePath.c_str());
 
     FScopedPhaseTimer WorkspaceTimer("Workspace registration");
 
-    for (const auto& Project : Data["Projects"])
+    for (FReflectorModuleInput& Module : Input.Modules)
     {
-        std::string ProjectName = Project["Name"].get<std::string>().c_str();
-        std::string ProjectPath = Project["Path"].get<std::string>().c_str();
-        
         auto ReflectedProject = std::make_unique<FReflectedProject>(&Workspace);
-        ReflectedProject->Name = std::move(ProjectName);
+        ReflectedProject->Name = std::move(Module.Name);
         // Normalized so prefix-matching against Header->HeaderPath works without per-call fixups.
-        ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ProjectPath));
+        ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(std::move(Module.Path));
 
         // A reference-only project is parsed so its types are known, but never generated for.
-        if (Project.contains("ReferenceOnly"))
+        ReflectedProject->bReferenceOnly = Module.bReferenceOnly;
+        ReflectedProject->bRouteTypeBindings = Module.bRouteTypeBindings;
+
+        // Empty means the module has none, and generated sources then include no PCH.
+        ReflectedProject->PrecompiledHeader = std::move(Module.PrecompiledHeader);
+
+        if (!Module.GeneratedDir.empty())
         {
-            ReflectedProject->bReferenceOnly = Project["ReferenceOnly"].get<bool>();
+            ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(Module.GeneratedDir));
         }
 
-        // Optional, the build system pins where this project's generated C++ lands.
-        if (Project.contains("GeneratedDir") && !Project["GeneratedDir"].get<std::string>().empty())
+        // A plugin or game module routes its C# bindings into its own Scripts/Generated dir.
+        if (!Module.CSharpBindingsDir.empty())
         {
-            std::string GeneratedDir = Project["GeneratedDir"].get<std::string>().c_str();
-            ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(GeneratedDir));
+            ReflectedProject->CSharpBindingsDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(Module.CSharpBindingsDir));
         }
 
-        // Absent or empty means the module has none, and generated sources then include no PCH.
-        if (Project.contains("PrecompiledHeader"))
+        for (std::string& IncludeDir : Module.IncludeDirs)
         {
-            ReflectedProject->PrecompiledHeader = Project["PrecompiledHeader"].get<std::string>().c_str();
+            ReflectedProject->IncludeDirs.push_back(Lumina::ClangUtils::NormalizeHeaderPath(std::move(IncludeDir)));
         }
 
-        // Optional, a plugin or game module routes its C# bindings into its own Scripts/Generated dir.
-        if (Project.contains("CSharpBindingsDir") && !Project["CSharpBindingsDir"].get<std::string>().empty())
+        for (std::string& Definition : Module.Definitions)
         {
-            std::string CSharpDir = Project["CSharpBindingsDir"].get<std::string>().c_str();
-            ReflectedProject->CSharpBindingsDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(CSharpDir));
+            ReflectedProject->Definitions.push_back(std::move(Definition));
         }
 
-        if (Project.contains("RouteTypeBindings"))
+        for (std::string& ForceInclude : Module.ForceIncludes)
         {
-            ReflectedProject->bRouteTypeBindings = Project["RouteTypeBindings"].get<bool>();
+            ReflectedProject->ForceIncludes.push_back(Lumina::ClangUtils::NormalizeHeaderPath(std::move(ForceInclude)));
         }
 
-        for (const auto& IncludeDirJson : Project["IncludeDirs"])
+        for (std::string& Header : Module.Headers)
         {
-            std::string IncludeDir = IncludeDirJson.get<std::string>().c_str();
-            IncludeDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(IncludeDir));
-            ReflectedProject->IncludeDirs.push_back(std::move(IncludeDir));
-        }
-        
-        if (Project.contains("Definitions"))
-        {
-            for (const auto& DefinitionJson : Project["Definitions"])
-            {
-                ReflectedProject->Definitions.push_back(DefinitionJson.get<std::string>().c_str());
-            }
-        }
-
-        if (Project.contains("ForceIncludes"))
-        {
-            for (const auto& ForceIncludeJson : Project["ForceIncludes"])
-            {
-                std::string ForceInclude = ForceIncludeJson.get<std::string>().c_str();
-                ForceInclude = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ForceInclude));
-                ReflectedProject->ForceIncludes.push_back(std::move(ForceInclude));
-            }
-        }
-
-        for (const auto& ProjectFileJson : Project["Files"])
-        {
-            std::string ProjectFile = ProjectFileJson.get<std::string>().c_str();
-            ProjectFile = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ProjectFile));
+            std::string ProjectFile = Lumina::ClangUtils::NormalizeHeaderPath(std::move(Header));
 
             auto ReflectedHeader = std::make_unique<FReflectedHeader>(ReflectedProject.get(), ProjectFile);
 
             Lumina::FStringHash HeaderHash(ProjectFile);
             ReflectedProject->Headers.emplace(HeaderHash, std::move(ReflectedHeader));
         }
-        
+
         Workspace.AddReflectedProject(std::move(ReflectedProject));
     }
 
@@ -235,7 +233,7 @@ int main(int argc, char* argv[])
 
     FClangParser Parser;
 
-    for (int i = 2; i < argc; ++i)
+    for (int i = 1; i < argc; ++i)
     {
         Parser.bStrictParse |= std::string(argv[i]) == "-strict-parse";
         Parser.bVerboseDiagnostics |= std::string(argv[i]) == "-verbose-diagnostics";

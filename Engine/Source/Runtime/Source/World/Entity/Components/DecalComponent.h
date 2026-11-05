@@ -87,7 +87,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Decal|Lifetime", ClampMin = 0.0f, Units = "s")
         float FadeOutDuration = 1.0f;
 
-        // World time the decal appeared, stamped on its first rendered frame when nothing set it.
+        // World time the decal appeared, stamped by the world when the component is added and nothing set it.
         float SpawnTime = -1.0f;
     };
 }

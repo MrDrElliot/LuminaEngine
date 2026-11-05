@@ -93,8 +93,8 @@ namespace Lumina
         {
             FString Name;
             FString Path;
-            size_t  Assets = 0;
-            size_t  Bytes  = 0;
+            int32   Assets = 0;
+            int64   Bytes  = 0;
         };
         TVector<FChunkSummary> LastChunks;
         TVector<FString>    LogLines;           // ring-bounded; UI thread only

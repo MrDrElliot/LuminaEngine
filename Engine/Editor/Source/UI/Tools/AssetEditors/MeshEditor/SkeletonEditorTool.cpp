@@ -27,7 +27,7 @@ namespace Lumina
 
 
     FSkeletonEditorTool::FSkeletonEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
@@ -51,7 +51,7 @@ namespace Lumina
             ImGui::Spacing();
 
             ImGui::Text("Number of Bones: %i", SkeletonResource->GetNumBones());
-            ImGui::Text("Skeleton Name: %s", SkeletonResource->Name.ToString().c_str());
+            ImGui::Text("Skeleton Name: %s", *SkeletonResource->Name.ToString());
             
             ImGui::Spacing();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
@@ -70,7 +70,7 @@ namespace Lumina
                 }
                 
                 int32 Depth = 0;
-                int32 CurrentIndex = (int32)(&Bone - SkeletonResource->Bones.data());
+                int32 CurrentIndex = (int32)(&Bone - SkeletonResource->Bones.GetData());
                 while (SkeletonResource->Bones[CurrentIndex].ParentIndex != -1)
                 {
                     CurrentIndex = SkeletonResource->Bones[CurrentIndex].ParentIndex;
@@ -182,7 +182,7 @@ namespace Lumina
             EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
         }
 
-        BoneWorldTransforms.resize(SkeletonResource->GetNumBones());
+        BoneWorldTransforms.SetNum(SkeletonResource->GetNumBones());
         for (int32 i = 0; i < SkeletonResource->GetNumBones(); ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
@@ -292,9 +292,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(DockspaceID, ImGuiDir_Right, 0.25f, &rightID, &centerID);
         ImGui::DockBuilderSplitNode(centerID, ImGuiDir_Left, 0.25f, &leftID, &centerID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), centerID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SkeletonPropertiesName).c_str(), rightID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(BoneHierarchyName).c_str(), leftID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), centerID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(SkeletonPropertiesName), rightID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(BoneHierarchyName), leftID);
     }
 
     void FSkeletonEditorTool::DrawBoneHierarchy(CWorld* DrawWorld, FSkeletonResource* SkeletonResource, const TVector<FMatrix4>& WorldTransforms, int32 BoneIndex)

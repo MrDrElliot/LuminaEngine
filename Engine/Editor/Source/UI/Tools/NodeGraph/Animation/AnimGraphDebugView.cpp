@@ -25,39 +25,39 @@ namespace Lumina
             return {};
         }
 
-        auto It = PinRegisters.find(Pin);
-        if (It == PinRegisters.end() && Pin->HasConnection())
+        auto It = PinRegisters.Find(Pin);
+        if (It == nullptr && Pin->HasConnection())
         {
-            It = PinRegisters.find(Pin->GetConnection(0));
+            It = PinRegisters.Find(Pin->GetConnection(0));
         }
 
-        if (It == PinRegisters.end() || It->second >= Scalars.size())
+        if (It == nullptr || (*It) >= Scalars.Num())
         {
             return {};
         }
-        return Scalars[It->second];
+        return Scalars[(*It)];
     }
 
     TOptional<float> FAnimGraphDebugView::ReadPlayhead(const CEdGraphNode* Node) const
     {
-        auto It = Playheads.find(Node);
-        if (!bLive || It == Playheads.end() || It->second >= Scalars.size())
+        auto It = Playheads.Find(Node);
+        if (!bLive || It == nullptr || (*It) >= Scalars.Num())
         {
             return {};
         }
-        return Scalars[It->second];
+        return Scalars[(*It)];
     }
 
     const FAnimValueHistory* FAnimGraphDebugView::FindHistory(const CEdNodeGraphPin* Pin) const
     {
-        auto It = Histories.find(Pin);
-        return It != Histories.end() ? &It->second : nullptr;
+        auto It = Histories.Find(Pin);
+        return It != nullptr ? &(*It) : nullptr;
     }
 
     float FAnimGraphDebugView::GetNodeWeight(const CEdGraphNode* Node) const
     {
-        auto It = NodeWeights.find(Node);
-        return It != NodeWeights.end() ? It->second : 1.0f;
+        auto It = NodeWeights.Find(Node);
+        return It != nullptr ? (*It) : 1.0f;
     }
 
     namespace AnimDebugDraw
@@ -103,7 +103,7 @@ namespace Lumina
             ImDrawList* DrawList = ImGui::GetWindowDrawList();
             DrawList->AddRectFilled(Min, Max, kPlotBackground, kPlotRounding);
 
-            if (Values.size() < 2)
+            if (Values.Num() < 2)
             {
                 CenteredHint(DrawList, Min, Size, "No live values");
                 return;
@@ -111,7 +111,7 @@ namespace Lumina
 
             float Low = Values[0];
             float High = Values[0];
-            for (size_t Index = 1; Index < Values.size(); ++Index)
+            for (int32 Index = 1; Index < Values.Num(); ++Index)
             {
                 Low = Math::Min(Low, Values[Index]);
                 High = Math::Max(High, Values[Index]);
@@ -125,29 +125,29 @@ namespace Lumina
             const float Step = (Size.x - Inset * 2.0f) / (float)(kAnimValueHistoryLength - 1);
 
             TVector<ImVec2> Points;
-            Points.reserve(Values.size());
-            for (size_t Index = 0; Index < Values.size(); ++Index)
+            Points.Reserve(Values.Num());
+            for (int32 Index = 0; Index < Values.Num(); ++Index)
             {
-                const float X = Max.x - Inset - (float)(Values.size() - 1 - Index) * Step;
+                const float X = Max.x - Inset - (float)(Values.Num() - 1 - Index) * Step;
                 const float T = (Values[Index] - Bottom) / Span;
-                Points.emplace_back(X, Max.y - Inset - T * (Size.y - Inset * 2.0f));
+                Points.Emplace(X, Max.y - Inset - T * (Size.y - Inset * 2.0f));
             }
-            DrawList->AddPolyline(Points.data(), (int)Points.size(), Color, 1.5f, ImDrawFlags_None);
-            DrawList->AddCircleFilled(Points.back(), 2.5f, Color);
+            DrawList->AddPolyline(Points.GetData(), Points.Num(), Color, 1.5f, ImDrawFlags_None);
+            DrawList->AddCircleFilled(Points.Last(), 2.5f, Color);
 
-            const FFixedString Current = FormatAs<FFixedString>("{:.3f}", Values.back());
-            SmallText(DrawList, ImVec2(Max.x - SmallTextSize(Current.c_str()).x - Inset, Min.y + 2.0f), Color, Current.c_str());
+            const FFixedString Current = FormatAs<FFixedString>("{:.3f}", Values.Last());
+            SmallText(DrawList, ImVec2(Max.x - SmallTextSize(*Current).x - Inset, Min.y + 2.0f), Color, *Current);
             if (High - Low > 1e-4f)
             {
-                SmallText(DrawList, ImVec2(Min.x + Inset, Min.y + 2.0f), kPlotLabel, FormatAs<FFixedString>("{:.2f}", High).c_str());
-                SmallText(DrawList, ImVec2(Min.x + Inset, Max.y - SmallFontSize() - 2.0f), kPlotLabel, FormatAs<FFixedString>("{:.2f}", Low).c_str());
+                SmallText(DrawList, ImVec2(Min.x + Inset, Min.y + 2.0f), kPlotLabel, *FormatAs<FFixedString>("{:.2f}", High));
+                SmallText(DrawList, ImVec2(Min.x + Inset, Max.y - SmallFontSize() - 2.0f), kPlotLabel, *FormatAs<FFixedString>("{:.2f}", Low));
             }
         }
 
         void ClipTimeline(const CAnimation* Clip, TOptional<float> Time, float Width)
         {
             const float Duration = Clip != nullptr ? Clip->GetDuration() : 0.0f;
-            const int32 CurveCount = Clip != nullptr ? Math::Min((int32)Clip->GetCurves().size(), kMaxClipCurves) : 0;
+            const int32 CurveCount = Clip != nullptr ? Math::Min(Clip->GetCurves().Num(), kMaxClipCurves) : 0;
 
             const float LineHeight  = SmallFontSize() + 4.0f;
             const float TrackHeight = 10.0f;
@@ -157,11 +157,11 @@ namespace Lumina
             const ImVec2 Min = ReserveBox(Size);
             ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
-            const FFixedString TimeText = Time.has_value()
-                ? FormatAs<FFixedString>("{:.2f} / {:.2f} s", Time.value(), Duration)
+            const FFixedString TimeText = Time.IsSet()
+                ? FormatAs<FFixedString>("{:.2f} / {:.2f} s", Time.GetValue(), Duration)
                 : FormatAs<FFixedString>("{:.2f} s", Duration);
-            SmallText(DrawList, Min, kPlotLabel, Clip != nullptr ? Clip->GetName().c_str() : "Clip from the Animation pin");
-            SmallText(DrawList, ImVec2(Min.x + Width - SmallTextSize(TimeText.c_str()).x, Min.y), kPlotLabel, TimeText.c_str());
+            SmallText(DrawList, Min, kPlotLabel, Clip != nullptr ? *Clip->GetName() : "Clip from the Animation pin");
+            SmallText(DrawList, ImVec2(Min.x + Width - SmallTextSize(*TimeText).x, Min.y), kPlotLabel, *TimeText);
 
             const ImVec2 TrackMin(Min.x, Min.y + LineHeight);
             const ImVec2 TrackMax(Min.x + Width, TrackMin.y + TrackHeight);
@@ -172,10 +172,10 @@ namespace Lumina
             }
 
             const auto TimeToX = [&](float At) { return TrackMin.x + Width * Math::Clamp(At / Duration, 0.0f, 1.0f); };
-            const TOptional<float> Playhead = Time.has_value() ? TOptional<float>(std::fmod(Math::Max(Time.value(), 0.0f), Duration + 1e-4f)) : TOptional<float>();
-            if (Playhead.has_value())
+            const TOptional<float> Playhead = Time.IsSet() ? TOptional<float>(std::fmod(Math::Max(Time.GetValue(), 0.0f), Duration + 1e-4f)) : TOptional<float>();
+            if (Playhead.IsSet())
             {
-                DrawList->AddRectFilled(TrackMin, ImVec2(TimeToX(Playhead.value()), TrackMax.y), EditorColors::ScaleAlpha(EditorColors::U32(EditorColors::Accent()), 0.45f), kPlotRounding);
+                DrawList->AddRectFilled(TrackMin, ImVec2(TimeToX(Playhead.GetValue()), TrackMax.y), EditorColors::ScaleAlpha(EditorColors::U32(EditorColors::Accent()), 0.45f), kPlotRounding);
             }
 
             for (const FAnimationNotifyState& State : Clip->GetNotifyStates())
@@ -211,15 +211,15 @@ namespace Lumina
                     const ImU32 Color = ToColor(Curve.Color);
                     DrawList->AddPolyline(Points, kCurveSamples, Color, 1.5f, ImDrawFlags_None);
 
-                    const char* Name = Curve.Name.c_str();
+                    const char* Name = *Curve.Name;
                     SmallText(DrawList, ImVec2(LegendX, CurveMin.y + CurveHeight + 2.0f), Color, Name);
                     LegendX += SmallTextSize(Name).x + 8.0f;
                 }
             }
 
-            if (Playhead.has_value())
+            if (Playhead.IsSet())
             {
-                const float X = TimeToX(Playhead.value());
+                const float X = TimeToX(Playhead.GetValue());
                 const float Bottom = CurveCount > 0 ? CurveMin.y + CurveHeight : TrackMax.y;
                 DrawList->AddLine(ImVec2(X, TrackMin.y - 2.0f), ImVec2(X, Bottom), kPlayhead, 1.5f);
                 DrawList->AddTriangleFilled(ImVec2(X - 4.0f, TrackMin.y - 4.0f), ImVec2(X + 4.0f, TrackMin.y - 4.0f), ImVec2(X, TrackMin.y + 1.0f), kPlayhead);
@@ -259,13 +259,13 @@ namespace Lumina
             }
 
             FBlendSpaceWeights Weights;
-            const FVector2 Input(X.value_or(0.0f), Y.value_or(0.0f));
-            if (X.has_value())
+            const FVector2 Input(X.Get(0.0f), Y.Get(0.0f));
+            if (X.IsSet())
             {
                 Space->Evaluate(Input, Weights);
             }
 
-            for (int32 SampleIndex = 0; SampleIndex < (int32)Space->Samples.size(); ++SampleIndex)
+            for (int32 SampleIndex = 0; SampleIndex < Space->Samples.Num(); ++SampleIndex)
             {
                 float Weight = 0.0f;
                 for (int32 Contribution = 0; Contribution < Weights.Count; ++Contribution)
@@ -281,7 +281,7 @@ namespace Lumina
                 }
             }
 
-            if (X.has_value())
+            if (X.IsSet())
             {
                 const ImVec2 Marker = ToScreen(Input);
                 DrawList->AddLine(ImVec2(Marker.x, BoxMin.y + 2.0f), ImVec2(Marker.x, BoxMax.y - 2.0f), IM_COL32(255, 255, 255, 50));
@@ -293,9 +293,9 @@ namespace Lumina
             }
 
             const FFixedString AxisLabel = bTwoAxes
-                ? FormatAs<FFixedString>("{} {:.2f}   {} {:.2f}", Space->AxisX.Name.c_str(), Input.x, Space->AxisY.Name.c_str(), Input.y)
-                : FormatAs<FFixedString>("{} {:.2f}", Space->AxisX.Name.c_str(), Input.x);
-            SmallText(DrawList, ImVec2(Min.x, BoxMax.y + 2.0f), kPlotLabel, X.has_value() ? AxisLabel.c_str() : "No live input");
+                ? FormatAs<FFixedString>("{} {:.2f}   {} {:.2f}", *Space->AxisX.Name, Input.x, *Space->AxisY.Name, Input.y)
+                : FormatAs<FFixedString>("{} {:.2f}", *Space->AxisX.Name, Input.x);
+            SmallText(DrawList, ImVec2(Min.x, BoxMax.y + 2.0f), kPlotLabel, X.IsSet() ? *AxisLabel : "No live input");
         }
 
         void Transfer(float InMin, float InMax, float OutMin, float OutMax, bool bClamp, TOptional<float> Input, float Width)
@@ -338,27 +338,27 @@ namespace Lumina
             }
             DrawList->AddPolyline(Points, kCurveSamples, EditorColors::U32(EditorColors::Accent()), 1.5f, ImDrawFlags_None);
 
-            if (Input.has_value())
+            if (Input.IsSet())
             {
-                const float In = Math::Clamp(Input.value(), Left, Right);
-                const ImVec2 Dot = ToScreen(In, Map(Input.value()));
+                const float In = Math::Clamp(Input.GetValue(), Left, Right);
+                const ImVec2 Dot = ToScreen(In, Map(Input.GetValue()));
                 DrawList->AddCircleFilled(Dot, 3.5f, kPlayhead);
-                const FFixedString Label = FormatAs<FFixedString>("{:.2f} > {:.2f}", Input.value(), Map(Input.value()));
-                SmallText(DrawList, ImVec2(Min.x + Inset, Min.y + 2.0f), kPlotLabel, Label.c_str());
+                const FFixedString Label = FormatAs<FFixedString>("{:.2f} > {:.2f}", Input.GetValue(), Map(Input.GetValue()));
+                SmallText(DrawList, ImVec2(Min.x + Inset, Min.y + 2.0f), kPlotLabel, *Label);
             }
         }
 
         void MachineStatus(const FAnimMachineStatus& Status, float Width)
         {
             const float LineHeight = SmallFontSize() + 4.0f;
-            const bool bBlending = !Status.From.empty() && Status.Blend < 1.0f;
+            const bool bBlending = !Status.From.IsEmpty() && Status.Blend < 1.0f;
             const ImVec2 Min = ReserveBox(ImVec2(Width, LineHeight + (bBlending ? 8.0f : 0.0f)));
             ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
             const FFixedString Label = bBlending
-                ? FormatAs<FFixedString>("{} > {}", Status.From.c_str(), Status.Current.c_str())
-                : FormatAs<FFixedString>("{}", Status.Current.c_str());
-            SmallText(DrawList, Min, EditorColors::U32(EditorColors::Accent()), Label.c_str());
+                ? FormatAs<FFixedString>("{} > {}", *Status.From, *Status.Current)
+                : FormatAs<FFixedString>("{}", *Status.Current);
+            SmallText(DrawList, Min, EditorColors::U32(EditorColors::Accent()), *Label);
 
             if (bBlending)
             {
@@ -385,9 +385,9 @@ namespace Lumina
             }
             DrawList->AddPolyline(Points, kCurveSamples, EditorColors::U32(EditorColors::Accent()), 1.5f, ImDrawFlags_None);
 
-            if (Elapsed.has_value() && Duration > 1e-5f)
+            if (Elapsed.IsSet() && Duration > 1e-5f)
             {
-                const float U = Math::Clamp(Elapsed.value() / Duration, 0.0f, 1.0f);
+                const float U = Math::Clamp(Elapsed.GetValue() / Duration, 0.0f, 1.0f);
                 const float X = Min.x + Inset + U * (Width - Inset * 2.0f);
                 DrawList->AddLine(ImVec2(X, Min.y + 2.0f), ImVec2(X, Max.y - 2.0f), kPlayhead, 1.0f);
                 DrawList->AddCircleFilled(ImVec2(X, Max.y - Inset - InertializationDecay(U) * (Height - Inset * 2.0f)), 3.5f, kPlayhead);
@@ -396,7 +396,7 @@ namespace Lumina
             SmallText(DrawList, ImVec2(Min.x + Inset, Min.y + 2.0f), kPlotLabel, "Offset left");
             const FFixedString End = FormatAs<FFixedString>("{:.2f} s", Duration);
             SmallText(DrawList, ImVec2(Min.x, Max.y + 2.0f), kPlotLabel, "0");
-            SmallText(DrawList, ImVec2(Max.x - SmallTextSize(End.c_str()).x, Max.y + 2.0f), kPlotLabel, End.c_str());
+            SmallText(DrawList, ImVec2(Max.x - SmallTextSize(*End).x, Max.y + 2.0f), kPlotLabel, *End);
         }
     }
 }

@@ -38,7 +38,7 @@ namespace Lumina
         TVector<FFracturePiece> Pieces;
         SAABB                   SourceBounds;
 
-        FORCEINLINE bool IsEmpty() const { return Pieces.empty(); }
+        FORCEINLINE bool IsEmpty() const { return Pieces.IsEmpty(); }
 
         friend FArchive& operator<<(FArchive& Ar, FFractureData& D)
         {
@@ -72,7 +72,7 @@ namespace Lumina
         /** Pre-build the shared piece meshes so the first runtime fracture doesn't hitch. */
         void PostLoad() override;
 
-        FORCEINLINE int32 GetNumPieces() const { return static_cast<int32>(Data.Pieces.size()); }
+        FORCEINLINE int32 GetNumPieces() const { return Data.Pieces.Num(); }
         FORCEINLINE const FFractureData& GetFractureData() const { return Data; }
         FORCEINLINE const FFracturePiece& GetPiece(int32 Index) const { return Data.Pieces[Index]; }
 
@@ -85,7 +85,7 @@ namespace Lumina
 
         void SerializeFractureData(FArchive& Ar) { Ar << Data; }
 
-        void InvalidatePieceMeshes() { PieceMeshes.clear(); }
+        void InvalidatePieceMeshes() { PieceMeshes.Reset(); }
 
         /** Bake convex Voronoi pieces from a source mesh's bounds. Returns a new collection owned by Outer. */
         static CGeometryCollection* GenerateFromMesh(CStaticMesh* Source, const FFractureSettings& Settings, CObject* Outer = nullptr);

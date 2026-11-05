@@ -10,7 +10,7 @@ using namespace Lumina;
 
 IMPLEMENT_MODULE(FMCPEditorModule, "MCPEditor");
 
-namespace
+namespace MCPEditorModuleInternal
 {
     FMCPEditorModule* GModule = nullptr;
 
@@ -25,6 +25,8 @@ namespace
         true,
         "Whether the Model Context Protocol endpoint opens as soon as the plugin loads.");
 }
+
+using namespace MCPEditorModuleInternal;
 
 namespace Lumina
 {

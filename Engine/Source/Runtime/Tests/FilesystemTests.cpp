@@ -19,12 +19,12 @@ namespace
         void SetUp() override
         {
             Root = GetTempDirectory();
-            while (!Root.empty() && (Root.back() == '/' || Root.back() == '\\'))
+            while (!Root.IsEmpty() && (Root.Last() == '/' || Root.Last() == '\\'))
             {
-                Root.pop_back();
+                Root.LeftChopInline(1);
             }
 
-            Root.append("/LuminaFilesystemTests");
+            Root.Append("/LuminaFilesystemTests");
             RemoveTree(Root);
             ASSERT_TRUE(MakeDirectoryTree(Root));
         }
@@ -37,14 +37,14 @@ namespace
         FString Under(FStringView Relative) const
         {
             FString Result = Root;
-            Result.push_back('/');
-            Result.append(Relative.data(), Relative.size());
+            Result.AppendChar('/');
+            Result.Append(Relative.GetData(), Relative.Len());
             return Result;
         }
 
         static TSpan<const uint8> Bytes(FStringView Text)
         {
-            return TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.data()), Text.size());
+            return TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len());
         }
 
         FString Root;
@@ -67,7 +67,7 @@ TEST_F(FilesystemTest, WriteThenReadRoundTrips)
 
     TVector<uint8> Data;
     ASSERT_TRUE(ReadFile(Data, Path));
-    EXPECT_EQ(Data.size(), 12u);
+    EXPECT_EQ(Data.Num(), 12);
 }
 
 TEST_F(FilesystemTest, ReadingAMissingFileFails)
@@ -84,7 +84,7 @@ TEST_F(FilesystemTest, EmptyFileReadsAsSuccessWithNoBytes)
 
     TVector<uint8> Data;
     EXPECT_TRUE(ReadFile(Data, Path));
-    EXPECT_TRUE(Data.empty());
+    EXPECT_TRUE(Data.IsEmpty());
 }
 
 TEST_F(FilesystemTest, WriteCreatesMissingParentDirectories)
@@ -114,16 +114,16 @@ TEST_F(FilesystemTest, ReadFileRangeClampsAtEndOfFile)
 
     TVector<uint8> Middle;
     ASSERT_TRUE(ReadFileRange(Middle, Path, 3, 4));
-    ASSERT_EQ(Middle.size(), 4u);
-    EXPECT_EQ(FString(reinterpret_cast<const char*>(Middle.data()), 4), FString("3456"));
+    ASSERT_EQ(Middle.Num(), 4);
+    EXPECT_EQ(FString(reinterpret_cast<const char*>(Middle.GetData()), 4), FString("3456"));
 
     TVector<uint8> Tail;
     ASSERT_TRUE(ReadFileRange(Tail, Path, 8, 100));
-    EXPECT_EQ(Tail.size(), 2u);
+    EXPECT_EQ(Tail.Num(), 2);
 
     TVector<uint8> PastEnd;
     EXPECT_TRUE(ReadFileRange(PastEnd, Path, 50, 10));
-    EXPECT_TRUE(PastEnd.empty());
+    EXPECT_TRUE(PastEnd.IsEmpty());
 }
 
 TEST_F(FilesystemTest, PositionalReadsDoNotDependOnTheFilePointer)
@@ -168,7 +168,7 @@ TEST_F(FilesystemTest, AtomicWriteLeavesNoTemporaryBehind)
     EXPECT_EQ(Text, FString("committed"));
 
     FString TempPath = Path;
-    TempPath.append(".tmp");
+    TempPath.Append(".tmp");
     EXPECT_FALSE(Exists(TempPath));
 }
 
@@ -266,7 +266,7 @@ TEST_F(FilesystemTest, SplicedWriteRejectsATruncatedSourceAndCommitsNothing)
     EXPECT_FALSE(Exists(Target));
 
     FString TempPath = Target;
-    TempPath.append(".tmp");
+    TempPath.Append(".tmp");
     EXPECT_FALSE(Exists(TempPath));
 }
 
@@ -404,7 +404,7 @@ TEST_F(FilesystemTest, EntryPathsResolveBackToRealFiles)
         EXPECT_EQ(Entry.Name, FStringView("File.bin"));
         EXPECT_EQ(Entry.Size, 10u);
         EXPECT_TRUE(Exists(Entry.FullPath));
-        EXPECT_TRUE(Entry.FullPath.ends_with("Paths/A/File.bin"));
+        EXPECT_TRUE(Entry.FullPath.EndsWith("Paths/A/File.bin"));
     }));
 
     EXPECT_EQ(Seen, 1);
@@ -415,7 +415,7 @@ TEST_F(FilesystemTest, VisitorCanStopIteration)
     for (int32 Index = 0; Index < 8; ++Index)
     {
         FString Name = "Stop/File";
-        Name.append(Format("{}", Index));
+        Name.Append(Format("{}", Index));
         ASSERT_TRUE(WriteFile(Under(Name), Bytes("x")));
     }
 
@@ -513,14 +513,14 @@ TEST_F(FilesystemTest, HandlesPathsLongerThanTheLegacyLimit)
     FString Deep = Root;
     for (int32 Index = 0; Index < 14; ++Index)
     {
-        Deep.append("/SegmentOfMeaningfulLength");
+        Deep.Append("/SegmentOfMeaningfulLength");
     }
 
-    ASSERT_GT(Deep.size(), 260u);
+    ASSERT_GT(Deep.Len(), 260);
     ASSERT_TRUE(MakeDirectoryTree(Deep));
 
     FString Path = Deep;
-    Path.append("/File.txt");
+    Path.Append("/File.txt");
     ASSERT_TRUE(WriteFile(Path, Bytes("long")));
 
     FString Text;
@@ -568,11 +568,11 @@ TEST(NativeFileSystemTest, ResolveVirtualPathRejectsForeignAliases)
 {
     const VFS::FNativeFileSystem Mount("/Game", "C:/Projects/Demo/Game");
 
-    EXPECT_TRUE(Mount.ResolveVirtualPath("/Engine/Content/A.lasset").empty());
+    EXPECT_TRUE(Mount.ResolveVirtualPath("/Engine/Content/A.lasset").IsEmpty());
 
     // A shared prefix is not a match, or "/GameData" would resolve as "<Base>Data".
-    EXPECT_TRUE(Mount.ResolveVirtualPath("/GameData/A.lasset").empty());
-    EXPECT_TRUE(Mount.ResolveVirtualPath("/Gam").empty());
+    EXPECT_TRUE(Mount.ResolveVirtualPath("/GameData/A.lasset").IsEmpty());
+    EXPECT_TRUE(Mount.ResolveVirtualPath("/Gam").IsEmpty());
 }
 
 TEST(NativeFileSystemTest, ResolveVirtualPathHandlesPathsPastTheFixedStringLimit)
@@ -582,12 +582,12 @@ TEST(NativeFileSystemTest, ResolveVirtualPathHandlesPathsPastTheFixedStringLimit
     FString Virtual = "/Game";
     for (int32 Index = 0; Index < 14; ++Index)
     {
-        Virtual.append("/SegmentOfMeaningfulLength");
+        Virtual.Append("/SegmentOfMeaningfulLength");
     }
 
     const FPathString Resolved = Mount.ResolveVirtualPath(Virtual);
 
-    ASSERT_GT(Resolved.size(), 260u);
-    EXPECT_TRUE(FStringView(Resolved.data(), Resolved.size()).starts_with("C:/Projects/Demo/Game/Segment"));
-    EXPECT_TRUE(FStringView(Resolved.data(), Resolved.size()).ends_with("SegmentOfMeaningfulLength"));
+    ASSERT_GT(Resolved.Len(), 260);
+    EXPECT_TRUE(FStringView(Resolved.GetData(), Resolved.Len()).StartsWith("C:/Projects/Demo/Game/Segment"));
+    EXPECT_TRUE(FStringView(Resolved.GetData(), Resolved.Len()).EndsWith("SegmentOfMeaningfulLength"));
 }

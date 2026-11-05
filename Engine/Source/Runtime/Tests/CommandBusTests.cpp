@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
 #include "Containers/HashTable.h"
+#include "Core/Threading/Thread.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
@@ -33,7 +37,7 @@ TEST(CommandBus, ReservedEntityBecomesLiveAtFlush)
     const ECS::FEntity Entity = Bus.Create();
     Bus.Emplace<FBusValue>(Entity, FBusValue{ 7 });
     EXPECT_FALSE(Registry.IsValid(Entity));
-    EXPECT_EQ(Registry.NumEntities(), 0u);
+    EXPECT_EQ(Registry.NumEntities(), 0);
 
     Bus.Flush();
 
@@ -55,7 +59,7 @@ TEST(CommandBus, ImmediateCreateNeverReusesAnOutstandingReservation)
     Bus.Flush();
     EXPECT_TRUE(Registry.IsValid(Reserved));
     EXPECT_TRUE(Registry.IsValid(Immediate));
-    EXPECT_EQ(Registry.NumEntities(), 2u);
+    EXPECT_EQ(Registry.NumEntities(), 2);
 }
 
 TEST(CommandBus, ReservationReusesAFreedSlotWithANewVersion)
@@ -148,7 +152,7 @@ TEST(CommandBus, DiscardReturnsReservationsAndDropsCommands)
     }
 
     EXPECT_EQ(Ran, 0);
-    EXPECT_EQ(Registry.NumEntities(), 0u);
+    EXPECT_EQ(Registry.NumEntities(), 0);
 
     const ECS::FEntity Next = Registry.Create();
     EXPECT_EQ(Next.GetIndex(), Reserved.GetIndex());
@@ -162,7 +166,7 @@ TEST(CommandBus, ManyThreadsRecordCreatesAndComponentsTogether)
     constexpr uint32 Count = 20000;
     TVector<ECS::FEntity> Entities(Count);
 
-    Task::ParallelFor(Count, [&](uint32 Index)
+    Jobs::ParallelFor(Count, [&](uint32 Index)
     {
         const ECS::FEntity Entity = Bus.Create();
         Entities[Index] = Entity;
@@ -178,24 +182,38 @@ TEST(CommandBus, ManyThreadsRecordCreatesAndComponentsTogether)
         const ECS::FEntity Entity = Entities[Index];
         ASSERT_TRUE(Registry.IsValid(Entity));
         EXPECT_EQ(Registry.Get<FBusValue>(Entity).Value, static_cast<int32>(Index));
-        Indices.insert(Entity.GetIndex());
+        Indices.Add(Entity.GetIndex());
     }
-    EXPECT_EQ(Indices.size(), static_cast<size_t>(Count));
+    EXPECT_EQ(Indices.Num(), Count);
 }
 
 TEST(CommandBus, WorkerThreadsAlwaysDefer)
 {
+    std::atomic<uint32> WorkerItems{ 0 };
     std::atomic<uint32> Deferring{ 0 };
-    Task::ParallelFor(64, [&](uint32)
+    Jobs::ParallelFor(64, [&](uint32)
     {
+        // The caller could otherwise drain every item itself, so it holds here until a worker has run one.
+        if (Threading::IsMainThread())
+        {
+            const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (WorkerItems.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < Deadline)
+            {
+                std::this_thread::yield();
+            }
+            return;
+        }
+
+        WorkerItems.fetch_add(1, std::memory_order_release);
         if (ECS::FCommandBus::ShouldDefer())
         {
             Deferring.fetch_add(1, std::memory_order_relaxed);
         }
     }, 1);
 
-    // The calling thread may run some items itself, so only the worker share is guaranteed.
-    EXPECT_GT(Deferring.load(), 0u);
+    ASSERT_GT(WorkerItems.load(), 0u);
+    EXPECT_EQ(Deferring.load(), WorkerItems.load());
+    EXPECT_FALSE(ECS::FCommandBus::ShouldDefer());
     {
         const ECS::FCommandBus::FDeferScope Scope(true);
         EXPECT_TRUE(ECS::FCommandBus::ShouldDefer());

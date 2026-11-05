@@ -77,7 +77,7 @@ namespace Lumina
 
     void CMaterialExpression_FunctionInput::DrawNodeBody()
     {
-        ImGui::Text("%s", InputName.c_str());
+        ImGui::Text("%s", *InputName);
         ImGui::TextDisabled("%s", SignatureTypeName(InputType));
     }
 
@@ -87,7 +87,7 @@ namespace Lumina
         const EMaterialInputType T = ToMaterialInputType(InputType);
         if (Output)
         {
-            Output->ResolvedVar.clear();
+            Output->ResolvedVar.Reset();
             Output->SetInputType(T);
             Output->SetComponentMask(FullMaskForType(T));
         }
@@ -104,7 +104,7 @@ namespace Lumina
 
     void CMaterialFunctionOutput::DrawNodeBody()
     {
-        ImGui::Text("%s", OutputName.c_str());
+        ImGui::Text("%s", *OutputName);
         ImGui::TextDisabled("%s", SignatureTypeName(OutputType));
     }
 
@@ -138,29 +138,29 @@ namespace Lumina
             return true;
         }
 
-        const size_t InputCount = Fn != nullptr ? Fn->GetInputs().size() : 0;
-        const size_t OutputCount = Fn != nullptr ? Fn->GetOutputs().size() : 0;
-        if (FunctionInputPins.size() != InputCount || FunctionOutputPins.size() != OutputCount ||
-            CachedInputTypes.size() != InputCount || CachedOutputTypes.size() != OutputCount)
+        const int32 InputCount = Fn != nullptr ? Fn->GetInputs().Num() : 0;
+        const int32 OutputCount = Fn != nullptr ? Fn->GetOutputs().Num() : 0;
+        if (FunctionInputPins.Num() != InputCount || FunctionOutputPins.Num() != OutputCount ||
+            CachedInputTypes.Num() != InputCount || CachedOutputTypes.Num() != OutputCount)
         {
             return true;
         }
 
-        for (size_t Index = 0; Index < InputCount; ++Index)
+        for (int32 Index = 0; Index < InputCount; ++Index)
         {
             const SMaterialFunctionInput& Input = Fn->GetInputs()[Index];
             const CMaterialInput* Pin = FunctionInputPins[Index];
-            if (Pin == nullptr || Pin->GetPinName() != Input.Name.c_str() || CachedInputTypes[Index] != Input.Type)
+            if (Pin == nullptr || Pin->GetPinName() != *Input.Name || CachedInputTypes[Index] != Input.Type)
             {
                 return true;
             }
         }
 
-        for (size_t Index = 0; Index < OutputCount; ++Index)
+        for (int32 Index = 0; Index < OutputCount; ++Index)
         {
             const SMaterialFunctionOutput& Output = Fn->GetOutputs()[Index];
             const CMaterialOutput* Pin = FunctionOutputPins[Index];
-            if (Pin == nullptr || Pin->GetPinName() != Output.Name.c_str() || CachedOutputTypes[Index] != Output.Type)
+            if (Pin == nullptr || Pin->GetPinName() != *Output.Name || CachedOutputTypes[Index] != Output.Type)
             {
                 return true;
             }
@@ -187,7 +187,7 @@ namespace Lumina
                 Snap.Name    = Pin->GetPinName();
                 Snap.bInput  = bInput;
                 Snap.Remotes = Pin->GetConnections();
-                Snapshots.push_back(Move(Snap));
+                Snapshots.Add(Move(Snap));
             }
         };
         SnapshotPins(GetInputPins(), true);
@@ -205,39 +205,39 @@ namespace Lumina
                 }
                 Pin->ClearConnections();
             }
-            NodePins[(uint32)Direction].clear();
+            NodePins[(uint32)Direction].Reset();
         };
         ClearDirection(ENodePinDirection::Input);
         ClearDirection(ENodePinDirection::Output);
 
-        FunctionInputPins.clear();
-        FunctionOutputPins.clear();
-        CachedInputTypes.clear();
-        CachedOutputTypes.clear();
+        FunctionInputPins.Reset();
+        FunctionOutputPins.Reset();
+        CachedInputTypes.Reset();
+        CachedOutputTypes.Reset();
 
         if (CMaterialFunction* Fn = Function.Get())
         {
             for (const SMaterialFunctionInput& In : Fn->GetInputs())
             {
                 const EMaterialInputType T = ToMaterialInputType(In.Type);
-                CMaterialInput* Pin = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), In.Name.c_str(), ENodePinDirection::Input));
-                Pin->SetPinName(In.Name.c_str());
+                CMaterialInput* Pin = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), *In.Name, ENodePinDirection::Input));
+                Pin->SetPinName(*In.Name);
                 Pin->SetInputType(T);
                 Pin->SetComponentMask(FullMaskForType(T));
-                FunctionInputPins.push_back(Pin);
-                CachedInputTypes.push_back(In.Type);
+                FunctionInputPins.Add(Pin);
+                CachedInputTypes.Add(In.Type);
             }
 
             for (const SMaterialFunctionOutput& Out : Fn->GetOutputs())
             {
                 const EMaterialInputType T = ToMaterialInputType(Out.Type);
-                CMaterialOutput* Pin = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), Out.Name.c_str(), ENodePinDirection::Output));
-                Pin->SetPinName(Out.Name.c_str());
+                CMaterialOutput* Pin = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), *Out.Name, ENodePinDirection::Output));
+                Pin->SetPinName(*Out.Name);
                 Pin->SetInputType(T);
                 Pin->SetComponentMask(FullMaskForType(T));
                 Pin->SetShouldDrawEditor(false);
-                FunctionOutputPins.push_back(Pin);
-                CachedOutputTypes.push_back(Out.Type);
+                FunctionOutputPins.Add(Pin);
+                CachedOutputTypes.Add(Out.Type);
             }
         }
 
@@ -288,7 +288,7 @@ namespace Lumina
 
     void CMaterialExpression_MaterialFunctionCall::DrawNodeBody()
     {
-        const char* Label = Function.IsValid() ? Function->GetName().c_str() : "(no function)";
+        const char* Label = Function.IsValid() ? *Function->GetName() : "(no function)";
         ImGui::Text("%s", Label);
     }
 
@@ -307,7 +307,7 @@ namespace Lumina
         auto EmitNeutralOutputs = [&]()
         {
             const FString Prefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
-            for (size_t j = 0; j < FunctionOutputPins.size(); ++j)
+            for (int32 j = 0; j < FunctionOutputPins.Num(); ++j)
             {
                 CMaterialOutput* OutPin = FunctionOutputPins[j];
                 const EMaterialInputType T = OutPin->InputType;
@@ -327,7 +327,7 @@ namespace Lumina
 
         if (!Compiler.BeginInlineFunction(Fn))
         {
-            EmitError("Recursive Function", FString("Material function '") + Fn->GetName().c_str() + "' calls itself (directly or indirectly).");
+            EmitError("Recursive Function", FString("Material function '") + *Fn->GetName() + "' calls itself (directly or indirectly).");
             EmitNeutralOutputs();
             return;
         }
@@ -335,7 +335,7 @@ namespace Lumina
         CMaterialNodeGraph* FnGraph = Cast<CMaterialNodeGraph>(Fn->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
         if (FnGraph == nullptr)
         {
-            EmitError("Material Function", FString("Material function '") + Fn->GetName().c_str() + "' has no graph to inline.");
+            EmitError("Material Function", FString("Material function '") + *Fn->GetName() + "' has no graph to inline.");
             EmitNeutralOutputs();
             Compiler.EndInlineFunction(Fn);
             return;
@@ -344,8 +344,8 @@ namespace Lumina
         // Per-call variable prefix, composed with any enclosing call's prefix so nesting never collides.
         const FString CallPrefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
         Compiler.PushInlinePrefix(CallPrefix);
-        const size_t FirstBodyError   = Compiler.GetErrors().size();
-        const size_t FirstBodyWarning = Compiler.GetWarnings().size();
+        const int32 FirstBodyError   = Compiler.GetErrors().Num();
+        const int32 FirstBodyWarning = Compiler.GetWarnings().Num();
 
         // Gather the function's I/O nodes.
         TVector<CMaterialExpression_FunctionInput*> InputNodes;
@@ -358,19 +358,19 @@ namespace Lumina
             }
             if (CMaterialExpression_FunctionInput* In = Cast<CMaterialExpression_FunctionInput>(N.Get()))
             {
-                InputNodes.push_back(In);
+                InputNodes.Add(In);
             }
             else if (CMaterialFunctionOutput* Out = Cast<CMaterialFunctionOutput>(N.Get()))
             {
-                OutputNodes.push_back(Out);
+                OutputNodes.Add(Out);
             }
         }
 
-        Compiler.AddRaw(FString("\t// ---- inline material function: ") + Fn->GetName().c_str() + " ----\n");
+        Compiler.AddRaw(FString("\t// ---- inline material function: ") + *Fn->GetName() + " ----\n");
 
         // ResolvedVars are cleared again at the end.
         TVector<CMaterialOutput*> BoundInputOutputs;
-        for (size_t i = 0; i < FunctionInputPins.size() && i < Fn->GetInputs().size(); ++i)
+        for (int32 i = 0; i < FunctionInputPins.Num() && i < Fn->GetInputs().Num(); ++i)
         {
             const SMaterialFunctionInput& Decl = Fn->GetInputs()[i];
             CMaterialInput* ArgPin = FunctionInputPins[i];
@@ -386,7 +386,7 @@ namespace Lumina
                     InNode->Output->ResolvedVar = ArgVar;
                     InNode->Output->SetInputType(Arg.Type);
                     InNode->Output->SetComponentMask(FullMaskForType(Arg.Type));
-                    BoundInputOutputs.push_back(InNode->Output);
+                    BoundInputOutputs.Add(InNode->Output);
                     break;
                 }
             }
@@ -395,17 +395,17 @@ namespace Lumina
         // Signature drift gets its own default, so downstream references resolve to a declared variable.
         for (CMaterialExpression_FunctionInput* InNode : InputNodes)
         {
-            if (InNode->Output == nullptr || !InNode->Output->ResolvedVar.empty())
+            if (InNode->Output == nullptr || !InNode->Output->ResolvedVar.IsEmpty())
             {
                 continue;
             }
             const EMaterialInputType T = ToMaterialInputType(InNode->InputType);
-            const FString Var = CallPrefix + "unbound_" + InNode->InputName.c_str();
+            const FString Var = CallPrefix + "unbound_" + *InNode->InputName;
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + " = " + VecLiteral(InNode->InputType, InNode->DefaultValue) + ";\n");
             InNode->Output->ResolvedVar = Var;
             InNode->Output->SetInputType(T);
             InNode->Output->SetComponentMask(FullMaskForType(T));
-            BoundInputOutputs.push_back(InNode->Output);
+            BoundInputOutputs.Add(InNode->Output);
         }
 
         // A function body's switches answer to the calling material's permutation, before the sort below.
@@ -428,10 +428,10 @@ namespace Lumina
 
         if (CyclicNode != nullptr)
         {
-            EmitError("Material Function", FString("Material function '") + Fn->GetName().c_str() + "' contains a cycle.");
+            EmitError("Material Function", FString("Material function '") + *Fn->GetName() + "' contains a cycle.");
             for (CMaterialOutput* Bound : BoundInputOutputs)
             {
-                Bound->ResolvedVar.clear();
+                Bound->ResolvedVar.Reset();
             }
             Compiler.PopInlinePrefix();
             Compiler.EndInlineFunction(Fn);
@@ -447,13 +447,13 @@ namespace Lumina
             {
                 continue;
             }
-            SavedNames.push_back({ Node, Node->GetNodeFullName() });
+            SavedNames.Emplace(Node, Node->GetNodeFullName());
             Node->SetNodeFullName(CallPrefix + Node->GetNodeFullName());
             static_cast<CMaterialGraphNode*>(Node)->GenerateDefinition(Compiler);
         }
 
         // Expose each declared output as a typed local that this call node's output pin reads from.
-        for (size_t j = 0; j < FunctionOutputPins.size() && j < Fn->GetOutputs().size(); ++j)
+        for (int32 j = 0; j < FunctionOutputPins.Num() && j < Fn->GetOutputs().Num(); ++j)
         {
             const SMaterialFunctionOutput& Decl = Fn->GetOutputs()[j];
             CMaterialOutput* OutPin = FunctionOutputPins[j];
@@ -493,10 +493,10 @@ namespace Lumina
         }
         for (CMaterialOutput* Bound : BoundInputOutputs)
         {
-            Bound->ResolvedVar.clear();
+            Bound->ResolvedVar.Reset();
         }
 
-        Compiler.RetargetDiagnosticsToCallNode(FirstBodyError, FirstBodyWarning, this, FString(Fn->GetName().c_str()));
+        Compiler.RetargetDiagnosticsToCallNode(FirstBodyError, FirstBodyWarning, this, FString(*Fn->GetName()));
         Compiler.PopInlinePrefix();
         Compiler.EndInlineFunction(Fn);
     }

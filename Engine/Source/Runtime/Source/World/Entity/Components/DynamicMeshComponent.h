@@ -42,22 +42,22 @@ namespace Lumina
     // Packs the streams into a resource ready for meshlet generation, deriving normals when absent. Consumes positions, indices and colors.
     RUNTIME_API TUniquePtr<FMeshResource> BuildMeshResource(FDynamicMeshBuildData& Data, const FMeshBuildOptions& Options);
     
-    struct FDynamicMeshRenderData
+    // A copy shares the geometry, so a material refresh republishes without touching the data readers already hold.
+    struct RUNTIME_API FDynamicMeshRenderData
     {
-        FMeshResource               Resource;
+        FDynamicMeshRenderData();
+        FDynamicMeshRenderData(const FDynamicMeshRenderData& Other);
+        FDynamicMeshRenderData& operator = (const FDynamicMeshRenderData&) = delete;
+        TSharedPtr<FMeshResource>   SharedResource;
+        FMeshResource&              Resource;
         TVector<FResolvedSurface>   Surfaces;
-
-        // Tight local box, kept alongside the sphere rather than derived from it: the sphere circumscribes
-        // the box, so rebuilding a box from the radius inflates every axis by up to sqrt(3).
+        // The sphere circumscribes the box, so a box rebuilt from the radius would inflate every axis by up to sqrt(3).
         FVector3                    LocalMin             = FVector3(0.0f);
         FVector3                    LocalMax             = FVector3(0.0f);
-
         FVector3                    LocalCenter          = FVector3(0.0f);
         float                       LocalRadius          = 0.0f;
         uint32                      MeshletHeaderSlot = 0;
-
-        // Materials can still be compiling when Commit runs; the resolve pass re-runs the material half
-        // until they settle, exactly as the asset path does.
+        // False while a material is still compiling; the resolve pass refreshes the material half until they settle.
         bool                        bAllMaterialsReady   = false;
     };
 
@@ -197,20 +197,10 @@ namespace Lumina
         /// observes a new version is guaranteed to observe the pointer that goes with it.
         uint32 LoadRenderDataVersion() const;
 
-        /// Atomically swaps in fully-built data and releases the version bump. Null clears.
+        // Any thread. Swaps in fully built data, bumps the version and queues the entity for the resolve pass. Null clears.
         void PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData);
 
-        /// Bumped every time RenderData is replaced or cleared.
-        ///
-        /// This component has no registry access, so it cannot signal the render scene's dirty channel --
-        /// it gets POLLED instead, once per component per frame. That poll used to hash the entity into the
-        /// primitive table and compare the stored surface pointer, which is a hash probe plus two random
-        /// memory accesses for every dynamic mesh in the world, every frame, whether or not anything moved.
-        /// Comparing these two adjacent fields instead keeps the poll a dense sequential scan.
-        ///
-        /// A counter rather than the old pointer compare also closes a real hole: the allocator can hand a
-        /// fresh FDynamicMeshRenderData back at the address the previous one just freed, and the pointer
-        /// compare would read that as "unchanged". Transient, never serialized.
+        // Bumped every time RenderData is replaced or cleared; a counter, since a freed address can come back as new data.
         uint32 RenderDataVersion = 0;
 
         /// Last RenderDataVersion the render scene's primitive sync observed. Owned by that pass, not by
@@ -221,14 +211,7 @@ namespace Lumina
         // Last RenderDataVersion whose materials the resolve pass examined. Transient, never serialized.
         uint32 ResolvedRenderDataVersion = 0;
 
-        // FMeshResolveCache::DependencyBit of every material the last resolve read, so an unrelated change skips this mesh.
-        uint64 ResolvedMaterialBits = 0;
-
-        // A material was still compiling at the last resolve, so any pending resolve work looks again.
-        bool bResolvedMaterialsPending = true;
-
-        /// Re-runs the material half of the resolve against the current MaterialOverrides. Called by the
-        /// render scene's resolve pass while a material is still compiling, and after an override changes.
+        // Game thread, for the resolve pass. Republishes a copy with the material half re-resolved against the current overrides.
         void RefreshResolvedMaterials();
 
     private:
@@ -239,8 +222,9 @@ namespace Lumina
         /// rather than reading the member so Commit can run it on the not-yet-published snapshot.
         void ResolveMaterialsInto(FDynamicMeshRenderData& Data) const;
 
-        /// Private: reachable only through LoadRenderData / PublishRenderData, which is what keeps the
-        /// cross-thread accesses atomic. Nothing may mutate it once published.
+        void StoreRenderData(TSharedPtr<FDynamicMeshRenderData> NewData);
+
+        // Reached only through the atomic load and store, and never mutated once published.
         TSharedPtr<FDynamicMeshRenderData> RenderData;
 
         TSharedPtr<FDynamicMeshBuildData> BuildData;

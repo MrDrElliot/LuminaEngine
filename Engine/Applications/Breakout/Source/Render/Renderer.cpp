@@ -91,8 +91,8 @@ namespace Breakout
         {
             return RHI::FShaderSource
             {
-                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                     Spirv.size() * sizeof(uint32)),
+                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                     Spirv.Num() * sizeof(uint32)),
                 .EntryPoint = EntryPoint,
             };
         }
@@ -123,7 +123,7 @@ namespace Breakout
                                      const TVector<uint32>& Pixel, const char* PixelEntry,
                                      EFormat Format, const RHI::FBlendDesc& Blend)
         {
-            if (Vertex.empty() || Pixel.empty())
+            if (Vertex.IsEmpty() || Pixel.IsEmpty())
             {
                 return {};
             }
@@ -144,7 +144,7 @@ namespace Breakout
         void PushQuad(TVector<FQuadInstance>& Out, const FBody& Body, const FVisual& Visual, float Param0 = 0.0f,
                       float Param1 = 0.0f)
         {
-            FQuadInstance& Instance = Out.emplace_back();
+            FQuadInstance& Instance = Out.EmplaceGetRef();
             Instance.Center       = Body.Position;
             Instance.HalfSize     = Body.HalfSize;
             Instance.Rotation     = Body.Rotation;
@@ -214,7 +214,7 @@ namespace Breakout
         void PushPanel(TVector<FQuadInstance>& Out, const FVector2& Center, const FVector2& HalfSize,
                        const FVector4& Color, float Glow, float Corner = 0.12f)
         {
-            FQuadInstance& Panel = Out.emplace_back();
+            FQuadInstance& Panel = Out.EmplaceGetRef();
             Panel.Center       = Center;
             Panel.HalfSize     = HalfSize;
             Panel.Color        = Color;
@@ -231,7 +231,7 @@ namespace Breakout
 
         void PushBar(TVector<FQuadInstance>& Out, const FVector2& Center, float Width, float Fill, const FVector4& Color)
         {
-            FQuadInstance& Track = Out.emplace_back();
+            FQuadInstance& Track = Out.EmplaceGetRef();
             Track.Center       = Center;
             Track.HalfSize     = { Width * 0.5f, 4.0f };
             Track.Color        = { Color.x * 0.18f, Color.y * 0.18f, Color.z * 0.18f, 1.0f };
@@ -241,7 +241,7 @@ namespace Breakout
 
             const float Filled = Math::Max(Width * Math::Clamp(Fill, 0.0f, 1.0f), 1.0f);
 
-            FQuadInstance& Level = Out.emplace_back();
+            FQuadInstance& Level = Out.EmplaceGetRef();
             Level.Center       = { Center.x - Width * 0.5f + Filled * 0.5f, Center.y };
             Level.HalfSize     = { Filled * 0.5f, 4.0f };
             Level.Color        = Color;
@@ -256,8 +256,8 @@ namespace Breakout
     {
         SwapchainFormat = InSwapchainFormat;
 
-        AlphaQuads.reserve(8192);
-        AdditiveQuads.reserve(8192);
+        AlphaQuads.Reserve(8192);
+        AdditiveQuads.Reserve(8192);
 
         return CreatePipelines();
     }
@@ -461,8 +461,8 @@ namespace Breakout
 
     void FRenderer::GatherQuads(FGame& Game, float RealTime)
     {
-        AlphaQuads.clear();
-        AdditiveQuads.clear();
+        AlphaQuads.Reset();
+        AdditiveQuads.Reset();
 
         ECS::FRegistry& Registry = Game.GetRegistry();
 
@@ -475,11 +475,11 @@ namespace Breakout
                 : 1.0f - float(Brick.Health) / float(Math::Max(1, Brick.MaxHealth));
 
             PushQuad(AlphaQuads, Body, Visual, Damage, float(Brick.Row * 13 + Brick.Column * 7));
-            AlphaQuads.back().Param2 = float(uint32(Brick.Kind));
+            AlphaQuads.Last().Param2 = float(uint32(Brick.Kind));
 
             if (Brick.Kind == EBrickKind::Gravity)
             {
-                FQuadInstance& Halo = AdditiveQuads.emplace_back();
+                FQuadInstance& Halo = AdditiveQuads.EmplaceGetRef();
                 Halo.Center   = Body.Position;
                 Halo.HalfSize = { 300.0f + Pulse(RealTime, 4.0f) * 30.0f, 300.0f + Pulse(RealTime, 4.0f) * 30.0f };
                 Halo.Color    = { 0.35f, 0.15f, 0.70f, 0.35f };
@@ -504,7 +504,7 @@ namespace Breakout
             {
                 Look = EBrickKind::Regen;
             }
-            AlphaQuads.back().Param2 = float(uint32(Look));
+            AlphaQuads.Last().Param2 = float(uint32(Look));
 
             PushBar(AdditiveQuads, { Body.Position.x, Body.Position.y + Body.HalfSize.y + 26.0f },
                 Body.HalfSize.x * 1.7f, Boss.Health / Math::Max(Boss.MaxHealth, 1.0f),
@@ -528,7 +528,7 @@ namespace Breakout
         if (State.WallTimer > 0.0f)
         {
             const float Fade = Math::Min(1.0f, State.WallTimer * (State.WallTimer < 2.0f ? 0.5f + 0.5f * Pulse(RealTime, 14.0f) : 1.0f));
-            FQuadInstance& Wall = AdditiveQuads.emplace_back();
+            FQuadInstance& Wall = AdditiveQuads.EmplaceGetRef();
             Wall.Center       = { kFieldWidth * 0.5f, kWallY };
             Wall.HalfSize     = { kFieldWidth * 0.5f, 5.0f + Pulse(RealTime, 6.0f) * 2.0f };
             Wall.Color        = { 0.25f * Fade, 1.10f * Fade, 0.70f * Fade, 1.0f };
@@ -566,7 +566,7 @@ namespace Breakout
             if (Paddle.SmashArm > 0.0f || Paddle.SmashFlash > 0.0f)
             {
                 const float Strength = Math::Max(Paddle.SmashArm / kSmashArmWindow, Paddle.SmashFlash);
-                FQuadInstance& Arc = AdditiveQuads.emplace_back();
+                FQuadInstance& Arc = AdditiveQuads.EmplaceGetRef();
                 Arc.Center   = { Body.Position.x, Body.Position.y };
                 Arc.HalfSize = { Body.HalfSize.x + 30.0f + Paddle.SmashFlash * 120.0f, Body.HalfSize.x + 30.0f + Paddle.SmashFlash * 120.0f };
                 Arc.Color    = { 1.80f * Strength, 1.50f * Strength, 0.90f * Strength, 1.0f };
@@ -581,7 +581,7 @@ namespace Breakout
                 const bool bReady = Paddle.ShieldCharge >= 1.0f;
                 const float Strength = Math::Max(Paddle.ShieldCharge, Paddle.ShieldFlash);
 
-                FQuadInstance& Shield = AdditiveQuads.emplace_back();
+                FQuadInstance& Shield = AdditiveQuads.EmplaceGetRef();
                 Shield.Center       = { kFieldWidth * 0.5f, kPaddleY + 44.0f };
                 Shield.HalfSize     = { kFieldWidth * 0.5f * Paddle.ShieldCharge, 4.0f + Paddle.ShieldFlash * 22.0f };
                 Shield.Color        = { 0.35f * Strength, 1.25f * Strength, 1.70f * Strength, 1.0f };
@@ -623,7 +623,7 @@ namespace Breakout
                 const float Falloff = 1.0f - float(Node) / float(kBallTrailNodes);
                 const float Taper = Falloff * Falloff;
 
-                FQuadInstance& Ribbon = AdditiveQuads.emplace_back();
+                FQuadInstance& Ribbon = AdditiveQuads.EmplaceGetRef();
                 Ribbon.Center   = Next - Segment * 0.5f;
                 Ribbon.HalfSize = { Length * 0.5f + kBallRadius * 0.55f * Taper, kBallRadius * 0.92f * Taper };
                 Ribbon.Rotation = Math::Atan2(Segment.y, Segment.x);
@@ -660,7 +660,7 @@ namespace Breakout
             const float Radius = Wave.MaxRadius * (1.0f - (1.0f - Alpha) * (1.0f - Alpha));
             const float Strength = (1.0f - Alpha) * (1.0f - Alpha);
 
-            FQuadInstance& Instance = AdditiveQuads.emplace_back();
+            FQuadInstance& Instance = AdditiveQuads.EmplaceGetRef();
             Instance.Center   = Body.Position;
             Instance.HalfSize = { Radius, Radius };
             Instance.Color    = { Wave.Color.x * 1.35f, Wave.Color.y * 1.35f, Wave.Color.z * 1.35f, Strength };
@@ -696,8 +696,8 @@ namespace Breakout
         GatherHud(Game, RealTime);
 
         FFrameStats& Stats = Game.GetStats();
-        Stats.AlphaQuads = int32(AlphaQuads.size());
-        Stats.AdditiveQuads = int32(AdditiveQuads.size());
+        Stats.AlphaQuads = AlphaQuads.Num();
+        Stats.AdditiveQuads = AdditiveQuads.Num();
     }
 
     void FRenderer::GatherHud(FGame& Game, float RealTime)
@@ -731,7 +731,7 @@ namespace Breakout
 
         for (int32 Life = 0; Life < State.Lives; ++Life)
         {
-            FQuadInstance& Instance = AdditiveQuads.emplace_back();
+            FQuadInstance& Instance = AdditiveQuads.EmplaceGetRef();
             Instance.Center   = { kFieldWidth - 72.0f - Life * 44.0f, 96.0f };
             Instance.HalfSize = { 13.0f, 13.0f };
             Instance.Color    = { 0.60f, 1.20f, 1.70f, 1.0f };
@@ -1174,18 +1174,18 @@ namespace Breakout
             .Time          = RealTime,
         };
 
-        if (!AlphaQuads.empty())
+        if (!AlphaQuads.IsEmpty())
         {
-            Args.Instances = RHI::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size()).Address;
+            Args.Instances = RHI::CopyTransientArray(AlphaQuads.GetData(), AlphaQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AlphaQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AlphaQuads.Num()), 0, 0);
         }
 
-        if (!AdditiveQuads.empty())
+        if (!AdditiveQuads.IsEmpty())
         {
-            Args.Instances = RHI::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size()).Address;
+            Args.Instances = RHI::CopyTransientArray(AdditiveQuads.GetData(), AdditiveQuads.Num()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AdditiveQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AdditiveQuads.Num()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);
