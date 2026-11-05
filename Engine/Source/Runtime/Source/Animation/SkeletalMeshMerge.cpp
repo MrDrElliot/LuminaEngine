@@ -176,12 +176,27 @@ namespace Lumina::SkeletalMeshMerge
             SourceSkeletons.Add(SkeletonOf(Mesh));
         }
 
-        TUniquePtr<FSkeletonResource> MergedSkeleton = MakeUnique<FSkeletonResource>();
-        TVector<TVector<int32>>       BoneRemap;
-        if (!BuildUnifiedSkeleton(TSpan<CSkeleton* const>(SourceSkeletons.GetData(), SourceSkeletons.Num()),
-                                  Settings.BaseSkeleton, *MergedSkeleton, BoneRemap, Result.Error))
+        // A per-merge copy of one shared skeleton collides with other skeletons' copies in the retarget cache.
+        CSkeleton* SharedSkeleton = Settings.BaseSkeleton != nullptr ? Settings.BaseSkeleton : SourceSkeletons[0];
+        for (const CSkeleton* Skeleton : SourceSkeletons)
         {
-            return Result;
+            if (Skeleton != SharedSkeleton || SharedSkeleton->GetSkeletonResource() == nullptr)
+            {
+                SharedSkeleton = nullptr;
+                break;
+            }
+        }
+
+        TUniquePtr<FSkeletonResource> MergedSkeleton;
+        TVector<TVector<int32>>       BoneRemap;
+        if (SharedSkeleton == nullptr)
+        {
+            MergedSkeleton = MakeUnique<FSkeletonResource>();
+            if (!BuildUnifiedSkeleton(TSpan<CSkeleton* const>(SourceSkeletons.GetData(), SourceSkeletons.Num()),
+                                      Settings.BaseSkeleton, *MergedSkeleton, BoneRemap, Result.Error))
+            {
+                return Result;
+            }
         }
 
         //~ Material slots, deduplicated so two pieces sharing a material share one slot.
@@ -315,7 +330,7 @@ namespace Lumina::SkeletalMeshMerge
             const FCell&          Cell     = Cells[CellIndex];
             const FMeshResource&  Resource = Sources[Cell.MeshIndex]->GetMeshResource();
             const FMeshletData&   Src      = Resource.MeshletData;
-            const TVector<int32>& Remap    = BoneRemap[Cell.MeshIndex];
+            const TVector<int32>* Remap    = SharedSkeleton != nullptr ? nullptr : &BoneRemap[Cell.MeshIndex];
 
             uint32 VertexCursor   = Cell.DstVertexBase;
             uint32 TriangleCursor = Cell.DstTriangleBase;
@@ -366,8 +381,15 @@ namespace Lumina::SkeletalMeshMerge
                         const uint32 SrcBone = (SrcSlot < static_cast<uint32>(Src.MeshletBoneIndices.Num()))
                             ? Src.MeshletBoneIndices[SrcSlot] : 0u;
 
-                        Dst.MeshletBoneIndices[PaletteCursor + b] = (SrcBone < static_cast<uint32>(Remap.Num()))
-                            ? (uint32)Remap[SrcBone] : 0u;
+                        if (Remap == nullptr)
+                        {
+                            Dst.MeshletBoneIndices[PaletteCursor + b] = SrcBone;
+                        }
+                        else
+                        {
+                            Dst.MeshletBoneIndices[PaletteCursor + b] = (SrcBone < static_cast<uint32>(Remap->Num()))
+                                ? (uint32)(*Remap)[SrcBone] : 0u;
+                        }
                     }
                 }
 
@@ -443,11 +465,15 @@ namespace Lumina::SkeletalMeshMerge
 
         const FName MeshName = Settings.Name.IsNone() ? FName("MergedSkeletalMesh") : Settings.Name;
 
-        CSkeleton* OutSkeleton = NewObject<CSkeleton>(nullptr, FName(MeshName.ToString() + "_Skeleton"),
-                                                     FGuid::New(), OF_Transient);
-        OutSkeleton->SetSkeletonResource(Move(MergedSkeleton));
+        CSkeleton* OutSkeleton = SharedSkeleton;
+        if (OutSkeleton == nullptr)
+        {
+            OutSkeleton = NewObject<CSkeleton>(nullptr, FName(MeshName.ToString() + "_Skeleton"), FGuid::New(),
+                                               OF_Transient);
+            OutSkeleton->SetSkeletonResource(Move(MergedSkeleton));
+        }
 
-        if (Settings.bMergeSockets)
+        if (Settings.bMergeSockets && SharedSkeleton == nullptr)
         {
             for (const CSkeleton* Skeleton : SourceSkeletons)
             {
