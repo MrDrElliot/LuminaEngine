@@ -63,7 +63,7 @@ namespace Lumina
 
         // An editor asset keeps its binaries in the artifact cache, and a cook embeds them since a game has no compiler.
         TVector<uint32> EditorBinaries = Move(ComputeShaderBinaries);
-        ComputeShaderBinaries.clear();
+        ComputeShaderBinaries.Reset();
         if (Ar.IsCooking())
         {
             ComputeShaderBinaries = EditorBinaries;
@@ -83,15 +83,15 @@ namespace Lumina
 
 #if USING(WITH_EDITOR)
         // Binaries embedded in an editor asset predate the artifact cache or were built against other templates.
-        bool bCurrent = !ComputeShaderBinaries.empty() && CompiledTemplateHash == GetSimulationTemplateHash();
+        bool bCurrent = !ComputeShaderBinaries.IsEmpty() && CompiledTemplateHash == GetSimulationTemplateHash();
 #else
         // A cooked game ships the binaries it was built with and has no compiler to replace them.
-        bool bCurrent = !ComputeShaderBinaries.empty();
+        bool bCurrent = !ComputeShaderBinaries.IsEmpty();
 #endif
         if (!bCurrent)
         {
-            bLoadedEmbeddedBinaries |= !ComputeShaderBinaries.empty();
-            ComputeShaderBinaries.clear();
+            bLoadedEmbeddedBinaries |= !ComputeShaderBinaries.IsEmpty();
+            ComputeShaderBinaries.Reset();
             bCurrent = LoadShaderFromArtifactCache();
         }
 
@@ -105,7 +105,7 @@ namespace Lumina
         ReleaseComputeShader();
 #if !USING(WITH_EDITOR)
         LOG_ERROR("Particle emitter '{}' in '{}' has no simulation shader for the current templates. Open the project in the editor once so it compiles into the artifact cache, or cook the content.",
-                  EmitterName.c_str(), GetPackage() != nullptr ? GetPackage()->GetPackagePath().c_str() : "");
+                  *EmitterName, GetPackage() != nullptr ? *GetPackage()->GetPackagePath() : "");
 #endif
     }
 
@@ -117,7 +117,7 @@ namespace Lumina
             return false;
         }
         const FFixedString Path = Package->GetPackagePath();
-        return GetName() == FName(VFS::FileName(FStringView(Path.c_str(), Path.size()), true));
+        return GetName() == FName(VFS::FileName(FStringView(*Path, Path.Len()), true));
     }
 
     void CParticleEmitter::OnDestroy()
@@ -148,25 +148,25 @@ namespace Lumina
     {
         // Test hosts run without an engine, and a stack that never compiled has no key.
         TVector<uint8> Bytes;
-        if (CompiledCodeHash == 0 || GEngine == nullptr || !GEngine->GetArtifactCache().Load(MakeArtifactKey(), Bytes) || Bytes.empty() || Bytes.size() % sizeof(uint32) != 0)
+        if (CompiledCodeHash == 0 || GEngine == nullptr || !GEngine->GetArtifactCache().Load(MakeArtifactKey(), Bytes) || Bytes.IsEmpty() || Bytes.Num() % sizeof(uint32) != 0)
         {
             return false;
         }
 
-        ComputeShaderBinaries.resize(Bytes.size() / sizeof(uint32));
-        Memory::Memcpy(ComputeShaderBinaries.data(), Bytes.data(), Bytes.size());
+        ComputeShaderBinaries.SetNum(Bytes.Num() / sizeof(uint32));
+        Memory::Memcpy(ComputeShaderBinaries.GetData(), Bytes.GetData(), Bytes.Num());
         CompiledTemplateHash = GetSimulationTemplateHash();
         return true;
     }
 
     void CParticleEmitter::StoreShaderInArtifactCache() const
     {
-        if (CompiledCodeHash == 0 || ComputeShaderBinaries.empty() || GEngine == nullptr)
+        if (CompiledCodeHash == 0 || ComputeShaderBinaries.IsEmpty() || GEngine == nullptr)
         {
             return;
         }
 
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(ComputeShaderBinaries.data()), ComputeShaderBinaries.size() * sizeof(uint32));
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(ComputeShaderBinaries.GetData()), ComputeShaderBinaries.Num() * sizeof(uint32));
         GEngine->GetArtifactCache().Store(MakeArtifactKey(), Bytes);
     }
 
@@ -179,7 +179,7 @@ namespace Lumina
         // Commit adds a reference every call, so the one held for the previous compile is given back, even when it is the same entry.
         const FShaderH Previous = ComputeShader;
         ComputeShader = FShaderLibrary::Commit(FName(ShaderKey), ERHIShaderType::Compute,
-            TSpan<const uint32>(ComputeShaderBinaries.data(), ComputeShaderBinaries.size()));
+            TSpan<const uint32>(ComputeShaderBinaries.GetData(), ComputeShaderBinaries.Num()));
         if (Previous != nullptr)
         {
             FShaderLibrary::Release(Previous);
@@ -205,22 +205,22 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Particles");
         // A shared emitter asset that was deleted leaves an empty slot nothing can draw or edit.
-        if (const size_t Missing = Emitters.RemoveAllBy([](const TStrongObjectPtr<CParticleEmitter>& Emitter) { return !Emitter.IsValid(); }))
+        if (const size_t Missing = Emitters.RemoveAll([](const TStrongObjectPtr<CParticleEmitter>& Emitter) { return !Emitter.IsValid(); }))
         {
-            LOG_WARN("Particle system '{}' dropped {} emitter(s) whose asset no longer exists.", GetName().c_str(), Missing);
+            LOG_WARN("Particle system '{}' dropped {} emitter(s) whose asset no longer exists.", *GetName(), Missing);
         }
 
         // Emitters is the only thing every consumer indexes, so an empty one gets a default instead.
-        if (Emitters.empty())
+        if (Emitters.IsEmpty())
         {
             AddEmitter();
         }
 
-        // A nested export gets no PostLoad from the outer load, while a shared emitter asset already had its own.
+        // A nested emitter may not have had its PostLoad yet, while a shared emitter asset already had its own.
         bool bNeedsCompile = false;
         for (const TStrongObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
-            if (Emitter->GetPackage() == GetPackage())
+            if (Emitter->GetPackage() == GetPackage() && !CPackage::ConditionalPostLoad(Emitter.Get()) && !Emitter->HasAnyFlag(OF_WasLoaded))
             {
                 Emitter->PostLoad();
             }
@@ -247,9 +247,9 @@ namespace Lumina
 
         // Names only disambiguate column headers, so a running index skipping taken ones is enough.
         FString Candidate;
-        for (int32 Suffix = (int32)Emitters.size(); ; ++Suffix)
+        for (int32 Suffix = Emitters.Num(); ; ++Suffix)
         {
-            Candidate = FString("Emitter ") + Format("{}", Suffix).c_str();
+            Candidate = FString("Emitter ") + *Format("{}", Suffix);
             bool bTaken = false;
             for (const TStrongObjectPtr<CParticleEmitter>& Existing : Emitters)
             {
@@ -266,13 +266,13 @@ namespace Lumina
         }
         Emitter->EmitterName = Candidate;
 
-        Emitters.push_back(Emitter);
+        Emitters.Add(Emitter);
         return Emitter;
     }
 
     bool CParticleSystem::RemoveEmitter(CParticleEmitter* Emitter)
     {
-        if (Emitter == nullptr || Emitters.size() <= 1)
+        if (Emitter == nullptr || Emitters.Num() <= 1)
         {
             return false;
         }
@@ -281,7 +281,7 @@ namespace Lumina
         {
             if (It->Get() == Emitter)
             {
-                Emitters.erase(It);
+                Emitters.RemoveAt(static_cast<int32>(It - Emitters.begin()));
                 return true;
             }
         }
@@ -295,12 +295,12 @@ namespace Lumina
             return;
         }
 
-        for (int32 i = 0; i < (int32)Emitters.size(); ++i)
+        for (int32 i = 0; i < Emitters.Num(); ++i)
         {
             if (Emitters[i].Get() == Emitter)
             {
                 const int32 Target = i + (Direction < 0 ? -1 : 1);
-                if (Target >= 0 && Target < (int32)Emitters.size())
+                if (Target >= 0 && Target < Emitters.Num())
                 {
                     TStrongObjectPtr<CParticleEmitter> Tmp = Emitters[i];
                     Emitters[i]      = Emitters[Target];
@@ -341,7 +341,7 @@ namespace Lumina
 
             // A sub-emitter's last particle can be born as late as its parent's last one dies.
             float Start = Emitter->Duration;
-            if (const CParticleEmitter* Parent = Emitter->SpawnFromEmitter.empty() ? nullptr : FindEmitter(Emitter->SpawnFromEmitter))
+            if (const CParticleEmitter* Parent = Emitter->SpawnFromEmitter.IsEmpty() ? nullptr : FindEmitter(Emitter->SpawnFromEmitter))
             {
                 Start = Math::Max(Start, Parent->Duration + Parent->LifetimeRange.y);
             }
@@ -409,7 +409,7 @@ namespace Lumina
         SParticlePropertyBinding NewBinding;
         NewBinding.PropertyName  = PropertyName;
         NewBinding.ParameterName = ParameterName;
-        PropertyBindings.push_back(NewBinding);
+        PropertyBindings.Add(NewBinding);
     }
 
     void CParticleSystem::ClearPropertyBinding(const FName& PropertyName)
@@ -418,7 +418,7 @@ namespace Lumina
         {
             if (It->PropertyName == PropertyName)
             {
-                PropertyBindings.erase(It);
+                PropertyBindings.RemoveAt(static_cast<int32>(It - PropertyBindings.begin()));
                 return;
             }
         }
@@ -460,7 +460,7 @@ namespace Lumina
     // A bound property searches the component once, and an asset with no bindings skips even that.
     static const SParticleParameter* FindBoundParameter(const CParticleSystem& Asset, const SParticleSystemComponent& Comp, const FName& PropName)
     {
-        return Asset.PropertyBindings.empty() ? nullptr : Comp.FindParameter(Asset.GetPropertyBinding(PropName));
+        return Asset.PropertyBindings.IsEmpty() ? nullptr : Comp.FindParameter(Asset.GetPropertyBinding(PropName));
     }
 
     static float ResolveBoundFloat(const CParticleSystem& Asset, const SParticleSystemComponent& Comp, const FName& PropName, float Literal)
@@ -517,7 +517,7 @@ namespace Lumina
     float FParticleGridSnapshot::Sample(FName Channel, const FVector3& WorldPosition) const
     {
         const auto Found = Algo::Find(ChannelNames, Channel);
-        if (Found == ChannelNames.end() || Size.x == 0u || Size.y == 0u || Values.size() < (size_t)Size.x * Size.y * Channels)
+        if (Found == ChannelNames.end() || Size.x == 0u || Size.y == 0u || static_cast<size_t>(Values.Num()) < (size_t)Size.x * Size.y * Channels)
         {
             return 0.0f;
         }
@@ -536,7 +536,7 @@ namespace Lumina
             const int32 Height = (int32)Size.y;
             X = bWraps ? ((X % Width) + Width) % Width : Math::Clamp(X, 0, Width - 1);
             Y = bWraps ? ((Y % Height) + Height) % Height : Math::Clamp(Y, 0, Height - 1);
-            return Values[((size_t)Y * Size.x + (size_t)X) * Channels + ChannelIndex];
+            return Values[(Y * Size.x + X) * Channels + ChannelIndex];
         };
 
         const float Low  = Math::Lerp(At(BaseX, BaseY), At(BaseX + 1, BaseY), Blend.x);
@@ -576,7 +576,7 @@ namespace Lumina
         R.MaxParticles            = Math::Clamp(Emitter.MaxParticles, 0, ParticleEmitterMaxCapacity);
         R.SpawnRate               = ResolveBoundFloat(Asset, Component, Names.SpawnRate,             Emitter.SpawnRate);
         R.BurstCount              = ResolveBoundInt  (Asset, Component, Names.BurstCount,            Emitter.BurstCount);
-        R.NumBursts               = Math::Min((int32)Emitter.Bursts.size(), FResolvedParticleParams::MaxBursts);
+        R.NumBursts               = Math::Min(Emitter.Bursts.Num(), FResolvedParticleParams::MaxBursts);
         for (int32 Index = 0; Index < R.NumBursts; ++Index)
         {
             R.Bursts[Index] = Emitter.Bursts[Index];
@@ -668,7 +668,7 @@ namespace Lumina
     void ApplyParticleParamBindings(const CParticleEmitter& Emitter, const SParticleSystemComponent& Component, TVector<FVector4>& InOutValues)
     {
         // The common case, a stack of plain constants, pays one empty check per emitter.
-        if (Emitter.ParamBindings.empty())
+        if (Emitter.ParamBindings.IsEmpty())
         {
             return;
         }
@@ -676,7 +676,7 @@ namespace Lumina
         for (const SParticleParamBinding& Binding : Emitter.ParamBindings)
         {
             // An out-of-range slot means bindings saved against a different compile, so skip and keep the constant.
-            if (Binding.SlotIndex < 0 || Binding.SlotIndex >= (int32)InOutValues.size())
+            if (Binding.SlotIndex < 0 || Binding.SlotIndex >= InOutValues.Num())
             {
                 continue;
             }

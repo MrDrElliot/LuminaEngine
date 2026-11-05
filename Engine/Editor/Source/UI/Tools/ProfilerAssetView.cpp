@@ -73,7 +73,7 @@ namespace Lumina
 
     void FProfilerEditorTool::DrawAssetTable(const char* Id, TVector<FAssetLoadStat>& Stats, bool bShowSize)
     {
-        if (Stats.empty())
+        if (Stats.IsEmpty())
         {
             ImGui::TextDisabled("Nothing recorded at this layer yet.");
             return;
@@ -115,7 +115,7 @@ namespace Lumina
         for (const FAssetLoadStat& Stat : Stats)
         {
             const FString Name = Stat.Name.ToString();
-            if (AssetFilter[0] != '\0' && Name.find(AssetFilter) == FString::npos)
+            if (AssetFilter[0] != '\0' && Name.Find(AssetFilter) == Constants::kIndexNone)
             {
                 continue;
             }
@@ -123,7 +123,7 @@ namespace Lumina
             ImGui::TableNextRow();
 
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(Name.c_str());
+            ImGui::TextUnformatted(*Name);
 
             ImGui::TableNextColumn();
             ImGui::Text("%u", Stat.Count);
@@ -194,9 +194,9 @@ namespace Lumina
         if (ImGui::SmallButton("Clear"))
         {
             Tracker.Clear();
-            AssetRecent.clear();
-            AssetRequests.clear();
-            AssetPackages.clear();
+            AssetRecent.Reset();
+            AssetRequests.Reset();
+            AssetPackages.Reset();
         }
 
         ImGui::SetNextItemWidth(220.0f);
@@ -204,7 +204,7 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::TextDisabled("L loaded, R resident, J joined, F failed");
 
-        if (Requests == 0 && AssetPackages.empty())
+        if (Requests == 0 && AssetPackages.IsEmpty())
         {
             ImGui::TextDisabled("No asset loads recorded yet. Open or import an asset.");
             return;
@@ -228,11 +228,11 @@ namespace Lumina
             if (ImGui::BeginChild("##assetrecent", ImVec2(0.0f, 200.0f), true))
             {
                 // Newest first, which is the order you want when you just clicked something.
-                for (size_t Index = AssetRecent.size(); Index > 0; --Index)
+                for (int32 Index = AssetRecent.Num(); Index > 0; --Index)
                 {
                     const FAssetLoadRecord& Record = AssetRecent[Index - 1];
                     const FString Name = Record.Name.ToString();
-                    if (AssetFilter[0] != '\0' && Name.find(AssetFilter) == FString::npos)
+                    if (AssetFilter[0] != '\0' && Name.Find(AssetFilter) == Constants::kIndexNone)
                     {
                         continue;
                     }
@@ -243,7 +243,7 @@ namespace Lumina
                     ImGui::SameLine();
                     ImGui::TextDisabled(Record.Source == EAssetLoadSource::Request ? "req " : "pkg ");
                     ImGui::SameLine();
-                    ImGui::TextUnformatted(Name.c_str());
+                    ImGui::TextUnformatted(*Name);
                 }
             }
             ImGui::EndChild();

@@ -17,10 +17,10 @@ namespace Lumina
         TVector<uint32> MakeBlob(uint32 Seed, uint32 Words = 8)
         {
             TVector<uint32> Blob;
-            Blob.reserve(Words);
+            Blob.Reserve(Words);
             for (uint32 i = 0; i < Words; ++i)
             {
-                Blob.push_back(Seed * 2654435761u + i);
+                Blob.Add(Seed * 2654435761u + i);
             }
             return Blob;
         }
@@ -51,10 +51,10 @@ namespace Lumina
         const TVector<uint32> Blob = MakeBlob(1);
 
         const FShaderH A = FShaderLibrary::Commit(FName("MatA_PS"), ERHIShaderType::Fragment,
-                                                       TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                       TSpan<const uint32>(Blob.GetData(), Blob.Num()));
         // Deliberately a DIFFERENT key name with the same content, which is the sharing case.
         const FShaderH B = FShaderLibrary::Commit(FName("MatB_PS"), ERHIShaderType::Fragment,
-                                                       TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                       TSpan<const uint32>(Blob.GetData(), Blob.Num()));
 
         ASSERT_NE(A, nullptr);
         EXPECT_EQ(A, B);
@@ -68,13 +68,13 @@ namespace Lumina
         const TVector<uint32> Blob = MakeBlob(2);
 
         const FShaderH First = FShaderLibrary::Commit(FName("Mat_PS"), ERHIShaderType::Fragment,
-                                                          TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                          TSpan<const uint32>(Blob.GetData(), Blob.Num()));
         ASSERT_NE(First, nullptr);
 
         const uint64 HashBefore = First.Handle;
 
         const FShaderH Second = FShaderLibrary::Commit(FName("Mat_PS"), ERHIShaderType::Fragment,
-                                                           TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                           TSpan<const uint32>(Blob.GetData(), Blob.Num()));
 
         EXPECT_EQ(First, Second);
         EXPECT_EQ(HashBefore, Second.Handle);
@@ -89,12 +89,12 @@ namespace Lumina
         const TVector<uint32> BlobB = MakeBlob(4);
 
         const FShaderH A = FShaderLibrary::Commit(FName("Mat_PS"), ERHIShaderType::Fragment,
-                                                      TSpan<const uint32>(BlobA.data(), BlobA.size()));
+                                                      TSpan<const uint32>(BlobA.GetData(), BlobA.Num()));
         ASSERT_NE(A, nullptr);
         const uint64 HashA = A.Handle;
 
         const FShaderH B = FShaderLibrary::Commit(FName("Mat_PS"), ERHIShaderType::Fragment,
-                                                      TSpan<const uint32>(BlobB.data(), BlobB.size()));
+                                                      TSpan<const uint32>(BlobB.GetData(), BlobB.Num()));
         ASSERT_NE(B, nullptr);
 
         EXPECT_NE(HashA, B.Handle);
@@ -112,20 +112,20 @@ namespace Lumina
 
         const TVector<uint32> BlobA = MakeBlob(5);
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
-                                    TSpan<const uint32>(BlobA.data(), BlobA.size()));
+                                    TSpan<const uint32>(BlobA.GetData(), BlobA.Num()));
 
         const uint32 AfterFirst = Material->GetShaderRevision();
         EXPECT_NE(Start, AfterFirst) << "first commit installs an entry and must be observable";
 
         // Same bytecode, so content-keyed Commit hands back the same entry and nothing was superseded.
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
-                                    TSpan<const uint32>(BlobA.data(), BlobA.size()));
+                                    TSpan<const uint32>(BlobA.GetData(), BlobA.Num()));
         EXPECT_EQ(AfterFirst, Material->GetShaderRevision()) << "an unchanged recompile must not churn";
 
         // Different bytecode gets a new entry, so anything caching the old pointer is stale.
         const TVector<uint32> BlobB = MakeBlob(6);
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
-                                    TSpan<const uint32>(BlobB.data(), BlobB.size()));
+                                    TSpan<const uint32>(BlobB.GetData(), BlobB.Num()));
         EXPECT_NE(AfterFirst, Material->GetShaderRevision()) << "a real recompile must be observable";
     }
 
@@ -139,7 +139,7 @@ namespace Lumina
 
         const TVector<uint32> BlobA = MakeBlob(7);
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
-                                    TSpan<const uint32>(BlobA.data(), BlobA.size()));
+                                    TSpan<const uint32>(BlobA.GetData(), BlobA.Num()));
 
         // The same call ResolveSurfaceMaterial makes, so a hand-rolled key cannot drift.
         FResolvedSurface Surface;
@@ -149,7 +149,7 @@ namespace Lumina
 
         const TVector<uint32> BlobB = MakeBlob(8);
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
-                                    TSpan<const uint32>(BlobB.data(), BlobB.size()));
+                                    TSpan<const uint32>(BlobB.GetData(), BlobB.Num()));
 
         EXPECT_TRUE(MeshResolve::IsSurfaceStale(Surface)) << "recompile must supersede the cached entries";
     }
@@ -162,7 +162,7 @@ namespace Lumina
         const TVector<uint32> Blob = MakeBlob(11);
 
         const FShaderH Owned = FShaderLibrary::Commit(FName("Free_PS"), ERHIShaderType::Fragment,
-                                                      TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                      TSpan<const uint32>(Blob.GetData(), Blob.Num()));
         ASSERT_NE(Owned, nullptr);
         ASSERT_NE(FShaderLibrary::Resolve(Owned), nullptr);
 
@@ -187,9 +187,9 @@ namespace Lumina
         const TVector<uint32> Blob = MakeBlob(12);
 
         const FShaderH A = FShaderLibrary::Commit(FName("ShareA_PS"), ERHIShaderType::Fragment,
-                                                  TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                  TSpan<const uint32>(Blob.GetData(), Blob.Num()));
         const FShaderH B = FShaderLibrary::Commit(FName("ShareB_PS"), ERHIShaderType::Fragment,
-                                                  TSpan<const uint32>(Blob.data(), Blob.size()));
+                                                  TSpan<const uint32>(Blob.GetData(), Blob.Num()));
         ASSERT_EQ(A, B) << "identical bytecode must intern to one entry";
 
         FShaderLibrary::Release(A);

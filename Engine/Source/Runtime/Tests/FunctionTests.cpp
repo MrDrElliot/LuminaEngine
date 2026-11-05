@@ -259,7 +259,7 @@ namespace LuminaFunctionTests
 
         for (int32 Index = 0; Index < 64; ++Index)
         {
-            Functions.push_back([Index, Text = FString("padding")] { return Index + static_cast<int32>(Text.size()); });
+            Functions.Add([Index, Text = FString("padding")] { return Index + Text.Len(); });
         }
 
         for (int32 Index = 0; Index < 64; ++Index)
@@ -302,7 +302,7 @@ namespace LuminaFunctionTests
 
         for (int32 Index = 0; Index < 32; ++Index)
         {
-            Functions.push_back([Payload = FMoveOnlyPayload(Index)] { return Payload.Value; });
+            Functions.Add([Payload = FMoveOnlyPayload(Index)] { return Payload.Value; });
         }
 
         for (int32 Index = 0; Index < 32; ++Index)

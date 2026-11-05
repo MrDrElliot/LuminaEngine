@@ -52,7 +52,7 @@ namespace Lumina
         if (EnumHasAnyFlags(Flags, OF_ScriptProperties))Result += "OF_ScriptProperties|";
         if (EnumHasAnyFlags(Flags, OF_DestroyStarted))  Result += "OF_DestroyStarted|";
 
-        if (!Result.empty() && Result.back() == '|') Result.pop_back();
+        if (!Result.IsEmpty() && Result.Last() == '|') Result.LeftChopInline(1);
 
         return Result;
     }

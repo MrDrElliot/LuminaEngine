@@ -17,7 +17,7 @@
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Physics/PhysicsScene.h"
 #include "Renderer/MeshData.h"
-#include "TaskSystem/TaskGraph.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -40,7 +40,7 @@ namespace Lumina
     // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;
 
-    namespace
+    namespace AnimationSystemInternal
     {
         // Names are the only thing two skeletons reliably share, so the map is built from them once.
         void BuildFollowerBoneMap(SFollowerPoseComponent& Follower, const FSkeletonResource& LeaderSkeleton,
@@ -48,8 +48,8 @@ namespace Lumina
         {
             const int32 NumFollowerBones = FollowerSkeleton.GetNumBones();
 
-            Follower.BoneMap.assign(NumFollowerBones, Constants::kIndexNone);
-            Follower.BindFixups.assign(NumFollowerBones, FMatrix4(1.0f));
+            Follower.BoneMap.Init(Constants::kIndexNone, NumFollowerBones);
+            Follower.BindFixups.Init(FMatrix4(1.0f), NumFollowerBones);
 
             int32 NumMatched = 0;
             for (int32 i = 0; i < NumFollowerBones; ++i)
@@ -84,20 +84,20 @@ namespace Lumina
         }
 
         // A leader that is hidden or culled still animates while a follower is drawn, at the closest follower's detail.
-        template<typename TFollowerView>
-        void RaiseLeaderDemand(ECS::FRegistry& Registry, TFollowerView& FollowerView, double Now)
+        template<typename TFollowers, typename TLinks, typename TMeshes>
+        void RaiseLeaderDemand(const SSystemContext& Context, TFollowers& Followers, const TLinks& Links, const TMeshes& Meshes,
+                               THashSet<ECS::FEntity>& TakenFromFollowers, double Now)
         {
-            THashSet<ECS::FEntity> TakenFromFollowers;
-            FollowerView.ForEachInRange(0, (uint32)FollowerView.NumDenseSlots(),
-                [&](ECS::FEntity Entity, SFollowerPoseComponent&, SSkeletalMeshComponent& Mesh)
+            TakenFromFollowers.Reset();
+            Followers.ForEach([&](ECS::FEntity Entity, const SFollowerPoseComponent&, const SSkeletalMeshComponent& Mesh)
             {
                 if (Now - Mesh.LastRenderedTime > kAnimVisibilityGrace)
                 {
                     return;
                 }
 
-                const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(Registry, Entity);
-                SSkeletalMeshComponent* Leader = LeaderEntity != ECS::NullEntity ? Registry.TryGet<SSkeletalMeshComponent>(LeaderEntity) : nullptr;
+                const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(Links, Meshes, Context.GetHierarchy(), [&Context](ECS::FEntity Candidate) { return Context.IsValidEntity(Candidate); }, Entity);
+                SSkeletalMeshComponent* Leader = LeaderEntity != ECS::NullEntity ? Meshes.template TryGet<SSkeletalMeshComponent>(LeaderEntity) : nullptr;
                 if (Leader == nullptr)
                 {
                     return;
@@ -112,7 +112,7 @@ namespace Lumina
                 }
 
                 // Zero means full rate and every bone, so the smaller value is always the more detailed one.
-                if (TakenFromFollowers.insert(LeaderEntity).second)
+                if (TakenFromFollowers.TryAdd(LeaderEntity))
                 {
                     Leader->LastDistanceOverRadius = Mesh.LastDistanceOverRadius;
                     Leader->LastBoneLODTolerance   = Mesh.LastBoneLODTolerance;
@@ -132,9 +132,6 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
         RunsAfter<SKinematicsSystem>();
-        Writes<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent, SFollowerPoseComponent>();
-        Reads<SCharacterMovementComponent, SystemResource::Hierarchy, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
-        SendsEvent<SAnimMontageStartedEvent, SAnimMontageBlendingOutEvent, SAnimMontageEndedEvent>();
     }
 
     // Diagnostic cross-check of the deferred executor against direct single-clip sampling.
@@ -173,7 +170,7 @@ namespace Lumina
 
 
     // A parallel update phase records each entity's recipe, then a parallel execute phase runs it.
-    namespace
+    namespace AnimationSystemInternal
     {
         // Skipped time stays in PendingAnimTime, so playback speed survives the reduced update rate.
         bool ShouldEvaluateThisFrame(SSkeletalMeshComponent& Mesh, ECS::FEntity Entity, bool bForce)
@@ -245,8 +242,7 @@ namespace Lumina
                 return false;
             }
 
-            // On a smoothing task these two carry the blend clock, which the executor reads only on the
-            // frames it captures or applies. A frame doing neither ignores however far they have drifted.
+            // On a smoothing task these two carry the blend clock, which the executor reads only on frames it captures or applies.
             if (A.Type == EAnimTaskType::Inertialize || A.Type == EAnimTaskType::DeadBlend)
             {
                 return (!A.bCapture || A.DeltaTime == B.DeltaTime)
@@ -264,12 +260,12 @@ namespace Lumina
                 || A.bLockRoot != B.bLockRoot
                 || A.RootBoneIndex != B.RootBoneIndex
                 || A.ActiveBoneCount != B.ActiveBoneCount
-                || A.Tasks.size() != B.Tasks.size())
+                || A.Tasks.Num() != B.Tasks.Num())
             {
                 return false;
             }
 
-            for (SIZE_T i = 0; i < A.Tasks.size(); ++i)
+            for (int32 i = 0; i < A.Tasks.Num(); ++i)
             {
                 if (!SameTask(A.Tasks[i], B.Tasks[i]))
                 {
@@ -279,8 +275,7 @@ namespace Lumina
             return true;
         }
 
-        // Skipped frames leave the smoothing history untouched, so its stored velocity is stale by however
-        // long the pose held. Reporting one frame of history makes the next capture start from rest.
+        // Skipped frames leave the smoothing history untouched, so reporting one frame of history makes the next capture start from rest.
         void HoldSmoothingHistory(const FAnimTaskList& List)
         {
             for (const FAnimTask& Task : List.Tasks)
@@ -388,8 +383,8 @@ namespace Lumina
             if (Layout->PoseSkeleton)
             {
                 Tasks.Skeleton    = Layout->PoseSkeleton.get();
-                Tasks.PoseToAsset = Layout->PoseToAsset.data();
-                Tasks.AssetToPose = Layout->AssetToPose.data();
+                Tasks.PoseToAsset = Layout->PoseToAsset.GetData();
+                Tasks.AssetToPose = Layout->AssetToPose.GetData();
             }
             Tasks.ActiveBoneCount = ResolveActiveBoneCount(Mesh, *Layout, NumBones);
 
@@ -418,7 +413,7 @@ namespace Lumina
         void UpdateSimple(SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh, ECS::FEntity Entity,
                           float DeltaTime, double Now)
         {
-            Anim.NotifyEvents.clear();
+            Anim.NotifyEvents.Reset();
 
             if (!Anim.Animation.IsValid())
             {
@@ -491,14 +486,14 @@ namespace Lumina
                 const TVector<FAnimationNotifyState>& States = Asset->GetNotifyStates();
 
                 thread_local TVector<int32> NowActive;
-                NowActive.clear();
+                NowActive.Reset();
                 if (Anim.bAdvancedThisFrame)
                 {
-                    for (int32 i = 0; i < (int32)States.size(); ++i)
+                    for (int32 i = 0; i < States.Num(); ++i)
                     {
                         if (Anim.CurrentTime >= States[i].StartTime && Anim.CurrentTime <= States[i].EndTime)
                         {
-                            NowActive.push_back(i);
+                            NowActive.Add(i);
                         }
                     }
                 }
@@ -508,7 +503,7 @@ namespace Lumina
                     const FAnimationNotifyState& Authored = States[StateIdx];
                     const float Span = Authored.EndTime - Authored.StartTime;
 
-                    FAnimNotifyEvent& Event = Anim.NotifyEvents.emplace_back();
+                    FAnimNotifyEvent& Event = Anim.NotifyEvents.EmplaceGetRef();
                     Event.Name      = Authored.NotifyName;
                     Event.Track     = Authored.NotifyTrack;
                     Event.Type      = Type;
@@ -528,13 +523,14 @@ namespace Lumina
                 }
                 for (int32 Idx : Anim.ActiveNotifyStates)
                 {
-                    if (Idx >= 0 && Idx < (int32)States.size() &&
+                    if (Idx >= 0 && Idx < States.Num() &&
                         !Algo::Contains(NowActive, Idx))
                     {
                         EmitState(Idx, EAnimNotifyEventType::End);
                     }
                 }
-                Anim.ActiveNotifyStates.assign(NowActive.begin(), NowActive.end());
+                Anim.ActiveNotifyStates.Reset();
+                Anim.ActiveNotifyStates.Append(NowActive.begin(), NowActive.end());
             }
 
             const bool bLock = (Anim.RootMotionLock == ERootMotionLockMode::ForceLock) ||
@@ -618,8 +614,8 @@ namespace Lumina
 
             FAnimGraphVMState& VMState = AnimGraph.VMState;
 
-            const SIZE_T NumParams = Math::Min(Graph->ParamBindings.size(), VMState.Parameters.size());
-            for (SIZE_T i = 0; i < NumParams; ++i)
+            const int32 NumParams = Math::Min(Graph->ParamBindings.Num(), VMState.Parameters.Num());
+            for (int32 i = 0; i < NumParams; ++i)
             {
                 const FAnimGraphParamBinding& Binding = Graph->ParamBindings[i];
                 if (Binding.IsResolved())
@@ -628,8 +624,8 @@ namespace Lumina
                 }
             }
 
-            const SIZE_T NumObjects = Math::Min(Graph->ObjectParamBindings.size(), VMState.ObjectParameters.size());
-            for (SIZE_T i = 0; i < NumObjects; ++i)
+            const int32 NumObjects = Math::Min(Graph->ObjectParamBindings.Num(), VMState.ObjectParameters.Num());
+            for (int32 i = 0; i < NumObjects; ++i)
             {
                 const FAnimGraphParamBinding& Binding = Graph->ObjectParamBindings[i];
                 if (Binding.IsResolved())
@@ -639,32 +635,33 @@ namespace Lumina
             }
         }
 
-        void SendMontageEvents(const SSystemContext& Context, ECS::FEntity Entity, FAnimMontagePlayer& Montages)
+        void SendMontageEvents(const ECS::TEventWriter<SAnimMontageStartedEvent>& Started, const ECS::TEventWriter<SAnimMontageBlendingOutEvent>& BlendingOut,
+                               const ECS::TEventWriter<SAnimMontageEndedEvent>& Ended, ECS::FEntity Entity, FAnimMontagePlayer& Montages)
         {
             for (const FAnimMontageTransition& Transition : Montages.Transitions)
             {
                 switch (Transition.Type)
                 {
                 case EAnimMontageTransition::Started:
-                    Context.SendEvent(SAnimMontageStartedEvent{ Entity, Transition.Montage });
+                    Started.Send(SAnimMontageStartedEvent{ Entity, Transition.Montage });
                     break;
                 case EAnimMontageTransition::BlendingOut:
-                    Context.SendEvent(SAnimMontageBlendingOutEvent{ Entity, Transition.Montage, Transition.bInterrupted });
+                    BlendingOut.Send(SAnimMontageBlendingOutEvent{ Entity, Transition.Montage, Transition.bInterrupted });
                     break;
                 case EAnimMontageTransition::Ended:
-                    Context.SendEvent(SAnimMontageEndedEvent{ Entity, Transition.Montage, Transition.bInterrupted });
+                    Ended.Send(SAnimMontageEndedEvent{ Entity, Transition.Montage, Transition.bInterrupted });
                     break;
                 }
             }
-            Montages.Transitions.clear();
+            Montages.Transitions.Reset();
         }
 
         // One entity's graph update, parallel-safe; pose math happens in the execute phase.
         void UpdateGraph(const SSystemContext& SystemContext, ECS::FEntity Entity,
-                         SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh,
-                         float DeltaTime, double Now, const FKinematicsState* KinematicsState)
+                         SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh, const STransformComponent* Transform,
+                         float DeltaTime, double Now, const FKinematicsState& KinematicsState)
         {
-            AnimGraph.NotifyEvents.clear();
+            AnimGraph.NotifyEvents.Reset();
             AnimGraph.PendingRootMotion = FRootMotionDelta();
             DeltaTime = AnimGraph.bPlaying ? DeltaTime * AnimGraph.PlaybackSpeed : 0.0f;
 
@@ -705,12 +702,12 @@ namespace Lumina
 
             // Ground traces are read-only and PrePhysics never overlaps the step, so querying here is safe.
             FAnimGraphSceneContext SceneContext;
-            if (const STransformComponent* Transform = SystemContext.TryGet<STransformComponent>(Entity))
+            if (Transform != nullptr)
             {
                 // Computed rather than cached, since the capsule this mesh hangs from moved earlier this frame and a stale pose slips the feet.
                 const VTransform World = Transform->GetWorldTransform();
 
-                SceneContext.Scene          = SystemContext.GetPhysicsScene();
+                SceneContext.Scene          = SystemContext.GetPhysics();
                 SceneContext.BoneTransforms = &Mesh.BoneTransforms;
                 SceneContext.WorldLocation  = World.GetLocation();
                 SceneContext.WorldScale     = World.GetScale();
@@ -724,7 +721,7 @@ namespace Lumina
                     SceneContext.SelfEntity = Parent;
                 }
 
-                SceneContext.Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
+                SceneContext.Velocity = KinematicsState.GetVelocity(Entity);
             }
 
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
@@ -745,7 +742,7 @@ namespace Lumina
                 FString Dump;
                 AppendFormat(Dump, "[AnimTasks] entity {} output={}",
                                     (uint32)(Entity).Value, (int32)Mesh.AnimTasks.OutputTask);
-                for (SIZE_T t = 0; t < Mesh.AnimTasks.Tasks.size(); ++t)
+                for (int32 t = 0; t < Mesh.AnimTasks.Tasks.Num(); ++t)
                 {
                     const FAnimTask& Task = Mesh.AnimTasks.Tasks[t];
                     AppendFormat(Dump, "\n  [{}] {:<13} depA={:<3} depB={:<3} alpha={:.3f}",
@@ -754,7 +751,7 @@ namespace Lumina
                     if (Task.Type == EAnimTaskType::SampleClip)
                     {
                         AppendFormat(Dump, " clip={} time={:.4f}",
-                                            Task.Clip != nullptr ? Task.Clip->GetName().c_str() : "<null>",
+                                            Task.Clip != nullptr ? *Task.Clip->GetName() : "<null>",
                                             Task.Time);
                     }
                     if (Task.MaskWeights != nullptr)
@@ -764,10 +761,10 @@ namespace Lumina
                         {
                             NumWeighted += Weight > 0.5f ? 1 : 0;
                         }
-                        AppendFormat(Dump, " mask={}/{} bones", NumWeighted, (int32)Task.MaskWeights->size());
+                        AppendFormat(Dump, " mask={}/{} bones", NumWeighted, Task.MaskWeights->Num());
                     }
                 }
-                LOG_INFO("{}", Dump.c_str());
+                LOG_INFO("{}", *Dump);
             }
 
             AnimGraph.PendingRootMotion = GraphRootMotion.Delta;
@@ -798,7 +795,7 @@ namespace Lumina
             // The executor hands back asset order, so the reference samples the asset skeleton.
             FSkeletonResource* ValidateSkeleton = ResolveSkeleton(Mesh);
             if (CVarValidateAnimTasks.GetValue() &&
-                Mesh.AnimTasks.Tasks.size() == 1 &&
+                Mesh.AnimTasks.Tasks.Num() == 1 &&
                 Mesh.AnimTasks.Tasks[0].Type == EAnimTaskType::SampleClip &&
                 Mesh.AnimTasks.ActiveBoneCount == 0)
             {
@@ -850,8 +847,8 @@ namespace Lumina
 
                 float MaxDiff = 0.0f;
                 int32 WorstBone = Constants::kIndexNone;
-                const SIZE_T Num = Math::Min(RefMatrices.size(), PoseScratch.size());
-                for (SIZE_T b = 0; b < Num; ++b)
+                const int32 Num = Math::Min(RefMatrices.Num(), PoseScratch.Num());
+                for (int32 b = 0; b < Num; ++b)
                 {
                     for (int32 c = 0; c < 4; ++c)
                     {
@@ -866,17 +863,17 @@ namespace Lumina
                         }
                     }
                 }
-                if (MaxDiff > 1e-4f || RefMatrices.size() != PoseScratch.size())
+                if (MaxDiff > 1e-4f || RefMatrices.Num() != PoseScratch.Num())
                 {
                     LOG_ERROR("anim.ValidateTasks: executor diverges from direct sampling (max diff {} at bone {}, sizes {}/{})",
-                              MaxDiff, WorstBone, PoseScratch.size(), RefMatrices.size());
+                              MaxDiff, WorstBone, PoseScratch.Num(), RefMatrices.Num());
                 }
             }
 
             // Any other writer leaves the serial or the dirty flag moved, so only the animation system's own last pose is ever compared by hash.
-            const uint64 PoseHash = bProduced ? Hash::GetHash64(PoseScratch.data(), PoseScratch.size() * sizeof(FMatrix4)) : 0ull;
+            const uint64 PoseHash = bProduced ? Hash::GetHash64(PoseScratch.GetData(), PoseScratch.Num() * sizeof(FMatrix4)) : 0ull;
             const bool bPoseChanged = bProduced
-                && (PoseScratch.size() != Mesh.BoneTransforms.size()
+                && (PoseScratch.Num() != Mesh.BoneTransforms.Num()
                 || Mesh.bRenderBonesDirty
                 || Mesh.PackedPoseSerial != Mesh.PoseSerial
                 || PoseHash != Mesh.PoseHash);
@@ -884,13 +881,13 @@ namespace Lumina
             if (bPoseChanged)
             {
                 // Streamed rather than swapped, so the scratch stays cached and the component's cold lines are never read for ownership.
-                Mesh.BoneTransforms.resize(PoseScratch.size());
-                Memory::MemcpyToWriteCombined(Mesh.BoneTransforms.data(), PoseScratch.data(), PoseScratch.size() * sizeof(FMatrix4));
+                Mesh.BoneTransforms.SetNum(PoseScratch.Num());
+                Memory::MemcpyToWriteCombined(Mesh.BoneTransforms.GetData(), PoseScratch.GetData(), PoseScratch.Num() * sizeof(FMatrix4));
 
                 // Packed here while the scratch is in cache, so the gather copies half the bytes and never reads the matrices.
-                const uint32 NumBones = (uint32)PoseScratch.size();
-                Mesh.PackedBones.resize((SIZE_T)NumBones * 2u);
-                SkeletalUtils::PackRenderBones(PoseScratch.data(), NumBones, reinterpret_cast<FBoneTransform*>(Mesh.PackedBones.data()));
+                const uint32 NumBones = (uint32)PoseScratch.Num();
+                Mesh.PackedBones.SetNum(IntCastChecked<int32>(static_cast<int64>(NumBones) * 2u));
+                SkeletalUtils::PackRenderBones(PoseScratch.GetData(), NumBones, reinterpret_cast<FBoneTransform*>(Mesh.PackedBones.GetData()));
 
                 // A stale external write is superseded by the pose that just replaced it.
                 Mesh.bRenderBonesDirty = false;
@@ -903,235 +900,185 @@ namespace Lumina
     }
 
 
+    bool SAnimationSystem::HasWork(const SSystemContext& Context)
+    {
+        return !SimpleAnimators.IsEmpty() || !GraphAnimators.IsEmpty();
+    }
+
     void SAnimationSystem::OnUpdate(const SSystemContext& Context)
     {
+        using namespace AnimationSystemInternal;
 
-        LUMINA_PROFILE_SCOPE();
+        const auto GraphView = GraphAnimators.View();
 
-        auto SimpleView   = Context.CreateView<SSimpleAnimationComponent, SSkeletalMeshComponent>(ECS::TExclude<SDisabledTag, SFollowerPoseComponent>{});
-        auto GraphView    = Context.CreateView<SAnimationGraphComponent, SSkeletalMeshComponent>(ECS::TExclude<SDisabledTag, SFollowerPoseComponent>{});
-        auto MeshView     = Context.CreateView<SSkeletalMeshComponent>(ECS::TExclude<SDisabledTag>{});
-        auto FollowerView = Context.CreateView<SFollowerPoseComponent, SSkeletalMeshComponent>(ECS::TExclude<SDisabledTag>{});
+        const bool bHasSimple   = !SimpleAnimators.IsEmpty();
+        const bool bHasGraph    = !GraphView.IsEmpty();
+        const bool bHasFollower = !Followers.IsEmpty();
 
-        auto SimpleHandle   = SimpleView.GetDriver();
-        auto GraphHandle    = GraphView.GetDriver();
-        auto MeshHandle     = MeshView.GetDriver();
-        auto FollowerHandle = FollowerView.GetDriver();
-
-        const bool bHasSimple   = SimpleHandle != nullptr && !SimpleHandle->IsEmpty();
-        const bool bHasGraph    = GraphHandle != nullptr && !GraphHandle->IsEmpty();
-        const bool bHasFollower = FollowerHandle != nullptr && !FollowerHandle->IsEmpty();
-
-        if ((!bHasSimple && !bHasGraph) || MeshHandle == nullptr)
+        if (!bHasSimple && !bHasGraph)
         {
             return;
         }
 
-        // Hoisted, since the graph bodies run in parallel and the context lookup is a per-type hash probe.
-        const FKinematicsState* KinematicsState = Kinematics::GetState(Context);
+        const FKinematicsState& SharedKinematics = *KinematicsState;
 
         // A paused game holds its poses, while editor worlds run this stage to preview animation unless the world turned that off.
-        const bool bPreviewing = Context.GetWorldType() == EWorldType::Editor && Context.GetWorld()->AnimatesWhilePaused();
-        const bool   bFrozen   = Context.GetUpdateStage() == EUpdateStage::Paused && !bPreviewing;
-        const float  DeltaTime = bFrozen ? 0.0f : (float)Context.GetDeltaTime();
-        const double Now       = Context.GetTime();
+        const bool bEditor = Context.GetWorldType() == EWorldType::Editor;
+        const bool   bPreviewing = bEditor && WorldSettings->bAnimatesWhilePaused;
+        const bool   bFrozen     = Context.GetUpdateStage() == EUpdateStage::Paused && !bPreviewing;
+        const float  DeltaTime   = bFrozen ? 0.0f : Context.GetDeltaTime();
+        const double Now         = Context.GetTime();
 
-        // Relaxed throughout, since the TaskGraph::Wait() before the read is the ordering edge.
+        // Relaxed throughout, since each ParallelFor returns before the read and is the ordering edge.
         std::atomic<bool> bAnyRootMotion{ false };
 
         if (bHasFollower)
         {
-            RaiseLeaderDemand(Context.GetRegistry(), FollowerView, Now);
+            RaiseLeaderDemand(Context, Followers, PoseLinks, LeaderMeshes, TakenFromFollowers, Now);
         }
 
         NotifyQueue.Prepare();
 
         const bool bFuseExecute = CVarFuseAnimExecute.GetValue();
-        auto GraphStorage = Context.GetStorage<SAnimationGraphComponent>();
 
-        FTaskGraph TaskGraph;
-
-        // The graph pass runs after the simple pass so a dual-component entity resolves the same way.
-        FTaskGraph::FNodeHandle SimpleUpdate;
-        FTaskGraph::FNodeHandle GraphUpdate;
-
+        // Each pass depends on the one before it, so the graph pass runs after the simple pass and a dual-component entity resolves the same way.
         if (bHasSimple)
         {
-            SimpleUpdate = TaskGraph.AddParallelFor((uint32)SimpleView.NumDenseSlots(), 16, [&](const Task::FParallelRange& Range)
+            SimpleAnimators.ParallelForEach([&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh)
             {
-                SimpleView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh)
+                UpdateSimple(Anim, Mesh, Entity, DeltaTime, Now);
+                if (bFuseExecute && !GraphView.Contains(Entity))
                 {
-                    UpdateSimple(Anim, Mesh, Entity, DeltaTime, Now);
-                    if (bFuseExecute && !(GraphStorage.IsValid() && GraphStorage.Contains(Entity)))
-                    {
-                        ExecuteMeshRecipe(Mesh);
-                    }
+                    ExecuteMeshRecipe(Mesh);
+                }
 
-                    if (!Anim.NotifyEvents.empty())
-                    {
-                        NotifyQueue.Record(Entity, EAnimNotifyPass::Simple, Anim.NotifyEvents);
-                    }
+                if (!Anim.NotifyEvents.IsEmpty())
+                {
+                    NotifyQueue.Record(Entity, EAnimNotifyPass::Simple, Anim.NotifyEvents);
+                }
 
-                    // Recording that ANY entity produced root motion lets the serial apply skip its sweep.
-                    if (Anim.PendingRootMotion.bHasMotion)
-                    {
-                        bAnyRootMotion.store(true, std::memory_order_relaxed);
-                    }
-                });
-            });
+                // Recording that ANY entity produced root motion lets the serial apply skip its sweep.
+                if (Anim.PendingRootMotion.bHasMotion)
+                {
+                    bAnyRootMotion.store(true, std::memory_order_relaxed);
+                }
+            }, 16);
         }
 
         if (bHasGraph)
         {
-            GraphUpdate = TaskGraph.AddParallelFor((uint32)GraphView.NumDenseSlots(), 16, [&](const Task::FParallelRange& Range)
+            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh)
             {
-                GraphView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh)
+                UpdateGraph(Context, Entity, AnimGraph, Mesh, Placements.TryGet<STransformComponent>(Entity), DeltaTime, Now, SharedKinematics);
+                SendMontageEvents(MontageStarted, MontageBlendingOut, MontageEnded, Entity, AnimGraph.Montages);
+
+                // Run while this mesh is hot, instead of after a barrier that waits for every graph.
+                if (bFuseExecute)
                 {
-                    UpdateGraph(Context, Entity, AnimGraph, Mesh, DeltaTime, Now, KinematicsState);
-                    SendMontageEvents(Context, Entity, AnimGraph.Montages);
+                    ExecuteMeshRecipe(Mesh);
+                }
 
-                    // Run while this mesh is hot, instead of after a barrier that waits for every graph.
-                    if (bFuseExecute)
-                    {
-                        ExecuteMeshRecipe(Mesh);
-                    }
+                if (!AnimGraph.NotifyEvents.IsEmpty())
+                {
+                    NotifyQueue.Record(Entity, EAnimNotifyPass::Graph, AnimGraph.NotifyEvents);
+                }
 
-                    if (!AnimGraph.NotifyEvents.empty())
-                    {
-                        NotifyQueue.Record(Entity, EAnimNotifyPass::Graph, AnimGraph.NotifyEvents);
-                    }
-
-                    if (AnimGraph.PendingRootMotion.bHasMotion)
-                    {
-                        bAnyRootMotion.store(true, std::memory_order_relaxed);
-                    }
-                });
-            });
-
-            if (SimpleUpdate.IsValid())
-            {
-                TaskGraph.AddDependency(GraphUpdate, SimpleUpdate);
-            }
+                if (AnimGraph.PendingRootMotion.bHasMotion)
+                {
+                    bAnyRootMotion.store(true, std::memory_order_relaxed);
+                }
+            }, 16);
         }
 
         // Each mesh has at most one recipe, so no entity is touched twice by the execute pass.
-        const FTaskGraph::FNodeHandle Execute = TaskGraph.AddParallelFor((uint32)MeshView.NumDenseSlots(), 16, [&](const Task::FParallelRange& Range)
+        Meshes.ParallelForEach([&](ECS::FEntity, SSkeletalMeshComponent& Mesh)
         {
-            MeshView.ForEachInRange(Range.Start, Range.End,
-                [&](ECS::FEntity, SSkeletalMeshComponent& Mesh)
-            {
-                ExecuteMeshRecipe(Mesh);
-                        });
-        });
+            ExecuteMeshRecipe(Mesh);
+        }, 16);
 
-        if (SimpleUpdate.IsValid())
-        {
-            TaskGraph.AddDependency(Execute, SimpleUpdate);
-        }
-        if (GraphUpdate.IsValid())
-        {
-            TaskGraph.AddDependency(Execute, GraphUpdate);
-        }
-
-        // Copying is its own pass so every leader has finished before any follower reads one. Followers
-        // resolve to the root of their chain, so nothing here depends on the order within the pass.
+        // Copying is its own pass so every leader finishes before any follower reads one.
         if (bHasFollower)
         {
-            ECS::FRegistry& Registry = Context.GetRegistry();
-
-            const FTaskGraph::FNodeHandle CopyFollowers = TaskGraph.AddParallelFor((uint32)FollowerView.NumDenseSlots(), 16, [&](const Task::FParallelRange& Range)
+            Followers.ParallelForEach([&](ECS::FEntity Entity, SFollowerPoseComponent& Follower, SSkeletalMeshComponent& Mesh)
             {
-                FollowerView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity Entity, SFollowerPoseComponent& Follower, SSkeletalMeshComponent& Mesh)
+                Follower.bSharesLeaderPose = false;
+
+                const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(PoseLinks, LeaderMeshes, Context.GetHierarchy(), [&Context](ECS::FEntity Candidate) { return Context.IsValidEntity(Candidate); }, Entity);
+                if (LeaderEntity == ECS::NullEntity)
                 {
+                    return;
+                }
 
+                const SSkeletalMeshComponent* LeaderMesh = LeaderMeshes.TryGet<SSkeletalMeshComponent>(LeaderEntity);
+                if (LeaderMesh == nullptr || LeaderMesh->BoneTransforms.IsEmpty())
+                {
+                    return;
+                }
 
-                    Follower.bSharesLeaderPose = false;
+                CSkeleton* LeaderSkeletonAsset   = SkeletalUtils::GetSkeletonAsset(*LeaderMesh);
+                CSkeleton* FollowerSkeletonAsset = SkeletalUtils::GetSkeletonAsset(Mesh);
+                if (LeaderSkeletonAsset == nullptr || FollowerSkeletonAsset == nullptr)
+                {
+                    return;
+                }
 
-                    const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(Registry, Entity);
-                    if (LeaderEntity == ECS::NullEntity)
+                const FSkeletonResource* LeaderSkeleton   = LeaderSkeletonAsset->GetSkeletonResource();
+                const FSkeletonResource* FollowerSkeleton = FollowerSkeletonAsset->GetSkeletonResource();
+                if (LeaderSkeleton == nullptr || FollowerSkeleton == nullptr)
+                {
+                    return;
+                }
+
+                // Same leader, same skeletons and an unmoved pose, so the copy already on this mesh still stands.
+                if (Follower.CopiedLeader == LeaderEntity && Follower.LastLeaderPoseSerial == LeaderMesh->PoseSerial &&
+                    Follower.MappedLeaderSkeleton == LeaderSkeleton && Follower.MappedFollowerSkeleton == FollowerSkeleton &&
+                    !Mesh.BoneTransforms.IsEmpty())
+                {
+                    Follower.bSharesLeaderPose = LeaderSkeleton == FollowerSkeleton;
+                    return;
+                }
+
+                // One skeleton behind both meshes is the common case, and it is a straight copy.
+                if (LeaderSkeleton == FollowerSkeleton)
+                {
+                    Mesh.BoneTransforms = LeaderMesh->BoneTransforms;
+                    Follower.MappedLeaderSkeleton   = LeaderSkeleton;
+                    Follower.MappedFollowerSkeleton = FollowerSkeleton;
+                    Follower.bSharesLeaderPose      = true;
+                }
+                else
+                {
+                    if (Follower.MappedLeaderSkeleton != LeaderSkeleton ||
+                        Follower.MappedFollowerSkeleton != FollowerSkeleton ||
+                        static_cast<size_t>(Follower.BoneMap.Num()) != (SIZE_T)FollowerSkeleton->GetNumBones())
                     {
-                        return;
+                        BuildFollowerBoneMap(Follower, *LeaderSkeleton, *FollowerSkeleton);
                     }
 
-                    const SSkeletalMeshComponent* LeaderMesh = Registry.TryGet<SSkeletalMeshComponent>(LeaderEntity);
-                    if (LeaderMesh == nullptr || LeaderMesh->BoneTransforms.empty())
+                    const int32 NumFollowerBones = FollowerSkeleton->GetNumBones();
+                    const int32 NumLeaderMatrices = LeaderMesh->BoneTransforms.Num();
+                    Mesh.BoneTransforms.SetNum(NumFollowerBones);
+
+                    for (int32 Bone = 0; Bone < NumFollowerBones; ++Bone)
                     {
-                        return;
+                        const int32 LeaderBone = Follower.BoneMap[Bone];
+
+                        // An unmatched bone resolves to its own bind pose, which skins as the identity.
+                        Mesh.BoneTransforms[Bone] = (LeaderBone >= 0 && LeaderBone < NumLeaderMatrices)
+                            ? LeaderMesh->BoneTransforms[LeaderBone] * Follower.BindFixups[Bone]
+                            : FMatrix4(1.0f);
                     }
+                }
 
-                    CSkeleton* LeaderSkeletonAsset   = SkeletalUtils::GetSkeletonAsset(*LeaderMesh);
-                    CSkeleton* FollowerSkeletonAsset = SkeletalUtils::GetSkeletonAsset(Mesh);
-                    if (LeaderSkeletonAsset == nullptr || FollowerSkeletonAsset == nullptr)
-                    {
-                        return;
-                    }
-
-                    const FSkeletonResource* LeaderSkeleton   = LeaderSkeletonAsset->GetSkeletonResource();
-                    const FSkeletonResource* FollowerSkeleton = FollowerSkeletonAsset->GetSkeletonResource();
-                    if (LeaderSkeleton == nullptr || FollowerSkeleton == nullptr)
-                    {
-                        return;
-                    }
-
-                    // Same leader, same skeletons and an unmoved pose, so the copy already on this mesh still stands.
-                    if (Follower.CopiedLeader == LeaderEntity && Follower.LastLeaderPoseSerial == LeaderMesh->PoseSerial &&
-                        Follower.MappedLeaderSkeleton == LeaderSkeleton && Follower.MappedFollowerSkeleton == FollowerSkeleton &&
-                        !Mesh.BoneTransforms.empty())
-                    {
-                        Follower.bSharesLeaderPose = LeaderSkeleton == FollowerSkeleton;
-                        return;
-                    }
-
-                    // One skeleton behind both meshes is the common case, and it is a straight copy.
-                    if (LeaderSkeleton == FollowerSkeleton)
-                    {
-                        Mesh.BoneTransforms = LeaderMesh->BoneTransforms;
-                        Follower.MappedLeaderSkeleton   = LeaderSkeleton;
-                        Follower.MappedFollowerSkeleton = FollowerSkeleton;
-                        Follower.bSharesLeaderPose      = true;
-                    }
-                    else
-                    {
-                        if (Follower.MappedLeaderSkeleton != LeaderSkeleton ||
-                            Follower.MappedFollowerSkeleton != FollowerSkeleton ||
-                            Follower.BoneMap.size() != (SIZE_T)FollowerSkeleton->GetNumBones())
-                        {
-                            BuildFollowerBoneMap(Follower, *LeaderSkeleton, *FollowerSkeleton);
-                        }
-
-                        const int32 NumFollowerBones = FollowerSkeleton->GetNumBones();
-                        const int32 NumLeaderMatrices = (int32)LeaderMesh->BoneTransforms.size();
-                        Mesh.BoneTransforms.resize(NumFollowerBones);
-
-                        for (int32 Bone = 0; Bone < NumFollowerBones; ++Bone)
-                        {
-                            const int32 LeaderBone = Follower.BoneMap[Bone];
-
-                            // An unmatched bone resolves to its own bind pose, which skins as the identity.
-                            Mesh.BoneTransforms[Bone] = (LeaderBone >= 0 && LeaderBone < NumLeaderMatrices)
-                                ? LeaderMesh->BoneTransforms[LeaderBone] * Follower.BindFixups[Bone]
-                                : FMatrix4(1.0f);
-                        }
-                    }
-
-                    Follower.CopiedLeader = LeaderEntity;
-                    Mesh.bRenderBonesDirty = false;
-                    Follower.LastLeaderPoseSerial = LeaderMesh->PoseSerial;
-                    ++Mesh.PoseSerial;
-                                });
-            });
-
-            TaskGraph.AddDependency(CopyFollowers, Execute);
+                Follower.CopiedLeader = LeaderEntity;
+                Mesh.bRenderBonesDirty = false;
+                Follower.LastLeaderPoseSerial = LeaderMesh->PoseSerial;
+                ++Mesh.PoseSerial;
+            }, 16);
         }
 
-        TaskGraph.Dispatch();
-        TaskGraph.Wait();
-
         // Handlers run user code that may touch any component, so they wait for the flush after this batch.
-        NotifyQueue.Submit(Context.GetCommandBus());
+        NotifyQueue.Submit(Context);
 
         // Nothing moved, so everything below is dead work.
         if (!bAnyRootMotion.load(std::memory_order_relaxed))
@@ -1140,8 +1087,6 @@ namespace Lumina
         }
 
         // Serial because applying root motion marks the transform dirty, which is not ParallelFor-safe.
-        auto TransformStorage = Context.GetStorage<STransformComponent>();
-
         const auto ApplyRootMotion = [&](ECS::FEntity Entity, FRootMotionDelta& Delta)
         {
             if (!Delta.bHasMotion)
@@ -1156,34 +1101,28 @@ namespace Lumina
                 return;
             }
 
-            STransformComponent& Transform = TransformStorage.Get(Entity);
+            STransformComponent& Transform = RootMotionTargets.Get<STransformComponent>(Entity);
             FTransform DeltaTransform;
             DeltaTransform.SetLocation(Delta.Translation);
             DeltaTransform.SetRotation(Delta.Rotation);
             DeltaTransform.SetScale(FVector3(1.0f));
             Transform.SetLocalTransform(Transform.LocalTransform * DeltaTransform);
         };
-        
+
         if (bHasSimple)
         {
-            for (auto&& [Entity, Anim] : Context.GetStorage<SSimpleAnimationComponent>().Each())
+            SimpleAnimators.ForEach([&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent&)
             {
-                if (Anim.PendingRootMotion.bHasMotion)
-                {
-                    ApplyRootMotion(Entity, Anim.PendingRootMotion);
-                }
-            }
+                ApplyRootMotion(Entity, Anim.PendingRootMotion);
+            });
         }
 
         if (bHasGraph)
         {
-            for (auto&& [Entity, AnimGraph] : Context.GetStorage<SAnimationGraphComponent>().Each())
+            GraphAnimators.ForEach([&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent&)
             {
-                if (AnimGraph.PendingRootMotion.bHasMotion)
-                {
-                    ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);
-                }
-            }
+                ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);
+            });
         }
     }
 }

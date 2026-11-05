@@ -1,10 +1,13 @@
 #pragma once
 
 #include "World/Entity/Systems/EntitySystem.h"
+#include "Components/PrefabSpawnerComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "PrefabSpawnerSystem.generated.h"
 
 namespace Lumina
 {
+
     REFLECT()
     class SPrefabSpawnerSystem : public CEntitySystem
     {
@@ -12,11 +15,12 @@ namespace Lumina
     public:
 
         void Configure() override;
-        
 
-        void OnStartup(const SSystemContext& Context) override;
+        void OnStartup(const SExclusiveContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
-        void OnTeardown(const SSystemContext& Context) override;
-        
+
+    private:
+
+        ECS::TQuery<ECS::Write<SPrefabSpawnerComponent>, ECS::Read<STransformComponent>> Spawners;
     };
 }

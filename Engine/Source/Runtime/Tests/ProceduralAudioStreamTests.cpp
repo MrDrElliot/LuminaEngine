@@ -12,8 +12,8 @@ namespace
 {
     TVector<float> Ramp(uint32 Frames, uint32 Channels, float Start)
     {
-        TVector<float> Out((size_t)Frames * Channels);
-        for (size_t i = 0; i < Out.size(); ++i)
+        TVector<float> Out(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Frames) * Channels));
+        for (int32 i = 0; i < Out.Num(); ++i)
         {
             Out[i] = Start + (float)i;
         }
@@ -54,15 +54,15 @@ TEST(ProceduralAudioStream, RoundTripsInterleavedFrames)
     EXPECT_EQ(Stream.GetAvailableReadFrames(), 0u);
 
     const TVector<float> Source = Ramp(10, 2, 1.0f);
-    EXPECT_EQ(Stream.Write(Source.data(), 10), 10u);
+    EXPECT_EQ(Stream.Write(Source.GetData(), 10), 10u);
 
     EXPECT_EQ(Stream.GetAvailableReadFrames(), 10u);
     EXPECT_EQ(Stream.GetAvailableWriteFrames(), 54u);
 
     TVector<float> Out(20, -1.0f);
-    EXPECT_EQ(Stream.Read(Out.data(), 10), 10u);
+    EXPECT_EQ(Stream.Read(Out.GetData(), 10), 10u);
 
-    for (size_t i = 0; i < Out.size(); ++i)
+    for (int32 i = 0; i < Out.Num(); ++i)
     {
         EXPECT_FLOAT_EQ(Out[i], Source[i]) << "sample " << i;
     }
@@ -77,12 +77,12 @@ TEST(ProceduralAudioStream, SaturatesWhenFull)
     const TVector<float> Source = Ramp(16, 1, 0.0f);
 
     // Only the capacity is accepted; the rest is dropped rather than overwriting unread frames.
-    EXPECT_EQ(Stream.Write(Source.data(), 16), 8u);
+    EXPECT_EQ(Stream.Write(Source.GetData(), 16), 8u);
     EXPECT_EQ(Stream.GetAvailableWriteFrames(), 0u);
-    EXPECT_EQ(Stream.Write(Source.data(), 1), 0u);
+    EXPECT_EQ(Stream.Write(Source.GetData(), 1), 0u);
 
     TVector<float> Out(8, -1.0f);
-    EXPECT_EQ(Stream.Read(Out.data(), 8), 8u);
+    EXPECT_EQ(Stream.Read(Out.GetData(), 8), 8u);
     for (uint32 i = 0; i < 8; ++i)
     {
         EXPECT_FLOAT_EQ(Out[i], (float)i);
@@ -94,18 +94,18 @@ TEST(ProceduralAudioStream, UnderrunPadsWithSilence)
     FProceduralAudioStream Stream(48000, 2, 16);
 
     const TVector<float> Source = Ramp(3, 2, 5.0f);
-    ASSERT_EQ(Stream.Write(Source.data(), 3), 3u);
+    ASSERT_EQ(Stream.Write(Source.GetData(), 3), 3u);
 
     TVector<float> Out(16, -1.0f);
-    EXPECT_EQ(Stream.Read(Out.data(), 8), 3u);
+    EXPECT_EQ(Stream.Read(Out.GetData(), 8), 3u);
 
-    for (size_t i = 0; i < 6; ++i)
+    for (int32 i = 0; i < 6; ++i)
     {
         EXPECT_FLOAT_EQ(Out[i], Source[i]) << "sample " << i;
     }
 
     // Everything past the real data is zeroed, so an underrun never plays stale samples.
-    for (size_t i = 6; i < 16; ++i)
+    for (int32 i = 6; i < 16; ++i)
     {
         EXPECT_FLOAT_EQ(Out[i], 0.0f) << "sample " << i;
     }
@@ -118,19 +118,19 @@ TEST(ProceduralAudioStream, WrapsAroundTheRing)
 
     // Advance the cursors so the next write straddles the end of the storage.
     const TVector<float> Priming = Ramp(6, 2, 0.0f);
-    ASSERT_EQ(Stream.Write(Priming.data(), 6), 6u);
+    ASSERT_EQ(Stream.Write(Priming.GetData(), 6), 6u);
 
     TVector<float> Drain(12, 0.0f);
-    ASSERT_EQ(Stream.Read(Drain.data(), 6), 6u);
+    ASSERT_EQ(Stream.Read(Drain.GetData(), 6), 6u);
 
     const TVector<float> Source = Ramp(7, 2, 100.0f);
-    ASSERT_EQ(Stream.Write(Source.data(), 7), 7u);
+    ASSERT_EQ(Stream.Write(Source.GetData(), 7), 7u);
     EXPECT_EQ(Stream.GetAvailableReadFrames(), 7u);
 
     TVector<float> Out(14, -1.0f);
-    ASSERT_EQ(Stream.Read(Out.data(), 7), 7u);
+    ASSERT_EQ(Stream.Read(Out.GetData(), 7), 7u);
 
-    for (size_t i = 0; i < Out.size(); ++i)
+    for (int32 i = 0; i < Out.Num(); ++i)
     {
         EXPECT_FLOAT_EQ(Out[i], Source[i]) << "sample " << i;
     }
@@ -152,11 +152,11 @@ TEST(ProceduralAudioStream, PartialReadsAndWritesStayAligned)
         {
             Sample = Next++;
         }
-        ASSERT_EQ(Stream.Write(Chunk.data(), WriteFrames), WriteFrames) << "round " << Round;
+        ASSERT_EQ(Stream.Write(Chunk.GetData(), WriteFrames), WriteFrames) << "round " << Round;
 
         const uint32 ReadFrames = 5;
         TVector<float> Out((size_t)ReadFrames * 3, -1.0f);
-        ASSERT_EQ(Stream.Read(Out.data(), ReadFrames), ReadFrames) << "round " << Round;
+        ASSERT_EQ(Stream.Read(Out.GetData(), ReadFrames), ReadFrames) << "round " << Round;
 
         for (float Sample : Out)
         {
@@ -188,7 +188,7 @@ TEST(ProceduralAudioStream, SingleProducerSingleConsumerStaysOrdered)
                 Chunk[i] = Next + (float)i;
             }
 
-            const uint32 Wrote = Stream.Write(Chunk.data(), Want);
+            const uint32 Wrote = Stream.Write(Chunk.GetData(), Want);
             Next    += (float)Wrote;
             Written += Wrote;
         }
@@ -202,7 +202,7 @@ TEST(ProceduralAudioStream, SingleProducerSingleConsumerStaysOrdered)
 
     while (TotalRead < kTotalFrames)
     {
-        const uint32 Read = Stream.Read(Out.data(), kChunk);
+        const uint32 Read = Stream.Read(Out.GetData(), kChunk);
         for (uint32 i = 0; i < Read; ++i)
         {
             ASSERT_FLOAT_EQ(Out[i], ExpectedNext) << "frame " << TotalRead + i;

@@ -94,8 +94,8 @@ namespace Lumina
         /** Whether the script overrides the event the generator assigned Slot. */
         NODISCARD bool HasScriptOverrideSlot(int32 Slot) const
         {
-            const size_t Word = (size_t)((uint32)Slot >> 6);
-            return Word < ScriptOverrideSlots.size() && (ScriptOverrideSlots[Word] & (1ull << (Slot & 63))) != 0;
+            const int32 Word = (size_t)((uint32)Slot >> 6);
+            return Word < ScriptOverrideSlots.Num() && (ScriptOverrideSlots[Word] & (1ull << (Slot & 63))) != 0;
         }
 
         // EScriptUpdatePhase from the UpdatePhase metadata up the chain, resolved at mint since the script tick reads it per script.

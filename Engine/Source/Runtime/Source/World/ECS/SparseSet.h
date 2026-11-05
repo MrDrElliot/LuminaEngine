@@ -23,6 +23,13 @@ namespace Lumina::ECS
 
     class FSparseSet;
 
+    // Every entity holding all Owned types sits at dense [0, Num) of each owned pool, at the same index in each.
+    struct FOwningGroup
+    {
+        TInlineVector<FSparseSet*, 8> Owned;
+        int32 Num = 0;
+    };
+
     // A pool's sparse pages hoisted into registers, so a filter loop reloads nothing through the pool.
     struct FMembershipProbe
     {
@@ -87,7 +94,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE FEntity FindSlot(uint32 EntityIndex) const
         {
             const uint32 Page = EntityIndex / SparsePageSize;
-            if (Page >= SparsePages.size())
+            if (Page >= static_cast<uint32>(SparsePages.Num()))
             {
                 return NullEntity;
             }
@@ -95,13 +102,12 @@ namespace Lumina::ECS
             return Slots != nullptr ? Slots[EntityIndex % SparsePageSize] : NullEntity;
         }
 
-        NODISCARD FORCEINLINE size_t Num() const { return LiveCount; }
+        NODISCARD FORCEINLINE int32 Num() const { return LiveCount; }
         NODISCARD FORCEINLINE bool IsEmpty() const { return LiveCount == 0; }
 
         // Includes tombstones on a stable pool, so index with a tombstone check.
-        NODISCARD FORCEINLINE size_t GetDenseSize() const { return Dense.size(); }
-        NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Dense.data(); }
-        NODISCARD FORCEINLINE FEntity GetDenseAt(size_t Index) const { return Dense[Index]; }
+        NODISCARD FORCEINLINE int32 GetDenseSize() const { return Dense.Num(); }
+        NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Dense.GetData(); }
 
         // The highest entity index in the pool, tombstones skipped, or 0 when it holds none. For sizing an index-keyed table.
         NODISCARD RUNTIME_API uint32 MaxLiveIndex() const;
@@ -109,7 +115,10 @@ namespace Lumina::ECS
         // The entity whose payload starts at Payload, or null when the address is not a live element of this pool.
         NODISCARD FEntity FindPayloadOwner(const void* Payload) const;
 
-        NODISCARD FORCEINLINE bool HasTombstones() const { return Dense.size() != LiveCount; }
+        NODISCARD FORCEINLINE bool HasTombstones() const { return Dense.Num() != LiveCount; }
+
+        // The group that keeps this pool's dense front packed, or null when no group owns the pool.
+        NODISCARD FORCEINLINE const FOwningGroup* GetOwningGroup() const { return OwningGroup; }
 
         NODISCARD FORCEINLINE const FComponentTypeInfo& GetTypeInfo() const { return TypeInfo; }
         NODISCARD FORCEINLINE FComponentTypeID GetTypeID() const { return TypeInfo.TypeID; }
@@ -120,8 +129,127 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE const uint32* GetLayoutEpoch() const { return LayoutEpoch; }
         static constexpr uint32 DeadLayoutEpoch = 0xFFFFFFFFu;
 
+
+        //~ Change detection
+
+        // Moves on Emplace, EmplaceOrReplace, Remove, Clear, Compact, Relayout and every stamped write; an untracked pool also moves on each run of a scheduled system that writes it.
+        NODISCARD FORCEINLINE uint64 GetWriteEpoch() const { return WriteEpoch.load(std::memory_order_relaxed); }
+
+        // A system that declared the pool written is about to run. Only an untracked pool needs telling, since its writes are not stamped.
+        FORCEINLINE void MarkScheduledWrite()
+        {
+            if (!bTrackChanges)
+            {
+                BumpWriteEpoch();
+            }
+        }
+
+        // An in-place write to one live element, which moves the epoch and stamps the element.
+        FORCEINLINE void MarkWritten(uint32 DenseIndex)
+        {
+            BumpWriteEpoch();
+            if (bTrackChanges)
+            {
+                StampChange(DenseIndex);
+            }
+        }
+
+        // Mutable access to one live element, which a tracked pool counts as a write and an untracked one ignores.
+        FORCEINLINE void StampIfTracked(uint32 DenseIndex)
+        {
+            if (bTrackChanges) [[unlikely]]
+            {
+                StampChange(DenseIndex);
+            }
+        }
+
+        // A type-erased GetRaw that counts as mutable access, for a caller about to write through the pointer.
+        NODISCARD FORCEINLINE void* GetRawForWrite(FEntity Entity)
+        {
+            const uint32 DenseIndex = FindLiveDense(Entity);
+            if (DenseIndex == InvalidDenseIndex)
+            {
+                return nullptr;
+            }
+            StampIfTracked(DenseIndex);
+            return GetRawAtDense(DenseIndex);
+        }
+
+        // Stamps the entity's element if the pool holds it and is tracked.
+        RUNTIME_API void StampEntity(FEntity Entity);
+
+        NODISCARD FORCEINLINE bool IsTrackingChanges() const { return bTrackChanges; }
+
+        // Keeps a change tick per dense slot from now on, stamping every element so the first query reports the whole pool.
+        RUNTIME_API void TrackChanges();
+
+        // A pointer into the pool went to a holder that may cache it, so ExpireEscapedPointers has to make it look again. Any thread may mark.
+        FORCEINLINE void MarkPointersEscaped()
+        {
+            if (!bPointersEscaped.load(std::memory_order_relaxed))
+            {
+                bPointersEscaped.store(true, std::memory_order_relaxed);
+            }
+        }
+
+        // Moves the layout epoch of a tracked pool whose pointers escaped, so every cached reference resolves, and so stamps, again.
+        RUNTIME_API void ExpireEscapedPointers();
+
+        // Parallel to the dense array, or null while untracked, so a parallel walk can test its own slice.
+        NODISCARD FORCEINLINE const uint32* GetChangeTickData() const { return bTrackChanges ? ChangeTicks.GetData() : nullptr; }
+
+        // The tick each element was added at, parallel to the dense array like the change ticks.
+        NODISCARD FORCEINLINE const uint32* GetAddedTickData() const { return bTrackChanges ? AddedTicks.GetData() : nullptr; }
+
+        // Undefined unless tracked and DenseIndex is a live slot. Any thread may stamp, since a stamp is a relaxed atomic store.
+        FORCEINLINE void SetChangeTickAt(uint32 DenseIndex, uint32 Tick)
+        {
+            std::atomic_ref<uint32>(ChangeTicks[static_cast<int32>(DenseIndex)]).store(Tick, std::memory_order_relaxed);
+        }
+
+        // Records that a stamp of this tick is about to land, moving the epoch once per tick rather than once per stamp.
+        FORCEINLINE void NoteStampTick(uint32 Tick)
+        {
+            if (LastStampTick.load(std::memory_order_relaxed) != Tick)
+            {
+                LastStampTick.store(Tick, std::memory_order_relaxed);
+                BumpWriteEpoch();
+            }
+        }
+
+        RUNTIME_API void StampAllChanges(uint32 Tick);
+
+        // Wrap-safe, so a stamp from before a counter wrap reads as changed rather than as old.
+        NODISCARD static constexpr bool IsNewerTick(uint32 Stamp, uint32 Since) { return static_cast<int32>(Stamp - Since) > 0; }
+
+        // Always true for a held element of an untracked pool, so a reader that never enabled tracking stays correct.
+        NODISCARD FORCEINLINE bool HasChangedSince(FEntity Entity, uint32 Since) const { return HasTickSince(ChangeTicks, Entity, Since); }
+        NODISCARD FORCEINLINE bool HasAddedSince(FEntity Entity, uint32 Since) const { return HasTickSince(AddedTicks, Entity, Since); }
+
+        // The live dense index of Entity, or InvalidDenseIndex for a null, absent or stale handle.
+        NODISCARD FORCEINLINE uint32 FindLiveDense(FEntity Entity) const
+        {
+            if (Entity.IsNull())
+            {
+                return InvalidDenseIndex;
+            }
+            const FEntity Slot = FindSlot(Entity.GetIndex());
+            return Slot.GetVersion() == Entity.GetVersion() ? Slot.GetIndex() : InvalidDenseIndex;
+        }
+
+        NODISCARD FORCEINLINE bool HasTickSince(const TVector<uint32>& Ticks, FEntity Entity, uint32 Since) const
+        {
+            const uint32 DenseIndex = FindLiveDense(Entity);
+            return DenseIndex != InvalidDenseIndex && (!bTrackChanges || IsNewerTick(Ticks[static_cast<int32>(DenseIndex)], Since));
+        }
+
+        // Process-wide, so stamps stay comparable across a registry swap.
+        NODISCARD static RUNTIME_API uint32 GetChangeTick();
+
+        // Hands back the current tick and moves on, so every later write stamps newer than the value returned.
+        static RUNTIME_API uint32 AdvanceChangeTick();
+
         NODISCARD FORCEINLINE bool IsPaged() const { return bPaged; }
-        NODISCARD FORCEINLINE bool IsInPlaceDelete() const { return bInPlaceDelete; }
         NODISCARD FORCEINLINE uint32 GetPayloadPageSize() const { return PayloadPageMask + 1u; }
         NODISCARD FORCEINLINE bool IsTagOnly() const { return ElementSize == 0; }
         NODISCARD FORCEINLINE uint32 GetElementSize() const { return ElementSize; }
@@ -132,14 +260,14 @@ namespace Lumina::ECS
 
             FIterator() = default;
 
-            FIterator(const FSparseSet* InSet, size_t InEndSlot)
+            FIterator(const FSparseSet* InSet, int32 InEndSlot)
                 : Set(InSet)
                 , EndSlot(InEndSlot)
             {
                 Advance();
             }
 
-            NODISCARD FEntity operator * () const { return Set->Dense[EndSlot - 1u]; }
+            NODISCARD FEntity operator * () const { return Set->Dense[EndSlot - 1]; }
 
             FIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
@@ -155,7 +283,7 @@ namespace Lumina::ECS
                     return;
                 }
 
-                while (EndSlot > 0 && Set->Dense[EndSlot - 1u].IsTombstone())
+                while (EndSlot > 0 && Set->Dense[EndSlot - 1].IsTombstone())
                 {
                     --EndSlot;
                 }
@@ -164,11 +292,11 @@ namespace Lumina::ECS
             const FSparseSet* Set = nullptr;
 
             // One past the current slot, so the finished walk sits at zero without wrapping.
-            size_t EndSlot = 0;
+            int32 EndSlot = 0;
         };
 
         // Backward, so removing the current entity only pulls an already visited one into its slot.
-        NODISCARD FIterator begin() const { return FIterator(this, Dense.size()); }
+        NODISCARD FIterator begin() const { return FIterator(this, Dense.Num()); }
         NODISCARD FIterator end() const { return FIterator(this, 0); }
 
 
@@ -204,12 +332,12 @@ namespace Lumina::ECS
 
         NODISCARD FORCEINLINE FMembershipProbe MakeProbe() const
         {
-            return FMembershipProbe{ SparsePages.data(), SparsePages.size() };
+            return FMembershipProbe{ SparsePages.GetData(), static_cast<size_t>(SparsePages.Num()) };
         }
 
         // The block a typed accessor reinterprets. Only one of these is meaningful, per IsPaged.
         NODISCARD FORCEINLINE uint8* GetPackedBlock() const { return PackedData; }
-        NODISCARD FORCEINLINE uint8* GetPayloadPage(size_t PageIndex) const { return PayloadPages[PageIndex]; }
+        NODISCARD FORCEINLINE uint8* GetPayloadPage(int32 PageIndex) const { return PayloadPages[PageIndex]; }
 
 
         //~ Mutation
@@ -217,19 +345,20 @@ namespace Lumina::ECS
         // Inline, because an opaque call here stops the caller's element stores pipelining across iterations.
         NODISCARD FORCEINLINE uint32 AllocateSlot(FEntity Entity)
         {
-            if (FreeDenseHead == InvalidDenseIndex)
+            BumpWriteEpoch();
+            if (FreeDenseHead == InvalidDenseIndex && !bTrackChanges && OwningGroup == nullptr)
             {
                 const uint32 EntityIndex = Entity.GetIndex();
                 const uint32 Page = EntityIndex / SparsePageSize;
 
-                if (Page < SparsePages.size())
+                if (Page < static_cast<uint32>(SparsePages.Num()))
                 {
                     FEntity* Slots = SparsePages[Page];
-                    const size_t Next = Dense.size();
+                    const int32 Next = Dense.Num();
 
-                    if (Slots != nullptr && Next < Dense.capacity() && HasPayloadRoomFor(Next))
+                    if (Slots != nullptr && Next < Dense.Max() && HasPayloadRoomFor(Next))
                     {
-                        Dense.push_back(Entity);
+                        Dense.Add(Entity);
                         Slots[EntityIndex % SparsePageSize] = FEntity(static_cast<uint32>(Next), Entity.GetVersion());
                         ++LiveCount;
                         return static_cast<uint32>(Next);
@@ -250,7 +379,7 @@ namespace Lumina::ECS
         // Drops tombstones so iteration stops paying for them. Invalidates every dense index.
         RUNTIME_API void Compact();
 
-        RUNTIME_API void Reserve(size_t Count);
+        RUNTIME_API void Reserve(int32 Count);
 
         // Rebuilds the payload in a new layout of the same type, keeping every entity at its dense index.
         RUNTIME_API void Relayout(const FComponentTypeInfo& NewInfo, FMigrateComponentValue Migrate);
@@ -266,20 +395,37 @@ namespace Lumina::ECS
 
         RUNTIME_API uint32 AllocateSlotSlow(FEntity Entity);
 
-        NODISCARD FORCEINLINE bool HasPayloadRoomFor(size_t DenseIndex) const
+        RUNTIME_API void StampChange(uint32 DenseIndex);
+
+        // Exchanges two live elements with their entities, sparse slots and ticks.
+        RUNTIME_API void SwapDenseSlots(uint32 A, uint32 B);
+
+        // Moves the live element at From into the unconstructed slot To, leaving From unconstructed.
+        void MoveDenseSlot(uint32 From, uint32 To);
+
+        void RelocateElement(void* Target, void* Source) const;
+
+        // Called with the new entity's payload still unconstructed, so it may hand back a different slot for the caller to fill.
+        uint32 JoinOwningGroup(FEntity Entity, uint32 DenseIndex);
+        void LeaveOwningGroup(FEntity Entity);
+
+        // Relaxed, because a mutable Get on a tracked pool may move it from a parallel system.
+        FORCEINLINE void BumpWriteEpoch() { WriteEpoch.store(WriteEpoch.load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed); }
+
+        NODISCARD FORCEINLINE bool HasPayloadRoomFor(int32 DenseIndex) const
         {
             if (ElementSize == 0)
             {
                 return true;
             }
-            return bPaged ? DenseIndex < (PayloadPages.size() << PayloadPageShift) : DenseIndex < PackedCapacity;
+            return bPaged ? DenseIndex < (PayloadPages.Num() << PayloadPageShift) : DenseIndex < PackedCapacity;
         }
 
         // Unlinks the entity and hands back its dense slot, or InvalidDenseIndex when absent.
         RUNTIME_API uint32 ReleaseSlot(FEntity Entity);
 
         void ApplyLayout(const FComponentTypeInfo& InTypeInfo);
-        RUNTIME_API void GrowPayloadTo(size_t ElementCount);
+        RUNTIME_API void GrowPayloadTo(int32 ElementCount);
         RUNTIME_API void BumpLayoutEpoch();
         RUNTIME_API void DestroyLiveElements();
         RUNTIME_API void FreePayload();
@@ -288,12 +434,24 @@ namespace Lumina::ECS
 
         uint32* LayoutEpoch = nullptr;
 
+        // Starts in a range of its own per pool, so a swapped-in pool never repeats an epoch a reader cached.
+        std::atomic<uint64> WriteEpoch{ 0 };
+        std::atomic<uint32> LastStampTick{ 0 };
+
+        // Beside the sparse pages, so the test every Get pays shares their cache line.
+        bool bTrackChanges = false;
+        std::atomic<bool> bPointersEscaped{ false };
+
         TVector<FEntity*> SparsePages;
         TVector<FEntity> Dense;
 
+        // Empty unless bTrackChanges, and then always as long as Dense.
+        TVector<uint32> ChangeTicks;
+        TVector<uint32> AddedTicks;
+
         // One growing block for a packed pool. Null when the pool is paged or holds a tag.
         uint8* PackedData = nullptr;
-        size_t PackedCapacity = 0;
+        int32 PackedCapacity = 0;
 
         // One block per page for a paged pool, so growth allocates a page instead of relocating the payload.
         TVector<uint8*> PayloadPages;
@@ -309,11 +467,13 @@ namespace Lumina::ECS
         bool   bPaged = false;
         bool   bInPlaceDelete = false;
 
-        // Dense minus tombstones, so a packed pool sees Dense.size() and a stable one does not.
-        size_t LiveCount = 0;
+        // Dense minus tombstones, so a packed pool sees Dense.Num() and a stable one does not.
+        int32 LiveCount = 0;
 
         // Head of the tombstone chain threaded through Dense. InvalidDenseIndex when there is none.
         uint32 FreeDenseHead = InvalidDenseIndex;
+
+        FOwningGroup* OwningGroup = nullptr;
     };
 }
 

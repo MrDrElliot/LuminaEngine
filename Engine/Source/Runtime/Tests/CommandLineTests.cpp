@@ -13,20 +13,20 @@ namespace
 
         explicit FArgs(std::initializer_list<const char*> InArgs)
         {
-            Storage.reserve(InArgs.size());
-            Pointers.reserve(InArgs.size());
+            Storage.Reserve(Lumina::IntCastChecked<Lumina::int32>(InArgs.size()));
+            Pointers.Reserve(Lumina::IntCastChecked<Lumina::int32>(InArgs.size()));
             for (const char* Arg : InArgs)
             {
-                Storage.push_back(FFixedString(Arg));
+                Storage.Emplace(Arg);
             }
             for (FFixedString& Arg : Storage)
             {
-                Pointers.push_back(Arg.data());
+                Pointers.Add(Arg.GetData());
             }
         }
 
-        int   Count() const { return (int)Pointers.size(); }
-        char** Values()     { return Pointers.data(); }
+        int   Count() const { return Pointers.Num(); }
+        char** Values()     { return Pointers.GetData(); }
 
     private:
 
@@ -45,10 +45,10 @@ TEST(CommandLine, AParsedArgumentIsFoundByName)
     EXPECT_TRUE(Parsed.Has("map"));
 
     ASSERT_TRUE(Parsed.Get("project").IsSet());
-    EXPECT_EQ(Parsed.Get("project").value(), FFixedString("H:/Projects/Game.lproject"));
+    EXPECT_EQ(Parsed.Get("project").GetValue(), FFixedString("H:/Projects/Game.lproject"));
 
     ASSERT_TRUE(Parsed.Get("map").IsSet());
-    EXPECT_EQ(Parsed.Get("map").value(), FFixedString("/Game/Content/Maps/Test.lasset"))
+    EXPECT_EQ(Parsed.Get("map").GetValue(), FFixedString("/Game/Content/Maps/Test.lasset"))
         << "the value's case and slashes must survive verbatim";
 }
 
@@ -63,7 +63,7 @@ TEST(CommandLine, LookupIsCaseInsensitiveOnTheKeyOnly)
     EXPECT_TRUE(Parsed.Has("LogFile"));
 
     ASSERT_TRUE(Parsed.Get("logfile").IsSet());
-    EXPECT_EQ(Parsed.Get("logfile").value(), FFixedString("Standalone")) << "the value keeps its own case";
+    EXPECT_EQ(Parsed.Get("logfile").GetValue(), FFixedString("Standalone")) << "the value keeps its own case";
 }
 
 TEST(CommandLine, AnAbsentArgumentReportsAbsent)
@@ -85,10 +85,10 @@ TEST(CommandLine, AValuelessFlagIsPresentAndReadsAsTrue)
     EXPECT_TRUE(Parsed.Has("server"));
 
     ASSERT_TRUE(Parsed.GetBool("server").IsSet());
-    EXPECT_TRUE(Parsed.GetBool("server").value());
+    EXPECT_TRUE(Parsed.GetBool("server").GetValue());
 
     ASSERT_TRUE(Parsed.GetInt("port").IsSet());
-    EXPECT_EQ(Parsed.GetInt("port").value(), 7778);
+    EXPECT_EQ(Parsed.GetInt("port").GetValue(), 7778);
 }
 
 // A separated value is the other spelling the parser accepts, and it must read back the same way.
@@ -98,5 +98,5 @@ TEST(CommandLine, ASeparatedValueParsesLikeAnEqualsValue)
     FCommandLine Parsed(Args.Count(), Args.Values());
 
     ASSERT_TRUE(Parsed.Get("map").IsSet());
-    EXPECT_EQ(Parsed.Get("map").value(), FFixedString("/Game/Content/Maps/Test.lasset"));
+    EXPECT_EQ(Parsed.Get("map").GetValue(), FFixedString("/Game/Content/Maps/Test.lasset"));
 }

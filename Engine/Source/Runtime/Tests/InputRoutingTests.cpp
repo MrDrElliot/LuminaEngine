@@ -86,7 +86,7 @@ TEST(InputRouting, APressKeepsTheMouseUntilEveryButtonIsUp)
     F.Registry.SetHoveredViewport(&F.B);
     F.Button(Lumina::EMouseKey::ButtonLeft, false, 150.0f);
     EXPECT_FALSE(F.A.GetContext().IsMouseButtonDownRaw(Lumina::EMouseKey::ButtonLeft));
-    EXPECT_FALSE(F.B.GetContext().GetFrameEvents().size() > 0);
+    EXPECT_FALSE(F.B.GetContext().GetFrameEvents().Num() > 0);
 
     // Once released, the next press goes to whatever is hovered.
     F.Button(Lumina::EMouseKey::ButtonLeft, true, 150.0f);

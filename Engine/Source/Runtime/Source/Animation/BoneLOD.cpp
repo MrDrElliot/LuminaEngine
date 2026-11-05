@@ -4,7 +4,6 @@
 #include "Renderer/MeshQuantization.h"
 #include "Renderer/SkeletonResource.h"
 #include <cfloat>
-#include <queue>
 
 namespace Lumina::BoneLOD
 {
@@ -51,12 +50,12 @@ namespace Lumina::BoneLOD
                 , NumBones(InSkeleton.GetNumBones())
                 , Chord(SwingChord())
             {
-                Joints.resize(NumBones);
+                Joints.SetNum(NumBones);
                 for (int32 Bone = 0; Bone < NumBones; ++Bone)
                 {
                     Joints[Bone] = JointPosition(Skeleton, Bone);
                 }
-                SubtreeWeight.assign(NumBones, 0.0f);
+                SubtreeWeight.Init(0.0f, NumBones);
             }
 
             void Add(const FVector3& Position, const int32 (&Joint)[kInfluencesPerVertex], const uint8 (&Weight)[kInfluencesPerVertex])
@@ -72,7 +71,7 @@ namespace Lumina::BoneLOD
                     {
                         if (SubtreeWeight[Bone] == 0.0f)
                         {
-                            Touched.push_back(Bone);
+                            Touched.Add(Bone);
                         }
                         SubtreeWeight[Bone] += Share;
                     }
@@ -84,7 +83,7 @@ namespace Lumina::BoneLOD
                     Errors[Bone] = Math::Max(Errors[Bone], Displacement);
                     SubtreeWeight[Bone] = 0.0f;
                 }
-                Touched.clear();
+                Touched.Reset();
             }
 
             const TVector<FVector3>& GetJoints() const { return Joints; }
@@ -102,8 +101,8 @@ namespace Lumina::BoneLOD
 
         void AccumulateSourceVertices(const FMeshResource& Mesh, FVertexErrorAccumulator& Accumulator)
         {
-            const size_t NumVertices = Math::Min(Mesh.Positions.size(), Math::Min(Mesh.JointIndices.size(), Mesh.JointWeights.size()));
-            for (size_t Vertex = 0; Vertex < NumVertices; ++Vertex)
+            const size_t NumVertices = Math::Min(Mesh.Positions.Num(), Math::Min(Mesh.JointIndices.Num(), Mesh.JointWeights.Num()));
+            for (int32 Vertex = 0, Limit = IntCastChecked<int32>(NumVertices); Vertex < Limit; ++Vertex)
             {
                 int32 Joints[kInfluencesPerVertex];
                 uint8 Weights[kInfluencesPerVertex];
@@ -119,8 +118,8 @@ namespace Lumina::BoneLOD
         // The finest LOD covers every vertex, and coarser ones only re-index the same skin data.
         void AccumulateMeshletVertices(const FMeshletData& Data, FVertexErrorAccumulator& Accumulator)
         {
-            const size_t NumMeshlets = Math::Min(Data.Meshlets.size(), Data.MeshletBonePalettes.size());
-            for (size_t MeshletIndex = 0; MeshletIndex < NumMeshlets; ++MeshletIndex)
+            const int32 NumMeshlets = Math::Min(Data.Meshlets.Num(), Data.MeshletBonePalettes.Num());
+            for (int32 MeshletIndex = 0; MeshletIndex < NumMeshlets; ++MeshletIndex)
             {
                 const FMeshlet& Meshlet = Data.Meshlets[MeshletIndex];
                 if (Meshlet.LODIndex != 0u)
@@ -131,8 +130,8 @@ namespace Lumina::BoneLOD
                 const FMeshletBonePalette& Palette = Data.MeshletBonePalettes[MeshletIndex];
                 for (uint32 i = 0; i < Meshlet.VertexCount; ++i)
                 {
-                    const size_t VertexIndex = (size_t)Meshlet.VertexOffset + i;
-                    if (VertexIndex >= Data.MeshletSkinnedVertices.size())
+                    const uint32 VertexIndex = Meshlet.VertexOffset + i;
+                    if (VertexIndex >= static_cast<uint32>(Data.MeshletSkinnedVertices.Num()))
                     {
                         break;
                     }
@@ -143,8 +142,8 @@ namespace Lumina::BoneLOD
                     for (int32 Influence = 0; Influence < kInfluencesPerVertex; ++Influence)
                     {
                         const uint32 Slot = (Vertex.JointIndices >> (Influence * 8)) & 0xFFu;
-                        const size_t PaletteEntry = (size_t)Palette.Offset + Slot;
-                        Joints[Influence]  = (Slot < Palette.Count && PaletteEntry < Data.MeshletBoneIndices.size())
+                        const uint32 PaletteEntry = Palette.Offset + Slot;
+                        Joints[Influence]  = (Slot < Palette.Count && PaletteEntry < static_cast<uint32>(Data.MeshletBoneIndices.Num()))
                             ? (int32)Data.MeshletBoneIndices[PaletteEntry]
                             : Constants::kIndexNone;
                         Weights[Influence] = (uint8)((Vertex.JointWeights >> (Influence * 8)) & 0xFFu);
@@ -165,7 +164,7 @@ namespace Lumina::BoneLOD
         }
 
         FVertexErrorAccumulator Accumulator(Skeleton, Errors);
-        if (!Mesh.JointIndices.empty())
+        if (!Mesh.JointIndices.IsEmpty())
         {
             AccumulateSourceVertices(Mesh, Accumulator);
         }
@@ -219,7 +218,7 @@ namespace Lumina::BoneLOD
     TVector<int32> SortBonesByError(const FSkeletonResource& Skeleton, const TVector<float>& BoneErrors)
     {
         const int32 NumBones = Skeleton.GetNumBones();
-        const bool bHasErrors = (int32)BoneErrors.size() == NumBones;
+        const bool bHasErrors = BoneErrors.Num() == NumBones;
 
         TVector<TVector<int32>> Children(NumBones);
         auto Before = [&](int32 A, int32 B)
@@ -229,39 +228,41 @@ namespace Lumina::BoneLOD
             return BandA != BandB ? BandA > BandB : A < B;
         };
         auto After = [&](int32 A, int32 B) { return Before(B, A); };
-        std::priority_queue<int32, TVector<int32>, decltype(After)> Ready(After);
+        TVector<int32> Ready;
 
         for (int32 Bone = 0; Bone < NumBones; ++Bone)
         {
             const int32 Parent = Skeleton.GetBone(Bone).ParentIndex;
             if (Parent >= 0 && Parent < NumBones)
             {
-                Children[Parent].push_back(Bone);
+                Children[Parent].Add(Bone);
             }
             else
             {
-                Ready.push(Bone);
+                Ready.Add(Bone);
+                Algo::PushHeap(Ready.begin(), Ready.end(), After);
             }
         }
 
         // Only a bone whose parent is already placed can go next, so the order is parents-first whatever the source order was.
         TVector<int32> NewToOld;
-        NewToOld.reserve(NumBones);
-        while (!Ready.empty())
+        NewToOld.Reserve(NumBones);
+        while (!Ready.IsEmpty())
         {
-            const int32 Bone = Ready.top();
-            Ready.pop();
-            NewToOld.push_back(Bone);
+            Algo::PopHeap(Ready.begin(), Ready.end(), After);
+            const int32 Bone = Ready.Pop();
+            NewToOld.Add(Bone);
             for (int32 Child : Children[Bone])
             {
-                Ready.push(Child);
+                Ready.Add(Child);
+                Algo::PushHeap(Ready.begin(), Ready.end(), After);
             }
         }
 
         // A parent cycle leaves bones unreachable, and such a skeleton is better left as it came.
-        if ((int32)NewToOld.size() != NumBones)
+        if (NewToOld.Num() != NumBones)
         {
-            NewToOld.resize(NumBones);
+            NewToOld.SetNum(NumBones);
             for (int32 Bone = 0; Bone < NumBones; ++Bone)
             {
                 NewToOld[Bone] = Bone;
@@ -274,7 +275,7 @@ namespace Lumina::BoneLOD
     {
         const int32 NumBones = Skeleton.GetNumBones();
         TVector<int32> OldToNew(NumBones, Constants::kIndexNone);
-        if ((int32)NewToOld.size() != NumBones)
+        if (NewToOld.Num() != NumBones)
         {
             for (int32 Bone = 0; Bone < NumBones; ++Bone)
             {
@@ -289,8 +290,8 @@ namespace Lumina::BoneLOD
         }
 
         TVector<FSkeletonResource::FBoneInfo> Reordered;
-        Reordered.reserve(NumBones);
-        Skeleton.BoneNameToIndex.clear();
+        Reordered.Reserve(NumBones);
+        Skeleton.BoneNameToIndex.Reset();
         for (int32 New = 0; New < NumBones; ++New)
         {
             FSkeletonResource::FBoneInfo Bone = Skeleton.Bones[NewToOld[New]];
@@ -299,7 +300,7 @@ namespace Lumina::BoneLOD
                 Bone.ParentIndex = OldToNew[Bone.ParentIndex];
             }
             Skeleton.BoneNameToIndex[Bone.Name] = New;
-            Reordered.push_back(Move(Bone));
+            Reordered.Add(Move(Bone));
         }
         Skeleton.Bones = Move(Reordered);
 
@@ -345,12 +346,12 @@ namespace Lumina::BoneLOD
 
     TVector<float> RemapBoneErrors(const TVector<float>& BoneErrors, const TVector<int32>& OldToNew)
     {
-        if (BoneErrors.size() != OldToNew.size())
+        if (BoneErrors.Num() != OldToNew.Num())
         {
             return {};
         }
-        TVector<float> Remapped(OldToNew.size(), 0.0f);
-        for (size_t Old = 0; Old < OldToNew.size(); ++Old)
+        TVector<float> Remapped(OldToNew.Num(), 0.0f);
+        for (int32 Old = 0; Old < OldToNew.Num(); ++Old)
         {
             Remapped[OldToNew[Old]] = BoneErrors[Old];
         }
@@ -360,7 +361,7 @@ namespace Lumina::BoneLOD
     int32 CountActiveBones(const TVector<float>& BoneErrors, int32 NumBones, float Tolerance, int32 MinBones)
     {
         // Errors measured against another bone layout say nothing about this one.
-        if (Tolerance <= 0.0f || (int32)BoneErrors.size() != NumBones)
+        if (Tolerance <= 0.0f || BoneErrors.Num() != NumBones)
         {
             return NumBones;
         }

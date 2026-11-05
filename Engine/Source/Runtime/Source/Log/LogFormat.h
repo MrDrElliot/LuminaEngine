@@ -70,7 +70,7 @@ namespace Lumina::Logging
 
         void Append(FStringView Text)
         {
-            Append(Text.data(), static_cast<uint32>(Text.size()));
+            Append(Text.GetData(), static_cast<uint32>(Text.Len()));
         }
 
         template<uint32 N>

@@ -5,14 +5,19 @@
 #include "Core/Object/ObjectCore.h"
 
 #include "Scripting/ScriptableTest.h"
+#include "World/World.h"
 #include "World/Subsystems/WorldSubsystem.h"
 
 using namespace Lumina;
 
 namespace
 {
-    // The driver only ever stores and hands back the pointer, so a sentinel proves ownership without a world.
-    CWorld* const SentinelWorld = reinterpret_cast<CWorld*>(0x5150);
+    // Never initialized, so the engine's own subsystems find no world resources and stay inert.
+    CWorld& BareWorld()
+    {
+        static CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+        return *World;
+    }
 
     // Flips the gate for one test and puts it back, so discovery in any other test still skips the type.
     struct FCreationGate
@@ -39,12 +44,12 @@ TEST(WorldSubsystem, CreateMissingHonorsShouldCreate)
     FCreationGate Gate;
 
     TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
-    WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
+    WorldSubsystems::CreateMissing(BareWorld(), Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
     ASSERT_NE(Created, nullptr) << "a subsystem class that wants to exist was not created";
 
-    EXPECT_EQ(Created->GetWorld(), SentinelWorld) << "the owning world is set before OnInitialize runs";
+    EXPECT_EQ(Created->GetWorld(), &BareWorld()) << "the owning world is set before OnInitialize runs";
 
     EXPECT_EQ(WorldSubsystems::Find(Subsystems, CWorldSubsystemDeclineTest::StaticClass()), nullptr)
         << "a class whose ShouldCreate returns false must be skipped";
@@ -57,7 +62,7 @@ TEST(WorldSubsystem, InitializeRunsBeforeWorldReady)
     FCreationGate Gate;
 
     TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
-    WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
+    WorldSubsystems::CreateMissing(BareWorld(), Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
     ASSERT_NE(Created, nullptr);
@@ -74,17 +79,17 @@ TEST(WorldSubsystem, CreateMissingIsIdempotent)
     FCreationGate Gate;
 
     TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
-    const int32 First = WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
+    const int32 First = WorldSubsystems::CreateMissing(BareWorld(), Subsystems);
     ASSERT_GT(First, 0);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
     ASSERT_NE(Created, nullptr);
 
-    const size_t CountAfterFirst = Subsystems.size();
+    const int32 CountAfterFirst = Subsystems.Num();
 
-    EXPECT_EQ(WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems), 0)
+    EXPECT_EQ(WorldSubsystems::CreateMissing(BareWorld(), Subsystems), 0)
         << "a second pass must not duplicate a subsystem that already exists";
-    EXPECT_EQ(Subsystems.size(), CountAfterFirst);
+    EXPECT_EQ(Subsystems.Num(), CountAfterFirst);
     EXPECT_EQ(Created->InitializeCount, 1) << "an existing subsystem must not be initialized twice";
 
     WorldSubsystems::DestroyAll(Subsystems);
@@ -95,7 +100,7 @@ TEST(WorldSubsystem, UpdateAndTeardownReachEverySubsystem)
     FCreationGate Gate;
 
     TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
-    WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
+    WorldSubsystems::CreateMissing(BareWorld(), Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
     ASSERT_NE(Created, nullptr);
@@ -110,7 +115,7 @@ TEST(WorldSubsystem, UpdateAndTeardownReachEverySubsystem)
 
     EXPECT_EQ(Created->TeardownCount, 1);
     EXPECT_EQ(Created->GetWorld(), nullptr) << "teardown must unlink the world it no longer belongs to";
-    EXPECT_TRUE(Subsystems.empty());
+    EXPECT_TRUE(Subsystems.IsEmpty());
 }
 
 TEST(WorldSubsystem, DropScriptedLeavesNativeSubsystemsAlone)
@@ -118,15 +123,15 @@ TEST(WorldSubsystem, DropScriptedLeavesNativeSubsystemsAlone)
     FCreationGate Gate;
 
     TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
-    WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
+    WorldSubsystems::CreateMissing(BareWorld(), Subsystems);
 
-    const size_t Before = Subsystems.size();
+    const int32 Before = Subsystems.Num();
     ASSERT_GT(Before, 0u);
 
     // Nothing here is backed by a script class, so a reload rebuild must not disturb the native ones.
     WorldSubsystems::DropScripted(Subsystems);
 
-    EXPECT_EQ(Subsystems.size(), Before);
+    EXPECT_EQ(Subsystems.Num(), Before);
     EXPECT_NE(FindTestSubsystem(Subsystems), nullptr);
 
     WorldSubsystems::DestroyAll(Subsystems);

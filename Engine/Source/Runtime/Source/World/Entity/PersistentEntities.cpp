@@ -45,7 +45,7 @@ namespace Lumina
             World->GetEntitiesByTag(Tag, Tagged);
             for (ECS::FEntity Candidate : Tagged)
             {
-                if (!Arrived.contains(Candidate) && Registry.HasAll<SPersistentComponent>(Candidate))
+                if (!Arrived.Contains(Candidate) && Registry.HasAll<SPersistentComponent>(Candidate))
                 {
                     return Candidate;
                 }
@@ -70,7 +70,7 @@ namespace Lumina
             const THashMap<ECS::FEntity, ECS::FEntity> Redirect = { { Placed, Arrival } };
             Registry.ForEachEntity([&](ECS::FEntity Entity)
             {
-                if (!Arrived.contains(Entity))
+                if (!Arrived.Contains(Entity))
                 {
                     ECS::Utils::RemapEntityReferences(Registry, Entity, Redirect, /*bClearUnmapped*/ false);
                 }
@@ -93,11 +93,11 @@ namespace Lumina
         {
             if (!HasPersistentAncestor(Registry, Entity))
             {
-                Carried.push_back(Entity);
-                Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Child) { Carried.push_back(Child); });
+                Carried.Add(Entity);
+                Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Child) { Carried.Add(Child); });
             }
         });
-        if (Carried.empty())
+        if (Carried.IsEmpty())
         {
             return;
         }
@@ -107,10 +107,10 @@ namespace Lumina
         for (ECS::FEntity Entity : Carried)
         {
             SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
-            if (Component != nullptr && !Component->Scripts.empty())
+            if (Component != nullptr && !Component->Scripts.IsEmpty())
             {
-                Taken.push_back({ Entity, Move(Component->Scripts) });
-                Component->Scripts.clear();
+                Taken.Add({ Entity, Move(Component->Scripts) });
+                Component->Scripts.Reset();
             }
         }
         EntityScripts::NoteStructureChange();
@@ -132,7 +132,7 @@ namespace Lumina
                 // The document belongs to the old world's UI, which goes with it.
                 const bool bUIHidden = UIScripts::GetDocument(Script.Get()) != nullptr && !UIScripts::IsShown(Script.Get());
                 UIScripts::Close(Script.Get());
-                Scripts.push_back({ Move(Script), ToStaging[Entity], bUIHidden });
+                Scripts.Emplace(Move(Script), ToStaging[Entity], bUIHidden);
             }
         }
 
@@ -143,7 +143,7 @@ namespace Lumina
 
     void FPersistentCarry::Land(CWorld* To)
     {
-        if (Entities.empty() || To == nullptr)
+        if (Entities.IsEmpty() || To == nullptr)
         {
             return;
         }
@@ -162,7 +162,7 @@ namespace Lumina
         THashSet<ECS::FEntity> ArrivedSet;
         for (const auto& [Staged, Entity] : Arrived)
         {
-            ArrivedSet.insert(Entity);
+            ArrivedSet.Add(Entity);
             Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         }
 
@@ -171,7 +171,7 @@ namespace Lumina
             const ECS::FEntity Entity = Arrived[Carried.Entity];
             ECS::Utils::RemapEntityReferences(Carried.Script.Get(), Arrived, /*bClearUnmapped*/ true);
             Carried.Script->SetOwner(Entity, To);
-            Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.push_back(Carried.Script);
+            Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.Add(Carried.Script);
             Carried.Script->BindComponentRefs();
         }
         EntityScripts::NoteStructureChange();
@@ -200,7 +200,7 @@ namespace Lumina
             }
         }
 
-        Entities.clear();
-        Scripts.clear();
+        Entities.Reset();
+        Scripts.Reset();
     }
 }

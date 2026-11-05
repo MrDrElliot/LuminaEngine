@@ -10,7 +10,7 @@ namespace Lumina
 
     int32 FSyncTrack::WrapIndex(int32 Index) const
     {
-        const int32 Count = (int32)Events.size();
+        const int32 Count = Events.Num();
         int32 Wrapped = Index % Count;
         if (Wrapped < 0)
         {
@@ -40,38 +40,38 @@ namespace Lumina
 
     void FSyncTrack::BuildFromMarkers(const TVector<FMarker>& Markers)
     {
-        Events.clear();
+        Events.Reset();
 
-        if (Markers.empty())
+        if (Markers.IsEmpty())
         {
-            Events.push_back(FSyncEvent());
+            Events.AddDefaulted();
             return;
         }
 
-        Events.reserve(Markers.size());
+        Events.Reserve(Markers.Num());
         for (const FMarker& Marker : Markers)
         {
             FSyncEvent Event;
             Event.ID        = Marker.ID;
             Event.StartTime = Math::Saturate(Marker.StartTime);
-            Events.push_back(Event);
+            Events.Add(Event);
         }
 
-        const int32 Count = (int32)Events.size();
+        const int32 Count = Events.Num();
         for (int32 i = 0; i < Count - 1; ++i)
         {
             Events[i].Duration = Events[i + 1].StartTime - Events[i].StartTime;
         }
 
-        Events.back().Duration = 1.0f - (Events.back().StartTime - Events[0].StartTime);
+        Events.Last().Duration = 1.0f - (Events.Last().StartTime - Events[0].StartTime);
 
         // A degenerate span would divide by zero on every conversion, so collapse to the default track.
         for (const FSyncEvent& Event : Events)
         {
             if (Event.Duration < kMinEventDuration)
             {
-                Events.clear();
-                Events.push_back(FSyncEvent());
+                Events.Reset();
+                Events.AddDefaulted();
                 return;
             }
         }
@@ -89,7 +89,7 @@ namespace Lumina
 
         // Built aside, since a chained blend passes its own destination back in as a source.
         TVector<FSyncEvent, 8> Blended;
-        Blended.reserve(Count);
+        Blended.Reserve(Count);
 
         float StartTime = 0.0f;
         for (int32 i = 0; i < Count; ++i)
@@ -102,14 +102,14 @@ namespace Lumina
             Event.StartTime = StartTime;
             Event.Duration  = Math::Mix(EventA.Duration * ScaleA, EventB.Duration * ScaleB, Weight);
 
-            Blended.push_back(Event);
+            Blended.Add(Event);
             StartTime += Event.Duration;
         }
 
         if (StartTime < kMinEventDuration)
         {
-            Events.clear();
-            Events.push_back(FSyncEvent());
+            Events.Reset();
+            Events.AddDefaulted();
             return;
         }
 
@@ -120,7 +120,7 @@ namespace Lumina
             Event.Duration  *= Normalize;
         }
 
-        Blended.back().Duration = 1.0f - Blended.back().StartTime;
+        Blended.Last().Duration = 1.0f - Blended.Last().StartTime;
         Events = Move(Blended);
     }
 
@@ -135,13 +135,13 @@ namespace Lumina
 
     FSyncPosition FSyncTrack::GetPosition(float ClipPercent) const
     {
-        const int32 Count = (int32)Events.size();
+        const int32 Count = Events.Num();
         const float Percent = Math::Fract(ClipPercent);
 
         // Anything before the first marker belongs to the last event's wrapped tail.
         if (Percent < Events[0].StartTime)
         {
-            const FSyncEvent& Last = Events.back();
+            const FSyncEvent& Last = Events.Last();
             const float Remaining = Events[0].StartTime - Percent;
             return FSyncPosition(Count - 1, Math::Saturate((Last.Duration - Remaining) / Last.Duration));
         }

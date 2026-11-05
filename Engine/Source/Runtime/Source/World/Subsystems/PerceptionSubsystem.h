@@ -4,7 +4,7 @@
 #include "AI/Perception/PerceptionTypes.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Vector/VectorTypes.h"
-#include "GameplayTags/GameplayTag.h"
+#include "HierarchicalTags/HierarchicalTag.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/ECS/Entity.h"
 #include "World/Subsystems/WorldSubsystem.h"

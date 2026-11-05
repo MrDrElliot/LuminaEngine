@@ -24,8 +24,8 @@ namespace Lumina
         /** Overwrites NativeFilePath. */
         bool Finalize(FStringView NativeFilePath);
 
-        size_t NumEntries() const { return Entries.size(); }
-        size_t TotalEntryBytes() const { return TotalDataSize; }
+        int32 NumEntries() const { return Entries.Num(); }
+        int64 TotalEntryBytes() const { return TotalDataSize; }
 
         // Every entry path in the order Finalize writes them.
         void GetEntryPaths(TVector<FFixedString>& OutPaths) const;
@@ -41,6 +41,6 @@ namespace Lumina
 
         TVector<FPendingEntry>          Entries;
         THashSet<FFixedString>          SeenPaths;
-        size_t                          TotalDataSize = 0;
+        int64                           TotalDataSize = 0;
     };
 }

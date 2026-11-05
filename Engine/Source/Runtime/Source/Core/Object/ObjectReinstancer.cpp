@@ -20,8 +20,8 @@ namespace Lumina
         FName MakeRetiredName(const FName& Original)
         {
             static uint32 Counter = 0;
-            const FString Base = FString("RETIRED_") + Original.c_str();
-            return FName(Base.c_str(), ++Counter);
+            const FString Base = FString("RETIRED_") + *Original;
+            return FName(*Base, ++Counter);
         }
     }
 
@@ -32,7 +32,7 @@ namespace Lumina
             return;
         }
 
-        ClassMap.insert_or_assign(Old, New);
+        ClassMap.Add(Old, New);
     }
 
     CObject* FObjectReinstancer::BuildReplacement(CObject* Old, CClass* NewClass)
@@ -52,6 +52,14 @@ namespace Lumina
             Old->HandleGUIDChange(Guid);
             Old->Rename(Name, Package);
             return nullptr;
+        }
+
+        // OF_Rooted only mirrors membership of the root set, so the membership itself has to move across.
+        if (Old->HasAnyFlag(OF_Rooted))
+        {
+            New->ClearFlags(OF_Rooted);
+            New->AddToRoot();
+            Old->RemoveFromRoot();
         }
 
         // Tagged, so a property the new shape added, dropped or moved is matched by name and the rest of the
@@ -79,7 +87,7 @@ namespace Lumina
     FReinstanceResult FObjectReinstancer::Commit()
     {
         FReinstanceResult Result;
-        if (ClassMap.empty())
+        if (ClassMap.IsEmpty())
         {
             return Result;
         }
@@ -91,9 +99,9 @@ namespace Lumina
             {
                 return;
             }
-            if (ClassMap.find(Base->GetClass()) != ClassMap.end())
+            if (ClassMap.Contains(Base->GetClass()))
             {
-                Originals.push_back(static_cast<CObject*>(Base));
+                Originals.Add(static_cast<CObject*>(Base));
             }
         });
 
@@ -102,11 +110,11 @@ namespace Lumina
 
         for (CObject* Old : Originals)
         {
-            CClass* const NewClass = ClassMap.find(Old->GetClass())->second;
+            CClass* const NewClass = ClassMap.FindChecked(Old->GetClass());
             const FObjectHandle OldHandle = Object::Internal::GetHandleByObject(Old);
             if (CObject* New = BuildReplacement(Old, NewClass))
             {
-                ObjectMap.insert_or_assign(Old, New);
+                ObjectMap.Add(Old, New);
 
                 // A weak reference is not a property, so no walk can reach it. Redirecting the handle is what
                 // makes one follow the instance instead of reading as destroyed.
@@ -119,10 +127,10 @@ namespace Lumina
         // repointed by the very same walk that repoints the instances.
         for (const auto& [Old, New] : ClassMap)
         {
-            ObjectMap.insert_or_assign(static_cast<CObject*>(Old), static_cast<CObject*>(New));
+            ObjectMap.Add(static_cast<CObject*>(Old), static_cast<CObject*>(New));
         }
 
-        if (ObjectMap.empty())
+        if (ObjectMap.IsEmpty())
         {
             return Result;
         }
@@ -133,13 +141,13 @@ namespace Lumina
             {
                 return nullptr;
             }
-            const auto Found = ObjectMap.find(Current);
-            if (Found == ObjectMap.end())
+            const auto Found = ObjectMap.Find(Current);
+            if (Found == nullptr)
             {
                 return Current;
             }
             ++Result.ReferencesPatched;
-            return Found->second;
+            return (*Found);
         };
 
         // Raw is safe here because every original is pinned above, so none dies while the walk is still going.
@@ -148,13 +156,13 @@ namespace Lumina
         {
             if (Base != nullptr && !Base->HasAnyFlag(OF_MarkedDestroy))
             {
-                Live.push_back(static_cast<CObject*>(Base));
+                Live.Add(static_cast<CObject*>(Base));
             }
         });
 
         for (CObject* Object : Live)
         {
-            if (ObjectMap.find(Object) != ObjectMap.end())
+            if (ObjectMap.Contains(Object))
             {
                 continue;   // an original on its way out, so what it points at no longer matters
             }
@@ -170,23 +178,23 @@ namespace Lumina
 
         // Captured as handles, since destroying one original can free another one in the same map.
         TVector<TPair<FObjectHandle, CObject*>> Doomed;
-        Doomed.reserve(ObjectMap.size());
+        Doomed.Reserve(ObjectMap.Num());
         for (const auto& [Old, New] : ObjectMap)
         {
             if (Old->IsA<CClass>())
             {
                 continue;   // a retired class is taken out by whoever minted it, not here
             }
-            Doomed.emplace_back(Object::Internal::GetHandleByObject(Old), Old);
+            Doomed.Emplace(Object::Internal::GetHandleByObject(Old), Old);
         }
 
         // An original nothing reaches any more dies here, which the handle check below then skips.
-        Pins.clear();
+        Pins.Reset();
 
         FString Stranded;
         for (const TPair<FObjectHandle, CObject*>& Entry : Doomed)
         {
-            if (Object::Internal::ResolveHandle(Entry.first) != Entry.second)
+            if (Object::Internal::ResolveHandle(Entry.Key) != Entry.Value)
             {
                 continue;   // an earlier destroy in this loop already took it
             }
@@ -194,17 +202,17 @@ namespace Lumina
             // Forcing it down while a strong reference survives would dangle that holder. The original is
             // already renamed aside and resolves to nothing, so leaving it to its refcount is safe, and a
             // reference the walk could not reach keeps working until its owner lets go.
-            if (Object::Internal::GetStrongRefCountByIndex(Entry.first.Index) == 0)
+            if (Object::Internal::GetStrongRefCountByIndex(Entry.Key.Index) == 0)
             {
-                Entry.second->ForceDestroyNow();
+                Entry.Value->ForceDestroyNow();
             }
             else
             {
                 ++Result.OriginalsOutlivingTheSwap;
                 if (Result.OriginalsOutlivingTheSwap <= 4)
                 {
-                    Stranded += Stranded.empty() ? "" : ", ";
-                    Stranded += Entry.second->GetName().c_str();
+                    Stranded += Stranded.IsEmpty() ? "" : ", ";
+                    Stranded += *Entry.Value->GetName();
                 }
             }
         }

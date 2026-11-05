@@ -6,6 +6,7 @@
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
 #include "Asset/AssetOps.h"
+#include "MCPGraphTools.h"
 #include "MCPTextMatch.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -25,12 +26,12 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPMaterialToolsInternal
     {
         struct FMaterialTarget
         {
             CObject*            Asset    = nullptr;
-            CMaterial*          Material = nullptr;   // null when Asset is a material function
+            CMaterial*          Material = nullptr;
             CMaterialNodeGraph* Graph    = nullptr;
         };
 
@@ -69,7 +70,7 @@ namespace Lumina::MCP
             }
         }
 
-        void RegisterListNodeTypes(FStringView Owner)
+        void RegisterMaterialListNodeTypes(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SListMaterialNodeTypesParams, SListMaterialNodeTypesResult>(
                 Owner, "material.list_node_types",
@@ -86,9 +87,9 @@ namespace Lumina::MCP
                         }
 
                         SMaterialNodeTypeInfo Info;
-                        Info.Name        = FString(Class->GetName().ToString().c_str());
+                        Info.Name        = FString(*Class->GetName().ToString());
                         Info.DisplayName = FString(CDO->GetNodeDisplayName());
-                        Info.Category    = FString(CDO->GetNodeCategory().c_str());
+                        Info.Category    = FString(*CDO->GetNodeCategory());
                         Info.Description = FString(CDO->GetNodeTooltip());
 
                         if (!ContainsText(FStringView(Info.Name), In.Contains)
@@ -102,24 +103,24 @@ namespace Lumina::MCP
                             const Agent::FSchemaResult Schema = Agent::GenerateSchema(Class);
                             if (Schema.IsValid())
                             {
-                                Info.ParameterSchema = FString(Schema.Schema.dump().c_str());
+                                Info.ParameterSchema = Schema.Schema.ToString();
                             }
                         }
 
-                        Out.Types.push_back(Move(Info));
+                        Out.Types.Add(Move(Info));
                     }
 
-                    return Agent::FToolResult::Ok(Lumina::Format("{} material node type(s).", Out.Types.size()));
+                    return Agent::FToolResult::Ok(Lumina::Format("{} material node type(s).", Out.Types.Num()));
                 });
         }
 
-        void RegisterDescribeMaterial(FStringView Owner)
+        void RegisterMaterialDescribe(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SDescribeMaterialParams, SDescribeMaterialResult>(
+            Agent::FToolRegistry::Get().Register<SMaterialRefParams, SDescribeMaterialResult>(
                 Owner, "material.describe",
                 "Report a material's graph, meaning every node, its pins and what they connect to.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SDescribeMaterialParams& In, SDescribeMaterialResult& Out)
+                [](const SMaterialRefParams& In, SDescribeMaterialResult& Out)
                 {
                     FMaterialTarget Target;
                     FString Error;
@@ -128,7 +129,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name = FString(Target.Asset->GetName().ToString().c_str());
+                    Out.Name = FString(*Target.Asset->GetName().ToString());
                     Out.bReadyForRender = Target.Material != nullptr && Target.Material->IsReadyForRender();
 
                     for (const TStrongObjectPtr<CEdGraphNode>& Node : Target.Graph->Nodes)
@@ -138,30 +139,30 @@ namespace Lumina::MCP
                             continue;
                         }
 
-                        SMaterialNodeInfo Info;
+                        SGraphNodeInfo Info;
                         Info.Id          = Node->GetNodeID();
-                        Info.Type        = FString(Node->GetClass()->GetName().ToString().c_str());
+                        Info.Type        = FString(*Node->GetClass()->GetName().ToString());
                         Info.DisplayName = FString(Node->GetNodeDisplayName());
                         Info.X           = Node->GetNodeX();
                         Info.Y           = Node->GetNodeY();
 
                         CollectPins(Node.Get(), Info.Pins);
 
-                        nlohmann::json Values;
+                        FJsonValue Values;
                         if (Agent::WriteStruct(Node->GetClass(), Node.Get(), Values).IsValid())
                         {
-                            Info.Values = FString(Values.dump().c_str());
+                            Info.Values = Values.ToString();
                         }
 
-                        Out.Nodes.push_back(Move(Info));
+                        Out.Nodes.Add(Move(Info));
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("'{}' has {} node(s).",
-                        Out.Name, Out.Nodes.size()));
+                        Out.Name, Out.Nodes.Num()));
                 });
         }
 
-        void RegisterCreateMaterial(FStringView Owner)
+        void RegisterMaterialCreate(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SCreateMaterialParams, SCreateMaterialResult>(
                 Owner, "material.create",
@@ -169,7 +170,7 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateMaterialParams& In, SCreateMaterialResult& Out)
                 {
-                    if (In.Name.empty())
+                    if (In.Name.IsEmpty())
                     {
                         return Agent::FToolResult::Error("A material needs a name.");
                     }
@@ -194,7 +195,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
                     }
 
-                    CMaterial* Material = CFactory::CreateNewOf<CMaterial>(FStringView(Path.c_str(), Path.size()));
+                    CMaterial* Material = CFactory::CreateNewOf<CMaterial>(FStringView(*Path, Path.Len()));
                     if (Material == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create a material at {}.", Path));
@@ -213,8 +214,8 @@ namespace Lumina::MCP
 
                     FAssetRegistry::Get().AssetCreated(Material);
 
-                    Out.Path = FString(Path.c_str());
-                    Out.Guid = FString(Material->GetGUID().ToString().c_str());
+                    Out.Path = FString(*Path);
+                    Out.Guid = FString(*Material->GetGUID().ToString());
 
                     if (CEdGraphNode* Output = MaterialOps::FindOutputNode(Graph))
                     {
@@ -225,50 +226,37 @@ namespace Lumina::MCP
                 });
         }
 
-        void RegisterAddNode(FStringView Owner)
+        Agent::FToolResult AddMaterialNode(const SMaterialNodeParams& In, const FMaterialTarget& Target, SMaterialNodeResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SAddMaterialNodeParams, SAddMaterialNodeResult>(
-                Owner, "material.add_node",
-                "Add a node to a material graph and report the pins it came with. X grows to the right and Y downward, and a graph reads left to right, so place a node left of (smaller X than) the node it feeds; describe reports every node's X and Y. When the graph is open, the edit is one undo step in its tab, graph.arrange lays the canvas out and graph.frame brings nodes into view.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SAddMaterialNodeParams& In, SAddMaterialNodeResult& Out)
-                {
-                    FMaterialTarget Target;
-                    FString Error;
-                    if (!ResolveMaterial(In.Material, Target, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
+            CClass* NodeClass = MaterialOps::ResolveNodeType(FStringView(In.NodeType));
+            if (NodeClass == nullptr)
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "No material node type is named '{}'. Use material.list_node_types.", In.NodeType));
+            }
 
-                    CClass* NodeClass = MaterialOps::ResolveNodeType(FStringView(In.NodeType));
-                    if (NodeClass == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "No material node type is named '{}'. Use material.list_node_types.", In.NodeType));
-                    }
+            CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
+            if (Node == nullptr)
+            {
+                return Agent::FToolResult::Error("The graph refused to create that node.");
+            }
 
-                    CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
-                    if (Node == nullptr)
-                    {
-                        return Agent::FToolResult::Error("The graph refused to create that node.");
-                    }
+            Out.Id = Node->GetNodeID();
+            CollectPins(Node, Out.Pins);
 
-                    Out.Id = Node->GetNodeID();
-                    CollectPins(Node, Out.Pins);
+            MarkMaterialDirty(Target);
 
-                    MarkMaterialDirty(Target);
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
-                });
+            return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
         }
 
-        void RegisterRemoveNode(FStringView Owner)
+        void RegisterMaterialNode(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SRemoveMaterialNodeParams, SCompileMaterialResult>(
-                Owner, "material.remove_node",
-                "Remove a node from a material graph, clearing every link it had.",
+            Agent::FToolRegistry::Get().Register<SMaterialNodeParams, SMaterialNodeResult>(
+                Owner, "material.node",
+                "Add or remove a material graph node. Add returns the node's id and pins; X grows right and Y down, "
+                "so place a node left of the node it feeds. Remove clears its links. Undoable while the graph is open.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SRemoveMaterialNodeParams& In, SCompileMaterialResult& Out)
+                [](const SMaterialNodeParams& In, SMaterialNodeResult& Out)
                 {
                     FMaterialTarget Target;
                     FString Error;
@@ -277,31 +265,30 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
-                    if (Node == nullptr)
+                    if (In.Action == EMaterialNodeAction::Add)
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
+                        return AddMaterialNode(In, Target, Out);
                     }
 
-                    if (!NodeGraphOps::RemoveNode(Target.Graph, Node, Error))
+                    if (!RemoveGraphNode(Target.Graph, In.Node, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.bSucceeded = true;
                     MarkMaterialDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Removed node {}.", In.Node));
                 });
         }
 
-        void RegisterConnect(FStringView Owner)
+        void RegisterMaterialLink(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SConnectMaterialParams, SCompileMaterialResult>(
-                Owner, "material.connect",
-                "Wire one node's output pin into another node's input pin.",
+            Agent::FToolRegistry::Get().Register<SMaterialLinkParams>(
+                Owner, "material.link",
+                "Connect wires FromNode.FromPin (an output) into ToNode.ToPin (an input). "
+                "Disconnect clears every link on Node.Pin.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SConnectMaterialParams& In, SCompileMaterialResult& Out)
+                [](const SMaterialLinkParams& In)
                 {
                     FMaterialTarget Target;
                     FString Error;
@@ -310,96 +297,31 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* From = NodeGraphOps::FindNode(Target.Graph, In.FromNode);
-                    CEdGraphNode* To   = NodeGraphOps::FindNode(Target.Graph, In.ToNode);
-
-                    if (From == nullptr || To == nullptr)
+                    if (In.Action == EMaterialLinkAction::Connect)
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.",
-                            From == nullptr ? In.FromNode : In.ToNode));
+                        if (!ConnectGraphPins(Target.Graph, In.FromNode, In.FromPin, In.ToNode, In.ToPin, Error))
+                        {
+                            return Agent::FToolResult::Error(Error);
+                        }
+
+                        MarkMaterialDirty(Target);
+
+                        return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
+                            In.FromNode, In.FromPin, In.ToNode, In.ToPin));
                     }
 
-                    CEdNodeGraphPin* OutputPin =
-                        NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
-
-                    if (OutputPin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no output pin '{}'. It has {}.",
-                            In.FromNode, In.FromPin,
-                            NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
-                    }
-
-                    CEdNodeGraphPin* InputPin =
-                        NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
-
-                    if (InputPin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no input pin '{}'. It has {}.",
-                            In.ToNode, In.ToPin,
-                            NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
-                    }
-
-                    if (!NodeGraphOps::ConnectPins(Target.Graph, OutputPin, InputPin, Error))
+                    if (!DisconnectGraphPin(Target.Graph, In.Node, In.Pin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.bSucceeded = true;
-                    MarkMaterialDirty(Target);
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
-                        In.FromNode, In.FromPin, In.ToNode, In.ToPin));
-                });
-        }
-
-        void RegisterDisconnect(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SDisconnectMaterialParams, SCompileMaterialResult>(
-                Owner, "material.disconnect",
-                "Clear every link on one pin.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SDisconnectMaterialParams& In, SCompileMaterialResult& Out)
-                {
-                    FMaterialTarget Target;
-                    FString Error;
-                    if (!ResolveMaterial(In.Material, Target, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
-                    if (Node == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
-                    }
-
-                    CEdNodeGraphPin* Pin =
-                        NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
-
-                    if (Pin == nullptr)
-                    {
-                        Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
-                    }
-
-                    if (Pin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no pin '{}'.",
-                            In.Node, In.Pin));
-                    }
-
-                    if (!NodeGraphOps::DisconnectPin(Target.Graph, Pin, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    Out.bSucceeded = true;
                     MarkMaterialDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Disconnected {}.{}.", In.Node, In.Pin));
                 });
         }
 
-        void RegisterSetNodeProperty(FStringView Owner)
+        void RegisterMaterialSetNodeProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetMaterialNodePropertyParams, SMaterialPropertyResult>(
                 Owner, "material.set_node_property",
@@ -426,10 +348,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    const nlohmann::json Value = nlohmann::json::parse(
-                        In.Value.c_str(), In.Value.c_str() + In.Value.size(), nullptr, false);
-
-                    if (Value.is_discarded())
+                    FJsonValue Value;
+                    if (!FJsonValue::Parse(In.Value, Value))
                     {
                         return Agent::FToolResult::Error(
                             "Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.");
@@ -442,9 +362,9 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Check.Error);
                     }
 
-                    nlohmann::json Before;
+                    FJsonValue Before;
                     Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-                    Out.Previous = FString(Before.dump().c_str());
+                    Out.Previous = Before.ToString();
 
                     const Agent::FMarshalResult Applied =
                         Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(In.Path));
@@ -458,9 +378,9 @@ namespace Lumina::MCP
                     Node->PostPropertyChange(Property.Property);
                     NodeGraphOps::NotifyNodeValuesChanged(Target.Graph);
 
-                    nlohmann::json After;
+                    FJsonValue After;
                     Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-                    Out.Current = FString(After.dump().c_str());
+                    Out.Current = After.ToString();
 
                     MarkMaterialDirty(Target);
 
@@ -469,13 +389,13 @@ namespace Lumina::MCP
                 });
         }
 
-        void RegisterCompile(FStringView Owner)
+        void RegisterMaterialCompile(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SCompileMaterialParams, SCompileMaterialResult>(
+            Agent::FToolRegistry::Get().Register<SMaterialRefParams, SCompileMaterialResult>(
                 Owner, "material.compile",
                 "Compile a material's graph into its shaders and report what the graph got wrong.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SCompileMaterialParams& In, SCompileMaterialResult& Out)
+                [](const SMaterialRefParams& In, SCompileMaterialResult& Out)
                 {
                     FMaterialTarget Target;
                     FString Error;
@@ -496,12 +416,12 @@ namespace Lumina::MCP
 
                     for (const EdNodeGraph::FError& Item : Result.Errors)
                     {
-                        Out.Errors.push_back(Lumina::Format("{} {}", Item.Name, Item.Description));
+                        Out.Errors.Add(Lumina::Format("{} {}", Item.Name, Item.Description));
                     }
 
                     for (const EdNodeGraph::FError& Item : Result.Warnings)
                     {
-                        Out.Warnings.push_back(Lumina::Format("{} {}", Item.Name, Item.Description));
+                        Out.Warnings.Add(Lumina::Format("{} {}", Item.Name, Item.Description));
                     }
 
                     MarkMaterialDirty(Target);
@@ -515,58 +435,25 @@ namespace Lumina::MCP
                             Listed += "\n- " + Line;
                         }
                         return Agent::FToolResult::Error(Lumina::Format("Compile failed with {} error(s).{}",
-                            Out.Errors.size(), Listed));
+                            Out.Errors.Num(), Listed));
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s).",
-                        Out.Warnings.size()));
+                        Out.Warnings.Num()));
                 });
         }
     }
 
-    void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out)
-    {
-        const auto Append = [&](const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
-        {
-            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
-            {
-                if (!Pin.IsValid())
-                {
-                    continue;
-                }
-
-                SGraphPinInfo Info;
-                Info.Name      = Pin->GetPinName();
-                Info.Direction = Direction;
-
-                if (Pin->HasConnection())
-                {
-                    CEdNodeGraphPin* Other = Pin->GetConnection(0);
-                    if (Other != nullptr && Other->GetOwningNode() != nullptr)
-                    {
-                        Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
-                        Info.ConnectedPin  = Other->GetPinName();
-                    }
-                }
-
-                Out.push_back(Move(Info));
-            }
-        };
-
-        Append(Node->GetInputPins(), "Input");
-        Append(Node->GetOutputPins(), "Output");
-    }
+    using namespace MCPMaterialToolsInternal;
 
     void RegisterMaterialTools(FStringView Owner)
     {
-        RegisterListNodeTypes(Owner);
-        RegisterDescribeMaterial(Owner);
-        RegisterCreateMaterial(Owner);
-        RegisterAddNode(Owner);
-        RegisterRemoveNode(Owner);
-        RegisterConnect(Owner);
-        RegisterDisconnect(Owner);
-        RegisterSetNodeProperty(Owner);
-        RegisterCompile(Owner);
+        RegisterMaterialListNodeTypes(Owner);
+        RegisterMaterialDescribe(Owner);
+        RegisterMaterialCreate(Owner);
+        RegisterMaterialNode(Owner);
+        RegisterMaterialLink(Owner);
+        RegisterMaterialSetNodeProperty(Owner);
+        RegisterMaterialCompile(Owner);
     }
 }

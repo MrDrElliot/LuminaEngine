@@ -1,46 +1,40 @@
 #include "RuntimePCH.h"
 
-#include "GameplayTags/GameplayTagComponent.h"
-#include "GameplayTags/GameplayTagRegistry.h"
+#include "HierarchicalTags/HierarchicalTagComponent.h"
+#include "HierarchicalTags/HierarchicalTagRegistry.h"
 #include "World/World.h"
 
 namespace Lumina
 {
     namespace
     {
-        // The component stores serializable name-backed tags, so an id has to be resolved to one first.
-        SGameplayTag TagFromId(uint32 TagId)
+        SHierarchicalTag TagFromId(uint32 TagId)
         {
-            SGameplayTag Tag;
-            const FString Name = FGameplayTagRegistry::Get().GetName(TagId);
-            if (!Name.empty())
-            {
-                Tag.TagName = FName(Name.c_str());
-            }
+            SHierarchicalTag Tag;
+            Tag.TagName = FHierarchicalTagRegistry::Get().GetTagName(TagId);
             return Tag;
         }
 
-        const SGameplayTagComponent* ComponentOf(CWorld& World, ECS::FEntity Entity, uint32 TagId)
+        const SHierarchicalTagComponent* ComponentOf(CWorld& World, ECS::FEntity Entity, uint32 TagId)
         {
             if (TagId == 0)
             {
                 return nullptr;
             }
-            return World.TryGetComponent<SGameplayTagComponent>(Entity);
+            return World.TryGetComponent<SHierarchicalTagComponent>(Entity);
         }
     }
     void CWorld::GetGameplayTags(ECS::FEntity Entity, TVector<uint32>& Out)
     {
-        const SGameplayTagComponent* Tags = TryGetComponent<SGameplayTagComponent>(Entity);
+        const SHierarchicalTagComponent* Tags = TryGetComponent<SHierarchicalTagComponent>(Entity);
         if (Tags == nullptr)
         {
             return;
         }
 
-        FGameplayTagRegistry& Registry = FGameplayTagRegistry::Get();
-        for (const SGameplayTag& Owned : Tags->Tags.Tags)
+        for (const SHierarchicalTag& Owned : Tags->Tags.Tags)
         {
-            Out.push_back(Registry.RequestTag(FStringView(Owned.TagName.c_str())));
+            Out.Add(Owned.GetId());
         }
     }
 
@@ -50,10 +44,10 @@ namespace Lumina
         {
             return;
         }
-        const SGameplayTag Tag = TagFromId(TagId);
+        const SHierarchicalTag Tag = TagFromId(TagId);
         if (Tag.IsValid())
         {
-            GetOrEmplaceComponent<SGameplayTagComponent>(Entity).Tags.AddTag(Tag);
+            GetOrEmplaceComponent<SHierarchicalTagComponent>(Entity).Tags.AddTag(Tag);
         }
     }
 
@@ -63,7 +57,7 @@ namespace Lumina
         {
             return;
         }
-        if (SGameplayTagComponent* Comp = TryGetComponent<SGameplayTagComponent>(Entity))
+        if (SHierarchicalTagComponent* Comp = TryGetComponent<SHierarchicalTagComponent>(Entity))
         {
             Comp->Tags.RemoveTag(TagFromId(TagId));
         }
@@ -71,15 +65,15 @@ namespace Lumina
 
     bool CWorld::HasGameplayTag(ECS::FEntity Entity, uint32 TagId)
     {
-        const SGameplayTagComponent* Comp = ComponentOf(*this, Entity, TagId);
+        const SHierarchicalTagComponent* Comp = ComponentOf(*this, Entity, TagId);
         if (Comp == nullptr)
         {
             return false;
         }
-        FGameplayTagRegistry& Registry = FGameplayTagRegistry::Get();
-        for (const SGameplayTag& Owned : Comp->Tags.Tags)
+        FHierarchicalTagRegistry& Registry = FHierarchicalTagRegistry::Get();
+        for (const SHierarchicalTag& Owned : Comp->Tags.Tags)
         {
-            if (Registry.Matches(Registry.RequestTag(FStringView(Owned.TagName.c_str())), TagId))
+            if (Registry.Matches(Owned.GetId(), TagId))
             {
                 return true;
             }
@@ -89,15 +83,14 @@ namespace Lumina
 
     bool CWorld::HasGameplayTagExact(ECS::FEntity Entity, uint32 TagId)
     {
-        const SGameplayTagComponent* Comp = ComponentOf(*this, Entity, TagId);
+        const SHierarchicalTagComponent* Comp = ComponentOf(*this, Entity, TagId);
         if (Comp == nullptr)
         {
             return false;
         }
-        FGameplayTagRegistry& Registry = FGameplayTagRegistry::Get();
-        for (const SGameplayTag& Owned : Comp->Tags.Tags)
+        for (const SHierarchicalTag& Owned : Comp->Tags.Tags)
         {
-            if (Registry.RequestTag(FStringView(Owned.TagName.c_str())) == TagId)
+            if (Owned.GetId() == TagId)
             {
                 return true;
             }
@@ -107,9 +100,9 @@ namespace Lumina
 
     void CWorld::ClearGameplayTags(ECS::FEntity Entity)
     {
-        if (SGameplayTagComponent* Comp = TryGetComponent<SGameplayTagComponent>(Entity))
+        if (SHierarchicalTagComponent* Comp = TryGetComponent<SHierarchicalTagComponent>(Entity))
         {
-            Comp->Tags.Tags.clear();
+            Comp->Tags.Tags.Reset();
         }
     }
 }

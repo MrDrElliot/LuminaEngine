@@ -3,6 +3,7 @@
 
 #include "Core/Assertions/Assert.h"
 #include "Core/Object/Class.h"
+#include "Core/Threading/Thread.h"
 
 namespace Lumina::ECS
 {
@@ -14,12 +15,12 @@ namespace Lumina::ECS
 
     FComponentTypeRegistry::FComponentTypeRegistry()
     {
-        Types.reserve(MaxComponentTypes);
+        Types.Reserve(MaxComponentTypes);
     }
 
     void FComponentTypeRegistry::BindStruct(FComponentTypeID TypeID, CStruct* Struct)
     {
-        if (TypeID < Types.size())
+        if (TypeID < Types.Num())
         {
             Types[TypeID]->CachedStruct = Struct;
         }
@@ -27,7 +28,7 @@ namespace Lumina::ECS
 
     void FComponentTypeRegistry::SetEventFanOut(FComponentTypeID TypeID, FEventFanOut FanOut)
     {
-        if (TypeID < Types.size())
+        if (TypeID < Types.Num())
         {
             Types[TypeID]->EventFanOut = FanOut;
         }
@@ -42,20 +43,20 @@ namespace Lumina::ECS
             return Existing;
         }
 
-        ASSERT(Types.size() < InvalidComponentTypeID);
-        ASSERT(Types.size() < MaxComponentTypes);
+        ASSERT(Types.Num() < InvalidComponentTypeID);
+        ASSERT(static_cast<size_t>(Types.Num()) < MaxComponentTypes);
 
         TUniquePtr<FComponentTypeInfo> Stored = MakeUnique<FComponentTypeInfo>(Info);
-        Stored->TypeID = static_cast<FComponentTypeID>(Types.size());
+        Stored->TypeID = static_cast<FComponentTypeID>(Types.Num());
 
         const FComponentTypeID TypeID = Stored->TypeID;
-        Types.push_back(std::move(Stored));
+        Types.Add(std::move(Stored));
         return TypeID;
     }
 
     const FComponentTypeInfo& FComponentTypeRegistry::GetInfo(FComponentTypeID TypeID) const
     {
-        ASSERT(TypeID < Types.size());
+        ASSERT(TypeID < Types.Num());
         return *Types[TypeID];
     }
 
@@ -95,21 +96,26 @@ namespace Lumina::ECS
         return InvalidComponentTypeID;
     }
 
-    size_t FComponentTypeRegistry::Num() const
+    int32 FComponentTypeRegistry::Num() const
     {
         FScopeLock Lock(TypesLock);
-        return Types.size();
+        return Types.Num();
     }
 
     void FComponentTypeRegistry::Relayout(FComponentTypeID TypeID, const FComponentTypeInfo& Info, FMigrateComponentValue Migrate)
     {
-        ASSERT(TypeID < Types.size());
-        FComponentTypeInfo& Stored = *Types[TypeID];
-        const FEventFanOut FanOut = Stored.EventFanOut;
-        Stored = Info;
-        Stored.EventFanOut = FanOut;
-        Stored.TypeID = TypeID;
-        Stored.bRuntimeLayout = true;
+        FComponentTypeInfo* StoredPtr = nullptr;
+        {
+            FScopeLock Lock(TypesLock);
+            ASSERT(TypeID < Types.Num());
+            StoredPtr = &*Types[TypeID];
+            const FEventFanOut FanOut = StoredPtr->EventFanOut;
+            *StoredPtr = Info;
+            StoredPtr->EventFanOut = FanOut;
+            StoredPtr->TypeID = TypeID;
+            StoredPtr->bRuntimeLayout = true;
+        }
+        FComponentTypeInfo& Stored = *StoredPtr;
 
         FScopeLock Lock(PoolLock);
         for (FSparseSet* Pool : RuntimeLayoutPools)
@@ -124,18 +130,18 @@ namespace Lumina::ECS
     void FComponentTypeRegistry::TrackPool(FSparseSet* Pool)
     {
         FScopeLock Lock(PoolLock);
-        RuntimeLayoutPools.push_back(Pool);
+        RuntimeLayoutPools.Add(Pool);
     }
 
     void FComponentTypeRegistry::UntrackPool(FSparseSet* Pool)
     {
         FScopeLock Lock(PoolLock);
-        for (size_t Index = 0; Index < RuntimeLayoutPools.size(); ++Index)
+        for (int32 Index = 0; Index < RuntimeLayoutPools.Num(); ++Index)
         {
             if (RuntimeLayoutPools[Index] == Pool)
             {
-                RuntimeLayoutPools[Index] = RuntimeLayoutPools.back();
-                RuntimeLayoutPools.pop_back();
+                RuntimeLayoutPools[Index] = RuntimeLayoutPools.Last();
+                RuntimeLayoutPools.Pop();
                 return;
             }
         }
@@ -143,7 +149,7 @@ namespace Lumina::ECS
 
 
 
-    // Slots past EntityRecords.size() up to NextAppendIndex are handed out but not yet stored, so a reservation never reallocates the records a reader may be walking.
+    // Slots past EntityRecords.Num() up to NextAppendIndex are handed out but not yet stored, so a reservation never reallocates the records a reader may be walking.
     struct FEntityAllocState
     {
         FMutex Mutex;
@@ -191,7 +197,7 @@ namespace Lumina::ECS
             return Index;
         }
 
-        const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.size()));
+        const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.Num()));
         ASSERT(Index <= FEntity::MaxIndex);
         AllocState->NextAppendIndex = Index + 1u;
         OutVersion = 0u;
@@ -200,10 +206,10 @@ namespace Lumina::ECS
 
     void FRegistry::EnsureRecordLocked(uint32 Index)
     {
-        if (Index >= EntityRecords.size())
+        if (Index >= static_cast<uint32>(EntityRecords.Num()))
         {
             // The slots in between belong to reservations other threads still hold, so they stay unlinked.
-            EntityRecords.resize(Index + 1u, FEntity(NoFreeSlot, 0u));
+            EntityRecords.SetNum(Index + 1u, FEntity(NoFreeSlot, 0u));
         }
     }
 
@@ -229,7 +235,7 @@ namespace Lumina::ECS
         FEntity Created;
         {
             TScopeLock<FMutex> Lock(AllocState->Mutex);
-            const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.size()));
+            const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.Num()));
             ASSERT(Index <= FEntity::MaxIndex);
             AllocState->NextAppendIndex = Index + 1u;
             EnsureRecordLocked(Index);
@@ -290,13 +296,13 @@ namespace Lumina::ECS
         const uint32 Index = Hint.GetIndex();
         ASSERT(Index <= FEntity::MaxIndex);
 
-        if (Index >= EntityRecords.size())
+        if (Index >= static_cast<uint32>(EntityRecords.Num()))
         {
             TScopeLock<FMutex> Lock(AllocState->Mutex);
 
             // Everything between the end and the hint becomes free, linked head-first so Create reuses it.
-            const uint32 FirstNew = static_cast<uint32>(EntityRecords.size());
-            EntityRecords.resize(Index + 1u);
+            const uint32 FirstNew = static_cast<uint32>(EntityRecords.Num());
+            EntityRecords.SetNum(Index + 1u);
 
             for (uint32 Slot = FirstNew; Slot < Index; ++Slot)
             {
@@ -343,14 +349,16 @@ namespace Lumina::ECS
 
     void FRegistry::Destroy(FEntity Entity)
     {
-        if (!IsValid(Entity))
+        if (!IsValid(Entity) || DestroyingEntities.Contains(Entity))
         {
             return;
         }
 
+        DestroyingEntities.Add(Entity);
         EntityDestroyed.Broadcast(*this, Entity);
         DestroyHierarchyLinks(Entity);
         DetachFromAllStorages(Entity);
+        DestroyingEntities.Pop();
 
         const uint32 Index = Entity.GetIndex();
         {
@@ -380,10 +388,10 @@ namespace Lumina::ECS
         if (bDestroyDescendantsWithParent)
         {
             TVector<FEntity> Subtree;
-            Hierarchy.ForEachDescendant(Entity, [&](FEntity Descendant) { Subtree.push_back(Descendant); });
+            Hierarchy.ForEachDescendant(Entity, [&](FEntity Descendant) { Subtree.Add(Descendant); });
 
             // Reversed, so every child goes before its parent, and unlinked first, since nobody is left to tell.
-            for (size_t Index = Subtree.size(); Index-- > 0;)
+            for (int32 Index = Subtree.Num(); Index-- > 0;)
             {
                 Hierarchy.Unlink(Subtree[Index]);
                 Destroy(Subtree[Index]);
@@ -441,19 +449,36 @@ namespace Lumina::ECS
         HierarchyChanged.Broadcast(*this, OldParent);
     }
 
-    // Indexed, since an OnDestroy handler that first touches a type grows ActiveStorages under the loop.
+    // Indexed and repeated, since an OnDestroy handler can create a pool or add to one already passed; the last pass is silent.
     void FRegistry::DetachFromAllStorages(FEntity Entity)
     {
-        for (size_t Index = 0; Index < ActiveStorages.size(); ++Index)
+        constexpr int32 MaxNotifyingPasses = 4;
+        for (int32 Pass = 0; Pass <= MaxNotifyingPasses; ++Pass)
         {
-            FSparseSet* Storage = ActiveStorages[Index];
-            if (!Storage->Contains(Entity))
+            bool bDetachedAny = false;
+            for (int32 Index = 0; Index < ActiveStorages.Num(); ++Index)
             {
-                continue;
+                FSparseSet* Storage = ActiveStorages[Index];
+                if (!Storage->Contains(Entity))
+                {
+                    continue;
+                }
+                if (Pass < MaxNotifyingPasses)
+                {
+                    Storage->Signals.OnDestroy.Broadcast(*this, Entity);
+                }
+                if (Storage->Contains(Entity))
+                {
+                    Storage->RemoveEntity(Entity);
+                }
+                bDetachedAny = true;
             }
-            Storage->Signals.OnDestroy.Broadcast(*this, Entity);
-            Storage->RemoveEntity(Entity);
+            if (!bDetachedAny)
+            {
+                return;
+            }
         }
+        LOG_WARN("Entity {} kept gaining components while it was destroyed; the last ones were removed without notifying.", Entity.GetPacked());
     }
 
     void FRegistry::Clear()
@@ -464,15 +489,18 @@ namespace Lumina::ECS
         }
 
         Hierarchy.Reset();
-        EntityRecords.clear();
+        EntityRecords.Reset();
         FreeEntityHead = NoFreeSlot;
         LiveEntityCount = 0;
         AllocState->NextAppendIndex = 0u;
+
+        // An emptied registry is often refilled by a loader thread, which may claim it afresh.
+        PoolTableOwner = 0;
     }
 
-    void FRegistry::Reserve(size_t EntityCount)
+    void FRegistry::Reserve(int32 EntityCount)
     {
-        EntityRecords.reserve(EntityCount);
+        EntityRecords.Reserve(EntityCount);
     }
 
     void FRegistry::Compact()
@@ -485,11 +513,12 @@ namespace Lumina::ECS
 
     void FRegistry::Swap(FRegistry& Other) noexcept
     {
-        EntityRecords.swap(Other.EntityRecords);
-        OwnedStorages.swap(Other.OwnedStorages);
-        StoragesByTypeID.swap(Other.StoragesByTypeID);
-        ActiveStorages.swap(Other.ActiveStorages);
-        NamedStorages.swap(Other.NamedStorages);
+        swap(EntityRecords, Other.EntityRecords);
+        swap(OwnedStorages, Other.OwnedStorages);
+        swap(Groups, Other.Groups);
+        swap(StoragesByTypeID, Other.StoragesByTypeID);
+        swap(ActiveStorages, Other.ActiveStorages);
+        swap(NamedStorages, Other.NamedStorages);
         Context.Swap(Other.Context);
         std::swap(Hierarchy, Other.Hierarchy);
 
@@ -499,9 +528,15 @@ namespace Lumina::ECS
 
         AllocState.Swap(Other.AllocState);
 
-        const size_t LiveCount = LiveEntityCount;
+        const int32 LiveCount = LiveEntityCount;
         LiveEntityCount = Other.LiveEntityCount;
         Other.LiveEntityCount = LiveCount;
+
+        // Both pool tables now belong to whoever swapped them, rather than to whichever loader filled one.
+        PoolTableOwner = 0;
+        Other.PoolTableOwner = 0;
+        CheckPoolTableThread();
+        Other.CheckPoolTableThread();
     }
 
     uint64 FRegistry::MakeNamedStorageKey(FComponentTypeID TypeID, const FName& Name)
@@ -511,33 +546,34 @@ namespace Lumina::ECS
 
     FSparseSet* FRegistry::FindNamedStorage(FComponentTypeID TypeID, const FName& Name) const
     {
-        const auto It = NamedStorages.find(MakeNamedStorageKey(TypeID, Name));
-        return It != NamedStorages.end() ? It->second.get() : nullptr;
+        const auto It = NamedStorages.Find(MakeNamedStorageKey(TypeID, Name));
+        return It != nullptr ? It->get() : nullptr;
     }
 
     FSparseSet* FRegistry::AssureNamedStorage(FComponentTypeID TypeID, const FName& Name)
     {
         const uint64 Key = MakeNamedStorageKey(TypeID, Name);
 
-        const auto It = NamedStorages.find(Key);
-        if (It != NamedStorages.end())
+        const auto It = NamedStorages.Find(Key);
+        if (It != nullptr)
         {
-            return It->second.get();
+            return It->get();
         }
 
         TUniquePtr<FSparseSet> Storage = MakeUnique<FSparseSet>(FComponentTypeRegistry::Get().GetInfo(TypeID));
         FSparseSet* Raw = Storage.Get();
 
-        NamedStorages.emplace(Key, std::move(Storage));
+        CheckPoolTableThread();
+        NamedStorages.TryAdd(Key, std::move(Storage));
 
         // Joins the walk so a destroy detaches from it too, but never the by-type-id index, which one pool owns.
-        ActiveStorages.push_back(Raw);
+        ActiveStorages.Add(Raw);
         return Raw;
     }
 
     FSparseSet& FRegistry::AssureStorage(FComponentTypeID TypeID)
     {
-        if (TypeID >= StoragesByTypeID.size() || StoragesByTypeID[TypeID] == nullptr)
+        if (TypeID >= StoragesByTypeID.Num() || StoragesByTypeID[TypeID] == nullptr)
         {
             CreateStorage(TypeID);
         }
@@ -549,7 +585,7 @@ namespace Lumina::ECS
         FSparseSet& Storage = AssureStorage(TypeID);
         if (Storage.Contains(Entity))
         {
-            return Storage.GetRaw(Entity);
+            return Storage.GetRawForWrite(Entity);
         }
         void* Value = Storage.EmplaceDefaultRaw(Entity);
         Storage.Signals.OnConstruct.Broadcast(*this, Entity);
@@ -581,22 +617,165 @@ namespace Lumina::ECS
         FSparseSet* Storage = FindStorage(TypeID);
         if (Storage != nullptr && !Storage->IsTagOnly() && Storage->Contains(Entity))
         {
+            Storage->MarkWritten(Storage->GetDenseIndex(Entity));
             Storage->Signals.OnUpdate.Broadcast(*this, Entity);
         }
     }
 
+    void FRegistry::MarkChangedRaw(FComponentTypeID TypeID, FEntity Entity)
+    {
+        FSparseSet* Storage = FindStorage(TypeID);
+        if (Storage != nullptr && Storage->Contains(Entity))
+        {
+            Storage->MarkWritten(Storage->GetDenseIndex(Entity));
+        }
+    }
+
+    uint32 FRegistry::AdvanceChangeTick()
+    {
+        const uint32 Previous = FSparseSet::AdvanceChangeTick();
+        ExpireEscapedPointers();
+        return Previous;
+    }
+
+    void FRegistry::ExpireEscapedPointers()
+    {
+        for (FSparseSet* Storage : ActiveStorages)
+        {
+            Storage->ExpireEscapedPointers();
+        }
+    }
+
+    void FRegistry::AssureStorages(TSpan<const FComponentTypeID> TypeIDs)
+    {
+        for (const FComponentTypeID TypeID : TypeIDs)
+        {
+            (void)AssureStorage(TypeID);
+        }
+    }
+
+    void FRegistry::CheckPoolTableThread()
+    {
+#if defined(LE_DEBUG) || defined(LE_DEVELOPMENT)
+        const uint64 Self = Threading::GetThreadID();
+        if (PoolTableOwner == 0)
+        {
+            PoolTableOwner = Self;
+        }
+        DEBUG_ASSERT(PoolTableOwner == Self || Threading::IsMainThread(),
+            "Created a component pool off the registry's thread, which races every view and lookup reading the pool table. Create it first with AssureStorages, or read through FindView.");
+#endif
+    }
+
     void FRegistry::CreateStorage(FComponentTypeID TypeID)
     {
-        if (TypeID >= StoragesByTypeID.size())
+        CheckPoolTableThread();
+
+        if (TypeID >= StoragesByTypeID.Num())
         {
-            StoragesByTypeID.resize(TypeID + 1u, nullptr);
+            StoragesByTypeID.SetNum(TypeID + 1u, nullptr);
         }
 
         TUniquePtr<FSparseSet> Storage = MakeUnique<FSparseSet>(FComponentTypeRegistry::Get().GetInfo(TypeID));
 
         FSparseSet* Raw = Storage.Get();
         StoragesByTypeID[TypeID] = Raw;
-        ActiveStorages.push_back(Raw);
-        OwnedStorages.push_back(std::move(Storage));
+        ActiveStorages.Add(Raw);
+        OwnedStorages.Add(std::move(Storage));
+    }
+
+    FOwningGroup* FRegistry::DeclareGroup(TSpan<const FComponentTypeID> TypeIDs)
+    {
+        if (TypeIDs.Num() < 2)
+        {
+            LOG_ERROR("Cannot declare a group of {} component types: a group owns at least two.", TypeIDs.Num());
+            return nullptr;
+        }
+
+        TInlineVector<FSparseSet*, 8> Sets;
+        for (const FComponentTypeID TypeID : TypeIDs)
+        {
+            FSparseSet* Set = &AssureStorage(TypeID);
+            if (Sets.Contains(Set))
+            {
+                LOG_ERROR("Cannot declare a group listing {} twice.", Set->GetName());
+                return nullptr;
+            }
+            Sets.Add(Set);
+        }
+
+        FOwningGroup* Existing = Sets[0]->OwningGroup;
+        if (Existing != nullptr && Existing->Owned.Num() == Sets.Num()
+            && Sets.FindByPredicate([Existing](const FSparseSet* Set) { return Set->OwningGroup != Existing; }) == nullptr)
+        {
+            return Existing;
+        }
+
+        for (const FSparseSet* Set : Sets)
+        {
+            if (Set->OwningGroup != nullptr)
+            {
+                LOG_ERROR("Cannot declare a group owning {}: another group already owns it, and a component type can be owned by one group only.", Set->GetName());
+                return nullptr;
+            }
+            if (Set->bInPlaceDelete)
+            {
+                LOG_ERROR("Cannot declare a group owning {}: an in-place-delete pool leaves holes, which a packed group cannot hold.", Set->GetName());
+                return nullptr;
+            }
+        }
+
+        FOwningGroup* Group = Groups.EmplaceGetRef(MakeUnique<FOwningGroup>()).Get();
+        Group->Owned = Sets;
+
+        FSparseSet* Smallest = Sets[0];
+        for (FSparseSet* Set : Sets)
+        {
+            Set->OwningGroup = Group;
+            if (Set->Num() < Smallest->Num())
+            {
+                Smallest = Set;
+            }
+        }
+
+        for (int32 Index = 0; Index < Smallest->GetDenseSize(); ++Index)
+        {
+            const FEntity Entity = Smallest->Dense[Index];
+            if (Sets.FindByPredicate([Entity](const FSparseSet* Set) { return !Set->Contains(Entity); }) != nullptr)
+            {
+                continue;
+            }
+            const uint32 Target = static_cast<uint32>(Group->Num++);
+            for (FSparseSet* Set : Sets)
+            {
+                Set->SwapDenseSlots(Set->GetDenseIndex(Entity), Target);
+            }
+        }
+        return Group;
+    }
+
+    void FRegistry::PermuteDense(TSpan<FSparseSet* const> Sets, int32 Begin, TSpan<int32> Order)
+    {
+        for (int32 Start = 0; Start < Order.Num(); ++Start)
+        {
+            int32 Current = Start;
+            int32 Next = Order[Current] - Begin;
+            while (Next != Start)
+            {
+                for (FSparseSet* Set : Sets)
+                {
+                    Set->SwapDenseSlots(static_cast<uint32>(Begin + Current), static_cast<uint32>(Begin + Next));
+                }
+                Order[Current] = Begin + Current;
+                Current = Next;
+                Next = Order[Current] - Begin;
+            }
+            Order[Current] = Begin + Current;
+        }
+
+        for (FSparseSet* Set : Sets)
+        {
+            Set->BumpWriteEpoch();
+        }
     }
 }

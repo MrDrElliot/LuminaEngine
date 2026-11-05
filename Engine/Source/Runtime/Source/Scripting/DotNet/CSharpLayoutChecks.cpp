@@ -57,10 +57,10 @@ namespace Lumina
     static_assert(sizeof(FString) == 16, "NativeMarshal assumes a 16-byte FString (update NativeMarshal.cs).");
     static_assert(sizeof(TVector<int32>) == 16, "NativeMarshal assumes a 16-byte TVector (update NativeMarshal.cs).");
 
-    // LuminaSharp.VectorOps (TVector.cs) overlays FVectorOps and calls these three by offset.
-    static_assert(offsetof(FVectorOps, PushBack) == 16, "VectorOps.PushBack offset drift (update TVector.cs).");
-    static_assert(offsetof(FVectorOps, RemoveAt) == 24, "VectorOps.RemoveAt offset drift (update TVector.cs).");
-    static_assert(offsetof(FVectorOps, Clear)    == 32, "VectorOps.Clear offset drift (update TVector.cs).");
+    // LuminaSharp.VectorOps (ContainerOps.cs) overlays FVectorOps, and TVector.cs calls these three by offset.
+    static_assert(offsetof(FVectorOps, Add) == 16, "VectorOps.Add offset drift (update ContainerOps.cs).");
+    static_assert(offsetof(FVectorOps, RemoveAt) == 24, "VectorOps.RemoveAt offset drift (update ContainerOps.cs).");
+    static_assert(offsetof(FVectorOps, Reset)    == 32, "VectorOps.Reset offset drift (update ContainerOps.cs).");
     static_assert(offsetof(FVectorOps, DataOffset)   == 100, "VectorOps.DataOffset offset drift (update ContainerOps.cs).");
     static_assert(offsetof(FVectorOps, CountDivisor) == 108, "VectorOps.CountDivisor offset drift (update ContainerOps.cs).");
     static_assert(offsetof(FMapOps, At)   == 72,  "MapOps.At offset drift (update ContainerOps.cs).");
@@ -75,18 +75,18 @@ namespace Lumina
             const uint8* Base = reinterpret_cast<const uint8*>(&S);
             const uint8 Flag = Base[15];
             const char* Data;
-            size_t Length;
+            int32 Length;
             if (Flag & 0x80)
             {
                 Data = *reinterpret_cast<const char* const*>(Base);
-                Length = *reinterpret_cast<const uint32*>(Base + 8);
+                Length = *reinterpret_cast<const int32*>(Base + 8);
             }
             else
             {
                 Data = reinterpret_cast<const char*>(Base);
-                Length = static_cast<size_t>(15 - Flag);
+                Length = 15 - Flag;
             }
-            return Data == S.data() && Length == S.length();
+            return Data == S.GetData() && Length == S.Len();
         }
     }
 
@@ -101,14 +101,14 @@ namespace Lumina
         LUMINA_DEBUG_ASSERT(FStringDecodeMatches(Heap),  "NativeMarshal FString (heap) layout drift.");
 
         TVector<int32> V;
-        V.push_back(10);
-        V.push_back(20);
-        V.push_back(30);
+        V.Add(10);
+        V.Add(20);
+        V.Add(30);
         const uint8* H = reinterpret_cast<const uint8*>(&V);
         const int32* Begin = *reinterpret_cast<const int32* const*>(H);
-        const uint32 Length = *reinterpret_cast<const uint32*>(H + sizeof(void*));
-        LUMINA_DEBUG_ASSERT(Begin == V.data(), "NativeMarshal TVector data offset drift.");
-        LUMINA_DEBUG_ASSERT(static_cast<size_t>(Length) == V.size(), "NativeMarshal TVector count offset drift.");
+        const int32 Length = *reinterpret_cast<const int32*>(H + sizeof(void*));
+        LUMINA_DEBUG_ASSERT(Begin == V.GetData(), "NativeMarshal TVector data offset drift.");
+        LUMINA_DEBUG_ASSERT(Length == V.Num(), "NativeMarshal TVector count offset drift.");
     }
 #else
     void VerifyContainerInteropLayout() {}

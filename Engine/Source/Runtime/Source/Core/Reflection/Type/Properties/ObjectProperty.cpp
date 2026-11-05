@@ -1,22 +1,38 @@
 ﻿#include "RuntimePCH.h"
 #include "ObjectProperty.h"
 
+#include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Serialization/NetArchive.h"
+#include "Log/Log.h"
 
+namespace Lumina::ObjectPropertyInternal
+{
+    // Code reading the field trusts its declared class, so a reference that resolved to another kind is dropped.
+    CObject* Accept(const FObjectProperty& Property, CObject* Candidate)
+    {
+        CClass* Required = Property.GetPropertyClass();
+        if (Candidate == nullptr || Required == nullptr || Candidate->IsA(Required))
+        {
+            return Candidate;
+        }
+        LOG_WARN("Object property '{}' expects a {} but was handed '{}', a {}; it was left empty.",
+            Property.GetPropertyName(), Required->GetName(), Candidate->GetName(), Candidate->GetClass()->GetName());
+        return nullptr;
+    }
+}
 
 namespace Lumina
 {
-
     void FObjectProperty::Serialize(FArchive& Ar, void* Value)
     {
         auto Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
 
         CObject* Raw = Ptr->Get();
         Ar << Raw;
-        *Ptr = Raw;
+        *Ptr = Ar.IsReading() ? ObjectPropertyInternal::Accept(*this, Raw) : Raw;
     }
 
     void FObjectProperty::NetSerialize(FNetArchive& Ar, void* Value)
@@ -42,7 +58,7 @@ namespace Lumina
             if (Ar.NetIndexToObject)
             {
                 const uint32 Index = ReadVarUInt(Ar);
-                *Ptr = (Index != 0) ? Ar.NetIndexToObject(Index) : nullptr;
+                *Ptr = ObjectPropertyInternal::Accept(*this, (Index != 0) ? Ar.NetIndexToObject(Index) : nullptr);
                 return;
             }
 
@@ -58,7 +74,7 @@ namespace Lumina
                     Resolved = StaticLoadObject(Guid); // not resident yet -> try to load by GUID
                 }
             }
-            *Ptr = Resolved;
+            *Ptr = ObjectPropertyInternal::Accept(*this, Resolved);
         }
     }
 
@@ -68,7 +84,7 @@ namespace Lumina
 
         CObject* Raw = Ptr->Get();
         Slot.Serialize(Raw);
-        *Ptr = Raw;
+        *Ptr = ObjectPropertyInternal::Accept(*this, Raw);
     }
 
     void FObjectProperty::CopyCompleteValue(void* Dst, const void* Src) const

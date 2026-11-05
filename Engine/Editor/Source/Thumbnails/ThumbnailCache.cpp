@@ -18,7 +18,7 @@ namespace Lumina::ThumbnailCache
         FString CacheDirectory()
         {
             const FString& Install = Paths::GetEngineInstallDirectory();
-            if (Install.empty())
+            if (Install.IsEmpty())
             {
                 return {};
             }
@@ -33,7 +33,7 @@ namespace Lumina::ThumbnailCache
             return {};
         }
         const FString Dir = CacheDirectory();
-        if (Dir.empty())
+        if (Dir.IsEmpty())
         {
             return {};
         }
@@ -44,7 +44,7 @@ namespace Lumina::ThumbnailCache
     bool Load(const FGuid& GUID, uint64 ExpectedContentHash, FPackageThumbnail& OutThumbnail)
     {
         const FString Path = CachePath(GUID);
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return false;
         }
@@ -56,7 +56,7 @@ namespace Lumina::ThumbnailCache
         }
 
         TVector<uint8> Bytes;
-        if (!FileHelper::LoadFileToArray(Bytes, Path) || Bytes.empty())
+        if (!FileHelper::LoadFileToArray(Bytes, Path) || Bytes.IsEmpty())
         {
             return false;
         }
@@ -81,18 +81,18 @@ namespace Lumina::ThumbnailCache
         }
 
         OutThumbnail.Serialize(Ar);
-        return !Ar.HasError() && !OutThumbnail.ImageData.empty();
+        return !Ar.HasError() && !OutThumbnail.ImageData.IsEmpty();
     }
 
     bool Save(const FGuid& GUID, uint64 ContentHash, FPackageThumbnail& Thumbnail)
     {
-        if (!GUID.IsValid() || Thumbnail.ImageData.empty())
+        if (!GUID.IsValid() || Thumbnail.ImageData.IsEmpty())
         {
             return false;
         }
 
         const FString Path = CachePath(GUID);
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return false;
         }
@@ -114,7 +114,7 @@ namespace Lumina::ThumbnailCache
     void Delete(const FGuid& GUID)
     {
         const FString Path = CachePath(GUID);
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return;
         }

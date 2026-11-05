@@ -145,24 +145,14 @@ public static class ReflectionStep
             AppendEngineReferenceProjects(Target, Document);
         }
 
-        // Per target, since an Editor and a Game build reflect different module sets and a shared file would look changed.
-        string InputFile = Path.Combine(Target.IntermediateDirectory, "Reflection_Files.json");
-
-        BuildAction WriteInput = new(ActionType.Generate, "Reflection")
-        {
-            StatusText = Path.GetFileName(InputFile),
-            Operation = new WriteFileOperation(InputFile, Serialize(Document)),
-        };
-
-        WriteInput.ProducedItems.Add(FileItem.Get(InputFile));
-        InputActions.Add(WriteInput);
-
+        // Streamed over stdin rather than written to a file, so its content is part of the command key and a change reruns the step.
         BuildAction Action = new(ActionType.Generate, "Reflection")
         {
             StatusText = $"{Reflected.Count} modules",
             ToolPath = ReflectorPath,
             // A clang error in a reflected header silently generates wrong data, so it fails the build.
-            Arguments = PathUtils.Quote(InputFile) + " -strict-parse",
+            Arguments = "-strict-parse",
+            StandardInput = ReflectorInput.Write(Document),
             WorkingDirectory = Target.Directories.OutputRoot,
 
             // The generator holds every header in memory and is already internally parallel, so a second instance fights it.
@@ -172,7 +162,6 @@ public static class ReflectionStep
             bWritesUndeclaredOutputs = true,
         };
 
-        Action.PrerequisiteItems.Add(FileItem.Get(InputFile));
         Action.PrerequisiteItems.Add(FileItem.Get(ReflectorPath));
 
         foreach (BuildModule Module in Reflected)

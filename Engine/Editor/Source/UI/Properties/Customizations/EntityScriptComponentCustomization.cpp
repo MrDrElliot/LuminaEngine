@@ -26,15 +26,15 @@ namespace Lumina
         void SplitTypeName(const FString& Full, FStringView& OutShort, FStringView& OutNamespace)
         {
             const FStringView View(Full);
-            const size_t Dot = View.find_last_of('.');
-            if (Dot == FStringView::npos)
+            const int32 Dot = View.FindLastOf('.');
+            if (Dot == Constants::kIndexNone)
             {
                 OutShort = View;
                 OutNamespace = FStringView();
                 return;
             }
-            OutShort = View.substr(Dot + 1);
-            OutNamespace = View.substr(0, Dot);
+            OutShort = View.Mid(Dot + 1);
+            OutNamespace = View.Mid(0, Dot);
         }
     }
 
@@ -59,22 +59,22 @@ namespace Lumina
     {
         PendingMutation = [this, Component, From, To]
         {
-            const int32 Count = (int32)Component->Scripts.size();
+            const int32 Count = Component->Scripts.Num();
             if (From == To || From < 0 || To < 0 || From >= Count || To >= Count)
             {
                 return;
             }
 
             TStrongObjectPtr<CEntityScript> Moved = Move(Component->Scripts[From]);
-            Component->Scripts.erase(Component->Scripts.begin() + From);
-            Component->Scripts.insert(Component->Scripts.begin() + To, Move(Moved));
+            Component->Scripts.RemoveAt(From);
+            Component->Scripts.Insert(Move(Moved), To);
 
             // The views travel with their scripts, so an open table keeps its state across the move.
-            if ((int32)SlotViews.size() == Count)
+            if (SlotViews.Num() == Count)
             {
                 FSlotView View = Move(SlotViews[From]);
-                SlotViews.erase(SlotViews.begin() + From);
-                SlotViews.insert(SlotViews.begin() + To, Move(View));
+                SlotViews.RemoveAt(From);
+                SlotViews.Insert(Move(View), To);
             }
         };
     }
@@ -86,9 +86,9 @@ namespace Lumina
 
         ImGui::PushID(this);
 
-        SlotViews.resize(Component->Scripts.size());
+        SlotViews.SetNum(Component->Scripts.Num());
 
-        for (int32 Index = 0; Index < (int32)Component->Scripts.size(); ++Index)
+        for (int32 Index = 0; Index < Component->Scripts.Num(); ++Index)
         {
             CEntityScript* Script = Component->Scripts[Index].Get();
             FSlotView& View = SlotViews[Index];
@@ -102,7 +102,7 @@ namespace Lumina
             SplitTypeName(TypeName, Short, Namespace);
 
             const FString HeaderLabel = bValid
-                ? Lumina::Format("{} {}", GScriptIcon, FString(Short.data(), Short.size()))
+                ? Lumina::Format("{} {}", GScriptIcon, FString(Short.GetData(), Short.Len()))
                 : FString(LE_ICON_ALERT " (missing script)");
 
             const float Spacing     = ImGui::GetStyle().ItemSpacing.x;
@@ -116,7 +116,7 @@ namespace Lumina
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.05f));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.08f));
             // AllowOverlap so the buttons get their own clicks instead of the header toggling collapse.
-            const bool bOpen = ImGui::CollapsingHeader((HeaderLabel + "##scripthdr").c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+            const bool bOpen = ImGui::CollapsingHeader(*(HeaderLabel + "##scripthdr"), ImGuiTreeNodeFlags_AllowOverlap);
             ImGui::PopStyleColor(3);
             ImGui::PopStyleVar();
 
@@ -125,7 +125,7 @@ namespace Lumina
             {
                 const FScriptSlotPayload Payload{ Component, Index };
                 ImGui::SetDragDropPayload(kScriptSlotPayload, &Payload, sizeof(Payload));
-                ImGui::TextUnformatted(HeaderLabel.c_str());
+                ImGui::TextUnformatted(*HeaderLabel);
                 ImGui::EndDragDropSource();
             }
             if (ImGui::BeginDragDropTarget())
@@ -143,10 +143,10 @@ namespace Lumina
             }
 
             // The namespace trails the name in the header's own row, dimmed, so it informs without competing.
-            if (!Namespace.empty())
+            if (!Namespace.IsEmpty())
             {
                 ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-                ImGui::TextDisabled("%.*s", (int)Namespace.size(), Namespace.data());
+                ImGui::TextDisabled("%.*s", Namespace.Len(), Namespace.GetData());
             }
 
             ImGui::SameLine(ButtonsLeft);
@@ -160,7 +160,7 @@ namespace Lumina
             ImGuiX::TextTooltip("{}", "Move up. Scripts attach, ready and update top to bottom.");
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(Index + 1 >= (int32)Component->Scripts.size());
+            ImGui::BeginDisabled(Index + 1 >= Component->Scripts.Num());
             if (ImGui::Button(LE_ICON_ARROW_DOWN "##MoveEntityScriptDown", AssetPickerFilter::kButtonSize))
             {
                 QueueMove(Component, Index, Index + 1);
@@ -170,23 +170,23 @@ namespace Lumina
             ImGuiX::TextTooltip("{}", "Move down. Scripts attach, ready and update top to bottom.");
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(View.SourceFile.empty());
+            ImGui::BeginDisabled(View.SourceFile.IsEmpty());
             if (ImGui::Button(LE_ICON_FILE_CODE "##OpenEntityScriptSource", AssetPickerFilter::kButtonSize))
             {
                 // The Content Browser's route, which honors the script editor chosen in the editor settings.
                 if (IEditorToolContext* Tools = SessionOps::GetToolContext())
                 {
-                    Tools->OpenScriptEditor(FStringView(View.SourceFile.c_str(), View.SourceFile.size()));
+                    Tools->OpenScriptEditor(FStringView(*View.SourceFile, View.SourceFile.Len()));
                 }
             }
             ImGui::EndDisabled();
-            ImGuiX::TextTooltip("{}", View.SourceFile.empty() ? FString("No source file found for this script.") : Lumina::Format("Open {}", View.SourceFile));
+            ImGuiX::TextTooltip("{}", View.SourceFile.IsEmpty() ? FString("No source file found for this script.") : Lumina::Format("Open {}", View.SourceFile));
 
             ImGui::SameLine();
             ImGui::BeginDisabled(!bValid);
             if (ImGui::Button(LE_ICON_CONTENT_COPY "##CopyEntityScriptName", AssetPickerFilter::kButtonSize))
             {
-                ImGui::SetClipboardText(TypeName.c_str());
+                ImGui::SetClipboardText(*TypeName);
             }
             ImGui::EndDisabled();
             ImGuiX::TextTooltip("{}", "Copy the script's type name.");
@@ -201,13 +201,13 @@ namespace Lumina
             {
                 PendingMutation = [Component, Index]
                 {
-                    if (Index < (int32)Component->Scripts.size())
+                    if (Index < Component->Scripts.Num())
                     {
                         if (CEntityScript* Removed = Component->Scripts[Index].Get(); Removed != nullptr && Removed->IsAttached())
                         {
                             Removed->OnDetach();
                         }
-                        Component->Scripts.erase(Component->Scripts.begin() + Index);
+                        Component->Scripts.RemoveAt(Index);
                     }
                 };
                 bWasChanged = true;
@@ -230,12 +230,12 @@ namespace Lumina
                     });
                     View.ValueTable->SetFinishEditCallback([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Finished; });
 
-                    View.Buttons.clear();
+                    View.Buttons.Reset();
                     for (const FFunction* Function : Script->GetClass()->GetFunctions())
                     {
-                        if (Function->HasMetadata("Button") && Function->GetArguments().empty())
+                        if (Function->HasMetadata("Button") && Function->GetArguments().IsEmpty())
                         {
-                            View.Buttons.push_back(Function);
+                            View.Buttons.Add(Function);
                         }
                     }
                     View.SourceFile = Script->GetClass()->HasMeta("SourceFile")
@@ -252,18 +252,18 @@ namespace Lumina
 
                 // The instance is created on demand, so a script that has never been dispatched to still has
                 // something to invoke against.
-                if (!View.Buttons.empty())
+                if (!View.Buttons.IsEmpty())
                 {
                     ImGui::Spacing();
 
                     const float Right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-                    for (int32 ButtonIndex = 0; ButtonIndex < (int32)View.Buttons.size(); ++ButtonIndex)
+                    for (int32 ButtonIndex = 0; ButtonIndex < View.Buttons.Num(); ++ButtonIndex)
                     {
                         const FFunction& Button = *View.Buttons[ButtonIndex];
                         const FCStringView Label = Button.GetMetadata("Button");
                         const FString Text = Lumina::Format("{} {}", LE_ICON_PLAY_CIRCLE,
-                            Label.empty() ? Button.GetFunctionName().ToString() : FString(Label.data(), Label.size()));
-                        const float Width = ImGui::CalcTextSize(Text.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                            Label.IsEmpty() ? Button.GetFunctionName().ToString() : FString(Label.GetData(), Label.Len()));
+                        const float Width = ImGui::CalcTextSize(*Text).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 
                         // Wrapped by hand, since a row of actions should use the width it has and then break.
                         if (ButtonIndex > 0 && ImGui::GetCursorPosX() + Width < Right)
@@ -271,14 +271,14 @@ namespace Lumina
                             ImGui::SameLine();
                         }
 
-                        if (ImGui::Button(Text.c_str()))
+                        if (ImGui::Button(*Text))
                         {
                             FFunctionFrame Frame(Button);
                             Frame.Invoke(Script);
                         }
-                        if (const FCStringView Tooltip = Button.GetMetadata("ToolTip"); !Tooltip.empty() && ImGui::IsItemHovered())
+                        if (const FCStringView Tooltip = Button.GetMetadata("ToolTip"); !Tooltip.IsEmpty() && ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Tooltip.c_str());
+                            ImGui::SetTooltip("%s", *Tooltip);
                         }
                     }
                 }
@@ -308,10 +308,10 @@ namespace Lumina
             FFixedString ScriptPath;
             if (DragDrop::AcceptFile("cs", ScriptPath))
             {
-                Class = EntityScriptPicker::FindScriptClassForSource(FStringView(ScriptPath.c_str(), ScriptPath.size()));
+                Class = EntityScriptPicker::FindScriptClassForSource(FStringView(*ScriptPath, ScriptPath.Len()));
                 if (Class == nullptr)
                 {
-                    ImGuiX::Notifications::NotifyWarning("\"{}\" declares no entity script to add.", ScriptPath.c_str());
+                    ImGuiX::Notifications::NotifyWarning("\"{}\" declares no entity script to add.", *ScriptPath);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -323,7 +323,7 @@ namespace Lumina
                 // The driver adopts an owner-less script next tick, the same path a deserialized script takes.
                 if (CObject* Created = NewObject(Class, nullptr, NAME_None, FGuid::New(), OF_Transient))
                 {
-                    Component->Scripts.push_back(static_cast<CEntityScript*>(Created));
+                    Component->Scripts.Add(static_cast<CEntityScript*>(Created));
                 }
             };
             bWasChanged = true;

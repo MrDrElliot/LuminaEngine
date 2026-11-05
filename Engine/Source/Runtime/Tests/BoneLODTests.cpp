@@ -39,8 +39,8 @@ namespace
             const FVector3 ParentJoint = Spec.Parent >= 0 ? Bones[Spec.Parent].Joint : FVector3(0.0f);
             Bone.LocalTransform = AnimPose::ComposeTRS(Spec.Joint - ParentJoint, FQuat::Identity(), FVector3(1.0f));
             Bone.InvBindMatrix  = AnimPose::ComposeTRS(-Spec.Joint, FQuat::Identity(), FVector3(1.0f));
-            Skeleton.BoneNameToIndex[Bone.Name] = (int32)Skeleton.Bones.size();
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.BoneNameToIndex[Bone.Name] = Skeleton.Bones.Num();
+            Skeleton.Bones.Add(Bone);
         }
         Skeleton.BuildBindPoseCache();
     }
@@ -59,9 +59,9 @@ namespace
 
     void AddVertex(FMeshResource& Mesh, const FVector3& Position, uint16 Bone)
     {
-        Mesh.Positions.push_back(Position);
-        Mesh.JointIndices.push_back(FU16Vector4(Bone, 0, 0, 0));
-        Mesh.JointWeights.push_back(FU8Vector4(255, 0, 0, 0));
+        Mesh.Positions.Add(Position);
+        Mesh.JointIndices.Emplace(Bone, 0, 0, 0);
+        Mesh.JointWeights.Emplace(255, 0, 0, 0);
     }
 
     float Joint(const FSkeletonResource& Skeleton, const char* Name, int32 Axis)
@@ -82,7 +82,7 @@ TEST(BoneLOD, ErrorGrowsWithReachAndParentsNeverCutBeforeChildren)
     AddVertex(Mesh, FVector3(0.0f, 1.62f, 0.0f), 3);
 
     const TVector<float> Errors = BoneLOD::ComputeBoneErrors(Mesh, Skeleton);
-    ASSERT_EQ(Errors.size(), 5u);
+    ASSERT_EQ(Errors.Num(), 5);
 
     // A finger vertex 2 cm out swings by about 2 cm, far less than a body vertex a meter from its joint.
     EXPECT_NEAR(Errors[3], 0.02f * 2.0f * Math::Sin(0.5f), 1e-3f);
@@ -181,7 +181,7 @@ TEST(BoneLOD, CutSkinningMatchesFullFKWithTheTailAtBind)
         BindGlobals[i]      = Bone.ParentIndex >= 0 ? BindGlobals[Bone.ParentIndex] * Bone.LocalTransform : Bone.LocalTransform;
         Bone.InvBindMatrix  = Math::Inverse(BindGlobals[i]);
         Skeleton.BoneNameToIndex[Bone.Name] = i;
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
     }
     Skeleton.BuildBindPoseCache();
 
@@ -197,7 +197,7 @@ TEST(BoneLOD, CutSkinningMatchesFullFKWithTheTailAtBind)
     AnimPose::ToSkinningMatrices(Pose, &Skeleton, Full);
     AnimPose::ToSkinningMatrices(Pose, &Skeleton, Cut, kActive);
 
-    ASSERT_EQ(Full.size(), Cut.size());
+    ASSERT_EQ(Full.Num(), Cut.Num());
     for (int32 i = 0; i < kBones; ++i)
     {
         for (int c = 0; c < 4; ++c)
@@ -225,10 +225,10 @@ namespace
             for (int32 k = 0; k <= 30; ++k)
             {
                 const float T = (float)k / 30.0f;
-                Channel.Timestamps.push_back(T);
-                Channel.Rotations.push_back(FQuat(FVector3(SweepRadians * T, 0.5f * SweepRadians * T, 0.0f)));
+                Channel.Timestamps.Add(T);
+                Channel.Rotations.Emplace(FVector3(SweepRadians * T, 0.5f * SweepRadians * T, 0.0f));
             }
-            Resource.Channels.push_back(Channel);
+            Resource.Channels.Add(Channel);
         }
         AnimCompression::Build(Resource);
         return Clip;
@@ -292,14 +292,14 @@ TEST(BoneLOD, PoseLayoutEvaluatesToTheSameAssetOrderMatrices)
 
     FAnimTaskList Laid;
     Laid.Skeleton    = &PoseSkeleton;
-    Laid.PoseToAsset = PoseToAsset.data();
-    Laid.AssetToPose = AssetToPose.data();
+    Laid.PoseToAsset = PoseToAsset.GetData();
+    Laid.AssetToPose = AssetToPose.GetData();
     RecordMaskedRecipe(Laid, ClipA, ClipB, Mask, Finger);
     TVector<FMatrix4> Actual;
     ASSERT_TRUE(Anim::ExecuteTaskList(Laid, Actual, nullptr));
 
-    ASSERT_EQ(Expected.size(), Actual.size());
-    for (size_t Bone = 0; Bone < Expected.size(); ++Bone)
+    ASSERT_EQ(Expected.Num(), Actual.Num());
+    for (int32 Bone = 0; Bone < Expected.Num(); ++Bone)
     {
         for (int c = 0; c < 4; ++c)
         {
@@ -339,23 +339,23 @@ TEST(BoneLOD, MeshletSkinMeasuresLikeTheSourceVertices)
     for (uint32 Row = 0; Row + 1 < kRows; ++Row)
     {
         const uint32 b = Row * 2u;
-        Source.Indices.insert(Source.Indices.end(), { b, b + 1u, b + 3u, b, b + 3u, b + 2u });
+        Source.Indices.Append({ b, b + 1u, b + 3u, b, b + 3u, b + 2u });
     }
     FGeometrySurface Surface;
-    Surface.IndexCount = (uint32)Source.Indices.size();
-    Source.GeometrySurfaces.push_back(Surface);
+    Surface.IndexCount = (uint32)Source.Indices.Num();
+    Source.GeometrySurfaces.Add(Surface);
 
     const TVector<float> FromSource = BoneLOD::ComputeBoneErrors(Source, Skeleton);
 
     Import::Mesh::GenerateMeshlets(Source);
-    ASSERT_FALSE(Source.MeshletData.MeshletBoneIndices.empty());
+    ASSERT_FALSE(Source.MeshletData.MeshletBoneIndices.IsEmpty());
 
     // A loaded mesh has only its meshlets, so measure from them alone.
     Source.ClearVertices();
 
     const TVector<float> FromMeshlets = BoneLOD::ComputeBoneErrors(Source, Skeleton);
-    ASSERT_EQ(FromSource.size(), FromMeshlets.size());
-    for (size_t Bone = 0; Bone < FromSource.size(); ++Bone)
+    ASSERT_EQ(FromSource.Num(), FromMeshlets.Num());
+    for (int32 Bone = 0; Bone < FromSource.Num(); ++Bone)
     {
         EXPECT_NEAR(FromMeshlets[Bone], FromSource[Bone], 0.01f + FromSource[Bone] * 0.02f) << "bone " << Bone;
     }

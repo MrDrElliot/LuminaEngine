@@ -186,7 +186,7 @@ namespace Lumina
         // Restamps the unserialized selection tags from the CPU set, since a true restore keeps handles but drops tags.
         void ReapplySelectionTags();
 
-        NODISCARD bool IsEntitySelected(ECS::FEntity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
+        NODISCARD bool IsEntitySelected(ECS::FEntity Entity) const { return SelectedEntities.Contains(Entity); }
         NODISCARD const THashSet<ECS::FEntity>& GetSelectedEntities() const { return SelectedEntities; }
         NODISCARD ECS::FEntity GetLastSelectedEntity() const { return LastSelectedEntity; }
 
@@ -212,7 +212,7 @@ namespace Lumina
         void SyncOutlinerRowSelection(ECS::FEntity Entity, bool bSelected);
         void DrawOutliner(bool bFocused);
         void DrawFilterOptions();
-        NODISCARD size_t CountOutlinerEntities() const;
+        NODISCARD int32 CountOutlinerEntities() const;
         void DrawAddToEntityOrWorldPopup(ECS::FEntity Entity = ECS::NullEntity);
 
         // The folder table lives on the world's singleton entity, which the outliner hides.

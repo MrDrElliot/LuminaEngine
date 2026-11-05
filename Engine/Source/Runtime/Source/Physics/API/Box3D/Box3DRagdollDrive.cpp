@@ -68,7 +68,7 @@ namespace Lumina::Physics
 
         bool Has(const FString& Lower, const char* Word)
         {
-            return Lower.contains(Word);
+            return Lower.Contains(Word);
         }
 
         // Bone names across the common rigs, with helper bones rejected so a twist or end bone never stands in for a limb.
@@ -164,10 +164,10 @@ namespace Lumina::Physics
     static void FillRagdollRest(FPhysicsRagdollHandle& Ragdoll, const SRagdollComponent& Component)
     {
         const FSkeletonResource& Skeleton = *Ragdoll.Skeleton;
-        const int32 NumBodies = (int32)Ragdoll.Bodies.size();
-        const bool  bTargets  = (int32)Component.TargetGlobals.size() == Skeleton.GetNumBones();
-        Ragdoll.RestRotation.resize(NumBodies);
-        Ragdoll.RestPosition.resize(NumBodies);
+        const int32 NumBodies = Ragdoll.Bodies.Num();
+        const bool  bTargets  = Component.TargetGlobals.Num() == Skeleton.GetNumBones();
+        Ragdoll.RestRotation.SetNum(NumBodies);
+        Ragdoll.RestPosition.SetNum(NumBodies);
         for (int32 Body = 0; Body < NumBodies; ++Body)
         {
             const int32 Bone = Ragdoll.JointToBone[Body];
@@ -185,31 +185,31 @@ namespace Lumina::Physics
         Rig.bBuilt = true;
 
         const FSkeletonResource& Skeleton = *Ragdoll.Skeleton;
-        const int32 NumBodies = (int32)Ragdoll.Bodies.size();
+        const int32 NumBodies = Ragdoll.Bodies.Num();
         const TVector<FVector3>& Rest = Ragdoll.RestPosition;
 
         TVector<ELimb> Limbs;
-        Limbs.resize(NumBodies, ELimb::None);
+        Limbs.SetNum(NumBodies, ELimb::None);
         for (int32 Body = 0; Body < NumBodies; ++Body)
         {
             Limbs[Body] = ClassifyBone(Skeleton.GetBone(Ragdoll.JointToBone[Body]).Name);
         }
 
-        TFixedVector<int32, 4> Feet;
-        TFixedVector<int32, 4> UpperArms;
+        TInlineVector<int32, 4> Feet;
+        TInlineVector<int32, 4> UpperArms;
         for (int32 Body = 0; Body < NumBodies; ++Body)
         {
             // A foot that carries another foot below it, as some rigs chain them, is not the end of the leg.
-            if (Limbs[Body] == ELimb::Foot && NearestAncestor(Ragdoll, Limbs, Body, ELimb::Foot) < 0 && Feet.size() < 4)
+            if (Limbs[Body] == ELimb::Foot && NearestAncestor(Ragdoll, Limbs, Body, ELimb::Foot) < 0 && Feet.Num() < 4)
             {
-                Feet.push_back(Body);
+                Feet.Add(Body);
             }
-            if (Limbs[Body] == ELimb::UpperArm && NearestAncestor(Ragdoll, Limbs, Body, ELimb::UpperArm) < 0 && UpperArms.size() < 4)
+            if (Limbs[Body] == ELimb::UpperArm && NearestAncestor(Ragdoll, Limbs, Body, ELimb::UpperArm) < 0 && UpperArms.Num() < 4)
             {
-                UpperArms.push_back(Body);
+                UpperArms.Add(Body);
             }
         }
-        if (Feet.size() != 2)
+        if (Feet.Num() != 2)
         {
             return;
         }
@@ -248,7 +248,7 @@ namespace Lumina::Physics
         {
             if (Limbs[Body] == ELimb::Spine && IsAncestor(Ragdoll, Rig.Pelvis, Body))
             {
-                Rig.Spine.push_back(Body);
+                Rig.Spine.Add(Body);
             }
         }
 
@@ -391,8 +391,8 @@ namespace Lumina::Physics
             const b3JointId Joint = b3CreateMotorJoint(Ragdoll.WorldId, &Def);
             if (b3Joint_IsValid(Joint))
             {
-                Ragdoll.Joints.push_back(Joint);
-                Ragdoll.Braces.push_back(FRagdollBrace{ Joint, Ragdoll.Bodies[Body], MeanRotationalInertia(Ragdoll.Bodies[Body]) });
+                Ragdoll.Joints.Add(Joint);
+                Ragdoll.Braces.Emplace(Joint, Ragdoll.Bodies[Body], MeanRotationalInertia(Ragdoll.Bodies[Body]));
                 Ragdoll.TorsoInertia += MeanRotationalInertia(Ragdoll.Bodies[Body]);
             }
         };
@@ -416,9 +416,9 @@ namespace Lumina::Physics
         const FRagdollGait& Gait = Ragdoll.Gait;
         const FQuat ChestLean = Math::AngleAxis(-Gait.Lean, Rig.SwingAxis);
 
-        for (int32 k = 0; k < (int32)Rig.Spine.size(); ++k)
+        for (int32 k = 0; k < Rig.Spine.Num(); ++k)
         {
-            const float Share = (float)(k + 1) / (float)Rig.Spine.size();
+            const float Share = (float)(k + 1) / (float)Rig.Spine.Num();
             Ragdoll.Delta[Rig.Spine[k]] = Math::AngleAxis(-Gait.Lean * Share, Rig.SwingAxis);
             Ragdoll.bExplicitDelta[Rig.Spine[k]] = 1;
         }
@@ -482,7 +482,7 @@ namespace Lumina::Physics
         Probe.End   = PelvisPos - WorldUp * (Rig.StandHeight * kGroundProbeReach);
         Probe.AddIgnoredEntity(Owner);
         const TOptional<SRayResult> Ground = CastRay(Probe);
-        const float Height = Ground.has_value() && Ground->bHit ? Math::Dot(PelvisPos - Ground->Location, WorldUp) : 1e30f;
+        const float Height = Ground.IsSet() && Ground->bHit ? Math::Dot(PelvisPos - Ground->Location, WorldUp) : 1e30f;
 
         Gait.bGrounded = Height < Rig.StandHeight * kGroundedReach;
         Gait.AirTime   = Gait.bGrounded ? 0.0f : Gait.AirTime + Dt;
@@ -692,7 +692,7 @@ namespace Lumina::Physics
         FQuat    TargetRotation;
         FVector3 Scale;
         const int32 RootBone = Ragdoll.JointToBone[0];
-        const FMatrix4 Global = (int32)Component.TargetGlobals.size() == Ragdoll.Skeleton->GetNumBones()
+        const FMatrix4 Global = Component.TargetGlobals.Num() == Ragdoll.Skeleton->GetNumBones()
             ? Component.TargetGlobals[RootBone] : Math::Inverse(Ragdoll.Skeleton->GetBone(RootBone).InvBindMatrix);
         AnimPose::DecomposeTRS(Transform->GetWorldMatrix() * Global, TargetPosition, TargetRotation, Scale);
 
@@ -717,8 +717,8 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::DrivePoweredRagdoll(ECS::FEntity Owner, FPhysicsRagdollHandle& Ragdoll, const SRagdollComponent& Component,
                                                  SRagdollLocomotionComponent* Locomotion, float Dt)
     {
-        const int32 NumBodies = (int32)Ragdoll.Bodies.size();
-        if (Ragdoll.Skeleton == nullptr || (int32)Ragdoll.ParentBody.size() != NumBodies || (int32)Ragdoll.JointToBone.size() != NumBodies)
+        const int32 NumBodies = Ragdoll.Bodies.Num();
+        if (Ragdoll.Skeleton == nullptr || Ragdoll.ParentBody.Num() != NumBodies || Ragdoll.JointToBone.Num() != NumBodies)
         {
             return;
         }
@@ -729,8 +729,8 @@ namespace Lumina::Physics
             BuildRagdollRig(Ragdoll, Locomotion);
         }
 
-        Ragdoll.Delta.resize(NumBodies);
-        Ragdoll.bExplicitDelta.assign(NumBodies, 0);
+        Ragdoll.Delta.SetNum(NumBodies);
+        Ragdoll.bExplicitDelta.Init(0, NumBodies);
 
         const bool bWalks = Locomotion != nullptr && Ragdoll.Rig.bValid;
         if (bWalks)
@@ -782,7 +782,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::UpdatePoweredRagdolls(float FixedDt)
     {
-        if (OwnedRagdolls.empty())
+        if (OwnedRagdolls.IsEmpty())
         {
             return;
         }
@@ -793,7 +793,7 @@ namespace Lumina::Physics
         for (const FOwnedRagdoll& Owned : OwnedRagdolls)
         {
             FPhysicsRagdollHandle& Ragdoll = *Owned.Handle;
-            if (!IsRagdollReady(Ragdoll) || Ragdoll.Bodies.empty() || !Registry.IsValid(Owned.Owner))
+            if (!IsRagdollReady(Ragdoll) || Ragdoll.Bodies.IsEmpty() || !Registry.IsValid(Owned.Owner))
             {
                 continue;
             }

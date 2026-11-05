@@ -28,12 +28,12 @@ namespace Lumina
             int32 Count = 0;
 
             TVector<FTreeNodeID> BoneNodes;
-            BoneNodes.resize(NumBones, InvalidTreeNode);
+            BoneNodes.SetNum(NumBones, InvalidTreeNode);
 
             for (int32 i = 0; i < NumBones; ++i)
             {
                 const FSkeletonResource::FBoneInfo& Bone = Skeleton.GetBone(i);
-                if (bFiltering && !ImGuiX::PassSearchFilter(Filter, Bone.Name.c_str()))
+                if (bFiltering && !ImGuiX::PassSearchFilter(Filter, *Bone.Name))
                 {
                     continue;
                 }
@@ -43,7 +43,7 @@ namespace Lumina
                     ? BoneNodes[Bone.ParentIndex]
                     : InvalidTreeNode;
 
-                const FTreeNodeID Node = Tree.CreateNode(Parent, Bone.Name.c_str());
+                const FTreeNodeID Node = Tree.CreateNode(Parent, *Bone.Name);
                 BoneNodes[i] = Node;
 
                 FTreeNodeState& State = Tree.Get<FTreeNodeState>(Node);
@@ -62,7 +62,7 @@ namespace Lumina
             {
                 Preview = LE_ICON_ALERT_CIRCLE_OUTLINE "  ";
             }
-            Preview += Current.IsNone() ? "None" : Current.c_str();
+            Preview += Current.IsNone() ? "None" : *Current;
             return Preview;
         }
 
@@ -92,7 +92,7 @@ namespace Lumina
             {
                 if (Tree.IsValid(Item))
                 {
-                    Result = { true, FName(Tree.Get<FTreeNodeDisplay>(Item).DisplayName.c_str()) };
+                    Result = { true, FName(*Tree.Get<FTreeNodeDisplay>(Item).DisplayName) };
                 }
             };
 
@@ -120,7 +120,7 @@ namespace Lumina
 
             // Not PushItemWidth, whose matching pop would land on the popup window while the combo is open.
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            const bool bOpen = ImGui::BeginCombo(Args.StrId, Preview.c_str(), ImGuiComboFlags_HeightLargest);
+            const bool bOpen = ImGui::BeginCombo(Args.StrId, *Preview, ImGuiComboFlags_HeightLargest);
 
             if (bOpen && ImGui::IsWindowAppearing())
             {
@@ -151,10 +151,10 @@ namespace Lumina
                     return;
                 }
 
-                Out.reserve(Skeleton->GetNumBones());
+                Out.Reserve(Skeleton->GetNumBones());
                 for (int32 i = 0; i < Skeleton->GetNumBones(); ++i)
                 {
-                    Out.push_back(Skeleton->GetBone(i).Name);
+                    Out.Add(Skeleton->GetBone(i).Name);
                 }
             }
 
@@ -224,7 +224,7 @@ namespace Lumina
             FNamePickerResult DrawCustomBody(const FNamePickerArgs& Args) const override
             {
                 const FSocketEditContext* Sockets = Args.Context.Get<FSocketEditContext>();
-                const bool bHasAny = Sockets != nullptr && (!Sockets->Sockets.empty() || Sockets->Skeleton != nullptr);
+                const bool bHasAny = Sockets != nullptr && (!Sockets->Sockets.IsEmpty() || Sockets->Skeleton != nullptr);
                 const bool bStale = bHasAny && !Args.Current.IsNone() && !Contains(*Sockets, Args.Current);
 
                 FNamePickerResult Result;
@@ -236,16 +236,16 @@ namespace Lumina
 
                     DrawNoneRow(Args.Current, Result);
 
-                    if (Sockets != nullptr && !Sockets->Sockets.empty())
+                    if (Sockets != nullptr && !Sockets->Sockets.IsEmpty())
                     {
                         ImGui::SeparatorText("Sockets");
                         for (const FName& Socket : Sockets->Sockets)
                         {
-                            if (Socket.IsNone() || !ImGuiX::PassSearchFilter(Args.State->Filter, Socket.c_str()))
+                            if (Socket.IsNone() || !ImGuiX::PassSearchFilter(Args.State->Filter, *Socket))
                             {
                                 continue;
                             }
-                            if (ImGui::Selectable(Socket.c_str(), Socket == Args.Current))
+                            if (ImGui::Selectable(*Socket, Socket == Args.Current))
                             {
                                 Result = { true, Socket };
                                 ImGui::CloseCurrentPopup();
@@ -317,7 +317,7 @@ namespace Lumina
                 {
                     return;
                 }
-                Out.push_back(Property->Name);
+                Out.Add(Property->Name);
             });
         }
 
@@ -401,7 +401,7 @@ namespace Lumina
                     CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(Node);
                     if (State != nullptr && !State->StateName.IsNone())
                     {
-                        Out.push_back(State->StateName);
+                        Out.Add(State->StateName);
                     }
                 }
             }
@@ -427,10 +427,10 @@ namespace Lumina
 
             FNamePickerResult DrawCustomBody(const FNamePickerArgs& Args) const override
             {
-                FString Picked = Args.Current.IsNone() ? FString() : FString(Args.Current.c_str());
+                FString Picked = Args.Current.IsNone() ? FString() : FString(*Args.Current);
                 if (InputActionPicker::DrawCombo(Args.StrId, Picked, Args.State->Filter))
                 {
-                    return { true, Picked.empty() ? FName() : FName(Picked.c_str()) };
+                    return { true, Picked.IsEmpty() ? FName() : FName(*Picked) };
                 }
                 return {};
             }

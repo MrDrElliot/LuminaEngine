@@ -2,8 +2,6 @@
 #include "SpriteAnimationSystem.h"
 
 #include "Assets/AssetTypes/SpriteSheet/SpriteSheet.h"
-#include "SystemContext.h"
-#include "World/ECS/Registry.h"
 #include "World/Entity/Components/AnimatedSprite3DComponent.h"
 #include "World/Entity/Components/Sprite3DComponent.h"
 
@@ -12,18 +10,19 @@ namespace Lumina
     void SSpriteAnimationSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SAnimatedSprite3DComponent, SSprite3DComponent>();
+    }
+
+    // Every animated sprite also has a sprite, so a group lets the per-frame walk index both pools at one slot.
+    void SSpriteAnimationSystem::OnStartup(const SExclusiveContext& Context)
+    {
+        (void)Context.GetRegistry().DeclareGroup<SAnimatedSprite3DComponent, SSprite3DComponent>();
     }
 
     void SSpriteAnimationSystem::OnUpdate(const SSystemContext& Context)
     {
+        const float Dt = Context.GetDeltaTime();
 
-        LUMINA_PROFILE_SCOPE();
-
-        const float Dt = (float)Context.GetDeltaTime();
-
-        Context.CreateView<SAnimatedSprite3DComponent, SSprite3DComponent>().ForEach(
-            [Dt](SAnimatedSprite3DComponent& Animated, SSprite3DComponent& Sprite)
+        Animators.ParallelForEach([Dt](SAnimatedSprite3DComponent& Animated, SSprite3DComponent& Sprite)
         {
             CSpriteSheet* Sheet = Animated.SpriteSheet.Get();
             if (Sheet == nullptr)
@@ -32,7 +31,7 @@ namespace Lumina
             }
 
             const SSpriteAnimation* Clip = Sheet->FindAnimation(Animated.Animation);
-            if (Clip == nullptr || Clip->Frames.empty())
+            if (Clip == nullptr || Clip->Frames.IsEmpty())
             {
                 return;
             }
@@ -53,12 +52,12 @@ namespace Lumina
 
             if (Animated.bPlaying)
             {
-                SpriteAnimation::Advance(Playback, (int32)Clip->Frames.size(), Clip->FPS, Clip->bLoop,
+                SpriteAnimation::Advance(Playback, Clip->Frames.Num(), Clip->FPS, Clip->bLoop,
                                          Animated.SpeedScale, Dt);
             }
             else
             {
-                Playback.Frame = Math::Clamp(Playback.Frame, 0, (int32)Clip->Frames.size() - 1);
+                Playback.Frame = Math::Clamp(Playback.Frame, 0, Clip->Frames.Num() - 1);
             }
 
             Animated.Frame         = Playback.Frame;

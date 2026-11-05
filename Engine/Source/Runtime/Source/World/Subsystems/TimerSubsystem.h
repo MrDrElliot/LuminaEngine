@@ -68,9 +68,10 @@ namespace Lumina
 
         void OnTeardown() override;
 
-        FTimerManager& GetTimerManager() { return TimerManager; }
+        // The world's resources, so a system holding them and this subsystem share one instance.
+        FTimerManager& GetTimerManager() { return *EnsureTimerManager(); }
 
-        FCoroutineManager& GetCoroutineManager() { return CoroutineManager; }
+        FCoroutineManager& GetCoroutineManager() { return *EnsureCoroutineManager(); }
 
     private:
 
@@ -78,7 +79,7 @@ namespace Lumina
 
         uint64 ScheduleWait(CoroDetail::FLatentWaitSpec&& Spec, SScriptCallback OnDone);
 
-        FTimerManager       TimerManager;
-        FCoroutineManager   CoroutineManager;
+        FTimerManager*     EnsureTimerManager() const;
+        FCoroutineManager* EnsureCoroutineManager() const;
     };
 }

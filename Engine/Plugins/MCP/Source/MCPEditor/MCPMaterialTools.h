@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "MCPToolTypes.h"
 
 #include "MCPMaterialTools.generated.h"
 
@@ -13,7 +14,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Type name to pass to material.add_node. */
+        // Pass this to material.node as NodeType.
         PROPERTY()
         FString Name;
 
@@ -26,7 +27,7 @@ namespace Lumina
         PROPERTY()
         FString Description;
 
-        /** JSON Schema of the settable fields on this node, for material.set_node_property. */
+        // JSON Schema of the fields material.set_node_property can set.
         PROPERTY()
         FString ParameterSchema;
     };
@@ -36,11 +37,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Only types whose name or category contains this. Empty lists every one of them. */
+        // Substring of the type name or category. Empty lists every type.
         PROPERTY()
         FString Contains;
 
-        /** Include each type's parameter schema, which is large. Off by default. */
+        // Include each type's ParameterSchema, which is large.
         PROPERTY()
         bool bIncludeSchema = false;
     };
@@ -55,60 +56,11 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SGraphPinInfo
+    struct MCPEDITOR_API SMaterialRefParams
     {
         GENERATED_BODY()
 
-        PROPERTY()
-        FString Name;
-
-        /** Either Input or Output. */
-        PROPERTY()
-        FString Direction;
-
-        /** Node id this pin is wired to, or 0 when nothing is connected. */
-        PROPERTY()
-        int64 ConnectedNode = 0;
-
-        PROPERTY()
-        FString ConnectedPin;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SMaterialNodeInfo
-    {
-        GENERATED_BODY()
-
-        /** Id to pass to any tool taking a node. */
-        PROPERTY()
-        int64 Id = 0;
-
-        PROPERTY()
-        FString Type;
-
-        PROPERTY()
-        FString DisplayName;
-
-        PROPERTY()
-        float X = 0.0f;
-
-        PROPERTY()
-        float Y = 0.0f;
-
-        PROPERTY()
-        TVector<SGraphPinInfo> Pins;
-
-        /** Current values of this node's settable fields, as JSON. */
-        PROPERTY()
-        FString Values;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SDescribeMaterialParams
-    {
-        GENERATED_BODY()
-
-        /** GUID of the material, from assets.search. */
+        // GUID or content path of the material or material function.
         PROPERTY()
         FString Material;
     };
@@ -122,9 +74,9 @@ namespace Lumina
         FString Name;
 
         PROPERTY()
-        TVector<SMaterialNodeInfo> Nodes;
+        TVector<SGraphNodeInfo> Nodes;
 
-        // False for a material function, and for a material whose shaders are still compiling or failed to.
+        // False for a material function, or while shaders are compiling or after they failed.
         PROPERTY()
         bool bReadyForRender = false;
     };
@@ -134,7 +86,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Folder to create it in, such as /Game/Content/Materials. */
+        // Folder to create it in, such as /Game/Content/Materials.
         PROPERTY()
         FString Folder;
 
@@ -147,42 +99,58 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID to pass to every other material tool. */
         PROPERTY()
         FString Guid;
 
         PROPERTY()
         FString Path;
 
-        /** Id of the output node the graph is seeded with. */
+        // Id of the output node the graph is seeded with.
         PROPERTY()
         int64 OutputNode = 0;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddMaterialNodeParams
+    enum class EMaterialNodeAction : uint8
+    {
+        Add,
+        Remove,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SMaterialNodeParams
     {
         GENERATED_BODY()
+
+        PROPERTY()
+        EMaterialNodeAction Action = EMaterialNodeAction::Add;
 
         PROPERTY()
         FString Material;
 
-        /** Node type name, from material.list_node_types. */
+        // Add only. Node type name, from material.list_node_types.
         PROPERTY()
         FString NodeType;
 
+        // Add only.
         PROPERTY()
         float X = 0.0f;
 
+        // Add only.
         PROPERTY()
         float Y = 0.0f;
+
+        // Remove only.
+        PROPERTY()
+        int64 Node = 0;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddMaterialNodeResult
+    struct MCPEDITOR_API SMaterialNodeResult
     {
         GENERATED_BODY()
 
+        // Add only. Id of the new node.
         PROPERTY()
         int64 Id = 0;
 
@@ -191,53 +159,44 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SRemoveMaterialNodeParams
+    enum class EMaterialLinkAction : uint8
     {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Material;
-
-        PROPERTY()
-        int64 Node = 0;
+        Connect,
+        Disconnect,
     };
 
     REFLECT()
-    struct MCPEDITOR_API SConnectMaterialParams
+    struct MCPEDITOR_API SMaterialLinkParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        EMaterialLinkAction Action = EMaterialLinkAction::Connect;
+
+        PROPERTY()
         FString Material;
 
-        /** Node the value comes from. */
+        // Connect only. Node the value comes from.
         PROPERTY()
         int64 FromNode = 0;
 
-        /** Output pin name on FromNode, as material.describe reports it. */
+        // Connect only. Output pin name on FromNode, as material.describe reports it.
         PROPERTY()
         FString FromPin;
 
+        // Connect only.
         PROPERTY()
         int64 ToNode = 0;
 
-        /** Input pin name on ToNode. Any existing link on it is replaced. */
+        // Connect only. Input pin on ToNode; any existing link on it is replaced.
         PROPERTY()
         FString ToPin;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SDisconnectMaterialParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Material;
-
+        // Disconnect only.
         PROPERTY()
         int64 Node = 0;
 
-        /** Pin to clear, in either direction. */
+        // Disconnect only. Pin whose links are cleared, in either direction.
         PROPERTY()
         FString Pin;
     };
@@ -253,11 +212,11 @@ namespace Lumina
         PROPERTY()
         int64 Node = 0;
 
-        /** Field path on the node, such as Value or Value.X or ParameterName. */
+        // Field path on the node, such as Value, Value.X or ParameterName.
         PROPERTY()
         FString Path;
 
-        /** The new value as JSON, so a bare number, a quoted name, or a braced object. */
+        // New value as JSON: a number, a quoted string or an object.
         PROPERTY(RawJson)
         FString Value;
     };
@@ -275,15 +234,6 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SCompileMaterialParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Material;
-    };
-
-    REFLECT()
     struct MCPEDITOR_API SCompileMaterialResult
     {
         GENERATED_BODY()
@@ -298,13 +248,8 @@ namespace Lumina
         TVector<FString> Warnings;
     };
 
-    class CEdGraphNode;
-
     namespace MCP
     {
-        // Shared with the anim graph tools, which describe pins the same way.
-        void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out);
-
         void RegisterMaterialTools(FStringView Owner);
     }
 }

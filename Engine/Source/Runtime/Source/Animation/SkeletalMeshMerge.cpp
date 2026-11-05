@@ -20,8 +20,8 @@ namespace Lumina::SkeletalMeshMerge
         // The smallest run that must stay contiguous, because a surface's per-LOD range is one span.
         struct FCell
         {
-            uint32 MeshIndex       = 0;
-            uint32 SurfaceIndex    = 0;
+            int32  MeshIndex       = 0;
+            int32  SurfaceIndex    = 0;
             uint32 LODSlot         = 0;
             uint32 SrcMeshletBegin = 0;
             uint32 MeshletCount    = 0;
@@ -58,27 +58,27 @@ namespace Lumina::SkeletalMeshMerge
     {
         LUMINA_PROFILE_SCOPE();
 
-        Out.Bones.clear();
-        Out.BoneNameToIndex.clear();
-        OutBoneRemap.clear();
-        OutBoneRemap.resize(Skeletons.size());
+        Out.Bones.Reset();
+        Out.BoneNameToIndex.Reset();
+        OutBoneRemap.Reset();
+        OutBoneRemap.SetNum(Skeletons.Num());
 
         // The base goes in whole and first, so its bone ORDER and bind pose survive the merge.
         TVector<CSkeleton*> Ordered;
-        Ordered.reserve(Skeletons.size() + 1);
+        Ordered.Reserve(Skeletons.Num() + 1);
         if (Base != nullptr && Base->GetSkeletonResource() != nullptr)
         {
-            Ordered.push_back(Base);
+            Ordered.Add(Base);
         }
         for (CSkeleton* Skeleton : Skeletons)
         {
             if (Skeleton != nullptr && Skeleton->GetSkeletonResource() != nullptr && Skeleton != Base)
             {
-                Ordered.push_back(Skeleton);
+                Ordered.Add(Skeleton);
             }
         }
 
-        if (Ordered.empty())
+        if (Ordered.IsEmpty())
         {
             OutError = "No skeleton to merge: every input was null or carried no skeleton resource.";
             return false;
@@ -91,7 +91,7 @@ namespace Lumina::SkeletalMeshMerge
             for (int32 i = 0; i < Source.GetNumBones(); ++i)
             {
                 const FSkeletonResource::FBoneInfo& Bone = Source.GetBone(i);
-                if (Out.BoneNameToIndex.find(Bone.Name) != Out.BoneNameToIndex.end())
+                if (Out.BoneNameToIndex.Contains(Bone.Name))
                 {
                     continue;   // first definition wins, so the base's bind pose is authoritative
                 }
@@ -100,21 +100,21 @@ namespace Lumina::SkeletalMeshMerge
                 int32 ParentIndex = Constants::kIndexNone;
                 if (Bone.ParentIndex != Constants::kIndexNone)
                 {
-                    const auto It = Out.BoneNameToIndex.find(Source.GetBone(Bone.ParentIndex).Name);
-                    if (It != Out.BoneNameToIndex.end())
+                    const auto It = Out.BoneNameToIndex.Find(Source.GetBone(Bone.ParentIndex).Name);
+                    if (It != nullptr)
                     {
-                        ParentIndex = It->second;
+                        ParentIndex = (*It);
                     }
                 }
 
-                const int32 NewIndex = (int32)Out.Bones.size();
-                FSkeletonResource::FBoneInfo& Added = Out.Bones.emplace_back(Bone);
+                const int32 NewIndex = Out.Bones.Num();
+                FSkeletonResource::FBoneInfo& Added = Out.Bones.EmplaceGetRef(Bone);
                 Added.ParentIndex = ParentIndex;
-                Out.BoneNameToIndex.emplace(Bone.Name, NewIndex);
+                Out.BoneNameToIndex.TryAdd(Bone.Name, NewIndex);
             }
         }
 
-        if (Out.Bones.empty())
+        if (Out.Bones.IsEmpty())
         {
             OutError = "No skeleton to merge: every input skeleton was empty.";
             return false;
@@ -123,7 +123,7 @@ namespace Lumina::SkeletalMeshMerge
         Out.Name = Ordered[0]->GetSkeletonResource()->Name;
         Out.BuildBindPoseCache();
 
-        for (SIZE_T s = 0; s < Skeletons.size(); ++s)
+        for (int32 s = 0; s < Skeletons.Num(); ++s)
         {
             const CSkeleton* Skeleton = Skeletons[s];
             if (Skeleton == nullptr || Skeleton->GetSkeletonResource() == nullptr)
@@ -133,12 +133,12 @@ namespace Lumina::SkeletalMeshMerge
 
             const FSkeletonResource& Source = *Skeleton->GetSkeletonResource();
             TVector<int32>& Remap = OutBoneRemap[s];
-            Remap.resize(Source.GetNumBones(), 0);
+            Remap.SetNum(Source.GetNumBones(), 0);
 
             for (int32 i = 0; i < Source.GetNumBones(); ++i)
             {
-                const auto It = Out.BoneNameToIndex.find(Source.GetBone(i).Name);
-                Remap[i] = (It != Out.BoneNameToIndex.end()) ? It->second : 0;
+                const auto It = Out.BoneNameToIndex.Find(Source.GetBone(i).Name);
+                Remap[i] = (It != nullptr) ? (*It) : 0;
             }
         }
 
@@ -152,16 +152,16 @@ namespace Lumina::SkeletalMeshMerge
         FResult Result;
 
         TVector<CSkeletalMesh*> Sources;
-        Sources.reserve(Meshes.size());
+        Sources.Reserve(Meshes.Num());
         for (CSkeletalMesh* Mesh : Meshes)
         {
             if (HasMergeableGeometry(Mesh))
             {
-                Sources.push_back(Mesh);
+                Sources.Add(Mesh);
             }
         }
 
-        if (Sources.empty())
+        if (Sources.IsEmpty())
         {
             Result.Error = "Nothing to merge: no input was a skinned mesh with baked meshlets and a skeleton.";
             return Result;
@@ -170,15 +170,15 @@ namespace Lumina::SkeletalMeshMerge
         //~ Unified skeleton, and the per-source bone remap the palettes are rewritten through.
 
         TVector<CSkeleton*> SourceSkeletons;
-        SourceSkeletons.reserve(Sources.size());
+        SourceSkeletons.Reserve(Sources.Num());
         for (const CSkeletalMesh* Mesh : Sources)
         {
-            SourceSkeletons.push_back(SkeletonOf(Mesh));
+            SourceSkeletons.Add(SkeletonOf(Mesh));
         }
 
         TUniquePtr<FSkeletonResource> MergedSkeleton = MakeUnique<FSkeletonResource>();
         TVector<TVector<int32>>       BoneRemap;
-        if (!BuildUnifiedSkeleton(TSpan<CSkeleton* const>(SourceSkeletons.data(), SourceSkeletons.size()),
+        if (!BuildUnifiedSkeleton(TSpan<CSkeleton* const>(SourceSkeletons.GetData(), SourceSkeletons.Num()),
                                   Settings.BaseSkeleton, *MergedSkeleton, BoneRemap, Result.Error))
         {
             return Result;
@@ -187,17 +187,17 @@ namespace Lumina::SkeletalMeshMerge
         //~ Material slots, deduplicated so two pieces sharing a material share one slot.
 
         TVector<TStrongObjectPtr<CMaterialInterface>> MergedMaterials;
-        TVector<TVector<int16>>                 MaterialRemap(Sources.size());
+        TVector<TVector<int16>>                 MaterialRemap(Sources.Num());
 
-        for (SIZE_T m = 0; m < Sources.size(); ++m)
+        for (int32 m = 0; m < Sources.Num(); ++m)
         {
             const TVector<TStrongObjectPtr<CMaterialInterface>>& Slots = Sources[m]->Materials;
-            MaterialRemap[m].resize(Slots.size(), -1);
+            MaterialRemap[m].SetNum(Slots.Num(), -1);
 
-            for (SIZE_T s = 0; s < Slots.size(); ++s)
+            for (int32 s = 0; s < Slots.Num(); ++s)
             {
                 int32 Found = Constants::kIndexNone;
-                for (SIZE_T e = 0; e < MergedMaterials.size(); ++e)
+                for (int32 e = 0; e < MergedMaterials.Num(); ++e)
                 {
                     if (MergedMaterials[e].Get() == Slots[s].Get())
                     {
@@ -208,8 +208,8 @@ namespace Lumina::SkeletalMeshMerge
 
                 if (Found == Constants::kIndexNone)
                 {
-                    Found = (int32)MergedMaterials.size();
-                    MergedMaterials.push_back(Slots[s]);
+                    Found = MergedMaterials.Num();
+                    MergedMaterials.Add(Slots[s]);
                 }
                 MaterialRemap[m][s] = (int16)Found;
             }
@@ -220,12 +220,12 @@ namespace Lumina::SkeletalMeshMerge
         TVector<FCell> Cells;
         for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
         {
-            for (uint32 m = 0; m < (uint32)Sources.size(); ++m)
+            for (int32 m = 0; m < Sources.Num(); ++m)
             {
                 const FMeshResource& Resource = Sources[m]->GetMeshResource();
                 const FMeshletData&  Data     = Resource.MeshletData;
 
-                for (uint32 s = 0; s < (uint32)Resource.GeometrySurfaces.size(); ++s)
+                for (int32 s = 0; s < Resource.GeometrySurfaces.Num(); ++s)
                 {
                     const FGeometrySurface& Surface = Resource.GeometrySurfaces[s];
                     if (LOD >= Surface.NumLODs || Surface.LODMeshletCount[LOD] == 0)
@@ -234,13 +234,13 @@ namespace Lumina::SkeletalMeshMerge
                     }
 
                     const uint32 Begin = Surface.LODMeshletOffset[LOD];
-                    const uint32 End   = Math::Min(Begin + Surface.LODMeshletCount[LOD], (uint32)Data.Meshlets.size());
+                    const uint32 End   = Math::Min(Begin + Surface.LODMeshletCount[LOD], (uint32)Data.Meshlets.Num());
                     if (Begin >= End)
                     {
                         continue;
                     }
 
-                    FCell& Cell = Cells.emplace_back();
+                    FCell& Cell = Cells.EmplaceGetRef();
                     Cell.MeshIndex       = m;
                     Cell.SurfaceIndex    = s;
                     Cell.LODSlot         = LOD;
@@ -251,14 +251,14 @@ namespace Lumina::SkeletalMeshMerge
                     {
                         Cell.VertexCount   += Data.Meshlets[i].VertexCount;
                         Cell.TriangleCount += Data.Meshlets[i].TriangleCount;
-                        Cell.PaletteBones  += (i < Data.MeshletBonePalettes.size())
+                        Cell.PaletteBones  += (i < static_cast<uint32>(Data.MeshletBonePalettes.Num()))
                             ? Data.MeshletBonePalettes[i].Count : 0u;
                     }
                 }
             }
         }
 
-        if (Cells.empty())
+        if (Cells.IsEmpty())
         {
             Result.Error = "Nothing to merge: no input surface had meshlets at any LOD.";
             return Result;
@@ -286,13 +286,13 @@ namespace Lumina::SkeletalMeshMerge
         Merged->bSkinnedMesh = true;
 
         FMeshletData& Dst = Merged->MeshletData;
-        Dst.Meshlets.resize(TotalMeshlets);
-        Dst.MeshletSpheres.resize(TotalMeshlets);
-        Dst.MeshletCones.resize(TotalMeshlets);
-        Dst.MeshletBonePalettes.resize(TotalMeshlets);
-        Dst.MeshletSkinnedVertices.resize(TotalVertices);
-        Dst.MeshletTriangles.resize(TotalTriangles);
-        Dst.MeshletBoneIndices.resize(TotalPalette);
+        Dst.Meshlets.SetNum(TotalMeshlets);
+        Dst.MeshletSpheres.SetNum(TotalMeshlets);
+        Dst.MeshletCones.SetNum(TotalMeshlets);
+        Dst.MeshletBonePalettes.SetNum(TotalMeshlets);
+        Dst.MeshletSkinnedVertices.SetNum(TotalVertices);
+        Dst.MeshletTriangles.SetNum(TotalTriangles);
+        Dst.MeshletBoneIndices.SetNum(TotalPalette);
 
         // Spans every source grid, so each source's vertices re-encode onto it without clamping.
         {
@@ -302,15 +302,15 @@ namespace Lumina::SkeletalMeshMerge
             for (const CSkeletalMesh* Source : Sources)
             {
                 const FMeshPositionGrid& Grid = Source->GetMeshResource().MeshletData.PositionGrid;
-                GridCorners.push_back(DecodeMeshPosition(Grid, GridLow));
-                GridCorners.push_back(DecodeMeshPosition(Grid, GridHigh));
+                GridCorners.Add(DecodeMeshPosition(Grid, GridLow));
+                GridCorners.Add(DecodeMeshPosition(Grid, GridHigh));
             }
-            Dst.PositionGrid = ComputeMeshPositionGrid(GridCorners.data(), GridCorners.size());
+            Dst.PositionGrid = ComputeMeshPositionGrid(GridCorners.GetData(), GridCorners.Num());
         }
 
         //~ Every cell owns a disjoint destination range, so the copy needs no synchronization at all.
 
-        Task::ParallelFor((uint32)Cells.size(), [&](uint32 CellIndex)
+        Jobs::ParallelFor((uint32)Cells.Num(), [&](uint32 CellIndex)
         {
             const FCell&          Cell     = Cells[CellIndex];
             const FMeshResource&  Resource = Sources[Cell.MeshIndex]->GetMeshResource();
@@ -337,7 +337,7 @@ namespace Lumina::SkeletalMeshMerge
 
                 // JointIndices address the meshlet's own palette, so only the position changes, onto the merged grid.
                 const uint32 VertexEnd = Math::Min(SrcM.VertexOffset + SrcM.VertexCount,
-                                                   (uint32)Src.MeshletSkinnedVertices.size());
+                                                   (uint32)Src.MeshletSkinnedVertices.Num());
                 for (uint32 v = SrcM.VertexOffset; v < VertexEnd; ++v)
                 {
                     FMeshletSkinnedVertex Vertex = Src.MeshletSkinnedVertices[v];
@@ -346,7 +346,7 @@ namespace Lumina::SkeletalMeshMerge
                 }
 
                 const uint32 TriangleEnd = Math::Min(SrcM.TriangleOffset + SrcM.TriangleCount,
-                                                     (uint32)Src.MeshletTriangles.size());
+                                                     (uint32)Src.MeshletTriangles.Num());
                 for (uint32 t = SrcM.TriangleOffset; t < TriangleEnd; ++t)
                 {
                     Dst.MeshletTriangles[TriangleCursor + (t - SrcM.TriangleOffset)] = Src.MeshletTriangles[t];
@@ -354,7 +354,7 @@ namespace Lumina::SkeletalMeshMerge
 
                 FMeshletBonePalette& DstPalette = Dst.MeshletBonePalettes[DstIndex];
                 DstPalette.Offset = PaletteCursor;
-                DstPalette.Count  = (SrcIndex < Src.MeshletBonePalettes.size())
+                DstPalette.Count  = (SrcIndex < static_cast<uint32>(Src.MeshletBonePalettes.Num()))
                     ? Src.MeshletBonePalettes[SrcIndex].Count : 0u;
 
                 if (DstPalette.Count != 0u)
@@ -363,10 +363,10 @@ namespace Lumina::SkeletalMeshMerge
                     for (uint32 b = 0; b < DstPalette.Count; ++b)
                     {
                         const uint32 SrcSlot = SrcPaletteBase + b;
-                        const uint32 SrcBone = (SrcSlot < Src.MeshletBoneIndices.size())
+                        const uint32 SrcBone = (SrcSlot < static_cast<uint32>(Src.MeshletBoneIndices.Num()))
                             ? Src.MeshletBoneIndices[SrcSlot] : 0u;
 
-                        Dst.MeshletBoneIndices[PaletteCursor + b] = (SrcBone < Remap.size())
+                        Dst.MeshletBoneIndices[PaletteCursor + b] = (SrcBone < static_cast<uint32>(Remap.Num()))
                             ? (uint32)Remap[SrcBone] : 0u;
                     }
                 }
@@ -379,23 +379,23 @@ namespace Lumina::SkeletalMeshMerge
 
         //~ Surfaces. One per (mesh, surface), carrying the LOD table the cells just laid out.
 
-        struct FSurfaceKey { uint32 MeshIndex; uint32 SurfaceIndex; };
+        struct FSurfaceKey { int32 MeshIndex; int32 SurfaceIndex; };
         TVector<FSurfaceKey> SurfaceKeys;
 
-        for (uint32 m = 0; m < (uint32)Sources.size(); ++m)
+        for (int32 m = 0; m < Sources.Num(); ++m)
         {
             const FMeshResource& Resource = Sources[m]->GetMeshResource();
-            for (uint32 s = 0; s < (uint32)Resource.GeometrySurfaces.size(); ++s)
+            for (int32 s = 0; s < Resource.GeometrySurfaces.Num(); ++s)
             {
                 const FGeometrySurface& Source = Resource.GeometrySurfaces[s];
 
-                FGeometrySurface& Out = Merged->GeometrySurfaces.emplace_back();
+                FGeometrySurface& Out = Merged->GeometrySurfaces.EmplaceGetRef();
                 Out.ID            = Source.ID;
                 Out.IndexCount    = Source.IndexCount;
                 Out.StartIndex    = Source.StartIndex;
                 Out.TexelFactor   = Source.TexelFactor;
                 Out.NumLODs       = 0;
-                Out.MaterialIndex = (Source.MaterialIndex >= 0 && (SIZE_T)Source.MaterialIndex < MaterialRemap[m].size())
+                Out.MaterialIndex = (Source.MaterialIndex >= 0 && Source.MaterialIndex < MaterialRemap[m].Num())
                     ? MaterialRemap[m][Source.MaterialIndex] : (int16)-1;
 
                 for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
@@ -405,13 +405,13 @@ namespace Lumina::SkeletalMeshMerge
                     Out.LODError[LOD]         = Source.LODError[LOD];
                 }
 
-                SurfaceKeys.push_back(FSurfaceKey{ m, s });
+                SurfaceKeys.Emplace(m, s);
             }
         }
 
         for (const FCell& Cell : Cells)
         {
-            for (SIZE_T k = 0; k < SurfaceKeys.size(); ++k)
+            for (int32 k = 0; k < SurfaceKeys.Num(); ++k)
             {
                 if (SurfaceKeys[k].MeshIndex != Cell.MeshIndex || SurfaceKeys[k].SurfaceIndex != Cell.SurfaceIndex)
                 {
@@ -459,7 +459,7 @@ namespace Lumina::SkeletalMeshMerge
                 {
                     if (FindSocketByName(OutSkeleton->Sockets, Socket.SocketName) == nullptr)
                     {
-                        OutSkeleton->Sockets.push_back(Socket);
+                        OutSkeleton->Sockets.Add(Socket);
                     }
                 }
             }
@@ -477,16 +477,16 @@ namespace Lumina::SkeletalMeshMerge
                 {
                     if (FindSocketByName(OutMesh->Sockets, Socket.SocketName) == nullptr)
                     {
-                        OutMesh->Sockets.push_back(Socket);
+                        OutMesh->Sockets.Add(Socket);
                     }
                 }
             }
         }
         OutMesh->Materials = MergedMaterials;
-        OutMesh->MergeSources.reserve(Sources.size());
+        OutMesh->MergeSources.Reserve(Sources.Num());
         for (CSkeletalMesh* Source : Sources)
         {
-            OutMesh->MergeSources.emplace_back(Source);
+            OutMesh->MergeSources.Emplace(Source);
         }
 
         // Last, because it uploads the geometry and derives the bounding box from what it was given.
@@ -511,7 +511,7 @@ namespace Lumina::SkeletalMeshMerge
         {
             FMutex                                Mutex;
             THashMap<uint64, FMergeCacheEntry>    Entries;
-            SIZE_T                                PruneAt = 64;
+            int32                                 PruneAt = 64;
         };
 
         FMergeCache& GetMergeCache()
@@ -529,9 +529,9 @@ namespace Lumina::SkeletalMeshMerge
         // Resource addresses catch a reimport, which swaps the geometry under the same object.
         void BuildMergeKey(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings, TVector<uint64>& OutKey)
         {
-            OutKey.push_back(Settings.BaseSkeleton != nullptr ? PackHandle(Settings.BaseSkeleton) : 0ull);
-            OutKey.push_back(GetTypeHash(Settings.Name));
-            OutKey.push_back(Settings.bMergeSockets ? 1ull : 0ull);
+            OutKey.Add(Settings.BaseSkeleton != nullptr ? PackHandle(Settings.BaseSkeleton) : 0ull);
+            OutKey.Add(GetTypeHash(Settings.Name));
+            OutKey.Add(Settings.bMergeSockets ? 1ull : 0ull);
 
             for (CSkeletalMesh* Mesh : Meshes)
             {
@@ -540,13 +540,13 @@ namespace Lumina::SkeletalMeshMerge
                     continue;
                 }
                 const CSkeleton* Skeleton = SkeletonOf(Mesh);
-                OutKey.push_back(PackHandle(Mesh));
-                OutKey.push_back((uint64)(uintptr_t)&Mesh->GetMeshResource());
-                OutKey.push_back(PackHandle(Skeleton));
-                OutKey.push_back((uint64)(uintptr_t)Skeleton->GetSkeletonResource());
+                OutKey.Add(PackHandle(Mesh));
+                OutKey.Add((uint64)(uintptr_t)&Mesh->GetMeshResource());
+                OutKey.Add(PackHandle(Skeleton));
+                OutKey.Add((uint64)(uintptr_t)Skeleton->GetSkeletonResource());
                 for (const TStrongObjectPtr<CMaterialInterface>& Material : Mesh->Materials)
                 {
-                    OutKey.push_back((uint64)(uintptr_t)Material.Get());
+                    OutKey.Add((uint64)(uintptr_t)Material.Get());
                 }
             }
         }
@@ -571,12 +571,12 @@ namespace Lumina::SkeletalMeshMerge
         FMergeCache& Cache = GetMergeCache();
         {
             FScopeLock Lock(Cache.Mutex);
-            auto It = Cache.Entries.find(Hash);
-            if (It != Cache.Entries.end() && It->second.Key == Key)
+            auto It = Cache.Entries.Find(Hash);
+            if (It != nullptr && It->Key == Key)
             {
                 FResult Shared;
-                Shared.Mesh     = It->second.Mesh.Lock();
-                Shared.Skeleton = It->second.Skeleton.Lock();
+                Shared.Mesh     = It->Mesh.Lock();
+                Shared.Skeleton = It->Skeleton.Lock();
                 if (Shared.IsValid() && Shared.Skeleton.Get() != nullptr)
                 {
                     return Shared;
@@ -596,10 +596,10 @@ namespace Lumina::SkeletalMeshMerge
         Entry.Mesh     = Result.Mesh;
         Entry.Skeleton = Result.Skeleton;
 
-        if (Cache.Entries.size() >= Cache.PruneAt)
+        if (Cache.Entries.Num() >= Cache.PruneAt)
         {
-            erase_if(Cache.Entries, [](const auto& Pair) { return !Pair.second.Mesh.IsValid(); });
-            Cache.PruneAt = Math::Max<SIZE_T>(64, Cache.Entries.size() * 2);
+            Cache.Entries.RemoveAll([](const auto& Pair) { return !Pair.Value.Mesh.IsValid(); });
+            Cache.PruneAt = Math::Max(64, Cache.Entries.Num() * 2);
         }
         return Result;
     }

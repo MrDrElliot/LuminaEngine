@@ -43,14 +43,14 @@ namespace Lumina::RHITests
             FScopeLock Lock(GValidationMutex);
             if (GCapturing)
             {
-                GValidationMessages.push_back(FString(Message));
+                GValidationMessages.Emplace(Message);
             }
         }
 
         void BeginCapture()
         {
             FScopeLock Lock(GValidationMutex);
-            GValidationMessages.clear();
+            GValidationMessages.Reset();
             GCapturing = true;
         }
 
@@ -60,14 +60,14 @@ namespace Lumina::RHITests
             FScopeLock Lock(GValidationMutex);
             GCapturing = false;
             TVector<FString> Out = Move(GValidationMessages);
-            GValidationMessages.clear();
+            GValidationMessages.Reset();
             return Out;
         }
     }
 
     FTestRegistrar::FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError)
     {
-        Registry().push_back(FRegisteredTest{ Group, Name, Fn, bExpectValidationError });
+        Registry().Emplace(Group, Name, Fn, bExpectValidationError);
     }
 
     RHI::FTextureDesc MakeSampledDesc(uint32 Size, EFormat Format, RHI::EImageUsageFlags Extra)
@@ -99,7 +99,7 @@ namespace Lumina::RHITests
         std::vsnprintf(Buffer, sizeof(Buffer), Format, Args);
         va_end(Args);
 
-        Failures.push_back(FString(Buffer));
+        Failures.Emplace(Buffer);
     }
 
     RHI::FGPUAllocation FTestContext::Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName)
@@ -108,7 +108,7 @@ namespace Lumina::RHITests
         if (Allocation.Gpu != 0)
         {
             RHI::SetDebugName(Allocation.Gpu, DebugName);
-            ScratchBuffers.push_back(Allocation);
+            ScratchBuffers.Add(Allocation);
         }
         return Allocation;
     }
@@ -119,7 +119,7 @@ namespace Lumina::RHITests
         if (RHI::IsValid(Texture))
         {
             RHI::SetDebugName(Texture, DebugName);
-            ScratchTextures.push_back(Texture);
+            ScratchTextures.Add(Texture);
         }
         return Texture;
     }
@@ -178,14 +178,14 @@ namespace Lumina::RHITests
     {
         TVector<uint32> Spirv = TryCompileShader(Source, DebugName, EntryPoint);
 
-        if (Spirv.empty())
+        if (Spirv.IsEmpty())
         {
             Failf("shader '%s' failed to compile (see the Slang diagnostics above)", DebugName);
         }
         else if (Spirv[0] != 0x07230203u)
         {
             Failf("shader '%s' produced %zu words with a bad SPIR-V magic (%#x)",
-                  DebugName, (size_t)Spirv.size(), Spirv[0]);
+                  DebugName, (size_t)Spirv.Num(), Spirv[0]);
         }
 
         return Spirv;
@@ -195,7 +195,7 @@ namespace Lumina::RHITests
     {
         if (RHI::IsValid(Pipeline))
         {
-            ScratchPipelines.push_back(Pipeline);
+            ScratchPipelines.Add(Pipeline);
         }
         return Pipeline;
     }
@@ -215,9 +215,9 @@ namespace Lumina::RHITests
         {
             RHI::Retire(*It);
         }
-        ScratchPipelines.clear();
-        ScratchTextures.clear();
-        ScratchBuffers.clear();
+        ScratchPipelines.Reset();
+        ScratchTextures.Reset();
+        ScratchBuffers.Reset();
     }
 
     void ForEachTest(void (*Visitor)(const char* Group, const char* Name))
@@ -283,21 +283,21 @@ namespace Lumina::RHITests
             if (Test.bExpectValidationError)
             {
                 // The driver complaining IS the pass condition, so silence means the check went dark.
-                if (Validation.empty())
+                if (Validation.IsEmpty())
                 {
                     Ctx.Failf("expected a validation error, but none was reported "
                               "(GPU-AV off, or the capture path is broken)");
                 }
                 else
                 {
-                    LOG_INFO("             caught: {}", Validation.front());
+                    LOG_INFO("             caught: {}", Validation[0]);
                 }
             }
             else
             {
                 for (const FString& Message : Validation)
                 {
-                    Ctx.Failf("validation: %s", Message.c_str());
+                    Ctx.Failf("validation: %s", *Message);
                 }
             }
 
@@ -321,7 +321,7 @@ namespace Lumina::RHITests
 
         LOG_INFO("");
         LOG_INFO("[==========] {} passed, {} failed{}", Passed, Failed,
-                 Skipped > 0 ? FString(" (" + Format("{}", Skipped) + " filtered out)") : FString());
+                 Skipped > 0 ? " (" + Format("{}", Skipped) + " filtered out)" : FString());
 
         return Failed;
     }

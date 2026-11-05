@@ -41,7 +41,7 @@ namespace Lumina::WorldSubsystems
             CWorldSubsystem* Subsystem = NewObject<CWorldSubsystem>(Class);
             if (Subsystem == nullptr)
             {
-                LOG_WARN("World subsystem '{}' could not be created.", Class->GetName().ToString().c_str());
+                LOG_WARN("World subsystem '{}' could not be created.", *Class->GetName().ToString());
                 return nullptr;
             }
             Subsystem->SetOwningWorld(&World);
@@ -54,7 +54,7 @@ namespace Lumina::WorldSubsystems
         CWorldSubsystem* Subsystem = Class != nullptr && Class->IsChildOf(CWorldSubsystem::StaticClass()) ? Instantiate(World, Class) : nullptr;
         if (Subsystem != nullptr)
         {
-            Out.push_back(Subsystem);
+            Out.Add(Subsystem);
             Subsystem->OnInitialize();
             Subsystem->OnWorldReady();
         }
@@ -77,22 +77,22 @@ namespace Lumina::WorldSubsystems
             CClass* Class = static_cast<CClass*>(Object);
             if (Class != BaseClass && Class->IsChildOf(BaseClass) && Class->CanInstantiate() && !AlreadyPresent(Out, Class))
             {
-                Candidates.push_back(Class);
+                Candidates.Add(Class);
             }
         });
 
-        const size_t FirstNew = Out.size();
+        const int32 FirstNew = Out.Num();
 
         for (CClass* Class : Candidates)
         {
             if (CWorldSubsystem* Subsystem = Instantiate(World, Class))
             {
-                Out.push_back(Subsystem);
+                Out.Add(Subsystem);
             }
         }
 
         // Separate passes, so a subsystem's OnInitialize cannot observe a half built list.
-        for (size_t Index = FirstNew; Index < Out.size(); ++Index)
+        for (int32 Index = FirstNew; Index < Out.Num(); ++Index)
         {
             if (Out[Index] != nullptr)
             {
@@ -100,7 +100,7 @@ namespace Lumina::WorldSubsystems
             }
         }
 
-        for (size_t Index = FirstNew; Index < Out.size(); ++Index)
+        for (int32 Index = FirstNew; Index < Out.Num(); ++Index)
         {
             if (Out[Index] != nullptr)
             {
@@ -108,13 +108,13 @@ namespace Lumina::WorldSubsystems
             }
         }
 
-        return (int32)(Out.size() - FirstNew);
+        return Out.Num() - FirstNew;
     }
 
     void DropScripted(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
         // Back to front, so a subsystem created later can still reach an earlier one while it tears down.
-        for (size_t Index = Subsystems.size(); Index > 0; --Index)
+        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
         {
             CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
             if (Subsystem == nullptr || Cast<CScriptClass>(Subsystem->GetClass()) == nullptr)
@@ -124,13 +124,13 @@ namespace Lumina::WorldSubsystems
 
             Subsystem->OnTeardown();
             Subsystem->SetOwningWorld(nullptr);
-            Subsystems.erase(Subsystems.begin() + (int64)(Index - 1));
+            Subsystems.RemoveAt((int64)(Index - 1));
         }
     }
 
     void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
-        for (size_t Index = Subsystems.size(); Index > 0; --Index)
+        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
         {
             CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
             if (Subsystem == nullptr || NetRealm::Allows(Subsystem->GetClass(), &World))
@@ -140,7 +140,7 @@ namespace Lumina::WorldSubsystems
 
             Subsystem->OnTeardown();
             Subsystem->SetOwningWorld(nullptr);
-            Subsystems.erase(Subsystems.begin() + (int64)(Index - 1));
+            Subsystems.RemoveAt((int64)(Index - 1));
         }
     }
 
@@ -157,7 +157,7 @@ namespace Lumina::WorldSubsystems
 
     void DestroyAll(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
-        for (size_t Index = Subsystems.size(); Index > 0; --Index)
+        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
         {
             if (CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get())
             {
@@ -167,7 +167,7 @@ namespace Lumina::WorldSubsystems
         }
 
         // The handles are the only strong reference the world holds, matching how a script pool is dropped.
-        Subsystems.clear();
+        Subsystems.Reset();
     }
 
     CWorldSubsystem* Find(const TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class)

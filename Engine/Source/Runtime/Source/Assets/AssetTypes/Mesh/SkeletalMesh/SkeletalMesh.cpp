@@ -32,12 +32,12 @@ namespace Lumina
         TVector<FMatrix4> BindSkinning;
         Skeleton->ComputeBindPoseSkinningMatrices(BindSkinning);
 
-        TVector<uint8> Visited(BindSkinning.size(), 0u);
+        TVector<uint8> Visited(BindSkinning.Num(), 0u);
         SAABB Posed;
         bool bAny = false;
         const auto Grow = [&](uint32 Bone)
         {
-            if (Bone >= (uint32)BindSkinning.size() || Visited[Bone])
+            if (Bone >= (uint32)BindSkinning.Num() || Visited[Bone])
             {
                 return;
             }
@@ -56,7 +56,7 @@ namespace Lumina
         }
         if (!bAny)
         {
-            for (uint32 Bone = 0; Bone < (uint32)BindSkinning.size(); ++Bone)
+            for (int32 Bone = 0; Bone < BindSkinning.Num(); ++Bone)
             {
                 Grow(Bone);
             }
@@ -84,10 +84,10 @@ namespace Lumina
 
     void CSkeletalMesh::CollectActiveSockets(TVector<const SMeshSocket*>& OutSockets) const
     {
-        OutSockets.clear();
+        OutSockets.Reset();
         for (const SMeshSocket& Socket : Sockets)
         {
-            OutSockets.push_back(&Socket);
+            OutSockets.Add(&Socket);
         }
 
         if (Skeleton.IsValid())
@@ -96,7 +96,7 @@ namespace Lumina
             {
                 if (FindSocketByName(Sockets, Socket.SocketName) == nullptr)
                 {
-                    OutSockets.push_back(&Socket);
+                    OutSockets.Add(&Socket);
                 }
             }
         }
@@ -105,13 +105,13 @@ namespace Lumina
     const BoneLOD::FBoneLODLayout* CSkeletalMesh::GetBoneLODLayout(const FSkeletonResource* InSkeleton) const
     {
         const FMeshResource* Resource = TryGetMeshResource();
-        if (InSkeleton == nullptr || Resource == nullptr || Resource->MeshletData.MeshletBoneIndices.empty())
+        if (InSkeleton == nullptr || Resource == nullptr || Resource->MeshletData.MeshletBoneIndices.IsEmpty())
         {
             return nullptr;
         }
 
         const uint64 LayoutKey = InSkeleton->BoneLayoutHash != 0 ? InSkeleton->BoneLayoutHash : InSkeleton->ComputeBoneLayoutHash();
-        const size_t PaletteEntries = Resource->MeshletData.MeshletBoneIndices.size();
+        const int32 PaletteEntries = Resource->MeshletData.MeshletBoneIndices.Num();
         const CSkeleton* SkeletonAsset = Skeleton.Get();
         // Both generations only grow, so their sum changes whenever either set of sockets does.
         const uint32 SocketGeneration = GetSocketGeneration() + (SkeletonAsset != nullptr ? SkeletonAsset->GetSocketGeneration() : 0u);
@@ -143,7 +143,7 @@ namespace Lumina
                 const int32 Bone = InSkeleton->FindBoneIndex(Socket->BoneName);
                 if (Bone != Constants::kIndexNone)
                 {
-                    SocketBones.push_back(Bone);
+                    SocketBones.Add(Bone);
                 }
             }
         }
@@ -156,7 +156,7 @@ namespace Lumina
         Entry->Layout           = BoneLOD::BuildLayout(*Resource, *InSkeleton, SocketBones);
 
         const FBoneLODLayoutEntry* Published = Entry.get();
-        BoneLODLayouts.push_back(Move(Entry));
+        BoneLODLayouts.Add(Move(Entry));
         ActiveBoneLODLayout.store(Published, std::memory_order_release);
         return Published->Layout.get();
     }
@@ -223,8 +223,8 @@ namespace Lumina
         for (uint32& GlobalBone : GetMeshResource().MeshletData.MeshletBoneIndices)
         {
             const uint32 OldBone = GlobalBone;
-            GlobalBone = OldBone < FromToTo.size() ? FromToTo[OldBone] : 0u;
-            if (OldBone >= FromBindPose.size())
+            GlobalBone = OldBone < static_cast<uint32>(FromToTo.Num()) ? FromToTo[OldBone] : 0u;
+            if (OldBone >= static_cast<uint32>(FromBindPose.Num()))
             {
                 continue;
             }

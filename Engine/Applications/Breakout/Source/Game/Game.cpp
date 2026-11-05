@@ -407,9 +407,9 @@ namespace Breakout
         void PlaySound(ECS::FRegistry& Registry, ESound Sound, float Pitch = 1.0f, float Volume = 1.0f, float Pan = 0.0f)
         {
             FSoundQueue& Queue = Registry.GetSingleton<FSoundQueue>();
-            if (Queue.Pending.size() < 96)
+            if (Queue.Pending.Num() < 96)
             {
-                Queue.Pending.push_back(FSoundRequest{ Sound, Pitch, Volume, Pan });
+                Queue.Pending.Emplace(Sound, Pitch, Volume, Pan);
             }
         }
 
@@ -473,7 +473,7 @@ namespace Breakout
 
         int32 CountParticles(ECS::FRegistry& Registry)
         {
-            return int32(Registry.View<FParticle>().NumCandidates());
+            return Registry.View<FParticle>().NumCandidates();
         }
 
         int32 ParticleBudget(ECS::FRegistry& Registry, int32 Wanted)
@@ -697,7 +697,7 @@ namespace Breakout
             TVector<ECS::FEntity> Doomed;
             for (const ECS::FEntity Entity : Registry.View<TComponent>())
             {
-                Doomed.push_back(Entity);
+                Doomed.Add(Entity);
             }
             for (const ECS::FEntity Entity : Doomed)
             {
@@ -718,7 +718,7 @@ namespace Breakout
             DestroyAllWith<FDrone>(Registry);
 
             FExplosionQueue& Queue = Registry.GetSingleton<FExplosionQueue>();
-            Queue.Pending.clear();
+            Queue.Pending.Reset();
             Queue.Cursor = 0;
         }
 
@@ -731,7 +731,7 @@ namespace Breakout
                 {
                     if (Paddle.PlayerIndex == Index)
                     {
-                        Paddles.push_back(Entity);
+                        Paddles.Add(Entity);
                     }
                 }
             }
@@ -762,14 +762,14 @@ namespace Breakout
         void EnsurePaddles(ECS::FRegistry& Registry, int32 Count)
         {
             TVector<ECS::FEntity> Paddles = CollectPaddles(Registry);
-            while (int32(Paddles.size()) > Count)
+            while (Paddles.Num() > Count)
             {
-                Registry.Destroy(Paddles.back());
-                Paddles.pop_back();
+                Registry.Destroy(Paddles.Last());
+                Paddles.Pop();
             }
-            while (int32(Paddles.size()) < Count)
+            while (Paddles.Num() < Count)
             {
-                Paddles.push_back(SpawnPaddle(Registry, uint8(Paddles.size())));
+                Paddles.Add(SpawnPaddle(Registry, uint8(Paddles.Num())));
             }
         }
 
@@ -851,17 +851,17 @@ namespace Breakout
             {
                 if (Brick.Kind == EBrickKind::Portal)
                 {
-                    Portals.push_back(Entity);
+                    Portals.Add(Entity);
                 }
             }
 
-            for (int32 Index = 0; Index < int32(Portals.size()); ++Index)
+            for (int32 Index = 0; Index < Portals.Num(); ++Index)
             {
                 Registry.Get<FBrick>(Portals[Index]).PortalPair = Index / 2;
             }
-            if (Portals.size() % 2 == 1)
+            if (Portals.Num() % 2 == 1)
             {
-                Registry.Get<FBrick>(Portals.back()).PortalPair = -1;
+                Registry.Get<FBrick>(Portals.Last()).PortalPair = -1;
             }
         }
 
@@ -1144,7 +1144,7 @@ namespace Breakout
                     continue;
                 }
                 Paddle.LaserCooldown = kLaserInterval;
-                Shots.push_back({ Body.Position, Body.HalfSize.x, Paddle.LaserTimer });
+                Shots.Emplace(Body.Position, Body.HalfSize.x, Paddle.LaserTimer);
             }
 
             for (const FShot& Shot : Shots)
@@ -1219,12 +1219,12 @@ namespace Breakout
                 {
                     for (int32 Extra = 0; Extra < State.Perks.Count(EPerk::Splitter); ++Extra)
                     {
-                        Extras.push_back({ Body.Position, Ball.Speed });
+                        Extras.Emplace(Body.Position, Ball.Speed);
                     }
                 }
             }
 
-            for (int32 Index = 0; Index < int32(Extras.size()); ++Index)
+            for (int32 Index = 0; Index < Extras.Num(); ++Index)
             {
                 const float Angle = (Index % 2 == 0 ? -0.7f : 0.7f) + Rng.Range(-0.15f, 0.15f);
                 SpawnBall(Registry, Extras[Index].Position, { Math::Sin(Angle) * Extras[Index].Speed,
@@ -1309,7 +1309,7 @@ namespace Breakout
 
         void QueueExplosion(ECS::FRegistry& Registry, const FVector2& Origin)
         {
-            Registry.GetSingleton<FExplosionQueue>().Pending.push_back(Origin);
+            Registry.GetSingleton<FExplosionQueue>().Pending.Add(Origin);
         }
 
         void ApplyPowerUp(ECS::FRegistry& Registry, EPowerUp Type, const FVector2& Position)
@@ -1334,7 +1334,7 @@ namespace Breakout
                 TVector<ECS::FEntity> Sources;
                 for (const ECS::FEntity Entity : Registry.View<FBall>())
                 {
-                    Sources.push_back(Entity);
+                    Sources.Add(Entity);
                 }
 
                 for (const ECS::FEntity Source : Sources)
@@ -1504,9 +1504,9 @@ namespace Breakout
             TVector<FPaddleSpan> Paddles;
             for (auto [Entity, Body, Paddle] : Registry.View<FBody, FPaddle>().Each())
             {
-                Paddles.push_back({ Body.Position, Body.HalfSize, Paddle.MagnetTimer > 0.0f });
+                Paddles.Emplace(Body.Position, Body.HalfSize, Paddle.MagnetTimer > 0.0f);
             }
-            if (Paddles.empty())
+            if (Paddles.IsEmpty())
             {
                 return;
             }
@@ -1563,11 +1563,11 @@ namespace Breakout
 
                 if (bTouches)
                 {
-                    Collected.push_back(Entity);
+                    Collected.Add(Entity);
                 }
                 else if (Body.Position.y > kFieldHeight + 80.0f)
                 {
-                    Missed.push_back(Entity);
+                    Missed.Add(Entity);
                 }
             }
 
@@ -1666,9 +1666,9 @@ namespace Breakout
         void ResolveExplosions(ECS::FRegistry& Registry)
         {
             FExplosionQueue& Queue = Registry.GetSingleton<FExplosionQueue>();
-            if (Queue.Cursor >= int32(Queue.Pending.size()))
+            if (Queue.Cursor >= Queue.Pending.Num())
             {
-                Queue.Pending.clear();
+                Queue.Pending.Reset();
                 Queue.Cursor = 0;
                 return;
             }
@@ -1677,11 +1677,11 @@ namespace Breakout
 
             TVector<FVector2> Batch;
             const int32 Last = Math::Min(Queue.Cursor + kExplosionsPerStep,
-                Math::Min(int32(Queue.Pending.size()), kMaxChainStages));
+                Math::Min(Queue.Pending.Num(), kMaxChainStages));
 
             for (int32 Index = Queue.Cursor; Index < Last; ++Index)
             {
-                Batch.push_back(Queue.Pending[Index]);
+                Batch.Add(Queue.Pending[Index]);
             }
             Queue.Cursor = Last;
 
@@ -1690,19 +1690,19 @@ namespace Breakout
 
             for (const FVector2& Origin : Batch)
             {
-                Caught.clear();
+                Caught.Reset();
                 for (auto [Entity, Body, Brick] : Registry.View<FBody, FBrick>().Each())
                 {
                     if (Brick.Health > 0 && !BrickIsFixture(Brick.Kind) && VectorLength(Body.Position - Origin) <= Radius)
                     {
-                        Caught.push_back(Entity);
+                        Caught.Add(Entity);
                     }
                 }
                 for (auto [Entity, Body, Drone] : Registry.View<FBody, FDrone>().Each())
                 {
                     if (VectorLength(Body.Position - Origin) <= Radius)
                     {
-                        DronesCaught.push_back(Entity);
+                        DronesCaught.Add(Entity);
                     }
                 }
 
@@ -1964,26 +1964,26 @@ namespace Breakout
                 {
                     if (!Occupied[Row][Column])
                     {
-                        Empty.push_back({ Row, Column });
+                        Empty.Emplace(Row, Column);
                     }
                 }
             }
 
-            if (Empty.empty())
+            if (Empty.IsEmpty())
             {
                 return;
             }
 
             FRandom& Rng = Registry.GetSingleton<FRandom>();
             FGameState& State = Registry.GetSingleton<FGameState>();
-            const int32 Count = Math::Min<int32>(2, int32(Empty.size()));
+            const int32 Count = Math::Min<int32>(2, Empty.Num());
 
             for (int32 Index = 0; Index < Count; ++Index)
             {
-                const int32 Pick = Rng.Below(int32(Empty.size()));
+                const int32 Pick = Rng.Below(Empty.Num());
                 const FSlot Slot = Empty[Pick];
-                Empty[Pick] = Empty.back();
-                Empty.pop_back();
+                Empty[Pick] = Empty.Last();
+                Empty.Pop();
 
                 const EBrickKind Kind = Rng.Unit() < 0.25f ? EBrickKind::Reinforced : EBrickKind::Normal;
                 const ECS::FEntity Entity = SpawnBrick(Registry, Slot.Row, Slot.Column, Kind, Kind == EBrickKind::Reinforced ? 2 : 1);
@@ -2067,7 +2067,7 @@ namespace Breakout
                 {
                     const float Base = Boss.Kind == EBossKind::Warden ? 1.9f : (Boss.Kind == EBossKind::Architect ? 3.4f : 2.8f);
                     Boss.FireTimer = Math::Max(0.55f, Base - (1.0f - Health) * 1.1f);
-                    Shots.push_back({ { Body.Position.x, Body.Position.y + Body.HalfSize.y },
+                    Shots.Add({ { Body.Position.x, Body.Position.y + Body.HalfSize.y },
                         Boss.Kind == EBossKind::Warden ? 1 + int32(Rng.Range(0.0f, 2.4f)) : 1 });
                 }
             }
@@ -2160,7 +2160,7 @@ namespace Breakout
             if (State.Phase == EPhase::Playing && DronesEnabled(State))
             {
                 State.DroneTimer -= Delta;
-                const int32 Alive = int32(Registry.View<FDrone>().NumCandidates());
+                const int32 Alive = Registry.View<FDrone>().NumCandidates();
                 const int32 Cap = Math::Min(1 + State.Level / 3, 5);
 
                 if (State.DroneTimer <= 0.0f && Alive < Cap)
@@ -2184,7 +2184,7 @@ namespace Breakout
             TVector<FPaddleSpan> Paddles;
             for (auto [Entity, Body, Paddle] : Registry.View<FBody, FPaddle>().Each())
             {
-                Paddles.push_back({ Body.Position, Body.HalfSize, Entity });
+                Paddles.Emplace(Body.Position, Body.HalfSize, Entity);
             }
 
             TVector<ECS::FEntity> Doomed;
@@ -2197,7 +2197,7 @@ namespace Breakout
 
                 if (Drone.Health <= 0)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -2225,7 +2225,7 @@ namespace Breakout
 
                 if (Body.Position.y > kFieldHeight + 80.0f)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -2234,7 +2234,7 @@ namespace Breakout
                     if (Math::Abs(Body.Position.x - Span.Position.x) < Span.HalfSize.x + Drone.Radius * 0.8f &&
                         Math::Abs(Body.Position.y - Span.Position.y) < Span.HalfSize.y + Drone.Radius * 0.8f)
                     {
-                        PaddleStruck.push_back(Entity);
+                        PaddleStruck.Add(Entity);
                         Registry.Get<FPaddle>(Span.Entity).HitFlash = 1.0f;
                         break;
                     }
@@ -2277,7 +2277,7 @@ namespace Breakout
             TVector<FPaddleSpan> Paddles;
             for (auto [Entity, Body, Paddle] : Registry.View<FBody, FPaddle>().Each())
             {
-                Paddles.push_back({ Body.Position, Body.HalfSize, Entity });
+                Paddles.Emplace(Body.Position, Body.HalfSize, Entity);
             }
 
             TVector<ECS::FEntity> Doomed;
@@ -2293,7 +2293,7 @@ namespace Breakout
 
                 if (Bolt.Life <= 0.0f || Body.Position.y < -40.0f || Body.Position.y > kFieldHeight + 60.0f)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -2304,8 +2304,8 @@ namespace Breakout
                         if (Math::Abs(Body.Position.x - Span.Position.x) < Span.HalfSize.x + Body.HalfSize.x &&
                             Math::Abs(Body.Position.y - Span.Position.y) < Span.HalfSize.y + Body.HalfSize.y)
                         {
-                            StruckPaddles.push_back(Span.Entity);
-                            Doomed.push_back(Entity);
+                            StruckPaddles.Add(Span.Entity);
+                            Doomed.Add(Entity);
                             break;
                         }
                     }
@@ -2319,8 +2319,8 @@ namespace Breakout
                     if (Math::Abs(Offset.x) < BossBody.HalfSize.x + Body.HalfSize.x &&
                         Math::Abs(Offset.y) < BossBody.HalfSize.y + Body.HalfSize.y)
                     {
-                        BossHits.push_back(BossEntity);
-                        Doomed.push_back(Entity);
+                        BossHits.Add(BossEntity);
+                        Doomed.Add(Entity);
                         bConsumed = true;
                         break;
                     }
@@ -2334,8 +2334,8 @@ namespace Breakout
                 {
                     if (VectorLength(Body.Position - DroneBody.Position) < Drone.Radius + Body.HalfSize.y * 0.5f)
                     {
-                        DroneHits.push_back(DroneEntity);
-                        Doomed.push_back(Entity);
+                        DroneHits.Add(DroneEntity);
+                        Doomed.Add(Entity);
                         bConsumed = true;
                         break;
                     }
@@ -2356,8 +2356,8 @@ namespace Breakout
                     if (Math::Abs(Offset.x) < BrickBody.HalfSize.x + Body.HalfSize.x &&
                         Math::Abs(Offset.y) < BrickBody.HalfSize.y + Body.HalfSize.y)
                     {
-                        Struck.push_back(BrickEntity);
-                        Doomed.push_back(Entity);
+                        Struck.Add(BrickEntity);
+                        Doomed.Add(Entity);
                         break;
                     }
                 }
@@ -2486,10 +2486,10 @@ namespace Breakout
             TVector<FPaddleSnap> Paddles;
             for (auto [Entity, Body, Paddle] : Registry.View<FBody, FPaddle>().Each())
             {
-                Paddles.push_back({ Entity, Body.Position, Body.HalfSize, Paddle.Velocity, Paddle.PlayerIndex,
-                    Paddle.CatchTimer > 0.0f, Paddle.SmashArm > 0.0f, false, false });
+                Paddles.Emplace(Entity, Body.Position, Body.HalfSize, Paddle.Velocity, Paddle.PlayerIndex,
+                    Paddle.CatchTimer > 0.0f, Paddle.SmashArm > 0.0f, false, false);
             }
-            if (Paddles.empty())
+            if (Paddles.IsEmpty())
             {
                 return;
             }
@@ -2505,14 +2505,14 @@ namespace Breakout
             {
                 if (Brick.Kind == EBrickKind::Gravity && Brick.Health > 0)
                 {
-                    Wells.push_back(Body.Position);
+                    Wells.Add(Body.Position);
                 }
             }
 
             TVector<ECS::FEntity> Balls;
             for (const ECS::FEntity Entity : Registry.View<FBall>())
             {
-                Balls.push_back(Entity);
+                Balls.Add(Entity);
             }
 
             struct FBrickHit
@@ -2699,7 +2699,7 @@ namespace Breakout
 
                     if (!BossStruck.IsNull())
                     {
-                        BossTargets.push_back(BossStruck);
+                        BossTargets.Add(BossStruck);
                         Ball.Squash = 1.0f;
                         break;
                     }
@@ -2727,7 +2727,7 @@ namespace Breakout
 
                     if (!DroneStruck.IsNull())
                     {
-                        DroneTargets.push_back(DroneStruck);
+                        DroneTargets.Add(DroneStruck);
                         Ball.Squash = 1.0f;
                         break;
                     }
@@ -2758,7 +2758,7 @@ namespace Breakout
                             Velocity = Normal * Ball.Speed;
                             Position = BrickBody.Position + Normal * (Reach + 1.0f);
                             Ball.Squash = 1.0f;
-                            BumpersHit.push_back(BrickEntity);
+                            BumpersHit.Add(BrickEntity);
                             Struck = ECS::NullEntity;
                             bWarped = true;
                             break;
@@ -2840,7 +2840,7 @@ namespace Breakout
 
                     if (!Struck.IsNull())
                     {
-                        DoomedBricks.push_back({ Struck, Damage, Ball.SmashTimer > 0.0f });
+                        DoomedBricks.Emplace(Struck, Damage, Ball.SmashTimer > 0.0f);
                         Ball.Speed = Math::Min(Ball.Speed + 6.0f, MaxSpeed);
                         Ball.Squash = 1.0f;
                         Velocity = Velocity * (Ball.Speed / Math::Max(VectorLength(Velocity), 1.0f));
@@ -2947,7 +2947,7 @@ namespace Breakout
 
                 if (Position.y > kFieldHeight + Radius * 3.0f)
                 {
-                    LostBalls.push_back(Entity);
+                    LostBalls.Add(Entity);
                 }
             }
 
@@ -3064,7 +3064,7 @@ namespace Breakout
                 Particle.Life -= Delta;
                 if (Particle.Life <= 0.0f)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -3102,7 +3102,7 @@ namespace Breakout
                 Wave.Age += Delta;
                 if (Wave.Age >= Wave.Duration)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                 }
             }
 
@@ -3122,7 +3122,7 @@ namespace Breakout
                 Pop.Position.y -= 80.0f * Delta;
                 if (Pop.Age >= Pop.Duration)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                 }
             }
 
@@ -3227,20 +3227,20 @@ namespace Breakout
                 {
                     continue;
                 }
-                Pool.push_back(Perk);
+                Pool.Add(Perk);
             }
 
             for (int32 Slot = 0; Slot < kDraftChoices; ++Slot)
             {
-                if (Pool.empty())
+                if (Pool.IsEmpty())
                 {
                     State.Draft[Slot] = EPerk::Lifeline;
                     continue;
                 }
-                const int32 Pick = Rng.Below(int32(Pool.size()));
+                const int32 Pick = Rng.Below(Pool.Num());
                 State.Draft[Slot] = Pool[Pick];
-                Pool[Pick] = Pool.back();
-                Pool.pop_back();
+                Pool[Pick] = Pool.Last();
+                Pool.Pop();
             }
 
             State.DraftCursor = 1;
@@ -3636,7 +3636,7 @@ namespace Breakout
         CameraSystem(Registry, Delta);
 
         Stats.Particles = CountParticles(Registry);
-        Stats.Entities = int32(Registry.NumEntities());
+        Stats.Entities = Registry.NumEntities();
     }
 
     const char* FGame::GetLevelName() const
@@ -3698,7 +3698,7 @@ namespace Breakout
             break;
         case EKey::P:
             bPaused = !bPaused;
-            Registry.GetSingleton<FSoundQueue>().Pending.push_back(FSoundRequest{ ESound::UiMove });
+            Registry.GetSingleton<FSoundQueue>().Pending.Emplace(ESound::UiMove);
             break;
         case EKey::M:
             bMuted = !bMuted;

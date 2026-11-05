@@ -52,7 +52,7 @@ namespace Lumina::Dialogs
 
         EResult Result = EResult::Yes;
         MessageBeep(MB_ICONEXCLAMATION);
-        int32 ResultCode = MessageBoxA(nullptr, Message.c_str(), Title.c_str(), Style);
+        int32 ResultCode = MessageBoxA(nullptr, *Message, *Title, Style);
         switch(ResultCode)
         {
             case IDOK:

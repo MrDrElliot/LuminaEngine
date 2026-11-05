@@ -48,10 +48,10 @@ namespace
         const uint32 Seam = N / 2u;
         auto EmitQuads = [&](uint32 BeginX, uint32 EndX)
         {
-            FGeometrySurface& Surface = Resource.GeometrySurfaces.emplace_back();
+            FGeometrySurface& Surface = Resource.GeometrySurfaces.EmplaceGetRef();
             Surface.ID            = bTwoSurfaces ? (BeginX == 0 ? "Left" : "Right") : "Terrain";
-            Surface.StartIndex    = (uint32)Resource.Indices.size();
-            Surface.MaterialIndex = (int16)(Resource.GeometrySurfaces.size() - 1u);
+            Surface.StartIndex    = (uint32)Resource.Indices.Num();
+            Surface.MaterialIndex = (int16)(Resource.GeometrySurfaces.Num() - 1u);
 
             for (uint32 z = 0; z + 1u < N; ++z)
             {
@@ -61,10 +61,10 @@ namespace
                     const uint32 v10 = v00 + 1u;
                     const uint32 v01 = v00 + N;
                     const uint32 v11 = v01 + 1u;
-                    Resource.Indices.insert(Resource.Indices.end(), { v00, v01, v10, v10, v01, v11 });
+                    Resource.Indices.Append({ v00, v01, v10, v10, v01, v11 });
                 }
             }
-            Surface.IndexCount = (uint32)Resource.Indices.size() - Surface.StartIndex;
+            Surface.IndexCount = (uint32)Resource.Indices.Num() - Surface.StartIndex;
         };
 
         if (bTwoSurfaces)
@@ -105,7 +105,7 @@ namespace
     void BuildCardCanopy(FMeshResource& Resource, uint32 NumCards, float BoxSize, float CardSize)
     {
         Resource.ResizeVertices(NumCards * 4u);
-        FGeometrySurface& Surface = Resource.GeometrySurfaces.emplace_back();
+        FGeometrySurface& Surface = Resource.GeometrySurfaces.EmplaceGetRef();
         Surface.ID = "Canopy";
 
         uint32 Seed = 12345u;
@@ -132,9 +132,9 @@ namespace
             }
 
             const uint32 b = c * 4u;
-            Resource.Indices.insert(Resource.Indices.end(), { b, b + 1u, b + 2u, b, b + 2u, b + 3u });
+            Resource.Indices.Append({ b, b + 1u, b + 2u, b, b + 2u, b + 3u });
         }
-        Surface.IndexCount = (uint32)Resource.Indices.size();
+        Surface.IndexCount = (uint32)Resource.Indices.Num();
     }
 
     // Quantization moves a decoded position by a small fraction of the meshlet's extent.
@@ -165,12 +165,12 @@ TEST(MeshLOD, SurfaceSeamStaysSealedAtEveryLOD)
     BuildTerrain(Resource, true);
     Import::Mesh::GenerateMeshlets(Resource);
 
-    ASSERT_EQ(Resource.GeometrySurfaces.size(), 2u);
+    ASSERT_EQ(Resource.GeometrySurfaces.Num(), 2);
     const float SeamX = (float)(kGridSize / 2u);
 
     for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
     {
-        ASSERT_GE(Surface.NumLODs, 2u) << Surface.ID.c_str();
+        ASSERT_GE(Surface.NumLODs, 2u) << *Surface.ID;
 
         for (uint32 LOD = 0; LOD < Surface.NumLODs; ++LOD)
         {
@@ -189,7 +189,7 @@ TEST(MeshLOD, SurfaceSeamStaysSealedAtEveryLOD)
 
             for (uint32 Row = 0; Row < kGridSize; ++Row)
             {
-                EXPECT_TRUE(SeamRowPresent[Row]) << Surface.ID.c_str() << " LOD " << LOD << " lost seam vertex " << Row;
+                EXPECT_TRUE(SeamRowPresent[Row]) << *Surface.ID << " LOD " << LOD << " lost seam vertex " << Row;
             }
         }
     }

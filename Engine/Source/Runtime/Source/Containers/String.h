@@ -31,18 +31,12 @@ namespace Lumina
     using FWStringView                              = Containers::TStringView<wchar_t>;
     using FCWStringView                             = Containers::TCStringView<wchar_t>;
 
-    template<typename T>
-    concept StringLike = requires(T s)
-    {
-        { s.length() } -> std::convertible_to<size_t>;
-        { s.data() }   -> std::convertible_to<const char*>;
-    };
 
     namespace StringUtils
     {
         inline FWString ToWideString(FStringView str)
         {
-            const auto Conv = StringCast<WIDECHAR>(str.data(), static_cast<int32>(str.size()));
+            const auto Conv = StringCast<WIDECHAR>(str.GetData(), str.Len());
             return FWString(Conv.Get(), Conv.Length());
         }
         inline FWString ToWideString(const char* pStr)
@@ -52,7 +46,7 @@ namespace Lumina
         }
         inline FString FromWideString(const FWString& Str)
         {
-            const auto Conv = StringCast<ANSICHAR>(Str.c_str(), static_cast<int32>(Str.size()));
+            const auto Conv = StringCast<ANSICHAR>(*Str, Str.Len());
             return FString(Conv.Get(), Conv.Length());
         }
         inline FString FromWideString(const WIDECHAR* Str)
@@ -74,9 +68,9 @@ namespace Lumina
             }
             Fmt::TInlineFormatBuffer<64> Buffer;
             Fmt::WriteFloat(Buffer, Size, Fmt::FFormatSpec{ -1, 2, ' ', 'f' });
-            Buffer.Push(' ');
+            Buffer.AppendChar(' ');
             Buffer.Append(Suffixes[Suffix], Suffix == 0 ? 1 : 2);
-            return FString(Buffer.Data(), Buffer.Size());
+            return FString(Buffer.GetData(), Buffer.Len());
         }
 
     }
@@ -91,7 +85,7 @@ namespace Lumina::Containers
     template <typename TTraits, size_t N, typename TAllocator>
     inline std::basic_ostream<char, TTraits>& operator<<(std::basic_ostream<char, TTraits>& Out, const TBasicString<char, N, TAllocator>& Str)
     {
-        Out.write(Str.data(), static_cast<std::streamsize>(Str.size()));
+        Out.write(Str.GetData(), static_cast<std::streamsize>(Str.Len()));
         return Out;
     }
 }

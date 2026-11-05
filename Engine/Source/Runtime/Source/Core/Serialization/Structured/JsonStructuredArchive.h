@@ -1,7 +1,9 @@
 #pragma once
-#include <string>
+
+#include <type_traits>
+
+#include "Core/Json/Json.h"
 #include "StructuredArchive.h"
-#include "nlohmann/json.hpp"
 
 namespace Lumina
 {
@@ -16,23 +18,44 @@ namespace Lumina
 
         using FArchive::operator<<;
 
-        nlohmann::json* PendingNode = nullptr;
+        FJsonValue* PendingNode = nullptr;
         bool            bLoading    = false;
 
         bool IsReading() const override { return bLoading; }
         bool IsWriting() const override { return !bLoading; }
 
+        // Loading accepts a number or a bool for any arithmetic field and casts it to the field type.
         template<typename T>
         void ReadWrite(T& Value)
         {
             if (PendingNode == nullptr) { return; }
-            if (bLoading)
+            if (!bLoading)
             {
-                if (!PendingNode->is_null()) { Value = PendingNode->get<T>(); }
+                *PendingNode = FJsonValue(Value);
+                return;
             }
-            else
+            if (PendingNode->IsBool())
             {
-                *PendingNode = Value;
+                Value = static_cast<T>(PendingNode->AsBool());
+            }
+            else if (PendingNode->IsNumber())
+            {
+                if constexpr (std::is_same_v<T, bool>)
+                {
+                    Value = PendingNode->AsDouble() != 0.0;
+                }
+                else if constexpr (std::is_floating_point_v<T>)
+                {
+                    Value = static_cast<T>(PendingNode->AsDouble());
+                }
+                else if constexpr (std::is_signed_v<T>)
+                {
+                    Value = static_cast<T>(PendingNode->AsInt64());
+                }
+                else
+                {
+                    Value = static_cast<T>(PendingNode->IsUnsigned() ? PendingNode->AsUInt64() : static_cast<uint64>(PendingNode->AsInt64()));
+                }
             }
         }
 
@@ -53,11 +76,11 @@ namespace Lumina
             if (PendingNode == nullptr) { return *this; }
             if (bLoading)
             {
-                if (PendingNode->is_string()) { Str = PendingNode->get<std::string>().c_str(); }
+                if (PendingNode->IsString()) { Str = FString(PendingNode->AsString()); }
             }
             else
             {
-                *PendingNode = std::string(Str.c_str());
+                *PendingNode = FJsonValue(Str);
             }
             return *this;
         }
@@ -67,17 +90,17 @@ namespace Lumina
             if (PendingNode == nullptr) { return *this; }
             if (bLoading)
             {
-                if (PendingNode->is_string())
+                if (PendingNode->IsString())
                 {
-                    const std::string Str = PendingNode->get<std::string>();
                     // JSON carries no file version; files written before None's wire form became
                     // the empty string stored its "NAME_None" display rendering.
-                    Name = Str == "NAME_None" ? FName() : FName(Str.c_str());
+                    const FStringView Text = PendingNode->AsString();
+                    Name = Text == "NAME_None" ? FName() : FName(Text);
                 }
             }
             else
             {
-                *PendingNode = std::string(Name.IsNone() ? "" : Name.c_str());
+                *PendingNode = Name.IsNone() ? FJsonValue("") : FJsonValue(Name.ToString());
             }
             return *this;
         }
@@ -103,11 +126,11 @@ namespace Lumina
     {
     public:
 
-        FJsonStructuredArchive(nlohmann::json& InRoot, bool bLoading);
+        FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading);
 
         // Serialize a reflected struct/object's properties to/from the given JSON node.
-        static void SaveStruct(nlohmann::json& OutNode, const CStruct* Type, void* Data);
-        static void LoadStruct(nlohmann::json& InNode,  const CStruct* Type, void* Data);
+        static void SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data);
+        static void LoadStruct(FJsonValue& InNode,  const CStruct* Type, void* Data);
 
         void EnterSlot(FSlotPosition Slot, bool bEnteringAttributedValue = false) override {}
         void LeaveSlot() override {}
@@ -134,17 +157,17 @@ namespace Lumina
 
         struct FContainer
         {
-            nlohmann::json* Node;
-            bool            bArray;
-            size_t          ReadIndex;
+            FJsonValue* Node;
+            bool        bArray;
+            int32       ReadIndex;
         };
 
-        nlohmann::json* CurrentContainer() { return Containers.empty() ? RootNode : Containers.back().Node; }
+        FJsonValue* CurrentContainer() { return Containers.IsEmpty() ? RootNode : Containers.Last().Node; }
 
-        nlohmann::json*             RootNode = nullptr;
+        FJsonValue*                 RootNode = nullptr;
         // Null sentinel for absent keys on load, and the discard sink on save: any node that cannot be
         // resolved routes writes here rather than leaving PendingNode pointing at stale storage.
-        nlohmann::json              MissingNode;
+        FJsonValue              MissingNode;
         TVector<FContainer>         Containers;
     };
 }

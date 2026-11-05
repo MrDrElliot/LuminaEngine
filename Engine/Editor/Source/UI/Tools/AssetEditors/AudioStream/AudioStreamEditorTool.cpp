@@ -13,7 +13,7 @@ namespace Lumina
     static const char* DetailsWindowName  = "Details";
 
     FAudioStreamEditorTool::FAudioStreamEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -59,7 +59,7 @@ namespace Lumina
 
         Audio::FAudioInfo DecodedInfo;
         TVector<float> Samples;
-        if (!Audio::DecodePCM(Stream->AudioData->Bytes.data(), Stream->AudioData->Bytes.size(), DecodedInfo, Samples))
+        if (!Audio::DecodePCM(Stream->AudioData->Bytes.GetData(), Stream->AudioData->Bytes.Num(), DecodedInfo, Samples))
         {
             return;
         }
@@ -69,8 +69,8 @@ namespace Lumina
         const uint32 Channels = Info.NumChannels;
         const uint64 Frames   = Info.NumFrames;
 
-        PeakMin.assign((size_t)Channels * NumPeakBuckets, 0.0f);
-        PeakMax.assign((size_t)Channels * NumPeakBuckets, 0.0f);
+        PeakMin.Init(0.0f, IntCastChecked<int32>(static_cast<int64>(Channels) * NumPeakBuckets));
+        PeakMax.Init(0.0f, IntCastChecked<int32>(static_cast<int64>(Channels) * NumPeakBuckets));
 
         for (uint32 Bucket = 0; Bucket < NumPeakBuckets; ++Bucket)
         {
@@ -80,14 +80,14 @@ namespace Lumina
             for (uint32 C = 0; C < Channels; ++C)
             {
                 float MinS = 0.0f, MaxS = 0.0f;
-                for (uint64 F = Begin; F < End && F < Frames; ++F)
+                for (int32 F = IntCastChecked<int32>(Begin), Limit = IntCastChecked<int32>(Math::Min(End, Frames)); F < Limit; ++F)
                 {
-                    const float S = Samples[(size_t)F * Channels + C];
+                    const float S = Samples[F * Channels + C];
                     MinS = Math::Min(MinS, S);
                     MaxS = Math::Max(MaxS, S);
                 }
-                PeakMin[(size_t)C * NumPeakBuckets + Bucket] = MinS;
-                PeakMax[(size_t)C * NumPeakBuckets + Bucket] = MaxS;
+                PeakMin[C * NumPeakBuckets + Bucket] = MinS;
+                PeakMax[C * NumPeakBuckets + Bucket] = MaxS;
             }
         }
 
@@ -259,8 +259,8 @@ namespace Lumina
 
             DrawList->AddLine(ImVec2(Origin.x, LaneCenter), ImVec2(Origin.x + Avail.x, LaneCenter), CenterColor);
 
-            const float* Mins = &PeakMin[(size_t)C * NumPeakBuckets];
-            const float* Maxs = &PeakMax[(size_t)C * NumPeakBuckets];
+            const float* Mins = &PeakMin[C * NumPeakBuckets];
+            const float* Maxs = &PeakMax[C * NumPeakBuckets];
 
             const int32 NumColumns = (int32)Avail.x;
             for (int32 X = 0; X < NumColumns; ++X)
@@ -311,7 +311,7 @@ namespace Lumina
         }
 
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Stream->GetName().c_str());
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", *Stream->GetName());
         ImGui::SeparatorText("Audio Information");
         ImGuiX::Font::PopFont();
 
@@ -328,7 +328,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(Label);
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(Value.c_str());
+                ImGui::TextUnformatted(*Value);
             };
 
             const float Duration = Stream->GetDuration();
@@ -349,7 +349,7 @@ namespace Lumina
                                   : Format("{}", Stream->NumChannels));
             PropertyRow("Frames", Format("{}", Stream->NumFrames));
 
-            const size_t SizeBytes = Stream->IsValid() ? Stream->AudioData->Bytes.size() : 0;
+            const size_t SizeBytes = Stream->IsValid() ? Stream->AudioData->Bytes.Num() : 0;
             char SizeStr[64];
             if (SizeBytes >= Constants::kMiB)
             {
@@ -366,9 +366,9 @@ namespace Lumina
 
         ImGui::Spacing();
 
-        if (!Stream->SourcePath.empty())
+        if (!Stream->SourcePath.IsEmpty())
         {
-            ImGui::TextDisabled("Source: %s", Stream->SourcePath.c_str());
+            ImGui::TextDisabled("Source: %s", *Stream->SourcePath);
         }
     }
 
@@ -392,7 +392,7 @@ namespace Lumina
         ImGuiID LeftDockID = 0, RightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(WaveformWindowName).c_str(), LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(DetailsWindowName).c_str(), RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(WaveformWindowName), LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(DetailsWindowName), RightDockID);
     }
 }

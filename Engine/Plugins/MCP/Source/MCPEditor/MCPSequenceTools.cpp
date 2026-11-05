@@ -1,4 +1,5 @@
 #include "MCPSequenceTools.h"
+#include "MCPSceneTools.h"
 #include "World/ECS/Registry.h"
 
 #include "Agent/AgentAssetResolve.h"
@@ -31,10 +32,9 @@
 
 namespace Lumina::MCP
 {
-    // Named because the other tool files share these Register names and can land in one unity blob.
-    namespace SequenceTools
+    namespace MCPSequenceToolsInternal
     {
-        struct FTrackType
+        struct FSequenceTrackType
         {
             const char* Name;
             CClass*     (*Class)();
@@ -42,7 +42,7 @@ namespace Lumina::MCP
             const char* Description;
         };
 
-        const FTrackType TrackTypes[] =
+        const FSequenceTrackType GSequenceTrackTypes[] =
         {
             { "Transform",    &CSequenceTrack_Transform::StaticClass,    true,  "Keys the binding's Location, Rotation (pitch, yaw, roll degrees) and Scale." },
             { "CameraCut",    &CSequenceTrack_CameraCut::StaticClass,    false, "Which camera binding is live over each time range, with optional blends." },
@@ -55,9 +55,9 @@ namespace Lumina::MCP
             { "CameraShake",  &CSequenceTrack_CameraShake::StaticClass,  false, "A looping drift over the live view for a handheld feel, scaled by Intensity." },
         };
 
-        const FTrackType* FindTrackType(FStringView Name)
+        const FSequenceTrackType* FindSequenceTrackType(FStringView Name)
         {
-            for (const FTrackType& Type : TrackTypes)
+            for (const FSequenceTrackType& Type : GSequenceTrackTypes)
             {
                 if (Name == Type.Name)
                 {
@@ -67,19 +67,19 @@ namespace Lumina::MCP
             return nullptr;
         }
 
-        FString TrackTypeName(const CSequenceTrack* Track)
+        FString SequenceTrackTypeName(const CSequenceTrack* Track)
         {
-            for (const FTrackType& Type : TrackTypes)
+            for (const FSequenceTrackType& Type : GSequenceTrackTypes)
             {
                 if (Track->GetClass() == Type.Class())
                 {
                     return Type.Name;
                 }
             }
-            return FString(Track->GetClass()->GetName().ToString().c_str());
+            return FString(*Track->GetClass()->GetName().ToString());
         }
 
-        const char* BindingKindName(ESequenceBindingKind Kind)
+        const char* SequenceBindingKindName(ESequenceBindingKind Kind)
         {
             switch (Kind)
             {
@@ -114,12 +114,12 @@ namespace Lumina::MCP
             TVector<TStrongObjectPtr<CSequence>>& Touched = TouchedSequences();
             if (std::find_if(Touched.begin(), Touched.end(), [Out](const TStrongObjectPtr<CSequence>& Held) { return Held.Get() == Out; }) == Touched.end())
             {
-                Touched.push_back(Out);
+                Touched.Add(Out);
             }
             return true;
         }
 
-        void MarkDirty(CSequence* Sequence)
+        void MarkSequenceDirty(CSequence* Sequence)
         {
             if (CPackage* Package = Sequence->GetPackage())
             {
@@ -127,9 +127,9 @@ namespace Lumina::MCP
             }
         }
 
-        int32 FindBinding(const CSequence* Sequence, FStringView Name)
+        int32 FindSequenceBinding(const CSequence* Sequence, FStringView Name)
         {
-            for (int32 Index = 0; Index < (int32)Sequence->Bindings.size(); ++Index)
+            for (int32 Index = 0; Index < Sequence->Bindings.Num(); ++Index)
             {
                 if (Sequence->Bindings[Index].Name.ToString() == Name)
                 {
@@ -140,23 +140,23 @@ namespace Lumina::MCP
         }
 
         // A binding by name or by index, where empty means none.
-        bool ParseBinding(const CSequence* Sequence, const FString& Text, int32& Out, FString& OutError)
+        bool ParseSequenceBinding(const CSequence* Sequence, const FString& Text, int32& Out, FString& OutError)
         {
             Out = Constants::kIndexNone;
-            if (Text.empty())
+            if (Text.IsEmpty())
             {
                 return true;
             }
 
-            Out = FindBinding(Sequence, FStringView(Text));
+            Out = FindSequenceBinding(Sequence, FStringView(Text));
             if (Out != Constants::kIndexNone)
             {
                 return true;
             }
 
             char* End = nullptr;
-            const long Parsed = std::strtol(Text.c_str(), &End, 10);
-            if (End != nullptr && *End == '\0' && Parsed >= 0 && Parsed < (long)Sequence->Bindings.size())
+            const long Parsed = std::strtol(*Text, &End, 10);
+            if (End != nullptr && *End == '\0' && Parsed >= 0 && Parsed < (long)Sequence->Bindings.Num())
             {
                 Out = (int32)Parsed;
                 return true;
@@ -166,33 +166,33 @@ namespace Lumina::MCP
             return false;
         }
 
-        FString BindingName(const CSequence* Sequence, int32 Index)
+        FString SequenceBindingName(const CSequence* Sequence, int32 Index)
         {
-            return Index >= 0 && Index < (int32)Sequence->Bindings.size() ? FString(Sequence->Bindings[Index].Name.ToString().c_str()) : FString();
+            return Index >= 0 && Index < Sequence->Bindings.Num() ? FString(*Sequence->Bindings[Index].Name.ToString()) : FString();
         }
 
-        bool CheckTrack(const CSequence* Sequence, int32 Track, FString& OutError)
+        bool CheckSequenceTrack(const CSequence* Sequence, int32 Track, FString& OutError)
         {
-            if (Track < 0 || Track >= (int32)Sequence->Tracks.size() || Sequence->Tracks[Track] == nullptr)
+            if (Track < 0 || Track >= Sequence->Tracks.Num() || Sequence->Tracks[Track] == nullptr)
             {
-                OutError = Lumina::Format("Track {} does not exist. This sequence has {} track(s).", Track, Sequence->Tracks.size());
+                OutError = Lumina::Format("Track {} does not exist. This sequence has {} track(s).", Track, Sequence->Tracks.Num());
                 return false;
             }
             return true;
         }
 
-        CSequenceTrack* AddTrack(CSequence* Sequence, CClass* Class, int32 Binding)
+        CSequenceTrack* NewSequenceTrack(CSequence* Sequence, CClass* Class, int32 Binding)
         {
             CSequenceTrack* Track = NewObject<CSequenceTrack>(Class, Sequence->GetPackage());
             Track->BindingIndex = Binding;
-            Sequence->Tracks.push_back(Track);
+            Sequence->Tracks.Add(Track);
             return Track;
         }
 
         template<typename T>
-        T* FindTrack(CSequence* Sequence, int32 Binding, int32* OutIndex = nullptr)
+        T* FindSequenceTrack(CSequence* Sequence, int32 Binding, int32* OutIndex = nullptr)
         {
-            for (int32 Index = 0; Index < (int32)Sequence->Tracks.size(); ++Index)
+            for (int32 Index = 0; Index < (int32)Sequence->Tracks.Num(); ++Index)
             {
                 T* Track = Cast<T>(Sequence->Tracks[Index].Get());
                 if (Track != nullptr && Track->BindingIndex == Binding)
@@ -208,19 +208,19 @@ namespace Lumina::MCP
         }
 
         template<typename T>
-        T* FindOrAddTrack(CSequence* Sequence, int32 Binding, int32& OutIndex)
+        T* FindOrAddSequenceTrack(CSequence* Sequence, int32 Binding, int32& OutIndex)
         {
-            if (T* Existing = FindTrack<T>(Sequence, Binding, &OutIndex))
+            if (T* Existing = FindSequenceTrack<T>(Sequence, Binding, &OutIndex))
             {
                 return Existing;
             }
-            OutIndex = (int32)Sequence->Tracks.size();
-            return static_cast<T*>(AddTrack(Sequence, T::StaticClass(), Binding));
+            OutIndex = (int32)Sequence->Tracks.Num();
+            return static_cast<T*>(NewSequenceTrack(Sequence, T::StaticClass(), Binding));
         }
 
-        int32 IndexOfTrack(const CSequence* Sequence, const CSequenceTrack* Track)
+        int32 IndexOfSequenceTrack(const CSequence* Sequence, const CSequenceTrack* Track)
         {
-            for (int32 Index = 0; Index < (int32)Sequence->Tracks.size(); ++Index)
+            for (int32 Index = 0; Index < Sequence->Tracks.Num(); ++Index)
             {
                 if (Sequence->Tracks[Index].Get() == Track)
                 {
@@ -230,10 +230,9 @@ namespace Lumina::MCP
             return Constants::kIndexNone;
         }
 
-        bool ParseJson(const FString& Text, nlohmann::json& Out, FString& OutError)
+        bool ParseSequenceJson(const FString& Text, FJsonValue& Out, FString& OutError)
         {
-            Out = nlohmann::json::parse(Text.c_str(), nullptr, false);
-            if (Out.is_discarded())
+            if (!FJsonValue::Parse(Text, Out))
             {
                 OutError = Lumina::Format("'{}' is not valid JSON.", Text);
                 return false;
@@ -241,44 +240,44 @@ namespace Lumina::MCP
             return true;
         }
 
-        bool ReadVector(const nlohmann::json& Value, FVector3& Out)
+        bool ReadSequenceVector(const FJsonValue& Value, FVector3& Out)
         {
-            if (Value.is_array() && Value.size() == 3 && Value[0].is_number() && Value[1].is_number() && Value[2].is_number())
+            if (Value.IsArray() && Value.Num() == 3 && Value[0].IsNumber() && Value[1].IsNumber() && Value[2].IsNumber())
             {
-                Out = FVector3(Value[0].get<float>(), Value[1].get<float>(), Value[2].get<float>());
+                Out = FVector3(Value[0].AsFloat(), Value[1].AsFloat(), Value[2].AsFloat());
                 return true;
             }
-            if (Value.is_object() && Value.contains("X") && Value.contains("Y") && Value.contains("Z"))
+            if (Value["X"].IsNumber() && Value["Y"].IsNumber() && Value["Z"].IsNumber())
             {
-                Out = FVector3(Value["X"].get<float>(), Value["Y"].get<float>(), Value["Z"].get<float>());
+                Out = FVector3(Value["X"].AsFloat(), Value["Y"].AsFloat(), Value["Z"].AsFloat());
                 return true;
             }
             return false;
         }
 
-        bool ParseInterp(FStringView Text, ECurveInterpMode& Out)
+        bool ParseSequenceInterp(FStringView Text, ECurveInterpMode& Out)
         {
-            if (Text.empty() || Text == "Cubic")  { Out = ECurveInterpMode::Cubic; return true; }
+            if (Text.IsEmpty() || Text == "Cubic")  { Out = ECurveInterpMode::Cubic; return true; }
             if (Text == "Linear")                 { Out = ECurveInterpMode::Linear; return true; }
             if (Text == "Constant")               { Out = ECurveInterpMode::Constant; return true; }
             return false;
         }
 
-        void Key(SKeyedCurve& Curve, float Time, float Value, ECurveInterpMode Mode)
+        void KeySequenceCurve(SKeyedCurve& Curve, float Time, float Value, ECurveInterpMode Mode)
         {
             const int32 Index = Curve.UpdateOrAddKey(Time, Value);
             Curve.Keys[Index].InterpMode = Mode;
         }
 
-        void KeyVector(SSequenceVectorCurve& Curve, float Time, const FVector3& Value, ECurveInterpMode Mode)
+        void KeySequenceVector(SSequenceVectorCurve& Curve, float Time, const FVector3& Value, ECurveInterpMode Mode)
         {
             Curve.bEnabled = true;
-            Key(Curve.X.Curve, Time, Value.x, Mode);
-            Key(Curve.Y.Curve, Time, Value.y, Mode);
-            Key(Curve.Z.Curve, Time, Value.z, Mode);
+            KeySequenceCurve(Curve.X.Curve, Time, Value.x, Mode);
+            KeySequenceCurve(Curve.Y.Curve, Time, Value.y, Mode);
+            KeySequenceCurve(Curve.Z.Curve, Time, Value.z, Mode);
         }
 
-        void FinishVector(SSequenceVectorCurve& Curve, bool bAngles)
+        void FinishSequenceVector(SSequenceVectorCurve& Curve, bool bAngles)
         {
             if (bAngles)
             {
@@ -289,36 +288,14 @@ namespace Lumina::MCP
             Curve.Z.Curve.ComputeAutoTangents();
         }
 
-        FVector3 LookAtEuler(const FVector3& From, const FVector3& To)
+        FVector3 SequenceLookAtEuler(const FVector3& From, const FVector3& To)
         {
             return Math::Degrees(Math::YawFirstEulerAngles(Math::FindLookAtRotation(To, From)));
         }
 
-        CWorld* FindWorld(bool bGame)
+        CWorld* RequireSequenceGameWorld(FString& OutError)
         {
-            if (GWorldManager == nullptr)
-            {
-                return nullptr;
-            }
-
-            for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
-            {
-                if (!Context || !Context->World.IsValid())
-                {
-                    continue;
-                }
-                const bool bIsGame = Context->Type == EWorldType::Game || Context->Type == EWorldType::Simulation;
-                if (bIsGame == bGame)
-                {
-                    return Context->World.Get();
-                }
-            }
-            return nullptr;
-        }
-
-        CWorld* RequireGameWorld(FString& OutError)
-        {
-            CWorld* World = FindWorld(true);
+            CWorld* World = FindGameWorld();
             if (World == nullptr)
             {
                 OutError = "No game is playing. Start one with editor.play first, since sequences run in the game world.";
@@ -327,7 +304,7 @@ namespace Lumina::MCP
         }
 
         template<typename TFunc>
-        void ForEachPlayer(CWorld* World, const CSequence* Only, TFunc&& Visit)
+        void ForEachSequencePlayer(CWorld* World, const CSequence* Only, TFunc&& Visit)
         {
             TVector<ECS::FEntity> Players;
             auto View = World->View<SSequencePlayerComponent>();
@@ -336,7 +313,7 @@ namespace Lumina::MCP
                 const SSequencePlayerComponent& Player = View.Get<SSequencePlayerComponent>(Entity);
                 if (Only == nullptr || Player.Sequence.Get() == Only)
                 {
-                    Players.push_back(Entity);
+                    Players.Add(Entity);
                 }
             }
             for (ECS::FEntity Entity : Players)
@@ -345,10 +322,10 @@ namespace Lumina::MCP
             }
         }
 
-        FString DescribeValues(CSequenceTrack* Track, bool bSummary)
+        FString DescribeSequenceTrackValues(CSequenceTrack* Track, bool bSummary)
         {
-            nlohmann::json Values;
-            if (!Agent::WriteStruct(Track->GetClass(), Track, Values).IsValid() || !Values.is_object())
+            FJsonValue Values;
+            if (!Agent::WriteStruct(Track->GetClass(), Track, Values).IsValid() || !Values.IsObject())
             {
                 return FString();
             }
@@ -356,65 +333,44 @@ namespace Lumina::MCP
             if (bSummary)
             {
                 // A curve reads as its key count and range, which is what matters when surveying a long edit.
-                std::function<void(nlohmann::json&)> Collapse = [&Collapse](nlohmann::json& Node)
+                std::function<void(FJsonValue&)> Collapse = [&Collapse](FJsonValue& Node)
                 {
-                    if (!Node.is_object())
+                    if (!Node.IsObject())
                     {
                         return;
                     }
-                    if (Node.contains("Keys") && Node["Keys"].is_array())
+                    if (const FJsonValue& Keys = Node["Keys"]; Keys.IsArray())
                     {
-                        const nlohmann::json& Keys = Node["Keys"];
-                        nlohmann::json Summary = { { "KeyCount", Keys.size() } };
-                        if (!Keys.empty())
+                        FJsonValue Summary = FJsonValue::MakeObject({ { "KeyCount", Keys.Num() } });
+                        if (!Keys.IsEmpty())
                         {
-                            Summary["From"] = Keys.front().value("Time", 0.0f);
-                            Summary["To"] = Keys.back().value("Time", 0.0f);
+                            Summary.Set("From", Keys[0].GetValue("Time", 0.0f));
+                            Summary.Set("To", Keys[Keys.Num() - 1].GetValue("Time", 0.0f));
                         }
-                        Node = Summary;
+                        Node = Move(Summary);
                         return;
                     }
-                    for (auto& Entry : Node.items())
+                    for (FJsonMember& Entry : Node.Members())
                     {
-                        Collapse(Entry.value());
+                        Collapse(Entry.Value);
                     }
                 };
                 Collapse(Values);
             }
-            return FString(Values.dump().c_str());
-        }
-
-        constexpr float NoGround = -100000.0f;
-
-        // The first surface under a point, found in the playing world when there is one and the editor's otherwise.
-        float GroundHeight(float X, float Z)
-        {
-            FString Error;
-            CWorld* World = FindWorld(true);
-            if (World == nullptr)
-            {
-                World = SessionOps::GetSceneWorld(Error);
-            }
-            if (World == nullptr)
-            {
-                return NoGround;
-            }
-
-            const SRayResult Hit = World->GetPhysics()->Raycast(FVector3(X, 5000.0f, Z), FVector3(X, -5000.0f, Z), ECS::NullEntity);
-            return Hit.bHit ? Hit.Location.y : NoGround;
+            return Values.ToString();
         }
 
         // With Ground set a key's heights are above the terrain, so a shot can be placed without knowing the island's elevation.
-        void Ground(FVector3& Point, bool bGround)
+        void GroundSequencePoint(FVector3& Point, bool bGround)
         {
             if (bGround)
             {
-                const float Height = GroundHeight(Point.x, Point.z);
-                Point.y += Height > NoGround ? Height : 0.0f;
+                const float Height = GroundHeightAt(Point.x, Point.z);
+                Point.y += Height > GNoGroundHeight ? Height : 0.0f;
             }
         }
 
-        void FillStatus(const MovieCapture::FStatus& Status, SMovieStatusResult& Out)
+        void FillMovieStatus(const MovieCapture::FStatus& Status, SMovieStatusResult& Out)
         {
             Out.bActive       = Status.bActive;
             Out.bFinished     = Status.bFinished;
@@ -428,15 +384,15 @@ namespace Lumina::MCP
             Out.bAudio        = Status.bAudio;
         }
 
-        void RegisterCreate(FStringView Owner)
+        void RegisterSequenceCreate(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SCreateSequenceParams, SCreateSequenceResult>(
                 Owner, "sequence.create",
-                "Create an empty cinematic sequence asset. Build it with sequence.shot, add_event, add_track and set_keys, then play it with sequence.play or render it with movie.render.",
+                "Create an empty cinematic sequence asset under /Game/Content. Build it with sequence.shot, sequence.track and sequence.set_keys; play it with sequence.playback.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateSequenceParams& In, SCreateSequenceResult& Out)
                 {
-                    if (In.Name.empty())
+                    if (In.Name.IsEmpty())
                     {
                         return Agent::FToolResult::Error("A sequence needs a name.");
                     }
@@ -456,7 +412,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
                     }
 
-                    CSequence* Sequence = CFactory::CreateNewOf<CSequence>(FStringView(Path.c_str(), Path.size()));
+                    CSequence* Sequence = CFactory::CreateNewOf<CSequence>(FStringView(*Path, Path.Len()));
                     if (Sequence == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create a sequence at {}.", Path));
@@ -472,13 +428,13 @@ namespace Lumina::MCP
                     }
 
                     FAssetRegistry::Get().AssetCreated(Sequence);
-                    Out.Path = FString(Path.c_str());
-                    Out.Guid = FString(Sequence->GetGUID().ToString().c_str());
+                    Out.Path = FString(*Path);
+                    Out.Guid = FString(*Sequence->GetGUID().ToString());
                     return Agent::FToolResult::Ok(Lumina::Format("Created {}.", Out.Path));
                 });
         }
 
-        void RegisterSave(FStringView Owner)
+        void RegisterSequenceSave(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSequenceRefParams, SCreateSequenceResult>(
                 Owner, "sequence.save",
@@ -495,18 +451,18 @@ namespace Lumina::MCP
 
                     CPackage* Package = Sequence->GetPackage();
                     const FFixedString Path = Package != nullptr ? Package->GetPackagePath() : FFixedString();
-                    if (Package == nullptr || !CPackage::SavePackage(Package, FStringView(Path.c_str(), Path.size())))
+                    if (Package == nullptr || !CPackage::SavePackage(Package, FStringView(*Path, Path.Len())))
                     {
                         return Agent::FToolResult::Error("Could not save the sequence.");
                     }
 
-                    Out.Path = FString(Path.c_str());
-                    Out.Guid = FString(Sequence->GetGUID().ToString().c_str());
+                    Out.Path = FString(*Path);
+                    Out.Guid = FString(*Sequence->GetGUID().ToString());
                     return Agent::FToolResult::Ok(Lumina::Format("Saved {}.", Out.Path));
                 });
         }
 
-        void RegisterSettings(FStringView Owner)
+        void RegisterSequenceSetSettings(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSequenceSettingsParams, SDescribeSequenceResult>(
                 Owner, "sequence.set_settings",
@@ -533,9 +489,9 @@ namespace Lumina::MCP
                     {
                         Sequence->LetterboxAspect = Math::Min(In.LetterboxAspect, 4.0f);
                     }
-                    MarkDirty(Sequence);
+                    MarkSequenceDirty(Sequence);
 
-                    Out.Name = FString(Sequence->GetName().ToString().c_str());
+                    Out.Name = FString(*Sequence->GetName().ToString());
                     Out.Duration = Sequence->Duration;
                     Out.FrameRate = Sequence->FrameRate;
                     Out.LetterboxAspect = Sequence->LetterboxAspect;
@@ -543,7 +499,7 @@ namespace Lumina::MCP
                 });
         }
 
-        void RegisterDescribe(FStringView Owner)
+        void RegisterSequenceDescribe(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SDescribeSequenceParams, SDescribeSequenceResult>(
                 Owner, "sequence.describe",
@@ -558,26 +514,26 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name = FString(Sequence->GetName().ToString().c_str());
+                    Out.Name = FString(*Sequence->GetName().ToString());
                     Out.Duration = Sequence->Duration;
                     Out.FrameRate = Sequence->FrameRate;
                     Out.LetterboxAspect = Sequence->LetterboxAspect;
 
-                    for (int32 Index = 0; Index < (int32)Sequence->Bindings.size(); ++Index)
+                    for (int32 Index = 0; Index < Sequence->Bindings.Num(); ++Index)
                     {
                         const SSequenceBinding& Binding = Sequence->Bindings[Index];
                         SSequenceBindingInfo Info;
                         Info.Index = Index;
-                        Info.Name = FString(Binding.Name.ToString().c_str());
-                        Info.Kind = BindingKindName(Binding.Kind);
+                        Info.Name = FString(*Binding.Name.ToString());
+                        Info.Kind = SequenceBindingKindName(Binding.Kind);
                         if (Binding.SpawnPrefab.IsValid())
                         {
-                            Info.Prefab = FString(Binding.SpawnPrefab->GetGUID().ToString().c_str());
+                            Info.Prefab = FString(*Binding.SpawnPrefab->GetGUID().ToString());
                         }
-                        Out.Bindings.push_back(Move(Info));
+                        Out.Bindings.Add(Move(Info));
                     }
 
-                    for (int32 Index = 0; Index < (int32)Sequence->Tracks.size(); ++Index)
+                    for (int32 Index = 0; Index < Sequence->Tracks.Num(); ++Index)
                     {
                         CSequenceTrack* Track = Sequence->Tracks[Index].Get();
                         if (Track == nullptr)
@@ -586,18 +542,18 @@ namespace Lumina::MCP
                         }
                         SSequenceTrackInfo Info;
                         Info.Index = Index;
-                        Info.Type = TrackTypeName(Track);
-                        Info.Binding = BindingName(Sequence, Track->BindingIndex);
+                        Info.Type = SequenceTrackTypeName(Track);
+                        Info.Binding = SequenceBindingName(Sequence, Track->BindingIndex);
                         Info.bEnabled = Track->bEnabled;
-                        Info.Values = DescribeValues(Track, In.bSummary);
-                        Out.Tracks.push_back(Move(Info));
+                        Info.Values = DescribeSequenceTrackValues(Track, In.bSummary);
+                        Out.Tracks.Add(Move(Info));
                     }
 
-                    return Agent::FToolResult::Ok(Lumina::Format("{} binding(s), {} track(s), {:.2f}s.", Out.Bindings.size(), Out.Tracks.size(), Out.Duration));
+                    return Agent::FToolResult::Ok(Lumina::Format("{} binding(s), {} track(s), {:.2f}s.", Out.Bindings.Num(), Out.Tracks.Num(), Out.Duration));
                 });
         }
 
-        void RegisterTrackTypes(FStringView Owner)
+        void RegisterSequenceTrackTypes(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSequenceTrackTypesParams, SSequenceTrackTypesResult>(
                 Owner, "sequence.track_types",
@@ -605,7 +561,7 @@ namespace Lumina::MCP
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
                 [](const SSequenceTrackTypesParams& In, SSequenceTrackTypesResult& Out)
                 {
-                    for (const FTrackType& Type : TrackTypes)
+                    for (const FSequenceTrackType& Type : GSequenceTrackTypes)
                     {
                         SSequenceTrackTypeInfo Info;
                         Info.Name = Type.Name;
@@ -616,237 +572,238 @@ namespace Lumina::MCP
                             const Agent::FSchemaResult Schema = Agent::GenerateSchema(Type.Class());
                             if (Schema.IsValid())
                             {
-                                Info.Schema = FString(Schema.Schema.dump().c_str());
+                                Info.Schema = Schema.Schema.ToString();
                             }
                         }
-                        Out.Types.push_back(Move(Info));
+                        Out.Types.Add(Move(Info));
                     }
-                    return Agent::FToolResult::Ok(Lumina::Format("{} track type(s).", Out.Types.size()));
+                    return Agent::FToolResult::Ok(Lumina::Format("{} track type(s).", Out.Types.Num()));
                 });
         }
 
-        void RegisterAddBinding(FStringView Owner)
+        Agent::FToolResult SequenceAddBinding(const SSequenceBindingParams& In, SSequenceIndexResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SAddSequenceBindingParams, SSequenceIndexResult>(
-                Owner, "sequence.add_binding",
-                "Add something for the sequence to drive, an existing entity by name, a prefab spawned for its length, or a cinematic camera.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SAddSequenceBindingParams& In, SSequenceIndexResult& Out)
+            CSequence* Sequence = nullptr;
+            FString Error;
+            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            if (In.Name.IsEmpty())
+            {
+                return Agent::FToolResult::Error("A binding needs a name.");
+            }
+            if (FindSequenceBinding(Sequence, FStringView(In.Name)) != Constants::kIndexNone)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("The sequence already has a binding named '{}'.", In.Name));
+            }
+
+            SSequenceBinding Binding;
+            Binding.Name = FName(*In.Name);
+            if (In.Kind == "Spawn")
+            {
+                Binding.Kind = ESequenceBindingKind::Spawn;
+                CObject* Asset = nullptr;
+                if (!Agent::ResolveAssetObject(FStringView(In.Prefab), Asset, Error) || Cast<CPrefab>(Asset) == nullptr)
                 {
-                    CSequence* Sequence = nullptr;
-                    FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    if (In.Name.empty())
-                    {
-                        return Agent::FToolResult::Error("A binding needs a name.");
-                    }
-                    if (FindBinding(Sequence, FStringView(In.Name)) != Constants::kIndexNone)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("The sequence already has a binding named '{}'.", In.Name));
-                    }
+                    return Agent::FToolResult::Error(Error.IsEmpty() ? FString("Prefab has to name a prefab asset.") : Error);
+                }
+                Binding.SpawnPrefab = Cast<CPrefab>(Asset);
+            }
+            else if (In.Kind == "Camera")
+            {
+                Binding.Kind = ESequenceBindingKind::Camera;
+            }
+            else if (!In.Kind.IsEmpty() && In.Kind != "Possess")
+            {
+                return Agent::FToolResult::Error("Kind has to be Possess, Spawn or Camera.");
+            }
 
-                    SSequenceBinding Binding;
-                    Binding.Name = FName(In.Name.c_str());
-                    if (In.Kind == "Spawn")
-                    {
-                        Binding.Kind = ESequenceBindingKind::Spawn;
-                        CObject* Asset = nullptr;
-                        if (!Agent::ResolveAssetObject(FStringView(In.Prefab), Asset, Error) || Cast<CPrefab>(Asset) == nullptr)
-                        {
-                            return Agent::FToolResult::Error(Error.empty() ? FString("Prefab has to name a prefab asset.") : Error);
-                        }
-                        Binding.SpawnPrefab = Cast<CPrefab>(Asset);
-                    }
-                    else if (In.Kind == "Camera")
-                    {
-                        Binding.Kind = ESequenceBindingKind::Camera;
-                    }
-                    else if (!In.Kind.empty() && In.Kind != "Possess")
-                    {
-                        return Agent::FToolResult::Error("Kind has to be Possess, Spawn or Camera.");
-                    }
-
-                    Out.Index = (int32)Sequence->Bindings.size();
-                    Sequence->Bindings.push_back(Binding);
-                    MarkDirty(Sequence);
-                    return Agent::FToolResult::Ok(Lumina::Format("Binding {} is {}.", Out.Index, In.Name));
-                });
+            Out.Index = Sequence->Bindings.Num();
+            Sequence->Bindings.Add(Binding);
+            MarkSequenceDirty(Sequence);
+            return Agent::FToolResult::Ok(Lumina::Format("Binding {} is {}.", Out.Index, In.Name));
         }
 
-        void RegisterRemoveBinding(FStringView Owner)
+        Agent::FToolResult SequenceRemoveBinding(const SSequenceBindingParams& In, SSequenceIndexResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SRemoveSequenceBindingParams, SSequenceIndexResult>(
-                Owner, "sequence.remove_binding",
-                "Remove a binding along with its tracks and camera cuts, renumbering the ones after it.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SRemoveSequenceBindingParams& In, SSequenceIndexResult& Out)
+            CSequence* Sequence = nullptr;
+            FString Error;
+            int32 Removed = Constants::kIndexNone;
+            if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Removed, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            if (Removed == Constants::kIndexNone)
+            {
+                return Agent::FToolResult::Error("Name the binding to remove.");
+            }
+
+            const auto Renumber = [Removed](int32& Index)
+            {
+                if (Index > Removed)
                 {
-                    CSequence* Sequence = nullptr;
-                    FString Error;
-                    int32 Removed = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Removed, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    if (Removed == Constants::kIndexNone)
-                    {
-                        return Agent::FToolResult::Error("Name the binding to remove.");
-                    }
+                    --Index;
+                }
+            };
 
-                    const auto Renumber = [Removed](int32& Index)
-                    {
-                        if (Index > Removed)
-                        {
-                            --Index;
-                        }
-                    };
+            for (int32 Index = Sequence->Tracks.Num() - 1; Index >= 0; --Index)
+            {
+                CSequenceTrack* Track = Sequence->Tracks[Index].Get();
+                if (Track == nullptr || Track->BindingIndex == Removed)
+                {
+                    Sequence->Tracks.RemoveAt(Index);
+                    continue;
+                }
+                Renumber(Track->BindingIndex);
 
-                    for (int32 Index = (int32)Sequence->Tracks.size() - 1; Index >= 0; --Index)
+                if (CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track))
+                {
+                    for (int32 Cut = Cuts->Cuts.Num() - 1; Cut >= 0; --Cut)
                     {
-                        CSequenceTrack* Track = Sequence->Tracks[Index].Get();
-                        if (Track == nullptr || Track->BindingIndex == Removed)
+                        if (Cuts->Cuts[Cut].BindingIndex == Removed)
                         {
-                            Sequence->Tracks.erase(Sequence->Tracks.begin() + Index);
+                            Cuts->Cuts.RemoveAt(Cut);
                             continue;
                         }
-                        Renumber(Track->BindingIndex);
-
-                        if (CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track))
-                        {
-                            for (int32 Cut = (int32)Cuts->Cuts.size() - 1; Cut >= 0; --Cut)
-                            {
-                                if (Cuts->Cuts[Cut].BindingIndex == Removed)
-                                {
-                                    Cuts->Cuts.erase(Cuts->Cuts.begin() + Cut);
-                                    continue;
-                                }
-                                Renumber(Cuts->Cuts[Cut].BindingIndex);
-                            }
-                        }
-                        else if (CSequenceTrack_LookAt* LookAt = Cast<CSequenceTrack_LookAt>(Track))
-                        {
-                            if (LookAt->TargetBindingIndex == Removed)
-                            {
-                                LookAt->TargetBindingIndex = Constants::kIndexNone;
-                            }
-                            Renumber(LookAt->TargetBindingIndex);
-                        }
+                        Renumber(Cuts->Cuts[Cut].BindingIndex);
                     }
-
-                    Sequence->Bindings.erase(Sequence->Bindings.begin() + Removed);
-                    MarkDirty(Sequence);
-                    Out.Index = Removed;
-                    return Agent::FToolResult::Ok(Lumina::Format("Removed binding {}.", Removed));
-                });
-        }
-
-        void RegisterAddTrack(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SAddSequenceTrackParams, SSequenceIndexResult>(
-                Owner, "sequence.add_track",
-                "Add a track of any type from sequence.track_types. Property tracks take Settings such as {\"ComponentType\":\"SCameraComponent\",\"PropertyPath\":\"FOV\"}.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SAddSequenceTrackParams& In, SSequenceIndexResult& Out)
+                }
+                else if (CSequenceTrack_LookAt* LookAt = Cast<CSequenceTrack_LookAt>(Track))
                 {
-                    CSequence* Sequence = nullptr;
-                    FString Error;
-                    int32 Binding = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
+                    if (LookAt->TargetBindingIndex == Removed)
                     {
-                        return Agent::FToolResult::Error(Error);
+                        LookAt->TargetBindingIndex = Constants::kIndexNone;
                     }
+                    Renumber(LookAt->TargetBindingIndex);
+                }
+            }
 
-                    const FTrackType* Type = FindTrackType(FStringView(In.Type));
-                    if (Type == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("'{}' is not a track type. sequence.track_types lists them.", In.Type));
-                    }
-                    if (Type->bNeedsBinding && Binding == Constants::kIndexNone)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("A {} track drives a binding, so name one.", Type->Name));
-                    }
-
-                    CSequenceTrack* Track = AddTrack(Sequence, Type->Class(), Binding);
-                    Out.Index = (int32)Sequence->Tracks.size() - 1;
-
-                    if (!In.Settings.empty())
-                    {
-                        nlohmann::json Settings;
-                        if (!ParseJson(In.Settings, Settings, Error))
-                        {
-                            Sequence->Tracks.pop_back();
-                            return Agent::FToolResult::Error(Error);
-                        }
-                        for (auto& Entry : Settings.items())
-                        {
-                            Agent::FResolvedProperty Resolved;
-                            if (!Agent::ResolvePropertyPath(Track->GetClass(), Track, FStringView(Entry.key().c_str()), Resolved, Error))
-                            {
-                                Sequence->Tracks.pop_back();
-                                return Agent::FToolResult::Error(Error);
-                            }
-                            const Agent::FMarshalResult Read = Agent::ReadProperty(Entry.value(), Resolved.Property, Resolved.ValuePtr, FStringView(Entry.key().c_str()));
-                            if (!Read.IsValid())
-                            {
-                                Sequence->Tracks.pop_back();
-                                return Agent::FToolResult::Error(Read.Error);
-                            }
-                        }
-                    }
-
-                    MarkDirty(Sequence);
-                    return Agent::FToolResult::Ok(Lumina::Format("Track {} is a {} track.", Out.Index, Type->Name));
-                });
+            Sequence->Bindings.RemoveAt(Removed);
+            MarkSequenceDirty(Sequence);
+            Out.Index = Removed;
+            return Agent::FToolResult::Ok(Lumina::Format("Removed binding {}.", Removed));
         }
 
-        void RegisterRemoveTrack(FStringView Owner)
+        void RegisterSequenceBinding(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SRemoveSequenceTrackParams, SSequenceIndexResult>(
-                Owner, "sequence.remove_track",
-                "Remove a track by index, or every track with a negative index.",
+            Agent::FToolRegistry::Get().Register<SSequenceBindingParams, SSequenceIndexResult>(
+                Owner, "sequence.binding",
+                "Add something for the sequence to drive (an entity by Name, a prefab spawned for its length, or a camera), or Remove one with its tracks and cuts, renumbering later bindings.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SRemoveSequenceTrackParams& In, SSequenceIndexResult& Out)
+                [](const SSequenceBindingParams& In, SSequenceIndexResult& Out)
                 {
-                    CSequence* Sequence = nullptr;
-                    FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    if (In.Track < 0)
-                    {
-                        Out.Index = (int32)Sequence->Tracks.size();
-                        Sequence->Tracks.clear();
-                        MarkDirty(Sequence);
-                        return Agent::FToolResult::Ok(Lumina::Format("Removed {} track(s).", Out.Index));
-                    }
-
-                    if (!CheckTrack(Sequence, In.Track, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    Sequence->Tracks.erase(Sequence->Tracks.begin() + In.Track);
-                    MarkDirty(Sequence);
-                    Out.Index = In.Track;
-                    return Agent::FToolResult::Ok(Lumina::Format("Removed track {}. Later tracks moved down one.", In.Track));
+                    return In.Action == ESequenceBindingAction::Remove ? SequenceRemoveBinding(In, Out) : SequenceAddBinding(In, Out);
                 });
         }
 
-        void RegisterSetTrackProperty(FStringView Owner)
+        Agent::FToolResult SequenceAddTrack(const SSequenceTrackParams& In, SSequenceIndexResult& Out)
+        {
+            CSequence* Sequence = nullptr;
+            FString Error;
+            int32 Binding = Constants::kIndexNone;
+            if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            const FSequenceTrackType* Type = FindSequenceTrackType(FStringView(In.Type));
+            if (Type == nullptr)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("'{}' is not a track type. sequence.track_types lists them.", In.Type));
+            }
+            if (Type->bNeedsBinding && Binding == Constants::kIndexNone)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("A {} track drives a binding, so name one.", Type->Name));
+            }
+
+            CSequenceTrack* Track = NewSequenceTrack(Sequence, Type->Class(), Binding);
+            Out.Index = Sequence->Tracks.Num() - 1;
+
+            if (!In.Settings.IsEmpty())
+            {
+                FJsonValue Settings;
+                if (!ParseSequenceJson(In.Settings, Settings, Error))
+                {
+                    Sequence->Tracks.Pop();
+                    return Agent::FToolResult::Error(Error);
+                }
+                if (!Settings.IsObject() && !Settings.IsNull())
+                {
+                    Sequence->Tracks.Pop();
+                    return Agent::FToolResult::Error("Settings has to be a JSON object of property paths.");
+                }
+                for (const FJsonMember& Entry : Settings.Members())
+                {
+                    Agent::FResolvedProperty Resolved;
+                    if (!Agent::ResolvePropertyPath(Track->GetClass(), Track, Entry.Key.View(), Resolved, Error))
+                    {
+                        Sequence->Tracks.Pop();
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    const Agent::FMarshalResult Read = Agent::ReadProperty(Entry.Value, Resolved.Property, Resolved.ValuePtr, Entry.Key.View());
+                    if (!Read.IsValid())
+                    {
+                        Sequence->Tracks.Pop();
+                        return Agent::FToolResult::Error(Read.Error);
+                    }
+                }
+            }
+
+            MarkSequenceDirty(Sequence);
+            return Agent::FToolResult::Ok(Lumina::Format("Track {} is a {} track.", Out.Index, Type->Name));
+        }
+
+        Agent::FToolResult SequenceRemoveTrack(const SSequenceTrackParams& In, SSequenceIndexResult& Out)
+        {
+            CSequence* Sequence = nullptr;
+            FString Error;
+            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            if (In.Track < 0)
+            {
+                Out.Index = Sequence->Tracks.Num();
+                Sequence->Tracks.Reset();
+                MarkSequenceDirty(Sequence);
+                return Agent::FToolResult::Ok(Lumina::Format("Removed {} track(s).", Out.Index));
+            }
+
+            if (!CheckSequenceTrack(Sequence, In.Track, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            Sequence->Tracks.RemoveAt(In.Track);
+            MarkSequenceDirty(Sequence);
+            Out.Index = In.Track;
+            return Agent::FToolResult::Ok(Lumina::Format("Removed track {}. Later tracks moved down one.", In.Track));
+        }
+
+        void RegisterSequenceTrack(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSequenceTrackParams, SSequenceIndexResult>(
+                Owner, "sequence.track",
+                "Add a track of a type from sequence.track_types, with optional Settings fields, or Remove the track at index Track (negative removes all).",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSequenceTrackParams& In, SSequenceIndexResult& Out)
+                {
+                    return In.Action == ESequenceTrackAction::Remove ? SequenceRemoveTrack(In, Out) : SequenceAddTrack(In, Out);
+                });
+        }
+
+        void RegisterSequenceSetTrackProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetSequenceTrackPropertyParams, SSequencePropertyResult>(
                 Owner, "sequence.set_track_property",
-                "Set any field on a track by path, such as bEnabled, TargetOffset, bAutoFocus, Color, LocationAmplitude or Clips[0].Volume.",
+                "Set any field on a track by path, such as bEnabled, TargetOffset, Color or Clips[0].Volume.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SSetSequenceTrackPropertyParams& In, SSequencePropertyResult& Out)
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckTrack(Sequence, In.Track, Error))
+                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -858,13 +815,13 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    nlohmann::json Value;
-                    if (!ParseJson(In.Value, Value, Error))
+                    FJsonValue Value;
+                    if (!ParseSequenceJson(In.Value, Value, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    nlohmann::json Previous;
+                    FJsonValue Previous;
                     Agent::WriteProperty(Resolved.Property, Resolved.ValuePtr, Previous);
                     const Agent::FMarshalResult Read = Agent::ReadProperty(Value, Resolved.Property, Resolved.ValuePtr, FStringView(In.Path));
                     if (!Read.IsValid())
@@ -872,32 +829,32 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Read.Error);
                     }
 
-                    nlohmann::json Current;
+                    FJsonValue Current;
                     Agent::WriteProperty(Resolved.Property, Resolved.ValuePtr, Current);
-                    Out.Previous = FString(Previous.dump().c_str());
-                    Out.Current = FString(Current.dump().c_str());
-                    MarkDirty(Sequence);
+                    Out.Previous = Previous.ToString();
+                    Out.Current = Current.ToString();
+                    MarkSequenceDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} is now {}.", In.Path, Out.Current));
                 });
         }
 
-        void RegisterSetKeys(FStringView Owner)
+        void RegisterSequenceSetKeys(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetSequenceKeysParams, SSetSequenceKeysResult>(
                 Owner, "sequence.set_keys",
-                "Key one curve on a track. Keys is an array such as [{\"Time\":0,\"Value\":[0,5,0]},{\"Time\":2,\"Value\":[10,5,0]}] for a vector channel or [{\"Time\":0,\"Value\":1}] for a single curve. Rotation keys are unwound so they turn the short way.",
+                "Key one curve (Channel) on a track. Value is [x,y,z] for a vector channel or a number for a single curve. Rotation keys are unwound so they turn the short way.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SSetSequenceKeysParams& In, SSetSequenceKeysResult& Out)
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckTrack(Sequence, In.Track, Error))
+                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
                     ECurveInterpMode DefaultMode;
-                    if (!ParseInterp(FStringView(In.Interp), DefaultMode))
+                    if (!ParseSequenceInterp(FStringView(In.Interp), DefaultMode))
                     {
                         return Agent::FToolResult::Error("Interp has to be Cubic, Linear or Constant.");
                     }
@@ -917,12 +874,12 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("{} is not a curve. Key a channel such as Location, Rotation, Curve, Amount, Weight or Intensity.", In.Channel));
                     }
 
-                    nlohmann::json Keys;
-                    if (!ParseJson(In.Keys, Keys, Error))
+                    FJsonValue Keys;
+                    if (!ParseSequenceJson(In.Keys, Keys, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-                    if (!Keys.is_array())
+                    if (!Keys.IsArray())
                     {
                         return Agent::FToolResult::Error("Keys has to be an array.");
                     }
@@ -934,54 +891,53 @@ namespace Lumina::MCP
                     {
                         if (Vector != nullptr)
                         {
-                            Vector->X.Curve.Keys.clear();
-                            Vector->Y.Curve.Keys.clear();
-                            Vector->Z.Curve.Keys.clear();
+                            Vector->X.Curve.Keys.Reset();
+                            Vector->Y.Curve.Keys.Reset();
+                            Vector->Z.Curve.Keys.Reset();
                         }
                         else
                         {
-                            Scalar->Curve.Keys.clear();
+                            Scalar->Curve.Keys.Reset();
                         }
                     }
 
-                    for (const nlohmann::json& Entry : Keys)
+                    for (const FJsonValue& Entry : Keys.AsArray())
                     {
-                        if (!Entry.is_object() || !Entry.contains("Time") || !Entry["Time"].is_number() || !Entry.contains("Value"))
+                        if (!Entry.IsObject() || !Entry["Time"].IsNumber() || !Entry.Contains("Value"))
                         {
                             return Agent::FToolResult::Error("Every key needs a numeric Time and a Value.");
                         }
 
                         ECurveInterpMode Mode = DefaultMode;
-                        if (Entry.contains("Interp") && Entry["Interp"].is_string()
-                            && !ParseInterp(FStringView(Entry["Interp"].get<std::string>().c_str()), Mode))
+                        if (Entry["Interp"].IsString() && !ParseSequenceInterp(Entry["Interp"].AsString(), Mode))
                         {
                             return Agent::FToolResult::Error("A key's Interp has to be Cubic, Linear or Constant.");
                         }
 
-                        const float Time = Entry["Time"].get<float>();
+                        const float Time = Entry["Time"].AsFloat();
                         if (Vector != nullptr)
                         {
                             FVector3 Value;
-                            if (!ReadVector(Entry["Value"], Value))
+                            if (!ReadSequenceVector(Entry["Value"], Value))
                             {
                                 return Agent::FToolResult::Error("A vector channel's Value is [x,y,z].");
                             }
-                            KeyVector(*Vector, Time, Value, Mode);
+                            KeySequenceVector(*Vector, Time, Value, Mode);
                         }
                         else
                         {
-                            if (!Entry["Value"].is_number())
+                            if (!Entry["Value"].IsNumber())
                             {
                                 return Agent::FToolResult::Error("A single curve's Value is a number.");
                             }
-                            Key(Scalar->Curve, Time, Entry["Value"].get<float>(), Mode);
+                            KeySequenceCurve(Scalar->Curve, Time, Entry["Value"].AsFloat(), Mode);
                         }
                     }
 
                     if (Vector != nullptr)
                     {
-                        const bool bAngles = In.Channel.find("Rotation") != FString::npos;
-                        FinishVector(*Vector, bAngles);
+                        const bool bAngles = In.Channel.Find("Rotation") != Constants::kIndexNone;
+                        FinishSequenceVector(*Vector, bAngles);
                         Out.KeyCount = Vector->X.Curve.NumKeys();
                     }
                     else
@@ -991,15 +947,15 @@ namespace Lumina::MCP
                         Out.KeyCount = Scalar->Curve.NumKeys();
                     }
 
-                    MarkDirty(Sequence);
+                    MarkSequenceDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} now has {} key(s).", In.Channel, Out.KeyCount));
                 });
         }
 
-        int32 AddCut(CSequence* Sequence, int32 Camera, float Start, float End, float BlendTime)
+        int32 AddSequenceCut(CSequence* Sequence, int32 Camera, float Start, float End, float BlendTime)
         {
             int32 TrackIndex = Constants::kIndexNone;
-            CSequenceTrack_CameraCut* Track = FindOrAddTrack<CSequenceTrack_CameraCut>(Sequence, Constants::kIndexNone, TrackIndex);
+            CSequenceTrack_CameraCut* Track = FindOrAddSequenceTrack<CSequenceTrack_CameraCut>(Sequence, Constants::kIndexNone, TrackIndex);
 
             // A new shot takes over its range, trimming or dropping the cuts it lands on.
             TVector<SSequenceCameraCut> Kept;
@@ -1007,21 +963,21 @@ namespace Lumina::MCP
             {
                 if (Cut.EndTime <= Start || Cut.StartTime >= End)
                 {
-                    Kept.push_back(Cut);
+                    Kept.Add(Cut);
                     continue;
                 }
                 if (Cut.StartTime < Start)
                 {
                     SSequenceCameraCut Before = Cut;
                     Before.EndTime = Start;
-                    Kept.push_back(Before);
+                    Kept.Add(Before);
                 }
                 if (Cut.EndTime > End)
                 {
                     SSequenceCameraCut After = Cut;
                     After.StartTime = End;
                     After.BlendTime = 0.0f;
-                    Kept.push_back(After);
+                    Kept.Add(After);
                 }
             }
 
@@ -1030,7 +986,7 @@ namespace Lumina::MCP
             Cut.StartTime = Start;
             Cut.EndTime = End;
             Cut.BlendTime = Math::Max(BlendTime, 0.0f);
-            Kept.push_back(Cut);
+            Kept.Add(Cut);
 
             std::sort(Kept.begin(), Kept.end(), [](const SSequenceCameraCut& A, const SSequenceCameraCut& B) { return A.StartTime < B.StartTime; });
             Track->Cuts = Move(Kept);
@@ -1039,7 +995,7 @@ namespace Lumina::MCP
             return TrackIndex;
         }
 
-        void RegisterAddCameraCut(FStringView Owner)
+        void RegisterSequenceAddCameraCut(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SAddSequenceCameraCutParams, SSequenceIndexResult>(
                 Owner, "sequence.add_camera_cut",
@@ -1050,7 +1006,7 @@ namespace Lumina::MCP
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Camera = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Camera, Camera, Error))
+                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Camera, Camera, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1059,50 +1015,50 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("A cut needs a camera binding and an End after its Start.");
                     }
 
-                    Out.Index = AddCut(Sequence, Camera, In.Start, In.End, In.BlendTime);
-                    MarkDirty(Sequence);
-                    return Agent::FToolResult::Ok(Lumina::Format("{} is live from {:.2f}s to {:.2f}s.", BindingName(Sequence, Camera), In.Start, In.End));
+                    Out.Index = AddSequenceCut(Sequence, Camera, In.Start, In.End, In.BlendTime);
+                    MarkSequenceDirty(Sequence);
+                    return Agent::FToolResult::Ok(Lumina::Format("{} is live from {:.2f}s to {:.2f}s.", SequenceBindingName(Sequence, Camera), In.Start, In.End));
                 });
         }
 
-        void RegisterAddEvent(FStringView Owner)
+        void RegisterSequenceAddEvent(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SAddSequenceEventParams, SSequenceIndexResult>(
                 Owner, "sequence.add_event",
-                "Fire a named event at a time, for gameplay to react to through World.GetSequences().ConsumeEvents, such as an explosion on a beat.",
+                "Fire a named event at a time, for gameplay to read through World.GetSequences().ConsumeEvents.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SAddSequenceEventParams& In, SSequenceIndexResult& Out)
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Binding = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
+                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-                    if (In.Name.empty())
+                    if (In.Name.IsEmpty())
                     {
                         return Agent::FToolResult::Error("An event needs a name.");
                     }
 
                     int32 TrackIndex = Constants::kIndexNone;
-                    CSequenceTrack_Event* Track = FindOrAddTrack<CSequenceTrack_Event>(Sequence, Binding, TrackIndex);
+                    CSequenceTrack_Event* Track = FindOrAddSequenceTrack<CSequenceTrack_Event>(Sequence, Binding, TrackIndex);
 
                     SSequenceEventKey Key;
                     Key.Time = Math::Max(In.Time, 0.0f);
-                    Key.Name = FName(In.Name.c_str());
+                    Key.Name = FName(*In.Name);
                     Key.Payload = In.Payload;
                     auto Where = std::upper_bound(Track->Keys.begin(), Track->Keys.end(), Key.Time,
                         [](float Time, const SSequenceEventKey& Other) { return Time < Other.Time; });
-                    Track->Keys.insert(Where, Key);
+                    Track->Keys.Insert(Key, static_cast<int32>(Where - Track->Keys.begin()));
 
                     Out.Index = TrackIndex;
-                    MarkDirty(Sequence);
+                    MarkSequenceDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} fires at {:.2f}s.", In.Name, Key.Time));
                 });
         }
 
-        void RegisterAddAudio(FStringView Owner)
+        void RegisterSequenceAddAudio(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SAddSequenceAudioParams, SSequenceIndexResult>(
                 Owner, "sequence.add_audio",
@@ -1113,7 +1069,7 @@ namespace Lumina::MCP
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Binding = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
+                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1130,7 +1086,7 @@ namespace Lumina::MCP
                     }
 
                     int32 TrackIndex = Constants::kIndexNone;
-                    CSequenceTrack_Audio* Track = FindOrAddTrack<CSequenceTrack_Audio>(Sequence, Binding, TrackIndex);
+                    CSequenceTrack_Audio* Track = FindOrAddSequenceTrack<CSequenceTrack_Audio>(Sequence, Binding, TrackIndex);
                     SSequenceAudioClip Clip;
                     Clip.StartTime = Math::Max(In.Start, 0.0f);
                     Clip.Sound = Sound;
@@ -1138,19 +1094,19 @@ namespace Lumina::MCP
                     Clip.Pitch = Math::Max(In.Pitch, 0.01f);
                     // A clip bound to nothing is score, so it follows the music volume rather than the effects.
                     Clip.Bus = Binding == Constants::kIndexNone ? EAudioBus::Music : EAudioBus::SFX;
-                    Track->Clips.push_back(Clip);
+                    Track->Clips.Add(Clip);
 
                     Out.Index = TrackIndex;
-                    MarkDirty(Sequence);
+                    MarkSequenceDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} starts at {:.2f}s.", Sound->GetName(), Clip.StartTime));
                 });
         }
 
-        void KeyProperty(CSequence* Sequence, int32 Camera, const char* Path, float Time, float Value, ECurveInterpMode Mode, TVector<int32>& OutTracks)
+        void KeySequenceCameraProperty(CSequence* Sequence, int32 Camera, const char* Path, float Time, float Value, ECurveInterpMode Mode, TVector<int32>& OutTracks)
         {
             CSequenceTrack_Property* Found = nullptr;
             int32 FoundIndex = Constants::kIndexNone;
-            for (int32 Index = 0; Index < (int32)Sequence->Tracks.size(); ++Index)
+            for (int32 Index = 0; Index < Sequence->Tracks.Num(); ++Index)
             {
                 CSequenceTrack_Property* Track = Cast<CSequenceTrack_Property>(Sequence->Tracks[Index].Get());
                 if (Track != nullptr && Track->BindingIndex == Camera && Track->ComponentType == FName("SCameraComponent") && Track->PropertyPath == Path)
@@ -1163,27 +1119,26 @@ namespace Lumina::MCP
 
             if (Found == nullptr)
             {
-                FoundIndex = (int32)Sequence->Tracks.size();
-                Found = static_cast<CSequenceTrack_Property*>(AddTrack(Sequence, CSequenceTrack_Property::StaticClass(), Camera));
+                FoundIndex = Sequence->Tracks.Num();
+                Found = static_cast<CSequenceTrack_Property*>(NewSequenceTrack(Sequence, CSequenceTrack_Property::StaticClass(), Camera));
                 Found->ComponentType = FName("SCameraComponent");
                 Found->PropertyPath = Path;
             }
 
-            Key(Found->Curve.Curve, Time, Value, Mode);
+            KeySequenceCurve(Found->Curve.Curve, Time, Value, Mode);
             Found->Curve.Curve.ComputeAutoTangents();
             if (std::find(OutTracks.begin(), OutTracks.end(), FoundIndex) == OutTracks.end())
             {
-                OutTracks.push_back(FoundIndex);
+                OutTracks.Add(FoundIndex);
             }
         }
 
-        void RegisterShot(FStringView Owner)
+        void RegisterSequenceShot(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSequenceShotParams, SSequenceShotResult>(
                 Owner, "sequence.shot",
-                "Author a whole camera shot in one call, a camera binding with its move, aim, lens and cut. Keys are relative to Start, such as "
-                "[{\"Time\":0,\"Location\":[0,3,-10],\"Target\":[0,1,0]},{\"Time\":4,\"Location\":[6,4,-8],\"FOV\":40}]. A key aims with Rotation [pitch,yaw,roll] or a Target point; "
-                "LookAt or LookAtPoint aims every frame instead. Use one camera per shot so moves on either side of a cut cannot bend each other.",
+                "Author a camera shot in one call: a camera binding with its move, aim, lens and cut. Keys aim with Rotation or Target; LookAt or LookAtPoint aims every frame. "
+                "Use one camera per shot.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SSequenceShotParams& In, SSequenceShotResult& Out)
                 {
@@ -1199,52 +1154,52 @@ namespace Lumina::MCP
                     }
 
                     ECurveInterpMode Mode;
-                    if (!ParseInterp(FStringView(In.Interp), Mode))
+                    if (!ParseSequenceInterp(FStringView(In.Interp), Mode))
                     {
                         return Agent::FToolResult::Error("Interp has to be Cubic, Linear or Constant.");
                     }
 
-                    nlohmann::json Keys;
-                    if (!ParseJson(In.Keys.empty() ? FString("[]") : In.Keys, Keys, Error))
+                    FJsonValue Keys;
+                    if (!ParseSequenceJson(In.Keys.IsEmpty() ? FString("[]") : In.Keys, Keys, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-                    if (!Keys.is_array() || Keys.empty())
+                    if (!Keys.IsArray() || Keys.IsEmpty())
                     {
                         return Agent::FToolResult::Error("A shot needs at least one key with a Location.");
                     }
 
                     int32 LookAtBinding = Constants::kIndexNone;
-                    if (!ParseBinding(Sequence, In.LookAt, LookAtBinding, Error))
+                    if (!ParseSequenceBinding(Sequence, In.LookAt, LookAtBinding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
                     FVector3 LookAtPoint(0.0f);
                     bool bHasLookAtPoint = false;
-                    if (!In.LookAtPoint.empty())
+                    if (!In.LookAtPoint.IsEmpty())
                     {
-                        nlohmann::json Point;
-                        if (!ParseJson(In.LookAtPoint, Point, Error) || !ReadVector(Point, LookAtPoint))
+                        FJsonValue Point;
+                        if (!ParseSequenceJson(In.LookAtPoint, Point, Error) || !ReadSequenceVector(Point, LookAtPoint))
                         {
                             return Agent::FToolResult::Error("LookAtPoint is [x,y,z].");
                         }
-                        Ground(LookAtPoint, In.bGround);
+                        GroundSequencePoint(LookAtPoint, In.bGround);
                         bHasLookAtPoint = true;
                     }
 
                     FVector3 LookAtOffset(0.0f);
-                    if (!In.LookAtOffset.empty())
+                    if (!In.LookAtOffset.IsEmpty())
                     {
-                        nlohmann::json Offset;
-                        if (!ParseJson(In.LookAtOffset, Offset, Error) || !ReadVector(Offset, LookAtOffset))
+                        FJsonValue Offset;
+                        if (!ParseSequenceJson(In.LookAtOffset, Offset, Error) || !ReadSequenceVector(Offset, LookAtOffset))
                         {
                             return Agent::FToolResult::Error("LookAtOffset is [x,y,z].");
                         }
                     }
 
                     FString CameraName = In.Camera;
-                    if (CameraName.empty())
+                    if (CameraName.IsEmpty())
                     {
                         int32 Cameras = 0;
                         for (const SSequenceBinding& Binding : Sequence->Bindings)
@@ -1255,167 +1210,135 @@ namespace Lumina::MCP
                         {
                             CameraName = Lumina::Format("ShotCam{}", ++Cameras);
                         }
-                        while (FindBinding(Sequence, FStringView(CameraName)) != Constants::kIndexNone);
+                        while (FindSequenceBinding(Sequence, FStringView(CameraName)) != Constants::kIndexNone);
                     }
 
-                    int32 Camera = FindBinding(Sequence, FStringView(CameraName));
+                    int32 Camera = FindSequenceBinding(Sequence, FStringView(CameraName));
                     if (Camera == Constants::kIndexNone)
                     {
                         SSequenceBinding Binding;
-                        Binding.Name = FName(CameraName.c_str());
+                        Binding.Name = FName(*CameraName);
                         Binding.Kind = ESequenceBindingKind::Camera;
-                        Camera = (int32)Sequence->Bindings.size();
-                        Sequence->Bindings.push_back(Binding);
+                        Camera = Sequence->Bindings.Num();
+                        Sequence->Bindings.Add(Binding);
                     }
 
                     int32 TransformIndex = Constants::kIndexNone;
-                    CSequenceTrack_Transform* Transform = FindOrAddTrack<CSequenceTrack_Transform>(Sequence, Camera, TransformIndex);
-                    Out.Tracks.push_back(TransformIndex);
+                    CSequenceTrack_Transform* Transform = FindOrAddSequenceTrack<CSequenceTrack_Transform>(Sequence, Camera, TransformIndex);
+                    Out.Tracks.Add(TransformIndex);
 
                     const bool bFollows = LookAtBinding != Constants::kIndexNone || bHasLookAtPoint;
-                    for (const nlohmann::json& Entry : Keys)
+                    for (const FJsonValue& Entry : Keys.AsArray())
                     {
                         FVector3 Location;
-                        if (!Entry.is_object() || !Entry.contains("Location") || !ReadVector(Entry["Location"], Location))
+                        if (!Entry.IsObject() || !ReadSequenceVector(Entry["Location"], Location))
                         {
                             return Agent::FToolResult::Error("Every shot key needs a Location as [x,y,z].");
                         }
 
-                        const bool bGround = Entry.value("Ground", In.bGround);
-                        Ground(Location, bGround);
-                        const float Time = In.Start + Math::Clamp(Entry.value("Time", 0.0f), 0.0f, In.End - In.Start);
-                        KeyVector(Transform->Location, Time, Location, Mode);
+                        const FJsonValue* GroundValue = Entry.Find("Ground");
+                        const FJsonValue* TimeValue = Entry.Find("Time");
+                        if (GroundValue != nullptr && !GroundValue->IsBool())
+                        {
+                            return Agent::FToolResult::Error("A shot key's Ground has to be true or false.");
+                        }
+                        if (TimeValue != nullptr && !TimeValue->IsNumber())
+                        {
+                            return Agent::FToolResult::Error("A shot key's Time has to be a number.");
+                        }
+
+                        const bool bGround = GroundValue != nullptr ? GroundValue->AsBool() : In.bGround;
+                        GroundSequencePoint(Location, bGround);
+                        const float Time = In.Start + Math::Clamp(TimeValue != nullptr ? TimeValue->AsFloat() : 0.0f, 0.0f, In.End - In.Start);
+                        KeySequenceVector(Transform->Location, Time, Location, Mode);
 
                         FVector3 Rotation;
                         FVector3 Target;
-                        if (Entry.contains("Rotation") && ReadVector(Entry["Rotation"], Rotation))
+                        if (Entry.Contains("Rotation") && ReadSequenceVector(Entry["Rotation"], Rotation))
                         {
-                            KeyVector(Transform->Rotation, Time, Rotation, Mode);
+                            KeySequenceVector(Transform->Rotation, Time, Rotation, Mode);
                         }
-                        else if (Entry.contains("Target") && ReadVector(Entry["Target"], Target))
+                        else if (Entry.Contains("Target") && ReadSequenceVector(Entry["Target"], Target))
                         {
-                            Ground(Target, bGround);
-                            KeyVector(Transform->Rotation, Time, LookAtEuler(Location, Target), Mode);
+                            GroundSequencePoint(Target, bGround);
+                            KeySequenceVector(Transform->Rotation, Time, SequenceLookAtEuler(Location, Target), Mode);
                         }
                         else if (bHasLookAtPoint)
                         {
                             // Keyed too, so the rotation is right even before the look-at track takes over.
-                            KeyVector(Transform->Rotation, Time, LookAtEuler(Location, LookAtPoint), Mode);
+                            KeySequenceVector(Transform->Rotation, Time, SequenceLookAtEuler(Location, LookAtPoint), Mode);
                         }
 
-                        if (Entry.contains("FOV") && Entry["FOV"].is_number())
+                        if (Entry["FOV"].IsNumber())
                         {
-                            KeyProperty(Sequence, Camera, "FOV", Time, Entry["FOV"].get<float>(), Mode, Out.Tracks);
+                            KeySequenceCameraProperty(Sequence, Camera, "FOV", Time, Entry["FOV"].AsFloat(), Mode, Out.Tracks);
                         }
-                        if (Entry.contains("Focus") && Entry["Focus"].is_number())
+                        if (Entry["Focus"].IsNumber())
                         {
-                            KeyProperty(Sequence, Camera, "PostProcess.DepthOfFieldFocusDistance", Time, Entry["Focus"].get<float>(), Mode, Out.Tracks);
+                            KeySequenceCameraProperty(Sequence, Camera, "PostProcess.DepthOfFieldFocusDistance", Time, Entry["Focus"].AsFloat(), Mode, Out.Tracks);
                         }
-                        if (Entry.contains("FStop") && Entry["FStop"].is_number())
+                        if (Entry["FStop"].IsNumber())
                         {
-                            KeyProperty(Sequence, Camera, "PostProcess.DepthOfFieldFStop", Time, Entry["FStop"].get<float>(), Mode, Out.Tracks);
+                            KeySequenceCameraProperty(Sequence, Camera, "PostProcess.DepthOfFieldFStop", Time, Entry["FStop"].AsFloat(), Mode, Out.Tracks);
                         }
                     }
 
-                    FinishVector(Transform->Location, false);
+                    FinishSequenceVector(Transform->Location, false);
                     if (Transform->Rotation.bEnabled)
                     {
-                        FinishVector(Transform->Rotation, true);
+                        FinishSequenceVector(Transform->Rotation, true);
                     }
 
                     if (In.FOV > 0.0f)
                     {
-                        KeyProperty(Sequence, Camera, "FOV", In.Start, In.FOV, ECurveInterpMode::Constant, Out.Tracks);
+                        KeySequenceCameraProperty(Sequence, Camera, "FOV", In.Start, In.FOV, ECurveInterpMode::Constant, Out.Tracks);
                     }
                     if (In.FStop > 0.0f)
                     {
-                        KeyProperty(Sequence, Camera, "PostProcess.DepthOfFieldFStop", In.Start, In.FStop, ECurveInterpMode::Constant, Out.Tracks);
+                        KeySequenceCameraProperty(Sequence, Camera, "PostProcess.DepthOfFieldFStop", In.Start, In.FStop, ECurveInterpMode::Constant, Out.Tracks);
                     }
 
                     if (bFollows)
                     {
                         int32 LookAtIndex = Constants::kIndexNone;
-                        CSequenceTrack_LookAt* LookAt = FindOrAddTrack<CSequenceTrack_LookAt>(Sequence, Camera, LookAtIndex);
+                        CSequenceTrack_LookAt* LookAt = FindOrAddSequenceTrack<CSequenceTrack_LookAt>(Sequence, Camera, LookAtIndex);
                         LookAt->TargetBindingIndex = LookAtBinding;
                         LookAt->TargetOffset = LookAtBinding != Constants::kIndexNone ? LookAtOffset : LookAtPoint + LookAtOffset;
                         LookAt->bAutoFocus = In.bAutoFocus && In.FStop > 0.0f;
-                        Out.Tracks.push_back(LookAtIndex);
+                        Out.Tracks.Add(LookAtIndex);
                     }
 
                     if (In.Handheld > 0.0f)
                     {
                         // The shake runs over whatever view is live, so its strength is keyed to this shot's range alone.
                         int32 ShakeIndex = Constants::kIndexNone;
-                        CSequenceTrack_CameraShake* Shake = FindOrAddTrack<CSequenceTrack_CameraShake>(Sequence, Constants::kIndexNone, ShakeIndex);
-                        Key(Shake->Intensity.Curve, In.Start - 0.001f, 0.0f, ECurveInterpMode::Constant);
-                        Key(Shake->Intensity.Curve, In.Start, In.Handheld, ECurveInterpMode::Constant);
-                        Key(Shake->Intensity.Curve, In.End, 0.0f, ECurveInterpMode::Constant);
+                        CSequenceTrack_CameraShake* Shake = FindOrAddSequenceTrack<CSequenceTrack_CameraShake>(Sequence, Constants::kIndexNone, ShakeIndex);
+                        KeySequenceCurve(Shake->Intensity.Curve, In.Start - 0.001f, 0.0f, ECurveInterpMode::Constant);
+                        KeySequenceCurve(Shake->Intensity.Curve, In.Start, In.Handheld, ECurveInterpMode::Constant);
+                        KeySequenceCurve(Shake->Intensity.Curve, In.End, 0.0f, ECurveInterpMode::Constant);
                         if (std::find(Out.Tracks.begin(), Out.Tracks.end(), ShakeIndex) == Out.Tracks.end())
                         {
-                            Out.Tracks.push_back(ShakeIndex);
+                            Out.Tracks.Add(ShakeIndex);
                         }
                     }
 
                     if (In.bCut)
                     {
-                        const int32 CutIndex = AddCut(Sequence, Camera, In.Start, In.End, In.BlendTime);
-                        Out.Tracks.push_back(CutIndex);
+                        const int32 CutIndex = AddSequenceCut(Sequence, Camera, In.Start, In.End, In.BlendTime);
+                        Out.Tracks.Add(CutIndex);
                     }
                     Sequence->Duration = Math::Max(Sequence->Duration, In.End);
 
                     Out.Camera = CameraName;
                     Out.CameraBinding = Camera;
-                    MarkDirty(Sequence);
-                    return Agent::FToolResult::Ok(Lumina::Format("{} covers {:.2f}s to {:.2f}s with {} key(s).", CameraName, In.Start, In.End, Keys.size()));
+                    MarkSequenceDirty(Sequence);
+                    return Agent::FToolResult::Ok(Lumina::Format("{} covers {:.2f}s to {:.2f}s with {} key(s).", CameraName, In.Start, In.End, Keys.Num()));
                 });
         }
 
-        void RegisterPlay(FStringView Owner)
+        void CollectSequenceState(CWorld* World, SSequenceStateResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SSequencePlayParams, SSequencePlayerInfo>(
-                Owner, "sequence.play",
-                "Play a sequence in the running game, replacing any player of the same sequence. Paused shows StartTime for framing.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SSequencePlayParams& In, SSequencePlayerInfo& Out)
-                {
-                    CSequence* Sequence = nullptr;
-                    FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    CWorld* World = RequireGameWorld(Error);
-                    if (World == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    ForEachPlayer(World, Sequence, [World](ECS::FEntity Player) { World->GetSequences()->StopSequence(Player); });
-
-                    const ECS::FEntity Player = World->GetSequences()->PlaySequence(Sequence, In.bLoop, In.PlayRate);
-                    SSequencePlayerComponent& Component = World->GetComponent<SSequencePlayerComponent>(Player);
-                    if (In.StartTime > 0.0f)
-                    {
-                        Component.Seek(In.StartTime);
-                    }
-                    if (In.bPaused)
-                    {
-                        Component.Pause();
-                    }
-
-                    Out.Player = Agent::FEntityTokens::Mint(World->GetEntityRegistry(), Player);
-                    Out.Sequence = FString(Sequence->GetName().ToString().c_str());
-                    Out.Time = Component.Time;
-                    Out.Duration = Sequence->Duration;
-                    Out.bPlaying = true;
-                    Out.bPaused = In.bPaused;
-                    return Agent::FToolResult::Ok(Lumina::Format("Playing {} from {:.2f}s{}.", Out.Sequence, Out.Time, In.bPaused ? ", paused" : ""));
-                });
-        }
-
-        void CollectState(CWorld* World, SSequenceStateResult& Out)
-        {
-            ForEachPlayer(World, nullptr, [World, &Out](ECS::FEntity Entity)
+            ForEachSequencePlayer(World, nullptr, [World, &Out](ECS::FEntity Entity)
             {
                 const SSequencePlayerComponent& Player = World->GetComponent<SSequencePlayerComponent>(Entity);
                 SSequencePlayerInfo Info;
@@ -1425,7 +1348,7 @@ namespace Lumina::MCP
                 Info.bPaused = Player.bPaused;
                 if (const CSequence* Sequence = Player.Sequence.Get())
                 {
-                    Info.Sequence = FString(Sequence->GetName().ToString().c_str());
+                    Info.Sequence = FString(*Sequence->GetName().ToString());
                     Info.Duration = Sequence->Duration;
                     for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
                     {
@@ -1433,337 +1356,255 @@ namespace Lumina::MCP
                         const int32 Cut = Cuts != nullptr ? Cuts->FindCutAt(Player.Time) : Constants::kIndexNone;
                         if (Cut != Constants::kIndexNone)
                         {
-                            Info.LiveCamera = BindingName(Sequence, Cuts->Cuts[Cut].BindingIndex);
+                            Info.LiveCamera = SequenceBindingName(Sequence, Cuts->Cuts[Cut].BindingIndex);
                             break;
                         }
                     }
                 }
-                Out.Players.push_back(Move(Info));
+                Out.Players.Add(Move(Info));
             });
         }
 
-        void RegisterControl(FStringView Owner)
+        Agent::FToolResult SequencePlay(const SSequencePlaybackParams& In, SSequenceStateResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SSequenceControlParams, SSequenceStateResult>(
-                Owner, "sequence.control",
-                "Pause, Resume, Stop, Seek or Restart the sequences playing in the game.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SSequenceControlParams& In, SSequenceStateResult& Out)
+            CSequence* Sequence = nullptr;
+            FString Error;
+            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            CWorld* World = RequireSequenceGameWorld(Error);
+            if (World == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            ForEachSequencePlayer(World, Sequence, [World](ECS::FEntity Player) { World->GetSequences()->StopSequence(Player); });
+
+            const ECS::FEntity Player = World->GetSequences()->PlaySequence(Sequence, In.bLoop, In.PlayRate);
+            SSequencePlayerComponent& Component = World->GetComponent<SSequencePlayerComponent>(Player);
+            if (In.StartTime > 0.0f)
+            {
+                Component.Seek(In.StartTime);
+            }
+            if (In.bPaused)
+            {
+                Component.Pause();
+            }
+
+            SSequencePlayerInfo& Info = Out.Players.EmplaceGetRef();
+            Info.Player = Agent::FEntityTokens::Mint(World->GetEntityRegistry(), Player);
+            Info.Sequence = FString(*Sequence->GetName().ToString());
+            Info.Time = Component.Time;
+            Info.Duration = Sequence->Duration;
+            Info.bPlaying = true;
+            Info.bPaused = In.bPaused;
+            return Agent::FToolResult::Ok(Lumina::Format("Playing {} from {:.2f}s{}.", Info.Sequence, Info.Time, In.bPaused ? ", paused" : ""));
+        }
+
+        const char* SequencePlaybackActionName(ESequencePlaybackAction Action)
+        {
+            switch (Action)
+            {
+                case ESequencePlaybackAction::Pause:  return "Pause";
+                case ESequencePlaybackAction::Resume: return "Resume";
+                case ESequencePlaybackAction::Stop:   return "Stop";
+                case ESequencePlaybackAction::Seek:   return "Seek";
+                default:                              return "Restart";
+            }
+        }
+
+        Agent::FToolResult SequenceControlPlayback(const SSequencePlaybackParams& In, SSequenceStateResult& Out)
+        {
+            FString Error;
+            CWorld* World = RequireSequenceGameWorld(Error);
+            if (World == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            CSequence* Only = nullptr;
+            if (!In.Sequence.IsEmpty() && !ResolveSequence(In.Sequence, Only, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            int32 Touched = 0;
+            ForEachSequencePlayer(World, Only, [&](ECS::FEntity Entity)
+            {
+                ++Touched;
+                if (In.Action == ESequencePlaybackAction::Stop)
                 {
-                    FString Error;
-                    CWorld* World = RequireGameWorld(Error);
-                    if (World == nullptr)
+                    World->GetSequences()->StopSequence(Entity);
+                    return;
+                }
+
+                SSequencePlayerComponent& Player = World->GetComponent<SSequencePlayerComponent>(Entity);
+                switch (In.Action)
+                {
+                    case ESequencePlaybackAction::Pause:  Player.Pause(); break;
+                    case ESequencePlaybackAction::Resume: Player.Resume(); break;
+                    case ESequencePlaybackAction::Seek:   Player.Seek(In.Time); break;
+                    default:
+                        Player.Seek(0.0f);
+                        Player.Play(true);
+                        break;
+                }
+            });
+
+            CollectSequenceState(World, Out);
+            return Touched > 0
+                ? Agent::FToolResult::Ok(Lumina::Format("{} applied to {} player(s).", SequencePlaybackActionName(In.Action), Touched))
+                : Agent::FToolResult::Error("No sequence is playing. Start one with sequence.playback Play.");
+        }
+
+        Agent::FToolResult SequencePlaybackState(SSequenceStateResult& Out)
+        {
+            FString Error;
+            CWorld* World = RequireSequenceGameWorld(Error);
+            if (World == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            CollectSequenceState(World, Out);
+            return Agent::FToolResult::Ok(Lumina::Format("{} player(s).", Out.Players.Num()));
+        }
+
+        void RegisterSequencePlayback(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSequencePlaybackParams, SSequenceStateResult>(
+                Owner, "sequence.playback",
+                "Play a sequence in the running game (replacing any player of it), Pause, Resume, Stop, Seek or Restart players (Sequence empty means all), or report State.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSequencePlaybackParams& In, SSequenceStateResult& Out)
+                {
+                    switch (In.Action)
                     {
-                        return Agent::FToolResult::Error(Error);
+                        case ESequencePlaybackAction::Play:  return SequencePlay(In, Out);
+                        case ESequencePlaybackAction::State: return SequencePlaybackState(Out);
+                        default:                             return SequenceControlPlayback(In, Out);
                     }
-
-                    CSequence* Only = nullptr;
-                    if (!In.Sequence.empty() && !ResolveSequence(In.Sequence, Only, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    const FString& Action = In.Action;
-                    if (Action != "Pause" && Action != "Resume" && Action != "Stop" && Action != "Seek" && Action != "Restart")
-                    {
-                        return Agent::FToolResult::Error("Action has to be Pause, Resume, Stop, Seek or Restart.");
-                    }
-
-                    int32 Touched = 0;
-                    ForEachPlayer(World, Only, [&](ECS::FEntity Entity)
-                    {
-                        ++Touched;
-                        if (Action == "Stop")
-                        {
-                            World->GetSequences()->StopSequence(Entity);
-                            return;
-                        }
-
-                        SSequencePlayerComponent& Player = World->GetComponent<SSequencePlayerComponent>(Entity);
-                        if (Action == "Pause")        { Player.Pause(); }
-                        else if (Action == "Resume")  { Player.Resume(); }
-                        else if (Action == "Seek")    { Player.Seek(In.Time); }
-                        else
-                        {
-                            Player.Seek(0.0f);
-                            Player.Play(true);
-                        }
-                    });
-
-                    CollectState(World, Out);
-                    return Touched > 0
-                        ? Agent::FToolResult::Ok(Lumina::Format("{} applied to {} player(s).", Action, Touched))
-                        : Agent::FToolResult::Error("No sequence is playing. Start one with sequence.play.");
                 });
         }
 
-        void RegisterState(FStringView Owner)
+        Agent::FToolResult MovieRenderStart(const SMovieRenderParams& In, SMovieStatusResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SSequenceRefParams, SSequenceStateResult>(
-                Owner, "sequence.state",
-                "Report every sequence player in the game with its playhead and live camera.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SSequenceRefParams&, SSequenceStateResult& Out)
+            FString Error;
+            CWorld* World = RequireSequenceGameWorld(Error);
+            if (World == nullptr)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            CSequence* Sequence = nullptr;
+            if (!In.Sequence.IsEmpty() && !ResolveSequence(In.Sequence, Sequence, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            MovieCapture::FSettings Settings;
+            Settings.OutputPath = In.OutputPath;
+            Settings.PngDirectory = In.PngDirectory;
+            Settings.PngEvery = (uint32)Math::Max(In.PngEvery, 1);
+            if (Settings.OutputPath.IsEmpty() && Settings.PngDirectory.IsEmpty())
+            {
+                const FString Stem = Sequence != nullptr ? FString(*Sequence->GetName().ToString()) : FString("Gameplay");
+                Settings.OutputPath = Lumina::Format("{}/Saved/Movies/{}.mp4", Paths::GetEngineDirectory(), Stem);
+            }
+            Settings.Width = (uint32)Math::Max(In.Width, 16);
+            Settings.Height = (uint32)Math::Max(In.Height, 16);
+            Settings.FrameRate = (uint32)Math::Clamp(In.FrameRate, 1, 240);
+            Settings.BitRate = (uint32)Math::Max(In.BitRate, 1000000);
+            Settings.WarmupFrames = (uint32)Math::Max(In.WarmupFrames, 1);
+            Settings.bRecordAudio = In.bAudio;
+            Settings.WavPath = In.WavPath;
+
+            const float Seconds = Sequence != nullptr ? Sequence->Duration : In.Seconds;
+            Settings.FrameCount = Seconds > 0.0f ? (uint32)std::ceil(Seconds * (float)Settings.FrameRate) : 0u;
+
+            if (Sequence != nullptr)
+            {
+                // Held on its first frame through the warmup, so streaming and exposure settle on the opening shot.
+                ForEachSequencePlayer(World, nullptr, [World](ECS::FEntity Player) { World->GetSequences()->StopSequence(Player); });
+                const ECS::FEntity Player = World->GetSequences()->PlaySequence(Sequence, false, 1.0f);
+                World->GetComponent<SSequencePlayerComponent>(Player).Pause();
+
+                Settings.OnRecordingStarted = [Sequence]()
                 {
-                    FString Error;
-                    CWorld* World = RequireGameWorld(Error);
-                    if (World == nullptr)
+                    if (CWorld* Game = FindGameWorld())
                     {
-                        return Agent::FToolResult::Error(Error);
+                        ForEachSequencePlayer(Game, Sequence, [Game](ECS::FEntity Entity) { Game->GetComponent<SSequencePlayerComponent>(Entity).Resume(); });
                     }
-                    CollectState(World, Out);
-                    return Agent::FToolResult::Ok(Lumina::Format("{} player(s).", Out.Players.size()));
-                });
+                };
+            }
+
+            if (!MovieCapture::Start(Move(Settings), Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            FillMovieStatus(MovieCapture::GetStatus(), Out);
+            return Agent::FToolResult::Ok(Out.FrameCount > 0
+                ? Lumina::Format("Recording {} frame(s) to {}.", Out.FrameCount, Out.OutputPath.IsEmpty() ? Out.PngDirectory : Out.OutputPath)
+                : Lumina::Format("Recording to {} until movie.render Stop.", Out.OutputPath.IsEmpty() ? Out.PngDirectory : Out.OutputPath));
+        }
+
+        Agent::FToolResult MovieRenderStatus(SMovieStatusResult& Out)
+        {
+            FillMovieStatus(MovieCapture::GetStatus(), Out);
+            if (!Out.Error.IsEmpty())
+            {
+                return Agent::FToolResult::Error(Out.Error);
+            }
+            return Agent::FToolResult::Ok(Out.bActive
+                ? Lumina::Format("{} of {} frame(s).", Out.FramesWritten, Out.FrameCount)
+                : Lumina::Format("Finished with {} frame(s).", Out.FramesWritten));
+        }
+
+        Agent::FToolResult MovieRenderStop(SMovieStatusResult& Out)
+        {
+            MovieCapture::Stop();
+            FillMovieStatus(MovieCapture::GetStatus(), Out);
+            return Agent::FToolResult::Ok(Lumina::Format("Stopped with {} frame(s).", Out.FramesWritten));
         }
 
         void RegisterMovieRender(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SMovieRenderParams, SMovieStatusResult>(
                 Owner, "movie.render",
-                "Render the running game to an H.264 MP4 at a locked frame rate, however slowly each frame draws. With a Sequence it plays that sequence from the start "
-                "and stops at its end; without one it records Seconds of gameplay. Returns at once, so poll movie.status until bFinished.",
+                "Start renders the game to an H.264 MP4 at a locked frame rate: a Sequence from start to end, else Seconds of gameplay. It returns at once; poll Status until bFinished. Stop ends early.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SMovieRenderParams& In, SMovieStatusResult& Out)
                 {
-                    FString Error;
-                    CWorld* World = RequireGameWorld(Error);
-                    if (World == nullptr)
+                    switch (In.Action)
                     {
-                        return Agent::FToolResult::Error(Error);
+                        case EMovieRenderAction::Status: return MovieRenderStatus(Out);
+                        case EMovieRenderAction::Stop:   return MovieRenderStop(Out);
+                        default:                         return MovieRenderStart(In, Out);
                     }
-
-                    CSequence* Sequence = nullptr;
-                    if (!In.Sequence.empty() && !ResolveSequence(In.Sequence, Sequence, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    MovieCapture::FSettings Settings;
-                    Settings.OutputPath = In.OutputPath;
-                    Settings.PngDirectory = In.PngDirectory;
-                    Settings.PngEvery = (uint32)Math::Max(In.PngEvery, 1);
-                    if (Settings.OutputPath.empty() && Settings.PngDirectory.empty())
-                    {
-                        const FString Stem = Sequence != nullptr ? FString(Sequence->GetName().ToString().c_str()) : FString("Gameplay");
-                        Settings.OutputPath = Lumina::Format("{}/Saved/Movies/{}.mp4", Paths::GetEngineDirectory(), Stem);
-                    }
-                    Settings.Width = (uint32)Math::Max(In.Width, 16);
-                    Settings.Height = (uint32)Math::Max(In.Height, 16);
-                    Settings.FrameRate = (uint32)Math::Clamp(In.FrameRate, 1, 240);
-                    Settings.BitRate = (uint32)Math::Max(In.BitRate, 1000000);
-                    Settings.WarmupFrames = (uint32)Math::Max(In.WarmupFrames, 1);
-                    Settings.bRecordAudio = In.bAudio;
-                    Settings.WavPath = In.WavPath;
-
-                    const float Seconds = Sequence != nullptr ? Sequence->Duration : In.Seconds;
-                    Settings.FrameCount = Seconds > 0.0f ? (uint32)std::ceil(Seconds * (float)Settings.FrameRate) : 0u;
-
-                    if (Sequence != nullptr)
-                    {
-                        // Held on its first frame through the warmup, so streaming and exposure settle on the opening shot.
-                        ForEachPlayer(World, nullptr, [World](ECS::FEntity Player) { World->GetSequences()->StopSequence(Player); });
-                        const ECS::FEntity Player = World->GetSequences()->PlaySequence(Sequence, false, 1.0f);
-                        World->GetComponent<SSequencePlayerComponent>(Player).Pause();
-
-                        Settings.OnRecordingStarted = [Sequence]()
-                        {
-                            if (CWorld* Game = FindWorld(true))
-                            {
-                                ForEachPlayer(Game, Sequence, [Game](ECS::FEntity Entity) { Game->GetComponent<SSequencePlayerComponent>(Entity).Resume(); });
-                            }
-                        };
-                    }
-
-                    if (!MovieCapture::Start(Move(Settings), Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    FillStatus(MovieCapture::GetStatus(), Out);
-                    return Agent::FToolResult::Ok(Out.FrameCount > 0
-                        ? Lumina::Format("Recording {} frame(s) to {}.", Out.FrameCount, Out.OutputPath.empty() ? Out.PngDirectory : Out.OutputPath)
-                        : Lumina::Format("Recording to {} until movie.stop.", Out.OutputPath.empty() ? Out.PngDirectory : Out.OutputPath));
                 });
         }
 
-        void RegisterMovieStatus(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SSequenceRefParams, SMovieStatusResult>(
-                Owner, "movie.status",
-                "Report how far a movie render has got, and where it wrote once bFinished.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SSequenceRefParams&, SMovieStatusResult& Out)
-                {
-                    FillStatus(MovieCapture::GetStatus(), Out);
-                    if (!Out.Error.empty())
-                    {
-                        return Agent::FToolResult::Error(Out.Error);
-                    }
-                    return Agent::FToolResult::Ok(Out.bActive
-                        ? Lumina::Format("{} of {} frame(s).", Out.FramesWritten, Out.FrameCount)
-                        : Lumina::Format("Finished with {} frame(s).", Out.FramesWritten));
-                });
-        }
-
-        void RegisterMovieStop(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SSequenceRefParams, SMovieStatusResult>(
-                Owner, "movie.stop",
-                "Finish a movie render early, keeping what has been recorded.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SSequenceRefParams&, SMovieStatusResult& Out)
-                {
-                    MovieCapture::Stop();
-                    FillStatus(MovieCapture::GetStatus(), Out);
-                    return Agent::FToolResult::Ok(Lumina::Format("Stopped with {} frame(s).", Out.FramesWritten));
-                });
-        }
-
-        void RegisterCameraView(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SCameraViewParams, SCameraViewResult>(
-                Owner, "camera.get_view",
-                "Report where the live camera is and what it faces, with a key ready for sequence.shot. Fly the editor camera to a good angle and read it here.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SCameraViewParams& In, SCameraViewResult& Out)
-                {
-                    FString Error;
-                    CWorld* World = In.bEditorWorld ? nullptr : FindWorld(true);
-                    Out.World = World != nullptr ? "Game" : "Editor";
-                    if (World == nullptr)
-                    {
-                        World = SessionOps::GetSceneWorld(Error);
-                    }
-                    if (World == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Error.empty() ? FString("No world is open.") : Error);
-                    }
-
-                    const ECS::FEntity Camera = World->GetCamera()->GetActiveCameraEntity();
-                    const STransformComponent* Transform = Camera != ECS::NullEntity && World->IsValidEntity(Camera)
-                        ? World->TryGetComponent<STransformComponent>(Camera) : nullptr;
-                    if (Transform == nullptr)
-                    {
-                        return Agent::FToolResult::Error("The world has no live camera.");
-                    }
-
-                    const FVector3 Location = Transform->GetWorldLocation();
-                    const FVector3 Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->GetWorldRotation()));
-                    FVector3 Forward = Transform->GetWorldRotation() * FVector3(0.0f, 0.0f, -1.0f);
-                    Out.FOV = 90.0f;
-                    if (const SCameraComponent* Component = World->TryGetComponent<SCameraComponent>(Camera))
-                    {
-                        Forward = Component->GetForwardVector();
-                        Out.FOV = Component->FOV;
-                    }
-
-                    Out.Location = { Location.x, Location.y, Location.z };
-                    Out.Rotation = { Rotation.x, Rotation.y, Rotation.z };
-                    Out.Forward = { Forward.x, Forward.y, Forward.z };
-                    Out.ShotKey = Lumina::Format("{{\"Time\":0,\"Location\":[{:.2f},{:.2f},{:.2f}],\"Rotation\":[{:.2f},{:.2f},{:.2f}],\"FOV\":{:.1f}}}",
-                        Location.x, Location.y, Location.z, Rotation.x, Rotation.y, Rotation.z, Out.FOV);
-                    return Agent::FToolResult::Ok(Out.ShotKey);
-                });
-        }
     }
 
-    namespace SequenceTools
-    {
-        void RegisterSetCameraView(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SSetCameraViewParams, SCameraViewResult>(
-                Owner, "camera.set_view",
-                "Move the editor viewport camera to a location, facing a Target point or a Rotation, to frame a screenshot.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SSetCameraViewParams& In, SCameraViewResult& Out)
-                {
-                    if (In.Location.size() != 3 || (In.Target.size() != 3 && In.Rotation.size() != 3))
-                    {
-                        return Agent::FToolResult::Error("Location is [x,y,z], plus a Target [x,y,z] or a Rotation [pitch,yaw,roll].");
-                    }
-
-                    FString Error;
-                    CWorld* World = SessionOps::GetSceneWorld(Error);
-                    if (World == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Error.empty() ? FString("No world is open.") : Error);
-                    }
-
-                    const ECS::FEntity Camera = World->GetCamera()->GetActiveCameraEntity();
-                    STransformComponent* Transform = Camera != ECS::NullEntity && World->IsValidEntity(Camera)
-                        ? World->TryGetComponent<STransformComponent>(Camera) : nullptr;
-                    if (Transform == nullptr)
-                    {
-                        return Agent::FToolResult::Error("The editor world has no viewport camera.");
-                    }
-
-                    const FVector3 Location(In.Location[0], In.Location[1], In.Location[2]);
-                    const FQuat Rotation = In.Target.size() == 3
-                        ? Math::FindLookAtRotation(FVector3(In.Target[0], In.Target[1], In.Target[2]), Location)
-                        : FQuat(Math::Radians(FVector3(In.Rotation[0], In.Rotation[1], In.Rotation[2])));
-                    Transform->SetLocation(Location);
-                    Transform->SetRotation(Rotation);
-
-                    const FVector3 Euler = Math::Degrees(Math::YawFirstEulerAngles(Rotation));
-                    Out.World = "Editor";
-                    Out.Location = { Location.x, Location.y, Location.z };
-                    Out.Rotation = { Euler.x, Euler.y, Euler.z };
-                    return Agent::FToolResult::Ok(Lumina::Format("Camera at [{:.2f},{:.2f},{:.2f}].", Location.x, Location.y, Location.z));
-                });
-        }
-
-        void RegisterGroundHeight(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SGroundHeightParams, SGroundHeightResult>(
-                Owner, "world.ground_height",
-                "Report the height of the first surface under each [x,z] point, for placing cameras and events on uneven terrain.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SGroundHeightParams& In, SGroundHeightResult& Out)
-                {
-                    nlohmann::json Points;
-                    FString Error;
-                    if (!ParseJson(In.Points, Points, Error) || !Points.is_array())
-                    {
-                        return Agent::FToolResult::Error("Points is an array of [x,z] pairs.");
-                    }
-                    for (const nlohmann::json& Point : Points)
-                    {
-                        if (!Point.is_array() || Point.size() < 2 || !Point[0].is_number() || !Point[1].is_number())
-                        {
-                            return Agent::FToolResult::Error("Each point is [x,z].");
-                        }
-                        Out.Heights.push_back(GroundHeight(Point[0].get<float>(), Point[Point.size() - 1].get<float>()));
-                    }
-                    return Agent::FToolResult::Ok(Lumina::Format("Probed {} point(s).", Out.Heights.size()));
-                });
-        }
-    }
+    using namespace MCPSequenceToolsInternal;
 
     void RegisterSequenceTools(FStringView Owner)
     {
-        SequenceTools::RegisterGroundHeight(Owner);
-        SequenceTools::RegisterCreate(Owner);
-        SequenceTools::RegisterSave(Owner);
-        SequenceTools::RegisterSettings(Owner);
-        SequenceTools::RegisterDescribe(Owner);
-        SequenceTools::RegisterTrackTypes(Owner);
-        SequenceTools::RegisterAddBinding(Owner);
-        SequenceTools::RegisterRemoveBinding(Owner);
-        SequenceTools::RegisterAddTrack(Owner);
-        SequenceTools::RegisterRemoveTrack(Owner);
-        SequenceTools::RegisterSetTrackProperty(Owner);
-        SequenceTools::RegisterSetKeys(Owner);
-        SequenceTools::RegisterAddCameraCut(Owner);
-        SequenceTools::RegisterAddEvent(Owner);
-        SequenceTools::RegisterAddAudio(Owner);
-        SequenceTools::RegisterShot(Owner);
-        SequenceTools::RegisterPlay(Owner);
-        SequenceTools::RegisterControl(Owner);
-        SequenceTools::RegisterState(Owner);
-        SequenceTools::RegisterMovieRender(Owner);
-        SequenceTools::RegisterMovieStatus(Owner);
-        SequenceTools::RegisterMovieStop(Owner);
-        SequenceTools::RegisterCameraView(Owner);
-        SequenceTools::RegisterSetCameraView(Owner);
+        RegisterSequenceCreate(Owner);
+        RegisterSequenceSave(Owner);
+        RegisterSequenceSetSettings(Owner);
+        RegisterSequenceDescribe(Owner);
+        RegisterSequenceTrackTypes(Owner);
+        RegisterSequenceBinding(Owner);
+        RegisterSequenceTrack(Owner);
+        RegisterSequenceSetTrackProperty(Owner);
+        RegisterSequenceSetKeys(Owner);
+        RegisterSequenceAddCameraCut(Owner);
+        RegisterSequenceAddEvent(Owner);
+        RegisterSequenceAddAudio(Owner);
+        RegisterSequenceShot(Owner);
+        RegisterSequencePlayback(Owner);
+        RegisterMovieRender(Owner);
     }
 }

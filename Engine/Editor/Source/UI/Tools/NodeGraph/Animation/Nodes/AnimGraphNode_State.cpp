@@ -40,7 +40,7 @@ namespace Lumina
 
     void CAnimGraphNode_State::SetRenameText(const FString& InText)
     {
-        StateName = InText.empty() ? NAME_None : FName(InText.c_str());
+        StateName = InText.IsEmpty() ? NAME_None : FName(*InText);
     }
 
     CAnimationGraphNodeGraph* CAnimGraphNode_State::AllocateBlendTree()

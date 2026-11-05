@@ -26,7 +26,7 @@ namespace
         Curve.Name = Name;
         Curve.Curve.AddKey(0.0f, StartValue);
         Curve.Curve.AddKey(Clip->GetDuration(), EndValue);
-        Clip->GetAnimationResource()->Curves.push_back(Curve);
+        Clip->GetAnimationResource()->Curves.Add(Curve);
     }
 
     // Curve evaluation never touches bone transforms, so a one-bone skeleton is enough.
@@ -35,7 +35,7 @@ namespace
         FSkeletonResource::FBoneInfo Bone;
         Bone.Name        = FName("Root");
         Bone.ParentIndex = Constants::kIndexNone;
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
         Skeleton.BoneNameToIndex[Bone.Name] = 0;
     }
 
@@ -50,7 +50,7 @@ namespace
         FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.016f, State, Tasks, RootMotion);
 
         const int32 Slot = Graph->FindCurveIndex(CurveName);
-        return (Slot != Constants::kIndexNone && Slot < (int32)State.CurveValues.size()) ? State.CurveValues[Slot] : NAN;
+        return (Slot != Constants::kIndexNone && Slot < State.CurveValues.Num()) ? State.CurveValues[Slot] : NAN;
     }
 }
 
@@ -123,7 +123,7 @@ TEST(AnimationCurves, GetCurveReadsTheValueOffThePose)
     FAnimGraphRootMotion RootMotion;
     FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.016f, State, Tasks, RootMotion);
 
-    ASSERT_LT(ValueReg, State.ScalarRegisters.size());
+    ASSERT_LT(ValueReg, State.ScalarRegisters.Num());
     EXPECT_NEAR(State.ScalarRegisters[ValueReg], 3.0f, 1e-4f);
 }
 
@@ -201,7 +201,7 @@ TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
     GoTerm.CompareValue      = 0.5f;
     ToRun.Terms              = { GoTerm };
     ToRun.BlendDuration      = 0.2f;
-    Machine.Transitions.push_back(ToRun);
+    Machine.Transitions.Add(ToRun);
 
     const int32 GoParam = Compiler.AddParameter(FName("Go"), EAnimGraphParamType::Float, 0.0f);
     Compiler.EmitOutput(Compiler.EmitEvalStateMachine(Move(Machine)));
@@ -252,7 +252,7 @@ TEST(AnimationCurves, GraphWithoutCurvesCarriesNoCurveState)
     CAnimationGraph* Graph = NewObject<CAnimationGraph>();
     Compiler.BuildGraph(Graph);
 
-    EXPECT_TRUE(Graph->CurveNames.empty());
+    EXPECT_TRUE(Graph->CurveNames.IsEmpty());
 
     FSkeletonResource Skeleton;
     MakeSkeleton(Skeleton);
@@ -262,7 +262,7 @@ TEST(AnimationCurves, GraphWithoutCurvesCarriesNoCurveState)
     FAnimGraphRootMotion RootMotion;
     FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.016f, State, Tasks, RootMotion);
 
-    EXPECT_TRUE(State.CurveValues.empty());
+    EXPECT_TRUE(State.CurveValues.IsEmpty());
     EXPECT_TRUE(Tasks.HasWork());
 }
 

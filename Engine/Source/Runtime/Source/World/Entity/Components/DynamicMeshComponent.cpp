@@ -21,7 +21,7 @@
 
 namespace Lumina
 {
-    namespace
+    namespace DynamicMeshComponentInternal
     {
         constexpr uint32 kCommitGrain = 4096;
         
@@ -29,17 +29,17 @@ namespace Lumina
         {
             LUMINA_PROFILE_SCOPE();
 
-            const uint32 VertexCount   = (uint32)Positions.size();
-            const uint32 TriangleCount = (uint32)(Indices.size() / 3);
+            const uint32 VertexCount   = (uint32)Positions.Num();
+            const uint32 TriangleCount = (uint32)(Indices.Num() / 3);
 
-            OutNormals.assign(VertexCount, FVector3(0.0f));
+            OutNormals.Init(FVector3(0.0f), VertexCount);
             if (VertexCount == 0)
             {
                 return;
             }
 
-            const FVector3* Pos = Positions.data();
-            const uint32*   Idx = Indices.data();
+            const FVector3* Pos = Positions.GetData();
+            const uint32*   Idx = Indices.GetData();
             
             auto IsTriangleValid = [Idx, VertexCount](uint32 Tri)
             {
@@ -49,8 +49,8 @@ namespace Lumina
             };
             
             TVector<FVector3> FaceNormals;
-            FaceNormals.resize(TriangleCount);
-            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
+            FaceNormals.SetNum(TriangleCount);
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -68,8 +68,8 @@ namespace Lumina
             }, kCommitGrain);
 
             TVector<uint32> Offsets;
-            Offsets.assign(VertexCount + 1u, 0u);
-            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
+            Offsets.Init(0u, VertexCount + 1u);
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -94,8 +94,8 @@ namespace Lumina
 
             TVector<uint32> Cursor(Offsets.begin(), Offsets.begin() + VertexCount);
             TVector<uint32> Adjacency;
-            Adjacency.resize(Running);
-            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
+            Adjacency.SetNum(Running);
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -111,7 +111,7 @@ namespace Lumina
                 }
             }, kCommitGrain);
 
-            Task::ParallelFor(VertexCount, [&](const Task::FParallelRange& Range)
+            Jobs::ParallelFor(VertexCount, [&](const Jobs::FParallelRange& Range)
             {
                 for (uint32 Vertex = Range.Start; Vertex < Range.End; ++Vertex)
                 {
@@ -151,7 +151,7 @@ namespace Lumina
 
     CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(uint32 Slot) const
     {
-        if (Slot < MaterialOverrides.size())
+        if (Slot < static_cast<uint32>(MaterialOverrides.Num()))
         {
             return MaterialOverrides[Slot].Get();
         }
@@ -169,10 +169,33 @@ namespace Lumina
         return std::atomic_ref<uint32>(const_cast<uint32&>(RenderDataVersion)).load(std::memory_order_acquire);
     }
 
-    void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
+    FDynamicMeshRenderData::FDynamicMeshRenderData()
+        : SharedResource(MakeShared<FMeshResource>())
+        , Resource(*SharedResource)
+    {}
+
+    FDynamicMeshRenderData::FDynamicMeshRenderData(const FDynamicMeshRenderData& Other)
+        : SharedResource(Other.SharedResource)
+        , Resource(*SharedResource)
+        , Surfaces(Other.Surfaces)
+        , LocalMin(Other.LocalMin)
+        , LocalMax(Other.LocalMax)
+        , LocalCenter(Other.LocalCenter)
+        , LocalRadius(Other.LocalRadius)
+        , MeshletHeaderSlot(Other.MeshletHeaderSlot)
+        , bAllMaterialsReady(Other.bAllMaterialsReady)
+    {}
+
+    void SDynamicMeshComponent::StoreRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
     {
         AtomicStore(&RenderData, Move(NewData));
         (void)std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
+    }
+
+    void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
+    {
+        StoreRenderData(Move(NewData));
+        QueueRenderResolve();
     }
 
     SAABB SDynamicMeshComponent::GetAABB() const
@@ -191,7 +214,7 @@ namespace Lumina
         bool bAllReady = true;
         const TVector<FGeometrySurface>& Geometry = Data.Resource.GeometrySurfaces;
 
-        for (size_t i = 0; i < Data.Surfaces.size() && i < Geometry.size(); ++i)
+        for (int32 i = 0; i < Data.Surfaces.Num() && i < Geometry.Num(); ++i)
         {
             // -1 means unassigned, and reading it unsigned keeps it out of range of any slot.
             const uint32 Slot = (uint32)Geometry[i].MaterialIndex;
@@ -206,15 +229,21 @@ namespace Lumina
 
     void SDynamicMeshComponent::RefreshResolvedMaterials()
     {
-        if (const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData())
+        const TSharedPtr<FDynamicMeshRenderData> Current = LoadRenderData();
+        if (!Current)
         {
-            ResolveMaterialsInto(*Data);
+            return;
         }
+
+        // The resolve pass is reading this component right now, so the swap needs no queueing.
+        TSharedPtr<FDynamicMeshRenderData> Refreshed = MakeShared<FDynamicMeshRenderData>(*Current);
+        ResolveMaterialsInto(*Refreshed);
+        StoreRenderData(Move(Refreshed));
     }
 
     void SDynamicMeshComponent::AddSection(int32 MaterialSlot, int32 StartIndex, int32 IndexCount)
     {
-        FDynamicMeshSection& Section = EnsureBuildData().Sections.emplace_back();
+        FDynamicMeshSection& Section = EnsureBuildData().Sections.EmplaceGetRef();
         Section.MaterialSlot = Math::Max(0, MaterialSlot);
         Section.StartIndex   = Math::Max(0, StartIndex);
         Section.IndexCount   = Math::Max(0, IndexCount);
@@ -237,19 +266,19 @@ namespace Lumina
 
     int32 SDynamicMeshComponent::GetVertexCount() const
     {
-        return BuildData ? (int32)BuildData->Positions.size() : CommittedVertexCount;
+        return BuildData ? BuildData->Positions.Num() : CommittedVertexCount;
     }
 
     int32 SDynamicMeshComponent::GetTriangleCount() const
     {
-        return BuildData ? (int32)(BuildData->Indices.size() / 3) : CommittedTriangleCount;
+        return BuildData ? (BuildData->Indices.Num() / 3) : CommittedTriangleCount;
     }
 
     void SDynamicMeshComponent::SetPositionsData(const float* Data, int32 FloatCount)
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
         const int32 Count = FloatCount / 3;
-        BD.Positions.resize((size_t)Count);
+        BD.Positions.SetNum(Count);
         for (int32 i = 0; i < Count; ++i)
         {
             BD.Positions[i] = FVector3(Data[i * 3 + 0], Data[i * 3 + 1], Data[i * 3 + 2]);
@@ -260,7 +289,7 @@ namespace Lumina
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
         const int32 Count = FloatCount / 3;
-        BD.Normals.resize((size_t)Count);
+        BD.Normals.SetNum(Count);
         for (int32 i = 0; i < Count; ++i)
         {
             BD.Normals[i] = FVector3(Data[i * 3 + 0], Data[i * 3 + 1], Data[i * 3 + 2]);
@@ -271,7 +300,7 @@ namespace Lumina
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
         const int32 Count = FloatCount / 2;
-        BD.UVs.resize((size_t)Count);
+        BD.UVs.SetNum(Count);
         for (int32 i = 0; i < Count; ++i)
         {
             BD.UVs[i] = FVector2(Data[i * 2 + 0], Data[i * 2 + 1]);
@@ -282,7 +311,7 @@ namespace Lumina
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
         const int32 Count = FloatCount / 4;
-        BD.Colors.resize((size_t)Count);
+        BD.Colors.SetNum(Count);
         for (int32 i = 0; i < Count; ++i)
         {
             BD.Colors[i] = PackColor(FVector4(Data[i * 4 + 0], Data[i * 4 + 1], Data[i * 4 + 2], Data[i * 4 + 3]));
@@ -292,13 +321,15 @@ namespace Lumina
     void SDynamicMeshComponent::SetColorsPackedData(const uint32* Data, int32 Count)
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
-        BD.Colors.assign(Data, Data + Math::Max(0, Count));
+        BD.Colors.Reset();
+        BD.Colors.Append(Data, Data + Math::Max(0, Count));
     }
 
     void SDynamicMeshComponent::SetIndicesData(const uint32* Data, int32 Count)
     {
         FDynamicMeshBuildData& BD = EnsureBuildData();
-        BD.Indices.assign(Data, Data + Math::Max(0, Count));
+        BD.Indices.Reset();
+        BD.Indices.Append(Data, Data + Math::Max(0, Count));
     }
 
     void SDynamicMeshComponent::SetBuildData(FDynamicMeshBuildData&& Data)
@@ -310,7 +341,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        const size_t VertexCount = BD.Positions.size();
+        const int32 VertexCount = BD.Positions.Num();
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->bSkinnedMesh          = false;
@@ -323,19 +354,19 @@ namespace Lumina
         // Normals derive first because that is the only stage reading Positions and Indices.
         const TVector<FVector3>* SourceNormals = &BD.Normals;
         TVector<FVector3> DerivedNormals;
-        if (BD.Normals.size() != VertexCount)
+        if (BD.Normals.Num() != VertexCount)
         {
-            ComputeSmoothNormals(BD.Positions, BD.Indices, DerivedNormals);
+            DynamicMeshComponentInternal::ComputeSmoothNormals(BD.Positions, BD.Indices, DerivedNormals);
             SourceNormals = &DerivedNormals;
         }
 
-        Resource->Normals.resize(VertexCount);
+        Resource->Normals.SetNum(VertexCount);
 
         // Tangents are generated inside GenerateMeshlets; start them zeroed.
-        Resource->Tangents.assign(VertexCount, 0u);
+        Resource->Tangents.Init(0u, VertexCount);
 
-        const FVector2* InUVs    = (BD.UVs.size()    == VertexCount) ? BD.UVs.data()    : nullptr;
-        const uint32*   InColors = (BD.Colors.size() == VertexCount) ? BD.Colors.data() : nullptr;
+        const FVector2* InUVs    = (BD.UVs.Num()    == VertexCount) ? BD.UVs.GetData()    : nullptr;
+        const uint32*   InColors = (BD.Colors.Num() == VertexCount) ? BD.Colors.GetData() : nullptr;
 
         // An absent stream is one constant for the whole mesh, so it fills instead of packing per vertex.
         if (InColors != nullptr)
@@ -344,28 +375,28 @@ namespace Lumina
         }
         else
         {
-            Resource->Colors.assign(VertexCount, 0xFFFFFFFFu);
+            Resource->Colors.Init(0xFFFFFFFFu, VertexCount);
         }
 
         if (InUVs != nullptr)
         {
-            Resource->UVs.resize(VertexCount);
+            Resource->UVs.SetNum(VertexCount);
         }
         else
         {
             // A zero UV packs to zero.
-            Resource->UVs.assign(VertexCount, 0u);
+            Resource->UVs.Init(0u, VertexCount);
         }
 
         {
             LUMINA_PROFILE_SECTION("Pack Normals");
             static_assert(sizeof(FVector2) == 2 * sizeof(float), "PackHalf2x16Array reads UVs as a flat float stream");
 
-            const FVector3* InNormals  = SourceNormals->data();
-            uint32*         OutNormals = Resource->Normals.data();
-            uint32*         OutUVs     = Resource->UVs.data();
+            const FVector3* InNormals  = SourceNormals->GetData();
+            uint32*         OutNormals = Resource->Normals.GetData();
+            uint32*         OutUVs     = Resource->UVs.GetData();
 
-            Task::ParallelFor((uint32)VertexCount, [=](const Task::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)VertexCount, [=](const Jobs::FParallelRange& Range)
             {
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {
@@ -376,7 +407,7 @@ namespace Lumina
                 {
                     SIMD::PackHalf2x16Array(&InUVs[Range.Start].x, OutUVs + Range.Start, Range.End - Range.Start);
                 }
-            }, kCommitGrain);
+            }, DynamicMeshComponentInternal::kCommitGrain);
         }
 
         Resource->UVs1 = Resource->UVs;
@@ -385,12 +416,12 @@ namespace Lumina
         Resource->Indices   = std::move(BD.Indices);
 
         int32 MaterialSlotCount = 1;
-        if (BD.Sections.empty())
+        if (BD.Sections.IsEmpty())
         {
-            FGeometrySurface& Surface = Resource->GeometrySurfaces.emplace_back();
+            FGeometrySurface& Surface = Resource->GeometrySurfaces.EmplaceGetRef();
             Surface.ID            = "Section0";
             Surface.StartIndex    = 0;
-            Surface.IndexCount    = (uint32)Resource->Indices.size();
+            Surface.IndexCount    = (uint32)Resource->Indices.Num();
             Surface.MaterialIndex = 0;
         }
         else
@@ -398,7 +429,7 @@ namespace Lumina
             uint32 SurfaceIndex = 0;
             for (const FDynamicMeshSection& Section : BD.Sections)
             {
-                FGeometrySurface& Surface = Resource->GeometrySurfaces.emplace_back();
+                FGeometrySurface& Surface = Resource->GeometrySurfaces.EmplaceGetRef();
                 Surface.ID            = FName(Format("Section{}", SurfaceIndex++));
                 Surface.StartIndex    = (uint32)Section.StartIndex;
                 Surface.IndexCount    = (uint32)Section.IndexCount;
@@ -424,7 +455,7 @@ namespace Lumina
 
     bool SDynamicMeshComponent::Commit()
     {
-        if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
+        if (!BuildData || BuildData->Positions.IsEmpty() || BuildData->Indices.IsEmpty())
         {
             return false;
         }
@@ -440,7 +471,7 @@ namespace Lumina
 
     bool SDynamicMeshComponent::CommitNow()
     {
-        if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
+        if (!BuildData || BuildData->Positions.IsEmpty() || BuildData->Indices.IsEmpty())
         {
             return false;
         }
@@ -457,8 +488,8 @@ namespace Lumina
 
         TUniquePtr<FMeshResource> Resource = BuildMeshResource(*BuildData, Options);
 
-        CommittedVertexCount   = (int32)Resource->Positions.size();
-        CommittedTriangleCount = (int32)(Resource->Indices.size() / 3);
+        CommittedVertexCount   = Resource->Positions.Num();
+        CommittedTriangleCount = Resource->Indices.Num() / 3;
 
         const FVector3 Min = Resource->LocalBounds.Min;
         const FVector3 Max = Resource->LocalBounds.Max;
@@ -476,8 +507,8 @@ namespace Lumina
 
         // Geometry half of each surface, straight off the built resource; the material half follows.
         const TVector<FGeometrySurface>& Geometry = NewData->Resource.GeometrySurfaces;
-        NewData->Surfaces.resize(Geometry.size());
-        for (size_t i = 0; i < Geometry.size(); ++i)
+        NewData->Surfaces.SetNum(Geometry.Num());
+        for (int32 i = 0; i < Geometry.Num(); ++i)
         {
             FResolvedSurface& R = NewData->Surfaces[i];
             R.NumLODs = Geometry[i].NumLODs;
@@ -494,8 +525,8 @@ namespace Lumina
         ResolveMaterialsInto(*NewData);
 
         NewData->Resource.ClearVertices();
-        NewData->Resource.Indices.clear();
-        NewData->Resource.Indices.shrink_to_fit();
+        NewData->Resource.Indices.Reset();
+        NewData->Resource.Indices.Shrink();
         
         if (!bKeepCPUMeshletData)
         {

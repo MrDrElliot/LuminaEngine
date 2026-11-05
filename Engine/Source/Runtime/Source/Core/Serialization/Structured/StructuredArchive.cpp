@@ -198,7 +198,7 @@ namespace Lumina
         ASSERT(RootElementID == 0);
 
         RootElementID = IDGenerator.Generate();
-        CurrentScope.emplace_back(RootElementID, StructuredArchive::EElementType::Root);
+        CurrentScope.Emplace(RootElementID, StructuredArchive::EElementType::Root);
 
         CurrentSlotID = IDGenerator.Generate();
         
@@ -207,9 +207,9 @@ namespace Lumina
 
     void IStructuredArchive::Close()
     {
-        while (!CurrentScope.empty())
+        while (!CurrentScope.IsEmpty())
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
         
         RootElementID = 0;
@@ -218,9 +218,10 @@ namespace Lumina
 
     void IStructuredArchive::SetScope(FSlotPosition Slot)
     {
-        ASSERT(Slot.Depth < CurrentScope.size() && CurrentScope[Slot.Depth].ID == Slot.ID);
+        ASSERT(Slot.Depth < static_cast<uint32>(CurrentScope.Num()) && CurrentScope[Slot.Depth].ID == Slot.ID);
 
-        CurrentScope.erase(CurrentScope.begin() + Slot.Depth + 1, CurrentScope.end());
+        const int32 Keep = static_cast<int32>(Slot.Depth) + 1;
+        CurrentScope.RemoveAt(Keep, CurrentScope.Num() - Keep);
         CurrentSlotID = Slot.ID;
     }
 
@@ -230,16 +231,16 @@ namespace Lumina
 
         int32 NewSlotDepth = Slot.Depth;
 
-        if (NewSlotDepth < (int32)CurrentScope.size() &&
+        if (NewSlotDepth < CurrentScope.Num() &&
             CurrentScope[NewSlotDepth].Type == StructuredArchive::EElementType::AttributedValue)
         {
             ++NewSlotDepth;
         }
 
-        if (NewSlotDepth >= (int32)CurrentScope.size())
+        if (NewSlotDepth >= CurrentScope.Num())
         {
             StructuredArchive::FSlotID NewID = IDGenerator.Generate();
-            CurrentScope.emplace_back(NewID, Type);
+            CurrentScope.Emplace(NewID, Type);
             CurrentSlotID = NewID;
         }
         else
@@ -281,9 +282,9 @@ namespace Lumina
 
     void FBinaryStructuredArchive::LeaveRecord()
     {
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Record)
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Record)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
@@ -301,7 +302,7 @@ namespace Lumina
         }
 
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = (uint32)CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.Num();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -322,16 +323,16 @@ namespace Lumina
 
     void FBinaryStructuredArchive::LeaveArray()
     {
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Array)
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Array)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FBinaryStructuredArchive::EnterArrayElement()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = (uint32)CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.Num();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -342,16 +343,16 @@ namespace Lumina
 
     void FBinaryStructuredArchive::LeaveStream()
     {
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Stream)
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Stream)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FBinaryStructuredArchive::EnterStreamElement()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = (uint32)CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.Num();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -368,16 +369,16 @@ namespace Lumina
 
     void FBinaryStructuredArchive::LeaveMap()
     {
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Map)
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Map)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FBinaryStructuredArchive::EnterMapKey()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = (uint32)CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.Num();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -385,7 +386,7 @@ namespace Lumina
     FArchiveSlot FBinaryStructuredArchive::EnterMapValue()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = (uint32)CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.Num();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }

@@ -88,7 +88,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("MinimalHost Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
@@ -187,7 +187,7 @@ int main(int ArgC, char** ArgV)
 
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     LOG_INFO("MinimalHost: clean shutdown.");

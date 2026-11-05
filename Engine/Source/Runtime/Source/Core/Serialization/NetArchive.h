@@ -41,7 +41,16 @@ namespace Lumina
 
         int64 Tell() override      { return BitCursor / 8; }
         int64 TotalSize() override { return (TotalBits + 7) / 8; }
-        void  Seek(int64 BytePos) override { BitCursor = BytePos * 8; }
+        void  Seek(int64 BytePos) override
+        {
+            if (BytePos < 0 || BytePos > (TotalBits + 7) / 8)
+            {
+                SetHasError(true);
+                BitCursor = TotalBits;
+                return;
+            }
+            BitCursor = BytePos * 8;
+        }
 
         // Optional NetGUID translation for entity-ref fields. Null passes the raw value through.
         TFunction<uint32(uint32 /*LocalEntity*/)> EntityToNetGUID;

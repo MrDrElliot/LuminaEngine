@@ -29,7 +29,7 @@ namespace Lumina::ECS
         FRegistryContext(FRegistryContext&& Other) noexcept
             : Entries(std::move(Other.Entries))
         {
-            Other.Entries.clear();
+            Other.Entries.Reset();
         }
 
         FRegistryContext& operator = (FRegistryContext&& Other) noexcept
@@ -38,7 +38,7 @@ namespace Lumina::ECS
             {
                 Reset();
                 Entries = std::move(Other.Entries);
-                Other.Entries.clear();
+                Other.Entries.Reset();
             }
             return *this;
         }
@@ -64,7 +64,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE T* Find()
         {
             const FComponentTypeID TypeID = GetComponentTypeID<T>();
-            return TypeID < Entries.size() ? static_cast<T*>(Entries[TypeID].Data) : nullptr;
+            return TypeID < Entries.Num() ? static_cast<T*>(Entries[TypeID].Data) : nullptr;
         }
 
         template<typename T>
@@ -108,7 +108,7 @@ namespace Lumina::ECS
         bool Erase()
         {
             const FComponentTypeID TypeID = GetComponentTypeID<T>();
-            if (TypeID >= Entries.size() || Entries[TypeID].Data == nullptr)
+            if (TypeID >= Entries.Num() || Entries[TypeID].Data == nullptr)
             {
                 return false;
             }
@@ -125,12 +125,12 @@ namespace Lumina::ECS
                     DestroyEntry(Entry);
                 }
             }
-            Entries.clear();
+            Entries.Reset();
         }
 
         void Swap(FRegistryContext& Other) noexcept
         {
-            Entries.swap(Other.Entries);
+            swap(Entries, Other.Entries);
         }
 
     private:
@@ -143,9 +143,9 @@ namespace Lumina::ECS
 
         FEntry& AssureEntry(FComponentTypeID TypeID)
         {
-            if (TypeID >= Entries.size())
+            if (TypeID >= Entries.Num())
             {
-                Entries.resize(static_cast<size_t>(TypeID) + 1u);
+                Entries.SetNum(TypeID + 1);
             }
             return Entries[TypeID];
         }

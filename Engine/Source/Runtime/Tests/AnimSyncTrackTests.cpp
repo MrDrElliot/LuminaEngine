@@ -12,7 +12,7 @@ namespace
         int32 Index = 0;
         for (float StartTime : StartTimes)
         {
-            Markers.push_back({ FName(std::to_string(Index++).c_str()), StartTime });
+            Markers.Emplace(FName(std::to_string(Index++).c_str()), StartTime);
         }
 
         FSyncTrack Track;
@@ -170,8 +170,8 @@ TEST(AnimSyncTrack, PositionPacksIntoOneFloat)
 TEST(AnimSyncTrack, DegenerateMarkersCollapseToTheDefaultTrack)
 {
     TVector<FSyncTrack::FMarker> Markers;
-    Markers.push_back({ FName("a"), 0.25f });
-    Markers.push_back({ FName("b"), 0.25f });
+    Markers.Emplace(FName("a"), 0.25f);
+    Markers.Emplace(FName("b"), 0.25f);
 
     FSyncTrack Track;
     Track.BuildFromMarkers(Markers);

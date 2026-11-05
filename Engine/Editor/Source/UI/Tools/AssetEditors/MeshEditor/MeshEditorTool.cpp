@@ -18,11 +18,11 @@
 
 namespace Lumina
 {
-    // Bounded by Meshlets.size() so a malformed asset can't overrun during UI rendering.
+    // Bounded by Meshlets.Num() so a malformed asset can't overrun during UI rendering.
     static uint32 SumTrianglesInRange(const TVector<FMeshlet>& Meshlets, uint32 Offset, uint32 Count)
     {
         uint32 Tris = 0;
-        const uint32 End = Math::Min(Offset + Count, (uint32)Meshlets.size());
+        const uint32 End = Math::Min(Offset + Count, (uint32)Meshlets.Num());
         for (uint32 m = Offset; m < End; ++m)
         {
             Tris += Meshlets[m].TriangleCount;
@@ -31,7 +31,7 @@ namespace Lumina
     }
 
     FStaticMeshEditorTool::FStaticMeshEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
@@ -82,9 +82,9 @@ namespace Lumina
     {
         FString FormatCount(uint64 Value)
         {
-            FString Digits = Format("{}", Value).c_str();
+            FString Digits = *Format("{}", Value);
             FString Out;
-            const int32 Length = (int32)Digits.size();
+            const int32 Length = Digits.Len();
             for (int32 Index = 0; Index < Length; ++Index)
             {
                 Out += Digits[Index];
@@ -133,18 +133,18 @@ namespace Lumina
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
         ImGui::TextUnformatted(LE_ICON_CUBE " ");
         ImGui::SameLine(0.0f, 0.0f);
-        ImGui::TextUnformatted(Mesh.GetName().c_str());
+        ImGui::TextUnformatted(*Mesh.GetName());
         ImGuiX::Font::PopFont();
 
-        if (Mesh.SourcePath.empty())
+        if (Mesh.SourcePath.IsEmpty())
         {
             ImGui::TextDisabled("No source file, so it cannot be reimported.");
         }
         else
         {
-            const FStringView Source(Mesh.SourcePath.c_str(), Mesh.SourcePath.size());
+            const FStringView Source(*Mesh.SourcePath, Mesh.SourcePath.Len());
             const FStringView FileName = VFS::FileName(Source);
-            ImGui::TextDisabled("Imported from %.*s", (int)FileName.size(), FileName.data());
+            ImGui::TextDisabled("Imported from %.*s", FileName.Len(), FileName.GetData());
             ImGuiX::TextTooltip("{}", Mesh.SourcePath);
         }
 
@@ -152,10 +152,10 @@ namespace Lumina
         if (ImGui::BeginTable("##SummaryStats", 3, ImGuiTableFlags_SizingStretchSame))
         {
             const FString TriangleText = FormatCount(Triangles);
-            const FString MaterialText = Format("{}", Mesh.GetNumMaterials()).c_str();
-            const FString LODText      = Format("{}", CountLODs(Resource)).c_str();
+            const FString MaterialText = *Format("{}", Mesh.GetNumMaterials());
+            const FString LODText      = *Format("{}", CountLODs(Resource));
 
-            const char* Values[] = { TriangleText.c_str(), MaterialText.c_str(), LODText.c_str() };
+            const char* Values[] = { *TriangleText, *MaterialText, *LODText };
             const char* Labels[] = { "Triangles", "Materials", "LODs" };
             ImGui::TableNextRow();
             for (int32 Column = 0; Column < 3; ++Column)
@@ -246,7 +246,7 @@ namespace Lumina
                 ImGui::PopID();
 
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(FormatCount(LODTriangles[LOD]).c_str());
+                ImGui::TextUnformatted(*FormatCount(LODTriangles[LOD]));
 
                 ImGui::TableSetColumnIndex(2);
                 const float Ratio = LODTriangles[0] > 0 ? (float)LODTriangles[LOD] / (float)LODTriangles[0] : 0.0f;
@@ -279,19 +279,19 @@ namespace Lumina
     void FStaticMeshEditorTool::DrawSurfaceList(CStaticMesh& Mesh)
     {
         const FMeshResource& Resource = Mesh.GetMeshResource();
-        if (SelectedSurfaceIndex >= (int32)Resource.GeometrySurfaces.size())
+        if (SelectedSurfaceIndex >= Resource.GeometrySurfaces.Num())
         {
             SelectedSurfaceIndex = -1;
         }
 
         SectionTitle("Surfaces");
-        if (Resource.GeometrySurfaces.empty())
+        if (Resource.GeometrySurfaces.IsEmpty())
         {
             ImGui::TextDisabled("This mesh has no surfaces.");
             return;
         }
 
-        for (int32 Index = 0; Index < (int32)Resource.GeometrySurfaces.size(); ++Index)
+        for (int32 Index = 0; Index < Resource.GeometrySurfaces.Num(); ++Index)
         {
             const FGeometrySurface& Surface = Resource.GeometrySurfaces[Index];
             CMaterialInterface* Material = Mesh.GetMaterialAtSlot((size_t)Surface.MaterialIndex);
@@ -320,10 +320,10 @@ namespace Lumina
             DrawList->AddRectFilled(Badge0, Badge1, IM_COL32(110, 170, 240, 60), 4.0f);
             DrawList->AddText(ImVec2((Badge0.x + Badge1.x - SlotSize.x) * 0.5f, TextY), IM_COL32(200, 220, 250, 255), SlotText);
 
-            const float TrisW = ImGui::CalcTextSize(TriangleText.c_str()).x;
-            DrawList->AddText(ImVec2(RowPos.x + RowWidth - TrisW - 6.0f, TextY), ImGui::GetColorU32(ImGuiCol_TextDisabled), TriangleText.c_str());
+            const float TrisW = ImGui::CalcTextSize(*TriangleText).x;
+            DrawList->AddText(ImVec2(RowPos.x + RowWidth - TrisW - 6.0f, TextY), ImGui::GetColorU32(ImGuiCol_TextDisabled), *TriangleText);
             DrawList->PushClipRect(ImVec2(Badge1.x + 8.0f, RowPos.y), ImVec2(RowPos.x + RowWidth - TrisW - 14.0f, RowPos.y + RowHeight), true);
-            DrawList->AddText(ImVec2(Badge1.x + 8.0f, TextY), ImGui::GetColorU32(ImGuiCol_Text), MaterialName.c_str());
+            DrawList->AddText(ImVec2(Badge1.x + 8.0f, TextY), ImGui::GetColorU32(ImGuiCol_Text), *MaterialName);
             DrawList->PopClipRect();
             ImGui::PopID();
         }
@@ -353,17 +353,17 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextDisabled("%s", Name);
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(Value.c_str());
+                ImGui::TextUnformatted(*Value);
             };
 
             Row("GPU memory", ImGuiX::FormatSize(Resource.MeshBuffers.GeometryBlock.Size));
-            Row("Meshlets", FormatCount(Resource.MeshletData.Meshlets.size()) + " across all LODs");
-            Row("Bounds min", Math::ToString(Bounds.Min).c_str());
-            Row("Bounds max", Math::ToString(Bounds.Max).c_str());
+            Row("Meshlets", FormatCount(Resource.MeshletData.Meshlets.Num()) + " across all LODs");
+            Row("Bounds min", *Math::ToString(Bounds.Min));
+            Row("Bounds max", *Math::ToString(Bounds.Max));
             if (Field.IsValid())
             {
-                Row("Distance field", Format("{} x {} x {}, {}", Field.Dimensions.x, Field.Dimensions.y, Field.Dimensions.z,
-                                             ImGuiX::FormatSize(Field.GetSizeBytes()).c_str()).c_str());
+                Row("Distance field", *Format("{} x {} x {}, {}", Field.Dimensions.x, Field.Dimensions.y, Field.Dimensions.z,
+                                             *ImGuiX::FormatSize(Field.GetSizeBytes())));
             }
             else
             {
@@ -435,7 +435,7 @@ namespace Lumina
         if (SelectedSurfaceIndex >= 0 && IsValid(StaticMeshComponent.StaticMesh.Get()))
         {
             const FMeshResource& Resource = StaticMeshComponent.StaticMesh->GetMeshResource();
-            if (SelectedSurfaceIndex < (int32)Resource.GeometrySurfaces.size())
+            if (SelectedSurfaceIndex < Resource.GeometrySurfaces.Num())
             {
                 const FGeometrySurface& Surface = Resource.GeometrySurfaces[SelectedSurfaceIndex];
                 const FMeshletData&     MD      = Resource.MeshletData;
@@ -448,11 +448,11 @@ namespace Lumina
                 const uint32 OverlayOffset = Surface.LODMeshletOffset[OverlayLOD];
                 const uint32 OverlayCount  = Surface.LODMeshletCount[OverlayLOD];
 
-                if (OverlayCount > 0 && !MD.Meshlets.empty())
+                if (OverlayCount > 0 && !MD.Meshlets.IsEmpty())
                 {
                     FVector3 Lo( FLT_MAX);
                     FVector3 Hi(-FLT_MAX);
-                    const uint32 End = Math::Min(OverlayOffset + OverlayCount, (uint32)MD.MeshletSpheres.size());
+                    const uint32 End = Math::Min(OverlayOffset + OverlayCount, (uint32)MD.MeshletSpheres.Num());
                     for (uint32 m = OverlayOffset; m < End; ++m)
                     {
                         const FMeshletSphere& B = MD.MeshletSpheres[m];
@@ -473,7 +473,7 @@ namespace Lumina
 
         CollisionEditing->Tick(World.Get());
 
-        if (IsValid(StaticMeshComponent.StaticMesh.Get()) && !StaticMeshComponent.StaticMesh->Sockets.empty())
+        if (IsValid(StaticMeshComponent.StaticMesh.Get()) && !StaticMeshComponent.StaticMesh->Sockets.IsEmpty())
         {
             const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
             constexpr float AxisLength = 0.18f;
@@ -529,7 +529,7 @@ namespace Lumina
         ImGuiX::Font::PopFont();
         ImGui::Spacing();
 
-        if (Collision.bUseTriangleMesh && Collision.TriangleIndices.empty())
+        if (Collision.bUseTriangleMesh && Collision.TriangleIndices.IsEmpty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
             ImGui::TextWrapped(LE_ICON_ALERT " Use Triangle Mesh is on but no triangles are baked, so this mesh has no collision. "
@@ -709,20 +709,20 @@ namespace Lumina
                 CStaticMesh* Mesh = Cast<CStaticMesh>(Asset.Get());
 
                 FString Base("Socket");
-                FName SocketName(Base.c_str());
+                FName SocketName(*Base);
                 int32 Suffix = 1;
                 while (Mesh->FindSocket(SocketName) != nullptr)
                 {
                     FString Numbered = Base;
                     Numbered += "_";
-                    Numbered += Format("{}", Suffix++).c_str();
-                    SocketName = FName(Numbered.c_str());
+                    Numbered += *Format("{}", Suffix++);
+                    SocketName = FName(*Numbered);
                 }
 
                 const FName Label("Add Socket");
                 GetTransactionManager().BeginTransaction(Label);
                 GetTransactionManager().Record(MakeUnique<FObjectSnapshotCommand>(Mesh, Label));
-                SMeshSocket& Socket = Mesh->Sockets.emplace_back();
+                SMeshSocket& Socket = Mesh->Sockets.EmplaceGetRef();
                 Socket.SocketName = SocketName;
                 GetTransactionManager().CommitTransaction();
 
@@ -742,10 +742,10 @@ namespace Lumina
         ImGuiID leftDockID = 0, rightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);
         // The unwrap wants the same large canvas, and this is an inspect-one-then-the-other workflow.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(CollisionName.data()).c_str(), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(UVViewerName.GetData()), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MeshPropertiesName.GetData()), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(CollisionName.GetData()), rightDockID);
     }
 }

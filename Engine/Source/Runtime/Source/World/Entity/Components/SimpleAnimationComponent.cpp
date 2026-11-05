@@ -15,7 +15,7 @@ namespace Lumina
         const TVector<FAnimationNotifyState>& States = Animation->GetNotifyStates();
         for (int32 Index : ActiveNotifyStates)
         {
-            if (Index >= 0 && Index < (int32)States.size() && States[Index].NotifyName == NotifyName)
+            if (Index >= 0 && Index < States.Num() && States[Index].NotifyName == NotifyName)
             {
                 return true;
             }

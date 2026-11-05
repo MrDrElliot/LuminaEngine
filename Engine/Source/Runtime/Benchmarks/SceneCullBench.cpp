@@ -77,7 +77,7 @@ TEST(SceneCullBench, DISABLED_InstanceBlockBounds)
     {
         for (uint32 First = 0; First < kSlots; First += 64)
         {
-            Sink += ScalarBlockBounds(Entries.data(), First, First + 64).Max.x;
+            Sink += ScalarBlockBounds(Entries.GetData(), First, First + 64).Max.x;
         }
     }
     const uint64 SimdStart = PlatformTime::Cycles();
@@ -85,7 +85,7 @@ TEST(SceneCullBench, DISABLED_InstanceBlockBounds)
     {
         for (uint32 First = 0; First < kSlots; First += 64)
         {
-            Sink += SceneCull::ComputeInstanceBlockBounds(Entries.data(), First, First + 64, false).Max.x;
+            Sink += SceneCull::ComputeInstanceBlockBounds(Entries.GetData(), First, First + 64, false).Max.x;
         }
     }
     const uint64 End = PlatformTime::Cycles();

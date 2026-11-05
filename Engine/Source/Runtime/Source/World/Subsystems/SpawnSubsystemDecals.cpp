@@ -33,7 +33,6 @@ namespace Lumina
         Decal.AtlasCell       = AtlasCell;
         Decal.AtlasColumns    = AtlasColumns;
         Decal.AtlasRows       = AtlasRows;
-        Decal.SpawnTime       = (float)World->GetTimeSinceWorldCreation();
 
         if (Decal.Lifetime > 0.0f)
         {

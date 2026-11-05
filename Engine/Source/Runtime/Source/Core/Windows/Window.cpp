@@ -190,7 +190,7 @@ namespace Lumina
 
 			for (int i = 0; i < PathCount; ++i)
 			{
-				StringPaths.emplace_back(Paths[i]);
+				StringPaths.Emplace(Paths[i]);
 			}
 
 			if (FWindow* Owner = OwnerFrom(Window))
@@ -279,7 +279,7 @@ namespace Lumina
 				Impl->Specs.Extent.y = Mode->height - 300;
 			}
 
-			Impl->Window = glfwCreateWindow(Impl->Specs.Extent.x, Impl->Specs.Extent.y, Impl->Specs.Title.c_str(), nullptr, nullptr);
+			Impl->Window = glfwCreateWindow(Impl->Specs.Extent.x, Impl->Specs.Extent.y, *Impl->Specs.Title, nullptr, nullptr);
 			glfwSetWindowAttrib(Impl->Window, GLFW_RESIZABLE, GLFW_TRUE);
 			
 			glfwSetWindowSizeLimits(Impl->Window, 640, 360, GLFW_DONT_CARE, GLFW_DONT_CARE);
@@ -294,7 +294,7 @@ namespace Lumina
 			GLFWimage Icon;
 			int Channels;
 			FString IconPathStr = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
-			Icon.pixels = stbi_load(IconPathStr.c_str(), &Icon.width, &Icon.height, &Channels, 4);
+			Icon.pixels = stbi_load(*IconPathStr, &Icon.width, &Icon.height, &Channels, 4);
 			if (Icon.pixels)
 			{
 				glfwSetWindowIcon(Impl->Window, 1, &Icon);
@@ -497,7 +497,7 @@ namespace Lumina
 			});
 			if (!bSeen)
 			{
-				Modes.push_back(Mode);
+				Modes.Add(Mode);
 			}
 		}
 
@@ -519,7 +519,7 @@ namespace Lumina
 	void FWindow::SetTitle(const FString& Title)
 	{
 		Impl->Specs.Title = Title;
-		glfwSetWindowTitle(Impl->Window, Title.c_str());
+		glfwSetWindowTitle(Impl->Window, *Title);
 	}
 
 	void FWindow::SetTitleBarHovered(bool bHovered)

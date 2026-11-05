@@ -26,19 +26,19 @@ void FDLSSRuntimeModule::StartupModule()
         RHI::Native::FDeviceCreationRequest Request;
         for (uint32 Index = 0; Index < InstanceCount; ++Index)
         {
-            Request.InstanceExtensions.push_back(InstanceExtensions[Index]);
+            Request.InstanceExtensions.Add(InstanceExtensions[Index]);
         }
         for (uint32 Index = 0; Index < DeviceCount; ++Index)
         {
             // Core since Vulkan 1.2, and asking for the EXT form beside the core feature is a validation error.
             if (std::strcmp(DeviceExtensions[Index], VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) != 0)
             {
-                Request.DeviceExtensions.push_back(DeviceExtensions[Index]);
+                Request.DeviceExtensions.Add(DeviceExtensions[Index]);
             }
         }
         RHI::Native::RegisterDeviceCreationRequest(Request);
         LOG_INFO("[DLSS] Requested {} instance and {} device extension(s) for NGX.",
-            (int32)Request.InstanceExtensions.size(), (int32)Request.DeviceExtensions.size());
+            Request.InstanceExtensions.Num(), Request.DeviceExtensions.Num());
     }
 
     Upscaler = MakeUnique<FDLSSUpscaler>();

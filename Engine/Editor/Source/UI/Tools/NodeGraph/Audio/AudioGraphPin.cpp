@@ -123,13 +123,13 @@ namespace Lumina
 
                     // Listed by the graph, since a popup window cannot open from inside the zoomed canvas.
                     CEdNodeGraph* Graph = OwningNode->GetOwningGraph();
-                    if (ImGui::Button(Enum->GetNameAtValue((uint64)Current).c_str(), ImVec2(110.0f, 0.0f)) && Graph != nullptr)
+                    if (ImGui::Button(*Enum->GetNameAtValue((uint64)Current), ImVec2(110.0f, 0.0f)) && Graph != nullptr)
                     {
                         TVector<FString> Choices;
                         int32 CurrentIndex = 0;
-                        for (int64 Index = 0; Index < (int64)Enum->Names.size(); ++Index)
+                        for (int32 Index = 0; Index < Enum->Names.Num(); ++Index)
                         {
-                            Choices.emplace_back(Enum->GetNameAtIndex(Index).c_str());
+                            Choices.Emplace(*Enum->GetNameAtIndex(Index));
                             if ((int64)Enum->GetValueAtIndex(Index) == Current)
                             {
                                 CurrentIndex = (int32)Index;

@@ -9,7 +9,7 @@ namespace Lumina
     {
         bool IsStringOrComment(const TVector<ECodeToken>& Tokens, int32 Column)
         {
-            if (Column < 0 || Column >= (int32)Tokens.size())
+            if (Column < 0 || Column >= Tokens.Num())
             {
                 return false;
             }
@@ -61,8 +61,8 @@ namespace Lumina
 
     bool FCodeLanguage::ShouldIndentAfter(FStringView LineBeforeCaret, uint32 CaretState) const
     {
-        const size_t Last = LineBeforeCaret.find_last_not_of(" \t");
-        if (Last == FStringView::npos)
+        const int32 Last = LineBeforeCaret.FindLastNotOf(" \t");
+        if (Last == Constants::kIndexNone)
         {
             return false;
         }
@@ -76,7 +76,7 @@ namespace Lumina
         {
             return false;
         }
-        return CodeText::LeadingWhitespace(LineThroughCaret) == (int32)LineThroughCaret.size() - 1;
+        return CodeText::LeadingWhitespace(LineThroughCaret) == LineThroughCaret.Len() - 1;
     }
 
     void FCodeLanguage::GetFoldingRanges(const FCodeDocument& Document, TVector<FCodeFold>& Out) const
@@ -87,21 +87,21 @@ namespace Lumina
         {
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            const FStringView Trimmed = Text.substr((size_t)CodeText::LeadingWhitespace(Text));
+            const FStringView Trimmed = Text.Mid((size_t)CodeText::LeadingWhitespace(Text));
             if (CodeText::StartsWithIgnoreCase(Trimmed, "#region"))
             {
-                Regions.push_back(Line);
+                Regions.Add(Line);
             }
-            else if (CodeText::StartsWithIgnoreCase(Trimmed, "#endregion") && !Regions.empty())
+            else if (CodeText::StartsWithIgnoreCase(Trimmed, "#endregion") && !Regions.IsEmpty())
             {
-                Out.push_back({ Regions.back(), Line });
-                Regions.pop_back();
+                Out.Emplace(Regions.Last(), Line);
+                Regions.Pop();
             }
-            if (Tokens.size() != Text.size())
+            if (Tokens.Num() != Text.Len())
             {
                 continue;
             }
-            for (int32 Column = 0; Column < (int32)Text.size(); ++Column)
+            for (int32 Column = 0; Column < Text.Len(); ++Column)
             {
                 if (Tokens[Column] != ECodeToken::Punctuation)
                 {
@@ -109,26 +109,26 @@ namespace Lumina
                 }
                 if (Text[Column] == '{')
                 {
-                    Braces.push_back(Line);
+                    Braces.Add(Line);
                 }
-                else if (Text[Column] == '}' && !Braces.empty())
+                else if (Text[Column] == '}' && !Braces.IsEmpty())
                 {
                     // A brace alone on the next line folds from the line that names the block, as editors usually show it.
-                    int32 Start = Braces.back();
-                    Braces.pop_back();
-                    if (Start > 0 && CodeText::IsBlank(Document.GetLineView(Start).substr(0, Document.GetLineView(Start).find('{'))))
+                    int32 Start = Braces.Last();
+                    Braces.Pop();
+                    if (Start > 0 && CodeText::IsBlank(Document.GetLineView(Start).Mid(0, Document.GetLineView(Start).Find('{'))))
                     {
                         --Start;
                     }
                     if (Line - Start >= 2)
                     {
-                        Out.push_back({ Start, Line });
+                        Out.Emplace(Start, Line);
                     }
                 }
             }
         }
         Algo::Sort(Out, [](const FCodeFold& A, const FCodeFold& B) { return A.StartLine < B.StartLine || (A.StartLine == B.StartLine && A.EndLine > B.EndLine); });
-        Out.erase(Algo::Unique(Out.begin(), Out.end(), [](const FCodeFold& A, const FCodeFold& B) { return A.StartLine == B.StartLine; }), Out.end());
+        Out.SetNum(static_cast<int32>(Algo::Unique(Out.begin(), Out.end(), [](const FCodeFold& A, const FCodeFold& B) { return A.StartLine == B.StartLine; }) - Out.begin()));
     }
 
     bool FCodeLanguage::GetSignature(const FCodeDocument& Document, FCodePosition Caret, FCodeSignature& Out) const
@@ -140,7 +140,7 @@ namespace Lumina
         {
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            int32 Column = Line == Caret.Line ? Caret.Column : (int32)Text.size();
+            int32 Column = Line == Caret.Line ? Caret.Column : Text.Len();
             while (Column > 0)
             {
                 --Column;
@@ -175,7 +175,7 @@ namespace Lumina
                     {
                         --NameStart;
                     }
-                    if (NameStart == NameEnd || !FindSignature(Text.substr(NameStart, NameEnd - NameStart), Out))
+                    if (NameStart == NameEnd || !FindSignature(Text.Mid(NameStart, NameEnd - NameStart), Out))
                     {
                         return false;
                     }
@@ -209,18 +209,18 @@ namespace Lumina
     {
         void ParseSignatureParameters(FCodeSignature& Signature)
         {
-            Signature.Parameters.clear();
+            Signature.Parameters.Reset();
             const FStringView Label = Signature.Label.View();
-            const size_t Open = Label.find('(');
-            const size_t Close = Label.rfind(')');
-            if (Open == FStringView::npos || Close == FStringView::npos || Close <= Open + 1)
+            const int32 Open = Label.Find('(');
+            const int32 Close = Label.FindLast(')');
+            if (Open == Constants::kIndexNone || Close == Constants::kIndexNone || Close <= Open + 1)
             {
                 return;
             }
 
             int32 Depth = 0;
             bool bHasComma = false;
-            for (size_t i = Open + 1; i < Close; ++i)
+            for (int32 i = Open + 1; i < Close; ++i)
             {
                 Depth += Label[i] == '(' ? 1 : Label[i] == ')' ? -1 : 0;
                 bHasComma |= Depth == 0 && Label[i] == ',';
@@ -261,7 +261,7 @@ namespace Lumina
                     }
                     if (SpanEnd > SpanStart)
                     {
-                        Signature.Parameters.push_back({ SpanStart, SpanEnd });
+                        Signature.Parameters.Emplace(SpanStart, SpanEnd);
                     }
                     Start = i + 1;
                 }
@@ -278,7 +278,7 @@ namespace Lumina
             {
                 --Start;
             }
-            while (End < (int32)Text.size() && Language.IsWordChar(Text[End]))
+            while (End < Text.Len() && Language.IsWordChar(Text[End]))
             {
                 ++End;
             }
@@ -289,11 +289,11 @@ namespace Lumina
         {
             THashSet<FStringView> Seen;
             const FCodeRange Excluded = WordRangeAt(Document, Language, Exclude);
-            for (int32 Line = 0; Line < Document.GetLineCount() && (int32)Out.size() < MaxWords; ++Line)
+            for (int32 Line = 0; Line < Document.GetLineCount() && Out.Num() < MaxWords; ++Line)
             {
                 const FStringView Text = Document.GetLineView(Line);
                 int32 Column = 0;
-                while (Column < (int32)Text.size())
+                while (Column < Text.Len())
                 {
                     if (!Language.IsWordChar(Text[Column]))
                     {
@@ -301,15 +301,15 @@ namespace Lumina
                         continue;
                     }
                     const int32 Start = Column;
-                    while (Column < (int32)Text.size() && Language.IsWordChar(Text[Column]))
+                    while (Column < Text.Len() && Language.IsWordChar(Text[Column]))
                     {
                         ++Column;
                     }
                     const bool bExcluded = Line == Excluded.Start.Line && Start == Excluded.Start.Column;
-                    const FStringView Word = Text.substr(Start, Column - Start);
-                    if (!bExcluded && Word.size() >= 3 && !CodeText::IsDigit(Word[0]) && Seen.insert(Word).second)
+                    const FStringView Word = Text.Mid(Start, Column - Start);
+                    if (!bExcluded && Word.Len() >= 3 && !CodeText::IsDigit(Word[0]) && Seen.TryAdd(Word))
                     {
-                        Out.emplace_back(Word);
+                        Out.Emplace(Word);
                     }
                 }
             }
@@ -317,11 +317,11 @@ namespace Lumina
 
         bool ParseHexColor(FStringView Hex, uint32& OutColor)
         {
-            if (!Hex.empty() && Hex[0] == '#')
+            if (!Hex.IsEmpty() && Hex[0] == '#')
             {
-                Hex = Hex.substr(1);
+                Hex = Hex.Mid(1);
             }
-            const size_t Digits = Hex.size();
+            const int32 Digits = Hex.Len();
             if (Digits != 3 && Digits != 4 && Digits != 6 && Digits != 8)
             {
                 return false;
@@ -341,7 +341,7 @@ namespace Lumina
             }
             const bool bShort = Digits <= 4;
             const size_t Count = bShort ? Digits : Digits / 2;
-            for (size_t i = 0; i < Count; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Count); i < Limit; ++i)
             {
                 Channels[i] = bShort ? Nibble(Hex[i]) * 17 : Nibble(Hex[i * 2]) * 16 + Nibble(Hex[i * 2 + 1]);
             }
@@ -377,7 +377,7 @@ namespace Lumina
 
     uint32 FCLikeLanguage::Tokenize(FStringView Line, uint32 State, ECodeToken* OutTokens) const
     {
-        const int32 Size = (int32)Line.size();
+        const int32 Size = Line.Len();
         auto Mark = [OutTokens](int32 From, int32 To, ECodeToken Token)
         {
             for (int32 i = From; i < To; ++i)
@@ -389,8 +389,8 @@ namespace Lumina
         int32 i = 0;
         if (State == CLikeStates::BlockComment)
         {
-            const size_t Close = Line.find("*/");
-            if (Close == FStringView::npos)
+            const int32 Close = Line.Find("*/");
+            if (Close == Constants::kIndexNone)
             {
                 Mark(0, Size, ECodeToken::Comment);
                 return CLikeStates::BlockComment;
@@ -443,8 +443,8 @@ namespace Lumina
             }
             if (C == '/' && Next == '*')
             {
-                const size_t Close = Line.find("*/", i + 2);
-                if (Close == FStringView::npos)
+                const int32 Close = Line.Find("*/", i + 2);
+                if (Close == Constants::kIndexNone)
                 {
                     Mark(i, Size, ECodeToken::Comment);
                     return CLikeStates::BlockComment;
@@ -509,21 +509,21 @@ namespace Lumina
                 {
                     ++i;
                 }
-                const FStringView Word = Line.substr(Start, i - Start);
+                const FStringView Word = Line.Mid(Start, i - Start);
                 ECodeToken Token = ECodeToken::Default;
-                if (Keywords.contains(Word))
+                if (Keywords.Contains(Word))
                 {
                     Token = ECodeToken::Keyword;
                 }
-                else if (Types.contains(Word))
+                else if (Types.Contains(Word))
                 {
                     Token = ECodeToken::Type;
                 }
-                else if (Functions.contains(Word))
+                else if (Functions.Contains(Word))
                 {
                     Token = ECodeToken::Function;
                 }
-                else if (KnownIdentifiers.contains(Word) || FindContextSymbol(Word) != nullptr)
+                else if (KnownIdentifiers.Contains(Word) || FindContextSymbol(Word) != nullptr)
                 {
                     Token = ECodeToken::KnownIdentifier;
                 }
@@ -561,16 +561,16 @@ namespace Lumina
         {
             return false;
         }
-        return Request.Word.empty() || !CodeText::IsDigit(Request.Word[0]);
+        return Request.Word.IsEmpty() || !CodeText::IsDigit(Request.Word[0]);
     }
 
     void FCLikeLanguage::AddKeywordsAndSnippets(TVector<FCodeCompletionItem>& Out, THashSet<FStringView>& Added) const
     {
         for (const FStringView Keyword : Keywords)
         {
-            if (Added.insert(Keyword).second)
+            if (Added.TryAdd(Keyword))
             {
-                FCodeCompletionItem& Item = Out.emplace_back();
+                FCodeCompletionItem& Item = Out.EmplaceGetRef();
                 Item.Label = Keyword;
                 Item.Kind = ECodeCompletionKind::Keyword;
                 Item.Detail = "keyword";
@@ -578,13 +578,13 @@ namespace Lumina
         }
         for (const FCodeCompletionItem& Snippet : Snippets)
         {
-            Out.push_back(Snippet);
+            Out.Add(Snippet);
         }
     }
 
     void FCLikeLanguage::GetCompletions(const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out) const
     {
-        if (!CanCompleteAt(Request) || (Request.Word.empty() && !Request.bExplicit))
+        if (!CanCompleteAt(Request) || (Request.Word.IsEmpty() && !Request.bExplicit))
         {
             return;
         }
@@ -592,11 +592,11 @@ namespace Lumina
         THashSet<FStringView> Added;
         auto Add = [&Out, &Added](FStringView Label, ECodeCompletionKind Kind, FStringView Detail, FStringView Documentation, FStringView Insert, int32 Boost)
         {
-            if (!Added.insert(Label).second)
+            if (!Added.TryAdd(Label))
             {
                 return;
             }
-            FCodeCompletionItem& Item = Out.emplace_back();
+            FCodeCompletionItem& Item = Out.EmplaceGetRef();
             Item.Label = Label;
             Item.Kind = Kind;
             Item.Detail = Detail;
@@ -627,9 +627,9 @@ namespace Lumina
         CodeLanguageUtil::CollectDocumentWords(*Request.Document, *this, Request.Caret, 2000, Words);
         for (const FString& Word : Words)
         {
-            if (!Added.contains(Word.View()))
+            if (!Added.Contains(Word.View()))
             {
-                FCodeCompletionItem& Item = Out.emplace_back();
+                FCodeCompletionItem& Item = Out.EmplaceGetRef();
                 Item.Label = Word;
                 Item.Kind = ECodeCompletionKind::Text;
                 Item.Detail = "in document";
@@ -646,19 +646,19 @@ namespace Lumina
             return false;
         }
         const FStringView Text = Document.GetLineView(Range.Start.Line);
-        const FStringView Word = Text.substr(Range.Start.Column, Range.End.Column - Range.Start.Column);
+        const FStringView Word = Text.Mid(Range.Start.Column, Range.End.Column - Range.Start.Column);
         Out.Range = Range;
 
-        if (const auto Found = Functions.find(Word); Found != Functions.end())
+        if (const auto Found = Functions.Find(Word); Found != nullptr)
         {
-            Out.Title = Found->second->Signature;
-            Out.Body = Found->second->Documentation;
+            Out.Title = (*Found)->Signature;
+            Out.Body = (*Found)->Documentation;
             return true;
         }
-        if (const auto Found = KnownIdentifiers.find(Word); Found != KnownIdentifiers.end())
+        if (const auto Found = KnownIdentifiers.Find(Word); Found != nullptr)
         {
-            Out.Title = *Found->second->Signature != '\0' ? FString(Found->second->Signature) : FString(Word);
-            Out.Body = Found->second->Documentation;
+            Out.Title = *(*Found)->Signature != '\0' ? FString((*Found)->Signature) : FString(Word);
+            Out.Body = (*Found)->Documentation;
             return true;
         }
         if (const FContextSymbol* Symbol = FindContextSymbol(Word))
@@ -680,7 +680,7 @@ namespace Lumina
         TVector<FOpen> Stack;
         auto Report = [&Out](FCodePosition At, FString Message)
         {
-            FCodeDiagnostic& Diagnostic = Out.emplace_back();
+            FCodeDiagnostic& Diagnostic = Out.EmplaceGetRef();
             Diagnostic.Range = { At, { At.Line, At.Column + 1 } };
             Diagnostic.Message = Move(Message);
         };
@@ -689,7 +689,7 @@ namespace Lumina
         {
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            for (int32 Column = 0; Column < (int32)Text.size() && Column < (int32)Tokens.size(); ++Column)
+            for (int32 Column = 0; Column < Text.Len() && Column < Tokens.Num(); ++Column)
             {
                 if (Tokens[Column] != ECodeToken::Punctuation)
                 {
@@ -698,23 +698,23 @@ namespace Lumina
                 const char C = Text[Column];
                 if (C == '(' || C == '[' || C == '{')
                 {
-                    Stack.push_back({ C, { Line, Column } });
+                    Stack.Add({ C, { Line, Column } });
                 }
                 else if (C == ')' || C == ']' || C == '}')
                 {
                     const char Expected = C == ')' ? '(' : C == ']' ? '[' : '{';
-                    if (Stack.empty() || Stack.back().Bracket != Expected)
+                    if (Stack.IsEmpty() || Stack.Last().Bracket != Expected)
                     {
                         Report({ Line, Column }, Format("Unexpected '{}'", C));
                         return true;
                     }
-                    Stack.pop_back();
+                    Stack.Pop();
                 }
             }
         }
-        if (!Stack.empty())
+        if (!Stack.IsEmpty())
         {
-            Report(Stack.back().Position, Format("'{}' is never closed", Stack.back().Bracket));
+            Report(Stack.Last().Position, Format("'{}' is never closed", Stack.Last().Bracket));
         }
         return true;
     }
@@ -729,17 +729,17 @@ namespace Lumina
         {
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            const bool bTokens = Tokens.size() == Text.size();
+            const bool bTokens = Tokens.Num() == Text.Len();
             const int32 Indent = CodeText::LeadingWhitespace(Text);
-            if (Depth <= 1 && bTokens && Indent < (int32)Text.size() && Tokens[Indent] != ECodeToken::Comment && Tokens[Indent] != ECodeToken::Preprocessor)
+            if (Depth <= 1 && bTokens && Indent < Text.Len() && Tokens[Indent] != ECodeToken::Comment && Tokens[Indent] != ECodeToken::Preprocessor)
             {
                 int32 Column = Indent;
                 auto ReadWord = [&](int32& At) -> FStringView
                 {
-                    while (At < (int32)Text.size() && CodeText::IsSpace(Text[At])) { ++At; }
+                    while (At < Text.Len() && CodeText::IsSpace(Text[At])) { ++At; }
                     const int32 Start = At;
-                    while (At < (int32)Text.size() && IsWordChar(Text[At])) { ++At; }
-                    return Text.substr(Start, At - Start);
+                    while (At < Text.Len() && IsWordChar(Text[At])) { ++At; }
+                    return Text.Mid(Start, At - Start);
                 };
                 const FStringView First = ReadWord(Column);
                 const bool bType = Algo::Contains(TypeKeywords, First);
@@ -747,33 +747,33 @@ namespace Lumina
                 {
                     const int32 NameStart = Column + 1;
                     const FStringView Name = ReadWord(Column);
-                    if (!Name.empty())
+                    if (!Name.IsEmpty())
                     {
-                        FCodeSymbolInfo& Symbol = Out.emplace_back();
+                        FCodeSymbolInfo& Symbol = Out.EmplaceGetRef();
                         Symbol.Name = Name;
                         Symbol.Detail = First;
                         Symbol.Kind = First == "namespace" ? ECodeCompletionKind::Module : ECodeCompletionKind::Type;
-                        Symbol.Position = { Line, Math::Min(NameStart, (int32)Text.size()) };
+                        Symbol.Position = { Line, Math::Min(NameStart, Text.Len()) };
                         Symbol.EndLine = Line;
                         Symbol.Depth = Depth;
                     }
                 }
-                else if (!First.empty() && !Keywords.contains(First))
+                else if (!First.IsEmpty() && !Keywords.Contains(First))
                 {
                     // A return type, a name and an open parenthesis, with no semicolon closing it as a call or a declaration.
-                    const size_t Paren = Text.find('(');
-                    if (Paren != FStringView::npos && Text.find(';') == FStringView::npos && Text.find('=') == FStringView::npos)
+                    const int32 Paren = Text.Find('(');
+                    if (Paren != Constants::kIndexNone && Text.Find(';') == Constants::kIndexNone && Text.Find('=') == Constants::kIndexNone)
                     {
                         int32 NameEnd = (int32)Paren;
                         while (NameEnd > 0 && CodeText::IsSpace(Text[NameEnd - 1])) { --NameEnd; }
                         int32 NameStart = NameEnd;
                         while (NameStart > 0 && IsWordChar(Text[NameStart - 1])) { --NameStart; }
-                        const FStringView Name = Text.substr(NameStart, NameEnd - NameStart);
-                        if (!Name.empty() && NameStart > Indent && !Keywords.contains(Name))
+                        const FStringView Name = Text.Mid(NameStart, NameEnd - NameStart);
+                        if (!Name.IsEmpty() && NameStart > Indent && !Keywords.Contains(Name))
                         {
-                            FCodeSymbolInfo& Symbol = Out.emplace_back();
+                            FCodeSymbolInfo& Symbol = Out.EmplaceGetRef();
                             Symbol.Name = Name;
-                            Symbol.Detail = FString(Text.substr(Indent));
+                            Symbol.Detail = FString(Text.Mid(Indent));
                             Symbol.Kind = ECodeCompletionKind::Function;
                             Symbol.Position = { Line, NameStart };
                             Symbol.EndLine = Line;
@@ -782,7 +782,7 @@ namespace Lumina
                     }
                 }
             }
-            for (int32 Column = 0; bTokens && Column < (int32)Text.size(); ++Column)
+            for (int32 Column = 0; bTokens && Column < Text.Len(); ++Column)
             {
                 if (Tokens[Column] == ECodeToken::Punctuation && Text[Column] == '{')
                 {
@@ -799,13 +799,13 @@ namespace Lumina
 
     bool FCLikeLanguage::FindSignature(FStringView Function, FCodeSignature& Out) const
     {
-        const auto Found = Functions.find(Function);
-        if (Found == Functions.end() || *Found->second->Signature == '\0')
+        const auto Found = Functions.Find(Function);
+        if (Found == nullptr || *(*Found)->Signature == '\0')
         {
             return false;
         }
-        Out.Label = Found->second->Signature;
-        Out.Documentation = Found->second->Documentation;
+        Out.Label = (*Found)->Signature;
+        Out.Documentation = (*Found)->Documentation;
         CodeLanguageUtil::ParseSignatureParameters(Out);
         return true;
     }
@@ -814,7 +814,7 @@ namespace Lumina
     {
         for (const char* Word : Words)
         {
-            Keywords.insert(FStringView(Word));
+            Keywords.Emplace(Word);
         }
     }
 
@@ -822,7 +822,7 @@ namespace Lumina
     {
         for (const char* Word : Words)
         {
-            Types.insert(FStringView(Word));
+            Types.Emplace(Word);
         }
     }
 
@@ -830,7 +830,7 @@ namespace Lumina
     {
         for (const FCodeSymbol& Symbol : Symbols)
         {
-            Functions.insert({ FStringView(Symbol.Name), &Symbol });
+            Functions.TryAdd(FStringView(Symbol.Name), &Symbol);
         }
     }
 
@@ -838,13 +838,13 @@ namespace Lumina
     {
         for (const FCodeSymbol& Symbol : Symbols)
         {
-            KnownIdentifiers.insert({ FStringView(Symbol.Name), &Symbol });
+            KnownIdentifiers.TryAdd(FStringView(Symbol.Name), &Symbol);
         }
     }
 
     void FCLikeLanguage::AddSnippet(const char* Label, const char* Body, const char* Detail)
     {
-        FCodeCompletionItem& Item = Snippets.emplace_back();
+        FCodeCompletionItem& Item = Snippets.EmplaceGetRef();
         Item.Label = Label;
         Item.InsertText = Body;
         Item.Detail = Detail;

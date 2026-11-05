@@ -18,13 +18,13 @@ namespace Lumina
 
     float SKeyedCurve::EvaluateInRange(float InTime) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             return 0.0f;
         }
 
-        const int32 Last = (int32)Keys.size() - 1;
-        if (Keys.size() == 1 || InTime <= Keys[0].Time)
+        const int32 Last = Keys.Num() - 1;
+        if (Keys.Num() == 1 || InTime <= Keys[0].Time)
         {
             return Keys[0].Value;
         }
@@ -87,8 +87,8 @@ namespace Lumina
 
     float SKeyedCurve::Extrapolate(float InTime, ECurveExtrapolation Mode, bool bBefore) const
     {
-        const SCurveKey& First = Keys.front();
-        const SCurveKey& Last = Keys.back();
+        const SCurveKey& First = Keys[0];
+        const SCurveKey& Last = Keys.Last();
         const float Span = Last.Time - First.Time;
 
         if (Span <= CurveMinSegment)
@@ -106,7 +106,7 @@ namespace Lumina
                     return First.Value + Slope * (InTime - First.Time);
                 }
 
-                const SCurveKey& Prev = Keys[Keys.size() - 2];
+                const SCurveKey& Prev = Keys[Keys.Num() - 2];
                 const float Slope = Last.IsCubic() ? Last.ArriveTangent : SegmentSlope(Prev, Last);
                 return Last.Value + Slope * (InTime - Last.Time);
             }
@@ -145,20 +145,20 @@ namespace Lumina
 
     float SKeyedCurve::Evaluate(float InTime) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             return 0.0f;
         }
-        if (Keys.size() == 1)
+        if (Keys.Num() == 1)
         {
             return Keys[0].Value;
         }
 
-        if (InTime < Keys.front().Time)
+        if (InTime < Keys[0].Time)
         {
             return Extrapolate(InTime, PreExtrapolation, true);
         }
-        if (InTime > Keys.back().Time)
+        if (InTime > Keys.Last().Time)
         {
             return Extrapolate(InTime, PostExtrapolation, false);
         }
@@ -168,15 +168,15 @@ namespace Lumina
 
     void SKeyedCurve::BakeSegments(TVector<FCurveSegment>& OutSegments) const
     {
-        OutSegments.clear();
-        if (Keys.size() < 2)
+        OutSegments.Reset();
+        if (Keys.Num() < 2)
         {
             return;
         }
 
-        OutSegments.reserve(Keys.size() - 1);
+        OutSegments.Reserve(Keys.Num() - 1);
 
-        for (size_t Index = 0; Index + 1 < Keys.size(); ++Index)
+        for (int32 Index = 0; Index + 1 < Keys.Num(); ++Index)
         {
             const SCurveKey& A = Keys[Index];
             const SCurveKey& B = Keys[Index + 1];
@@ -190,7 +190,7 @@ namespace Lumina
                 // EvaluateInRange collapses a zero-width segment to the trailing key.
                 Segment.Duration = 0.0f;
                 Segment.A = B.Value;
-                OutSegments.push_back(Segment);
+                OutSegments.Add(Segment);
                 continue;
             }
 
@@ -221,7 +221,7 @@ namespace Lumina
                 break;
             }
 
-            OutSegments.push_back(Segment);
+            OutSegments.Add(Segment);
         }
     }
 
@@ -230,14 +230,14 @@ namespace Lumina
         OutPreSlope = 0.0f;
         OutPostSlope = 0.0f;
 
-        if (Keys.size() < 2)
+        if (Keys.Num() < 2)
         {
             return;
         }
 
-        const SCurveKey& First = Keys.front();
-        const SCurveKey& Last = Keys.back();
-        const SCurveKey& Prev = Keys[Keys.size() - 2];
+        const SCurveKey& First = Keys[0];
+        const SCurveKey& Last = Keys.Last();
+        const SCurveKey& Prev = Keys[Keys.Num() - 2];
 
         OutPreSlope = First.IsCubic() ? First.LeaveTangent : SegmentSlope(First, Keys[1]);
         OutPostSlope = Last.IsCubic() ? Last.ArriveTangent : SegmentSlope(Prev, Last);
@@ -246,7 +246,7 @@ namespace Lumina
     int32 SKeyedCurve::AddKey(float InTime, float InValue)
     {
         int32 Index = 0;
-        while (Index < (int32)Keys.size() && Keys[Index].Time <= InTime)
+        while (Index < Keys.Num() && Keys[Index].Time <= InTime)
         {
             ++Index;
         }
@@ -256,19 +256,19 @@ namespace Lumina
         NewKey.Value = InValue;
 
         // User tangents do not transfer, so those fall back to an auto key that gets filled in.
-        if (!Keys.empty())
+        if (!Keys.IsEmpty())
         {
             const ECurveInterpMode Neighbor = Keys[Math::Max(Index - 1, 0)].InterpMode;
             NewKey.InterpMode = Neighbor == ECurveInterpMode::CubicUser ? ECurveInterpMode::Cubic : Neighbor;
         }
 
-        Keys.insert(Keys.begin() + Index, NewKey);
+        Keys.Insert(NewKey, Index);
         return Index;
     }
 
     int32 SKeyedCurve::UpdateOrAddKey(float InTime, float InValue, float Tolerance)
     {
-        for (int32 Index = 0; Index < (int32)Keys.size(); ++Index)
+        for (int32 Index = 0; Index < Keys.Num(); ++Index)
         {
             if (Math::Abs(Keys[Index].Time - InTime) <= Tolerance)
             {
@@ -277,14 +277,14 @@ namespace Lumina
 
                 // Curves authored before AddKey stopped being called blind still carry invisible duplicates.
                 int32 Next = Index + 1;
-                while (Next < (int32)Keys.size() && Math::Abs(Keys[Next].Time - InTime) <= Tolerance)
+                while (Next < Keys.Num() && Math::Abs(Keys[Next].Time - InTime) <= Tolerance)
                 {
                     ++Next;
                 }
 
                 if (Next > Index + 1)
                 {
-                    Keys.erase(Keys.begin() + (Index + 1), Keys.begin() + Next);
+                    Keys.RemoveAt(Index + 1, Next - (Index + 1));
                 }
 
                 return Index;
@@ -296,9 +296,9 @@ namespace Lumina
 
     void SKeyedCurve::RemoveKey(int32 Index)
     {
-        if (Index >= 0 && Index < (int32)Keys.size())
+        if (Index >= 0 && Index < Keys.Num())
         {
-            Keys.erase(Keys.begin() + Index);
+            Keys.RemoveAt(Index);
         }
     }
 
@@ -312,7 +312,7 @@ namespace Lumina
 
     void SKeyedCurve::ComputeAutoTangents()
     {
-        const int32 Num = (int32)Keys.size();
+        const int32 Num = Keys.Num();
         if (Num == 0)
         {
             return;
@@ -351,20 +351,20 @@ namespace Lumina
 
     void SKeyedCurve::GetTimeRange(float& OutMin, float& OutMax) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             OutMin = 0.0f;
             OutMax = 1.0f;
             return;
         }
 
-        OutMin = Keys.front().Time;
-        OutMax = Keys.back().Time;
+        OutMin = Keys[0].Time;
+        OutMax = Keys.Last().Time;
     }
 
     void SKeyedCurve::GetValueRange(float& OutMin, float& OutMax) const
     {
-        if (Keys.empty())
+        if (Keys.IsEmpty())
         {
             OutMin = 0.0f;
             OutMax = 1.0f;
@@ -382,7 +382,7 @@ namespace Lumina
 
     CCurveAsset::CCurveAsset()
     {
-        Curve.Keys.reserve(2);
+        Curve.Keys.Reserve(2);
         Curve.AddKey(0.0f, 0.0f);
         Curve.AddKey(1.0f, 1.0f);
     }

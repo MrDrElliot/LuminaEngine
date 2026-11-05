@@ -16,9 +16,9 @@ namespace Lumina
         TVector<uint8>  Bytes;
         TVector<uint32> Offsets;   // NumFields + 1 entries
 
-        uint32 Num() const { return Offsets.empty() ? 0u : (uint32)Offsets.size() - 1u; }
+        uint32 Num() const { return Offsets.IsEmpty() ? 0u : (uint32)Offsets.Num() - 1u; }
         uint32 FieldSize(uint32 Index) const { return Offsets[Index + 1] - Offsets[Index]; }
-        const uint8* FieldData(uint32 Index) const { return Bytes.data() + Offsets[Index]; }
+        const uint8* FieldData(uint32 Index) const { return Bytes.GetData() + Offsets[Index]; }
     };
 
     struct FComponentRepState

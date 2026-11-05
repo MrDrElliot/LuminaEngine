@@ -11,14 +11,14 @@ namespace ECSBench
         {
         public:
 
-            void Reserve(size_t IndexCount) { Slots.resize(IndexCount, ECS::NullEntity); }
+            void Reserve(int32 IndexCount) { Slots.SetNum(IndexCount, ECS::NullEntity); }
 
             void Set(ECS::FEntity From, ECS::FEntity To)
             {
                 const uint32 Index = From.GetIndex();
-                if (Index >= Slots.size())
+                if (Index >= static_cast<uint32>(Slots.Num()))
                 {
-                    Slots.resize(Index + 1u, ECS::NullEntity);
+                    Slots.SetNum(Index + 1u, ECS::NullEntity);
                 }
                 Slots[Index] = To;
             }
@@ -26,10 +26,10 @@ namespace ECSBench
             NODISCARD ECS::FEntity Find(ECS::FEntity From) const
             {
                 const uint32 Index = From.GetIndex();
-                return Index < Slots.size() ? Slots[Index] : ECS::NullEntity;
+                return Index < static_cast<uint32>(Slots.Num()) ? Slots[Index] : ECS::NullEntity;
             }
 
-            NODISCARD size_t Num() const { return Slots.size(); }
+            NODISCARD int32 Num() const { return Slots.Num(); }
 
         private:
 
@@ -37,7 +37,7 @@ namespace ECSBench
         };
     }
 
-    void RunEntityMapCases(size_t EntityCount, size_t Passes)
+    void RunEntityMapCases(int32 EntityCount, int32 Passes)
     {
         std::printf("\nEntity-keyed remap table, nanoseconds per operation.\n\n");
         std::printf("%-46s %12s %10s\n", "case", "ns per op", "vs hash");
@@ -46,16 +46,16 @@ namespace ECSBench
         ECS::FRegistry Registry;
         TVector<ECS::FEntity> Source;
         TVector<ECS::FEntity> Dest;
-        Source.reserve(EntityCount);
-        Dest.reserve(EntityCount);
+        Source.Reserve(EntityCount);
+        Dest.Reserve(EntityCount);
 
-        for (size_t Index = 0; Index < EntityCount; ++Index)
+        for (int32 Index = 0; Index < EntityCount; ++Index)
         {
-            Source.push_back(Registry.Create());
+            Source.Add(Registry.Create());
         }
-        for (size_t Index = 0; Index < EntityCount; ++Index)
+        for (int32 Index = 0; Index < EntityCount; ++Index)
         {
-            Dest.push_back(Registry.Create());
+            Dest.Add(Registry.Create());
         }
 
         uint64 Sink = 0;
@@ -63,18 +63,18 @@ namespace ECSBench
         const double HashBuild = MeasureNanosPerOp(EntityCount, Passes, [&]
         {
             THashMap<ECS::FEntity, ECS::FEntity> Map;
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 Map[Source[Index]] = Dest[Index];
             }
-            Sink += Map.size();
+            Sink += Map.Num();
         });
 
         const double FlatBuild = MeasureNanosPerOp(EntityCount, Passes, [&]
         {
             FEntityIndexMap Map;
             Map.Reserve(EntityCount * 2);
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 Map.Set(Source[Index], Dest[Index]);
             }
@@ -84,7 +84,7 @@ namespace ECSBench
         THashMap<ECS::FEntity, ECS::FEntity> HashMap;
         FEntityIndexMap FlatMap;
         FlatMap.Reserve(EntityCount * 2);
-        for (size_t Index = 0; Index < EntityCount; ++Index)
+        for (int32 Index = 0; Index < EntityCount; ++Index)
         {
             HashMap[Source[Index]] = Dest[Index];
             FlatMap.Set(Source[Index], Dest[Index]);
@@ -93,10 +93,10 @@ namespace ECSBench
         const double HashLookup = MeasureNanosPerOp(EntityCount, Passes, [&]
         {
             uint64 Total = 0;
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
-                const auto It = HashMap.find(Source[Index]);
-                Total += (It != HashMap.end()) ? It->second.Value : 0u;
+                const auto It = HashMap.Find(Source[Index]);
+                Total += (It != nullptr) ? It->Value : 0u;
             }
             Sink += Total;
         });
@@ -104,7 +104,7 @@ namespace ECSBench
         const double FlatLookup = MeasureNanosPerOp(EntityCount, Passes, [&]
         {
             uint64 Total = 0;
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 Total += FlatMap.Find(Source[Index]).Value;
             }

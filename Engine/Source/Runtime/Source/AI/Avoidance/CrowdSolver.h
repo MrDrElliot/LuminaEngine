@@ -39,7 +39,7 @@ namespace Lumina::Avoidance
 
         FAvoidanceGrid Grid;
 
-        RUNTIME_API void Reset(size_t Count);
+        RUNTIME_API void Reset(int32 Count);
     };
 
     // Agents below this solve on the calling thread, since the dispatch would cost more than the work.

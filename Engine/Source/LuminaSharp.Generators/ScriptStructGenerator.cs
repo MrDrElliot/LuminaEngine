@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -16,6 +17,7 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
     private const string ExtendsInterface = "LuminaSharp.IExtends<TBase>";
     private const string ComponentInterface = "LuminaSharp.IComponent<TSelf>";
     private const string RootInterface = "LuminaSharp.INativeStruct<TSelf>";
+    private const string PropertyAttribute = "LuminaSharp.PropertyAttribute";
 
     private static readonly DiagnosticDescriptor NotPartial = new(
         id: "LUM0110",
@@ -85,8 +87,9 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
         }
         if (IsComponent(Symbol))
         {
-            EmitComponent(Source, Name, Symbol.GetMembers("CopyFrom").IsEmpty);
+            EmitComponent(Source, Symbol, Symbol.GetMembers("CopyFrom").IsEmpty);
             Output.AddSource(Name + ".ScriptStruct.g.cs", SourceText.From(Source.ToString(), Encoding.UTF8));
+            Output.AddSource(Name + ".ReadAccess.g.cs", SourceText.From(ReadAccess(Symbol), Encoding.UTF8));
             return;
         }
         Source.Append("partial struct ").Append(Name).Append(" : global::LuminaSharp.INativeStruct<").Append(Name).AppendLine(">");
@@ -114,8 +117,9 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
     }
 
     // A component is only ever reached in place, so its own address is the storage, and the private constructor only satisfies field initializers.
-    private static void EmitComponent(StringBuilder Source, string Name, bool bEmitCopyFrom)
+    private static void EmitComponent(StringBuilder Source, INamedTypeSymbol Symbol, bool bEmitCopyFrom)
     {
+        string Name = Symbol.Name;
         Source.Append("unsafe partial struct ").AppendLine(Name);
         Source.AppendLine("{");
         Source.Append("    private ").Append(Name).AppendLine("(global::LuminaSharp.NativeRef __Unused) { }");
@@ -125,6 +129,72 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
         {
             Source.Append("    public readonly void CopyFrom(in ").Append(Name).AppendLine(" Source) => global::LuminaSharp.Native.StructAssign(Handle, Source.Handle, NativeName);");
         }
+        EmitReadOnlyView(Source, Symbol);
         Source.AppendLine("}");
+    }
+
+    // The same storage seen through ref readonly values and getters only, which Read<T> hands out; views with no read-only form are left out.
+    private static void EmitReadOnlyView(StringBuilder Source, INamedTypeSymbol Symbol)
+    {
+        string Name = Symbol.Name;
+        Source.AppendLine("    public readonly struct ReadOnly");
+        Source.AppendLine("    {");
+        Source.AppendLine("        private readonly global::LuminaSharp.NativeRef __Ref;");
+        Source.AppendLine("        public ReadOnly(global::LuminaSharp.NativeRef Ref) { __Ref = Ref; }");
+        Source.AppendLine("        public ReadOnly(nint Address) { __Ref = new global::LuminaSharp.NativeRef(Address); }");
+        Source.Append("        public static implicit operator ReadOnly(in ").Append(Name).AppendLine(" Value) => new(Value.Handle);");
+        Source.Append("        private ref ").Append(Name).Append(" Owner => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<").Append(Name).AppendLine(">((void*)__Ref.Address);");
+        // A stored member is a field in the authored source and a property once the script compiler has rewritten it.
+        foreach (ISymbol Stored in Symbol.GetMembers())
+        {
+            ITypeSymbol? FieldType = Stored switch
+            {
+                IFieldSymbol { IsStatic: false, IsConst: false, IsImplicitlyDeclared: false } Field => Field.Type,
+                IPropertySymbol { IsStatic: false } Property when IsStoredProperty(Property) => Property.Type,
+                _ => null,
+            };
+            if (FieldType == null)
+            {
+                continue;
+            }
+            string Member = SyntaxFacts.GetKeywordKind(Stored.Name) != SyntaxKind.None ? "@" + Stored.Name : Stored.Name;
+            string Type = FieldType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            switch (ScriptPropertyClassifier.ClassifyMember(Stored, FieldType).Access)
+            {
+                case EScriptAccess.Blittable or EScriptAccess.Enum:
+                    Source.Append("        public ref readonly ").Append(Type).Append(' ').Append(Member).Append(" => ref Owner.").Append(Member).AppendLine(";");
+                    break;
+                case EScriptAccess.MarshalledStruct or EScriptAccess.String or EScriptAccess.AssetPath or EScriptAccess.Object or EScriptAccess.ObjectPtr:
+                    Source.Append("        public ").Append(Type).Append(' ').Append(Member).Append(" => Owner.").Append(Member).AppendLine(";");
+                    break;
+                case EScriptAccess.NativeStruct when !FieldType.GetTypeMembers("ReadOnly").IsEmpty:
+                    Source.Append("        public ").Append(Type).Append(".ReadOnly ").Append(Member).Append(" => Owner.").Append(Member).AppendLine(";");
+                    break;
+            }
+        }
+        Source.AppendLine("    }");
+    }
+
+    private static bool IsStoredProperty(IPropertySymbol Property)
+    {
+        return Property.GetAttributes().Any(Data => Data.AttributeClass?.ToDisplayString() == PropertyAttribute);
+    }
+
+    // Beside the generic extensions in LuminaSharp, so it is found in the same scope wherever Read<T> is.
+    private static string ReadAccess(INamedTypeSymbol Symbol)
+    {
+        string Type = Symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        string Access = Symbol.DeclaredAccessibility == Accessibility.Public ? "public" : "internal";
+        var Source = new StringBuilder();
+        Source.AppendLine("// <auto-generated/>");
+        Source.AppendLine("namespace LuminaSharp");
+        Source.AppendLine("{");
+        Source.AppendLine("    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+        Source.Append("    ").Append(Access).Append(" static class ").Append(Type.Replace("global::", string.Empty).Replace('.', '_')).AppendLine("ParamAccess");
+        Source.AppendLine("    {");
+        Source.Append("        extension(Read<").Append(Type).Append("> Term) { public ").Append(Type).AppendLine(".ReadOnly Value => new(Term.Address); }");
+        Source.AppendLine("    }");
+        Source.AppendLine("}");
+        return Source.ToString();
     }
 }

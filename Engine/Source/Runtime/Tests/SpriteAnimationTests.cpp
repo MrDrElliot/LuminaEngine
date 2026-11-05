@@ -110,9 +110,9 @@ TEST(SpriteSheet, FindAnimationFallsBackToTheFirst)
     CSpriteSheet* Sheet = NewObject<CSpriteSheet>();
     ASSERT_NE(Sheet, nullptr);
 
-    SSpriteAnimation& Idle = Sheet->Animations.emplace_back();
+    SSpriteAnimation& Idle = Sheet->Animations.EmplaceGetRef();
     Idle.Name = "Idle";
-    SSpriteAnimation& Walk = Sheet->Animations.emplace_back();
+    SSpriteAnimation& Walk = Sheet->Animations.EmplaceGetRef();
     Walk.Name = "Walk";
 
     EXPECT_EQ(Sheet->FindAnimation("Walk")->Name, FName("Walk"));

@@ -2,6 +2,7 @@
 
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
+#include "World/Entity/Systems/SystemResources.h"
 
 namespace Lumina
 {
@@ -52,7 +53,7 @@ namespace Lumina
     };
 
     // What every Weather Interactor did this frame, written by SWeatherInteractionSystem into the registry context.
-    struct FWeatherInteractionState
+    struct FWeatherInteractionState : ECS::FResource
     {
         TVector<FWeatherContact>         Contacts;
         TVector<FWeatherImpact>          Impacts;

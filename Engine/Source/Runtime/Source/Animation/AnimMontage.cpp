@@ -46,7 +46,7 @@ namespace Lumina
             }
         }
 
-        FAnimMontageInstance& Instance = Instances.emplace_back();
+        FAnimMontageInstance& Instance = Instances.EmplaceGetRef();
         Instance.Montage    = Montage;
         Instance.InstanceID = NextInstanceID++;
         Instance.PlayRate   = Math::Max(PlayRate, 0.0f);
@@ -54,7 +54,7 @@ namespace Lumina
         Instance.BlendRate  = ResolveBlendRate(Montage->BlendInTime);
 
         int32 SectionIndex = StartSection.IsNone() ? Constants::kIndexNone : Montage->FindSectionIndex(StartSection);
-        if (SectionIndex == Constants::kIndexNone && !Montage->Sections.empty())
+        if (SectionIndex == Constants::kIndexNone && !Montage->Sections.IsEmpty())
         {
             SectionIndex = Montage->FindSectionAtTime(0.0f);
         }
@@ -97,12 +97,12 @@ namespace Lumina
                 RecordTransition(Instance, EAnimMontageTransition::Ended);
             }
         }
-        Instances.clear();
+        Instances.Reset();
     }
 
     void FAnimMontagePlayer::RecordTransition(const FAnimMontageInstance& Instance, EAnimMontageTransition Type)
     {
-        Transitions.push_back({ Instance.Montage, Type, Instance.bInterrupted });
+        Transitions.Emplace(Instance.Montage, Type, Instance.bInterrupted);
     }
 
     void FAnimMontagePlayer::BeginBlendOut(FAnimMontageInstance& Instance, float BlendOutTime, bool bInterrupted)
@@ -196,7 +196,7 @@ namespace Lumina
         }
 
         const int32 Index = Instance->CurrentSection;
-        return (Index >= 0 && Index < (int32)Instance->Montage->Sections.size())
+        return (Index >= 0 && Index < Instance->Montage->Sections.Num())
             ? Instance->Montage->Sections[Index].Name
             : FName();
     }
@@ -251,7 +251,7 @@ namespace Lumina
 
     void FAnimMontagePlayer::Update(float DeltaTime, TVector<FAnimNotifyEvent>* OutEvents)
     {
-        if (Instances.empty())
+        if (Instances.IsEmpty())
         {
             return;
         }
@@ -264,10 +264,10 @@ namespace Lumina
             }
         }
 
-        Instances.erase(Algo::RemoveIf(Instances, [](const FAnimMontageInstance& Instance)
+        Instances.RemoveAll([](const FAnimMontageInstance& Instance)
         {
             return !Instance.IsActive();
-        }), Instances.end());
+        });
     }
 
     void FAnimMontagePlayer::AdvanceInstance(FAnimMontageInstance& Instance, float DeltaTime, TVector<FAnimNotifyEvent>* OutEvents)
@@ -311,7 +311,7 @@ namespace Lumina
         if (Instance.Position >= SectionEnd)
         {
             FName Next = Instance.QueuedSection;
-            if (Next.IsNone() && Instance.CurrentSection >= 0 && Instance.CurrentSection < (int32)Montage->Sections.size())
+            if (Next.IsNone() && Instance.CurrentSection >= 0 && Instance.CurrentSection < Montage->Sections.Num())
             {
                 Next = Montage->Sections[Instance.CurrentSection].NextSection;
             }
@@ -339,7 +339,7 @@ namespace Lumina
         {
             const bool bChains = !Instance.QueuedSection.IsNone() ||
                                  (Instance.CurrentSection >= 0 &&
-                                  Instance.CurrentSection < (int32)Montage->Sections.size() &&
+                                  Instance.CurrentSection < Montage->Sections.Num() &&
                                   !Montage->Sections[Instance.CurrentSection].NextSection.IsNone());
 
             if (!bChains)
@@ -368,7 +368,7 @@ namespace Lumina
             {
                 if (Notify.Time > Prev && Notify.Time <= Cur)
                 {
-                    FAnimNotifyEvent& Event = OutEvents->emplace_back();
+                    FAnimNotifyEvent& Event = OutEvents->EmplaceGetRef();
                     Event.Name   = Notify.Name;
                     Event.Track  = Notify.Track;
                     Event.Type   = EAnimNotifyEventType::Trigger;
@@ -380,16 +380,16 @@ namespace Lumina
         }
 
         thread_local TVector<int32> NowActive;
-        NowActive.clear();
+        NowActive.Reset();
 
         if (bAdvanced)
         {
-            for (int32 i = 0; i < (int32)Montage->NotifyStates.size(); ++i)
+            for (int32 i = 0; i < Montage->NotifyStates.Num(); ++i)
             {
                 const SAnimMontageNotifyState& State = Montage->NotifyStates[i];
                 if (Cur >= State.StartTime && Cur <= State.EndTime)
                 {
-                    NowActive.push_back(i);
+                    NowActive.Add(i);
                 }
             }
         }
@@ -399,7 +399,7 @@ namespace Lumina
             const SAnimMontageNotifyState& State = Montage->NotifyStates[Index];
             const float Span = State.EndTime - State.StartTime;
 
-            FAnimNotifyEvent& Event = OutEvents->emplace_back();
+            FAnimNotifyEvent& Event = OutEvents->EmplaceGetRef();
             Event.Name   = State.Name;
             Event.Track  = State.Track;
             Event.Type   = Type;
@@ -423,7 +423,8 @@ namespace Lumina
             }
         }
 
-        Instance.ActiveNotifyStates.assign(NowActive.begin(), NowActive.end());
+        Instance.ActiveNotifyStates.Reset();
+        Instance.ActiveNotifyStates.Append(NowActive.begin(), NowActive.end());
     }
 
     void FAnimMontagePlayer::EndActiveNotifyStates(FAnimMontageInstance& Instance, TVector<FAnimNotifyEvent>* OutEvents)
@@ -433,10 +434,10 @@ namespace Lumina
         {
             for (int32 Index : Instance.ActiveNotifyStates)
             {
-                if (Index >= 0 && Index < (int32)Montage->NotifyStates.size())
+                if (Index >= 0 && Index < Montage->NotifyStates.Num())
                 {
                     const SAnimMontageNotifyState& State = Montage->NotifyStates[Index];
-                    FAnimNotifyEvent& Event = OutEvents->emplace_back();
+                    FAnimNotifyEvent& Event = OutEvents->EmplaceGetRef();
                     Event.Name   = State.Name;
                     Event.Track  = State.Track;
                     Event.Type   = EAnimNotifyEventType::End;
@@ -448,12 +449,12 @@ namespace Lumina
             }
         }
 
-        Instance.ActiveNotifyStates.clear();
+        Instance.ActiveNotifyStates.Reset();
     }
 
     void FAnimMontagePlayer::GatherSlot(const FName& SlotName, TVector<FAnimMontageSlotContribution>& OutContributions) const
     {
-        OutContributions.clear();
+        OutContributions.Reset();
 
         for (const FAnimMontageInstance& Instance : Instances)
         {
@@ -468,7 +469,7 @@ namespace Lumina
                 continue;
             }
 
-            FAnimMontageSlotContribution& Contribution = OutContributions.emplace_back();
+            FAnimMontageSlotContribution& Contribution = OutContributions.EmplaceGetRef();
             Contribution.Montage      = Instance.Montage.Get();
             Contribution.Clip         = Sample.Clip;
             Contribution.ClipTime     = Sample.ClipTime;

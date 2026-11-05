@@ -1,11 +1,10 @@
 ﻿#include "RuntimePCH.h"
-#include <string>
 #include "PluginDescriptor.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Platform/Filesystem/FileHelper.h"
 
-#include "nlohmann/json.hpp"
+#include "Core/Json/Json.h"
 
 namespace Lumina
 {
@@ -20,70 +19,126 @@ namespace Lumina
         }
     }
 
-    EPluginModuleType ParsePluginModuleType(FStringView Str, EPluginModuleType Default)
+    bool TryParsePluginModuleType(FStringView Str, EPluginModuleType& OutType)
     {
-        if (Str.empty())        return Default;
-        if (Str == "Runtime")   return EPluginModuleType::Runtime;
-        if (Str == "Editor")    return EPluginModuleType::Editor;
-        if (Str == "Developer") return EPluginModuleType::Developer;
-        LOG_WARN("[PluginManager] Unknown module Type '{}' in .lplugin; falling back to '{}'",
-            Str, LexToString(Default));
-        return Default;
+        for (const EPluginModuleType Type : { EPluginModuleType::Runtime, EPluginModuleType::Editor, EPluginModuleType::Developer })
+        {
+            if (Str == LexToString(Type))
+            {
+                OutType = Type;
+                return true;
+            }
+        }
+        return false;
     }
 
-    namespace
+    namespace PluginDescriptorInternal
     {
-        // Tiny JSON helpers that tolerate a missing field rather than throwing.
-        FString GetString(const nlohmann::json& J, const char* Key, const char* Default = "")
+        // A missing field takes its default, but a present one of the wrong type fails, which is what the build tool does.
+        class FFieldReader
         {
-            auto It = J.find(Key);
-            if (It == J.end() || !It->is_string())
-            {
-                return FString(Default);
-            }
-            const std::string& V = It->get_ref<const std::string&>();
-            return FString(V.c_str(), V.size());
-        }
+        public:
 
-        int32 GetInt(const nlohmann::json& J, const char* Key, int32 Default = 0)
-        {
-            auto It = J.find(Key);
-            if (It == J.end() || !It->is_number_integer())
-            {
-                return Default;
-            }
-            return It->get<int32>();
-        }
+            explicit FFieldReader(FString& InError) : Error(InError) {}
 
-        bool GetBool(const nlohmann::json& J, const char* Key, bool Default = false)
-        {
-            auto It = J.find(Key);
-            if (It == J.end() || !It->is_boolean())
-            {
-                return Default;
-            }
-            return It->get<bool>();
-        }
+            NODISCARD bool Failed() const { return bFailed; }
 
-        TVector<FString> GetStringArray(const nlohmann::json& J, const char* Key)
-        {
-            TVector<FString> Out;
-            auto It = J.find(Key);
-            if (It == J.end() || !It->is_array())
+            FString String(const FJsonValue& Object, const char* Key, const char* Default = "")
             {
+                const FJsonValue* Field = Find(Object, Key, &FJsonValue::IsString, "a string");
+                if (Field == nullptr)
+                {
+                    return FString(Default);
+                }
+                return FString(Field->AsString());
+            }
+
+            int32 Int(const FJsonValue& Object, const char* Key, int32 Default)
+            {
+                const FJsonValue* Field = Find(Object, Key, &FJsonValue::IsInteger, "an integer");
+                if (Field == nullptr)
+                {
+                    return Default;
+                }
+                const int64 Value = Field->AsInt64();
+                if (Value < TNumericLimits<int32>::Min() || Value > TNumericLimits<int32>::Max())
+                {
+                    Fail(Key, "an integer that fits 32 bits");
+                    return Default;
+                }
+                return static_cast<int32>(Value);
+            }
+
+            bool Bool(const FJsonValue& Object, const char* Key, bool Default)
+            {
+                const FJsonValue* Field = Find(Object, Key, &FJsonValue::IsBool, "a boolean");
+                return Field != nullptr ? Field->AsBool() : Default;
+            }
+
+            TVector<FString> StringArray(const FJsonValue& Object, const char* Key)
+            {
+                TVector<FString> Out;
+                const FJsonValue* Field = Find(Object, Key, &FJsonValue::IsArray, "an array");
+                if (Field == nullptr)
+                {
+                    return Out;
+                }
+                Out.Reserve(Field->Num());
+                for (const FJsonValue& Value : Field->AsArray())
+                {
+                    if (!Value.IsString())
+                    {
+                        Fail(Key, "an array of strings");
+                        return Out;
+                    }
+                    Out.Emplace(Value.AsString());
+                }
                 return Out;
             }
-            Out.reserve(It->size());
-            for (const auto& V : *It)
+
+            const FJsonValue* Array(const FJsonValue& Object, const char* Key)
             {
-                if (V.is_string())
+                return Find(Object, Key, &FJsonValue::IsArray, "an array");
+            }
+
+            void Fail(const char* Key, const char* Expected)
+            {
+                if (!bFailed)
                 {
-                    const std::string& S = V.get_ref<const std::string&>();
-                    Out.emplace_back(S.c_str(), S.size());
+                    Error = Format("Plugin descriptor field '{}' must be {}.", Key, Expected);
+                    bFailed = true;
                 }
             }
-            return Out;
-        }
+
+            void FailWith(FString Message)
+            {
+                if (!bFailed)
+                {
+                    Error = Move(Message);
+                    bFailed = true;
+                }
+            }
+
+        private:
+
+            const FJsonValue* Find(const FJsonValue& Object, const char* Key, bool (FJsonValue::*IsType)() const noexcept, const char* Expected)
+            {
+                const FJsonValue* Field = Object.Find(Key);
+                if (Field == nullptr)
+                {
+                    return nullptr;
+                }
+                if (!(Field->*IsType)())
+                {
+                    Fail(Key, Expected);
+                    return nullptr;
+                }
+                return Field;
+            }
+
+            FString& Error;
+            bool     bFailed = false;
+        };
     }
 
     bool FPluginDescriptor::LoadFromFile(FStringView FilePath, FPluginDescriptor& OutDescriptor, FString& OutError)
@@ -92,121 +147,151 @@ namespace Lumina
         if (!FileHelper::LoadFileIntoString(Json, FilePath))
         {
             OutError = "Failed to read plugin descriptor file: ";
-            OutError.append(FilePath.data(), FilePath.size());
+            OutError.Append(FilePath.GetData(), FilePath.Len());
             return false;
         }
         return LoadFromString(Json, OutDescriptor, OutError);
     }
 
+    // The schema, defaults and errors here match LuminaBuildTool's PluginDescriptor, so a descriptor builds only if it loads.
     bool FPluginDescriptor::LoadFromString(FStringView JsonText, FPluginDescriptor& OutDescriptor, FString& OutError)
     {
-        nlohmann::json J;
-        try
+        using namespace PluginDescriptorInternal;
+
+        FJsonValue J;
+        FJsonParseError ParseError;
+        if (!FJsonValue::Parse(JsonText, J, &ParseError))
         {
-            J = nlohmann::json::parse(JsonText.data(), JsonText.data() + JsonText.size());
-        }
-        catch (const std::exception& E)
-        {
-            OutError = "Malformed plugin descriptor JSON: ";
-            OutError += E.what();
+            OutError = "Malformed plugin descriptor JSON: " + ParseError.Message;
             return false;
         }
 
-        if (!J.is_object())
+        if (!J.IsObject())
         {
             OutError = "Plugin descriptor root must be an object.";
             return false;
         }
 
-        OutDescriptor.FormatVersion      = GetInt(J, "FormatVersion", 1);
-        OutDescriptor.Name               = GetString(J, "Name");
-        OutDescriptor.Version            = GetInt(J, "Version", 1);
-        OutDescriptor.VersionName        = GetString(J, "VersionName");
-        OutDescriptor.Author             = GetString(J, "Author");
-        OutDescriptor.Description        = GetString(J, "Description");
-        OutDescriptor.Category           = GetString(J, "Category");
-        OutDescriptor.bEnabledByDefault  = GetBool(J,   "EnabledByDefault", true);
-        OutDescriptor.bEditorOnly        = GetBool(J,   "EditorOnly",       false);
-        OutDescriptor.bContainsContent   = GetBool(J,   "ContainsContent",  true);
-        OutDescriptor.SupportedPlatforms = GetStringArray(J, "SupportedPlatforms");
+        FFieldReader Read(OutError);
 
-        if (OutDescriptor.Name.empty())
+        OutDescriptor.FormatVersion      = Read.Int(J, "FormatVersion", 1);
+        OutDescriptor.Name               = Read.String(J, "Name");
+        OutDescriptor.Version            = Read.Int(J, "Version", 1);
+        OutDescriptor.VersionName        = Read.String(J, "VersionName");
+        OutDescriptor.Author             = Read.String(J, "Author");
+        OutDescriptor.Description        = Read.String(J, "Description");
+        OutDescriptor.Category           = Read.String(J, "Category");
+        OutDescriptor.bEnabledByDefault  = Read.Bool(J, "EnabledByDefault", true);
+        OutDescriptor.bEditorOnly        = Read.Bool(J, "EditorOnly", false);
+        OutDescriptor.bContainsContent   = Read.Bool(J, "ContainsContent", true);
+        OutDescriptor.SupportedPlatforms = Read.StringArray(J, "SupportedPlatforms");
+
+        if (!Read.Failed() && OutDescriptor.Name.IsEmpty())
         {
-            OutError = "Plugin descriptor missing required field 'Name'.";
-            return false;
+            Read.FailWith("Plugin descriptor missing required field 'Name'.");
         }
 
-        // Dependencies
-        if (auto It = J.find("Dependencies"); It != J.end() && It->is_array())
+        if (const FJsonValue* Dependencies = Read.Array(J, "Dependencies"))
         {
-            OutDescriptor.Dependencies.reserve(It->size());
-            for (const auto& D : *It)
+            OutDescriptor.Dependencies.Reserve(Dependencies->Num());
+            for (const FJsonValue& Entry : Dependencies->AsArray())
             {
-                if (!D.is_object()) continue;
-                FPluginDependency Dep;
-                Dep.Name      = GetString(D, "Name");
-                Dep.Version   = GetInt(D,   "Version", 0);
-                Dep.bOptional = GetBool(D,  "Optional", false);
-                if (!Dep.Name.empty())
+                FPluginDependency Dependency;
+                if (Entry.IsString())
                 {
-                    OutDescriptor.Dependencies.emplace_back(Move(Dep));
+                    Dependency.Name = FString(Entry.AsString());
                 }
+                else if (Entry.IsObject())
+                {
+                    Dependency.Name      = Read.String(Entry, "Name");
+                    Dependency.Version   = Read.Int(Entry, "Version", 0);
+                    Dependency.bOptional = Read.Bool(Entry, "Optional", false);
+                }
+                else
+                {
+                    Read.FailWith("A dependency must be a plugin name or an object with a Name.");
+                    break;
+                }
+
+                if (Dependency.Name.IsEmpty())
+                {
+                    Read.FailWith(Format("Plugin '{}' has a dependency with no Name.", OutDescriptor.Name));
+                    break;
+                }
+                OutDescriptor.Dependencies.Emplace(Move(Dependency));
             }
         }
 
         // Cook roots are read here and carried into the engine, and the cooker iterates them.
-        if (auto It = J.find("CookRoots"); It != J.end() && It->is_array())
+        if (const FJsonValue* Roots = Read.Array(J, "CookRoots"))
         {
-            OutDescriptor.CookRoots.reserve(It->size());
-            for (const auto& R : *It)
+            OutDescriptor.CookRoots.Reserve(Roots->Num());
+            for (const FJsonValue& Entry : Roots->AsArray())
             {
                 FCookRoot Root;
-                if (R.is_string())
+                if (Entry.IsString())
                 {
                     // The shorthand form, where a bare string is the asset path.
-                    const std::string& S = R.get_ref<const std::string&>();
-                    Root.Asset.assign(S.c_str(), S.size());
+                    Root.Asset = Entry.AsString();
                 }
-                else if (R.is_object())
+                else if (Entry.IsObject())
                 {
-                    Root.Asset = GetString(R, "Asset");
-                    if (Root.Asset.empty())
+                    Root.Asset = Read.String(Entry, "Asset");
+                    if (Root.Asset.IsEmpty())
                     {
                         LOG_WARN("[PluginManager] Plugin '{}' CookRoots entry has no 'Asset' field; skipping",
                             OutDescriptor.Name);
                     }
-                    Root.Chunk = FName(GetString(R, "Chunk").c_str());
+                    Root.Chunk = FName(*Read.String(Entry, "Chunk"));
                 }
-                if (!Root.Asset.empty())
+                if (!Root.Asset.IsEmpty())
                 {
-                    OutDescriptor.CookRoots.emplace_back(Move(Root));
+                    OutDescriptor.CookRoots.Emplace(Move(Root));
                 }
             }
         }
 
-        // Modules
-        if (auto It = J.find("Modules"); It != J.end() && It->is_array())
+        if (const FJsonValue* Modules = Read.Array(J, "Modules"))
         {
-            OutDescriptor.Modules.reserve(It->size());
-            for (const auto& M : *It)
+            OutDescriptor.Modules.Reserve(Modules->Num());
+            for (const FJsonValue& Entry : Modules->AsArray())
             {
-                if (!M.is_object()) continue;
-                FPluginModuleDescriptor Mod;
-                Mod.Name               = GetString(M, "Name");
-                Mod.Type               = ParsePluginModuleType(GetString(M, "Type", "Runtime"));
-                Mod.LoadingPhase       = ParsePluginLoadingPhase(GetString(M, "LoadingPhase", "PreEngineInit"));
-                Mod.SupportedPlatforms = GetStringArray(M, "SupportedPlatforms");
-                if (Mod.Name.empty())
+                if (!Entry.IsObject())
                 {
-                    OutError = "Plugin '";
-                    OutError += OutDescriptor.Name;
-                    OutError += "' has a module with no Name.";
-                    return false;
+                    Read.FailWith(Format("Plugin '{}' has a module entry that is not an object.", OutDescriptor.Name));
+                    break;
                 }
-                OutDescriptor.Modules.emplace_back(Move(Mod));
+
+                FPluginModuleDescriptor Module;
+                Module.Name               = Read.String(Entry, "Name");
+                Module.SupportedPlatforms = Read.StringArray(Entry, "SupportedPlatforms");
+                const FString Type        = Read.String(Entry, "Type", "Runtime");
+                const FString Phase       = Read.String(Entry, "LoadingPhase", "PreEngineInit");
+                if (Read.Failed())
+                {
+                    break;
+                }
+
+                if (Module.Name.IsEmpty())
+                {
+                    Read.FailWith(Format("Plugin '{}' has a module with no Name.", OutDescriptor.Name));
+                    break;
+                }
+                if (!TryParsePluginModuleType(Type, Module.Type))
+                {
+                    Read.FailWith(Format("Plugin '{}' module '{}' has unknown Type '{}'; expected Runtime, Editor or Developer.",
+                        OutDescriptor.Name, Module.Name, Type));
+                    break;
+                }
+                if (!TryParsePluginLoadingPhase(Phase, Module.LoadingPhase))
+                {
+                    Read.FailWith(Format("Plugin '{}' module '{}' has unknown LoadingPhase '{}'.", OutDescriptor.Name, Module.Name, Phase));
+                    break;
+                }
+                OutDescriptor.Modules.Emplace(Move(Module));
             }
         }
 
-        return true;
+        return !Read.Failed();
     }
 }

@@ -9,6 +9,7 @@
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Core/Serialization/Package/PackageLoader.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Core/Threading/Sync.h"
 #include "Core/Versioning/CoreVersion.h"
 #include "Memory/SmartPtr.h"
 
@@ -284,6 +285,9 @@ namespace Lumina
                 
         /** Serializes the object's data; no-op if OF_NeedsLoad is unset. */
         RUNTIME_API void LoadObject(CObject* Object);
+
+        // Runs Object's owed PostLoad, waiting out one already running elsewhere; true only when this call ran it.
+        RUNTIME_API static bool ConditionalPostLoad(CObject* Object);
         RUNTIME_API CObject* LoadObject(const FGuid& GUID);
         RUNTIME_API CObject* LoadObjectByName(const FName& Name);
 
@@ -326,13 +330,15 @@ namespace Lumina
 
     private:
 
+        friend class FPackageLoader;
+
         // Phased-load steps for LoadAssetGraph, each one task over this package's whole ExportTable.
 
         // Creates every export's shell with OF_NeedsLoad, so a cross-package reference resolves before any read.
         void CreateExportShells();
 
-        // Serializes every export, deferring PostLoad so references resolve to shells without a nested load.
-        void SerializeExports();
+        // Serializes every export under Request, which defers the closure's PostLoads to the graph's wave pass.
+        void SerializeExports(FLoadRequest& Request);
 
         // PostLoad every export still owing one (OF_NeedsPostLoad). Called leaf-first across packages.
         void PostLoadExports();
@@ -341,10 +347,14 @@ namespace Lumina
         CObject* CreateExportShell(int32 ExportIndex);
 
         // Reads one export's data and marks OF_NeedsPostLoad, which is what splits serialize from PostLoad.
-        void SerializeObject(CObject* Object);
+        void SerializeObject(CObject* Object, FLoadRequest& Request);
 
-        // Run a deferred PostLoad if one is owed; idempotent (clears OF_NeedsPostLoad first).
-        static void PostLoadObject(CObject* Object);
+        void LoadObject(CObject* Object, FLoadRequest& Request);
+        CObject* LoadObject(const FGuid& GUID, FLoadRequest& Request);
+        CObject* IndexToObject(const FObjectPackageIndex& Index, FLoadRequest& Request);
+
+        // StaticLoadObject that keeps the request, so an import loaded mid-graph defers like the rest.
+        static CObject* LoadImport(const FGuid& GUID, FLoadRequest& Request);
 
         // Re-opens the on-disk bytes when the cache was dropped, false for a package with no backing file.
         bool EnsureLoader();
@@ -386,6 +396,9 @@ namespace Lumina
 
         // Guards publication of LoaderBytes only. Reads run outside it, one cursor each.
         mutable FMutex                  LoaderBytesMutex;
+
+        // Two loads reaching one export at once would otherwise both create its shell; recursive for a shell whose construction loads a sibling.
+        FRecursiveMutex                 ExportShellMutex;
 #if USING(WITH_EDITOR)
         mutable FMutex                  ThumbnailMutex;
         TUniquePtr<FPackageThumbnail>   PackageThumbnail;

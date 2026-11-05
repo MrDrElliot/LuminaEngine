@@ -14,6 +14,7 @@
 #include "Core/Templates/IntegerCompare.h"
 #include "HashPrimitives.h"
 #include "Pair.h"
+#include "Vector.h"
 
 #if defined(_M_X64) || defined(__x86_64__) || defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
     #define LUMINA_HASHTABLE_SSE2 1
@@ -71,7 +72,7 @@ namespace HashTableInternal
     NODISCARD FORCEINLINE constexpr bool IsEmptyOrDeleted(FCtrl Value) noexcept { return Value < CtrlSentinel; }
 
     /** H1 picks the group, H2 is the 7 bits stored in the control byte and matched a group at a time. */
-    NODISCARD FORCEINLINE constexpr size_t H1(uint64 Hash) noexcept { return static_cast<size_t>(Hash >> 7); }
+    NODISCARD FORCEINLINE constexpr size_t H1(uint64 Hash) noexcept { return Hash >> 7; }
     NODISCARD FORCEINLINE constexpr FCtrl H2(uint64 Hash) noexcept { return static_cast<FCtrl>(Hash & 0x7F); }
 
     template <typename TWord, uint32 SignificantBits, uint32 Shift = 0>
@@ -225,9 +226,9 @@ namespace HashTableInternal
 
     inline constexpr size_t kGroupWidth = FGroup::kWidth;
 
-    NODISCARD FORCEINLINE constexpr bool IsValidCapacity(size_t Capacity) noexcept
+    NODISCARD FORCEINLINE constexpr bool IsValidCapacity(size_t Cap) noexcept
     {
-        return Capacity > 0 && ((Capacity + 1) & Capacity) == 0;
+        return Cap > 0 && ((Cap + 1) & Cap) == 0;
     }
 
     NODISCARD FORCEINLINE constexpr size_t NormalizeCapacity(size_t Count) noexcept
@@ -236,9 +237,9 @@ namespace HashTableInternal
     }
 
     /** The table grows at 7/8, which is the load the group probe absorbs without long chains. */
-    NODISCARD FORCEINLINE constexpr size_t CapacityToGrowth(size_t Capacity) noexcept
+    NODISCARD FORCEINLINE constexpr size_t CapacityToGrowth(size_t Cap) noexcept
     {
-        return Capacity - Capacity / 8;
+        return Cap - Cap / 8;
     }
 
     NODISCARD FORCEINLINE constexpr size_t GrowthToLowerBoundCapacity(size_t Growth) noexcept
@@ -246,53 +247,55 @@ namespace HashTableInternal
         return Growth + static_cast<size_t>((static_cast<int64>(Growth) - 1) / 7);
     }
 
-    NODISCARD FORCEINLINE constexpr size_t NumCtrlBytes(size_t Capacity) noexcept
+    NODISCARD FORCEINLINE constexpr size_t NumCtrlBytes(size_t Cap) noexcept
     {
-        return Capacity + 1 + kGroupWidth;
+        return Cap + 1 + kGroupWidth;
     }
 
-    NODISCARD FORCEINLINE constexpr size_t SlotOffset(size_t Capacity, size_t SlotAlign) noexcept
+    NODISCARD FORCEINLINE constexpr size_t SlotOffset(size_t Cap, size_t SlotAlign) noexcept
     {
-        return (NumCtrlBytes(Capacity) + SlotAlign - 1) & ~(SlotAlign - 1);
+        return (NumCtrlBytes(Cap) + SlotAlign - 1) & ~(SlotAlign - 1);
     }
 
-    NODISCARD FORCEINLINE constexpr size_t AllocSize(size_t Capacity, size_t SlotSize, size_t SlotAlign) noexcept
+    NODISCARD FORCEINLINE constexpr size_t AllocSize(size_t Cap, size_t SlotSize, size_t SlotAlign) noexcept
     {
-        return SlotOffset(Capacity, SlotAlign) + Capacity * SlotSize;
+        return SlotOffset(Cap, SlotAlign) + Cap * SlotSize;
     }
 
     /** A capacity-0 table probes this instead of branching on null; the leading sentinel stops every search. */
-    NODISCARD inline FCtrl* EmptyGroup() noexcept
+    alignas(16) inline constexpr FCtrl kEmptyGroup[] =
     {
-        alignas(16) static constexpr FCtrl Group[] =
-        {
-            CtrlSentinel, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty,
-            CtrlEmpty,    CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty,
-        };
-        return const_cast<FCtrl*>(Group);
+        CtrlSentinel, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty,
+        CtrlEmpty,    CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty,
+    };
+
+    // Not a static local, which a constexpr function only allows on compilers with P2647.
+    NODISCARD FORCEINLINE constexpr FCtrl* EmptyGroup() noexcept
+    {
+        return const_cast<FCtrl*>(kEmptyGroup);
     }
 
-    inline void ResetCtrl(FCtrl* Ctrl, size_t Capacity) noexcept
+    inline void ResetCtrl(FCtrl* Ctrl, size_t Cap) noexcept
     {
-        std::memset(Ctrl, CtrlEmpty, NumCtrlBytes(Capacity));
-        Ctrl[Capacity] = CtrlSentinel;
+        std::memset(Ctrl, CtrlEmpty, NumCtrlBytes(Cap));
+        Ctrl[Cap] = CtrlSentinel;
     }
 
     /** The mirrored write keeps the cloned tail bytes in step, so a group load near the end stays valid. */
-    FORCEINLINE void SetCtrl(FCtrl* Ctrl, size_t Capacity, size_t Index, FCtrl Value) noexcept
+    FORCEINLINE void SetCtrl(FCtrl* Ctrl, size_t Cap, size_t Index, FCtrl Value) noexcept
     {
         Ctrl[Index] = Value;
-        Ctrl[((Index - kGroupWidth) & Capacity) + 1 + ((kGroupWidth - 1) & Capacity)] = Value;
+        Ctrl[((Index - kGroupWidth) & Cap) + 1 + ((kGroupWidth - 1) & Cap)] = Value;
     }
 
-    inline void ConvertDeletedToEmptyAndFullToDeleted(FCtrl* Ctrl, size_t Capacity) noexcept
+    inline void ConvertDeletedToEmptyAndFullToDeleted(FCtrl* Ctrl, size_t Cap) noexcept
     {
-        for (FCtrl* Position = Ctrl; Position != Ctrl + Capacity + 1; Position += kGroupWidth)
+        for (FCtrl* Position = Ctrl; Position < Ctrl + Cap; Position += kGroupWidth)
         {
             FGroup(Position).ConvertSpecialToEmptyAndFullToDeleted(Position);
         }
-        std::memcpy(Ctrl + Capacity + 1, Ctrl, kGroupWidth);
-        Ctrl[Capacity] = CtrlSentinel;
+        std::memcpy(Ctrl + Cap + 1, Ctrl, kGroupWidth);
+        Ctrl[Cap] = CtrlSentinel;
     }
 
     class FProbeSeq
@@ -329,9 +332,9 @@ namespace HashTableInternal
         size_t ProbeLength;
     };
 
-    inline FFindInfo FindFirstNonFull(const FCtrl* Ctrl, uint64 Hash, size_t Capacity) noexcept
+    inline FFindInfo FindFirstNonFull(const FCtrl* Ctrl, uint64 Hash, size_t Cap) noexcept
     {
-        FProbeSeq Seq(H1(Hash), Capacity);
+        FProbeSeq Seq(H1(Hash), Cap);
         while (true)
         {
             const FGroup Group(Ctrl + Seq.GetOffset());
@@ -340,7 +343,7 @@ namespace HashTableInternal
                 return { Seq.GetOffset(*Mask), Seq.GetIndex() };
             }
             Seq.Next();
-            LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Cap);
         }
     }
 
@@ -398,6 +401,7 @@ namespace Private
         using mapped_type = void;
 
         static constexpr bool bTrivialDestroy = std::is_trivially_destructible_v<T>;
+        static constexpr bool bBitwiseCopy    = std::is_trivially_copyable_v<T>;
 
         NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return Slot; }
         NODISCARD FORCEINLINE static value_type& Element(slot_type& Slot) noexcept { return Slot; }
@@ -443,11 +447,12 @@ namespace Private
         using mapped_type = V;
 
         static constexpr bool bTrivialDestroy = std::is_trivially_destructible_v<FMutablePair>;
+        static constexpr bool bBitwiseCopy    = std::is_trivially_copyable_v<FMutablePair>;
 
-        NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return Slot.Value.first; }
+        NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return Slot.Value.Key; }
         NODISCARD FORCEINLINE static value_type& Element(slot_type& Slot) noexcept { return Slot.Value; }
         NODISCARD FORCEINLINE static const value_type& Element(const slot_type& Slot) noexcept { return Slot.Value; }
-        NODISCARD FORCEINLINE static V& Value(slot_type& Slot) noexcept { return Slot.Mutable.second; }
+        NODISCARD FORCEINLINE static V& Value(slot_type& Slot) noexcept { return Slot.Mutable.Value; }
 
         template <typename... TArgs>
         FORCEINLINE static void Construct(slot_type* Slot, TArgs&&... Args)
@@ -474,6 +479,7 @@ namespace Private
         using mapped_type = void;
 
         static constexpr bool bTrivialDestroy = false;
+        static constexpr bool bBitwiseCopy    = false;
 
         NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return *Slot; }
         NODISCARD FORCEINLINE static value_type& Element(slot_type& Slot) noexcept { return *Slot; }
@@ -513,11 +519,12 @@ namespace Private
         using mapped_type = V;
 
         static constexpr bool bTrivialDestroy = false;
+        static constexpr bool bBitwiseCopy    = false;
 
-        NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return Slot->first; }
+        NODISCARD FORCEINLINE static const key_type& Key(const slot_type& Slot) noexcept { return Slot->Key; }
         NODISCARD FORCEINLINE static value_type& Element(slot_type& Slot) noexcept { return *Slot; }
         NODISCARD FORCEINLINE static const value_type& Element(const slot_type& Slot) noexcept { return *Slot; }
-        NODISCARD FORCEINLINE static V& Value(slot_type& Slot) noexcept { return Slot->second; }
+        NODISCARD FORCEINLINE static V& Value(slot_type& Slot) noexcept { return Slot->Value; }
 
         // The node never moves, so the key can stay const here and no mutable twin is needed.
         template <typename... TArgs>
@@ -557,6 +564,9 @@ namespace Private
         static constexpr size_t kBlockAlign = kSlotAlign > 16 ? kSlotAlign : 16;
         static constexpr size_t kInlineCapacity = InlineCapacity == 0 ? 0 : HashTableInternal::NormalizeCapacity(InlineCapacity);
 
+        // Below 2^32 - 1, so doubling the last capacity or adding one to it never wraps the uint32 it is stored in.
+        static constexpr size_t kMaxCapacity = 0x7FFFFFFFu;
+
     public:
 
         using policy_type     = TPolicy;
@@ -564,7 +574,7 @@ namespace Private
         using key_type        = typename TPolicy::key_type;
         using value_type      = typename TPolicy::value_type;
         using init_type       = typename TPolicy::init_type;
-        using size_type       = size_t;
+        using size_type       = int32;
         using difference_type = ptrdiff_t;
         using hasher          = THasher;
         using key_equal       = TEqual;
@@ -575,7 +585,7 @@ namespace Private
         using const_pointer   = const value_type*;
         using mapped_type     = typename TPolicy::mapped_type;
 
-        static constexpr size_t InlineCapacityV = kInlineCapacity;
+        static constexpr size_type InlineCapacityV = static_cast<size_type>(kInlineCapacity);
 
         template <bool bConst>
         class TIterator
@@ -666,22 +676,21 @@ namespace Private
         using iterator       = TIterator<false>;
         using const_iterator = TIterator<true>;
 
-        TRawHashTable() noexcept { ResetToInline(); }
+        // Constant-initializable, so a global table can be constinit and no static initializer can run before it.
+        constexpr TRawHashTable() noexcept { ResetToInline(); }
 
-        explicit TRawHashTable(size_t InitialCapacity)
+        explicit TRawHashTable(size_type InitialCapacity)
         {
             ResetToInline();
-            reserve(InitialCapacity);
+            Reserve(InitialCapacity);
         }
 
         TRawHashTable(const TRawHashTable& Other)
+            : Hasher(Other.Hasher)
+            , Equal(Other.Equal)
         {
             ResetToInline();
-            reserve(Other.Size);
-            for (const auto& Element : Other)
-            {
-                InsertValue(Element);
-            }
+            CopyElementsFrom(Other);
         }
 
         TRawHashTable(TRawHashTable&& Other) noexcept
@@ -695,7 +704,7 @@ namespace Private
         TRawHashTable(std::initializer_list<init_type> Values)
         {
             ResetToInline();
-            reserve(Values.size());
+            Reserve(static_cast<int32>(Values.size()));
             for (const init_type& Value : Values)
             {
                 InsertValue(Value);
@@ -706,14 +715,17 @@ namespace Private
 
         TRawHashTable& operator=(const TRawHashTable& Other)
         {
-            if (this != &Other)
+            if (this != &Other && OwnsRegion(&Other))
             {
-                clear();
-                reserve(Other.Size);
-                for (const auto& Element : Other)
-                {
-                    InsertValue(Element);
-                }
+                TRawHashTable Copy(Other);
+                *this = std::move(Copy);
+            }
+            else if (this != &Other)
+            {
+                Reset();
+                Hasher = Other.Hasher;
+                Equal  = Other.Equal;
+                CopyElementsFrom(Other);
             }
             return *this;
         }
@@ -722,161 +734,230 @@ namespace Private
         {
             if (this != &Other)
             {
+                // Other is emptied before our values go, since it may live inside one of them.
+                TRawHashTable Taken(std::move(Other));
                 ReleaseBlock();
-                Hasher = std::move(Other.Hasher);
-                Equal  = std::move(Other.Equal);
-                AdoptFrom(Other);
+                Hasher = std::move(Taken.Hasher);
+                Equal  = std::move(Taken.Equal);
+                AdoptFrom(Taken);
             }
             return *this;
         }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Size; }
-        NODISCARD FORCEINLINE size_t capacity() const noexcept { return Capacity; }
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return static_cast<int32>(ElementCount); }
+        NODISCARD FORCEINLINE int32 Max() const noexcept { return static_cast<int32>(Cap); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return ElementCount == 0; }
 
         // The first element at or after slot Cursor, leaving Cursor past it, so a walk resumes across calls and survives a rehash.
-        NODISCARD value_type* FindNextOccupied(size_t& Cursor) noexcept
+        NODISCARD value_type* FindNextOccupied(int32& Cursor) noexcept
         {
-            for (; Cursor < Capacity; ++Cursor)
+            for (size_t Slot = static_cast<uint32>(Cursor); Slot < Cap; ++Slot)
             {
-                if (HashTableInternal::IsFull(Ctrl[Cursor]))
+                if (HashTableInternal::IsFull(Ctrl[Slot]))
                 {
-                    return &TPolicy::Element(Slots[Cursor++]);
+                    Cursor = static_cast<int32>(Slot + 1);
+                    return &TPolicy::Element(Slots[Slot]);
                 }
             }
+            Cursor = static_cast<int32>(Cap);
             return nullptr;
         }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Size == 0; }
-        NODISCARD static constexpr size_t max_size() noexcept { return ~static_cast<size_t>(0) / 2; }
 
-        NODISCARD FORCEINLINE float load_factor() const noexcept
+        NODISCARD FORCEINLINE float LoadFactor() const noexcept
         {
-            return Capacity == 0 ? 0.0f : static_cast<float>(Size) / static_cast<float>(Capacity);
+            return Cap == 0 ? 0.0f : static_cast<float>(ElementCount) / static_cast<float>(Cap);
         }
 
-        NODISCARD iterator begin() noexcept
+        template <typename TSelf>
+        NODISCARD auto begin(this TSelf&& Self) noexcept
         {
-            iterator It(Ctrl, Slots);
+            TIterator<std::is_const_v<std::remove_reference_t<TSelf>>> It(Self.Ctrl, Self.Slots);
             It.SkipEmptyOrDeleted();
             return It;
         }
 
-        NODISCARD const_iterator begin() const noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto end(this TSelf&&) noexcept { return TIterator<std::is_const_v<std::remove_reference_t<TSelf>>>(); }
+
+        /** Walks the table with the option to remove the element it stands on, as Unreal's CreateIterator does. */
+        template <bool bConst>
+        class TCursor
         {
-            const_iterator It(Ctrl, Slots);
-            It.SkipEmptyOrDeleted();
-            return It;
-        }
+            using FTable = std::conditional_t<bConst, const TRawHashTable, TRawHashTable>;
+            using FIterator = std::conditional_t<bConst, const_iterator, iterator>;
 
-        NODISCARD FORCEINLINE iterator end() noexcept { return iterator(); }
-        NODISCARD FORCEINLINE const_iterator end() const noexcept { return const_iterator(); }
-        NODISCARD FORCEINLINE const_iterator cbegin() const noexcept { return begin(); }
-        NODISCARD FORCEINLINE const_iterator cend() const noexcept { return const_iterator(); }
+        public:
 
-        void clear() noexcept
+            explicit TCursor(FTable& InTable) noexcept : Table(&InTable), It(InTable.begin()) {}
+
+            NODISCARD explicit operator bool() const noexcept { return It != Table->end(); }
+
+            TCursor& operator++() noexcept
+            {
+                if (bRemoved)
+                {
+                    bRemoved = false;
+                }
+                else
+                {
+                    ++It;
+                }
+                return *this;
+            }
+
+            NODISCARD decltype(auto) operator*() const noexcept { return *It; }
+            NODISCARD auto operator->() const noexcept { return It.operator->(); }
+
+            void RemoveCurrent() noexcept requires (!bConst)
+            {
+                It = Table->EraseIterator(It);
+                bRemoved = true;
+            }
+
+        private:
+
+            FTable*   Table;
+            FIterator It;
+            bool      bRemoved = false;
+        };
+
+        NODISCARD TCursor<false> CreateIterator() noexcept { return TCursor<false>(*this); }
+        NODISCARD TCursor<true> CreateConstIterator() const noexcept { return TCursor<true>(*this); }
+
+        /** Drops every element but keeps the block, so refilling it does not rehash. */
+        void Reset() noexcept
         {
             DestroyAllSlots();
-            Size = 0;
-            if (Capacity != 0)
+            ElementCount = 0;
+            if (Cap != 0)
             {
-                HashTableInternal::ResetCtrl(Ctrl, Capacity);
-                GrowthLeft = HashTableInternal::CapacityToGrowth(Capacity);
+                HashTableInternal::ResetCtrl(Ctrl, Cap);
+                GrowthLeft = HashTableInternal::CapacityToGrowth(Cap);
             }
         }
 
-        void reserve(size_t Count)
+        /** Drops every element and the block, keeping room for Slack entries. */
+        void Empty(int32 Slack = 0)
         {
-            if (Count > Size + GrowthLeft)
+            if (Slack > 0 && !IsInline() && Cap == CapacityFor(static_cast<uint32>(Slack)))
             {
-                Resize(HashTableInternal::NormalizeCapacity(HashTableInternal::GrowthToLowerBoundCapacity(Count)));
-            }
-        }
-
-        void rehash(size_t Count)
-        {
-            if (Count == 0 && Size == 0)
-            {
-                ReleaseBlock();
+                Reset();
                 return;
             }
-
-            const size_t LowerBound = HashTableInternal::GrowthToLowerBoundCapacity(Size);
-            const size_t NewCapacity = HashTableInternal::NormalizeCapacity(Count < LowerBound ? LowerBound : Count);
-            if (NewCapacity != Capacity)
+            ReleaseBlock();
+            if (Slack > 0)
             {
-                Resize(NewCapacity);
+                Reserve(Slack);
             }
         }
 
-        void shrink_to_fit() { rehash(0); }
+        void Reserve(int32 InCount)
+        {
+            const uint32 Count = static_cast<uint32>(Private::CheckCapacity(static_cast<uint32>(InCount), HashTableInternal::CapacityToGrowth(kMaxCapacity)));
+            if (Count > static_cast<uint64>(ElementCount) + GrowthLeft)
+            {
+                Resize(CapacityFor(Count));
+            }
+        }
+
+        void Shrink() { Rehash(0); }
 
         template <typename TKeyArg>
-        NODISCARD iterator find(const TKeyArg& Key) noexcept
-        {
-            const size_t Index = FindIndex(Key, Hasher(Key));
-            return Index == kNoIndex ? end() : iterator(Ctrl + Index, Slots + Index);
-        }
-
-        template <typename TKeyArg>
-        NODISCARD const_iterator find(const TKeyArg& Key) const noexcept
-        {
-            const size_t Index = FindIndex(Key, Hasher(Key));
-            return Index == kNoIndex ? end() : const_iterator(Ctrl + Index, Slots + Index);
-        }
-
-        /** Looks up with a caller-supplied hash and equality, for a key type the table is not built on. */
-        template <typename TKeyArg, typename THashFn, typename TEqualFn>
-        NODISCARD iterator find_as(const TKeyArg& Key, THashFn&& HashFn, TEqualFn&& EqualFn) noexcept
-        {
-            const size_t Index = FindIndexWith(Key, static_cast<uint64>(HashFn(Key)), EqualFn);
-            return Index == kNoIndex ? end() : IteratorAt(Index);
-        }
-
-        template <typename TKeyArg, typename THashFn, typename TEqualFn>
-        NODISCARD const_iterator find_as(const TKeyArg& Key, THashFn&& HashFn, TEqualFn&& EqualFn) const noexcept
-        {
-            const size_t Index = FindIndexWith(Key, static_cast<uint64>(HashFn(Key)), EqualFn);
-            return Index == kNoIndex ? end() : const_iterator(Ctrl + Index, Slots + Index);
-        }
-
-        template <typename TKeyArg>
-        NODISCARD FORCEINLINE bool contains(const TKeyArg& Key) const noexcept
+        NODISCARD FORCEINLINE bool Contains(const TKeyArg& Key) const noexcept
         {
             return FindIndex(Key, Hasher(Key)) != kNoIndex;
         }
 
         template <typename TKeyArg>
-        NODISCARD FORCEINLINE size_t count(const TKeyArg& Key) const noexcept
+        requires (!std::is_convertible_v<const TKeyArg&, const_iterator>)
+        int32 Remove(const TKeyArg& Key) noexcept
         {
-            return contains(Key) ? 1 : 0;
+            const size_t Index = FindIndex(Key, Hasher(Key));
+            if (Index == kNoIndex)
+            {
+                return 0;
+            }
+            EraseAt(Index);
+            return 1;
         }
 
-        TPair<iterator, bool> insert(const init_type& Value) { return InsertValue(Value); }
-        TPair<iterator, bool> insert(init_type&& Value) { return InsertValue(std::move(Value)); }
+        /** Removes the element Position stands on and hands back the iterator to the one after it. */
+        iterator Remove(const_iterator Position) noexcept { return EraseIterator(Position); }
 
-        iterator insert(const_iterator, const init_type& Value) { return InsertValue(Value).first; }
-        iterator insert(const_iterator, init_type&& Value) { return InsertValue(std::move(Value)).first; }
-
-        template <typename TIter>
-        void insert(TIter First, TIter Last)
+        template <typename TPredicate>
+        int32 RemoveAll(TPredicate&& Predicate)
         {
-            for (; First != Last; ++First)
+            int32 Removed = 0;
+            for (auto It = begin(); It != end();)
             {
-                InsertValue(*First);
+                if (Predicate(*It))
+                {
+                    It = EraseIterator(It);
+                    ++Removed;
+                }
+                else
+                {
+                    ++It;
+                }
+            }
+            return Removed;
+        }
+
+        /** Looks up with a caller-supplied hash and equality, for a key type the table is not built on. */
+        template <typename TKeyArg, typename THashFn, typename TEqualFn, typename TSelf>
+        NODISCARD auto FindAs(this TSelf&& Self, const TKeyArg& Key, THashFn&& HashFn, TEqualFn&& EqualFn) noexcept -> TLikeSelf<TSelf, value_type>*
+        {
+            const size_t Index = Self.FindIndexWith(Key, static_cast<uint64>(HashFn(Key)), EqualFn);
+            return Index == kNoIndex ? nullptr : &TPolicy::Element(Self.Slots[Index]);
+        }
+
+        friend void swap(TRawHashTable& Left, TRawHashTable& Right) noexcept
+        {
+            Left.SwapWith(Right);
+        }
+
+        /** True while the table still lives in its inline block rather than a heap allocation. */
+        NODISCARD FORCEINLINE bool IsInline() const noexcept
+        {
+            if constexpr (kInlineCapacity == 0)
+            {
+                return false;
+            }
+            else
+            {
+                return static_cast<const void*>(Ctrl) == FStorage::GetInlineBlock();
             }
         }
 
-        void insert(std::initializer_list<init_type> Values)
+        NODISCARD hasher GetHasher() const { return Hasher; }
+        NODISCARD key_equal GetKeyEqual() const { return Equal; }
+
+        /** Bytes held by the table, so a memory report can attribute them without guessing. */
+        NODISCARD size_t GetAllocatedSize() const noexcept
         {
-            reserve(Size + Values.size());
-            for (const init_type& Value : Values)
-            {
-                InsertValue(Value);
-            }
+            return (Cap == 0 || IsInline()) ? 0 : HashTableInternal::AllocSize(Cap, sizeof(slot_type), kSlotAlign);
+        }
+
+    protected:
+
+        template <typename TKeyArg, typename TSelf>
+        NODISCARD FORCEINLINE auto FindElement(this TSelf&& Self, const TKeyArg& Key) noexcept -> TLikeSelf<TSelf, value_type>*
+        {
+            const size_t Index = Self.FindIndex(Key, Self.Hasher(Key));
+            return Index == kNoIndex ? nullptr : &TPolicy::Element(Self.Slots[Index]);
+        }
+
+        template <typename TKeyArg, typename TSelf>
+        NODISCARD auto FindIt(this TSelf&& Self, const TKeyArg& Key) noexcept
+        {
+            using FIterator = TIterator<std::is_const_v<std::remove_reference_t<TSelf>>>;
+            const size_t Index = Self.FindIndex(Key, Self.Hasher(Key));
+            return Index == kNoIndex ? FIterator() : FIterator(Self.Ctrl + Index, Self.Slots + Index);
         }
 
         /** Staging the element first is what lets an arbitrary argument pack find its own key. */
         template <typename... TArgs>
-        TPair<iterator, bool> emplace(TArgs&&... Args)
+        TPair<iterator, bool> EmplaceElement(TArgs&&... Args)
         {
             alignas(slot_type) unsigned char Raw[sizeof(slot_type)];
             slot_type* Staged = reinterpret_cast<slot_type*>(Raw);
@@ -895,27 +976,7 @@ namespace Private
             return { IteratorAt(Index), true };
         }
 
-        template <typename... TArgs>
-        iterator emplace_hint(const_iterator, TArgs&&... Args)
-        {
-            return emplace(std::forward<TArgs>(Args)...).first;
-        }
-
-        // Constrained so an iterator argument cannot bind here instead of the iterator overload below.
-        template <typename TKeyArg>
-        requires (!std::is_convertible_v<const TKeyArg&, const_iterator>)
-        size_t erase(const TKeyArg& Key) noexcept
-        {
-            const size_t Index = FindIndex(Key, Hasher(Key));
-            if (Index == kNoIndex)
-            {
-                return 0;
-            }
-            EraseAt(Index);
-            return 1;
-        }
-
-        iterator erase(const_iterator Position) noexcept
+        iterator EraseIterator(const_iterator Position) noexcept
         {
             LUMINA_CONTAINER_CHECK(Position.Ctrl != nullptr);
             const size_t Index = static_cast<size_t>(Position.Ctrl - Ctrl);
@@ -926,16 +987,24 @@ namespace Private
             return Next;
         }
 
-        iterator erase(const_iterator First, const_iterator Last) noexcept
+        void Rehash(int32 InCount)
         {
-            while (First != Last)
+            const uint32 Count = static_cast<uint32>(Private::CheckCapacity(static_cast<uint32>(InCount), kMaxCapacity));
+            if (Count == 0 && ElementCount == 0)
             {
-                First = const_iterator(erase(First));
+                ReleaseBlock();
+                return;
             }
-            return iterator(First.Ctrl, const_cast<slot_type*>(First.Slot));
+
+            const size_t LowerBound = HashTableInternal::GrowthToLowerBoundCapacity(ElementCount);
+            const size_t NewCapacity = HashTableInternal::NormalizeCapacity(Count < LowerBound ? LowerBound : static_cast<size_t>(Count));
+            if (NewCapacity != Cap)
+            {
+                Resize(NewCapacity);
+            }
         }
 
-        void swap(TRawHashTable& Other) noexcept
+        void SwapWith(TRawHashTable& Other) noexcept
         {
             if (this == &Other)
             {
@@ -946,8 +1015,8 @@ namespace Private
             {
                 std::swap(Ctrl, Other.Ctrl);
                 std::swap(Slots, Other.Slots);
-                std::swap(Size, Other.Size);
-                std::swap(Capacity, Other.Capacity);
+                std::swap(ElementCount, Other.ElementCount);
+                std::swap(Cap, Other.Cap);
                 std::swap(GrowthLeft, Other.GrowthLeft);
                 std::swap(Hasher, Other.Hasher);
                 std::swap(Equal, Other.Equal);
@@ -960,34 +1029,12 @@ namespace Private
             }
         }
 
-        /** True while the table still lives in its inline block rather than a heap allocation. */
-        NODISCARD FORCEINLINE bool IsInline() const noexcept
-        {
-            if constexpr (kInlineCapacity == 0)
-            {
-                return false;
-            }
-            else
-            {
-                return static_cast<const void*>(Ctrl) == FStorage::GetInlineBlock();
-            }
-        }
-
-        NODISCARD hasher hash_function() const { return Hasher; }
-        NODISCARD key_equal key_eq() const { return Equal; }
-
-        /** Bytes held by the table, so a memory report can attribute them without guessing. */
-        NODISCARD size_t GetAllocatedBytes() const noexcept
-        {
-            return (Capacity == 0 || IsInline()) ? 0 : HashTableInternal::AllocSize(Capacity, sizeof(slot_type), kSlotAlign);
-        }
-
     protected:
 
         template <typename TKeyArg>
         NODISCARD size_t FindIndex(const TKeyArg& Key, uint64 Hash) const noexcept
         {
-            HashTableInternal::FProbeSeq Seq(HashTableInternal::H1(Hash), Capacity);
+            HashTableInternal::FProbeSeq Seq(HashTableInternal::H1(Hash), Cap);
             const FCtrl Wanted = HashTableInternal::H2(Hash);
 
             while (true)
@@ -1006,14 +1053,14 @@ namespace Private
                     return kNoIndex;
                 }
                 Seq.Next();
-                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
+                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Cap);
             }
         }
 
         template <typename TKeyArg, typename TEqualFn>
         NODISCARD size_t FindIndexWith(const TKeyArg& Key, uint64 Hash, TEqualFn& EqualFn) const noexcept
         {
-            HashTableInternal::FProbeSeq Seq(HashTableInternal::H1(Hash), Capacity);
+            HashTableInternal::FProbeSeq Seq(HashTableInternal::H1(Hash), Cap);
             const FCtrl Wanted = HashTableInternal::H2(Hash);
 
             while (true)
@@ -1032,22 +1079,31 @@ namespace Private
                     return kNoIndex;
                 }
                 Seq.Next();
-                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
+                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Cap);
             }
+        }
+
+        // An insert now may rehash, which moves every element, so a caller's reference into the table goes stale.
+        NODISCARD FORCEINLINE bool MayRehashOnInsert() const noexcept { return GrowthLeft == 0; }
+
+        NODISCARD FORCEINLINE bool OwnsRegion(const void* Address) const noexcept
+        {
+            const uint8* Byte = static_cast<const uint8*>(Address);
+            return Slots != nullptr && Byte >= reinterpret_cast<const uint8*>(Slots) && Byte < reinterpret_cast<const uint8*>(Slots + Cap);
         }
 
         size_t PrepareInsert(uint64 Hash)
         {
-            HashTableInternal::FFindInfo Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Capacity);
+            HashTableInternal::FFindInfo Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Cap);
             if (GrowthLeft == 0 && !HashTableInternal::IsDeleted(Ctrl[Target.Offset]))
             {
                 RehashAndGrowIfNecessary();
-                Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Capacity);
+                Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Cap);
             }
 
-            ++Size;
+            ++ElementCount;
             GrowthLeft -= HashTableInternal::IsEmpty(Ctrl[Target.Offset]) ? 1 : 0;
-            HashTableInternal::SetCtrl(Ctrl, Capacity, Target.Offset, HashTableInternal::H2(Hash));
+            HashTableInternal::SetCtrl(Ctrl, Cap, Target.Offset, HashTableInternal::H2(Hash));
             return Target.Offset;
         }
 
@@ -1099,20 +1155,84 @@ namespace Private
             }
             else
             {
-                return (Value.first);
+                return (Value.Key);
             }
         }
 
-        void AdoptEmpty() noexcept
+        NODISCARD static size_t CapacityFor(uint32 Count) noexcept
         {
-            Ctrl       = HashTableInternal::EmptyGroup();
-            Slots      = nullptr;
-            Size       = 0;
-            Capacity   = 0;
-            GrowthLeft = 0;
+            return HashTableInternal::NormalizeCapacity(HashTableInternal::GrowthToLowerBoundCapacity(Count));
         }
 
-        void ResetToInline() noexcept
+        // At the source's capacity every element keeps its slot, so nothing hashes; a source over twice too big is compacted instead.
+        void CopyElementsFrom(const TRawHashTable& Other)
+        {
+            LUMINA_CONTAINER_CHECK(ElementCount == 0);
+            if (Other.ElementCount == 0)
+            {
+                return;
+            }
+
+            const size_t Fit = CapacityFor(Other.ElementCount);
+            if (Other.Cap > Fit * 2 + 1)
+            {
+                if (Cap < Fit)
+                {
+                    Resize(Fit);
+                }
+                for (size_t Index = 0, Remaining = Other.ElementCount; Remaining != 0; ++Index)
+                {
+                    if (HashTableInternal::IsFull(Other.Ctrl[Index]))
+                    {
+                        --Remaining;
+                        const size_t Target = PrepareInsert(Hasher(TPolicy::Key(Other.Slots[Index])));
+                        TPolicy::Construct(Slots + Target, TPolicy::Element(Other.Slots[Index]));
+                    }
+                }
+                return;
+            }
+
+            if (Cap != Other.Cap)
+            {
+                ReleaseBlock();
+                if (Cap != Other.Cap)
+                {
+                    AllocateBlock(Other.Cap, false);
+                }
+            }
+
+            if constexpr (TPolicy::bBitwiseCopy)
+            {
+                std::memcpy(static_cast<void*>(Slots), static_cast<const void*>(Other.Slots), static_cast<size_t>(Cap) * sizeof(slot_type));
+            }
+            else
+            {
+                for (size_t Index = 0, Remaining = Other.ElementCount; Remaining != 0; ++Index)
+                {
+                    if (HashTableInternal::IsFull(Other.Ctrl[Index]))
+                    {
+                        --Remaining;
+                        TPolicy::Construct(Slots + Index, TPolicy::Element(Other.Slots[Index]));
+                    }
+                }
+            }
+
+            // Control bytes last, so a copy that throws leaves a table that owns nothing it did not build.
+            std::memcpy(Ctrl, Other.Ctrl, HashTableInternal::NumCtrlBytes(Cap));
+            ElementCount   = Other.ElementCount;
+            GrowthLeft     = Other.GrowthLeft;
+        }
+
+        constexpr void AdoptEmpty() noexcept
+        {
+            Ctrl           = HashTableInternal::EmptyGroup();
+            Slots          = nullptr;
+            ElementCount   = 0;
+            Cap            = 0;
+            GrowthLeft     = 0;
+        }
+
+        constexpr void ResetToInline() noexcept
         {
             if constexpr (kInlineCapacity == 0)
             {
@@ -1121,7 +1241,7 @@ namespace Private
             else
             {
                 PointAtBlock(FStorage::GetInlineBlock(), kInlineCapacity);
-                Size = 0;
+                ElementCount = 0;
                 GrowthLeft = HashTableInternal::CapacityToGrowth(kInlineCapacity);
             }
         }
@@ -1130,8 +1250,8 @@ namespace Private
         {
             Ctrl = static_cast<FCtrl*>(Block);
             Slots = reinterpret_cast<slot_type*>(static_cast<uint8*>(Block) + HashTableInternal::SlotOffset(NewCapacity, kSlotAlign));
-            Capacity = NewCapacity;
-            HashTableInternal::ResetCtrl(Ctrl, Capacity);
+            Cap = static_cast<uint32>(NewCapacity);
+            HashTableInternal::ResetCtrl(Ctrl, Cap);
         }
 
         /** A heap table hands over its pointers; an inline one has to move its elements slot for slot. */
@@ -1140,11 +1260,11 @@ namespace Private
             if (!Other.IsInline())
             {
                 ReleaseBlock();
-                Ctrl       = Other.Ctrl;
-                Slots      = Other.Slots;
-                Size       = Other.Size;
-                Capacity   = Other.Capacity;
-                GrowthLeft = Other.GrowthLeft;
+                Ctrl           = Other.Ctrl;
+                Slots          = Other.Slots;
+                ElementCount   = Other.ElementCount;
+                Cap            = Other.Cap;
+                GrowthLeft     = Other.GrowthLeft;
                 Other.ResetToInline();
                 return;
             }
@@ -1154,36 +1274,37 @@ namespace Private
                 ResetToInline();
 
                 // Both blocks have the same capacity, so every element keeps its slot and no rehash is needed.
-                std::memcpy(Ctrl, Other.Ctrl, HashTableInternal::NumCtrlBytes(Capacity));
-                for (size_t Index = 0; Index != Capacity; ++Index)
+                std::memcpy(Ctrl, Other.Ctrl, HashTableInternal::NumCtrlBytes(Cap));
+                for (size_t Index = 0; Index != Cap; ++Index)
                 {
                     if (HashTableInternal::IsFull(Ctrl[Index]))
                     {
                         TPolicy::Transfer(Slots + Index, Other.Slots + Index);
                     }
                 }
-                Size = Other.Size;
+                ElementCount = Other.ElementCount;
                 GrowthLeft = Other.GrowthLeft;
 
-                Other.Size = 0;
-                HashTableInternal::ResetCtrl(Other.Ctrl, Other.Capacity);
-                Other.GrowthLeft = HashTableInternal::CapacityToGrowth(Other.Capacity);
+                Other.ElementCount = 0;
+                HashTableInternal::ResetCtrl(Other.Ctrl, Other.Cap);
+                Other.GrowthLeft = HashTableInternal::CapacityToGrowth(Other.Cap);
             }
         }
 
         void DestroyAllSlots() noexcept
         {
-            if (Capacity == 0 || Size == 0)
+            if (Cap == 0 || ElementCount == 0)
             {
                 return;
             }
             if constexpr (!TPolicy::bTrivialDestroy)
             {
-                for (size_t Index = 0; Index != Capacity; ++Index)
+                for (size_t Index = 0, Remaining = ElementCount; Remaining != 0; ++Index)
                 {
                     if (HashTableInternal::IsFull(Ctrl[Index]))
                     {
                         TPolicy::Destroy(Slots + Index);
+                        --Remaining;
                     }
                 }
             }
@@ -1191,14 +1312,14 @@ namespace Private
 
         void ReleaseBlock() noexcept
         {
-            if (Capacity == 0)
+            if (Cap == 0)
             {
                 return;
             }
             DestroyAllSlots();
             if (!IsInline())
             {
-                TAllocator::Deallocate(Ctrl, HashTableInternal::AllocSize(Capacity, sizeof(slot_type), kSlotAlign), kBlockAlign);
+                TAllocator::Deallocate(Ctrl, HashTableInternal::AllocSize(Cap, sizeof(slot_type), kSlotAlign), kBlockAlign);
             }
             ResetToInline();
         }
@@ -1206,15 +1327,15 @@ namespace Private
         /** An erase whose group still holds an empty byte can clear the slot outright: no probe ran past it. */
         void EraseMetaOnly(size_t Index) noexcept
         {
-            --Size;
-            const size_t IndexBefore = (Index - HashTableInternal::kGroupWidth) & Capacity;
+            --ElementCount;
+            const size_t IndexBefore = (Index - HashTableInternal::kGroupWidth) & Cap;
             const auto EmptyAfter = FGroup(Ctrl + Index).MatchEmpty();
             const auto EmptyBefore = FGroup(Ctrl + IndexBefore).MatchEmpty();
 
             const bool bWasNeverFull = EmptyBefore && EmptyAfter
                 && static_cast<size_t>(EmptyAfter.TrailingZeros() + EmptyBefore.LeadingZeros()) < HashTableInternal::kGroupWidth;
 
-            HashTableInternal::SetCtrl(Ctrl, Capacity, Index,
+            HashTableInternal::SetCtrl(Ctrl, Cap, Index,
                 bWasNeverFull ? HashTableInternal::CtrlEmpty : HashTableInternal::CtrlDeleted);
             GrowthLeft += bWasNeverFull ? 1 : 0;
         }
@@ -1222,23 +1343,25 @@ namespace Private
         void Resize(size_t NewCapacity)
         {
             LUMINA_CONTAINER_CHECK(HashTableInternal::IsValidCapacity(NewCapacity));
+            (void)Private::CheckCapacity(NewCapacity, kMaxCapacity);
 
             FCtrl* OldCtrl = Ctrl;
             slot_type* OldSlots = Slots;
-            const size_t OldCapacity = Capacity;
+            const size_t OldCapacity = Cap;
             const bool bOldWasHeap = OldCapacity != 0 && !IsInline();
 
             AllocateBlock(NewCapacity, bOldWasHeap);
 
-            for (size_t Index = 0; Index != OldCapacity; ++Index)
+            for (size_t Index = 0, Remaining = static_cast<size_t>(ElementCount); Remaining != 0; ++Index)
             {
                 if (!HashTableInternal::IsFull(OldCtrl[Index]))
                 {
                     continue;
                 }
+                --Remaining;
                 const uint64 Hash = Hasher(TPolicy::Key(OldSlots[Index]));
-                const size_t Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Capacity).Offset;
-                HashTableInternal::SetCtrl(Ctrl, Capacity, Target, HashTableInternal::H2(Hash));
+                const size_t Target = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Cap).Offset;
+                HashTableInternal::SetCtrl(Ctrl, Cap, Target, HashTableInternal::H2(Hash));
                 TPolicy::Transfer(Slots + Target, OldSlots + Index);
             }
 
@@ -1256,44 +1379,44 @@ namespace Private
                 if (bCanReuseInline && NewCapacity <= kInlineCapacity)
                 {
                     PointAtBlock(FStorage::GetInlineBlock(), kInlineCapacity);
-                    GrowthLeft = HashTableInternal::CapacityToGrowth(Capacity) - Size;
+                    GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
                     return;
                 }
             }
 
             const size_t Bytes = HashTableInternal::AllocSize(NewCapacity, sizeof(slot_type), kSlotAlign);
             PointAtBlock(TAllocator::Allocate(Bytes, kBlockAlign), NewCapacity);
-            GrowthLeft = HashTableInternal::CapacityToGrowth(Capacity) - Size;
+            GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
         }
 
-        /** A table out of growth but only half occupied is full of tombstones, not elements. */
+        // Under half full it clears tombstones in place, else it doubles: twice as fast under churn as abseil's 25/32, as measured.
         void RehashAndGrowIfNecessary()
         {
-            if (Capacity == 0)
+            if (Cap == 0)
             {
                 Resize(1);
                 return;
             }
 
-            if (Size <= HashTableInternal::CapacityToGrowth(Capacity) / 2)
+            if (ElementCount <= HashTableInternal::CapacityToGrowth(Cap) / 2)
             {
                 DropDeletesWithoutResize();
                 return;
             }
 
-            Resize(Capacity * 2 + 1);
+            Resize(static_cast<size_t>(Cap) * 2 + 1);
         }
 
         void DropDeletesWithoutResize()
         {
-            LUMINA_CONTAINER_CHECK(HashTableInternal::IsValidCapacity(Capacity));
+            LUMINA_CONTAINER_CHECK(HashTableInternal::IsValidCapacity(Cap));
 
             alignas(slot_type) unsigned char Raw[sizeof(slot_type)];
             slot_type* Staged = reinterpret_cast<slot_type*>(Raw);
 
-            HashTableInternal::ConvertDeletedToEmptyAndFullToDeleted(Ctrl, Capacity);
+            HashTableInternal::ConvertDeletedToEmptyAndFullToDeleted(Ctrl, Cap);
 
-            for (size_t Index = 0; Index != Capacity; ++Index)
+            for (size_t Index = 0; Index != Cap; ++Index)
             {
                 if (!HashTableInternal::IsDeleted(Ctrl[Index]))
                 {
@@ -1301,30 +1424,30 @@ namespace Private
                 }
 
                 const uint64 Hash = Hasher(TPolicy::Key(Slots[Index]));
-                const size_t NewIndex = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Capacity).Offset;
-                const size_t ProbeOffset = HashTableInternal::FProbeSeq(HashTableInternal::H1(Hash), Capacity).GetOffset();
+                const size_t NewIndex = HashTableInternal::FindFirstNonFull(Ctrl, Hash, Cap).Offset;
+                const size_t ProbeOffset = HashTableInternal::FProbeSeq(HashTableInternal::H1(Hash), Cap).GetOffset();
 
                 const auto ProbeGroupOf = [this, ProbeOffset](size_t Position)
                 {
-                    return ((Position - ProbeOffset) & Capacity) / HashTableInternal::kGroupWidth;
+                    return ((Position - ProbeOffset) & Cap) / HashTableInternal::kGroupWidth;
                 };
 
                 if (ProbeGroupOf(NewIndex) == ProbeGroupOf(Index)) [[likely]]
                 {
-                    HashTableInternal::SetCtrl(Ctrl, Capacity, Index, HashTableInternal::H2(Hash));
+                    HashTableInternal::SetCtrl(Ctrl, Cap, Index, HashTableInternal::H2(Hash));
                     continue;
                 }
 
                 if (HashTableInternal::IsEmpty(Ctrl[NewIndex]))
                 {
-                    HashTableInternal::SetCtrl(Ctrl, Capacity, NewIndex, HashTableInternal::H2(Hash));
+                    HashTableInternal::SetCtrl(Ctrl, Cap, NewIndex, HashTableInternal::H2(Hash));
                     TPolicy::Transfer(Slots + NewIndex, Slots + Index);
-                    HashTableInternal::SetCtrl(Ctrl, Capacity, Index, HashTableInternal::CtrlEmpty);
+                    HashTableInternal::SetCtrl(Ctrl, Cap, Index, HashTableInternal::CtrlEmpty);
                     continue;
                 }
 
                 LUMINA_CONTAINER_CHECK(HashTableInternal::IsDeleted(Ctrl[NewIndex]));
-                HashTableInternal::SetCtrl(Ctrl, Capacity, NewIndex, HashTableInternal::H2(Hash));
+                HashTableInternal::SetCtrl(Ctrl, Cap, NewIndex, HashTableInternal::H2(Hash));
 
                 TPolicy::Transfer(Staged, Slots + Index);
                 TPolicy::Transfer(Slots + Index, Slots + NewIndex);
@@ -1332,14 +1455,14 @@ namespace Private
                 --Index;
             }
 
-            GrowthLeft = HashTableInternal::CapacityToGrowth(Capacity) - Size;
+            GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
         }
 
-        FCtrl*     Ctrl  = HashTableInternal::EmptyGroup();
-        slot_type* Slots = nullptr;
-        size_t     Size = 0;
-        size_t     Capacity = 0;
-        size_t     GrowthLeft = 0;
+        FCtrl*     Ctrl           = HashTableInternal::EmptyGroup();
+        slot_type* Slots          = nullptr;
+        uint32     ElementCount   = 0;
+        uint32     Cap            = 0;
+        uint32     GrowthLeft     = 0;
 
         LUMINA_NO_UNIQUE_ADDRESS THasher Hasher;
         LUMINA_NO_UNIQUE_ADDRESS TEqual  Equal;
@@ -1358,18 +1481,68 @@ namespace Private
 
         using Super::Super;
 
-        using key_type   = typename TPolicy::key_type;
-        using value_type = typename TPolicy::value_type;
+        using key_type    = typename TPolicy::key_type;
+        using value_type  = typename TPolicy::value_type;
+        using ElementType = value_type;
+
+        const value_type& Add(const value_type& Value) { return *this->InsertValue(Value).Key; }
+        const value_type& Add(value_type&& Value) { return *this->InsertValue(std::move(Value)).Key; }
+
+        /** Adds the element unless an equal one is present, and says which happened. */
+        bool TryAdd(const value_type& Value) { return this->InsertValue(Value).Value; }
+        bool TryAdd(value_type&& Value) { return this->InsertValue(std::move(Value)).Value; }
+
+        template <typename TArg>
+        requires (!std::is_same_v<std::remove_cvref_t<TArg>, value_type> && std::is_constructible_v<value_type, TArg&&>)
+        bool TryAdd(TArg&& Arg) { return this->EmplaceElement(std::forward<TArg>(Arg)).Value; }
+
+        template <typename... TArgs>
+        const value_type& Emplace(TArgs&&... Args) { return *this->EmplaceElement(std::forward<TArgs>(Args)...).Key; }
+
+        template <typename TKeyArg>
+        NODISCARD FORCEINLINE const value_type* Find(const TKeyArg& Key) const noexcept
+        {
+            return this->FindElement(Key);
+        }
+
+        template <typename TRange>
+        void Append(const TRange& Range)
+        {
+            for (const auto& Value : Range)
+            {
+                Add(Value);
+            }
+        }
+
+        void Append(std::initializer_list<value_type> Values)
+        {
+            this->Reserve(this->Num() + static_cast<int32>(Values.size()));
+            for (const value_type& Value : Values)
+            {
+                Add(Value);
+            }
+        }
+
+        NODISCARD TVector<value_type> Array() const
+        {
+            TVector<value_type> Out;
+            Out.Reserve(this->Num());
+            for (const value_type& Value : *this)
+            {
+                Out.Add(Value);
+            }
+            return Out;
+        }
 
         NODISCARD friend bool operator==(const TBasicHashSet& Left, const TBasicHashSet& Right) noexcept
         {
-            if (Left.size() != Right.size())
+            if (Left.Num() != Right.Num())
             {
                 return false;
             }
             for (const value_type& Element : Left)
             {
-                if (!Right.contains(Element))
+                if (!Right.Contains(Element))
                 {
                     return false;
                 }
@@ -1395,71 +1568,210 @@ namespace Private
         using mapped_type = typename TPolicy::mapped_type;
         using value_type  = typename TPolicy::value_type;
         using iterator    = typename Super::iterator;
+        using KeyType     = key_type;
+        using ValueType   = mapped_type;
+        using ElementType = value_type;
+
+        /** Sets Key to Value, replacing what it held, as Unreal's TMap::Add does. */
+        template <typename TKeyArg, typename TValueArg>
+        mapped_type& Add(TKeyArg&& Key, TValueArg&& Value)
+        {
+            return InsertOrAssign(std::forward<TKeyArg>(Key), std::forward<TValueArg>(Value)).Key->Value;
+        }
+
+        template <typename TKeyArg>
+        mapped_type& Add(TKeyArg&& Key)
+        {
+            return InsertOrAssign(std::forward<TKeyArg>(Key), mapped_type()).Key->Value;
+        }
 
         template <typename TKeyArg, typename... TArgs>
-        TPair<iterator, bool> try_emplace(TKeyArg&& Key, TArgs&&... Args)
+        mapped_type& Emplace(TKeyArg&& Key, TArgs&&... Args)
         {
-            const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(Key);
-            if (Placed.second)
+            const TPair<iterator, bool> Placed = TryEmplace(std::forward<TKeyArg>(Key), std::forward<TArgs>(Args)...);
+            if (!Placed.Value)
             {
-                TPolicy::Construct(this->SlotAt(Placed.first),
+                Placed.Key->Value = mapped_type(std::forward<TArgs>(Args)...);
+            }
+            return Placed.Key->Value;
+        }
+
+        /** The value under Key, default-constructed and added first when there is none. */
+        template <typename TKeyArg>
+        mapped_type& FindOrAdd(TKeyArg&& Key)
+        {
+            return TryEmplace(std::forward<TKeyArg>(Key)).Key->Value;
+        }
+
+        template <typename TKeyArg, typename TArg, typename... TArgs>
+        mapped_type& FindOrAdd(TKeyArg&& Key, TArg&& Arg, TArgs&&... Args)
+        {
+            return TryEmplace(std::forward<TKeyArg>(Key), std::forward<TArg>(Arg), std::forward<TArgs>(Args)...).Key->Value;
+        }
+
+        /** Adds Key unless it is present, leaving an existing value alone, and says which happened. */
+        template <typename TKeyArg, typename... TArgs>
+        bool TryAdd(TKeyArg&& Key, TArgs&&... Args)
+        {
+            return TryEmplace(std::forward<TKeyArg>(Key), std::forward<TArgs>(Args)...).Value;
+        }
+
+        template <typename TKeyArg, typename TSelf>
+        NODISCARD FORCEINLINE auto Find(this TSelf&& Self, const TKeyArg& Key) noexcept -> TLikeSelf<TSelf, mapped_type>*
+        {
+            auto* Pair = Self.FindElement(Key);
+            return Pair != nullptr ? &Pair->Value : nullptr;
+        }
+
+        /** A copy of the value under Key, or a default one when there is none. */
+        template <typename TKeyArg>
+        NODISCARD mapped_type FindRef(const TKeyArg& Key) const
+        {
+            const mapped_type* Found = Find(Key);
+            return Found != nullptr ? *Found : mapped_type();
+        }
+
+        template <typename TKeyArg, typename TSelf>
+        NODISCARD auto FindChecked(this TSelf&& Self, const TKeyArg& Key) -> TLikeSelf<TSelf, mapped_type>&
+        {
+            auto* Found = Self.Find(Key);
+            LUMINA_CONTAINER_CHECK(Found != nullptr);
+            return *Found;
+        }
+
+        template <typename TKeyArg>
+        bool RemoveAndCopyValue(const TKeyArg& Key, mapped_type& OutValue)
+        {
+            const iterator It = this->FindIt(Key);
+            if (It == this->end())
+            {
+                return false;
+            }
+            OutValue = std::move(It->Value);
+            this->EraseIterator(It);
+            return true;
+        }
+
+        void GenerateKeyArray(TVector<key_type>& OutKeys) const
+        {
+            OutKeys.Reset(this->Num());
+            for (const value_type& Pair : *this)
+            {
+                OutKeys.Add(Pair.Key);
+            }
+        }
+
+        void GenerateValueArray(TVector<mapped_type>& OutValues) const
+        {
+            OutValues.Reset(this->Num());
+            for (const value_type& Pair : *this)
+            {
+                OutValues.Add(Pair.Value);
+            }
+        }
+
+        void Append(const TBasicHashMap& Other)
+        {
+            this->Reserve(this->Num() + Other.Num());
+            for (const value_type& Pair : Other)
+            {
+                Add(Pair.Key, Pair.Value);
+            }
+        }
+
+        // Find-or-add, as the standard map has it; Unreal's asserts, which would turn every insert written this way into a crash.
+        NODISCARD mapped_type& operator[](const key_type& Key) { return FindOrAdd(Key); }
+        NODISCARD mapped_type& operator[](key_type&& Key) { return FindOrAdd(std::move(Key)); }
+
+        NODISCARD friend bool operator==(const TBasicHashMap& Left, const TBasicHashMap& Right) noexcept
+        {
+            if (Left.Num() != Right.Num())
+            {
+                return false;
+            }
+            for (const auto& Pair : Left)
+            {
+                const mapped_type* Found = Right.Find(Pair.Key);
+                if (Found == nullptr || !(*Found == Pair.Value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+    private:
+
+        template <typename TKeyArg, typename... TArgs>
+        TPair<iterator, bool> TryEmplace(TKeyArg&& Key, TArgs&&... Args)
+        {
+            if (this->MayRehashOnInsert())
+            {
+                return TryEmplaceStaged(std::forward<TKeyArg>(Key), std::forward<TArgs>(Args)...);
+            }
+            const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(Key);
+            if (Placed.Value)
+            {
+                TPolicy::Construct(this->SlotAt(Placed.Key),
                     std::piecewise_construct,
                     ForwardAsTuple(std::forward<TKeyArg>(Key)),
                     ForwardAsTuple(std::forward<TArgs>(Args)...));
             }
-            return { this->IteratorAt(Placed.first), Placed.second };
+            return { this->IteratorAt(Placed.Key), Placed.Value };
         }
 
         template <typename TKeyArg, typename TValueArg>
-        TPair<iterator, bool> insert_or_assign(TKeyArg&& Key, TValueArg&& Value)
+        TPair<iterator, bool> InsertOrAssign(TKeyArg&& Key, TValueArg&& Value)
         {
-            const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(Key);
-            if (Placed.second)
+            if (this->MayRehashOnInsert())
             {
-                TPolicy::Construct(this->SlotAt(Placed.first),
+                if (const iterator Existing = this->FindIt(Key); Existing != this->end())
+                {
+                    Existing->Value = std::forward<TValueArg>(Value);
+                    return { Existing, false };
+                }
+                return TryEmplaceStaged(std::forward<TKeyArg>(Key), std::forward<TValueArg>(Value));
+            }
+            const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(Key);
+            if (Placed.Value)
+            {
+                TPolicy::Construct(this->SlotAt(Placed.Key),
                     std::piecewise_construct,
                     ForwardAsTuple(std::forward<TKeyArg>(Key)),
                     ForwardAsTuple(std::forward<TValueArg>(Value)));
             }
             else
             {
-                TPolicy::Value(*this->SlotAt(Placed.first)) = std::forward<TValueArg>(Value);
+                TPolicy::Value(*this->SlotAt(Placed.Key)) = std::forward<TValueArg>(Value);
             }
-            return { this->IteratorAt(Placed.first), Placed.second };
+            return { this->IteratorAt(Placed.Key), Placed.Value };
         }
 
-        NODISCARD mapped_type& operator[](const key_type& Key) { return try_emplace(Key).first->second; }
-        NODISCARD mapped_type& operator[](key_type&& Key) { return try_emplace(std::move(Key)).first->second; }
-
-        NODISCARD mapped_type& at(const key_type& Key)
+        // The key and value are built before the table grows, so neither can be read from a slot the rehash moved.
+        template <typename TKeyArg, typename... TArgs>
+        TPair<iterator, bool> TryEmplaceStaged(TKeyArg&& Key, TArgs&&... Args)
         {
-            const iterator It = this->find(Key);
-            LUMINA_CONTAINER_CHECK(It != this->end());
-            return It->second;
-        }
-
-        NODISCARD const mapped_type& at(const key_type& Key) const
-        {
-            const typename Super::const_iterator It = this->find(Key);
-            LUMINA_CONTAINER_CHECK(It != this->end());
-            return It->second;
-        }
-
-        NODISCARD friend bool operator==(const TBasicHashMap& Left, const TBasicHashMap& Right) noexcept
-        {
-            if (Left.size() != Right.size())
+            if (const iterator Existing = this->FindIt(Key); Existing != this->end())
             {
-                return false;
+                return { Existing, false };
             }
-            for (const auto& Pair : Left)
+
+            key_type StagedKey(std::forward<TKeyArg>(Key));
+            if constexpr (std::is_move_constructible_v<mapped_type>)
             {
-                const auto It = Right.find(Pair.first);
-                if (It == Right.end() || !(It->second == Pair.second))
-                {
-                    return false;
-                }
+                mapped_type StagedValue(std::forward<TArgs>(Args)...);
+                const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(StagedKey);
+                TPolicy::Construct(this->SlotAt(Placed.Key), std::piecewise_construct,
+                    ForwardAsTuple(std::move(StagedKey)), ForwardAsTuple(std::move(StagedValue)));
+                return { this->IteratorAt(Placed.Key), true };
             }
-            return true;
+            else
+            {
+                const TPair<size_t, bool> Placed = this->FindOrPrepareInsert(StagedKey);
+                TPolicy::Construct(this->SlotAt(Placed.Key), std::piecewise_construct,
+                    ForwardAsTuple(std::move(StagedKey)), ForwardAsTuple(std::forward<TArgs>(Args)...));
+                return { this->IteratorAt(Placed.Key), true };
+            }
         }
     };
 
@@ -1507,41 +1819,28 @@ namespace Private
               ContainerAllocatorType TAllocator = FHeapAllocator>
     using TInlineHashMap = TBasicHashMap<TMapPolicy<K, V>, THasher, TEqual, TAllocator, N>;
 
-    template <typename TPolicy, typename THasher, typename TEqual, ContainerAllocatorType TAllocator, size_t N, typename TPredicate>
-    size_t erase_if(TRawHashTable<TPolicy, THasher, TEqual, TAllocator, N>& Table, TPredicate Predicate)
-    {
-        size_t Removed = 0;
-        for (auto It = Table.begin(); It != Table.end();)
-        {
-            if (Predicate(*It))
-            {
-                It = Table.erase(It);
-                ++Removed;
-            }
-            else
-            {
-                ++It;
-            }
-        }
-        return Removed;
-    }
-
     template <typename K, typename V>
     using TScratchHashMap = TBasicHashMap<TMapPolicy<K, V>, FDefaultHash, FDefaultEqual, FScratchAllocator, 0>;
 
     template <typename T>
     using TScratchHashSet = TBasicHashSet<TSetPolicy<T>, FDefaultHash, FDefaultEqual, FScratchAllocator, 0>;
-
-    template <typename TPolicy, typename THasher, typename TEqual, ContainerAllocatorType TAllocator, size_t InlineCapacity>
-    FORCEINLINE void swap(TRawHashTable<TPolicy, THasher, TEqual, TAllocator, InlineCapacity>& Left,
-                          TRawHashTable<TPolicy, THasher, TEqual, TAllocator, InlineCapacity>& Right) noexcept
-    {
-        Left.swap(Right);
-    }
 }
 
 namespace Lumina
 {
+    // A heap-only table points only at its own heap block or the shared empty group, never into itself.
+    template <typename TPolicy, typename THasher, typename TEqual, typename TAllocator>
+    struct TIsTriviallyRelocatable<Containers::TBasicHashMap<TPolicy, THasher, TEqual, TAllocator, 0>>
+    {
+        static constexpr bool Value = TIsTriviallyRelocatable_V<THasher> && TIsTriviallyRelocatable_V<TEqual>;
+    };
+
+    template <typename TPolicy, typename THasher, typename TEqual, typename TAllocator>
+    struct TIsTriviallyRelocatable<Containers::TBasicHashSet<TPolicy, THasher, TEqual, TAllocator, 0>>
+    {
+        static constexpr bool Value = TIsTriviallyRelocatable_V<THasher> && TIsTriviallyRelocatable_V<TEqual>;
+    };
+
     template <typename K, typename V,
               typename H = Containers::FDefaultHash,
               typename E = Containers::FDefaultEqual>
@@ -1552,17 +1851,9 @@ namespace Lumina
               typename E = Containers::FDefaultEqual>
     using THashSet = Containers::THashSet<T, H, E>;
 
-    template <typename K, typename V, size_t NodeCount,
-              size_t BucketCount = NodeCount + 1,
-              bool bEnableOverflow = true,
-              typename H = Containers::FDefaultHash,
-              typename E = Containers::FDefaultEqual>
-    using TFixedHashMap = Containers::TInlineHashMap<K, V, NodeCount, H, E>;
+    template <typename K, typename V, size_t N, typename H = Containers::FDefaultHash, typename E = Containers::FDefaultEqual>
+    using TInlineHashMap = Containers::TInlineHashMap<K, V, N, H, E>;
 
-    template <typename T, size_t NodeCount,
-              size_t BucketCount = NodeCount + 1,
-              bool bEnableOverflow = true,
-              typename H = Containers::FDefaultHash,
-              typename E = Containers::FDefaultEqual>
-    using TFixedHashSet = Containers::TInlineHashSet<T, NodeCount, H, E>;
+    template <typename T, size_t N, typename H = Containers::FDefaultHash, typename E = Containers::FDefaultEqual>
+    using TInlineHashSet = Containers::TInlineHashSet<T, N, H, E>;
 }

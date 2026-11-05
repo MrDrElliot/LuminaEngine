@@ -47,7 +47,7 @@ namespace Lumina
          *  language wants reset to their new default rather than migrated. */
         void SetPostReplaceHook(FPostReplaceFunc Func) { PostReplace = Func; }
 
-        NODISCARD bool IsEmpty() const { return ClassMap.empty(); }
+        NODISCARD bool IsEmpty() const { return ClassMap.IsEmpty(); }
 
         /** Builds the replacements, repoints the graph, and retires the originals. */
         FReinstanceResult Commit();

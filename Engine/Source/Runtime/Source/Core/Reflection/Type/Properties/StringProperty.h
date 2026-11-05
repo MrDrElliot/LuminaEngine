@@ -8,8 +8,8 @@ namespace Lumina
     {
     public:
 
-        explicit FStringProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FStringProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
             SetElementSize(sizeof(FString));
         }
@@ -32,8 +32,8 @@ namespace Lumina
     {
     public:
         
-        explicit FNameProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FNameProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
             SetElementSize(sizeof(FName));
         }

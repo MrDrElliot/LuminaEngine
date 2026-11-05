@@ -23,13 +23,13 @@ namespace Lumina
 
     const THashSet<CClass*>& FGraphNodeRegistry::GetNodesForGraphClass(CClass* GraphClass)
     {
-        auto Existing = Cache.find(GraphClass);
-        if (Existing != Cache.end())
+        auto Existing = Cache.Find(GraphClass);
+        if (Existing != nullptr)
         {
-            return Existing->second;
+            return (*Existing);
         }
 
-        return Cache.emplace(GraphClass, BuildForGraphClass(GraphClass)).first->second;
+        return Cache.FindOrAdd(GraphClass, BuildForGraphClass(GraphClass));
     }
 
     THashSet<CClass*> FGraphNodeRegistry::BuildForGraphClass(CClass* GraphClass) const
@@ -59,7 +59,7 @@ namespace Lumina
                 return;
             }
 
-            Candidates.push_back(Class);
+            Candidates.Add(Class);
         });
 
         THashSet<CClass*> Supported;
@@ -68,7 +68,7 @@ namespace Lumina
             CEdGraphNode* CDO = Class->GetDefaultObject<CEdGraphNode>();
             if (CDO != nullptr && CDO->IsSupportedInGraph(GraphClass))
             {
-                Supported.emplace(Class);
+                Supported.TryAdd(Class);
             }
         }
 

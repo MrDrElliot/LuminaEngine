@@ -109,9 +109,9 @@ namespace Lumina::RHI
         // Caller holds BatchMutex. Batches execute in order per queue, so the first one still running blocks the rest.
         void PopCompletedBatchesLocked()
         {
-            while (!GUpload.InFlightBatches.empty())
+            while (!GUpload.InFlightBatches.IsEmpty())
             {
-                const FBatchGate& Gate = GUpload.InFlightBatches.front();
+                const FBatchGate& Gate = GUpload.InFlightBatches[0];
 
                 bool bSubmitted = false;
                 bool bExecuted  = true;
@@ -138,7 +138,7 @@ namespace Lumina::RHI
 
                 GUpload.CompletedBatch   = Gate.Batch;
                 GUpload.CompletedRingEnd = Math::Max(GUpload.CompletedRingEnd, Gate.RingEnd);
-                GUpload.InFlightBatches.erase(GUpload.InFlightBatches.begin());
+                GUpload.InFlightBatches.RemoveAt(0);
             }
         }
 
@@ -174,7 +174,7 @@ namespace Lumina::RHI
             Ring.Tail = Math::Max(Ring.Tail, GUpload.CompletedRingEnd);
 
             // Nothing queued, writing or in flight means no copy can read the ring, so all of it is free.
-            if (GUpload.InFlightBatches.empty() && GUpload.Queue.empty() && Ring.ActiveStarts.empty())
+            if (GUpload.InFlightBatches.IsEmpty() && GUpload.Queue.IsEmpty() && Ring.ActiveStarts.IsEmpty())
             {
                 Ring.Tail = Ring.Head;
             }
@@ -203,7 +203,7 @@ namespace Lumina::RHI
             }
 
             // The space is held by queued ops no flush has taken yet, or by writers still copying in.
-            return GUpload.Queue.empty() ? ERingStall::Yield : ERingStall::Flush;
+            return GUpload.Queue.IsEmpty() ? ERingStall::Yield : ERingStall::Flush;
         }
 
         FStaging ReserveOutsideRing(uint64 Size, uint64 Alignment)
@@ -247,7 +247,7 @@ namespace Lumina::RHI
                     if (Start + Size - Ring.Tail <= Ring.Capacity)
                     {
                         Ring.Head = Start + Size;
-                        Ring.ActiveStarts.push_back(Start);
+                        Ring.ActiveStarts.Add(Start);
                         Ring.PeakInUse = Math::Max(Ring.PeakInUse, Ring.Head - Ring.Tail);
 
                         const uint64 RingOffset = Start % Ring.Capacity;
@@ -290,18 +290,18 @@ namespace Lumina::RHI
         void QueueStagedOp(const FUploadOp& Op, const FStaging& Staging)
         {
             FScopeLock Lock(GUpload.Mutex);
-            GUpload.Queue.push_back(Op);
-            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
+            GUpload.Queue.Add(Op);
+            GUpload.QueuedOps.store((uint32)GUpload.Queue.Num(), std::memory_order_relaxed);
 
             if (Staging.RingStart != kNotInRing)
             {
                 TVector<uint64>& Active = GUpload.Ring.ActiveStarts;
-                for (SIZE_T i = 0; i < Active.size(); ++i)
+                for (int32 i = 0; i < Active.Num(); ++i)
                 {
                     if (Active[i] == Staging.RingStart)
                     {
-                        Active[i] = Active.back();
-                        Active.pop_back();
+                        Active[i] = Active.Last();
+                        Active.Pop();
                         break;
                     }
                 }
@@ -366,7 +366,7 @@ namespace Lumina::RHI
         }
 
         LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
-        LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
+        LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", Size / 1024);
 
         // Split from the copy, since this arm is a cursor bump or a wait on a full ring.
         FStaging S;
@@ -426,8 +426,8 @@ namespace Lumina::RHI
         Op.Height        = Height;
 
         FScopeLock Lock(GUpload.Mutex);
-        GUpload.Queue.push_back(Op);
-        GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
+        GUpload.Queue.Add(Op);
+        GUpload.QueuedOps.store((uint32)GUpload.Queue.Num(), std::memory_order_relaxed);
     }
 
     void UploadClearTexture(FTextureH Dest, const float Value[4])
@@ -446,8 +446,8 @@ namespace Lumina::RHI
         Op.ClearValue[3] = Value[3];
 
         FScopeLock Lock(GUpload.Mutex);
-        GUpload.Queue.push_back(Op);
-        GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
+        GUpload.Queue.Add(Op);
+        GUpload.QueuedOps.store((uint32)GUpload.Queue.Num(), std::memory_order_relaxed);
     }
 
     void FlushUploadsAndWait()
@@ -516,7 +516,7 @@ namespace Lumina::RHI
             SetDebugName(Ring.Memory.Gpu, "Upload.StagingRing");
             Ring.Head = 0;
             Ring.Tail = 0;
-            Ring.ActiveStarts.clear();
+            Ring.ActiveStarts.Reset();
             GUpload.bInitialized = true;
         }
 
@@ -537,10 +537,10 @@ namespace Lumina::RHI
                 {
                     if (Op.OwnedStaging.Gpu != 0)
                     {
-                        Orphaned.push_back(Op.OwnedStaging);
+                        Orphaned.Add(Op.OwnedStaging);
                     }
                 }
-                GUpload.Queue.clear();
+                GUpload.Queue.Reset();
             }
 
             // Outside the lock, since Retire re-enters CancelBuffer, which takes the upload mutex.
@@ -557,7 +557,7 @@ namespace Lumina::RHI
                 FScopeLock Lock(GUpload.BatchMutex);
                 GUpload.CompletedBatch   = GUpload.BatchCounter;
                 GUpload.CompletedRingEnd = 0;
-                GUpload.InFlightBatches.clear();
+                GUpload.InFlightBatches.Reset();
             }
 
             GUpload.bInitialized = false;
@@ -574,8 +574,8 @@ namespace Lumina::RHI
             bool      bAny = false;
 
             // Inline, since the window above bounds both lists and a flush runs every frame.
-            TFixedVector<FTextureH, kMaxWrittenTracked>    WrittenTextures;
-            TFixedVector<FWrittenRange, kMaxWrittenTracked> WrittenBuffers;
+            TInlineVector<FTextureH, kMaxWrittenTracked>   WrittenTextures;
+            TInlineVector<FWrittenRange, kMaxWrittenTracked> WrittenBuffers;
 
             bool AlreadyWritten(FTextureH Tex) const
             {
@@ -610,20 +610,20 @@ namespace Lumina::RHI
             uint64 Batch = 0;
             {
                 FScopeLock Lock(GUpload.Mutex);
-                if (GUpload.Queue.empty())
+                if (GUpload.Queue.IsEmpty())
                 {
                     return 0u;
                 }
-                Ops.swap(GUpload.Queue);
+                swap(Ops, GUpload.Queue);
 
                 // Without this the queue restarts from zero capacity and regrows through every flush.
-                GUpload.Queue.swap(GUpload.QueueSpare);
+                swap(GUpload.Queue, GUpload.QueueSpare);
                 GUpload.QueuedOps.store(0u, std::memory_order_relaxed);
 
                 // Under the queue lock, so BatchForQueuedOps cannot hand out a batch whose ops already went out.
                 FScopeLock BatchLock(GUpload.BatchMutex);
                 Batch = GUpload.BatchCounter++;
-                GUpload.InFlightBatches.push_back(FBatchGate{ .Batch = Batch, .RingEnd = SubmittableRingEndLocked() });
+                GUpload.InFlightBatches.Add(FBatchGate{ .Batch = Batch, .RingEnd = SubmittableRingEndLocked() });
             }
 
             if (OutBatch != nullptr)
@@ -659,8 +659,8 @@ namespace Lumina::RHI
                 // A copy reads as well as writes, so an earlier write to its source has to be ordered against.
                 const bool bReadsWritten = Op.Type == EUploadOp::TextureCopy && T.AlreadyWritten(Op.TextureSource);
 
-                const bool bWindowFull = T.WrittenTextures.size() >= kMaxWrittenTracked
-                                      || T.WrittenBuffers.size() >= kMaxWrittenTracked;
+                const bool bWindowFull = static_cast<size_t>(T.WrittenTextures.Num()) >= kMaxWrittenTracked
+                                      || static_cast<size_t>(T.WrittenBuffers.Num()) >= kMaxWrittenTracked;
 
                 if (bWindowFull
                  || bReadsWritten
@@ -668,8 +668,8 @@ namespace Lumina::RHI
                  || (bWritesBuffer && T.OverlapsWritten(Op.BufferDest, Op.Size)))
                 {
                     Barriers::TransferToTransfer(T.CL);
-                    T.WrittenTextures.clear();
-                    T.WrittenBuffers.clear();
+                    T.WrittenTextures.Reset();
+                    T.WrittenBuffers.Reset();
                 }
 
                 switch (Op.Type)
@@ -713,11 +713,11 @@ namespace Lumina::RHI
 
                 if (bWritesTexture)
                 {
-                    T.WrittenTextures.push_back(Op.TextureDest);
+                    T.WrittenTextures.Add(Op.TextureDest);
                 }
                 if (bWritesBuffer)
                 {
-                    T.WrittenBuffers.push_back(FFlushTarget::FWrittenRange{ Op.BufferDest, Op.BufferDest + Op.Size });
+                    T.WrittenBuffers.Emplace(Op.BufferDest, Op.BufferDest + Op.Size);
                 }
             }
 
@@ -741,15 +741,15 @@ namespace Lumina::RHI
             {
                 if (Op.OwnedStaging.Gpu != 0)
                 {
-                    OutOwnedStaging.push_back(Op.OwnedStaging);
+                    OutOwnedStaging.Add(Op.OwnedStaging);
                 }
             }
 
             // Hands the drained buffer back so the next flush swaps it in rather than allocating.
             {
                 FScopeLock Lock(GUpload.Mutex);
-                Ops.clear();
-                GUpload.QueueSpare.swap(Ops);
+                Ops.Reset();
+                swap(GUpload.QueueSpare, Ops);
             }
 
             return Result;
@@ -767,15 +767,15 @@ namespace Lumina::RHI
             {
                 FScopeLock Lock(GUpload.Mutex);
 
-                size_t Write = 0;
-                for (size_t Read = 0; Read < GUpload.Queue.size(); ++Read)
+                int32 Write = 0;
+                for (int32 Read = 0; Read < GUpload.Queue.Num(); ++Read)
                 {
                     FUploadOp& Op = GUpload.Queue[Read];
                     if (Targets(Op))
                     {
                         if (Op.OwnedStaging.Gpu != 0)
                         {
-                            Orphaned.push_back(Op.OwnedStaging);
+                            Orphaned.Add(Op.OwnedStaging);
                         }
                         continue;
                     }
@@ -787,7 +787,7 @@ namespace Lumina::RHI
                     ++Write;
                 }
 
-                GUpload.Queue.resize(Write);
+                GUpload.Queue.SetNum(Write);
                 GUpload.QueuedOps.store((uint32)Write, std::memory_order_relaxed);
             }
             
@@ -851,7 +851,7 @@ namespace Lumina::RHI
             FScopeLock BatchLock(GUpload.BatchMutex);
 
             // Returning the open batch would wait on a flush that may never happen, since no ops means no flush.
-            if (GUpload.Queue.empty())
+            if (GUpload.Queue.IsEmpty())
             {
                 return GUpload.BatchCounter - 1;
             }
@@ -887,7 +887,7 @@ namespace Lumina::RHI
         void PublishProfileCounters()
         {
             FScopeLock Lock(GUpload.Mutex);
-            LUMINA_PROFILE_VALUE("Upload/StagingInUseKiB", (int64)((GUpload.Ring.Head - GUpload.Ring.Tail) / 1024));
+            LUMINA_PROFILE_VALUE("Upload/StagingInUseKiB", (GUpload.Ring.Head - GUpload.Ring.Tail) / 1024);
         }
     }
 }

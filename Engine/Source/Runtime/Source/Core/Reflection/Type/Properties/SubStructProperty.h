@@ -11,10 +11,10 @@ namespace Lumina
     class LUMINA_VISIBLE_TYPE FSubStructProperty : public FProperty
     {
     public:
-        explicit FSubStructProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FSubStructProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            MetaStruct = Desc.Type->GetStruct();
+            MetaStruct = InDesc.Type->GetStruct();
             SetElementSize(sizeof(void*));
         }
 

@@ -4,12 +4,17 @@
 
 #include "EntitySystem.h"
 #include "World/Entity/Components/CameraComponent.h"
+#include "World/Entity/Components/PostProcessComponent.h"
+#include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "SystemResources.h"
+#include "SystemSingletons.h"
 #include "CameraSystem.generated.h"
 
 namespace Lumina
 {
-    // Authoring parameters for a camera shake (see SCameraSystem::PlayCameraShake). The shake is additive on
-    // the rendered view, so it composes with the cinematic blend and never moves the camera entity.
+
+    // Camera shake parameters; the shake is additive on the rendered view and never moves the camera entity.
     REFLECT()
     struct RUNTIME_API SCameraShakeParams
     {
@@ -43,9 +48,10 @@ namespace Lumina
 
         void Configure() override;
 
-        void OnStartup(const SSystemContext& Context) override;
+        void OnStartup(const SExclusiveContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
-        void OnTeardown(const SSystemContext& Context) override;
+        // Clears the resolved view every frame, even with no camera to fill it.
+        bool HasWork(const SSystemContext& Context) override { return true; }
 
         /** Restamps the active camera's ViewVolume from its live transform, advancing no blend or shake clock. */
         RUNTIME_API static void ResolveActiveCameraView(ECS::FRegistry& Registry);
@@ -68,5 +74,12 @@ namespace Lumina
         static void StopCameraShake(ECS::FRegistry& Registry, uint32 Handle);
         /** Immediately clear every active shake. */
         static void StopAllCameraShakes(ECS::FRegistry& Registry);
+
+    private:
+
+        ECS::TQuery<ECS::Read<SPostProcessComponent>, ECS::Read<STransformComponent>, ECS::Without<SDisabledTag>> Volumes;
+        ECS::TQuery<ECS::Write<SCameraComponent>, ECS::Read<STransformComponent>> Cameras;
+        TResMut<FResolvedSceneView> ResolvedView;
+        TResMut<FCameraGlobalState> GlobalState;
     };
 }

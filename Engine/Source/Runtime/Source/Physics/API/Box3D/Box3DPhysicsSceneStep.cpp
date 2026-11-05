@@ -91,7 +91,7 @@ namespace Lumina::Physics
         Registry.View<SPhysicsConstraintComponent>().ForEach([&](ECS::FEntity E, SPhysicsConstraintComponent& C)
         {
             C.ConstraintID = 0;
-            PendingConstraintCreations.push_back(E);
+            PendingConstraintCreations.Add(E);
         });
     }
 
@@ -156,21 +156,21 @@ namespace Lumina::Physics
             OnCharacterComponentDestroyed(Registry, EntityID);
         });
 
-        PendingStaticGroups.clear();
-        PendingRagdolls.clear();
+        PendingStaticGroups.Reset();
+        PendingRagdolls.Reset();
         for (const FOwnedRagdoll& Ragdoll : OwnedRagdolls) { Ragdoll.Handle->bPendingDestroy = true; }
         DestroyAllConstraints();
         SynchronizeBodies();
         for (TVector<FBodyCommand>& Commands : ThreadBodyCommands)
         {
-            Commands.clear();
+            Commands.Reset();
         }
-        OverflowBodyCommands.clear();
-        WaitingBodyCommands.clear();
-        BodyCommandScratch.clear();
-        PendingRigidBodies.clear();
-        PendingCharacters.clear();
-        PendingConstraintCreations.clear();
+        OverflowBodyCommands.Reset();
+        WaitingBodyCommands.Reset();
+        BodyCommandScratch.Reset();
+        PendingRigidBodies.Reset();
+        PendingCharacters.Reset();
+        PendingConstraintCreations.Reset();
         DestroyAllStaticBodyGroups();
     }
 
@@ -189,8 +189,8 @@ namespace Lumina::Physics
         {
             BodyAuthoredKinematic[Handle] = 0;
         }
-        PreviousAuthoredKinematicHandles.swap(AuthoredKinematicHandles);
-        AuthoredKinematicHandles.clear();
+        swap(PreviousAuthoredKinematicHandles, AuthoredKinematicHandles);
+        AuthoredKinematicHandles.Reset();
         }
 
         // Spread over every step this update runs, so a second step does not carry the body past its target.
@@ -295,12 +295,12 @@ namespace Lumina::Physics
         }
 
         // Carried forward with the payload intact, since a blanket clear lost a spawn-then-SetLocation.
-        RetryBodyUpdates.clear();
+        RetryBodyUpdates.Reset();
         for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
             if (FindEntityBody(Entity) == InvalidBodyHandle)
             {
-                RetryBodyUpdates.push_back({ Entity, Update });
+                RetryBodyUpdates.Emplace(Entity, Update);
             }
         }
 
@@ -317,23 +317,23 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::MarkAuthoredKinematic(uint32 Handle)
     {
-        if (Handle >= BodyAuthoredKinematic.size())
+        if (Handle >= static_cast<uint32>(BodyAuthoredKinematic.Num()))
         {
-            BodyAuthoredKinematic.resize(Handle + 1, 0);
+            BodyAuthoredKinematic.SetNum(Handle + 1, 0);
         }
 
         if (BodyAuthoredKinematic[Handle] == 0)
         {
             BodyAuthoredKinematic[Handle] = 1;
-            AuthoredKinematicHandles.push_back(Handle);
+            AuthoredKinematicHandles.Add(Handle);
         }
     }
 
     uint32 FBox3DPhysicsScene::StageInterpSlot(uint32 BodyHandle, const FVector3& Position, const FQuat& Rotation)
     {
-        if (BodyHandle >= BodyStagingSlot.size())
+        if (BodyHandle >= static_cast<uint32>(BodyStagingSlot.Num()))
         {
-            BodyStagingSlot.resize(BodyHandle + 1, InvalidBodyHandle);
+            BodyStagingSlot.SetNum(BodyHandle + 1, InvalidBodyHandle);
         }
 
         uint32 Slot = BodyStagingSlot[BodyHandle];
@@ -342,9 +342,9 @@ namespace Lumina::Physics
             return Slot;
         }
 
-        Slot = (uint32)InterpStaging.Entities.size();
+        Slot = (uint32)InterpStaging.Entities.Num();
         BodyStagingSlot[BodyHandle] = Slot;
-        StagedBodyHandles.push_back(BodyHandle);
+        StagedBodyHandles.Add(BodyHandle);
 
         InterpStaging.PushBack();
         InterpStaging.Flags[Slot] = EInterpFlag::Interpolate;
@@ -396,22 +396,22 @@ namespace Lumina::Physics
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
 
-            if (Handle < BodyAwake.size())
+            if (Handle < static_cast<uint32>(BodyAwake.Num()))
             {
                 if (BodyAwake[Handle] == 0)
                 {
                     BodyAwake[Handle] = 1;
-                    ActivationDrainScratch.push_back({ Entity, true });
+                    ActivationDrainScratch.Emplace(Entity, true);
                 }
                 if (Event.fellAsleep)
                 {
                     BodyAwake[Handle] = 0;
-                    ActivationDrainScratch.push_back({ Entity, false });
+                    ActivationDrainScratch.Emplace(Entity, false);
                 }
             }
 
             // Gameplay already put its transform where it should draw, and the step only chased that placement.
-            if (Handle < BodyAuthoredKinematic.size() && BodyAuthoredKinematic[Handle] != 0)
+            if (Handle < static_cast<uint32>(BodyAuthoredKinematic.Num()) && BodyAuthoredKinematic[Handle] != 0)
             {
                 Record.LastBodyPosition = NewPosition;
                 Record.LastBodyRotation = NewRotation;
@@ -446,12 +446,12 @@ namespace Lumina::Physics
     {
         for (uint32 Handle : StagedBodyHandles)
         {
-            if (Handle < BodyStagingSlot.size())
+            if (Handle < static_cast<uint32>(BodyStagingSlot.Num()))
             {
                 BodyStagingSlot[Handle] = InvalidBodyHandle;
             }
         }
-        StagedBodyHandles.clear();
+        StagedBodyHandles.Reset();
         InterpStaging.Clear();
         bInterpCharacterTail = false;
     }
@@ -520,7 +520,7 @@ namespace Lumina::Physics
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
 
         DropCharacterInterpSlots();
-        InterpBodySlots = (uint32)InterpStaging.Entities.size();
+        InterpBodySlots = (uint32)InterpStaging.Entities.Num();
         bInterpCharacterTail = true;
 
         // Characters are driven by the mover rather than the solver, so they never raise move events.
@@ -588,7 +588,7 @@ namespace Lumina::Physics
         };
         if (NumCharacters > InterpParallelThreshold)
         {
-            Task::ParallelFor(NumCharacters, StageCharacter);
+            Jobs::ParallelFor(NumCharacters, StageCharacter);
         }
         else
         {
@@ -598,7 +598,7 @@ namespace Lumina::Physics
             }
         }
 
-        const uint32 Total = (uint32)InterpStaging.Entities.size();
+        const uint32 Total = (uint32)InterpStaging.Entities.Num();
         if (Total == 0)
         {
             return;
@@ -606,9 +606,9 @@ namespace Lumina::Physics
 
         InterpStaging.EnsureLerpCapacity();
 
-        SIMD::LerpArray(reinterpret_cast<float*>(InterpStaging.LerpPos.data()),
-                        reinterpret_cast<const float*>(InterpStaging.PrevPos.data()),
-                        reinterpret_cast<const float*>(InterpStaging.CurrPos.data()),
+        SIMD::LerpArray(reinterpret_cast<float*>(InterpStaging.LerpPos.GetData()),
+                        reinterpret_cast<const float*>(InterpStaging.PrevPos.GetData()),
+                        reinterpret_cast<const float*>(InterpStaging.CurrPos.GetData()),
                         int(Total) * 3, Alpha);
 
         Algo::Copy(InterpStaging.CurrQx, InterpStaging.LerpQx.begin());
@@ -616,10 +616,10 @@ namespace Lumina::Physics
         Algo::Copy(InterpStaging.CurrQz, InterpStaging.LerpQz.begin());
         Algo::Copy(InterpStaging.CurrQw, InterpStaging.LerpQw.begin());
 
-        NlerpQuatsSoA(InterpStaging.LerpQx.data(), InterpStaging.LerpQy.data(),
-                      InterpStaging.LerpQz.data(), InterpStaging.LerpQw.data(),
-                      InterpStaging.PrevQx.data(), InterpStaging.PrevQy.data(),
-                      InterpStaging.PrevQz.data(), InterpStaging.PrevQw.data(),
+        NlerpQuatsSoA(InterpStaging.LerpQx.GetData(), InterpStaging.LerpQy.GetData(),
+                      InterpStaging.LerpQz.GetData(), InterpStaging.LerpQw.GetData(),
+                      InterpStaging.PrevQx.GetData(), InterpStaging.PrevQy.GetData(),
+                      InterpStaging.PrevQz.GetData(), InterpStaging.PrevQw.GetData(),
                       Total, Alpha);
     }
 
@@ -630,7 +630,7 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        const uint32 Count = (uint32)InterpStaging.Entities.size();
+        const uint32 Count = (uint32)InterpStaging.Entities.Num();
         if (Count == 0)
         {
             return;
@@ -642,11 +642,11 @@ namespace Lumina::Physics
 
         const auto PendingTeleport = Registry.GetStorage<FNeedsPhysicsBodyUpdate>();
 
-        InterpApplied.clear();
-        InterpAppliedParented.clear();
+        InterpApplied.Reset();
+        InterpAppliedParented.Reset();
 
         enum : uint8 { kInterpSkip = 0, kInterpFlat = 1, kInterpParented = 2, kInterpKill = 3 };
-        InterpCategory.resize(Count);
+        InterpCategory.SetNum(Count);
         std::atomic<uint32> KillCount{0};
 
         // Reads only, so it fans out; a kill is structural and is handled serially below.
@@ -672,7 +672,7 @@ namespace Lumina::Physics
         };
         if (Count > InterpParallelThreshold)
         {
-            Task::ParallelFor(Count, Classify);
+            Jobs::ParallelFor(Count, Classify);
         }
         else
         {
@@ -698,7 +698,7 @@ namespace Lumina::Physics
                     Registry.Destroy(Entity);
                     continue;
                 }
-                (InterpCategory[i] == kInterpFlat ? InterpApplied : InterpAppliedParented).push_back(i);
+                (InterpCategory[i] == kInterpFlat ? InterpApplied : InterpAppliedParented).Add(i);
             }
         }
 
@@ -744,7 +744,7 @@ namespace Lumina::Physics
         }
         else if (Count > InterpParallelThreshold)
         {
-            Task::ParallelFor(Count, [&](uint32 i)
+            Jobs::ParallelFor(Count, [&](uint32 i)
             {
                 if (InterpCategory[i] == kInterpFlat)
                 {
@@ -769,11 +769,11 @@ namespace Lumina::Physics
             {
                 if (InterpCategory[i] == kInterpParented)
                 {
-                    InterpAppliedParented.push_back(i);
+                    InterpAppliedParented.Add(i);
                 }
             }
         }
-        if (InterpAppliedParented.empty())
+        if (InterpAppliedParented.IsEmpty())
         {
             return;
         }
@@ -838,8 +838,8 @@ namespace Lumina::Physics
             ApplyInterpolatedTransforms();
             ResetInterpStaging();
         }
-        ContactDrainScratch.clear();
-        ActivationDrainScratch.clear();
+        ContactDrainScratch.Reset();
+        ActivationDrainScratch.Reset();
 
         if (CollisionSteps > 0)
         {
@@ -883,8 +883,8 @@ namespace Lumina::Physics
             Accumulator -= (float)CollisionSteps * FixedTimestep;
         }
 
-        LUMINA_PROFILE_VALUE("Physics/AwakeBodies", (int64)b3World_GetAwakeBodyCount(WorldId));
-        LUMINA_PROFILE_VALUE("Physics/AwakeContacts", (int64)b3World_GetCounters(WorldId).awakeContactCount);
+        LUMINA_PROFILE_VALUE("Physics/AwakeBodies", b3World_GetAwakeBodyCount(WorldId));
+        LUMINA_PROFILE_VALUE("Physics/AwakeContacts", b3World_GetCounters(WorldId).awakeContactCount);
 
         if (IsDebugDrawEnabled() || FBox3DPhysicsContext::IsDebugDrawForced())
         {

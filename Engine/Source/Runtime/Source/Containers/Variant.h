@@ -62,10 +62,17 @@ namespace Lumina::Containers
     class TVariant
     {
         static_assert(sizeof...(Ts) > 0, "A variant needs at least one alternative.");
+        static_assert(sizeof...(Ts) < 255, "A variant indexes its alternatives in one byte.");
 
         static constexpr size_t kCount   = sizeof...(Ts);
         static constexpr size_t kStorage = Private::MaxOf<sizeof(Ts)...>();
         static constexpr size_t kAlign   = Private::MaxOf<alignof(Ts)...>();
+        static constexpr uint8  kNone    = 0xFF;
+
+        // All-trivial alternatives make the variant trivial too, so a moved-from one keeps its value; any other leaves it empty.
+        static constexpr bool bTrivialCopy    = (std::is_trivially_copyable_v<Ts> && ...);
+        static constexpr bool bTrivialDestroy = (std::is_trivially_destructible_v<Ts> && ...);
+        static constexpr bool bNothrowMove    = (std::is_nothrow_move_constructible_v<Ts> && ...);
 
         template <size_t Index>
         using TAlternative = TTupleElementT<Index, TTuple<Ts...>>;
@@ -89,62 +96,50 @@ namespace Lumina::Containers
         constexpr TVariant(T&& Value)
         {
             Memory::ConstructAt(reinterpret_cast<TDecayed*>(Buffer), std::forward<T>(Value));
-            Index = IndexOf<TDecayed>;
+            Index = static_cast<uint8>(IndexOf<TDecayed>);
         }
 
         template <size_t TargetIndex, typename... TArgs>
         constexpr explicit TVariant(std::in_place_index_t<TargetIndex>, TArgs&&... Args)
         {
             Memory::ConstructAt(reinterpret_cast<TAlternative<TargetIndex>*>(Buffer), std::forward<TArgs>(Args)...);
-            Index = TargetIndex;
+            Index = static_cast<uint8>(TargetIndex);
         }
 
-        TVariant(const TVariant& Other)
+        TVariant(const TVariant&) requires bTrivialCopy = default;
+        TVariant(TVariant&&) requires bTrivialCopy = default;
+        TVariant& operator=(const TVariant&) requires bTrivialCopy = default;
+        TVariant& operator=(TVariant&&) requires bTrivialCopy = default;
+
+        ~TVariant() requires bTrivialDestroy = default;
+        ~TVariant() requires (!bTrivialDestroy) { Reset(); }
+
+        TVariant(const TVariant& Other) requires (!bTrivialCopy)
         {
-            if (Other.Index != kInvalidIndex)
-            {
-                CopyTable()[Other.Index](Buffer, Other.Buffer);
-                Index = Other.Index;
-            }
+            CopyFrom(Other);
         }
 
-        TVariant(TVariant&& Other) noexcept
+        TVariant(TVariant&& Other) noexcept(bNothrowMove) requires (!bTrivialCopy)
         {
-            if (Other.Index != kInvalidIndex)
-            {
-                MoveTable()[Other.Index](Buffer, Other.Buffer);
-                Index = Other.Index;
-                Other.Reset();
-            }
+            MoveFrom(Other);
         }
 
-        ~TVariant() { Reset(); }
-
-        TVariant& operator=(const TVariant& Other)
+        TVariant& operator=(const TVariant& Other) requires (!bTrivialCopy)
         {
             if (this != &Other)
             {
                 Reset();
-                if (Other.Index != kInvalidIndex)
-                {
-                    CopyTable()[Other.Index](Buffer, Other.Buffer);
-                    Index = Other.Index;
-                }
+                CopyFrom(Other);
             }
             return *this;
         }
 
-        TVariant& operator=(TVariant&& Other) noexcept
+        TVariant& operator=(TVariant&& Other) noexcept(bNothrowMove) requires (!bTrivialCopy)
         {
             if (this != &Other)
             {
                 Reset();
-                if (Other.Index != kInvalidIndex)
-                {
-                    MoveTable()[Other.Index](Buffer, Other.Buffer);
-                    Index = Other.Index;
-                    Other.Reset();
-                }
+                MoveFrom(Other);
             }
             return *this;
         }
@@ -155,7 +150,7 @@ namespace Lumina::Containers
         {
             if constexpr (std::is_assignable_v<TDecayed&, T&&>)
             {
-                if (Is<TDecayed>())
+                if (IsType<TDecayed>())
                 {
                     Get<TDecayed>() = std::forward<T>(Value);
                     return *this;
@@ -166,18 +161,23 @@ namespace Lumina::Containers
             return *this;
         }
 
-        NODISCARD FORCEINLINE constexpr size_t GetIndex() const noexcept { return Index; }
-        NODISCARD FORCEINLINE constexpr size_t index() const noexcept { return Index; }
+        NODISCARD FORCEINLINE constexpr size_t GetIndex() const noexcept { return Index == kNone ? kInvalidIndex : Index; }
 
         /** False only after a throwing emplace left the variant with nothing in it. */
-        NODISCARD FORCEINLINE constexpr bool IsValid() const noexcept { return Index != kInvalidIndex; }
-        NODISCARD FORCEINLINE constexpr bool valueless_by_exception() const noexcept { return Index == kInvalidIndex; }
+        NODISCARD FORCEINLINE constexpr bool IsValid() const noexcept { return Index != kNone; }
 
         template <typename T>
-        NODISCARD FORCEINLINE constexpr bool Is() const noexcept { return Index == IndexOf<T>; }
-
-        template <typename T>
-        NODISCARD FORCEINLINE constexpr bool HoldsAlternative() const noexcept { return Is<T>(); }
+        NODISCARD FORCEINLINE constexpr bool IsType() const noexcept
+        {
+            if constexpr (IndexOf<T> == kInvalidIndex)
+            {
+                return false;
+            }
+            else
+            {
+                return Index == IndexOf<T>;
+            }
+        }
 
         template <typename T, typename... TArgs>
         T& Emplace(TArgs&&... Args)
@@ -185,7 +185,7 @@ namespace Lumina::Containers
             static_assert(IndexOf<T> != kInvalidIndex, "That type is not one of the variant alternatives.");
             Reset();
             T* Constructed = Memory::ConstructAt(reinterpret_cast<T*>(Buffer), std::forward<TArgs>(Args)...);
-            Index = IndexOf<T>;
+            Index = static_cast<uint8>(IndexOf<T>);
             return *Constructed;
         }
 
@@ -195,71 +195,42 @@ namespace Lumina::Containers
             return Emplace<TAlternative<TargetIndex>>(std::forward<TArgs>(Args)...);
         }
 
-        template <typename T, typename... TArgs>
-        FORCEINLINE T& emplace(TArgs&&... Args) { return Emplace<T>(std::forward<TArgs>(Args)...); }
+        template <typename T, typename U>
+        void Set(U&& Value) { Emplace<T>(std::forward<U>(Value)); }
 
-        template <size_t TargetIndex, typename... TArgs>
-        FORCEINLINE TAlternative<TargetIndex>& emplace(TArgs&&... Args)
+        template <size_t TargetIndex, typename TSelf>
+        NODISCARD FORCEINLINE auto&& GetByIndex(this TSelf&& Self) noexcept
         {
-            return Emplace<TargetIndex>(std::forward<TArgs>(Args)...);
+            LUMINA_CONTAINER_CHECK(Self.Index == TargetIndex);
+            return std::forward_like<TSelf>(*std::launder(reinterpret_cast<TAlternative<TargetIndex>*>(const_cast<unsigned char*>(Self.Buffer))));
         }
 
-        template <size_t TargetIndex>
-        NODISCARD FORCEINLINE TAlternative<TargetIndex>& GetByIndex() & noexcept
+        template <typename T, typename TSelf>
+        NODISCARD FORCEINLINE auto&& Get(this TSelf&& Self) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index == TargetIndex);
-            return *reinterpret_cast<TAlternative<TargetIndex>*>(Buffer);
+            return std::forward<TSelf>(Self).template GetByIndex<IndexOf<T>>();
         }
 
-        template <size_t TargetIndex>
-        NODISCARD FORCEINLINE const TAlternative<TargetIndex>& GetByIndex() const& noexcept
+        template <typename T, typename TSelf>
+        NODISCARD FORCEINLINE auto* TryGet(this TSelf&& Self) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index == TargetIndex);
-            return *reinterpret_cast<const TAlternative<TargetIndex>*>(Buffer);
-        }
-
-        template <size_t TargetIndex>
-        NODISCARD FORCEINLINE TAlternative<TargetIndex>&& GetByIndex() && noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Index == TargetIndex);
-            return std::move(*reinterpret_cast<TAlternative<TargetIndex>*>(Buffer));
-        }
-
-        template <typename T>
-        NODISCARD FORCEINLINE T& Get() & noexcept { return GetByIndex<IndexOf<T>>(); }
-
-        template <typename T>
-        NODISCARD FORCEINLINE const T& Get() const& noexcept { return GetByIndex<IndexOf<T>>(); }
-
-        template <typename T>
-        NODISCARD FORCEINLINE T&& Get() && noexcept { return std::move(*this).template GetByIndex<IndexOf<T>>(); }
-
-        template <typename T>
-        NODISCARD FORCEINLINE T* GetIf() noexcept
-        {
-            return Is<T>() ? reinterpret_cast<T*>(Buffer) : nullptr;
-        }
-
-        template <typename T>
-        NODISCARD FORCEINLINE const T* GetIf() const noexcept
-        {
-            return Is<T>() ? reinterpret_cast<const T*>(Buffer) : nullptr;
+            using FResult = std::conditional_t<std::is_const_v<std::remove_reference_t<TSelf>>, const T, T>;
+            return Self.template IsType<T>() ? std::launder(reinterpret_cast<FResult*>(const_cast<unsigned char*>(Self.Buffer))) : nullptr;
         }
 
         void Reset() noexcept
         {
-            if (Index != kInvalidIndex)
+            if constexpr (!bTrivialDestroy)
             {
-                DestroyTable()[Index](Buffer);
-                Index = kInvalidIndex;
+                if (Index != kNone)
+                {
+                    DispatchVoid([this]<size_t I>(std::integral_constant<size_t, I>) noexcept
+                    {
+                        Memory::DestroyAt(reinterpret_cast<TAlternative<I>*>(Buffer));
+                    });
+                }
             }
-        }
-
-        void swap(TVariant& Other) noexcept
-        {
-            TVariant Staged(std::move(*this));
-            *this = std::move(Other);
-            Other = std::move(Staged);
+            Index = kNone;
         }
 
         NODISCARD friend bool operator==(const TVariant& Left, const TVariant& Right)
@@ -268,82 +239,93 @@ namespace Lumina::Containers
             {
                 return false;
             }
-            if (Left.Index == kInvalidIndex)
+            if (Left.Index == kNone)
             {
                 return true;
             }
-            return EqualTable()[Left.Index](Left.Buffer, Right.Buffer);
+            bool bEqual = false;
+            Left.DispatchVoid([&]<size_t I>(std::integral_constant<size_t, I>)
+            {
+                bEqual = Left.template GetByIndex<I>() == Right.template GetByIndex<I>();
+            });
+            return bEqual;
         }
 
     private:
 
-        using FDestroyFn = void (*)(void*) noexcept;
-        using FCopyFn    = void (*)(void*, const void*);
-        using FMoveFn    = void (*)(void*, void*);
-        using FEqualFn   = bool (*)(const void*, const void*);
-
-        // Function-pointer tables keep dispatch to one indexed indirect call, with no recursion over the pack.
-        NODISCARD static const FDestroyFn* DestroyTable() noexcept
+        // A compare chain over the index, which the optimizer turns into a jump table and lets inline the body.
+        template <typename TFn, size_t I = 0>
+        FORCEINLINE void DispatchVoid(TFn&& Fn) const
         {
-            static constexpr FDestroyFn Table[kCount] =
+            if constexpr (I + 1 == kCount)
             {
-                +[](void* Target) noexcept { static_cast<Ts*>(Target)->~Ts(); }...
-            };
-            return Table;
+                Fn(std::integral_constant<size_t, I>{});
+            }
+            else if (Index == I)
+            {
+                Fn(std::integral_constant<size_t, I>{});
+            }
+            else
+            {
+                DispatchVoid<TFn, I + 1>(std::forward<TFn>(Fn));
+            }
         }
 
-        NODISCARD static const FCopyFn* CopyTable() noexcept
+        void CopyFrom(const TVariant& Other)
         {
-            static constexpr FCopyFn Table[kCount] =
+            if (Other.Index != kNone)
             {
-                +[](void* Target, const void* Source) { Memory::ConstructAt(static_cast<Ts*>(Target), *static_cast<const Ts*>(Source)); }...
-            };
-            return Table;
-        }
-
-        NODISCARD static const FMoveFn* MoveTable() noexcept
-        {
-            static constexpr FMoveFn Table[kCount] =
-            {
-                +[](void* Target, void* Source) { Memory::ConstructAt(static_cast<Ts*>(Target), std::move(*static_cast<Ts*>(Source))); }...
-            };
-            return Table;
-        }
-
-        NODISCARD static const FEqualFn* EqualTable() noexcept
-        {
-            static constexpr FEqualFn Table[kCount] =
-            {
-                +[](const void* Left, const void* Right)
+                Other.DispatchVoid([this, &Other]<size_t I>(std::integral_constant<size_t, I>)
                 {
-                    return *static_cast<const Ts*>(Left) == *static_cast<const Ts*>(Right);
-                }...
-            };
-            return Table;
+                    Memory::ConstructAt(reinterpret_cast<TAlternative<I>*>(Buffer), Other.template GetByIndex<I>());
+                });
+                Index = Other.Index;
+            }
+        }
+
+        void MoveFrom(TVariant& Other) noexcept(bNothrowMove)
+        {
+            if (Other.Index != kNone)
+            {
+                Other.DispatchVoid([this, &Other]<size_t I>(std::integral_constant<size_t, I>)
+                {
+                    Memory::ConstructAt(reinterpret_cast<TAlternative<I>*>(Buffer), std::move(Other).template GetByIndex<I>());
+                });
+                Index = Other.Index;
+                Other.Reset();
+            }
         }
 
         alignas(kAlign) unsigned char Buffer[kStorage];
-        size_t Index = kInvalidIndex;
+        uint8 Index = kNone;
     };
 
     namespace Private
     {
+        // Every alternative's result converts implicitly to the first one's, as the old dispatch table's entries did.
+        template <typename TRet, size_t I, size_t Last, typename TVisitor, typename TVariantRef>
+        FORCEINLINE constexpr TRet VisitFrom(TVisitor& Visitor, TVariantRef&& Variant, size_t Index)
+        {
+            if constexpr (I == Last)
+            {
+                return Visitor(std::forward<TVariantRef>(Variant).template GetByIndex<I>());
+            }
+            else
+            {
+                if (Index == I)
+                {
+                    return Visitor(std::forward<TVariantRef>(Variant).template GetByIndex<I>());
+                }
+                return VisitFrom<TRet, I + 1, Last>(Visitor, std::forward<TVariantRef>(Variant), Index);
+            }
+        }
+
         template <typename TVisitor, typename TVariantRef, size_t... Indices>
         constexpr decltype(auto) VisitImpl(TVisitor&& Visitor, TVariantRef&& Variant, std::index_sequence<Indices...>)
         {
             using FReturn = decltype(Visitor(std::forward<TVariantRef>(Variant).template GetByIndex<0>()));
-            using FEntry = FReturn (*)(TVisitor&&, TVariantRef&&);
-
-            static constexpr FEntry Table[] =
-            {
-                +[](TVisitor&& Vis, TVariantRef&& Var) -> FReturn
-                {
-                    return Vis(std::forward<TVariantRef>(Var).template GetByIndex<Indices>());
-                }...
-            };
-
             LUMINA_CONTAINER_CHECK(Variant.IsValid());
-            return Table[Variant.GetIndex()](std::forward<TVisitor>(Visitor), std::forward<TVariantRef>(Variant));
+            return VisitFrom<FReturn, 0, sizeof...(Indices) - 1>(Visitor, std::forward<TVariantRef>(Variant), Variant.GetIndex());
         }
     }
 
@@ -392,58 +374,35 @@ namespace Lumina::Containers
     template <typename T, typename... Ts>
     NODISCARD FORCEINLINE T* GetIf(TVariant<Ts...>* Variant) noexcept
     {
-        return Variant != nullptr ? Variant->template GetIf<T>() : nullptr;
+        return Variant != nullptr ? Variant->template TryGet<T>() : nullptr;
     }
 
     template <typename T, typename... Ts>
     NODISCARD FORCEINLINE const T* GetIf(const TVariant<Ts...>* Variant) noexcept
     {
-        return Variant != nullptr ? Variant->template GetIf<T>() : nullptr;
+        return Variant != nullptr ? Variant->template TryGet<T>() : nullptr;
     }
 
     template <typename T, typename... Ts>
     NODISCARD FORCEINLINE bool HoldsAlternative(const TVariant<Ts...>& Variant) noexcept
     {
-        return Variant.template Is<T>();
-    }
-
-    // Lowercase surface, so existing call sites that relied on argument-dependent lookup keep working.
-    template <typename TArg, typename... Ts>
-    NODISCARD FORCEINLINE decltype(auto) get(TVariant<Ts...>& Variant) noexcept { return Get<TArg>(Variant); }
-
-    template <typename TArg, typename... Ts>
-    NODISCARD FORCEINLINE decltype(auto) get(const TVariant<Ts...>& Variant) noexcept { return Get<TArg>(Variant); }
-
-    template <size_t Index, typename... Ts>
-    NODISCARD FORCEINLINE decltype(auto) get(TVariant<Ts...>& Variant) noexcept { return Get<Index>(Variant); }
-
-    template <size_t Index, typename... Ts>
-    NODISCARD FORCEINLINE decltype(auto) get(const TVariant<Ts...>& Variant) noexcept { return Get<Index>(Variant); }
-
-    template <typename T, typename... Ts>
-    NODISCARD FORCEINLINE T* get_if(TVariant<Ts...>* Variant) noexcept { return GetIf<T>(Variant); }
-
-    template <typename T, typename... Ts>
-    NODISCARD FORCEINLINE const T* get_if(const TVariant<Ts...>* Variant) noexcept { return GetIf<T>(Variant); }
-
-    template <typename T, typename... Ts>
-    NODISCARD FORCEINLINE bool holds_alternative(const TVariant<Ts...>& Variant) noexcept { return Variant.template Is<T>(); }
-
-    template <typename TVisitor, typename... Ts>
-    constexpr decltype(auto) visit(TVisitor&& Visitor, TVariant<Ts...>& Variant)
-    {
-        return Visit(std::forward<TVisitor>(Visitor), Variant);
-    }
-
-    template <typename TVisitor, typename... Ts>
-    constexpr decltype(auto) visit(TVisitor&& Visitor, const TVariant<Ts...>& Variant)
-    {
-        return Visit(std::forward<TVisitor>(Visitor), Variant);
+        return Variant.template IsType<T>();
     }
 
     template <typename... Ts>
-    FORCEINLINE void swap(TVariant<Ts...>& Left, TVariant<Ts...>& Right) noexcept
+    FORCEINLINE void swap(TVariant<Ts...>& Left, TVariant<Ts...>& Right) noexcept((std::is_nothrow_move_constructible_v<Ts> && ...))
     {
-        Left.swap(Right);
+        TVariant<Ts...> Staged(std::move(Left));
+        Left = std::move(Right);
+        Right = std::move(Staged);
     }
+}
+
+namespace Lumina
+{
+    template <typename... Ts>
+    struct TIsTriviallyRelocatable<Containers::TVariant<Ts...>>
+    {
+        static constexpr bool Value = (TIsTriviallyRelocatable_V<Ts> && ...);
+    };
 }

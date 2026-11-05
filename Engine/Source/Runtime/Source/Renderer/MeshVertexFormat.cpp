@@ -39,53 +39,53 @@ namespace Lumina
         };
 
         template<typename TVisit>
-        void ForEachLegacySlot(const TVector<FLegacyMeshlet>& Meshlets, size_t SlotCount, TVisit&& Visit)
+        void ForEachLegacySlot(const TVector<FLegacyMeshlet>& Meshlets, int32 SlotCount, TVisit&& Visit)
         {
             for (const FLegacyMeshlet& M : Meshlets)
             {
-                for (uint32 Local = 0; Local < M.VertexCount && (size_t)M.VertexOffset + Local < SlotCount; ++Local)
+                for (uint32 Local = 0; Local < M.VertexCount && static_cast<int64>(M.VertexOffset) + Local < SlotCount; ++Local)
                 {
-                    Visit(M, (size_t)M.VertexOffset + Local);
+                    Visit(M, static_cast<int32>(M.VertexOffset + Local));
                 }
             }
         }
 
         void ConvertStaticVertices(FMeshletData& Data, const TVector<FLegacyMeshlet>& Meshlets, const TVector<FLegacyMeshletVertex>& Legacy)
         {
-            TVector<FLegacyVertexKey> Keys(Legacy.size());
-            memset(Keys.data(), 0, Keys.size() * sizeof(FLegacyVertexKey));
+            TVector<FLegacyVertexKey> Keys(Legacy.Num());
+            memset(Keys.GetData(), 0, Keys.Num() * sizeof(FLegacyVertexKey));
 
-            ForEachLegacySlot(Meshlets, Legacy.size(), [&](const FLegacyMeshlet& M, size_t Slot)
+            ForEachLegacySlot(Meshlets, Legacy.Num(), [&](const FLegacyMeshlet& M, int32 Slot)
             {
                 const FLegacyMeshletVertex& V = Legacy[Slot];
                 Keys[Slot] = { DecodeLegacyPosition(M, V), PackLegacyNormal(V), V.Tangent, V.UV, V.UV1, V.Color };
             });
 
-            TVector<uint32> Remap(Keys.size());
-            const size_t UniqueCount = meshopt_generateVertexRemap(Remap.data(), nullptr, Keys.size(), Keys.data(), Keys.size(), sizeof(FLegacyVertexKey));
+            TVector<uint32> Remap(Keys.Num());
+            const size_t UniqueCount = meshopt_generateVertexRemap(Remap.GetData(), nullptr, Keys.Num(), Keys.GetData(), Keys.Num(), sizeof(FLegacyVertexKey));
 
-            TVector<FLegacyVertexKey> Unique(UniqueCount);
-            for (size_t i = 0; i < Keys.size(); ++i)
+            TVector<FLegacyVertexKey> Unique(IntCastChecked<int32>(UniqueCount));
+            for (int32 i = 0; i < Keys.Num(); ++i)
             {
                 Unique[Remap[i]] = Keys[i];
             }
 
-            TVector<FVector3> Positions(UniqueCount);
+            TVector<FVector3> Positions(IntCastChecked<int32>(UniqueCount));
             bool bHasUV1   = false;
             bool bHasColor = false;
-            for (size_t i = 0; i < UniqueCount; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(UniqueCount); i < Limit; ++i)
             {
                 Positions[i] = Unique[i].Position;
                 bHasUV1      = bHasUV1   || Unique[i].UV1 != Unique[i].UV;
                 bHasColor    = bHasColor || Unique[i].Color != 0xFFFFFFFFu;
             }
 
-            Data.PositionGrid = ComputeMeshPositionGrid(Positions.data(), Positions.size());
-            Data.VertexPositions.resize(UniqueCount);
-            Data.VertexAttributes.resize(UniqueCount);
-            Data.VertexUV1s.resize(bHasUV1 ? UniqueCount : 0u);
-            Data.VertexColors.resize(bHasColor ? UniqueCount : 0u);
-            for (size_t i = 0; i < UniqueCount; ++i)
+            Data.PositionGrid = ComputeMeshPositionGrid(Positions.GetData(), Positions.Num());
+            Data.VertexPositions.SetNum(IntCastChecked<int32>(UniqueCount));
+            Data.VertexAttributes.SetNum(IntCastChecked<int32>(UniqueCount));
+            Data.VertexUV1s.SetNum(IntCastChecked<int32>(bHasUV1 ? UniqueCount : 0u));
+            Data.VertexColors.SetNum(IntCastChecked<int32>(bHasColor ? UniqueCount : 0u));
+            for (int32 i = 0, Limit = IntCastChecked<int32>(UniqueCount); i < Limit; ++i)
             {
                 Data.VertexPositions[i]  = EncodeMeshPosition(Data.PositionGrid, Positions[i]);
                 Data.VertexAttributes[i] = { Unique[i].Normal, Unique[i].Tangent, Unique[i].UV };
@@ -99,14 +99,14 @@ namespace Lumina
                 }
             }
 
-            for (size_t m = 0; m < Meshlets.size(); ++m)
+            for (int32 m = 0; m < Meshlets.Num(); ++m)
             {
                 uint32 Vertices[MESHLET_MAX_VERTICES];
                 const uint32 Count = Math::Min(Meshlets[m].VertexCount, (uint32)MESHLET_MAX_VERTICES);
                 for (uint32 Local = 0; Local < Count; ++Local)
                 {
-                    const size_t Slot = (size_t)Meshlets[m].VertexOffset + Local;
-                    Vertices[Local] = Slot < Remap.size() ? Remap[Slot] : 0u;
+                    const int32 Slot = (size_t)Meshlets[m].VertexOffset + Local;
+                    Vertices[Local] = Slot < Remap.Num() ? Remap[Slot] : 0u;
                 }
                 AppendMeshletVertexRefs(Data, Data.Meshlets[m], Vertices, Count);
             }
@@ -114,15 +114,15 @@ namespace Lumina
 
         void ConvertSkinnedVertices(FMeshletData& Data, const TVector<FLegacyMeshlet>& Meshlets, const TVector<FLegacyMeshletSkinnedVertex>& Legacy)
         {
-            TVector<FVector3> Positions(Legacy.size(), FVector3(0.0f));
-            ForEachLegacySlot(Meshlets, Legacy.size(), [&](const FLegacyMeshlet& M, size_t Slot)
+            TVector<FVector3> Positions(Legacy.Num(), FVector3(0.0f));
+            ForEachLegacySlot(Meshlets, Legacy.Num(), [&](const FLegacyMeshlet& M, int32 Slot)
             {
                 Positions[Slot] = DecodeLegacyPosition(M, Legacy[Slot].Base);
             });
 
-            Data.PositionGrid = ComputeMeshPositionGrid(Positions.data(), Positions.size());
-            Data.MeshletSkinnedVertices.resize(Legacy.size());
-            for (size_t i = 0; i < Legacy.size(); ++i)
+            Data.PositionGrid = ComputeMeshPositionGrid(Positions.GetData(), Positions.Num());
+            Data.MeshletSkinnedVertices.SetNum(Legacy.Num());
+            for (int32 i = 0; i < Legacy.Num(); ++i)
             {
                 const FLegacyMeshletVertex& V   = Legacy[i].Base;
                 FMeshletSkinnedVertex&      Out = Data.MeshletSkinnedVertices[i];
@@ -144,25 +144,25 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Data.Meshlets.resize(Meshlets.size());
-        for (size_t m = 0; m < Meshlets.size(); ++m)
+        Data.Meshlets.SetNum(Meshlets.Num());
+        for (int32 m = 0; m < Meshlets.Num(); ++m)
         {
             const FLegacyMeshlet& In  = Meshlets[m];
             FMeshlet&             Out = Data.Meshlets[m];
             Out = {};
             Out.VertexOffset   = In.VertexOffset;
             Out.TriangleOffset = In.TriangleOffset;
-            Out.VertexCount    = Math::Min(In.VertexCount, (uint32)MESHLET_COUNT_MASK);
-            Out.TriangleCount  = Math::Min(In.TriangleCount, (uint32)MESHLET_COUNT_MASK);
-            Out.LODIndex       = Math::Min(In.LODIndex, (uint32)MESHLET_LOD_MASK);
+            Out.VertexCount    = Math::Min(In.VertexCount, MESHLET_COUNT_MASK);
+            Out.TriangleCount  = Math::Min(In.TriangleCount, MESHLET_COUNT_MASK);
+            Out.LODIndex       = Math::Min(In.LODIndex, MESHLET_LOD_MASK);
         }
 
-        Data.MeshletVertexRefs.clear();
-        if (!StaticVertices.empty())
+        Data.MeshletVertexRefs.Reset();
+        if (!StaticVertices.IsEmpty())
         {
             ConvertStaticVertices(Data, Meshlets, StaticVertices);
         }
-        if (!SkinnedVertices.empty())
+        if (!SkinnedVertices.IsEmpty())
         {
             ConvertSkinnedVertices(Data, Meshlets, SkinnedVertices);
         }

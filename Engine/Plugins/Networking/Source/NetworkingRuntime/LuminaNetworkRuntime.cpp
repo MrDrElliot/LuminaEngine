@@ -49,11 +49,11 @@ namespace Lumina
 
         // Collected first, since destroying while iterating the view it came from is the hazard.
         TVector<ECS::FEntity> ServerOnly;
-        for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
+        for (ECS::FEntity Entity : Registry.View<ECS::Read<SNetworkComponent>>())
         {
-            if (!Registry.Get<SNetworkComponent>(Entity).bNetLoadOnClient)
+            if (!Registry.Get<ECS::Read<SNetworkComponent>>(Entity).bNetLoadOnClient)
             {
-                ServerOnly.push_back(Entity);
+                ServerOnly.Add(Entity);
             }
         }
 
@@ -108,14 +108,14 @@ namespace Lumina
         const SNetworkComponent* NetOf(const CWorld* World, ECS::FEntity Entity)
         {
             ECS::FRegistry& Registry = RegistryOf(World);
-            return Registry.IsValid(Entity) ? Registry.TryGet<SNetworkComponent>(Entity) : nullptr;
+            return Registry.IsValid(Entity) ? Registry.TryGet<ECS::Read<SNetworkComponent>>(Entity) : nullptr;
         }
     }
 
     int32 FLuminaNetworkRuntime::GetConnectedClientCount(const CWorld* World) const
     {
         const FNetWorldState* State = StateOf(World);
-        return State != nullptr ? (int32)State->ReadyClientIds.size() : 0;
+        return State != nullptr ? State->ReadyClientIds.Num() : 0;
     }
 
     bool FLuminaNetworkRuntime::TakeClientConnection(CWorld* OldWorld, TUniquePtr<INetworkTransport>& OutTransport,
@@ -147,9 +147,9 @@ namespace Lumina
         }
         ECS::FRegistry& Registry = RegistryOf(World);
         ECS::FEntity Fallback = ECS::NullEntity;
-        for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
+        for (ECS::FEntity Entity : Registry.View<ECS::Read<SNetworkComponent>>())
         {
-            if (Registry.Get<SNetworkComponent>(Entity).OwningConnectionId != ConnectionId)
+            if (Registry.Get<ECS::Read<SNetworkComponent>>(Entity).OwningConnectionId != ConnectionId)
             {
                 continue;
             }
@@ -167,7 +167,7 @@ namespace Lumina
 
     void FLuminaNetworkRuntime::BindEntityIds(const CWorld* World, FNetArchive& Ar) const
     {
-        if (FNetWorldState* State = const_cast<FNetWorldState*>(StateOf(World)))
+        if (FNetWorldState* State = StateOf(World))
         {
             Net::BindEntityIds(Ar, *State);
         }
@@ -181,7 +181,7 @@ namespace Lumina
 
     void FLuminaNetworkRuntime::GetConnectionIds(const CWorld* World, TVector<uint32>& OutIds) const
     {
-        OutIds.clear();
+        OutIds.Reset();
         if (const FNetWorldState* State = StateOf(World))
         {
             OutIds = State->ReadyClientIds;
@@ -218,7 +218,7 @@ namespace Lumina
         {
             Net.OwningConnectionId = ConnectionId;
             Net.RemoteRole = ConnectionId != 0 ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy;
-            State->OwnershipChanged.push_back(Entity);
+            State->OwnershipChanged.Add(Entity);
         }
         return true;
     }

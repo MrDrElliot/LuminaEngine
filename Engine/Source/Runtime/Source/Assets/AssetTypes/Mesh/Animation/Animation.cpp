@@ -99,7 +99,7 @@ namespace Lumina
         void BuildRetargetFixes(const FCompressedAnimData& Compressed, FAnimationResource::FResolvedSkeleton& Resolved,
                                 const FSkeletonResource& Target, const FSkeletonResource& Source)
         {
-            for (int32 i = 0; i < (int32)Compressed.Bones.size(); ++i)
+            for (int32 i = 0; i < Compressed.Bones.Num(); ++i)
             {
                 const int32 Bone = Resolved.CompressedBones[i];
                 const int32 SourceBone = Source.FindBoneIndex(Compressed.Bones[i].BoneName);
@@ -125,7 +125,7 @@ namespace Lumina
                     AnimPose::DecomposeTRS(Fix.RootCorrection, T, R, S);
                     if (!IsNearlyIdentity(T, R, S))
                     {
-                        Resolved.RetargetFixes.push_back(Fix);
+                        Resolved.RetargetFixes.Add(Fix);
                     }
                     continue;
                 }
@@ -143,7 +143,7 @@ namespace Lumina
                 Fix.TranslationScale = Math::Length(TargetT) / SourceLength;
                 if (Math::Abs(Fix.TranslationScale - 1.0f) > 1e-3f)
                 {
-                    Resolved.RetargetFixes.push_back(Fix);
+                    Resolved.RetargetFixes.Add(Fix);
                 }
             }
         }
@@ -174,8 +174,8 @@ namespace Lumina
                 }
 
                 float* RESTRICT        Out    = Pose.Stream(Stream);
-                const float* RESTRICT  Values = Resolved.OverlayValues.data() + (SIZE_T)Stream * Stride;
-                const uint32* RESTRICT Mask   = Resolved.OverlayMask.data() + (SIZE_T)Stream * Stride;
+                const float* RESTRICT  Values = Resolved.OverlayValues.GetData() + (SIZE_T)Stream * Stride;
+                const uint32* RESTRICT Mask   = Resolved.OverlayMask.GetData() + (SIZE_T)Stream * Stride;
 
                 int32 i = 0;
                 for (; i < Whole; i += 8)
@@ -204,13 +204,13 @@ namespace Lumina
 
         const auto SetConstant = [&](int32 Stream, int32 Bone, float Value)
         {
-            Values[(SIZE_T)Stream * Stride + Bone] = Value;
-            Mask[(SIZE_T)Stream * Stride + Bone]   = ~0u;
+            Values[Stream * Stride + Bone] = Value;
+            Mask[Stream * Stride + Bone]   = ~0u;
             Streams |= (uint16)(1u << Stream);
         };
 
         // Mirrors the decoders, which hand back Track.Constant for every format they do not interpolate.
-        for (int32 i = 0; i < (int32)Compressed.Bones.size(); ++i)
+        for (int32 i = 0; i < Compressed.Bones.Num(); ++i)
         {
             const int32 Bone = Resolved.CompressedBones[i];
             if (Bone < 0 || Bone >= NumBones)
@@ -219,7 +219,7 @@ namespace Lumina
             }
             if (Seen[Bone] != 0u)
             {
-                Resolved.AnimatedBones.clear();
+                Resolved.AnimatedBones.Reset();
                 return;
             }
             Seen[Bone] = 1u;
@@ -251,7 +251,7 @@ namespace Lumina
 
             if (bAnimatedT || bAnimatedR || bAnimatedS)
             {
-                Resolved.AnimatedBones.push_back(i);
+                Resolved.AnimatedBones.Add(i);
             }
         }
 
@@ -306,15 +306,15 @@ namespace Lumina
         NewSet->SourceKey = SourceKey;
 
         const int32 NumBones = Skeleton->GetNumBones();
-        NewSet->SkeletonToCompressed.assign(NumBones, Constants::kIndexNone);
-        NewSet->CompressedBones.reserve(Compressed.Bones.size());
+        NewSet->SkeletonToCompressed.Init(Constants::kIndexNone, NumBones);
+        NewSet->CompressedBones.Reserve(Compressed.Bones.Num());
 
         int32 NumUnmatched = 0;
-        for (int32 i = 0; i < (int32)Compressed.Bones.size(); ++i)
+        for (int32 i = 0; i < Compressed.Bones.Num(); ++i)
         {
             const int32 BoneIndex = Skeleton->FindBoneIndex(Compressed.Bones[i].BoneName);
             NumUnmatched += BoneIndex < 0 ? 1 : 0;
-            NewSet->CompressedBones.push_back(BoneIndex);
+            NewSet->CompressedBones.Add(BoneIndex);
 
             if (BoneIndex >= 0 && BoneIndex < NumBones)
             {
@@ -333,20 +333,20 @@ namespace Lumina
         if (NumUnmatched > 0)
         {
             LOG_WARN("Animation '{}': {}/{} bones are missing from the skeleton (name mismatch or wrong skeleton)",
-                     Name.c_str(), NumUnmatched, (int32)Compressed.Bones.size());
+                     *Name, NumUnmatched, Compressed.Bones.Num());
         }
 
         const FResolvedSkeleton* Result = NewSet.get();
-        ResolvedSkeletons.push_back(std::move(NewSet));
+        ResolvedSkeletons.Add(std::move(NewSet));
 
         // Old tables stay alive, since a reader may still be scanning one.
         TUniquePtr<FResolvedTable> Table = MakeUnique<FResolvedTable>();
         for (const TUniquePtr<FResolvedSkeleton>& Resolved : ResolvedSkeletons)
         {
-            Table->push_back(Resolved.get());
+            Table->Add(Resolved.get());
         }
         PublishedResolved.store(Table.get(), std::memory_order_release);
-        ResolvedTables.push_back(std::move(Table));
+        ResolvedTables.Add(std::move(Table));
 
         ActiveResolvedSkeleton.store(Result, std::memory_order_release);
         return Result;
@@ -362,7 +362,7 @@ namespace Lumina
             {
                 if (Notify.NotifyTrack == SyncTrackName)
                 {
-                    Markers.push_back({ Notify.NotifyName, Math::Saturate(Notify.Time / Duration) });
+                    Markers.Emplace(Notify.NotifyName, Math::Saturate(Notify.Time / Duration));
                 }
             }
 
@@ -372,10 +372,10 @@ namespace Lumina
             });
 
             // Two markers on the same frame would leave a zero-length span, which no conversion survives.
-            Markers.erase(Algo::Unique(Markers, [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
+            Markers.SetNum(static_cast<int32>(Algo::Unique(Markers, [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
             {
                 return Math::Abs(A.StartTime - B.StartTime) < 1e-4f;
-            }), Markers.end());
+            }) - Markers.begin()));
         }
 
         SyncTrack.BuildFromMarkers(Markers);
@@ -386,8 +386,8 @@ namespace Lumina
         FScopeLock Lock(ResolveMutex);
         ActiveResolvedSkeleton.store(nullptr, std::memory_order_release);
         PublishedResolved.store(nullptr, std::memory_order_release);
-        ResolvedSkeletons.clear();
-        ResolvedTables.clear();
+        ResolvedSkeletons.Reset();
+        ResolvedTables.Reset();
     }
 
     CAnimation::CAnimation()
@@ -410,13 +410,13 @@ namespace Lumina
         if (Ar.IsReading())
         {
             // Clips saved before the cutover still carry channels; compressing here spares a re-import.
-            if (!AnimationResource->Compressed.IsValid() && !AnimationResource->Channels.empty())
+            if (!AnimationResource->Compressed.IsValid() && !AnimationResource->Channels.IsEmpty())
             {
                 AnimCompression::Build(*AnimationResource);
             }
 
-            AnimationResource->Channels.clear();
-            AnimationResource->Channels.shrink_to_fit();
+            AnimationResource->Channels.Reset();
+            AnimationResource->Channels.Shrink();
             AnimationResource->InvalidateResolvedSkeletons();
         }
     }
@@ -424,7 +424,7 @@ namespace Lumina
     int32 CAnimation::FindCurveIndex(const FName& CurveName) const
     {
         const TVector<FAnimationCurve>& Curves = AnimationResource->Curves;
-        for (int32 i = 0; i < (int32)Curves.size(); ++i)
+        for (int32 i = 0; i < Curves.Num(); ++i)
         {
             if (Curves[i].Name == CurveName)
             {
@@ -443,7 +443,7 @@ namespace Lumina
     void CAnimation::SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const
     {
         const int32 NumBones = InSkeleton->GetNumBones();
-        OutBoneTransforms.resize(NumBones);
+        OutBoneTransforms.SetNum(NumBones);
 
         if (NumBones == 0)
         {
@@ -456,15 +456,15 @@ namespace Lumina
         thread_local TVector<FVector3> ScratchS;
         thread_local TVector<uint8>     ScratchTouched;
 
-        if ((int32)ScratchT.size() < NumBones)
+        if (ScratchT.Num() < NumBones)
         {
-            ScratchT.resize(NumBones);
-            ScratchR.resize(NumBones);
-            ScratchS.resize(NumBones);
-            ScratchTouched.resize(NumBones);
+            ScratchT.SetNum(NumBones);
+            ScratchR.SetNum(NumBones);
+            ScratchS.SetNum(NumBones);
+            ScratchTouched.SetNum(NumBones);
         }
 
-        Memory::Memset(ScratchTouched.data(), 0, (size_t)NumBones * sizeof(uint8));
+        Memory::Memset(ScratchTouched.GetData(), 0, (size_t)NumBones * sizeof(uint8));
 
         // Pass 1 gathers per-bone TRS overrides with bone indices pre-resolved.
         const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton, GetSourceSkeletonResource());
@@ -474,7 +474,7 @@ namespace Lumina
         float Alpha;
         Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
 
-        for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+        for (int32 b = 0; b < Compressed.Bones.Num(); ++b)
         {
             const int32 BoneIdx = Resolved->CompressedBones[b];
             if (BoneIdx < 0 || BoneIdx >= NumBones)
@@ -694,7 +694,7 @@ namespace Lumina
 
         // With the overlay in place only animated tracks remain, since a constant decode would write the overlay's value again.
         const bool bOverlay = Resolved->OverlayStride == FPose::StrideFor(NumBones);
-        const auto DecodeBone = [&](SIZE_T b)
+        const auto DecodeBone = [&](int32 b)
         {
             const int32 BoneIdx = Resolved->CompressedBones[b];
             if (BoneIdx < 0 || BoneIdx >= ActiveBones)
@@ -736,12 +736,12 @@ namespace Lumina
                 {
                     break;
                 }
-                DecodeBone((SIZE_T)b);
+                DecodeBone(b);
             }
         }
         else
         {
-            for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+            for (int32 b = 0; b < Compressed.Bones.Num(); ++b)
             {
                 DecodeBone(b);
             }
@@ -798,7 +798,7 @@ namespace Lumina
         const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton, GetSourceSkeletonResource());
         const FCompressedAnimData& Compressed = AnimationResource->Compressed;
 
-        if (BoneIndex < 0 || BoneIndex >= (int32)Resolved->SkeletonToCompressed.size())
+        if (BoneIndex < 0 || BoneIndex >= Resolved->SkeletonToCompressed.Num())
         {
             return;
         }

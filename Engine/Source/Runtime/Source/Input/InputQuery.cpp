@@ -220,13 +220,13 @@ namespace Lumina::Input
     static const SInputActionBinding* FindBinding(FName Action, int32 BindingIndex)
     {
         const SInputAction* Found = FInputActionMap::Get().FindAction(Action);
-        return (Found != nullptr && BindingIndex >= 0 && BindingIndex < int32(Found->Bindings.size())) ? &Found->Bindings[BindingIndex] : nullptr;
+        return (Found != nullptr && BindingIndex >= 0 && BindingIndex < Found->Bindings.Num()) ? &Found->Bindings[BindingIndex] : nullptr;
     }
 
     int32 GetBindingCount(FName Action)
     {
         const SInputAction* Found = FInputActionMap::Get().FindAction(Action);
-        return Found != nullptr ? int32(Found->Bindings.size()) : 0;
+        return Found != nullptr ? Found->Bindings.Num() : 0;
     }
 
     FString GetBindingDisplayName(FName Action, int32 BindingIndex)
@@ -274,7 +274,7 @@ namespace Lumina::Input
             return TSpan<const SInputEvent>();
         }
         const TVector<SInputEvent>& Events = Context->GetFrameEvents();
-        return TSpan<const SInputEvent>(Events.data(), Events.size());
+        return TSpan<const SInputEvent>(Events.GetData(), Events.Num());
     }
 
     void SetMouseMode(const CWorld* World, EMouseMode Mode)

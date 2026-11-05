@@ -62,7 +62,7 @@ namespace Lumina::RHITests
         RHI::FPipelineH TrackPipeline(RHI::FPipelineH Pipeline);
 
         const TVector<FString>& GetFailures() const { return Failures; }
-        bool HasFailures() const { return !Failures.empty(); }
+        bool HasFailures() const { return !Failures.IsEmpty(); }
 
         /** Runner-only: retires everything taken through Malloc/CreateTexture. Called after the body
          *  returns, before the frames that let the retire queue reach it. */
@@ -83,8 +83,8 @@ namespace Lumina::RHITests
     {
         return RHI::FShaderSource
         {
-            .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                 Spirv.size() * sizeof(uint32)),
+            .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                 Spirv.Num() * sizeof(uint32)),
             .EntryPoint = EntryPoint,
         };
     }

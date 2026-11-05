@@ -164,9 +164,9 @@ namespace Lumina
                 b3DestroyBody(BraceAnchor);
             }
 
-            Joints.clear();
-            Bodies.clear();
-            Braces.clear();
+            Joints.Reset();
+            Bodies.Reset();
+            Braces.Reset();
             BraceAnchor = b3_nullBodyId;
             bAddedToScene = false;
         }

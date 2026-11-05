@@ -18,15 +18,15 @@ namespace Lumina
 
         // Sorted descending; equal priorities keep registration order.
         FEntry NewEntry{ InHandler, Priority };
-        auto It = EventHandlers.begin();
-        for (; It != EventHandlers.end(); ++It)
+        int32 Index = 0;
+        for (; Index < EventHandlers.Num(); ++Index)
         {
-            if (It->Priority < Priority)
+            if (EventHandlers[Index].Priority < Priority)
             {
                 break;
             }
         }
-        EventHandlers.insert(It, NewEntry);
+        EventHandlers.Insert(NewEntry, Index);
     }
 
     void FEventProcessor::UnregisterEventHandler(IEventHandler* InHandler)
@@ -35,7 +35,7 @@ namespace Lumina
         {
             if (It->Handler == InHandler)
             {
-                EventHandlers.erase(It);
+                EventHandlers.RemoveAt(static_cast<int32>(It - EventHandlers.begin()));
                 return;
             }
         }
@@ -43,7 +43,7 @@ namespace Lumina
 
     void FEventProcessor::Clear()
     {
-        EventHandlers.clear();
+        EventHandlers.Reset();
     }
 
     void FEventProcessor::DispatchEvent(FEvent& Event)

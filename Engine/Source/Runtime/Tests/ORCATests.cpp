@@ -429,22 +429,22 @@ namespace
         constexpr float MaxSpeed    = 5.0f;
         constexpr float TimeHorizon = 2.0f;
 
-        Agents.PosX[(size_t)i]           = PosX;
-        Agents.PosZ[(size_t)i]           = PosZ;
-        Agents.VelX[(size_t)i]           = PrefX;
-        Agents.VelZ[(size_t)i]           = PrefZ;
-        Agents.PrefVelX[(size_t)i]       = PrefX;
-        Agents.PrefVelZ[(size_t)i]       = PrefZ;
-        Agents.Radius[(size_t)i]         = Radius;
-        Agents.MaxSpeed[(size_t)i]       = MaxSpeed;
-        Agents.InvTimeHorizon[(size_t)i] = 1.0f / TimeHorizon;
-        Agents.NeighborRange[(size_t)i]  = Radius * 2.0f + MaxSpeed * TimeHorizon;
-        Agents.Responsibility[(size_t)i] = 0.5f;
-        Agents.MaxNeighbors[(size_t)i]   = 8;
-        Agents.Flags[(size_t)i]          = Flags;
-        Agents.OutVelX[(size_t)i]        = 0.0f;
-        Agents.OutVelZ[(size_t)i]        = 0.0f;
-        Agents.OutNeighbors[(size_t)i]   = 0;
+        Agents.PosX[i]           = PosX;
+        Agents.PosZ[i]           = PosZ;
+        Agents.VelX[i]           = PrefX;
+        Agents.VelZ[i]           = PrefZ;
+        Agents.PrefVelX[i]       = PrefX;
+        Agents.PrefVelZ[i]       = PrefZ;
+        Agents.Radius[i]         = Radius;
+        Agents.MaxSpeed[i]       = MaxSpeed;
+        Agents.InvTimeHorizon[i] = 1.0f / TimeHorizon;
+        Agents.NeighborRange[i]  = Radius * 2.0f + MaxSpeed * TimeHorizon;
+        Agents.Responsibility[i] = 0.5f;
+        Agents.MaxNeighbors[i]   = 8;
+        Agents.Flags[i]          = Flags;
+        Agents.OutVelX[i]        = 0.0f;
+        Agents.OutVelZ[i]        = 0.0f;
+        Agents.OutNeighbors[i]   = 0;
     }
 }
 
@@ -551,13 +551,13 @@ TEST(CrowdSolver, ParallelAndSerialSolvesAgreeExactly)
     int32 Constrained = 0;
     for (int32 i = 0; i < Count; ++i)
     {
-        if (Serial.OutVelX[(size_t)i] != Parallel.OutVelX[(size_t)i]
-            || Serial.OutVelZ[(size_t)i] != Parallel.OutVelZ[(size_t)i]
-            || Serial.OutNeighbors[(size_t)i] != Parallel.OutNeighbors[(size_t)i])
+        if (Serial.OutVelX[i] != Parallel.OutVelX[i]
+            || Serial.OutVelZ[i] != Parallel.OutVelZ[i]
+            || Serial.OutNeighbors[i] != Parallel.OutNeighbors[i])
         {
             ++Mismatches;
         }
-        if (Serial.OutNeighbors[(size_t)i] > 0)
+        if (Serial.OutNeighbors[i] > 0)
         {
             ++Constrained;
         }
@@ -587,13 +587,13 @@ TEST(CrowdSolver, DensePackStaysFiniteAndWithinMaxSpeed)
 
     for (int32 i = 0; i < Count; ++i)
     {
-        const float VX = Agents.OutVelX[(size_t)i];
-        const float VZ = Agents.OutVelZ[(size_t)i];
+        const float VX = Agents.OutVelX[i];
+        const float VZ = Agents.OutVelZ[i];
 
         ASSERT_TRUE(std::isfinite(VX)) << "agent " << i << " solved to a non-finite X velocity";
         ASSERT_TRUE(std::isfinite(VZ)) << "agent " << i << " solved to a non-finite Z velocity";
 
         const float Speed = Math::Sqrt(VX * VX + VZ * VZ);
-        EXPECT_LE(Speed, Agents.MaxSpeed[(size_t)i] + 1e-3f) << "agent " << i << " exceeded its speed cap";
+        EXPECT_LE(Speed, Agents.MaxSpeed[i] + 1e-3f) << "agent " << i << " exceeded its speed cap";
     }
 }

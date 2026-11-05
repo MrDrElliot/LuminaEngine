@@ -19,28 +19,28 @@ namespace Lumina::DragDrop
 
     static FFixedString MakeFixed(FStringView View)
     {
-        return FFixedString(View.data(), View.size());
+        return FFixedString(View.GetData(), View.Len());
     }
 
     static FFixedString ExtractExtension(FStringView Path)
     {
-        const size_t Dot = Path.find_last_of('.');
-        if (Dot == FStringView::npos || Dot + 1 >= Path.size())
+        const int32 Dot = Path.FindLastOf('.');
+        if (Dot == Constants::kIndexNone || Dot + 1 >= Path.Len())
         {
             return {};
         }
         FFixedString Lower;
-        for (size_t i = Dot + 1; i < Path.size(); ++i)
+        for (int32 i = Dot + 1; i < Path.Len(); ++i)
         {
-            Lower.push_back((char)std::tolower((unsigned char)Path[i]));
+            Lower.AppendChar((char)std::tolower((unsigned char)Path[i]));
         }
         return Lower;
     }
 
     static bool IExtensionEquals(const FFixedString& A, FStringView B)
     {
-        if (A.size() != B.size()) return false;
-        for (size_t i = 0; i < A.size(); ++i)
+        if (A.Len() != B.Len()) return false;
+        for (int32 i = 0; i < A.Len(); ++i)
         {
             if (std::tolower((unsigned char)A[i]) != std::tolower((unsigned char)B[i]))
             {
@@ -67,7 +67,7 @@ namespace Lumina::DragDrop
 
     void SetAssetPayload(const FAssetData& Asset)
     {
-        SetAssetPayload(Asset.AssetClass, FStringView(Asset.Path.c_str(), Asset.Path.size()), nullptr);
+        SetAssetPayload(Asset.AssetClass, FStringView(*Asset.Path, Asset.Path.Len()), nullptr);
     }
 
     void SetAssetPayload(CObject* Asset)
@@ -79,7 +79,7 @@ namespace Lumina::DragDrop
         FName ClassName = Asset->GetClass() ? Asset->GetClass()->GetName() : FName();
         FName Name = Asset->GetName();
         FString PathStr = Name.ToString();
-        SetAssetPayload(ClassName, FStringView(PathStr.c_str(), PathStr.size()), Asset);
+        SetAssetPayload(ClassName, FStringView(*PathStr, PathStr.Len()), Asset);
     }
 
     void SetEntityPayload(CWorld* World, ECS::FEntity Entity)
@@ -180,9 +180,9 @@ namespace Lumina::DragDrop
             return GPayload.AssetObject;
         }
         // Lazy loaded by virtual path, so a source handing over only metadata still resolves on delivery.
-        if (!GPayload.AssetPath.empty())
+        if (!GPayload.AssetPath.IsEmpty())
         {
-            return StaticLoadObject(FStringView(GPayload.AssetPath.c_str(), GPayload.AssetPath.size()));
+            return StaticLoadObject(FStringView(*GPayload.AssetPath, GPayload.AssetPath.Len()));
         }
         return nullptr;
     }
@@ -267,7 +267,7 @@ namespace Lumina::DragDrop
         {
             return false;
         }
-        if (!ExtensionFilter.empty() && !IExtensionEquals(GPayload.FileExtension, ExtensionFilter))
+        if (!ExtensionFilter.IsEmpty() && !IExtensionEquals(GPayload.FileExtension, ExtensionFilter))
         {
             return false;
         }

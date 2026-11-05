@@ -147,17 +147,17 @@ namespace Lumina::NetPrediction
         }
 
         TVector<ECS::FEntity> Characters;
-        for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
+        for (ECS::FEntity Entity : Registry.View<ECS::Read<SNetworkComponent>>())
         {
             if (IsCharacter(Registry, Entity))
             {
-                Characters.push_back(Entity);
+                Characters.Add(Entity);
             }
         }
 
         for (ECS::FEntity Entity : Characters)
         {
-            const SNetworkComponent& Net = Registry.Get<SNetworkComponent>(Entity);
+            const SNetworkComponent& Net = Registry.Get<ECS::Read<SNetworkComponent>>(Entity);
             Physics::ECharacterNetDrive Drive;
             if (bServer)
             {
@@ -213,12 +213,12 @@ namespace Lumina::NetPrediction
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
         Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
-        auto View = Registry.View<FNetPredictionClient>();
+        auto View = Registry.View<ECS::Write<FNetPredictionClient>>();
         for (ECS::FEntity Entity : View)
         {
-            FNetPredictionClient& Prediction = Registry.Get<FNetPredictionClient>(Entity);
-            SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
-            SCharacterControllerComponent* Controller = Registry.TryGet<SCharacterControllerComponent>(Entity);
+            FNetPredictionClient& Prediction = Registry.Get<ECS::Write<FNetPredictionClient>>(Entity);
+            SCharacterMovementComponent* Movement = Registry.TryGet<ECS::Write<SCharacterMovementComponent>>(Entity);
+            const SCharacterControllerComponent* Controller = Registry.TryGet<ECS::Read<SCharacterControllerComponent>>(Entity);
             if (Movement == nullptr || Controller == nullptr)
             {
                 continue;
@@ -226,9 +226,9 @@ namespace Lumina::NetPrediction
 
             if (bAfter)
             {
-                if (!Prediction.Pending.empty() && !Prediction.Pending.back().bHasAfter)
+                if (!Prediction.Pending.IsEmpty() && !Prediction.Pending.Last().bHasAfter)
                 {
-                    Prediction.Pending.back().bHasAfter = Scene->GetCharacterNetState(Entity, Prediction.Pending.back().After);
+                    Prediction.Pending.Last().bHasAfter = Scene->GetCharacterNetState(Entity, Prediction.Pending.Last().After);
                 }
                 continue;
             }
@@ -251,11 +251,11 @@ namespace Lumina::NetPrediction
             Movement->bHasPendingMoveInput = Input.bHasMove;
             Movement->PendingLookYaw       = Input.LookYaw;
 
-            if (Prediction.Pending.size() >= MaxPendingMoves)
+            if (static_cast<uint32>(Prediction.Pending.Num()) >= MaxPendingMoves)
             {
-                Prediction.Pending.erase(Prediction.Pending.begin());
+                Prediction.Pending.RemoveAt(0);
             }
-            Prediction.Pending.push_back(FPredictedMove{ Command, Movement->MoveSpeed, {}, false });
+            Prediction.Pending.Add(FPredictedMove{ Command, Movement->MoveSpeed, {}, false });
         }
     }
 
@@ -302,29 +302,29 @@ namespace Lumina::NetPrediction
 
     void SendCommands(ECS::FRegistry& Registry, FNetWorldState& State)
     {
-        auto View = Registry.View<FNetPredictionClient, SNetworkComponent>();
+        auto View = Registry.View<ECS::Read<FNetPredictionClient>, ECS::Read<SNetworkComponent>>();
         for (ECS::FEntity Entity : View)
         {
-            const FNetPredictionClient& Prediction = Registry.Get<FNetPredictionClient>(Entity);
-            const SNetworkComponent& Net = Registry.Get<SNetworkComponent>(Entity);
-            if (Prediction.Pending.empty() || Net.NetGUID.Value == 0)
+            const FNetPredictionClient& Prediction = Registry.Get<ECS::Read<FNetPredictionClient>>(Entity);
+            const SNetworkComponent& Net = Registry.Get<ECS::Read<SNetworkComponent>>(Entity);
+            if (Prediction.Pending.IsEmpty() || Net.NetGUID.Value == 0)
             {
                 continue;
             }
 
-            const uint32 Count = Math::Min((uint32)Prediction.Pending.size(), MaxMovesPerUpload);
+            const uint32 Count = Math::Min((uint32)Prediction.Pending.Num(), MaxMovesPerUpload);
 
-            const uint32 First = (uint32)Prediction.Pending.size() - Count;
+            const uint32 First = (uint32)Prediction.Pending.Num() - Count;
 
             static thread_local TVector<FNetMoveCommand> Upload;
-            Upload.clear();
-            for (uint32 Index = First; Index < (uint32)Prediction.Pending.size(); ++Index)
+            Upload.Reset();
+            for (uint32 Index = First; Index < (uint32)Prediction.Pending.Num(); ++Index)
             {
-                Upload.push_back(Prediction.Pending[Index].Command);
+                Upload.Add(Prediction.Pending[Index].Command);
             }
             TVector<uint8> Buffer;
-            WriteMoveCommands(Buffer, Net.NetGUID.Value, Upload.data(), Count);
-            Net::SendFramed(*State.Transport, State.ServerConnection, Buffer.data(), static_cast<SIZE_T>(Buffer.size()), 1, ESendMode::UnreliableSequenced);
+            WriteMoveCommands(Buffer, Net.NetGUID.Value, Upload.GetData(), Count);
+            Net::SendFramed(*State.Transport, State.ServerConnection, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 1, ESendMode::UnreliableSequenced);
         }
     }
 
@@ -353,9 +353,9 @@ namespace Lumina::NetPrediction
         {
             return;
         }
-        const SNetworkComponent* Net = Registry.TryGet<SNetworkComponent>(Entity);
-        FNetPredictionServer* Prediction = Registry.TryGet<FNetPredictionServer>(Entity);
-        SCharacterControllerComponent* Controller = Registry.TryGet<SCharacterControllerComponent>(Entity);
+        const SNetworkComponent* Net = Registry.TryGet<ECS::Read<SNetworkComponent>>(Entity);
+        FNetPredictionServer* Prediction = Registry.TryGet<ECS::Write<FNetPredictionServer>>(Entity);
+        SCharacterControllerComponent* Controller = Registry.TryGet<ECS::Write<SCharacterControllerComponent>>(Entity);
         if (Net == nullptr || Net->OwningConnectionId != Sender || Prediction == nullptr || Controller == nullptr)
         {
             return;
@@ -415,9 +415,9 @@ namespace Lumina::NetPrediction
     {
         const float FixedDt = FixedStepOf(World);
         const float Cap = MaxBudgetSeconds / FixedDt + 4.0f;
-        for (ECS::FEntity Entity : Registry.View<FNetPredictionServer>())
+        for (ECS::FEntity Entity : Registry.View<ECS::Write<FNetPredictionServer>>())
         {
-            FNetPredictionServer& Prediction = Registry.Get<FNetPredictionServer>(Entity);
+            FNetPredictionServer& Prediction = Registry.Get<ECS::Write<FNetPredictionServer>>(Entity);
             Prediction.Budget = Math::Min(Prediction.Budget + DeltaTime / FixedDt, Cap);
         }
     }
@@ -427,11 +427,11 @@ namespace Lumina::NetPrediction
         const CNetworkSettings* Settings = GetDefault<CNetworkSettings>();
         const float AckInterval = 1.0f / Math::Max(Settings != nullptr ? Settings->MoveAckRate : 20.0f, 1.0f);
 
-        auto View = Registry.View<FNetPredictionServer, SNetworkComponent>();
+        auto View = Registry.View<ECS::Write<FNetPredictionServer>, ECS::Read<SNetworkComponent>>();
         for (ECS::FEntity Entity : View)
         {
-            FNetPredictionServer& Prediction = Registry.Get<FNetPredictionServer>(Entity);
-            const SNetworkComponent& Net = Registry.Get<SNetworkComponent>(Entity);
+            FNetPredictionServer& Prediction = Registry.Get<ECS::Write<FNetPredictionServer>>(Entity);
+            const SNetworkComponent& Net = Registry.Get<ECS::Read<SNetworkComponent>>(Entity);
             Prediction.TimeSinceAck += DeltaTime;
             if (!Prediction.bAckPending || Prediction.TimeSinceAck < AckInterval || Net.OwningConnectionId == 0 || Net.NetGUID.Value == 0)
             {
@@ -447,7 +447,7 @@ namespace Lumina::NetPrediction
             Net::WriteNetGuid(Writer, Net.NetGUID.Value);
             WriteVarUInt(Writer, Prediction.AckSeq);
             WriteState(Writer, Prediction.AckState);
-            Net::SendFramed(*State.Transport, FConnectionHandle{ Net.OwningConnectionId }, Buffer.data(), static_cast<SIZE_T>(Buffer.size()), 1, ESendMode::UnreliableSequenced);
+            Net::SendFramed(*State.Transport, FConnectionHandle{ Net.OwningConnectionId }, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 1, ESendMode::UnreliableSequenced);
         }
     }
 
@@ -473,14 +473,14 @@ namespace Lumina::NetPrediction
 
         const ECS::FEntity Entity = State.GuidTable.Find(SNetGUID{ Guid });
         FNetPredictionClient* Prediction = (Entity != ECS::NullEntity && Registry.IsValid(Entity))
-            ? Registry.TryGet<FNetPredictionClient>(Entity) : nullptr;
+            ? Registry.TryGet<ECS::Write<FNetPredictionClient>>(Entity) : nullptr;
         if (Prediction == nullptr || Seq <= Prediction->LastAcked)
         {
             return;
         }
 
         int32 Index = Constants::kIndexNone;
-        for (int32 Candidate = 0; Candidate < (int32)Prediction->Pending.size(); ++Candidate)
+        for (int32 Candidate = 0; Candidate < Prediction->Pending.Num(); ++Candidate)
         {
             if (Prediction->Pending[Candidate].Command.Seq == Seq)
             {
@@ -511,7 +511,7 @@ namespace Lumina::NetPrediction
             Scene->SetCharacterNetState(Entity, Corrected);
 
             const float FixedDt = FixedStepOf(World);
-            for (int32 Later = Index + 1; Later < (int32)Prediction->Pending.size(); ++Later)
+            for (int32 Later = Index + 1; Later < Prediction->Pending.Num(); ++Later)
             {
                 FPredictedMove& Move = Prediction->Pending[Later];
                 Scene->SimulateCharacterStep(Entity, ToInput(Move.Command, Move.MoveSpeed), FixedDt, true);
@@ -527,6 +527,6 @@ namespace Lumina::NetPrediction
             }
         }
 
-        Prediction->Pending.erase(Prediction->Pending.begin(), Prediction->Pending.begin() + Index + 1);
+        Prediction->Pending.RemoveAt(0, Index + 1);
     }
 }

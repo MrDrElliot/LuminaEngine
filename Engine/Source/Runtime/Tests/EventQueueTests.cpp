@@ -157,7 +157,7 @@ TEST(EventQueue, SendsFromEveryWorkerArrive)
     ECS::TEventReader<FPing> Reader;
 
     constexpr uint32 Count = 20000;
-    Task::ParallelFor(Count, [&](uint32)
+    Jobs::ParallelFor(Count, [&](uint32)
     {
         ECS::SendEvent(F.Queues, FPing{ 1 });
     });

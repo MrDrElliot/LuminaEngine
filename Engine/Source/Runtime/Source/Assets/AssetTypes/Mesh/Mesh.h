@@ -66,11 +66,11 @@ namespace Lumina
          *  48^3 field is well under a second, but scales cubically with Resolution. */
         void BuildDistanceField();
 
-        uint32 GetNumMaterials() const { return (uint32)Materials.size(); }
-        CMaterialInterface* GetMaterialAtSlot(size_t Slot) const;
-        void SetMaterialAtSlot(size_t Slot, CMaterialInterface* NewMaterial);
+        uint32 GetNumMaterials() const { return (uint32)Materials.Num(); }
+        CMaterialInterface* GetMaterialAtSlot(int32 Slot) const;
+        void SetMaterialAtSlot(int32 Slot, CMaterialInterface* NewMaterial);
         
-        FORCEINLINE const FGeometrySurface& GetSurface(size_t Slot) const { return MeshResources->GeometrySurfaces[Slot]; }
+        FORCEINLINE const FGeometrySurface& GetSurface(int32 Slot) const { return MeshResources->GeometrySurfaces[Slot]; }
         FORCEINLINE FMeshResource& GetMeshResource() const { return *MeshResources.get(); }
         FORCEINLINE const FMeshResource* TryGetMeshResource() const { return MeshResources.get(); }
 

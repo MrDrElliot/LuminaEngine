@@ -72,8 +72,8 @@ namespace Lumina
     void CAnimationGraphNodeGraph::ValidateGraph()
     {
         // PostLoad reads this pair list back to rewire the pins on open.
-        Connections.clear();
-        Connections.reserve(16);
+        Connections.Reset();
+        Connections.Reserve(16);
 
         for (const auto& NodeRef : Nodes)
         {
@@ -83,8 +83,8 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    Connections.push_back(InputPin->PinID);
-                    Connections.push_back(Connection->PinID);
+                    Connections.Add(InputPin->PinID);
+                    Connections.Add(Connection->PinID);
                 }
             }
         }
@@ -105,7 +105,7 @@ namespace Lumina
             Node->ClearError();
         }
 
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             EdNodeGraph::FError Error;
             Error.Name        = "No Output";
@@ -131,7 +131,7 @@ namespace Lumina
             return false;
         }
 
-        if (SortedNodes.empty())
+        if (SortedNodes.IsEmpty())
         {
             EdNodeGraph::FError Error;
             Error.Name        = "No Output";
@@ -149,17 +149,17 @@ namespace Lumina
             CEdGraphNode* Node = NodeRef.Get();
             if (CAnimGraphNode_SaveCachedPose* Save = Cast<CAnimGraphNode_SaveCachedPose>(Node))
             {
-                PendingSaves.push_back(Save);
+                PendingSaves.Add(Save);
             }
         }
 
         THashSet<CEdGraphNode*> EmittedNodes;
         THashSet<FName> WrittenCaches;
 
-        while (!PendingSaves.empty())
+        while (!PendingSaves.IsEmpty())
         {
             int32 ReadyIndex = -1;
-            for (int32 i = 0; i < (int32)PendingSaves.size(); ++i)
+            for (int32 i = 0; i < PendingSaves.Num(); ++i)
             {
                 THashSet<CEdGraphNode*> BranchNodes;
                 GraphAlgorithms::CollectReachableFromRoot(PendingSaves[i], BranchNodes);
@@ -170,7 +170,7 @@ namespace Lumina
                 bool bWaiting = false;
                 for (const FName& ReadCache : ReadCaches)
                 {
-                    if (WrittenCaches.find(ReadCache) != WrittenCaches.end())
+                    if (WrittenCaches.Contains(ReadCache))
                     {
                         continue;
                     }
@@ -204,7 +204,7 @@ namespace Lumina
             }
 
             CAnimGraphNode_SaveCachedPose* ReadySave = PendingSaves[ReadyIndex];
-            PendingSaves.erase(PendingSaves.begin() + ReadyIndex);
+            PendingSaves.RemoveAt(ReadyIndex);
 
             TVector<CEdGraphNode*> BranchOrder;
             CEdGraphNode* CyclicCachedPoseNode = GraphAlgorithms::TopologicalSortFromRoot(Nodes, BranchOrder,
@@ -222,7 +222,7 @@ namespace Lumina
 
             for (CEdGraphNode* Node : BranchOrder)
             {
-                if (EmittedNodes.find(Node) != EmittedNodes.end())
+                if (EmittedNodes.Contains(Node))
                 {
                     continue;
                 }
@@ -230,20 +230,20 @@ namespace Lumina
                 if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
                 {
                     AnimNode->GenerateBytecode(Compiler);
-                    EmittedNodes.insert(Node);
+                    EmittedNodes.Add(Node);
                 }
             }
 
-            WrittenCaches.insert(ReadySave->CacheName);
+            WrittenCaches.Add(ReadySave->CacheName);
         }
 
         // SortedNodes is dependency-ordered, so each node's input registers exist by the time it emits.
-        for (uint32 i = 0; i < (uint32)SortedNodes.size(); ++i)
+        for (int32 i = 0; i < SortedNodes.Num(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];
             Node->SetDebugExecutionOrder(i);
 
-            if (EmittedNodes.find(Node) != EmittedNodes.end())
+            if (EmittedNodes.Contains(Node))
             {
                 continue;
             }
@@ -273,7 +273,7 @@ namespace Lumina
         {
             if (CAnimGraphNode_UseCachedPose* Use = Cast<CAnimGraphNode_UseCachedPose>(Node))
             {
-                OutNames.insert(Use->CacheName);
+                OutNames.Add(Use->CacheName);
             }
 
             CAnimGraphNode_StateMachine* Machine = Cast<CAnimGraphNode_StateMachine>(Node);
@@ -310,7 +310,7 @@ namespace Lumina
         for (const auto& NodeRef : Graph->Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            GraphNodes.insert(Node);
+            GraphNodes.Add(Node);
         }
 
         CollectReadCacheNames(GraphNodes, OutNames);
@@ -401,15 +401,15 @@ namespace Lumina
 
         float ResolvePoseWeight(const CEdGraphNode* Node, float RootWeight, FAnimGraphDebugView& View, THashSet<const CEdGraphNode*>& Visiting)
         {
-            if (auto It = View.NodeWeights.find(Node); It != View.NodeWeights.end())
+            if (auto It = View.NodeWeights.Find(Node); It != nullptr)
             {
-                return It->second;
+                return (*It);
             }
             if (Cast<CAnimGraphNode_Output>(Node) != nullptr)
             {
                 return RootWeight;
             }
-            if (!Visiting.insert(Node).second)
+            if (!Visiting.TryAdd(Node))
             {
                 return 0.0f;
             }
@@ -439,7 +439,7 @@ namespace Lumina
 
     void CAnimationGraphNodeGraph::ComputePoseWeights(FAnimGraphDebugView& View, float RootWeight) const
     {
-        View.NodeWeights.clear();
+        View.NodeWeights.Reset();
         THashSet<const CEdGraphNode*> Visiting;
         for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : Nodes)
         {
@@ -479,28 +479,28 @@ namespace Lumina
 
     bool CAnimationGraphNodeGraph::IsNodeIdle(const CEdGraphNode* Node) const
     {
-        return DebugView != nullptr && DebugView->bShowWeights && DebugView->NodeWeights.contains(Node) && DebugView->GetNodeWeight(Node) < kIdleWeight;
+        return DebugView != nullptr && DebugView->bShowWeights && DebugView->NodeWeights.Contains(Node) && DebugView->GetNodeWeight(Node) < kIdleWeight;
     }
 
     void CAnimationGraphNodeGraph::GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImU32& OutColor, float& OutThickness) const
     {
         CEdNodeGraph::GetLinkStyle(InputPin, OutputPin, OutColor, OutThickness);
-        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.has_value())
+        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.IsSet())
         {
-            OutThickness = Math::Lerp(1.0f, OutThickness * 2.0f, Weight.value());
-            OutColor = EditorColors::ScaleAlpha(OutColor, 0.25f + 0.75f * Weight.value());
+            OutThickness = Math::Lerp(1.0f, OutThickness * 2.0f, Weight.GetValue());
+            OutColor = EditorColors::ScaleAlpha(OutColor, 0.25f + 0.75f * Weight.GetValue());
         }
     }
 
     bool CAnimationGraphNodeGraph::GetLinkBadge(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, FString& OutText, ImU32& OutColor)
     {
         const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin);
-        if (!Weight.has_value() || Weight.value() < kIdleWeight || Weight.value() > 1.0f - kIdleWeight)
+        if (!Weight.IsSet() || Weight.GetValue() < kIdleWeight || Weight.GetValue() > 1.0f - kIdleWeight)
         {
             return false;
         }
 
-        OutText = Format("{:.0f}%", Weight.value() * 100.0f);
+        OutText = Format("{:.0f}%", Weight.GetValue() * 100.0f);
         OutColor = EditorColors::U32(EditorColors::Accent());
         return true;
     }
@@ -512,13 +512,13 @@ namespace Lumina
             return false;
         }
 
-        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.has_value())
+        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.IsSet())
         {
-            return Weight.value() >= kIdleWeight;
+            return Weight.GetValue() >= kIdleWeight;
         }
 
         // A value wire runs only while what it carries is changing.
         const FAnimValueHistory* History = DebugView->FindHistory(OutputPin);
-        return History != nullptr && History->size() >= 2 && Math::Abs((*History)[History->size() - 1] - (*History)[History->size() - 2]) > 1e-5f;
+        return History != nullptr && History->Num() >= 2 && Math::Abs((*History)[History->Num() - 1] - (*History)[History->Num() - 2]) > 1e-5f;
     }
 }

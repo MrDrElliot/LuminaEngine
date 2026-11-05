@@ -51,10 +51,10 @@ namespace Lumina::Containers
 
         private:
 
-            FReference(TBitSet* InOwner, size_t InIndex) noexcept : Owner(InOwner), Index(InIndex) {}
+            FReference(TBitSet* InOwner, uint32 InIndex) noexcept : Owner(InOwner), Index(InIndex) {}
 
             TBitSet* Owner;
-            size_t   Index;
+            uint32   Index;
         };
 
         constexpr TBitSet() noexcept : Words{} {}
@@ -64,19 +64,15 @@ namespace Lumina::Containers
             Words[0] = Value;
             Trim();
         }
+        NODISCARD static constexpr int32 Num() noexcept { return static_cast<int32>(N); }
 
-        NODISCARD static constexpr size_t size() noexcept { return N; }
-        NODISCARD static constexpr size_t Num() noexcept { return N; }
-
-        NODISCARD FORCEINLINE bool Test(size_t Index) const noexcept
+        NODISCARD FORCEINLINE bool Test(uint32 Index) const noexcept
         {
             LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             return (Words[Index / kBitsPerWord] & Bit(Index)) != 0;
         }
 
-        NODISCARD FORCEINLINE bool test(size_t Index) const noexcept { return Test(Index); }
-
-        FORCEINLINE TBitSet& Set(size_t Index, bool Value = true) noexcept
+        FORCEINLINE TBitSet& Set(uint32 Index, bool Value = true) noexcept
         {
             LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             if (Value)
@@ -92,7 +88,7 @@ namespace Lumina::Containers
 
         TBitSet& Set() noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] = ~static_cast<uint64>(0);
             }
@@ -100,18 +96,18 @@ namespace Lumina::Containers
             return *this;
         }
 
-        FORCEINLINE TBitSet& Reset(size_t Index) noexcept { return Set(Index, false); }
+        FORCEINLINE TBitSet& Reset(uint32 Index) noexcept { return Set(Index, false); }
 
         TBitSet& Reset() noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] = 0;
             }
             return *this;
         }
 
-        FORCEINLINE TBitSet& Flip(size_t Index) noexcept
+        FORCEINLINE TBitSet& Flip(uint32 Index) noexcept
         {
             LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             Words[Index / kBitsPerWord] ^= Bit(Index);
@@ -120,7 +116,7 @@ namespace Lumina::Containers
 
         TBitSet& Flip() noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] = ~Words[Word];
             }
@@ -128,28 +124,19 @@ namespace Lumina::Containers
             return *this;
         }
 
-        FORCEINLINE TBitSet& set(size_t Index, bool Value = true) noexcept { return Set(Index, Value); }
-        FORCEINLINE TBitSet& set() noexcept { return Set(); }
-        FORCEINLINE TBitSet& reset(size_t Index) noexcept { return Reset(Index); }
-        FORCEINLINE TBitSet& reset() noexcept { return Reset(); }
-        FORCEINLINE TBitSet& flip(size_t Index) noexcept { return Flip(Index); }
-        FORCEINLINE TBitSet& flip() noexcept { return Flip(); }
-
-        NODISCARD size_t Count() const noexcept
+        NODISCARD uint32 Count() const noexcept
         {
-            size_t Total = 0;
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            uint32 Total = 0;
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
-                Total += static_cast<size_t>(std::popcount(Words[Word]));
+                Total += static_cast<uint32>(std::popcount(Words[Word]));
             }
             return Total;
         }
 
-        NODISCARD FORCEINLINE size_t count() const noexcept { return Count(); }
-
         NODISCARD bool Any() const noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 if (Words[Word] != 0)
                 {
@@ -162,29 +149,25 @@ namespace Lumina::Containers
         NODISCARD FORCEINLINE bool None() const noexcept { return !Any(); }
         NODISCARD bool All() const noexcept { return Count() == N; }
 
-        NODISCARD FORCEINLINE bool any() const noexcept { return Any(); }
-        NODISCARD FORCEINLINE bool none() const noexcept { return None(); }
-        NODISCARD FORCEINLINE bool all() const noexcept { return All(); }
-
         /** Index of the lowest set bit, or N when there is none. */
-        NODISCARD size_t FindFirst() const noexcept
+        NODISCARD uint32 FindFirst() const noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 if (Words[Word] != 0)
                 {
-                    return Word * kBitsPerWord + static_cast<size_t>(std::countr_zero(Words[Word]));
+                    return Word * kBitsPerWord + static_cast<uint32>(std::countr_zero(Words[Word]));
                 }
             }
             return N;
         }
 
-        NODISCARD FORCEINLINE bool operator[](size_t Index) const noexcept { return Test(Index); }
-        NODISCARD FORCEINLINE FReference operator[](size_t Index) noexcept { return FReference(this, Index); }
+        NODISCARD FORCEINLINE bool operator[](uint32 Index) const noexcept { return Test(Index); }
+        NODISCARD FORCEINLINE FReference operator[](uint32 Index) noexcept { return FReference(this, Index); }
 
         TBitSet& operator&=(const TBitSet& Other) noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] &= Other.Words[Word];
             }
@@ -193,7 +176,7 @@ namespace Lumina::Containers
 
         TBitSet& operator|=(const TBitSet& Other) noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] |= Other.Words[Word];
             }
@@ -202,7 +185,7 @@ namespace Lumina::Containers
 
         TBitSet& operator^=(const TBitSet& Other) noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 Words[Word] ^= Other.Words[Word];
             }
@@ -222,7 +205,7 @@ namespace Lumina::Containers
 
         NODISCARD friend bool operator==(const TBitSet& Left, const TBitSet& Right) noexcept
         {
-            for (size_t Word = 0; Word < kWordCount; ++Word)
+            for (uint32 Word = 0; Word < kWordCount; ++Word)
             {
                 if (Left.Words[Word] != Right.Words[Word])
                 {
@@ -233,11 +216,11 @@ namespace Lumina::Containers
         }
 
         NODISCARD const uint64* GetWords() const noexcept { return Words; }
-        NODISCARD static constexpr size_t GetWordCount() noexcept { return kWordCount; }
+        NODISCARD static constexpr uint32 GetWordCount() noexcept { return kWordCount; }
 
     private:
 
-        NODISCARD FORCEINLINE static constexpr uint64 Bit(size_t Index) noexcept
+        NODISCARD FORCEINLINE static constexpr uint64 Bit(uint32 Index) noexcept
         {
             return static_cast<uint64>(1) << (Index % kBitsPerWord);
         }

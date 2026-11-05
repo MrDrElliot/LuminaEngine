@@ -150,7 +150,7 @@ namespace Lumina
         PROPERTY()
         FString StatsFile;
 
-        // Walks every NT heap to size what foreign DLLs and the driver allocate. Holds a process-wide lock for as long as it takes.
+        // Walks every OS heap to size foreign DLL and driver allocations, holding a process-wide lock while it runs.
         PROPERTY()
         bool bIncludeHeaps = false;
     };
@@ -315,32 +315,31 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SOpenLevelParams
+    enum class EEngineSettingsAction : uint8
     {
-        GENERATED_BODY()
-
-        // A world path such as /Game/Content/Maps/Venezuela, optionally with ?listen and ?port=N.
-        PROPERTY()
-        FString Url;
+        Get,
+        Set,
     };
 
     REFLECT()
-    struct MCPEDITOR_API SOpenLevelResult
+    struct MCPEDITOR_API SEngineSettingsParams
     {
         GENERATED_BODY()
 
         PROPERTY()
-        FString Map;
-    };
+        EEngineSettingsAction Action = EEngineSettingsAction::Get;
 
-    REFLECT()
-    struct MCPEDITOR_API SSettingsParams
-    {
-        GENERATED_BODY()
-
-        // A settings class such as RendererSettings, matched by class or display name. Empty lists every class.
+        // A settings class such as RendererSettings, by class or display name. Get with none lists every class.
         PROPERTY()
         FString Class;
+
+        // Set only. The field to change, dotted for nested structs.
+        PROPERTY()
+        FString Path;
+
+        // Set only. The new value as JSON, so strings and enum names need quotes.
+        PROPERTY()
+        FString Value;
     };
 
     REFLECT()
@@ -363,37 +362,15 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SSettingsResult
+    struct MCPEDITOR_API SEngineSettingsResult
     {
         GENERATED_BODY()
 
+        // Get only.
         PROPERTY()
         TVector<SSettingsClassInfo> Classes;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SSetSettingParams
-    {
-        GENERATED_BODY()
-
-        // A settings class such as RendererSettings, matched by class or display name.
-        PROPERTY()
-        FString Class;
-
-        // The field to change, dotted for nested structs.
-        PROPERTY()
-        FString Path;
-
-        // The new value as JSON, so strings and enum names need quotes.
-        PROPERTY()
-        FString Value;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SSetSettingResult
-    {
-        GENERATED_BODY()
-
+        // Set only.
         PROPERTY()
         FString Previous;
 
@@ -401,9 +378,49 @@ namespace Lumina
         FString Current;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SGpuProfileParams
+    {
+        GENERATED_BODY()
+
+        // How many of the most expensive passes to list.
+        PROPERTY()
+        int32 Top = 25;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SGpuPassTime
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        float Ms = 0.0f;
+
+        // Nesting depth, so a parent's time includes its children's.
+        PROPERTY()
+        int32 Depth = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SGpuProfile
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bReady = false;
+
+        PROPERTY()
+        float TotalMs = 0.0f;
+
+        PROPERTY()
+        TVector<SGpuPassTime> Passes;
+    };
+
     namespace MCP
     {
-        // Frame timing, memory and level travel for exercising a running game.
         void RegisterRuntimeTools(FStringView Owner);
     }
 }

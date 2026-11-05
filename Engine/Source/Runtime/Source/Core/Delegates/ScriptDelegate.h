@@ -79,9 +79,10 @@ namespace Lumina
         // Every broadcast open on this delegate, so destroying the owner can flag all of them at once.
         struct FBroadcastFrame
         {
-            FBroadcastFrame*   Previous = nullptr;
-            TVector<FListener> PendingDestroy;
-            bool               bAlive   = true;
+            FBroadcastFrame*     Previous = nullptr;
+            FScriptDelegateBase* Relocated = nullptr;
+            TVector<FListener>   PendingDestroy;
+            bool                 bAlive   = true;
         };
 
         RUNTIME_API uint64 AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*));
@@ -94,7 +95,7 @@ namespace Lumina
 
     private:
 
-        void RetireAt(size_t Index);
+        void RetireAt(int32 Index);
         void Compact();
         void EndOpenBroadcasts();
         FBroadcastFrame* OutermostBroadcast() const;

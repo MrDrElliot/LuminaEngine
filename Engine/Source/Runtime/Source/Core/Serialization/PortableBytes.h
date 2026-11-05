@@ -41,7 +41,7 @@ namespace Lumina
         // The names and objects go through Ar itself, so whatever it writes into encodes them in its own tables.
         friend FArchive& operator<<(FArchive& Ar, FPortableBytes& Data) { return Ar << Data.FileVersion << Data.Names << Data.Objects << Data.Bytes; }
 
-        bool IsEmpty() const { return Bytes.empty(); }
+        bool IsEmpty() const { return Bytes.IsEmpty(); }
 
         int32                FileVersion = 0;
         TVector<uint8>       Bytes;

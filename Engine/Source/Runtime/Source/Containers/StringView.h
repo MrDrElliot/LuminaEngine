@@ -3,6 +3,7 @@
 #include <compare>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <string_view>
 
 #include "ContainerTraits.h"
@@ -19,14 +20,15 @@ namespace Lumina::Containers
              : Character;
     }
 
-    /** Borrowed character range. Never owns and never terminates; see TCStringView when a c_str is required. */
+    /** Borrowed character range. Never owns and never terminates; see TCStringView when a C string is required. */
     template <typename TChar>
     class TStringView
     {
     public:
 
+        using ElementType            = TChar;
         using value_type             = TChar;
-        using size_type              = size_t;
+        using size_type              = int32;
         using difference_type        = ptrdiff_t;
         using reference              = const TChar&;
         using const_reference        = const TChar&;
@@ -38,319 +40,258 @@ namespace Lumina::Containers
         using const_reverse_iterator = std::reverse_iterator<const TChar*>;
         using std_view_type          = std::basic_string_view<TChar>;
 
-        static constexpr size_t npos = ~static_cast<size_t>(0);
+        static constexpr int32 MaxLength = 0x7FFFFFFF;
 
         constexpr TStringView() noexcept = default;
 
-        constexpr TStringView(const TChar* InData, size_t InSize) noexcept
-            : Data(InData)
-            , Size(InSize)
-        {}
+        constexpr TStringView(const TChar* InData, int32 InLen) noexcept
+            : Chars(InData)
+            , Count(InLen)
+        {
+            LUMINA_CONTAINER_CHECK(InLen >= 0);
+        }
 
         constexpr TStringView(const TChar* InText) noexcept
-            : Data(InText)
-            , Size(InText != nullptr ? Length(InText) : 0)
+            : Chars(InText)
+            , Count(InText != nullptr ? StrLen(InText) : 0)
         {}
 
         constexpr TStringView(std_view_type Other) noexcept
-            : Data(Other.data())
-            , Size(Other.size())
-        {}
+            : Chars(Other.data())
+            , Count(static_cast<int32>(Other.size()))
+        {
+            LUMINA_CONTAINER_CHECK(Other.size() <= static_cast<size_t>(MaxLength));
+        }
 
         constexpr TStringView(std::nullptr_t) = delete;
 
-        NODISCARD constexpr operator std_view_type() const noexcept { return std_view_type(Data, Size); }
+        NODISCARD constexpr operator std_view_type() const noexcept { return std_view_type(Chars, USize()); }
 
-        NODISCARD FORCEINLINE constexpr const TChar* data() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr size_t size() const noexcept { return Size; }
-        NODISCARD FORCEINLINE constexpr size_t length() const noexcept { return Size; }
-        NODISCARD FORCEINLINE constexpr bool empty() const noexcept { return Size == 0; }
-        NODISCARD static constexpr size_t max_size() noexcept { return npos - 1; }
+        NODISCARD FORCEINLINE constexpr const TChar* GetData() const noexcept { return Chars; }
+        NODISCARD FORCEINLINE constexpr int32 Len() const noexcept { return Count; }
+        NODISCARD FORCEINLINE constexpr bool IsEmpty() const noexcept { return Count == 0; }
+        NODISCARD FORCEINLINE constexpr bool IsValidIndex(int32 Index) const noexcept { return static_cast<uint32>(Index) < USize(); }
 
-        NODISCARD FORCEINLINE constexpr const TChar* begin() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr const TChar* end() const noexcept { return Data + Size; }
-        NODISCARD FORCEINLINE constexpr const TChar* cbegin() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr const TChar* cend() const noexcept { return Data + Size; }
-
+        NODISCARD FORCEINLINE constexpr const TChar* begin() const noexcept { return Chars; }
+        NODISCARD FORCEINLINE constexpr const TChar* end() const noexcept { return Chars + USize(); }
         NODISCARD constexpr reverse_iterator rbegin() const noexcept { return reverse_iterator(end()); }
         NODISCARD constexpr reverse_iterator rend() const noexcept { return reverse_iterator(begin()); }
 
-        NODISCARD FORCEINLINE constexpr const TChar& operator[](size_t Index) const noexcept
+        NODISCARD FORCEINLINE constexpr const TChar& operator[](int32 Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Size);
-            return Data[Index];
+            LUMINA_CONTAINER_CHECK_INDEX(Index, USize());
+            return Chars[Index];
         }
 
-        NODISCARD FORCEINLINE constexpr const TChar& at(size_t Index) const noexcept { return (*this)[Index]; }
+        NODISCARD FORCEINLINE constexpr const TChar& Last(int32 IndexFromEnd = 0) const noexcept { return (*this)[Len() - IndexFromEnd - 1]; }
 
-        NODISCARD FORCEINLINE constexpr const TChar& front() const noexcept
+        constexpr void RemovePrefix(int32 InCount) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Size != 0);
-            return Data[0];
+            LUMINA_CONTAINER_CHECK_WITHIN(InCount, USize());
+            Chars += InCount;
+            Count -= InCount;
         }
 
-        NODISCARD FORCEINLINE constexpr const TChar& back() const noexcept
+        constexpr void RemoveSuffix(int32 InCount) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Size != 0);
-            return Data[Size - 1];
+            LUMINA_CONTAINER_CHECK_WITHIN(InCount, USize());
+            Count -= InCount;
         }
 
-        constexpr void remove_prefix(size_t Count) noexcept
+        // Clamped like Unreal's, so a start or count past either end yields what overlaps rather than asserting.
+        NODISCARD constexpr TStringView Mid(int32 Start, int32 InCount = MaxLength) const noexcept
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
-            Data += Count;
-            Size -= Count;
+            const uint32 First = Start < 0 ? 0u : (static_cast<uint32>(Start) < USize() ? static_cast<uint32>(Start) : USize());
+            const uint32 Wanted = InCount < 0 ? 0u : static_cast<uint32>(InCount);
+            const uint32 Available = USize() - First;
+            return FromRaw(Chars + First, Wanted < Available ? Wanted : Available);
         }
 
-        constexpr void remove_suffix(size_t Count) noexcept
+        NODISCARD FORCEINLINE constexpr TStringView Left(int32 InCount) const noexcept { return Mid(0, InCount); }
+        NODISCARD FORCEINLINE constexpr TStringView LeftChop(int32 InCount) const noexcept { return Mid(0, Len() - (InCount < 0 ? 0 : InCount)); }
+        NODISCARD FORCEINLINE constexpr TStringView Right(int32 InCount) const noexcept
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
-            Size -= Count;
+            const int32 Taken = InCount < 0 ? 0 : (InCount < Len() ? InCount : Len());
+            return Mid(Len() - Taken, Taken);
         }
+        NODISCARD FORCEINLINE constexpr TStringView RightChop(int32 InCount) const noexcept { return Mid(InCount < 0 ? 0 : InCount); }
 
-        FORCEINLINE constexpr void RemovePrefix(size_t Count) noexcept { remove_prefix(Count); }
-        FORCEINLINE constexpr void RemoveSuffix(size_t Count) noexcept { remove_suffix(Count); }
-
-        constexpr void swap(TStringView& Other) noexcept
+        NODISCARD constexpr TStringView TrimStart() const noexcept
         {
-            const TChar* SwapData = Data;
-            const size_t SwapSize = Size;
-            Data = Other.Data;
-            Size = Other.Size;
-            Other.Data = SwapData;
-            Other.Size = SwapSize;
-        }
-
-        NODISCARD constexpr TStringView substr(size_t Position = 0, size_t Count = npos) const noexcept
-        {
-            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
-            return TStringView(Data + Position, Clamp(Position, Count));
-        }
-
-        NODISCARD FORCEINLINE constexpr TStringView Left(size_t Count) const noexcept { return substr(0, Count); }
-        NODISCARD FORCEINLINE constexpr TStringView Right(size_t Count) const noexcept { return substr(Size - (Count < Size ? Count : Size)); }
-
-        NODISCARD constexpr int compare(TStringView Other) const noexcept
-        {
-            const size_t Shared = Size < Other.Size ? Size : Other.Size;
-            for (size_t Index = 0; Index < Shared; ++Index)
+            uint32 Index = 0;
+            while (Index < USize() && IsWhitespace(Chars[Index]))
             {
-                if (Data[Index] != Other.Data[Index])
+                ++Index;
+            }
+            return FromRaw(Chars + Index, USize() - Index);
+        }
+
+        NODISCARD constexpr TStringView TrimEnd() const noexcept
+        {
+            uint32 End = USize();
+            while (End > 0 && IsWhitespace(Chars[End - 1]))
+            {
+                --End;
+            }
+            return FromRaw(Chars, End);
+        }
+
+        NODISCARD FORCEINLINE constexpr TStringView TrimStartAndEnd() const noexcept { return TrimStart().TrimEnd(); }
+
+        // Through the traits, which is memcmp for char: vectorized, and unsigned on every platform as Equals already is.
+        NODISCARD constexpr int Compare(TStringView Other) const noexcept
+        {
+            const uint32 Shared = USize() < Other.USize() ? USize() : Other.USize();
+            if (Shared != 0)
+            {
+                if (const int Order = std::char_traits<TChar>::compare(Chars, Other.Chars, Shared); Order != 0)
                 {
-                    return Data[Index] < Other.Data[Index] ? -1 : 1;
+                    return Order < 0 ? -1 : 1;
                 }
             }
-            if (Size == Other.Size)
+            if (USize() == Other.USize())
             {
                 return 0;
             }
-            return Size < Other.Size ? -1 : 1;
+            return USize() < Other.USize() ? -1 : 1;
         }
 
-        NODISCARD constexpr int compare(size_t Position, size_t Count, TStringView Other) const noexcept
+        NODISCARD FORCEINLINE constexpr bool Equals(TStringView Other) const noexcept
         {
-            return substr(Position, Count).compare(Other);
+            return Count == Other.Count && (Count == 0 || std::char_traits<TChar>::compare(Chars, Other.Chars, USize()) == 0);
         }
 
-        NODISCARD constexpr bool starts_with(TStringView Prefix) const noexcept
+        NODISCARD constexpr bool StartsWith(TStringView Prefix) const noexcept
         {
-            return Size >= Prefix.Size && Match(Data, Prefix);
+            return USize() >= Prefix.USize() && Match(Chars, Prefix);
         }
 
-        NODISCARD constexpr bool starts_with(TChar Character) const noexcept { return Size != 0 && Data[0] == Character; }
+        NODISCARD constexpr bool StartsWith(TChar Character) const noexcept { return USize() != 0 && Chars[0] == Character; }
 
-        NODISCARD constexpr bool ends_with(TStringView Suffix) const noexcept
+        NODISCARD constexpr bool EndsWith(TStringView Suffix) const noexcept
         {
-            return Size >= Suffix.Size && Match(Data + (Size - Suffix.Size), Suffix);
+            return USize() >= Suffix.USize() && Match(Chars + (USize() - Suffix.USize()), Suffix);
         }
 
-        NODISCARD constexpr bool ends_with(TChar Character) const noexcept { return Size != 0 && Data[Size - 1] == Character; }
+        NODISCARD constexpr bool EndsWith(TChar Character) const noexcept { return USize() != 0 && Chars[USize() - 1] == Character; }
 
-        NODISCARD constexpr size_t find(TStringView Needle, size_t Position = 0) const noexcept
+        // Positions read as unsigned, so a negative start finds nothing and a negative reverse start searches everything.
+        NODISCARD constexpr int32 Find(TStringView Needle, int32 StartPosition = 0) const noexcept
         {
-            if (Needle.Size == 0)
+            const uint32 Position = static_cast<uint32>(StartPosition);
+            if (Needle.USize() == 0)
             {
-                return Position <= Size ? Position : npos;
+                return Position <= USize() ? static_cast<int32>(Position) : Constants::kIndexNone;
             }
-            if (Position >= Size || Needle.Size > Size - Position)
+            if (Position >= USize() || Needle.USize() > USize() - Position)
             {
-                return npos;
+                return Constants::kIndexNone;
             }
-            const size_t Last = Size - Needle.Size;
-            for (size_t Index = Position; Index <= Last; ++Index)
+            const TChar* Cursor = Chars + Position;
+            const TChar* Last = Chars + (USize() - Needle.USize());
+            while (Cursor <= Last)
             {
-                if (Data[Index] == Needle.Data[0] && Match(Data + Index, Needle))
+                Cursor = std::char_traits<TChar>::find(Cursor, static_cast<size_t>(Last - Cursor) + 1, Needle.Chars[0]);
+                if (Cursor == nullptr)
                 {
-                    return Index;
+                    return Constants::kIndexNone;
                 }
-            }
-            return npos;
-        }
-
-        NODISCARD constexpr size_t find(TChar Character, size_t Position = 0) const noexcept
-        {
-            for (size_t Index = Position; Index < Size; ++Index)
-            {
-                if (Data[Index] == Character)
+                if (Match(Cursor, Needle))
                 {
-                    return Index;
+                    return static_cast<int32>(Cursor - Chars);
                 }
+                ++Cursor;
             }
-            return npos;
+            return Constants::kIndexNone;
         }
 
-        NODISCARD constexpr size_t rfind(TStringView Needle, size_t Position = npos) const noexcept
+        NODISCARD constexpr int32 Find(TChar Character, int32 StartPosition = 0) const noexcept
         {
-            if (Needle.Size > Size)
+            const uint32 Position = static_cast<uint32>(StartPosition);
+            if (Position >= USize())
             {
-                return npos;
+                return Constants::kIndexNone;
             }
-            const size_t Highest = Size - Needle.Size;
-            size_t Index = Position < Highest ? Position : Highest;
-            for (;; --Index)
+            const TChar* Hit = std::char_traits<TChar>::find(Chars + Position, USize() - Position, Character);
+            return Hit != nullptr ? static_cast<int32>(Hit - Chars) : Constants::kIndexNone;
+        }
+
+        NODISCARD constexpr int32 FindLast(TStringView Needle, int32 StartPosition = Constants::kIndexNone) const noexcept
+        {
+            if (Needle.USize() > USize())
             {
-                if (Match(Data + Index, Needle))
+                return Constants::kIndexNone;
+            }
+            const uint32 Position = static_cast<uint32>(StartPosition);
+            const uint32 Highest = USize() - Needle.USize();
+            for (uint32 Index = Position < Highest ? Position : Highest;; --Index)
+            {
+                if ((Needle.USize() == 0 || Chars[Index] == Needle.Chars[0]) && Match(Chars + Index, Needle))
                 {
-                    return Index;
+                    return static_cast<int32>(Index);
                 }
                 if (Index == 0)
                 {
-                    return npos;
+                    return Constants::kIndexNone;
                 }
             }
         }
 
-        NODISCARD constexpr size_t rfind(TChar Character, size_t Position = npos) const noexcept
+        NODISCARD constexpr int32 FindLast(TChar Character, int32 StartPosition = Constants::kIndexNone) const noexcept
         {
-            if (Size == 0)
-            {
-                return npos;
-            }
-            size_t Index = Position < Size - 1 ? Position : Size - 1;
-            for (;; --Index)
-            {
-                if (Data[Index] == Character)
-                {
-                    return Index;
-                }
-                if (Index == 0)
-                {
-                    return npos;
-                }
-            }
+            return ScanBackward(StartPosition, [Character](TChar Value) { return Value == Character; });
         }
 
-        NODISCARD constexpr size_t find_first_of(TStringView Set, size_t Position = 0) const noexcept
+        NODISCARD FORCEINLINE constexpr bool FindChar(TChar Character, int32& OutIndex) const noexcept
         {
-            for (size_t Index = Position; Index < Size; ++Index)
-            {
-                if (Set.find(Data[Index]) != npos)
-                {
-                    return Index;
-                }
-            }
-            return npos;
+            OutIndex = Find(Character);
+            return OutIndex != Constants::kIndexNone;
         }
 
-        NODISCARD FORCEINLINE constexpr size_t find_first_of(TChar Character, size_t Position = 0) const noexcept { return find(Character, Position); }
-
-        NODISCARD constexpr size_t find_last_of(TStringView Set, size_t Position = npos) const noexcept
+        NODISCARD FORCEINLINE constexpr bool FindLastChar(TChar Character, int32& OutIndex) const noexcept
         {
-            if (Size == 0)
-            {
-                return npos;
-            }
-            size_t Index = Position < Size - 1 ? Position : Size - 1;
-            for (;; --Index)
-            {
-                if (Set.find(Data[Index]) != npos)
-                {
-                    return Index;
-                }
-                if (Index == 0)
-                {
-                    return npos;
-                }
-            }
+            OutIndex = FindLast(Character);
+            return OutIndex != Constants::kIndexNone;
         }
 
-        NODISCARD FORCEINLINE constexpr size_t find_last_of(TChar Character, size_t Position = npos) const noexcept { return rfind(Character, Position); }
-
-        NODISCARD constexpr size_t find_first_not_of(TStringView Set, size_t Position = 0) const noexcept
+        NODISCARD constexpr int32 FindFirstOf(TStringView Set, int32 StartPosition = 0) const noexcept
         {
-            for (size_t Index = Position; Index < Size; ++Index)
-            {
-                if (Set.find(Data[Index]) == npos)
-                {
-                    return Index;
-                }
-            }
-            return npos;
+            const FCharSet Members(Set);
+            return ScanForward(StartPosition, [&Members](TChar Value) { return Members.Contains(Value); });
         }
 
-        NODISCARD constexpr size_t find_first_not_of(TChar Character, size_t Position = 0) const noexcept
+        NODISCARD constexpr int32 FindLastOf(TStringView Set, int32 StartPosition = Constants::kIndexNone) const noexcept
         {
-            for (size_t Index = Position; Index < Size; ++Index)
-            {
-                if (Data[Index] != Character)
-                {
-                    return Index;
-                }
-            }
-            return npos;
+            const FCharSet Members(Set);
+            return ScanBackward(StartPosition, [&Members](TChar Value) { return Members.Contains(Value); });
         }
 
-        NODISCARD constexpr size_t find_last_not_of(TStringView Set, size_t Position = npos) const noexcept
+        NODISCARD FORCEINLINE constexpr int32 FindFirstOf(TChar Character, int32 StartPosition = 0) const noexcept { return Find(Character, StartPosition); }
+        NODISCARD FORCEINLINE constexpr int32 FindLastOf(TChar Character, int32 StartPosition = Constants::kIndexNone) const noexcept { return FindLast(Character, StartPosition); }
+
+        NODISCARD constexpr int32 FindFirstNotOf(TStringView Set, int32 StartPosition = 0) const noexcept
         {
-            if (Size == 0)
-            {
-                return npos;
-            }
-            size_t Index = Position < Size - 1 ? Position : Size - 1;
-            for (;; --Index)
-            {
-                if (Set.find(Data[Index]) == npos)
-                {
-                    return Index;
-                }
-                if (Index == 0)
-                {
-                    return npos;
-                }
-            }
+            const FCharSet Members(Set);
+            return ScanForward(StartPosition, [&Members](TChar Value) { return !Members.Contains(Value); });
         }
 
-        NODISCARD constexpr size_t find_last_not_of(TChar Character, size_t Position = npos) const noexcept
+        NODISCARD constexpr int32 FindLastNotOf(TStringView Set, int32 StartPosition = Constants::kIndexNone) const noexcept
         {
-            if (Size == 0)
-            {
-                return npos;
-            }
-            size_t Index = Position < Size - 1 ? Position : Size - 1;
-            for (;; --Index)
-            {
-                if (Data[Index] != Character)
-                {
-                    return Index;
-                }
-                if (Index == 0)
-                {
-                    return npos;
-                }
-            }
+            const FCharSet Members(Set);
+            return ScanBackward(StartPosition, [&Members](TChar Value) { return !Members.Contains(Value); });
         }
 
-        NODISCARD FORCEINLINE constexpr bool contains(TStringView Needle) const noexcept { return find(Needle) != npos; }
-        NODISCARD FORCEINLINE constexpr bool contains(TChar Character) const noexcept { return find(Character) != npos; }
+        NODISCARD FORCEINLINE constexpr bool Contains(TStringView Needle) const noexcept { return Find(Needle) != Constants::kIndexNone; }
+        NODISCARD FORCEINLINE constexpr bool Contains(TChar Character) const noexcept { return Find(Character) != Constants::kIndexNone; }
 
         NODISCARD friend constexpr bool operator==(TStringView A, TStringView B) noexcept
         {
-            return A.Size == B.Size && A.compare(B) == 0;
+            return A.Equals(B);
         }
 
         NODISCARD friend constexpr std::strong_ordering operator<=>(TStringView A, TStringView B) noexcept
         {
-            const int Result = A.compare(B);
+            const int Result = A.Compare(B);
             return Result < 0 ? std::strong_ordering::less
                  : Result > 0 ? std::strong_ordering::greater
                               : std::strong_ordering::equal;
@@ -363,38 +304,110 @@ namespace Lumina::Containers
         NODISCARD friend constexpr std::strong_ordering operator<=>(TStringView A, std_view_type B) noexcept { return A <=> TStringView(B); }
         NODISCARD friend constexpr std::strong_ordering operator<=>(TStringView A, const TChar* B) noexcept { return A <=> TStringView(B); }
 
-        NODISCARD static constexpr size_t Length(const TChar* Text) noexcept
+        // The traits fold a literal's length at compile time and call the vectorized strlen at run time.
+        NODISCARD static constexpr int32 StrLen(const TChar* Text) noexcept
         {
-            size_t Count = 0;
-            while (Text[Count] != TChar(0))
-            {
-                ++Count;
-            }
-            return Count;
+            const size_t Length = std::char_traits<TChar>::length(Text);
+            LUMINA_CONTAINER_CHECK(Length <= static_cast<size_t>(MaxLength));
+            return static_cast<int32>(Length);
         }
 
     private:
 
-        NODISCARD constexpr size_t Clamp(size_t Position, size_t Count) const noexcept
+        // A one-byte set is a 256-bit table, so membership is one test per character rather than a scan of the set.
+        class FCharSet
         {
-            const size_t Available = Size - Position;
-            return Count < Available ? Count : Available;
+        public:
+
+            explicit constexpr FCharSet(TStringView Set) noexcept
+                : Members(Set)
+            {
+                if constexpr (sizeof(TChar) == 1)
+                {
+                    for (const TChar Character : Set)
+                    {
+                        const uint32 Code = static_cast<uint8>(Character);
+                        Bits[Code >> 6] |= uint64(1) << (Code & 63);
+                    }
+                }
+            }
+
+            NODISCARD constexpr bool Contains(TChar Character) const noexcept
+            {
+                if constexpr (sizeof(TChar) == 1)
+                {
+                    const uint32 Code = static_cast<uint8>(Character);
+                    return ((Bits[Code >> 6] >> (Code & 63)) & 1) != 0;
+                }
+                else
+                {
+                    return Members.Find(Character) != Constants::kIndexNone;
+                }
+            }
+
+        private:
+
+            TStringView Members;
+            uint64      Bits[4] = {};
+        };
+
+        NODISCARD static constexpr bool IsWhitespace(TChar Character) noexcept
+        {
+            return Character == TChar(' ') || Character == TChar('\t') || Character == TChar('\n')
+                || Character == TChar('\r') || Character == TChar('\f') || Character == TChar('\v');
+        }
+
+        template <typename TPredicate>
+        NODISCARD constexpr int32 ScanForward(int32 StartPosition, TPredicate Predicate) const noexcept
+        {
+            for (uint32 Index = static_cast<uint32>(StartPosition); Index < USize(); ++Index)
+            {
+                if (Predicate(Chars[Index]))
+                {
+                    return static_cast<int32>(Index);
+                }
+            }
+            return Constants::kIndexNone;
+        }
+
+        template <typename TPredicate>
+        NODISCARD constexpr int32 ScanBackward(int32 StartPosition, TPredicate Predicate) const noexcept
+        {
+            if (USize() == 0)
+            {
+                return Constants::kIndexNone;
+            }
+            const uint32 Position = static_cast<uint32>(StartPosition);
+            for (uint32 Index = Position < USize() - 1 ? Position : USize() - 1;; --Index)
+            {
+                if (Predicate(Chars[Index]))
+                {
+                    return static_cast<int32>(Index);
+                }
+                if (Index == 0)
+                {
+                    return Constants::kIndexNone;
+                }
+            }
+        }
+
+        NODISCARD static constexpr TStringView FromRaw(const TChar* InData, uint32 InCount) noexcept
+        {
+            TStringView Result;
+            Result.Chars = InData;
+            Result.Count = static_cast<int32>(InCount);
+            return Result;
         }
 
         NODISCARD static constexpr bool Match(const TChar* At, TStringView Needle) noexcept
         {
-            for (size_t Index = 0; Index < Needle.Size; ++Index)
-            {
-                if (At[Index] != Needle.Data[Index])
-                {
-                    return false;
-                }
-            }
-            return true;
+            return Needle.USize() == 0 || std::char_traits<TChar>::compare(At, Needle.Chars, Needle.USize()) == 0;
         }
 
-        const TChar* Data = nullptr;
-        size_t       Size = 0;
+        NODISCARD FORCEINLINE constexpr uint32 USize() const noexcept { return static_cast<uint32>(Count); }
+
+        const TChar* Chars = nullptr;
+        int32        Count = 0;
     };
 
     /** A view that additionally guarantees a terminator, so it can be handed to any C API without a copy. */
@@ -403,63 +416,62 @@ namespace Lumina::Containers
     {
     public:
 
+        using ElementType   = TChar;
         using value_type    = TChar;
-        using size_type     = size_t;
+        using size_type     = int32;
         using const_pointer = const TChar*;
         using view_type     = TStringView<TChar>;
-
-        static constexpr size_t npos = view_type::npos;
 
         constexpr TCStringView() noexcept = default;
 
         constexpr TCStringView(const TChar* InText) noexcept
-            : Data(InText != nullptr ? InText : EmptyLiteral)
-            , Size(InText != nullptr ? view_type::Length(InText) : 0)
+            : Chars(InText != nullptr ? InText : EmptyLiteral)
+            , Count(InText != nullptr ? view_type::StrLen(InText) : 0)
         {}
 
         constexpr TCStringView(std::nullptr_t) = delete;
 
         /** For a caller that already knows the terminator is there, so the length need not be recomputed. */
-        NODISCARD static constexpr TCStringView FromTerminated(const TChar* InText, size_t InSize) noexcept
+        NODISCARD static constexpr TCStringView FromTerminated(const TChar* InText, int32 InLen) noexcept
         {
-            LUMINA_CONTAINER_CHECK(InText != nullptr && InText[InSize] == TChar(0));
-            return TCStringView(InText, InSize, FTrusted{});
+            LUMINA_CONTAINER_CHECK(InText != nullptr && InLen >= 0 && InText[InLen] == TChar(0));
+            return TCStringView(InText, InLen, FTrusted{});
         }
 
-        NODISCARD FORCEINLINE constexpr const TChar* c_str() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr const TChar* data() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr size_t size() const noexcept { return Size; }
-        NODISCARD FORCEINLINE constexpr size_t length() const noexcept { return Size; }
-        NODISCARD FORCEINLINE constexpr bool empty() const noexcept { return Size == 0; }
+        NODISCARD FORCEINLINE constexpr const TChar* operator*() const noexcept { return Chars; }
+        NODISCARD FORCEINLINE constexpr const TChar* GetData() const noexcept { return Chars; }
+        NODISCARD FORCEINLINE constexpr int32 Len() const noexcept { return Count; }
+        NODISCARD FORCEINLINE constexpr bool IsEmpty() const noexcept { return Count == 0; }
 
-        NODISCARD FORCEINLINE constexpr view_type View() const noexcept { return view_type(Data, Size); }
+        NODISCARD FORCEINLINE constexpr view_type View() const noexcept { return view_type(Chars, Count); }
         NODISCARD FORCEINLINE constexpr operator view_type() const noexcept { return View(); }
-        NODISCARD FORCEINLINE constexpr operator std::basic_string_view<TChar>() const noexcept { return std::basic_string_view<TChar>(Data, Size); }
+        NODISCARD FORCEINLINE constexpr operator std::basic_string_view<TChar>() const noexcept { return std::basic_string_view<TChar>(Chars, static_cast<size_t>(Count)); }
 
-        NODISCARD FORCEINLINE constexpr const TChar* begin() const noexcept { return Data; }
-        NODISCARD FORCEINLINE constexpr const TChar* end() const noexcept { return Data + Size; }
+        NODISCARD FORCEINLINE constexpr const TChar* begin() const noexcept { return Chars; }
+        NODISCARD FORCEINLINE constexpr const TChar* end() const noexcept { return Chars + Count; }
 
-        NODISCARD FORCEINLINE constexpr const TChar& operator[](size_t Index) const noexcept
+        NODISCARD FORCEINLINE constexpr const TChar& operator[](int32 Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Index, Size);
-            return Data[Index];
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Count);
+            return Chars[Index];
         }
 
         /** Dropping from the front keeps the terminator, which is why there is no matching RemoveSuffix. */
-        constexpr void RemovePrefix(size_t Count) noexcept
+        constexpr void RemovePrefix(int32 InCount) noexcept
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
-            Data += Count;
-            Size -= Count;
+            LUMINA_CONTAINER_CHECK_WITHIN(InCount, Count);
+            Chars += InCount;
+            Count -= InCount;
         }
 
-        NODISCARD FORCEINLINE constexpr int compare(view_type Other) const noexcept { return View().compare(Other); }
-        NODISCARD FORCEINLINE constexpr bool starts_with(view_type Prefix) const noexcept { return View().starts_with(Prefix); }
-        NODISCARD FORCEINLINE constexpr bool ends_with(view_type Suffix) const noexcept { return View().ends_with(Suffix); }
-        NODISCARD FORCEINLINE constexpr bool contains(view_type Needle) const noexcept { return View().contains(Needle); }
-        NODISCARD FORCEINLINE constexpr size_t find(view_type Needle, size_t Position = 0) const noexcept { return View().find(Needle, Position); }
-        NODISCARD FORCEINLINE constexpr size_t find(TChar Character, size_t Position = 0) const noexcept { return View().find(Character, Position); }
-        NODISCARD FORCEINLINE constexpr size_t rfind(TChar Character, size_t Position = npos) const noexcept { return View().rfind(Character, Position); }
+        NODISCARD FORCEINLINE constexpr int Compare(view_type Other) const noexcept { return View().Compare(Other); }
+        NODISCARD FORCEINLINE constexpr bool Equals(view_type Other) const noexcept { return View().Equals(Other); }
+        NODISCARD FORCEINLINE constexpr bool StartsWith(view_type Prefix) const noexcept { return View().StartsWith(Prefix); }
+        NODISCARD FORCEINLINE constexpr bool EndsWith(view_type Suffix) const noexcept { return View().EndsWith(Suffix); }
+        NODISCARD FORCEINLINE constexpr bool Contains(view_type Needle) const noexcept { return View().Contains(Needle); }
+        NODISCARD FORCEINLINE constexpr int32 Find(view_type Needle, int32 StartPosition = 0) const noexcept { return View().Find(Needle, StartPosition); }
+        NODISCARD FORCEINLINE constexpr int32 Find(TChar Character, int32 StartPosition = 0) const noexcept { return View().Find(Character, StartPosition); }
+        NODISCARD FORCEINLINE constexpr int32 FindLast(TChar Character, int32 StartPosition = Constants::kIndexNone) const noexcept { return View().FindLast(Character, StartPosition); }
 
         NODISCARD friend constexpr bool operator==(TCStringView A, TCStringView B) noexcept { return A.View() == B.View(); }
         NODISCARD friend constexpr std::strong_ordering operator<=>(TCStringView A, TCStringView B) noexcept { return A.View() <=> B.View(); }
@@ -468,59 +480,57 @@ namespace Lumina::Containers
 
         struct FTrusted {};
 
-        constexpr TCStringView(const TChar* InText, size_t InSize, FTrusted) noexcept
-            : Data(InText)
-            , Size(InSize)
+        constexpr TCStringView(const TChar* InText, int32 InLen, FTrusted) noexcept
+            : Chars(InText)
+            , Count(InLen)
         {}
 
         static constexpr TChar EmptyLiteral[1] = { TChar(0) };
 
-        const TChar* Data = EmptyLiteral;
-        size_t       Size = 0;
+        const TChar* Chars = EmptyLiteral;
+        int32        Count = 0;
     };
 
+    // Unsigned like Compare, so case-insensitive and case-sensitive sorting agree on characters past ASCII.
     template <typename TChar>
     NODISCARD constexpr int CompareIgnoreCase(TStringView<TChar> A, TStringView<TChar> B) noexcept
     {
-        const size_t Shared = A.size() < B.size() ? A.size() : B.size();
-        for (size_t Index = 0; Index < Shared; ++Index)
+        using FUnsigned = std::make_unsigned_t<TChar>;
+        const int32 Shared = A.Len() < B.Len() ? A.Len() : B.Len();
+        const TChar* Left = A.GetData();
+        const TChar* Right = B.GetData();
+        for (int32 Index = 0; Index < Shared; ++Index)
         {
-            const TChar Left = FoldAscii(A[Index]);
-            const TChar Right = FoldAscii(B[Index]);
-            if (Left != Right)
+            const FUnsigned FoldedLeft = static_cast<FUnsigned>(FoldAscii(Left[Index]));
+            const FUnsigned FoldedRight = static_cast<FUnsigned>(FoldAscii(Right[Index]));
+            if (FoldedLeft != FoldedRight)
             {
-                return Left < Right ? -1 : 1;
+                return FoldedLeft < FoldedRight ? -1 : 1;
             }
         }
-        if (A.size() == B.size())
+        if (A.Len() == B.Len())
         {
             return 0;
         }
-        return A.size() < B.size() ? -1 : 1;
+        return A.Len() < B.Len() ? -1 : 1;
     }
 
     template <typename TChar>
     NODISCARD constexpr bool EqualsIgnoreCase(TStringView<TChar> A, TStringView<TChar> B) noexcept
     {
-        return A.size() == B.size() && CompareIgnoreCase(A, B) == 0;
+        return A.Len() == B.Len() && CompareIgnoreCase(A, B) == 0;
     }
 
     template <typename TChar>
     NODISCARD inline uint64 GetTypeHash(TStringView<TChar> View) noexcept
     {
-        return HashBytes(View.data(), View.size() * sizeof(TChar));
+        return HashBytes(View.GetData(), static_cast<size_t>(View.Len()) * sizeof(TChar));
     }
 
     template <typename TChar>
     NODISCARD inline uint64 GetTypeHash(TCStringView<TChar> View) noexcept
     {
-        return HashBytes(View.data(), View.size() * sizeof(TChar));
-    }
-
-    template <typename TChar>
-    FORCEINLINE constexpr void swap(TStringView<TChar>& A, TStringView<TChar>& B) noexcept
-    {
-        A.swap(B);
+        return HashBytes(View.GetData(), static_cast<size_t>(View.Len()) * sizeof(TChar));
     }
 }
 
@@ -528,4 +538,14 @@ namespace Lumina
 {
     using FStringView  = Containers::TStringView<char>;
     using FCStringView = Containers::TCStringView<char>;
+}
+
+// Views borrow, so a ranges algorithm on a temporary one returns a usable iterator rather than a dangling marker.
+namespace std::ranges
+{
+    template <typename TChar>
+    inline constexpr bool enable_borrowed_range<Lumina::Containers::TStringView<TChar>> = true;
+
+    template <typename TChar>
+    inline constexpr bool enable_borrowed_range<Lumina::Containers::TCStringView<TChar>> = true;
 }

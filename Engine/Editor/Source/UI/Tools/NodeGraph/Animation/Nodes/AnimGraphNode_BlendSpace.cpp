@@ -37,7 +37,7 @@ namespace Lumina
             NodeError.Node        = this;
             Compiler.AddError(NodeError);
         }
-        else if (!bDynamicBlendSpace && BlendSpace.IsValid() && BlendSpace->Samples.empty())
+        else if (!bDynamicBlendSpace && BlendSpace.IsValid() && BlendSpace->Samples.IsEmpty())
         {
             EdNodeGraph::FError NodeWarning;
             NodeWarning.Name        = "Empty Blend Space";

@@ -77,6 +77,9 @@ namespace Lumina
 
         void CopyFrom(const FInstancedStruct& Other);
 
+        // Takes Other's value, moving an inline one into this storage since inline bytes cannot be handed over.
+        void TakeFrom(FInstancedStruct& Other);
+
         // Brings up storage for Type without constructing it; sets bInline and InstanceMemory.
         void AllocateFor(const CStruct* Type) const;
 

@@ -7,7 +7,7 @@
 #include "Input/InputAction.h"
 
 using namespace Lumina;
-using Json = nlohmann::json;
+using Json = Lumina::FJsonValue;
 
 // A copied scope handle closes twice and writes the rest of the struct into the PARENT node.
 
@@ -33,9 +33,9 @@ namespace
         Action.bInvert = true;
         Action.HoldTime = 0.5f;
         Action.TapTime = 0.125f;
-        Action.Bindings.push_back(MakeBinding(Lumina::EKey::D, 1.0f, Lumina::EInputAxisChannel::X));
-        Action.Bindings.push_back(MakeBinding(Lumina::EKey::A, -1.0f, Lumina::EInputAxisChannel::X));
-        Action.Bindings.push_back(MakeBinding(Lumina::EKey::W, 1.0f, Lumina::EInputAxisChannel::Y));
+        Action.Bindings.Add(MakeBinding(Lumina::EKey::D, 1.0f, Lumina::EInputAxisChannel::X));
+        Action.Bindings.Add(MakeBinding(Lumina::EKey::A, -1.0f, Lumina::EInputAxisChannel::X));
+        Action.Bindings.Add(MakeBinding(Lumina::EKey::W, 1.0f, Lumina::EInputAxisChannel::Y));
         return Action;
     }
 }
@@ -48,33 +48,33 @@ TEST(StructuredArchive, StructWithNestedArrayKeepsEveryFieldInItsOwnNode)
     Json Node;
     FJsonStructuredArchive::SaveStruct(Node, SInputAction::StaticStruct(), (void*)&Source);
 
-    ASSERT_TRUE(Node.is_object());
-    EXPECT_EQ(Node.value("Name", std::string()), "Move");
-    EXPECT_EQ(Node.value("Type", std::string()), "Axis2D");
-    EXPECT_TRUE(Node.value("bRunsInUI", false));
-    EXPECT_TRUE(Node.value("bInvert", false));
-    EXPECT_FLOAT_EQ(Node.value("DeadZone", 0.0f), 0.25f);
-    EXPECT_FLOAT_EQ(Node.value("Sensitivity", 0.0f), 2.5f);
-    EXPECT_FLOAT_EQ(Node.value("HoldTime", 0.0f), 0.5f);
-    EXPECT_FLOAT_EQ(Node.value("TapTime", 0.0f), 0.125f);
+    ASSERT_TRUE(Node.IsObject());
+    EXPECT_EQ(Node.GetString("Name"), "Move");
+    EXPECT_EQ(Node.GetString("Type"), "Axis2D");
+    EXPECT_TRUE(Node.GetValue("bRunsInUI", false));
+    EXPECT_TRUE(Node.GetValue("bInvert", false));
+    EXPECT_FLOAT_EQ(Node.GetValue("DeadZone", 0.0f), 0.25f);
+    EXPECT_FLOAT_EQ(Node.GetValue("Sensitivity", 0.0f), 2.5f);
+    EXPECT_FLOAT_EQ(Node.GetValue("HoldTime", 0.0f), 0.5f);
+    EXPECT_FLOAT_EQ(Node.GetValue("TapTime", 0.0f), 0.125f);
 
     // Every binding belongs to Bindings, and each one carries its own nested SKey record.
-    ASSERT_TRUE(Node.contains("Bindings"));
-    ASSERT_TRUE(Node["Bindings"].is_array());
-    ASSERT_EQ(Node["Bindings"].size(), 3u);
-    for (const Json& Binding : Node["Bindings"])
+    ASSERT_TRUE(Node.Contains("Bindings"));
+    ASSERT_TRUE(Node["Bindings"].IsArray());
+    ASSERT_EQ(Node["Bindings"].Num(), 3);
+    for (const Json& Binding : Node["Bindings"].AsArray())
     {
-        ASSERT_TRUE(Binding.is_object());
-        EXPECT_TRUE(Binding.contains("Key"));
-        EXPECT_TRUE(Binding["Key"].is_object());
-        EXPECT_TRUE(Binding.contains("Scale"));
-        EXPECT_TRUE(Binding.contains("Source"));
-        EXPECT_TRUE(Binding.contains("Channel"));
+        ASSERT_TRUE(Binding.IsObject());
+        EXPECT_TRUE(Binding.Contains("Key"));
+        EXPECT_TRUE(Binding["Key"].IsObject());
+        EXPECT_TRUE(Binding.Contains("Scale"));
+        EXPECT_TRUE(Binding.Contains("Source"));
+        EXPECT_TRUE(Binding.Contains("Channel"));
     }
-    EXPECT_EQ(Node["Bindings"][0]["Key"].value("Key", std::string()), "D");
-    EXPECT_FLOAT_EQ(Node["Bindings"][1].value("Scale", 0.0f), -1.0f);
+    EXPECT_EQ(Node["Bindings"][0]["Key"].GetString("Key"), "D");
+    EXPECT_FLOAT_EQ(Node["Bindings"][1].GetValue("Scale", 0.0f), -1.0f);
     // An enum is written through FName, which keeps whichever spelling of the name was interned first.
-    EXPECT_STRCASEEQ(Node["Bindings"][2].value("Channel", std::string()).c_str(), "Y");
+    EXPECT_STRCASEEQ(*Node["Bindings"][2].GetString("Channel"), "Y");
 
     SInputAction Loaded;
     FJsonStructuredArchive::LoadStruct(Node, SInputAction::StaticStruct(), &Loaded);
@@ -88,8 +88,8 @@ TEST(StructuredArchive, StructWithNestedArrayKeepsEveryFieldInItsOwnNode)
     EXPECT_FLOAT_EQ(Loaded.HoldTime, Source.HoldTime);
     EXPECT_FLOAT_EQ(Loaded.TapTime, Source.TapTime);
 
-    ASSERT_EQ(Loaded.Bindings.size(), Source.Bindings.size());
-    for (size_t i = 0; i < Source.Bindings.size(); ++i)
+    ASSERT_EQ(Loaded.Bindings.Num(), Source.Bindings.Num());
+    for (int32 i = 0; i < Source.Bindings.Num(); ++i)
     {
         EXPECT_EQ(Loaded.Bindings[i].Key.Key, Source.Bindings[i].Key.Key);
         EXPECT_EQ(Loaded.Bindings[i].Key.Device, Source.Bindings[i].Key.Device);
@@ -103,14 +103,14 @@ TEST(StructuredArchive, StructWithNestedArrayKeepsEveryFieldInItsOwnNode)
 TEST(StructuredArchive, ArrayOfStructsWithNestedArraysStaysNested)
 {
     TVector<SInputAction> Actions;
-    Actions.push_back(MakeAction("Move"));
-    Actions.push_back(MakeAction("Look"));
+    Actions.Add(MakeAction("Move"));
+    Actions.Add(MakeAction("Look"));
 
     Json Node;
     {
         FJsonStructuredArchive Ar(Node, false);
         FArchiveSlot Root = Ar.Open();
-        int32 Count = int32(Actions.size());
+        int32 Count = Actions.Num();
         FArchiveArray Array = Root.EnterArray(Count);
         for (SInputAction& Action : Actions)
         {
@@ -120,13 +120,13 @@ TEST(StructuredArchive, ArrayOfStructsWithNestedArraysStaysNested)
         }
     }
 
-    ASSERT_TRUE(Node.is_array()) << Node.dump(2);
-    ASSERT_EQ(Node.size(), 2u) << Node.dump(2);
-    EXPECT_EQ(Node[0].value("Name", std::string()), "Move");
-    EXPECT_EQ(Node[1].value("Name", std::string()), "Look");
-    ASSERT_TRUE(Node[0]["Bindings"].is_array());
-    EXPECT_EQ(Node[0]["Bindings"].size(), 3u) << Node.dump(2);
-    EXPECT_EQ(Node[1]["Bindings"].size(), 3u) << Node.dump(2);
+    ASSERT_TRUE(Node.IsArray()) << Node.ToString(2);
+    ASSERT_EQ(Node.Num(), 2) << Node.ToString(2);
+    EXPECT_EQ(Node[0].GetString("Name"), "Move");
+    EXPECT_EQ(Node[1].GetString("Name"), "Look");
+    ASSERT_TRUE(Node[0]["Bindings"].IsArray());
+    EXPECT_EQ(Node[0]["Bindings"].Num(), 3) << Node.ToString(2);
+    EXPECT_EQ(Node[1]["Bindings"].Num(), 3) << Node.ToString(2);
 
     TVector<SInputAction> Loaded;
     {
@@ -134,7 +134,7 @@ TEST(StructuredArchive, ArrayOfStructsWithNestedArraysStaysNested)
         FArchiveSlot Root = Ar.Open();
         int32 Count = 0;
         FArchiveArray Array = Root.EnterArray(Count);
-        Loaded.resize(size_t(Count));
+        Loaded.SetNum(size_t(Count));
         for (SInputAction& Action : Loaded)
         {
             FArchiveSlot Element = Array.EnterElement();
@@ -143,11 +143,11 @@ TEST(StructuredArchive, ArrayOfStructsWithNestedArraysStaysNested)
         }
     }
 
-    ASSERT_EQ(Loaded.size(), 2u);
+    ASSERT_EQ(Loaded.Num(), 2);
     EXPECT_EQ(Loaded[0].Name, FName("Move"));
     EXPECT_EQ(Loaded[1].Name, FName("Look"));
     EXPECT_FLOAT_EQ(Loaded[0].Sensitivity, 2.5f);
-    ASSERT_EQ(Loaded[0].Bindings.size(), 3u);
-    ASSERT_EQ(Loaded[1].Bindings.size(), 3u);
+    ASSERT_EQ(Loaded[0].Bindings.Num(), 3);
+    ASSERT_EQ(Loaded[1].Bindings.Num(), 3);
     EXPECT_EQ(Loaded[1].Bindings[2].Channel, Lumina::EInputAxisChannel::Y);
 }

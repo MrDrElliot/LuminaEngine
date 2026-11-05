@@ -42,7 +42,7 @@
 namespace Lumina
 {
     FPrefabEditorTool::FPrefabEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FSceneEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FSceneEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
@@ -84,7 +84,7 @@ namespace Lumina
         OutlinerContext.FilterFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             const FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Item);
-            return ImGuiX::PassSearchFilter(EntityFilterState.FilterName, Display.DisplayName.c_str());
+            return ImGuiX::PassSearchFilter(EntityFilterState.FilterName, *Display.DisplayName);
         };
 
         OutlinerContext.bAllowRangeSelect = true;
@@ -138,7 +138,7 @@ namespace Lumina
 
             if (ImGui::MenuItem("Copy Entity ID"))
             {
-                ImGui::SetClipboardText(Format("{}", (Data.Entity).Value).c_str());
+                ImGui::SetClipboardText(*Format("{}", (Data.Entity).Value));
             }
 
             DrawAddCollisionMenuItem(Data.Entity);
@@ -159,7 +159,7 @@ namespace Lumina
                 if (ImGui::MenuItem("Detach Children"))
                 {
                     TVector<ECS::FEntity> Children;
-                    Registry.GetHierarchy().ForEachChild(Data.Entity, [&](ECS::FEntity Child) { Children.push_back(Child); });
+                    Registry.GetHierarchy().ForEachChild(Data.Entity, [&](ECS::FEntity Child) { Children.Add(Child); });
                     BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::DetachImmediateChildren(Registry, Data.Entity);
                     EndTransaction("Detach Children");
@@ -400,7 +400,7 @@ namespace Lumina
         TVector<ECS::FEntity> ToDestroy;
         WorldRegistry.View<SPrefabComponent>().ForEach([&](ECS::FEntity E, const SPrefabComponent&)
         {
-            ToDestroy.push_back(E);
+            ToDestroy.Add(E);
         });
         for (ECS::FEntity E : ToDestroy)
         {
@@ -500,7 +500,7 @@ namespace Lumina
         TVector<ECS::FEntity> PrefabEntities;
         WorldRegistry.View<SPrefabComponent>().ForEach([&](ECS::FEntity E, const SPrefabComponent&)
         {
-            PrefabEntities.push_back(E);
+            PrefabEntities.Add(E);
         });
 
         // Taken before the registry is replaced, so the save's refresh can tell which instance children never diverged.
@@ -566,7 +566,7 @@ namespace Lumina
                 if (!bParentChangeDeferred)
                 {
                     bParentChangeDeferred = true;
-                    ImGuiX::Notifications::NotifyInfo("The parent of '{0}' changed. Its edits are kept, and the view refreshes after you save.", Prefab->GetName().c_str());
+                    ImGuiX::Notifications::NotifyInfo("The parent of '{0}' changed. Its edits are kept, and the view refreshes after you save.", *Prefab->GetName());
                 }
             }
             else if (ResolveCount != LastVariantResolveCount)
@@ -604,9 +604,9 @@ namespace Lumina
                 RebuildPropertyTables(LastSelected);
             }
         }
-        else if (!PropertyTables.empty() || DetailsEntity != ECS::NullEntity)
+        else if (!PropertyTables.IsEmpty() || DetailsEntity != ECS::NullEntity)
         {
-            PropertyTables.clear();
+            PropertyTables.Reset();
             DetailsEntity = ECS::NullEntity;
             bDetailsDirty = false;
         }
@@ -639,7 +639,7 @@ namespace Lumina
 
     void FPrefabEditorTool::ProcessDestroyRequests()
     {
-        if (EntityDestroyRequests.empty())
+        if (EntityDestroyRequests.IsEmpty())
         {
             return;
         }
@@ -649,10 +649,10 @@ namespace Lumina
 
         // Drained to a list first, since the command has to read them while they are still alive.
         TVector<ECS::FEntity> Doomed;
-        while (!EntityDestroyRequests.empty())
+        while (!EntityDestroyRequests.IsEmpty())
         {
-            Doomed.push_back(EntityDestroyRequests.front());
-            EntityDestroyRequests.pop();
+            Doomed.Add(EntityDestroyRequests.Peek());
+            EntityDestroyRequests.Pop();
         }
 
         BeginDestroyTransaction(Doomed);
@@ -696,8 +696,8 @@ namespace Lumina
 
     void FPrefabEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
-        PropertyTables.clear();
-        SelectedEntities.clear();
+        PropertyTables.Reset();
+        SelectedEntities.Reset();
     }
 
     ECS::FEntity FPrefabEditorTool::FindPrefabRoot() const
@@ -753,7 +753,7 @@ namespace Lumina
         {
             return;
         }
-        EntityDestroyRequests.push(Entity);
+        EntityDestroyRequests.Enqueue(Entity);
     }
 
     bool FPrefabEditorTool::IsComponentHiddenInDetails(const CStruct* Type) const
@@ -771,16 +771,16 @@ namespace Lumina
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        TFixedVector<ECS::FEntity, 64> Targets;
+        TInlineVector<ECS::FEntity, 64> Targets;
         Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Selected)
         {
             if (Registry.IsValid(Selected))
             {
-                Targets.push_back(Selected);
+                Targets.Add(Selected);
             }
         });
 
-        if (Targets.empty())
+        if (Targets.IsEmpty())
         {
             return;
         }
@@ -1041,16 +1041,16 @@ namespace Lumina
 
         if (bDuplicatePressed)
         {
-            TFixedVector<ECS::FEntity, 64> Sources;
-            Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Selected) { Sources.push_back(Selected); });
-            DuplicateAndSelect(TSpan<const ECS::FEntity>(Sources.data(), Sources.size()), "Duplicate");
+            TInlineVector<ECS::FEntity, 64> Sources;
+            Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Selected) { Sources.Add(Selected); });
+            DuplicateAndSelect(TSpan<const ECS::FEntity>(Sources.GetData(), Sources.Num()), "Duplicate");
         }
 
         if (bPastePressed)
         {
-            TFixedVector<ECS::FEntity, 64> Sources;
-            Registry.View<FCopiedTag>().ForEach([&](ECS::FEntity Tagged) { Sources.push_back(Tagged); });
-            DuplicateAndSelect(TSpan<const ECS::FEntity>(Sources.data(), Sources.size()), "Paste");
+            TInlineVector<ECS::FEntity, 64> Sources;
+            Registry.View<FCopiedTag>().ForEach([&](ECS::FEntity Tagged) { Sources.Add(Tagged); });
+            DuplicateAndSelect(TSpan<const ECS::FEntity>(Sources.GetData(), Sources.Num()), "Paste");
         }
     }
 
@@ -1170,13 +1170,13 @@ namespace Lumina
                 {
                     // The pivot is driven directly and the rest co-move, so the record covers both.
                     TVector<ECS::FEntity> Dragged;
-                    Dragged.reserve(SelectedEntities.size() + 1);
-                    Dragged.push_back(PivotEntity);
+                    Dragged.Reserve(SelectedEntities.Num() + 1);
+                    Dragged.Add(PivotEntity);
                     for (ECS::FEntity Selected : SelectedEntities)
                     {
                         if (Selected != PivotEntity)
                         {
-                            Dragged.push_back(Selected);
+                            Dragged.Add(Selected);
                         }
                     }
                     BeginTransformTransaction(Dragged);
@@ -1423,8 +1423,8 @@ namespace Lumina
         ImGuiID LeftOutlinerID = 0, LeftViewportID = 0;
         ImGui::DockBuilderSplitNode(LeftDockID, ImGuiDir_Left, 0.25f, &LeftOutlinerID, &LeftViewportID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), LeftViewportID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(OutlinerWindowName).c_str(), LeftOutlinerID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(PropertiesWindowName).c_str(), RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), LeftViewportID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(OutlinerWindowName), LeftOutlinerID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(PropertiesWindowName), RightDockID);
     }
 }

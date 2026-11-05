@@ -63,11 +63,11 @@ namespace Lumina
         PROPERTY()
         float BodyScale = 0.5f;
 
-        // Meshes that bob on a sine wave every frame, which moves transforms without any physics.
+        // Meshes that bob on a sine wave every frame, moving transforms without physics.
         PROPERTY()
         int32 Movers = 0;
 
-        // Particle system entities, each taking the next asset from ParticleSystems in turn.
+        // Particle system entities, each taking the next asset from ParticleSystems.
         PROPERTY()
         int32 Particles = 0;
 
@@ -153,7 +153,7 @@ namespace Lumina
         PROPERTY()
         int32 Columns = 32;
 
-        // Meters per cell. Each mesh covers the middle 60 percent of its cell, so a cell's center is inside it.
+        // Meters per cell. Each mesh covers the middle 60 percent of its cell.
         PROPERTY()
         float CellSize = 2.0f;
 
@@ -176,11 +176,11 @@ namespace Lumina
         PROPERTY()
         TVector<int32> Swap;
 
-        // Occupied cells destroyed and created again in the same frame, so the new entity can reuse the freed slot.
+        // Occupied cells destroyed and recreated in the same frame, so the new entity can reuse the freed slot.
         PROPERTY()
         TVector<int32> Respawn;
 
-        // Off-screen meshes added in the same frame, which grows the retained buffers under the grid's own changes.
+        // Off-screen meshes added in the same frame, growing the retained buffers under the grid's changes.
         PROPERTY()
         int32 Decoys = 0;
 
@@ -220,7 +220,6 @@ namespace Lumina
 
     namespace MCP
     {
-        // Bulk scene content for stress testing, which bypasses undo so thousands of entities stay cheap to add.
         void RegisterStressTools(FStringView Owner);
     }
 }

@@ -4,7 +4,7 @@
 
 namespace Lumina
 {
-    // A THashMap<K, V>, or any map that normalizes onto one, such as TFixedHashMap.
+    // A THashMap<K, V>, or any map that normalizes onto one, such as TInlineHashMap.
     class FReflectedMapProperty : public FReflectedProperty
     {
     public:

@@ -307,7 +307,7 @@ namespace LuminaInteropBench
         Anchor.Name = Lumina::FName("Anchor");
         Anchor.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Anchor.Type->Kind = Lumina::EPropertyTypeFlags::Int32;
-        Properties.Fields.push_back(Anchor);
+        Properties.Fields.Add(Anchor);
         Lumina::Scripting::AppendScriptPropertiesToClass(Class, Properties);
 
         auto* Record = Lumina::Cast<Lumina::CScriptStruct>(Class->LayoutRecord.Get());
@@ -318,13 +318,13 @@ namespace LuminaInteropBench
         In.Name = Lumina::FName("In");
         In.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         In.Type->Kind = Lumina::EPropertyTypeFlags::Int32;
-        Params.Fields.push_back(In);
+        Params.Fields.Add(In);
         Lumina::Scripting::FScriptExportField Out;
         Out.Name = Lumina::FName("Out");
         Out.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Out.Type->Kind = Lumina::EPropertyTypeFlags::Int32;
         Out.Flags = (Lumina::uint32)Lumina::EPropertyFlags::OutParam;
-        Params.Fields.push_back(Out);
+        Params.Fields.Add(Out);
 
         Lumina::FFunction* Function = Lumina::Scripting::MintScriptFunction(*Class, *Record,
             Lumina::FName("MarshalOut"), Params, -1, nullptr);
@@ -382,13 +382,13 @@ namespace LuminaInteropBench
         Text.Name = Lumina::FName("In");
         Text.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Text.Type->Kind = Lumina::EPropertyTypeFlags::String;
-        TextParams.Fields.push_back(Text);
+        TextParams.Fields.Add(Text);
         Lumina::Scripting::FScriptExportField Length;
         Length.Name = Lumina::FName("Length");
         Length.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Length.Type->Kind = Lumina::EPropertyTypeFlags::Int32;
         Length.Flags = (Lumina::uint32)Lumina::EPropertyFlags::OutParam;
-        TextParams.Fields.push_back(Length);
+        TextParams.Fields.Add(Length);
 
         Lumina::FFunction* TextFunction = Lumina::Scripting::MintScriptFunction(*Class, *Record,
             Lumina::FName("MarshalText"), TextParams, -1, nullptr);
@@ -421,13 +421,13 @@ namespace LuminaInteropBench
         Bone.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Bone.Type->Kind = Lumina::EPropertyTypeFlags::Struct;
         Bone.Type->NativeName = Lumina::FName("SAnimGraphBoneMaskBone");
-        ViewParams.Fields.push_back(Bone);
+        ViewParams.Fields.Add(Bone);
         Lumina::Scripting::FScriptExportField Weight;
         Weight.Name = Lumina::FName("Weight");
         Weight.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
         Weight.Type->Kind = Lumina::EPropertyTypeFlags::Float;
         Weight.Flags = (Lumina::uint32)Lumina::EPropertyFlags::OutParam;
-        ViewParams.Fields.push_back(Weight);
+        ViewParams.Fields.Add(Weight);
 
         Lumina::FFunction* ViewFunction = Lumina::Scripting::MintScriptFunction(*Class, *Record,
             Lumina::FName("MarshalStructView"), ViewParams, -1, nullptr);
@@ -526,11 +526,11 @@ namespace LuminaInteropBench
         constexpr int32 kOps = 196608;
         constexpr int32 kKinds = 14;
         Lumina::SInteropBenchComponent Component;
-        Component.Floats.resize(kSlots, 0.0f);
-        Component.Points.resize(kSlots);
+        Component.Floats.SetNum(kSlots, 0.0f);
+        Component.Points.SetNum(kSlots);
         for (int32 Slot = 0; Slot < kSlots; ++Slot)
         {
-            Component.Names.push_back(Lumina::FString("a name of moderate length"));
+            Component.Names.Emplace("a name of moderate length");
             Component.Scores[Slot] = (float)Slot;
         }
         Component.Label = "a label of moderate length";
@@ -544,14 +544,14 @@ namespace LuminaInteropBench
         const Lumina::FName CachedTag("BenchTag");
         float NativeTotal = 0.0f;
         double NativeNanos[kKinds] = {};
-        NativeNanos[0] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { if ((i & (kSlots - 1)) == 0) { Component.Floats.clear(); } Component.Floats.push_back(1.0f); } });
-        Component.Floats.resize(kSlots, 0.0f);
+        NativeNanos[0] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { if ((i & (kSlots - 1)) == 0) { Component.Floats.Reset(); } Component.Floats.Add(1.0f); } });
+        Component.Floats.SetNum(kSlots, 0.0f);
         NativeNanos[1] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Component.Floats[i & (kSlots - 1)] += 1.0f; } });
-        NativeNanos[2] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { NativeTotal += (float)Component.Floats.size(); } });
+        NativeNanos[2] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { NativeTotal += (float)Component.Floats.Num(); } });
         NativeNanos[3] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Component.Points[i & (kSlots - 1)].x += 1.0f; } });
-        NativeNanos[4] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Lumina::FString Copy = Component.Names[i & (kSlots - 1)]; NativeTotal += (float)Copy.size(); } });
+        NativeNanos[4] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Lumina::FString Copy = Component.Names[i & (kSlots - 1)]; NativeTotal += (float)Copy.Len(); } });
         NativeNanos[5] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Component.Names[i & (kSlots - 1)] = "abc"; } });
-        NativeNanos[6] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Lumina::FString Copy = Component.Label; NativeTotal += (float)Copy.size(); } });
+        NativeNanos[6] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Lumina::FString Copy = Component.Label; NativeTotal += (float)Copy.Len(); } });
         NativeNanos[7] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Component.Label = "hello"; } });
         NativeNanos[8] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { Component.Tag = Lumina::FName("BenchTag"); } });
         NativeNanos[9] = BestNanosOf(kRepeats, kOps, [&] { for (int32 i = 0; i < kOps; ++i) { NativeTotal += Component.Tag == CachedTag ? 1.0f : 0.0f; } });
@@ -640,13 +640,13 @@ namespace LuminaInteropBench
 
         Lumina::ECS::FRegistry& Registry = World->GetEntityRegistry();
         Lumina::TVector<Lumina::uint32> Ids;
-        Ids.reserve(kEntities);
+        Ids.Reserve(kEntities);
         for (int32 Index = 0; Index < kEntities; ++Index)
         {
             const Lumina::ECS::FEntity Entity = Registry.Create();
             Registry.Emplace<Lumina::STransformComponent>(Entity);
             Registry.Emplace<Lumina::SBuoyancyComponent>(Entity);
-            Ids.push_back((Lumina::uint32)Entity);
+            Ids.Add((Lumina::uint32)Entity);
         }
 
         // The same walk in C++, which is what a system written natively would cost.
@@ -705,14 +705,14 @@ namespace LuminaInteropBench
         {
             const double A = Walk(World, kTicks, &SeenWalk);
             const double B = Write(World, kTicks, &SeenWrite);
-            const double C = RandomGet(World, kTicks, Ids.data(), kEntities);
+            const double C = RandomGet(World, kTicks, Ids.GetData(), kEntities);
             const double D = StepOnly != nullptr ? StepOnly(World, kTicks, &SeenStep) : -1.0;
             BestWalk = A < BestWalk ? A : BestWalk;
             BestWrite = B < BestWrite ? B : BestWrite;
             BestRandom = C < BestRandom ? C : BestRandom;
             BestStep = D >= 0.0 && D < BestStep ? D : BestStep;
             const double E = WalkTwo(World, kTicks, &SeenWalkTwo);
-            const double F = LookupGet(World, kTicks, Ids.data(), kEntities);
+            const double F = LookupGet(World, kTicks, Ids.GetData(), kEntities);
             BestWalkTwo = E < BestWalkTwo ? E : BestWalkTwo;
             BestLookup = F < BestLookup ? F : BestLookup;
         }
@@ -771,10 +771,10 @@ namespace LuminaInteropBench
         {
             for (int32 Which = 0; Which < 4; ++Which)
             {
-                const double Value = SmallGet(World, Which, kTicks, Ids.data(), kEntities);
+                const double Value = SmallGet(World, Which, kTicks, Ids.GetData(), kEntities);
                 BestSmall[Which] = Value < BestSmall[Which] ? Value : BestSmall[Which];
             }
-            const double Value = KeptRef(World, kTicks, Ids.data(), kEntities);
+            const double Value = KeptRef(World, kTicks, Ids.GetData(), kEntities);
             BestKept = Value < BestKept ? Value : BestKept;
         }
 

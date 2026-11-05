@@ -167,7 +167,7 @@ namespace Lumina
 
         Link();
 
-        FString DefaultObjectName = GetName().c_str();
+        FString DefaultObjectName = *GetName();
         DefaultObjectName += "_CDO";
 
         FConstructCObjectParams Params(this);

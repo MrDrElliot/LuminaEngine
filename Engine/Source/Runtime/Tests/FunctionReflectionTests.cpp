@@ -32,7 +32,7 @@ namespace
 
         void Greet(const FString& Name, int32 Times)
         {
-            Greeted.clear();
+            Greeted.Reset();
             for (int32 i = 0; i < Times; ++i)
             {
                 Greeted += Name;
@@ -64,8 +64,8 @@ namespace
 
         int32 Lookup(const THashMap<FName, int32>& Table, FName Key)
         {
-            const auto It = Table.find(Key);
-            return It != Table.end() ? It->second : -1;
+            const auto It = Table.Find(Key);
+            return It != nullptr ? (*It) : -1;
         }
 
         void Consume(FString&& Moved)
@@ -135,7 +135,7 @@ namespace
     void Thunk_Echo(const FFunction&, void* Context, void* Frame)
     {
         FEcho_Parms& P = *(FEcho_Parms*)Frame;
-        P.ReturnValue = (CObject*)(((FSubject*)Context)->Echo((CObject*)P.In.Get()));
+        P.ReturnValue = ((FSubject*)Context)->Echo(P.In.Get());
     }
 
     struct FLookup_Parms
@@ -248,7 +248,7 @@ TEST(FunctionReflection, AStructReportsTheFunctionsItDeclares)
 {
     CStruct& Struct = SubjectStruct();
 
-    EXPECT_EQ(Struct.GetFunctions().size(), 7u);
+    EXPECT_EQ(Struct.GetFunctions().Num(), 7);
     ASSERT_NE(Struct.FindFunction("Double"), nullptr);
     ASSERT_NE(Struct.FindFunction("Greet"), nullptr);
     ASSERT_NE(Struct.FindFunction("Sum"), nullptr);
@@ -260,13 +260,13 @@ TEST(FunctionReflection, ParametersKeepTheirDeclaredOrder)
     const FFunction* Sum = SubjectStruct().FindFunction("Sum");
     ASSERT_NE(Sum, nullptr);
 
-    ASSERT_EQ(Sum->GetParams().size(), 3u);
+    ASSERT_EQ(Sum->GetParams().Num(), 3);
     EXPECT_EQ(Sum->GetParams()[0]->GetPropertyName(), FName("A"));
     EXPECT_EQ(Sum->GetParams()[1]->GetPropertyName(), FName("B"));
     EXPECT_EQ(Sum->GetParams()[2]->GetPropertyName(), FName("ReturnValue"));
 
     // Arguments excludes the return, which is what a caller walks to fill a frame.
-    EXPECT_EQ(Sum->GetArguments().size(), 2u);
+    EXPECT_EQ(Sum->GetArguments().Num(), 2);
     EXPECT_EQ(Sum->GetReturnParam(), Sum->GetParams()[2]);
     EXPECT_TRUE(Sum->HasReturn());
 }
@@ -278,7 +278,7 @@ TEST(FunctionReflection, AVoidFunctionHasNoReturnParameter)
 
     EXPECT_FALSE(Greet->HasReturn());
     EXPECT_EQ(Greet->GetReturnParam(), nullptr);
-    EXPECT_EQ(Greet->GetArguments().size(), Greet->GetParams().size());
+    EXPECT_EQ(Greet->GetArguments().Num(), Greet->GetParams().Num());
 }
 
 TEST(FunctionReflection, CallingThroughAFrameReachesTheRealFunction)
@@ -331,7 +331,7 @@ TEST(FunctionReflection, AParameterThatOwnsMemoryIsBuiltAndTornDown)
         Frame.Invoke(&Subject);
     }
 
-    EXPECT_EQ(Subject.Greeted.size(), 2u * strlen("Long enough to reach the heap rather than the small-string buffer"));
+    EXPECT_EQ(Subject.Greeted.Len(), 2 * strlen("Long enough to reach the heap rather than the small-string buffer"));
 }
 
 TEST(FunctionReflection, AFrameLargerThanTheInlineBufferStillWorks)
@@ -371,10 +371,10 @@ TEST(FunctionReflection, AContainerParameterIsOneArgumentDespiteItsInner)
     const FFunction* Total = SubjectStruct().FindFunction("Total");
     ASSERT_NE(Total, nullptr);
 
-    ASSERT_EQ(Total->GetParams().size(), 2u) << "the inner is described by its owner, not declared beside it";
+    ASSERT_EQ(Total->GetParams().Num(), 2) << "the inner is described by its owner, not declared beside it";
     EXPECT_EQ(Total->GetParams()[0]->GetPropertyName(), FName("Values"));
     EXPECT_EQ(Total->GetParams()[0]->GetType(), EPropertyTypeFlags::Vector);
-    EXPECT_EQ(Total->GetArguments().size(), 1u);
+    EXPECT_EQ(Total->GetArguments().Num(), 1);
     EXPECT_EQ(Total->GetReturnParam(), Total->GetParams()[1]);
 }
 
@@ -390,9 +390,9 @@ TEST(FunctionReflection, ACallWithAContainerArgumentRoundTrips)
         FFunctionFrame Frame(*Total);
 
         TVector<int32>& Values = Frame.At<TVector<int32>>(0);
-        Values.push_back(10);
-        Values.push_back(20);
-        Values.push_back(12);
+        Values.Add(10);
+        Values.Add(20);
+        Values.Add(12);
 
         Frame.Invoke(&Subject);
 
@@ -443,11 +443,11 @@ TEST(FunctionReflection, AMapParameterIsOneArgumentWithTwoInners)
     const FFunction* Lookup = SubjectStruct().FindFunction("Lookup");
     ASSERT_NE(Lookup, nullptr);
 
-    ASSERT_EQ(Lookup->GetParams().size(), 3u) << "Table, Key and the return; the inners are not declared";
+    ASSERT_EQ(Lookup->GetParams().Num(), 3) << "Table, Key and the return; the inners are not declared";
     EXPECT_EQ(Lookup->GetParams()[0]->GetPropertyName(), FName("Table"));
     EXPECT_EQ(Lookup->GetParams()[0]->GetType(), EPropertyTypeFlags::Map);
     EXPECT_EQ(Lookup->GetParams()[1]->GetPropertyName(), FName("Key"));
-    EXPECT_EQ(Lookup->GetArguments().size(), 2u);
+    EXPECT_EQ(Lookup->GetArguments().Num(), 2);
 }
 
 TEST(FunctionReflection, ACallWithAMapArgumentRoundTrips)
@@ -459,7 +459,7 @@ TEST(FunctionReflection, ACallWithAMapArgumentRoundTrips)
     FSubject Subject;
 
     FFunctionFrame Frame(*Lookup);
-    Frame.At<THashMap<FName, int32>>(0).emplace(FName("Answer"), 42);
+    Frame.At<THashMap<FName, int32>>(0).TryAdd(FName("Answer"), 42);
     Frame.At<FName>(1) = FName("Answer");
     Frame.Invoke(&Subject);
 

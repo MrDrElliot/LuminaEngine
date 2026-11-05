@@ -20,6 +20,18 @@ namespace LuminaFormatBench
 
     volatile uint64 GBenchSink = 0;
 
+    struct FStringAppender
+    {
+        using difference_type = std::ptrdiff_t;
+
+        FString* Target = nullptr;
+
+        FStringAppender& operator=(char Character) { Target->AppendChar(Character); return *this; }
+        FStringAppender& operator*() { return *this; }
+        FStringAppender& operator++() { return *this; }
+        FStringAppender operator++(int) { return *this; }
+    };
+
     constexpr int kIterations = 200'000;
     constexpr int kRepeats    = 5;
 
@@ -79,7 +91,7 @@ namespace LuminaFormatBench
                 {                                                                              \
                     FString Text;                                                              \
                     StdToExpr;                                                                 \
-                    Consume(Text.data(), Text.size());                                         \
+                    Consume(Text.GetData(), Text.Len());                                         \
                 }                                                                              \
             });                                                                                \
             const double Ours = BestMillisOf(kRepeats, [&]                                     \
@@ -87,7 +99,7 @@ namespace LuminaFormatBench
                 for (int32 Index = 0; Index < kIterations; ++Index)                            \
                 {                                                                              \
                     const FString Text = OursExpr;                                             \
-                    Consume(Text.data(), Text.size());                                         \
+                    Consume(Text.GetData(), Text.Len());                                         \
                 }                                                                              \
             });                                                                                \
             ReportHeader(Title);                                                               \
@@ -100,7 +112,7 @@ namespace LuminaFormatBench
     {
         BENCH_CASE("200,000 x Format(\"{}\", int)",
             std::format("{}", Index),
-            std::format_to(std::back_inserter(Text), "{}", Index),
+            std::format_to(FStringAppender{ &Text }, "{}", Index),
             Lumina::Format("{}", Index));
         SUCCEED();
     }
@@ -111,7 +123,7 @@ namespace LuminaFormatBench
 
         BENCH_CASE("200,000 x Format(\"{} {} {}\", int, double, str)",
             std::format("{} {} {}", Index, 3.5, Name),
-            std::format_to(std::back_inserter(Text), "{} {} {}", Index, 3.5, Name),
+            std::format_to(FStringAppender{ &Text }, "{} {} {}", Index, 3.5, Name),
             Lumina::Format("{} {} {}", Index, 3.5, Name));
         SUCCEED();
     }
@@ -122,7 +134,7 @@ namespace LuminaFormatBench
 
         BENCH_CASE("200,000 x a typical log line",
             std::format("[{}] {} finished in {:.2f} ms ({} draws)", Category, "frame", 12.3456, Index),
-            std::format_to(std::back_inserter(Text), "[{}] {} finished in {:.2f} ms ({} draws)",
+            std::format_to(FStringAppender{ &Text }, "[{}] {} finished in {:.2f} ms ({} draws)",
                            Category, "frame", 12.3456, Index),
             Lumina::Format("[{}] {} finished in {:.2f} ms ({} draws)", Category, "frame", 12.3456, Index));
         SUCCEED();
@@ -132,7 +144,7 @@ namespace LuminaFormatBench
     {
         BENCH_CASE("200,000 x Format(\"{:.3f}\", double)",
             std::format("{:.3f}", 1234.56789),
-            std::format_to(std::back_inserter(Text), "{:.3f}", 1234.56789),
+            std::format_to(FStringAppender{ &Text }, "{:.3f}", 1234.56789),
             Lumina::Format("{:.3f}", 1234.56789));
         SUCCEED();
     }
@@ -141,7 +153,7 @@ namespace LuminaFormatBench
     {
         BENCH_CASE("200,000 x Format(\"{:#010x}\", uint32)",
             std::format("{:#010x}", static_cast<Lumina::uint32>(Index)),
-            std::format_to(std::back_inserter(Text), "{:#010x}", static_cast<Lumina::uint32>(Index)),
+            std::format_to(FStringAppender{ &Text }, "{:#010x}", static_cast<Lumina::uint32>(Index)),
             Lumina::Format("{:#010x}", static_cast<Lumina::uint32>(Index)));
         SUCCEED();
     }
@@ -153,9 +165,9 @@ namespace LuminaFormatBench
             FString Text;
             for (int32 Index = 0; Index < kIterations; ++Index)
             {
-                Text.clear();
-                std::format_to(std::back_inserter(Text), "{}:{}", "key", Index);
-                Consume(Text.data(), Text.size());
+                Text.Reset();
+                std::format_to(FStringAppender{ &Text }, "{}:{}", "key", Index);
+                Consume(Text.GetData(), Text.Len());
             }
         });
 
@@ -166,7 +178,7 @@ namespace LuminaFormatBench
             {
                 Builder.Reset();
                 Builder.AppendFormat("{}:{}", "key", Index);
-                Consume(Builder.data(), Builder.size());
+                Consume(Builder.GetData(), Builder.Len());
             }
         });
 

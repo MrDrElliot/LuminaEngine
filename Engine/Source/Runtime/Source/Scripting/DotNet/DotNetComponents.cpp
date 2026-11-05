@@ -31,7 +31,7 @@ LUMINA_DOTNET_EXPORT(const void*, FindComponentOps)(const char* Name, int Len)
 namespace
 {
     // Inline down to the sparse probe, since this is the path every C# get takes.
-    FORCEINLINE const Lumina::ECS::FSparseSet* LmFindPool(uint64 World, const void* Ops)
+    FORCEINLINE Lumina::ECS::FSparseSet* LmFindPool(uint64 World, const void* Ops)
     {
         Lumina::CWorld* W = reinterpret_cast<Lumina::CWorld*>(World);
         const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
@@ -39,18 +39,36 @@ namespace
     }
 }
 
+// Managed code writes through what it gets without crossing again, so a tracked pool stamps here and counts the pointer as cached.
 LUMINA_DOTNET_EXPORT(void*, GetComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
+    if (Pool == nullptr)
+    {
+        return nullptr;
+    }
+    Pool->MarkPointersEscaped();
+    return Pool->GetRawForWrite(static_cast<Lumina::ECS::FEntity>(Entity));
+}
+
+// For read access, which neither stamps the row nor counts the pointer as escaped, since nothing is written through it.
+LUMINA_DOTNET_EXPORT(const void*, GetComponentRead)(uint64 World, uint32 Entity, const void* Ops)
+{
     const Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
-    return Pool ? Pool->GetRaw(static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
+    return Pool != nullptr ? Pool->GetRaw(static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
 }
 
 // Also hands back the pool's layout epoch, so the view can revalidate itself without crossing again.
 LUMINA_DOTNET_EXPORT(void*, GetComponentTracked)(uint64 World, uint32 Entity, const void* Ops, const uint32** OutEpoch)
 {
     *OutEpoch = nullptr;
-    const Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
-    void* Component = Pool ? Pool->GetRaw(static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
+    Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
+    if (Pool == nullptr)
+    {
+        return nullptr;
+    }
+    Pool->MarkPointersEscaped();
+    void* Component = Pool->GetRawForWrite(static_cast<Lumina::ECS::FEntity>(Entity));
     if (Component != nullptr)
     {
         *OutEpoch = Pool->GetLayoutEpoch();
@@ -78,10 +96,12 @@ LUMINA_DOTNET_EXPORT(int, TrackComponentPointer)(const void* Payload, const void
             return;
         }
 
-        const Lumina::ECS::FSparseSet* Pool = World.GetEntityRegistry().FindStorage(static_cast<uint32>(O->TypeId));
+        Lumina::ECS::FSparseSet* Pool = World.GetEntityRegistry().FindStorage(static_cast<uint32>(O->TypeId));
         const Lumina::ECS::FEntity Owner = Pool != nullptr ? Pool->FindPayloadOwner(Payload) : Lumina::ECS::NullEntity;
         if (!Owner.IsNull())
         {
+            Pool->MarkPointersEscaped();
+            Pool->StampEntity(Owner);
             *OutWorld = reinterpret_cast<uint64>(&World);
             *OutEntity = Owner.GetPacked();
             *OutEpoch = Pool->GetLayoutEpoch();
@@ -194,6 +214,7 @@ LUMINA_DOTNET_EXPORT(void, RegistryPatch)(uint64 World, uint32 Entity, const voi
 LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(FindComponentOps),
     LUMINA_DOTNET_SIG(GetComponent),
+    LUMINA_DOTNET_SIG(GetComponentRead),
     LUMINA_DOTNET_SIG(GetComponentTracked),
     LUMINA_DOTNET_SIG(TrackComponentPointer),
     LUMINA_DOTNET_SIG(HasComponent),

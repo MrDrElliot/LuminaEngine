@@ -50,6 +50,9 @@ namespace Lumina
         int32   PreparedChunkResolution = 0;
         int32   PreparedLayerCount      = -1;
 
+        // World origin the chunk and meshlet bounds were built at; a translated terrain shifts them instead of rebuilding.
+        FVector3 PreparedOrigin = FVector3(0.0f);
+
         /** Bumped on every height edit. Foliage compares against this to know when to re-project. */
         uint32  HeightmapVersion = 0;
 

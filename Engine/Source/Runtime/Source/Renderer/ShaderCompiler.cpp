@@ -61,7 +61,7 @@ namespace Lumina
         static const FString Path = []() -> FString
         {
             const FString SDK = Platform::GetEnvVariable("VULKAN_SDK");
-            if (SDK.empty())
+            if (SDK.IsEmpty())
             {
                 LOG_WARN("Shader validation was requested but VULKAN_SDK is unset, so spirv-val cannot run.");
                 return FString();
@@ -76,13 +76,13 @@ namespace Lumina
             Paths::Normalize(Candidate);
             if (!Paths::Exists(Candidate))
             {
-                LOG_WARN("Shader validation was requested but spirv-val was not found at '{}'.", Candidate.c_str());
+                LOG_WARN("Shader validation was requested but spirv-val was not found at '{}'.", *Candidate);
                 return FString();
             }
 
             VFS::CreateDir(FShaderCache::kCacheDirectory);
 
-            LOG_TRACE("Shader validation active: {}", Candidate.c_str());
+            LOG_TRACE("Shader validation active: {}", *Candidate);
             return Candidate;
         }();
 
@@ -91,13 +91,13 @@ namespace Lumina
 
     static void ValidateSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
     {
-        if (!IsShaderValidationEnabled() || Spirv.empty())
+        if (!IsShaderValidationEnabled() || Spirv.IsEmpty())
         {
             return;
         }
 
         const FString& Validator = GetSpirvValidatorPath();
-        if (Validator.empty())
+        if (Validator.IsEmpty())
         {
             return;
         }
@@ -109,7 +109,7 @@ namespace Lumina
 
         const FString VirtualPath = FString(FShaderCache::kCacheDirectory) + NameBuf;
 
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.data()), Spirv.size() * sizeof(uint32));
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.GetData()), Spirv.Num() * sizeof(uint32));
         if (!VFS::WriteFile(VirtualPath, Bytes))
         {
             return;
@@ -117,13 +117,13 @@ namespace Lumina
         DEFER { VFS::Remove(VirtualPath); };
 
         const FPathString RealPath = VFS::ResolvePath(VirtualPath);
-        const FString Params = FString("--target-env ") + kSpirvValTargetEnv + " \"" + RealPath.c_str() + "\"";
+        const FString Params = FString("--target-env ") + kSpirvValTargetEnv + " \"" + *RealPath + "\"";
 
         FString Diagnostic;
-        const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(Validator.c_str()), UTF8_TO_TCHAR(Params.c_str()), nullptr,
+        const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(*Validator), UTF8_TO_TCHAR(*Params), nullptr,
             [&Diagnostic](FStringView Line)
             {
-                Diagnostic.append(Line.data(), Line.size());
+                Diagnostic.Append(Line.GetData(), Line.Len());
                 Diagnostic += '\n';
             });
 
@@ -132,16 +132,16 @@ namespace Lumina
             static TAtomic<bool> bWarned{false};
             if (!bWarned.exchange(true, std::memory_order_relaxed))
             {
-                LOG_WARN("Could not run spirv-val ('{}'); shader validation is inactive this session.", Validator.c_str());
+                LOG_WARN("Could not run spirv-val ('{}'); shader validation is inactive this session.", *Validator);
             }
             return;
         }
 
         if (ExitCode != 0)
         {
-            const FString Name(DebugName.data(), DebugName.size());
+            const FString Name(DebugName.GetData(), DebugName.Len());
             LOG_ERROR("Shader '{}' compiled to INVALID SPIR-V (spirv-val --target-env {}):\n{}",
-                      Name.c_str(), kSpirvValTargetEnv, Diagnostic.c_str());
+                      *Name, kSpirvValTargetEnv, *Diagnostic);
         }
     }
 
@@ -152,12 +152,12 @@ namespace Lumina
 
     static void DumpSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
     {
-        if (CVarDumpShaders.GetValue() == 0 || Spirv.empty())
+        if (CVarDumpShaders.GetValue() == 0 || Spirv.IsEmpty())
         {
             return;
         }
 
-        FString Name(DebugName.data(), DebugName.size());
+        FString Name(DebugName.GetData(), DebugName.Len());
         for (char& c : Name)
         {
             const bool bSafe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
@@ -166,9 +166,9 @@ namespace Lumina
 
         const FString Directory = FString(FShaderCache::kCacheDirectory) + "/Dump";
         VFS::CreateDir(Directory);
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.data()), Spirv.size() * sizeof(uint32));
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.GetData()), Spirv.Num() * sizeof(uint32));
         // Hashed too, since generated shaders often share one debug name.
-        const uint64 ContentHash = Hash::XXHash::GetHash64(Bytes.data(), Bytes.size());
+        const uint64 ContentHash = Hash::XXHash::GetHash64(Bytes.GetData(), Bytes.Num());
         char Suffix[24];
         snprintf(Suffix, sizeof(Suffix), "_%016llx.spv", (unsigned long long)ContentHash);
         VFS::WriteFile(Directory + "/" + Name + Suffix, Bytes);
@@ -176,7 +176,7 @@ namespace Lumina
 
     static void ValidateMaterialTemplates(IShaderCompiler& Compiler)
     {
-        if (!IsShaderValidationEnabled() || GetSpirvValidatorPath().empty())
+        if (!IsShaderValidationEnabled() || GetSpirvValidatorPath().IsEmpty())
         {
             return;
         }
@@ -195,7 +195,7 @@ namespace Lumina
             }
 
             FString Source;
-            if (!VFS::ReadFile(Source, Info.VirtualPath.c_str()))
+            if (!VFS::ReadFile(Source, *Info.VirtualPath))
             {
                 return;
             }
@@ -203,11 +203,11 @@ namespace Lumina
             // Every occurrence, matching the material compiler, since a template can carry a token in more than one entry point.
             auto ReplaceAll = [&Source](const char* Token, const char* Stub)
             {
-                const size_t TokenLength = strlen(Token);
-                const size_t StubLength  = strlen(Stub);
-                for (size_t Pos = Source.find(Token); Pos != FString::npos; Pos = Source.find(Token, Pos + StubLength))
+                const int32 TokenLength = FStringView(Token).Len();
+                const int32 StubLength  = FStringView(Stub).Len();
+                for (int32 Pos = Source.Find(Token); Pos != Constants::kIndexNone; Pos = Source.Find(Token, Pos + StubLength))
                 {
-                    Source.replace(Pos, TokenLength, Stub);
+                    Source.RemoveAt(Pos, TokenLength).InsertAt(Pos, Stub);
                 }
             };
             ReplaceAll(kVertexToken, kVertexStub);
@@ -215,7 +215,7 @@ namespace Lumina
 
             FShaderCompileOptions Options;
             Options.bGenerateReflectionData = false;
-            Options.DebugName = FString(VFS::FileName(Info.VirtualPath.c_str(), true)) + " (template)";
+            Options.DebugName = FString(VFS::FileName(*Info.VirtualPath, true)) + " (template)";
 
             Compiler.CompilerShaderRaw(Move(Source), Options, [](const FShaderHeader&) {});
             ++Submitted;
@@ -243,8 +243,8 @@ namespace Lumina
     
         virtual ~FSlangBlob() = default;
         
-        void const* getBufferPointer() noexcept override { return (void*)Data.data(); }
-        size_t getBufferSize() noexcept override { return Data.size(); }
+        void const* getBufferPointer() noexcept override { return (void*)Data.GetData(); }
+        size_t getBufferSize() noexcept override { return Data.Num(); }
     
         SlangResult queryInterface(const SlangUUID&, void**) noexcept override { return SLANG_E_NO_INTERFACE; }
     
@@ -302,10 +302,10 @@ namespace Lumina
         {
             {
                 FScopeLock Lock(Mutex);
-                if (!Free.empty())
+                if (!Free.IsEmpty())
                 {
-                    Slang::ComPtr<slang::IGlobalSession> Session = Move(Free.back());
-                    Free.pop_back();
+                    Slang::ComPtr<slang::IGlobalSession> Session = Move(Free.Last());
+                    Free.Pop();
                     return Session;
                 }
             }
@@ -325,7 +325,7 @@ namespace Lumina
                 return;
             }
             FScopeLock Lock(Mutex);
-            Free.push_back(Move(Session));
+            Free.Add(Move(Session));
         }
 
         void TrimIdle(uint32 KeepCount)
@@ -333,21 +333,21 @@ namespace Lumina
             TVector<Slang::ComPtr<slang::IGlobalSession>> Dead;
             {
                 FScopeLock Lock(Mutex);
-                if (Free.size() <= KeepCount)
+                if (static_cast<uint32>(Free.Num()) <= KeepCount)
                 {
                     return;
                 }
 
-                Dead.reserve(Free.size() - KeepCount);
-                while (Free.size() > KeepCount)
+                Dead.Reserve(Free.Num() - KeepCount);
+                while (static_cast<uint32>(Free.Num()) > KeepCount)
                 {
-                    Dead.push_back(Move(Free.back()));
-                    Free.pop_back();
+                    Dead.Add(Move(Free.Last()));
+                    Free.Pop();
                 }
             }
 
             FScopeLock Lock(CreateMutex);
-            Dead.clear();
+            Dead.Reset();
         }
 
     private:
@@ -371,23 +371,23 @@ namespace Lumina
     {
         const FStringView OwnDir = VFS::Parent(ShaderPath, true);
 
-        OutPaths.clear();
-        OutPaths.reserve(SharedRoots.size() + 1);
-        if (!OwnDir.empty())
+        OutPaths.Reset();
+        OutPaths.Reserve(SharedRoots.Num() + 1);
+        if (!OwnDir.IsEmpty())
         {
-            OutPaths.emplace_back(OwnDir.data(), OwnDir.size());
+            OutPaths.Emplace(OwnDir.GetData(), OwnDir.Len());
         }
 
         for (const FString& Root : SharedRoots)
         {
-            if (OutPaths.empty() || Root != OutPaths[0])
+            if (OutPaths.IsEmpty() || Root != OutPaths[0])
             {
-                OutPaths.push_back(Root);
+                OutPaths.Add(Root);
             }
         }
     }
 
-    /** Backing storage for the pointers a SessionDesc holds; must outlive the createSession call. */
+    // Must outlive the createSession call; SessionDesc holds pointers into it.
     struct FSessionScratch
     {
         TVector<const char*>                    SearchPaths;
@@ -451,37 +451,37 @@ namespace Lumina
         SessionDesc.targets     = &TargetDesc;
         SessionDesc.targetCount = 1;
 
-        Scratch.SearchPaths.clear();
-        Scratch.SearchPaths.reserve(SearchRoots.size());
+        Scratch.SearchPaths.Reset();
+        Scratch.SearchPaths.Reserve(SearchRoots.Num());
         for (const FString& Root : SearchRoots)
         {
-            Scratch.SearchPaths.push_back(Root.c_str());
+            Scratch.SearchPaths.Add(*Root);
         }
-        SessionDesc.searchPaths     = Scratch.SearchPaths.data();
-        SessionDesc.searchPathCount = (SlangInt)Scratch.SearchPaths.size();
+        SessionDesc.searchPaths     = Scratch.SearchPaths.GetData();
+        SessionDesc.searchPathCount = (SlangInt)Scratch.SearchPaths.Num();
 
         // Macros hold pointers into the split storage, so a reallocation would dangle every one pushed.
-        Scratch.MacroSplits.clear();
-        Scratch.Macros.clear();
-        Scratch.MacroSplits.reserve(MacroDefinitions.size() * 2);
-        Scratch.Macros.reserve(MacroDefinitions.size());
+        Scratch.MacroSplits.Reset();
+        Scratch.Macros.Reset();
+        Scratch.MacroSplits.Reserve(MacroDefinitions.Num() * 2);
+        Scratch.Macros.Reserve(MacroDefinitions.Num());
         for (const FString& Macro : MacroDefinitions)
         {
-            const size_t SeparatorPos = Macro.find('=');
-            if (SeparatorPos != FString::npos)
+            const int32 SeparatorPos = Macro.Find('=');
+            if (SeparatorPos != Constants::kIndexNone)
             {
-                Scratch.MacroSplits.emplace_back(Macro.substr(0, SeparatorPos));
-                Scratch.MacroSplits.emplace_back(Macro.substr(SeparatorPos + 1));
-                Scratch.Macros.push_back({ Scratch.MacroSplits[Scratch.MacroSplits.size() - 2].c_str(),
-                                           Scratch.MacroSplits.back().c_str() });
+                Scratch.MacroSplits.Emplace(Macro.Mid(0, SeparatorPos));
+                Scratch.MacroSplits.Emplace(Macro.Mid(SeparatorPos + 1));
+                Scratch.Macros.Emplace(*Scratch.MacroSplits[Scratch.MacroSplits.Num() - 2],
+                                       *Scratch.MacroSplits.Last());
             }
             else
             {
-                Scratch.Macros.push_back({ Macro.c_str(), "1" });
+                Scratch.Macros.Emplace(*Macro, "1");
             }
         }
-        SessionDesc.preprocessorMacros     = Scratch.Macros.data();
-        SessionDesc.preprocessorMacroCount = (SlangInt)Scratch.Macros.size();
+        SessionDesc.preprocessorMacros     = Scratch.Macros.GetData();
+        SessionDesc.preprocessorMacroCount = (SlangInt)Scratch.Macros.Num();
 
         Slang::ComPtr<slang::ISession> Session;
         if (SLANG_FAILED(GlobalSession->createSession(SessionDesc, Session.writeRef())))
@@ -525,7 +525,7 @@ namespace Lumina
                 }
             }
 
-            if (!Names.empty())
+            if (!Names.IsEmpty())
             {
                 Names += ", ";
             }
@@ -548,9 +548,9 @@ namespace Lumina
         // One entry point per module. Concatenating several produced a blob that was valid SPIR-V for none.
         Slang::ComPtr<slang::IEntryPoint> EntryPoint;
 
-        if (!Options.EntryPoint.empty())
+        if (!Options.EntryPoint.IsEmpty())
         {
-            Module->findEntryPointByName(Options.EntryPoint.c_str(), EntryPoint.writeRef());
+            Module->findEntryPointByName(*Options.EntryPoint, EntryPoint.writeRef());
 
             if (!EntryPoint)
             {
@@ -628,19 +628,19 @@ namespace Lumina
         const size_t  SpirvSize = Code->getBufferSize() / sizeof(uint32);
 
         #if USING(WITH_EDITOR)
-        ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
-        DumpSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
+        ValidateSpirv(TSpan<const uint32>(SpirvData, IntCastChecked<int32>(SpirvSize)), DebugName);
+        DumpSpirv(TSpan<const uint32>(SpirvData, IntCastChecked<int32>(SpirvSize)), DebugName);
         #endif
 
         TVector<uint32> Binaries(SpirvData, SpirvData + SpirvSize);
 
-        if (Binaries.empty())
+        if (Binaries.IsEmpty())
         {
             LOG_ERROR("Slang: '{}' compiled to empty SPIR-V", DebugName);
             return false;
         }
 
-        OutHeader.DebugName = FString(DebugName.data(), DebugName.size());
+        OutHeader.DebugName = FString(DebugName.GetData(), DebugName.Len());
         OutHeader.Hash      = Hash::GetHash64(Binaries);
         OutHeader.Binaries  = Move(Binaries);
         OutHeader.Defines   = Options.MacroDefinitions;
@@ -656,8 +656,8 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Flush() const
     {
-        FFiberScopeLock Lock(PendingMutex);
-        PendingSignal.Wait(PendingMutex, [this]
+        FUniqueLock Lock(PendingMutex);
+        PendingSignal.Wait(Lock, [this]
         {
             return PendingTasks.load(std::memory_order_acquire) == 0;
         });
@@ -675,7 +675,7 @@ namespace Lumina
         {
             if (State->Outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1)
             {
-                FFiberScopeLock Lock(State->Mutex);
+                FScopeLock Lock(State->Mutex);
                 State->Settled.NotifyAll();
             }
         };
@@ -688,8 +688,102 @@ namespace Lumina
 
     void FShaderCompileWaiter::Wait() const
     {
-        FFiberScopeLock Lock(State->Mutex);
-        State->Settled.Wait(State->Mutex, [this] { return IsSettled(); });
+        FUniqueLock Lock(State->Mutex);
+        State->Settled.Wait(Lock, [this] { return IsSettled(); });
+    }
+
+    struct FSpirVShaderCompiler::FBatch
+    {
+        TVector<FString>               Paths;
+        TVector<FShaderCompileOptions> Options;
+        TVector<uint64>                SourceHashes;
+        CompletedFunc                  Callback;
+        FinishedFunc                   Finished;
+        TAtomic<uint32>                Remaining;
+    };
+
+    void FSpirVShaderCompiler::CompileChunk(FBatch& Batch, uint32 Start, uint32 End, uint32 Thread)
+    {
+    LUMINA_MEMORY_SCOPE("Shaders");
+
+    const uint32 Num = End - Start;
+
+    DEFER
+    {
+        if (Batch.Remaining.fetch_sub(Num, std::memory_order_acq_rel) == Num && Batch.Finished)
+        {
+            Batch.Finished();
+        }
+
+        bool bLastChunk;
+        {
+            FScopeLock Lock(PendingMutex);
+            bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
+        }
+        PendingSignal.NotifyAll();
+
+        if (bLastChunk)
+        {
+            GSlangSessionPool.TrimIdle(1);
+        }
+    };
+
+    Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
+    DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
+
+    const TVector<FString> SearchRoots = BuildShaderSearchRoots();
+    FSessionScratch Scratch;
+    TVector<FString> ModuleSearchPaths;
+
+    for (uint32 i = Start; i < End; ++i)
+    {
+        // It used to return, abandoning later shaders while still decrementing the pending count for all.
+        const uint64 CompileStart = PlatformTime::Cycles();
+
+        const FString&    Path     = Batch.Paths[i];
+        const FStringView FileName = VFS::FileName(Path);
+
+        BuildModuleSearchPaths(Path, SearchRoots, ModuleSearchPaths);
+
+        Slang::ComPtr<slang::ISession> Session =
+            CreateCompileSession(GlobalSession, ModuleSearchPaths, Batch.Options[i].MacroDefinitions, Scratch);
+        if (!Session)
+        {
+            continue;
+        }
+
+        Slang::ComPtr<slang::IBlob>   Diagnostics;
+        Slang::ComPtr<slang::IModule> SlangModule;
+        SlangModule = Session->loadModule(FileName.GetData(), Diagnostics.writeRef());
+
+        if (Diagnostics)
+        {
+            LOG_WARN("Slang diagnostics for '{}': {}", Path, (const char*)Diagnostics->getBufferPointer());
+        }
+
+        if (!SlangModule)
+        {
+            LOG_ERROR("Slang: failed to load shader module '{}'", Path);
+            continue;
+        }
+
+        // Two roots may ship the same file name, and the library keys on whatever lands in DebugName.
+        FShaderHeader Shader;
+        if (!BuildShaderFromModule(SlangModule, Path, Batch.Options[i], Shader))
+        {
+            continue;
+        }
+
+        const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
+
+        LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", Path, DurationMs, Thread);
+
+        RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
+
+        FShaderCache::Save(Batch.Paths[i], Batch.Options[i].MacroDefinitions, Batch.Options[i].EntryPoint, Batch.SourceHashes[i], Shader);
+
+        Batch.Callback(Move(Shader));
+    }
     }
 
     bool FSpirVShaderCompiler::CompileShaderPath(FString ShaderPath, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished)
@@ -705,9 +799,9 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Shaders");
 
-        ASSERT(ShaderPaths.size() == CompileOptions.size());
+        ASSERT(ShaderPaths.Num() == CompileOptions.Num());
 
-        uint32 NumInputs = (uint32)ShaderPaths.size();
+        uint32 NumInputs = (uint32)ShaderPaths.Num();
         if (NumInputs == 0)
         {
             return false;
@@ -717,9 +811,9 @@ namespace Lumina
         TVector<FString> Paths;
         TVector<FShaderCompileOptions> Options;
         TVector<uint64> SourceHashes;
-        Paths.reserve(NumInputs);
-        Options.reserve(NumInputs);
-        SourceHashes.reserve(NumInputs);
+        Paths.Reserve(NumInputs);
+        Options.Reserve(NumInputs);
+        SourceHashes.Reserve(NumInputs);
 
         // Hoisted, since rebuilding per shader costs a plugin walk and an existence check per root.
         const TVector<FString> CacheSearchRoots = BuildShaderSearchRoots();
@@ -737,17 +831,17 @@ namespace Lumina
                 continue;
             }
 
-            Paths.emplace_back(ShaderPaths[i]);
-            Options.emplace_back(CompileOptions[i]);
-            SourceHashes.push_back(SrcHash);
+            Paths.Emplace(ShaderPaths[i]);
+            Options.Emplace(CompileOptions[i]);
+            SourceHashes.Add(SrcHash);
         }
 
         if (NumHits > 0)
         {
-            LOG_INFO("Shader cache: {} hit, {} miss", NumHits, (uint32)Paths.size());
+            LOG_INFO("Shader cache: {} hit, {} miss", NumHits, (uint32)Paths.Num());
         }
 
-        const uint32 NumShaders = (uint32)Paths.size();
+        const uint32 NumShaders = (uint32)Paths.Num();
         if (NumShaders == 0)
         {
             if (OnFinished)
@@ -758,7 +852,7 @@ namespace Lumina
         }
 
         {
-            FFiberScopeLock Lock(PendingMutex);
+            FScopeLock Lock(PendingMutex);
             PendingTasks.fetch_add(NumShaders, std::memory_order_relaxed);
         }
 
@@ -767,96 +861,24 @@ namespace Lumina
         const uint32 TargetChunks = Math::Min(NumShaders, Math::Max(1u, Threading::GetNumThreads() / 2));
         const uint32 Grain        = (NumShaders + TargetChunks - 1) / TargetChunks;
 
-        Task::AsyncTask(NumShaders, Grain, [this,
-            Paths = Move(Paths),
-            Options = Move(Options),
-            SourceHashes = Move(SourceHashes),
-            Callback = Move(OnCompleted),
-            Finished = Move(OnFinished),
-            Remaining = MakeShared<TAtomic<uint32>>(NumShaders)] (uint32 Start, uint32 End, uint32 Thread) mutable
+        TSharedPtr<FBatch> Batch = MakeShared<FBatch>();
+        Batch->Paths        = Move(Paths);
+        Batch->Options      = Move(Options);
+        Batch->SourceHashes = Move(SourceHashes);
+        Batch->Callback     = Move(OnCompleted);
+        Batch->Finished     = Move(OnFinished);
+        Batch->Remaining.store(NumShaders, std::memory_order_relaxed);
+
+        Jobs::Spawn(Jobs::EJobPriority::High, [](FSpirVShaderCompiler* Self, TSharedPtr<FBatch> Work, uint32 Stride) -> Jobs::TTask<void>
         {
-            LUMINA_MEMORY_SCOPE("Shaders");
-
-            uint32 Num = End - Start;
-
-            DEFER
+            const uint32 Total      = (uint32)Work->Paths.Num();
+            const uint32 NumChunks  = (Total + Stride - 1) / Stride;
+            co_await Jobs::Call(Jobs::ForEach(NumChunks, [Self, Batch = Work.Get(), Stride, Total](uint32 Chunk, uint32 Thread)
             {
-                if (Remaining->fetch_sub(Num, std::memory_order_acq_rel) == Num && Finished)
-                {
-                    Finished();
-                }
-
-                bool bLastChunk;
-                {
-                    FFiberScopeLock Lock(PendingMutex);
-                    bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
-                }
-                PendingSignal.NotifyAll();
-
-                if (bLastChunk)
-                {
-                    GSlangSessionPool.TrimIdle(1);
-                }
-            };
-
-            Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
-            DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
-
-            const TVector<FString> SearchRoots = BuildShaderSearchRoots();
-            FSessionScratch Scratch;
-            TVector<FString> ModuleSearchPaths;
-
-            for (uint32 i = Start; i < End; ++i)
-            {
-                // It used to return, abandoning later shaders while still decrementing the pending count for all.
-                const uint64 CompileStart = PlatformTime::Cycles();
-
-                const FString&    Path     = Paths[i];
-                const FStringView FileName = VFS::FileName(Path);
-
-                BuildModuleSearchPaths(Path, SearchRoots, ModuleSearchPaths);
-
-                Slang::ComPtr<slang::ISession> Session =
-                    CreateCompileSession(GlobalSession, ModuleSearchPaths, Options[i].MacroDefinitions, Scratch);
-                if (!Session)
-                {
-                    continue;
-                }
-
-                Slang::ComPtr<slang::IBlob>   Diagnostics;
-                Slang::ComPtr<slang::IModule> SlangModule;
-                SlangModule = Session->loadModule(FileName.data(), Diagnostics.writeRef());
-
-                if (Diagnostics)
-                {
-                    LOG_WARN("Slang diagnostics for '{}': {}", Path, (const char*)Diagnostics->getBufferPointer());
-                }
-
-                if (!SlangModule)
-                {
-                    LOG_ERROR("Slang: failed to load shader module '{}'", Path);
-                    continue;
-                }
-
-                // Two roots may ship the same file name, and the library keys on whatever lands in DebugName.
-                FShaderHeader Shader;
-                if (!BuildShaderFromModule(SlangModule, Path, Options[i], Shader))
-                {
-                    continue;
-                }
-
-                const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
-
-                LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", Path, DurationMs, Thread);
-
-                RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
-
-                FShaderCache::Save(Paths[i], Options[i].MacroDefinitions, Options[i].EntryPoint, SourceHashes[i], Shader);
-
-                Callback(Move(Shader));
-            }
-
-        }, ETaskPriority::High);
+                const uint32 Start = Chunk * Stride;
+                Self->CompileChunk(*Batch, Start, Math::Min(Start + Stride, Total), Thread);
+            }, 1));
+        }, this, Batch, Grain);
     
         return true;
     }
@@ -878,9 +900,9 @@ namespace Lumina
                     return;
                 }
                 FShaderHeader Header;
-                if (!FShaderCache::TryLoadByCachePath(Info.VirtualPath.c_str(), 0, Header))
+                if (!FShaderCache::TryLoadByCachePath(*Info.VirtualPath, 0, Header))
                 {
-                    LOG_WARN("Shader cache: failed to load {}", Info.VirtualPath.c_str());
+                    LOG_WARN("Shader cache: failed to load {}", *Info.VirtualPath);
                     return;
                 }
                 RHI::GetCrashTracker().RegisterShader(Header.Binaries, Header.DebugName);
@@ -904,31 +926,26 @@ namespace Lumina
 
     bool FSpirVShaderCompiler::CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished)
     {
-        for (size_t Pos = ShaderString.find("#pragma once"); Pos != FString::npos; Pos = ShaderString.find("#pragma once", Pos))
+        for (int32 Pos = ShaderString.Find("#pragma once"); Pos != Constants::kIndexNone; Pos = ShaderString.Find("#pragma once", Pos))
         {
-            size_t LineEnd = ShaderString.find('\n', Pos);
-            if (LineEnd == FString::npos)
+            int32 LineEnd = ShaderString.Find('\n', Pos);
+            if (LineEnd == Constants::kIndexNone)
             {
-                LineEnd = ShaderString.size();
+                LineEnd = ShaderString.Len();
             }
             else
             {
                 ++LineEnd;
             }
-            ShaderString.erase(Pos, LineEnd - Pos);
+            ShaderString.RemoveAt(Pos, LineEnd - Pos);
         }
 
         {
-            FFiberScopeLock Lock(PendingMutex);
+            FScopeLock Lock(PendingMutex);
             PendingTasks.fetch_add(1, std::memory_order_relaxed);
         }
         
-        Task::AsyncTask(1, 1, [this,
-            ShaderString = Move(ShaderString),
-            CompileOptions = Move(CompileOptions),
-            Callback = Move(OnCompleted),
-            Finished = Move(OnFinished)]
-            (uint32, uint32, uint32 Thread)
+        Jobs::Spawn(CompileOptions.Priority, [](FSpirVShaderCompiler* Self, FString Source, FShaderCompileOptions Options, CompletedFunc Callback, FinishedFunc Finished) -> Jobs::TTask<void>
         {
             // Declared before the cache probe, so a hit still releases the slot after its callback ran.
             DEFER
@@ -940,10 +957,10 @@ namespace Lumina
 
                 bool bLast;
                 {
-                    FFiberScopeLock Lock(PendingMutex);
-                    bLast = PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
+                    FScopeLock Lock(Self->PendingMutex);
+                    bLast = Self->PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
                 }
-                PendingSignal.NotifyAll();
+                Self->PendingSignal.NotifyAll();
 
                 if (bLast)
                 {
@@ -955,15 +972,15 @@ namespace Lumina
             const TVector<FString> SearchRoots = BuildShaderSearchRoots();
 
             const uint64 CacheKey = FShaderCache::ComputeRawSourceHash(
-                ShaderString, CompileOptions.MacroDefinitions, SearchRoots, CompileOptions.TemplateVirtualPath,
-                CompileOptions.EntryPoint);
+                Source, Options.MacroDefinitions, SearchRoots, Options.TemplateVirtualPath,
+                Options.EntryPoint);
 
             if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached))
             {
                 // A cached binary still has to reach the crash tracker, or it resolves as unknown.
                 RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
                 Callback(Move(Cached));
-                return;
+                co_return;
             }
 
             Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
@@ -974,19 +991,19 @@ namespace Lumina
             FSessionScratch Scratch;
 
             Slang::ComPtr<slang::ISession> Session =
-                CreateCompileSession(GlobalSession, SearchRoots, CompileOptions.MacroDefinitions, Scratch);
+                CreateCompileSession(GlobalSession, SearchRoots, Options.MacroDefinitions, Scratch);
             if (!Session)
             {
-                return;
+                co_return;
             }
 
-            const FString& RawName    = CompileOptions.DebugName.empty() ? FString("RawShader") : CompileOptions.DebugName;
+            const FString& RawName    = Options.DebugName.IsEmpty() ? FString("RawShader") : Options.DebugName;
             const FString  SourcePath = RawName + ".slang";
 
             Slang::ComPtr<slang::IBlob>   Diagnostics;
             Slang::ComPtr<slang::IModule> SlangModule;
             SlangModule = Session->loadModuleFromSourceString(
-                RawName.c_str(), SourcePath.c_str(), ShaderString.c_str(), Diagnostics.writeRef());
+                *RawName, *SourcePath, *Source, Diagnostics.writeRef());
 
             if (Diagnostics)
             {
@@ -996,25 +1013,26 @@ namespace Lumina
             if (!SlangModule)
             {
                 LOG_ERROR("Slang: failed to load raw shader module '{}'", RawName);
-                return;
+                co_return;
             }
 
             FShaderHeader Shader;
-            if (!BuildShaderFromModule(SlangModule, RawName, CompileOptions, Shader))
+            if (!BuildShaderFromModule(SlangModule, RawName, Options, Shader))
             {
-                return;
+                co_return;
             }
 
             const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
 
-            LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Thread);
+            LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Jobs::GetThreadSlot());
 
             FShaderCache::SaveRaw(CacheKey, Shader);
 
             RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 
             Callback(Move(Shader));
-        }, CompileOptions.Priority);
+            co_return;
+        }, this, Move(ShaderString), CompileOptions, Move(OnCompleted), Move(OnFinished));
 
         return true;
     }

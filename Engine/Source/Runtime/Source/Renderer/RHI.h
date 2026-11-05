@@ -563,7 +563,7 @@ namespace Lumina::RHI
         uint64 TotalBlockBytes  = 0;
         uint32 TotalAllocations = 0;
         uint32 TotalBlocks      = 0;
-        TFixedVector<FGPUMemoryHeapStats, 16> Heaps;   // VK_MAX_MEMORY_HEAPS == 16.
+        TInlineVector<FGPUMemoryHeapStats, 16> Heaps;   // VK_MAX_MEMORY_HEAPS == 16.
     };
 
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);

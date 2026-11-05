@@ -30,7 +30,7 @@ namespace Lumina::Net
     {
         uint32 HashStructName(const FName& Name)
         {
-            return Hash::GetHash32(Name.c_str());
+            return Hash::GetHash32(*Name);
         }
 
         // Constant time, since the storage is keyed by type id rather than scanned.
@@ -71,14 +71,14 @@ namespace Lumina::Net
                 FReplTypeTable T;
                 ForEachComponentStruct([&T](CStruct* St)
                 {
-                    T.ByIndex.push_back({ HashStructName(St->GetName()), St });
+                    T.ByIndex.Emplace(HashStructName(St->GetName()), St);
                 });
                 Algo::Sort(T.ByIndex,[](const FReplType& A, const FReplType& B)
                 {
                     return A.Hash < B.Hash;
                 });
                 
-                for (uint32 i = 0; i < static_cast<uint32>(T.ByIndex.size()); ++i)
+                for (int32 i = 0; i < T.ByIndex.Num(); ++i)
                 {
                     T.HashToIndex[T.ByIndex[i].Hash] = i;
                 }
@@ -99,7 +99,7 @@ namespace Lumina::Net
             uint32 CurParentGuid = 0;
             if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Child); Parent != ECS::NullEntity)
             {
-                if (const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Parent))
+                if (const SNetworkComponent* PNet = Registry.TryGet<ECS::Read<SNetworkComponent>>(Parent))
                 {
                     CurParentGuid = PNet->NetGUID.Value;
                 }
@@ -108,14 +108,14 @@ namespace Lumina::Net
             const uint32 ChildKey = static_cast<uint32>((Child).Value);
             if (CurParentGuid == ParentGuid)
             {
-                State->PendingAttach.erase(ChildKey); // already attached as desired
+                State->PendingAttach.Remove(ChildKey); // already attached as desired
                 return;
             }
 
             if (ParentGuid == 0)
             {
                 ECS::Utils::ReparentEntity(Registry, Child, ECS::NullEntity, /*bPreserveWorld*/ false);
-                State->PendingAttach.erase(ChildKey);
+                State->PendingAttach.Remove(ChildKey);
                 return;
             }
 
@@ -123,7 +123,7 @@ namespace Lumina::Net
             if (Parent != ECS::NullEntity && Registry.IsValid(Parent))
             {
                 ECS::Utils::ReparentEntity(Registry, Child, Parent, /*bPreserveWorld*/ false);
-                State->PendingAttach.erase(ChildKey);
+                State->PendingAttach.Remove(ChildKey);
             }
             else
             {
@@ -136,14 +136,14 @@ namespace Lumina::Net
     {
         for (auto It = State.PendingAttach.begin(); It != State.PendingAttach.end(); )
         {
-            if (It->second == NewGuid)
+            if (It->Value == NewGuid)
             {
-                const ECS::FEntity Child = static_cast<ECS::FEntity>(It->first);
+                const ECS::FEntity Child = static_cast<ECS::FEntity>(It->Key);
                 if (Registry.IsValid(Child))
                 {
                     ECS::Utils::ReparentEntity(Registry, Child, NewEntity, /*bPreserveWorld*/ false);
                 }
-                It = State.PendingAttach.erase(It);
+                It = State.PendingAttach.Remove(It);
             }
             else
             {
@@ -158,7 +158,7 @@ namespace Lumina::Net
         {
             return false;
         }
-        const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Parent);
+        const SNetworkComponent* PNet = Registry.TryGet<ECS::Read<SNetworkComponent>>(Parent);
         return PNet != nullptr && PNet->bReplicates && PNet->bNetLoadOnClient && PNet->NetGUID.Value != 0;
     }
 
@@ -198,7 +198,7 @@ namespace Lumina::Net
         LUMINA_PROFILE_SCOPE();
 
         // Elements are reused so each block keeps its capacity instead of being freed and remade.
-        SIZE_T Emitted = 0;
+        int32 Emitted = 0;
 
         // Parked per thread; every buffer below is rebuilt from scratch on each call.
         static thread_local TVector<uint8>  HookScratch;
@@ -206,7 +206,7 @@ namespace Lumina::Net
         static thread_local TVector<uint32> CurOffsets;
         static thread_local TVector<uint8>  Mask;
 
-        HookScratch.clear();
+        HookScratch.Reset();
 
         // BindWriters sets the hooks so refs mint into the outgoing maps exactly as a live write would.
         FNetArchive HookSrc(HookScratch);
@@ -226,18 +226,18 @@ namespace Lumina::Net
             {
                 continue;
             }
-            const auto It = Types.HashToIndex.find(HashStructName(St->GetName()));
-            if (It == Types.HashToIndex.end())
+            const auto It = Types.HashToIndex.Find(HashStructName(St->GetName()));
+            if (It == nullptr)
             {
                 continue; // not a known replicated type (shouldn't happen for a reflected component)
             }
 
-            const uint32 WireIndex = It->second;
+            const uint32 WireIndex = (*It);
             void* Ptr = Set.GetRaw(Entity);
 
             // Current field bytes, flat; compare to the last-sent baseline to build the changed-field mask.
             St->NetSerializeReplicatedFlat(HookSrc, Ptr, CurBytes, CurOffsets);
-            const uint32 N = CurOffsets.empty() ? 0u : (uint32)CurOffsets.size() - 1u;
+            const uint32 N = CurOffsets.IsEmpty() ? 0u : (uint32)CurOffsets.Num() - 1u;
 
             FRepFieldSnapshot* Base = nullptr;
             if (DiffState != nullptr)
@@ -249,8 +249,8 @@ namespace Lumina::Net
             const bool bBaseUsable = Base != nullptr && Base->Num() == N;
 
             const uint32 MaskBytes = (N + 7) / 8;
-            Mask.clear();
-            Mask.resize(MaskBytes, 0);
+            Mask.Reset();
+            Mask.SetNum(MaskBytes, 0);
 
             bool bAny = false;
             for (uint32 i = 0; i < N; ++i)
@@ -259,7 +259,7 @@ namespace Lumina::Net
 
                 const bool bChanged = bBaseline || !bBaseUsable
                     || Base->FieldSize(i) != Size
-                    || Memory::Memcmp(Base->FieldData(i), CurBytes.data() + CurOffsets[i], Size) != 0;
+                    || Memory::Memcmp(Base->FieldData(i), CurBytes.GetData() + CurOffsets[i], Size) != 0;
 
                 if (bChanged)
                 {
@@ -270,8 +270,10 @@ namespace Lumina::Net
 
             if (Base != nullptr)
             {
-                Base->Bytes.assign(CurBytes.begin(), CurBytes.end());
-                Base->Offsets.assign(CurOffsets.begin(), CurOffsets.end());
+                Base->Bytes.Reset();
+                Base->Bytes.Append(CurBytes.begin(), CurBytes.end());
+                Base->Offsets.Reset();
+                Base->Offsets.Append(CurOffsets.begin(), CurOffsets.end());
             }
 
             // A baseline keeps a fieldless component so the client still emplaces the tag-only one.
@@ -280,23 +282,23 @@ namespace Lumina::Net
                 continue;
             }
 
-            FComponentRepOut& C = (Emitted < Out.size()) ? Out[Emitted] : Out.emplace_back();
+            FComponentRepOut& C = (Emitted < Out.Num()) ? Out[Emitted] : Out.EmplaceGetRef();
             ++Emitted;
 
             C.WireIndex = WireIndex;
-            C.Block.clear();
-            C.Block.insert(C.Block.end(), Mask.begin(), Mask.end());
+            C.Block.Reset();
+            C.Block.Append(Mask);
             for (uint32 i = 0; i < N; ++i)
             {
                 if (Mask[i >> 3] & (1u << (i & 7)))
                 {
-                    const uint8* Field = CurBytes.data() + CurOffsets[i];
-                    C.Block.insert(C.Block.end(), Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
+                    const uint8* Field = CurBytes.GetData() + CurOffsets[i];
+                    C.Block.Append(Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
                 }
             }
         }
 
-        Out.resize(Emitted);
+        Out.SetNum(Emitted);
     }
 
     TVector<FComponentRepOut> CollectComponentFields(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
@@ -310,16 +312,16 @@ namespace Lumina::Net
     {
         LUMINA_PROFILE_SCOPE();
         // Recipient-independent, so the same precomputed blocks serve every recipient.
-        uint16 Count = Components ? static_cast<uint16>(Components->size()) : 0;
+        uint16 Count = Components ? static_cast<uint16>(Components->Num()) : 0;
         Ar << Count;
         if (Components != nullptr)
         {
             for (const FComponentRepOut& C : *Components)
             {
                 WriteVarUInt(Ar, C.WireIndex);
-                if (!C.Block.empty())
+                if (!C.Block.IsEmpty())
                 {
-                    Ar.Serialize(const_cast<uint8*>(C.Block.data()), static_cast<int64>(C.Block.size()));
+                    Ar.Serialize(const_cast<uint8*>(C.Block.GetData()), static_cast<int64>(C.Block.Num()));
                 }
             }
         }
@@ -328,7 +330,7 @@ namespace Lumina::Net
         if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
             Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
         {
-            ParentGuid = Registry.Get<SNetworkComponent>(Parent).NetGUID.Value;
+            ParentGuid = Registry.Get<ECS::Read<SNetworkComponent>>(Parent).NetGUID.Value;
         }
         WriteNetGuid(Ar, ParentGuid);
     }
@@ -351,7 +353,7 @@ namespace Lumina::Net
                 return;
             }
 
-            if (Index >= static_cast<uint32>(Types.ByIndex.size()))
+            if (Index >= static_cast<uint32>(Types.ByIndex.Num()))
             {
                 // An unknown component cannot be skipped without a size prefix, so abort the entity.
                 LOG_WARN("[Net] Replication: component type index {} out of range -- aborting.", Index);
@@ -372,7 +374,7 @@ namespace Lumina::Net
             TVector<uint8> Mask(MaskBytes, 0);
             if (MaskBytes > 0)
             {
-                Ar.Serialize(Mask.data(), static_cast<int64>(MaskBytes));
+                Ar.Serialize(Mask.GetData(), static_cast<int64>(MaskBytes));
                 if (Ar.HasError())
                 {
                     return;
@@ -392,8 +394,8 @@ namespace Lumina::Net
 
             if (Ptr != nullptr)
             {
-                St->NetReadReplicatedMasked(Ar, Ptr, Mask.data());
-                Applied.push_back(St);
+                St->NetReadReplicatedMasked(Ar, Ptr, Mask.GetData());
+                Applied.Add(St);
             }
             else
             {
@@ -422,9 +424,9 @@ namespace Lumina::Net
 
     namespace
     {
-        SEntityScriptComponent* ScriptsOf(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        const SEntityScriptComponent* ScriptsOf(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            return Registry.TryGet<SEntityScriptComponent>(Entity);
+            return Registry.TryGet<ECS::Read<SEntityScriptComponent>>(Entity);
         }
 
         void WriteClassName(FNetArchive& Ar, FName Name)
@@ -453,7 +455,7 @@ namespace Lumina::Net
     // The Rate a Sync field declares, as the shortest gap between sends, or zero when it may go every tick.
     static double MinSendInterval(const FProperty* Property)
     {
-        const double Hz = Property->GetMetadataNumber("Rate").value_or(0.0);
+        const double Hz = Property->GetMetadataNumber("Rate").Get(0.0);
         return Hz > 0.0 ? 1.0 / Hz : 0.0;
     }
 
@@ -461,9 +463,9 @@ namespace Lumina::Net
                                  bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out)
     {
         LUMINA_PROFILE_SCOPE();
-        Out.clear();
+        Out.Reset();
 
-        SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+        const SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
         if (Component == nullptr)
         {
             return false;
@@ -479,11 +481,11 @@ namespace Lumina::Net
         bool bAnyHeld = false;
         const double Now = PlatformTime::Seconds();
 
-        HookScratch.clear();
+        HookScratch.Reset();
         FNetArchive HookSrc(HookScratch);
         Net::BindWriters(HookSrc, State);
 
-        for (uint32 Index = 0; Index < (uint32)Component->Scripts.size(); ++Index)
+        for (int32 Index = 0; Index < Component->Scripts.Num(); ++Index)
         {
             CEntityScript* Script = Component->Scripts[Index].Get();
             if (Script == nullptr)
@@ -497,16 +499,16 @@ namespace Lumina::Net
             }
 
             Class->NetSerializeReplicatedFlat(HookSrc, Script, CurBytes, CurOffsets);
-            const uint32 N = CurOffsets.empty() ? 0u : (uint32)CurOffsets.size() - 1u;
+            const uint32 N = CurOffsets.IsEmpty() ? 0u : (uint32)CurOffsets.Num() - 1u;
 
             FRepFieldSnapshot* Base = DiffState != nullptr ? &DiffState->ScriptLastSent[Index] : nullptr;
             const bool bBaseUsable = Base != nullptr && Base->Num() == N;
 
             FScriptRepOut Rep;
             Rep.ScriptIndex = Index;
-            Rep.Block.resize((N + 7) / 8, 0);
+            Rep.Block.SetNum((N + 7) / 8, 0);
 
-            Held.assign(N, 0);
+            Held.Init(0, N);
             bool bFieldsResolved = false;
 
             bool bAny = false;
@@ -516,7 +518,7 @@ namespace Lumina::Net
                 const uint32 Size = CurOffsets[i + 1] - CurOffsets[i];
                 const bool bChanged = bBaseline || !bBaseUsable
                     || Base->FieldSize(i) != Size
-                    || Memory::Memcmp(Base->FieldData(i), CurBytes.data() + CurOffsets[i], Size) != 0;
+                    || Memory::Memcmp(Base->FieldData(i), CurBytes.GetData() + CurOffsets[i], Size) != 0;
                 if (!bChanged)
                 {
                     continue;
@@ -530,11 +532,11 @@ namespace Lumina::Net
                         Class->GetNetReplicatedProperties(Fields);
                         bFieldsResolved = true;
                     }
-                    const double Interval = i < Fields.size() ? MinSendInterval(Fields[i]) : 0.0;
+                    const double Interval = i < static_cast<uint32>(Fields.Num()) ? MinSendInterval(Fields[i]) : 0.0;
                     if (Interval > 0.0)
                     {
                         TVector<double>& SentTimes = DiffState->ScriptFieldSentTime[Index];
-                        SentTimes.resize(N, -1.0e9);
+                        SentTimes.SetNum(N, -1.0e9);
                         if (Now - SentTimes[i] < Interval)
                         {
                             Held[i] = 1;
@@ -551,22 +553,26 @@ namespace Lumina::Net
 
             if (Base != nullptr && !bHeldHere)
             {
-                Base->Bytes.assign(CurBytes.begin(), CurBytes.end());
-                Base->Offsets.assign(CurOffsets.begin(), CurOffsets.end());
+                Base->Bytes.Reset();
+                Base->Bytes.Append(CurBytes.begin(), CurBytes.end());
+                Base->Offsets.Reset();
+                Base->Offsets.Append(CurOffsets.begin(), CurOffsets.end());
             }
             else if (Base != nullptr)
             {
-                Merged.clear();
-                MergedOffsets.assign(1, 0u);
+                Merged.Reset();
+                MergedOffsets.Init(0u, 1);
                 for (uint32 i = 0; i < N; ++i)
                 {
-                    const uint8* Source = Held[i] ? Base->FieldData(i) : CurBytes.data() + CurOffsets[i];
+                    const uint8* Source = Held[i] ? Base->FieldData(i) : CurBytes.GetData() + CurOffsets[i];
                     const uint32 Size = Held[i] ? Base->FieldSize(i) : CurOffsets[i + 1] - CurOffsets[i];
-                    Merged.insert(Merged.end(), Source, Source + Size);
-                    MergedOffsets.push_back(static_cast<uint32>(Merged.size()));
+                    Merged.Append(Source, Size);
+                    MergedOffsets.Add(static_cast<uint32>(Merged.Num()));
                 }
-                Base->Bytes.assign(Merged.begin(), Merged.end());
-                Base->Offsets.assign(MergedOffsets.begin(), MergedOffsets.end());
+                Base->Bytes.Reset();
+                Base->Bytes.Append(Merged.begin(), Merged.end());
+                Base->Offsets.Reset();
+                Base->Offsets.Append(MergedOffsets.begin(), MergedOffsets.end());
                 bAnyHeld = true;
             }
 
@@ -579,19 +585,19 @@ namespace Lumina::Net
             {
                 if (Rep.Block[i >> 3] & (1u << (i & 7)))
                 {
-                    const uint8* Field = CurBytes.data() + CurOffsets[i];
-                    Rep.Block.insert(Rep.Block.end(), Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
+                    const uint8* Field = CurBytes.GetData() + CurOffsets[i];
+                    Rep.Block.Append(Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
                 }
             }
-            Out.push_back(Move(Rep));
+            Out.Add(Move(Rep));
         }
         return bAnyHeld;
     }
 
     void WriteScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
-        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+        const SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.Num() : 0u;
         WriteVarUInt(Ar, Count);
         for (uint32 Index = 0; Index < Count; ++Index)
         {
@@ -606,8 +612,8 @@ namespace Lumina::Net
         for (uint32 Index = 0; Index < Count && !Ar.HasError(); ++Index)
         {
             const FName ClassName = ReadClassName(Ar);
-            SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
-            const uint32 Present = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+            const SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+            const uint32 Present = Component != nullptr ? (uint32)Component->Scripts.Num() : 0u;
             if (Index < Present || ClassName.IsNone())
             {
                 continue;
@@ -616,7 +622,7 @@ namespace Lumina::Net
             CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
             if (ScriptClass == nullptr || EntityScripts::Attach(Registry, Entity, ScriptClass) == nullptr)
             {
-                LOG_WARN("[Net] Spawned entity names script class '{}', which this peer cannot load; its later scripts shift index.", ClassName.c_str());
+                LOG_WARN("[Net] Spawned entity names script class '{}', which this peer cannot load; its later scripts shift index.", *ClassName);
             }
         }
         return Count;
@@ -624,13 +630,13 @@ namespace Lumina::Net
 
     void WriteEntityScripts(FNetArchive& Ar, const TVector<FScriptRepOut>& Scripts)
     {
-        WriteVarUInt(Ar, (uint32)Scripts.size());
+        WriteVarUInt(Ar, (uint32)Scripts.Num());
         for (const FScriptRepOut& Rep : Scripts)
         {
             WriteVarUInt(Ar, Rep.ScriptIndex);
-            if (!Rep.Block.empty())
+            if (!Rep.Block.IsEmpty())
             {
-                Ar.Serialize(const_cast<uint8*>(Rep.Block.data()), static_cast<int64>(Rep.Block.size()));
+                Ar.Serialize(const_cast<uint8*>(Rep.Block.GetData()), static_cast<int64>(Rep.Block.Num()));
             }
         }
     }
@@ -652,8 +658,8 @@ namespace Lumina::Net
                 return;
             }
 
-            SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
-            CEntityScript* Script = (Component != nullptr && Index < (uint32)Component->Scripts.size())
+            const SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+            CEntityScript* Script = (Component != nullptr && Index < (uint32)Component->Scripts.Num())
                 ? Component->Scripts[Index].Get() : nullptr;
             if (Script == nullptr)
             {
@@ -665,35 +671,35 @@ namespace Lumina::Net
 
             CClass* Class = Script->GetClass();
             Class->GetNetReplicatedProperties(Props);
-            const uint32 N = (uint32)Props.size();
-            Mask.assign((N + 7) / 8, 0);
-            if (!Mask.empty())
+            const uint32 N = (uint32)Props.Num();
+            Mask.Init(0, (N + 7) / 8);
+            if (!Mask.IsEmpty())
             {
-                Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+                Ar.Serialize(Mask.GetData(), static_cast<int64>(Mask.Num()));
                 if (Ar.HasError())
                 {
                     return;
                 }
             }
 
-            Names.clear();
+            Names.Reset();
             for (uint32 Field = 0; Field < N; ++Field)
             {
                 if (Mask[Field >> 3] & (1u << (Field & 7)))
                 {
-                    const char* FieldName = Props[Field]->GetPropertyName().c_str();
-                    Names.insert(Names.end(), FieldName, FieldName + strlen(FieldName));
-                    Names.push_back('\0');
+                    const char* FieldName = *Props[Field]->GetPropertyName();
+                    Names.Append(FieldName, FieldName + strlen(FieldName));
+                    Names.Add('\0');
                 }
             }
 
-            NetScripts::DispatchSyncChanging(Script, Names.data(), (uint32)Names.size());
-            Class->NetReadReplicatedMasked(Ar, Script, Mask.data());
+            NetScripts::DispatchSyncChanging(Script, Names.GetData(), (uint32)Names.Num());
+            Class->NetReadReplicatedMasked(Ar, Script, Mask.GetData());
             if (Ar.HasError())
             {
                 return;
             }
-            NetScripts::DispatchSyncChanged(Script, Names.data(), (uint32)Names.size());
+            NetScripts::DispatchSyncChanged(Script, Names.GetData(), (uint32)Names.Num());
 
             if (!Registry.IsValid(Entity))
             {
@@ -704,9 +710,9 @@ namespace Lumina::Net
 
     int32 FindScriptIndex(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script)
     {
-        if (const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))
+        if (const SEntityScriptComponent* Component = Registry.TryGet<ECS::Read<SEntityScriptComponent>>(Entity))
         {
-            for (int32 Index = 0; Index < (int32)Component->Scripts.size(); ++Index)
+            for (int32 Index = 0; Index < Component->Scripts.Num(); ++Index)
             {
                 if (Component->Scripts[Index].Get() == Script)
                 {
@@ -719,15 +725,15 @@ namespace Lumina::Net
 
     CEntityScript* GetScriptAt(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Index)
     {
-        const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
-        return (Component != nullptr && Index < (uint32)Component->Scripts.size()) ? Component->Scripts[Index].Get() : nullptr;
+        const SEntityScriptComponent* Component = Registry.TryGet<ECS::Read<SEntityScriptComponent>>(Entity);
+        return (Component != nullptr && Index < (uint32)Component->Scripts.Num()) ? Component->Scripts[Index].Get() : nullptr;
     }
 
     void AppendScriptRpc(TVector<uint8>& Batch, uint32 Guid, uint32 ScriptIndex, uint32 RpcId, ERpcTarget Target,
                          uint8 Flags, uint32 Caller, const uint8* Payload, uint32 PayloadSize)
     {
         static thread_local TVector<uint8> Message;
-        Message.clear();
+        Message.Reset();
         FNetArchive Writer(Message);
         uint8 Type = static_cast<uint8>(ENetMessage::ScriptRpc);
         uint8 TargetByte = static_cast<uint8>(Target);
@@ -743,19 +749,20 @@ namespace Lumina::Net
         {
             Writer.Serialize(const_cast<uint8*>(Payload), static_cast<int64>(PayloadSize));
         }
-        AppendFramedMessage(Batch, Message.data(), static_cast<SIZE_T>(Message.size()));
+        AppendFramedMessage(Batch, Message.GetData(), static_cast<SIZE_T>(Message.Num()));
     }
 
     // A default instance per component type, kept for the process so every spawn diffs against the same baseline.
     static void* DefaultComponentFor(CStruct* Struct)
     {
         static THashMap<CStruct*, void*> Defaults;
-        auto [It, bNew] = Defaults.try_emplace(Struct, nullptr);
-        if (bNew && Struct->GetComponentOps() != nullptr)
+        if (void** Found = Defaults.Find(Struct))
         {
-            It->second = Struct->GetComponentOps()->New();
+            return *Found;
         }
-        return It->second;
+        void* Default = Struct->GetComponentOps() != nullptr ? Struct->GetComponentOps()->New() : nullptr;
+        Defaults.Add(Struct, Default);
+        return Default;
     }
 
     void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -777,23 +784,23 @@ namespace Lumina::Net
             {
                 continue;
             }
-            const auto It = Types.HashToIndex.find(HashStructName(St->GetName()));
-            if (It == Types.HashToIndex.end())
+            const auto It = Types.HashToIndex.Find(HashStructName(St->GetName()));
+            if (It == nullptr)
             {
                 continue;
             }
-            FSpawnComponent Entry{ It->second, St, Set->GetRaw(Entity) };
+            FSpawnComponent Entry{ (*It), St, Set->GetRaw(Entity) };
             if (St == TransformStruct)
             {
-                Components.insert(Components.begin(), Entry);
+                Components.Insert(Entry, 0);
             }
             else
             {
-                Components.push_back(Entry);
+                Components.Add(Entry);
             }
         }
 
-        uint16 Count = static_cast<uint16>(Components.size());
+        uint16 Count = static_cast<uint16>(Components.Num());
         Ar << Count;
         for (const FSpawnComponent& Component : Components)
         {
@@ -816,7 +823,7 @@ namespace Lumina::Net
         if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
             Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
         {
-            ParentGuid = Registry.Get<SNetworkComponent>(Parent).NetGUID.Value;
+            ParentGuid = Registry.Get<ECS::Read<SNetworkComponent>>(Parent).NetGUID.Value;
         }
         WriteNetGuid(Ar, ParentGuid);
     }
@@ -832,7 +839,7 @@ namespace Lumina::Net
         for (uint16 i = 0; i < Count; ++i)
         {
             const uint32 Index = ReadVarUInt(Ar);
-            if (Ar.HasError() || Index >= static_cast<uint32>(Types.ByIndex.size()))
+            if (Ar.HasError() || Index >= static_cast<uint32>(Types.ByIndex.Num()))
             {
                 Ar.SetHasError(true);
                 return;
@@ -860,7 +867,7 @@ namespace Lumina::Net
             }
             Ops->EmplaceCopy(Registry, Entity, Staged);
             Ops->Delete(Staged);
-            Applied.push_back(St);
+            Applied.Add(St);
         }
 
         for (CStruct* Type : Applied)
@@ -878,8 +885,8 @@ namespace Lumina::Net
 
     void WriteScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
-        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+        const SEntityScriptComponent* Component = Registry.TryGet<ECS::Read<SEntityScriptComponent>>(Entity);
+        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.Num() : 0u;
         for (uint32 Index = 0; Index < Count; ++Index)
         {
             if (CEntityScript* Script = Component->Scripts[Index].Get())
@@ -916,25 +923,25 @@ namespace Lumina::Net
             return;
         }
         const uint16 Len = static_cast<uint16>(MsgSize);
-        Batch.push_back(static_cast<uint8>(Len & 0xFF));
-        Batch.push_back(static_cast<uint8>((Len >> 8) & 0xFF));
-        Batch.insert(Batch.end(), Msg, Msg + MsgSize);
+        Batch.Add(static_cast<uint8>(Len & 0xFF));
+        Batch.Add(static_cast<uint8>((Len >> 8) & 0xFF));
+        Batch.Append(Msg, IntCastChecked<int32>(MsgSize));
     }
 
     void SendFramed(INetworkTransport& Transport, FConnectionHandle Connection, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
         static thread_local TVector<uint8> Framed;
-        Framed.clear();
+        Framed.Reset();
         AppendFramedMessage(Framed, Msg, MsgSize);
-        Transport.Send(Connection, Framed.data(), static_cast<SIZE_T>(Framed.size()), Channel, Mode);
+        Transport.Send(Connection, Framed.GetData(), static_cast<SIZE_T>(Framed.Num()), Channel, Mode);
     }
 
     void BroadcastFramed(INetworkTransport& Transport, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
         static thread_local TVector<uint8> Framed;
-        Framed.clear();
+        Framed.Reset();
         AppendFramedMessage(Framed, Msg, MsgSize);
-        Transport.Broadcast(Framed.data(), static_cast<SIZE_T>(Framed.size()), Channel, Mode);
+        Transport.Broadcast(Framed.GetData(), static_cast<SIZE_T>(Framed.Num()), Channel, Mode);
     }
 
     void ForEachFramedMessage(const uint8* Data, SIZE_T Size, const TFunction<void(const uint8*, SIZE_T)>& Fn)
@@ -958,46 +965,62 @@ namespace Lumina::Net
         // Get-or-assign a stable index for an object, queuing an export of its GUID the first time.
         uint32 NetObj_GetOrAssign(FNetObjectMap& Map, CObject* Obj)
         {
-            if (Obj == nullptr) { return 0; }
-            auto It = Map.ObjToIndex.find(Obj);
-            if (It != Map.ObjToIndex.end()) { return It->second; }
+            const FGuid Guid = Obj != nullptr ? Obj->GetGUID() : FGuid::Invalid();
+            if (!Guid.IsValid()) { return 0; }
+            auto It = Map.GuidToIndex.Find(Guid);
+            if (It != nullptr) { return (*It); }
             const uint32 Index = Map.NextIndex++;
-            Map.ObjToIndex[Obj]    = Index;
-            Map.IndexToGuid[Index] = Obj->GetGUID();
-            Map.PendingExports.push_back(Index);
+            Map.GuidToIndex[Guid]  = Index;
+            Map.IndexToGuid[Index] = Guid;
+            Map.PendingExports.Add(Index);
             return Index;
         }
 
-        // The result is cached including null, so a missing asset is tried once rather than per reference.
+        // A failure is cached, so a missing asset is tried once rather than per reference, while one that died since is looked up again.
         CObject* NetObj_Resolve(FNetObjectMap& Map, uint32 Index)
         {
             if (Index == 0)
             {
                 return nullptr;
             }
-            auto Oit = Map.IndexToObject.find(Index);
-            if (Oit != Map.IndexToObject.end())
+            auto Oit = Map.IndexToObject.Find(Index);
+            if (Oit != nullptr)
             {
-                return Oit->second;
+                if (CObject* Live = Oit->Get())
+                {
+                    return Live;
+                }
+                Map.IndexToObject.Remove(Index);
             }
-            
-            auto Git = Map.IndexToGuid.find(Index);
-            if (Git == Map.IndexToGuid.end())
+            else if (Map.FailedIndices.Contains(Index))
             {
                 return nullptr;
             }
             
-            CObject* Obj = FindObject<CObject>(Git->second);
+            auto Git = Map.IndexToGuid.Find(Index);
+            if (Git == nullptr)
+            {
+                return nullptr;
+            }
+            
+            CObject* Obj = FindObject<CObject>(*Git);
             if (Obj == nullptr)
             {
-                Obj = StaticLoadObject(Git->second);
+                Obj = StaticLoadObject(*Git);
             }
             
             if (Obj == nullptr)
             {
-                LOG_WARN("[Net] Replicated object index {} (GUID {}) not found and load failed -- marking failed (null).", Index, Git->second.ToString().c_str());
+                LOG_WARN("[Net] Replicated object index {} (GUID {}) not found and load failed -- marking failed (null).", Index, *Git->ToString());
             }
-            Map.IndexToObject[Index] = Obj; // cache (incl. null) so we don't reload on every reference
+            if (Obj != nullptr)
+            {
+                Map.IndexToObject[Index] = Obj;
+            }
+            else
+            {
+                Map.FailedIndices.Add(Index);
+            }
             return Obj;
         }
 
@@ -1005,41 +1028,41 @@ namespace Lumina::Net
         uint32 NetAsset_GetOrAssign(FNetAssetMap& Map, const SUIDocumentRef& Ref)
         {
             if (Ref.IsNull()) { return 0; }
-            const FString& Key = !Ref.Guid.empty() ? Ref.Guid : Ref.Path;
-            auto It = Map.KeyToIndex.find(Key);
-            if (It != Map.KeyToIndex.end()) { return It->second; }
+            const FString& Key = !Ref.Guid.IsEmpty() ? Ref.Guid : Ref.Path;
+            auto It = Map.KeyToIndex.Find(Key);
+            if (It != nullptr) { return (*It); }
             const uint32 Index = Map.NextIndex++;
             Map.KeyToIndex[Key]   = Index;
             Map.IndexToRef[Index] = Ref;
-            Map.PendingExports.push_back(Index);
+            Map.PendingExports.Add(Index);
             return Index;
         }
 
         SUIDocumentRef NetAsset_Resolve(FNetAssetMap& Map, uint32 Index)
         {
             if (Index == 0) { return SUIDocumentRef(); }
-            auto It = Map.IndexToRef.find(Index);
-            return It != Map.IndexToRef.end() ? It->second : SUIDocumentRef();
+            auto It = Map.IndexToRef.Find(Index);
+            return It != nullptr ? (*It) : SUIDocumentRef();
         }
 
         // Get-or-assign a stable index for a name, keyed by the FName itself so it dedupes.
         uint32 NetName_GetOrAssign(FNetNameMap& Map, const FName& Name)
         {
             if (Name.IsNone()) { return 0; }
-            auto It = Map.KeyToIndex.find(Name);
-            if (It != Map.KeyToIndex.end()) { return It->second; }
+            auto It = Map.KeyToIndex.Find(Name);
+            if (It != nullptr) { return (*It); }
             const uint32 Index = Map.NextIndex++;
             Map.KeyToIndex[Name]   = Index;
             Map.IndexToName[Index] = Name;
-            Map.PendingExports.push_back(Index);
+            Map.PendingExports.Add(Index);
             return Index;
         }
 
         FName NetName_Resolve(FNetNameMap& Map, uint32 Index)
         {
             if (Index == 0) { return FName(); }
-            auto It = Map.IndexToName.find(Index);
-            return It != Map.IndexToName.end() ? It->second : FName();
+            auto It = Map.IndexToName.Find(Index);
+            return It != nullptr ? (*It) : FName();
         }
     }
 
@@ -1052,7 +1075,7 @@ namespace Lumina::Net
             {
                 return 0u;
             }
-            const SNetworkComponent* Net = State.Registry->TryGet<SNetworkComponent>(Entity);
+            const SNetworkComponent* Net = State.Registry->TryGet<ECS::Read<SNetworkComponent>>(Entity);
             return Net != nullptr ? Net->NetGUID.Value : 0u;
         };
         Ar.ObjectToNetIndex   = [&State](CObject* O)         { return NetObj_GetOrAssign(State.OutObjects, O); };
@@ -1069,7 +1092,7 @@ namespace Lumina::Net
             {
                 return 0u;
             }
-            const SNetworkComponent* Net = State.Registry->TryGet<SNetworkComponent>(Entity);
+            const SNetworkComponent* Net = State.Registry->TryGet<ECS::Read<SNetworkComponent>>(Entity);
             return Net != nullptr ? Net->NetGUID.Value : 0u;
         };
         Ar.NetGUIDToEntity = [&State](uint32 Guid) -> uint32
@@ -1111,14 +1134,14 @@ namespace Lumina::Net
     {
         FNetArchive Writer(OutMsg);
         uint8  Type  = static_cast<uint8>(ENetMessage::ObjectExport);
-        uint16 Count = static_cast<uint16>(Indices.size());
+        uint16 Count = static_cast<uint16>(Indices.Num());
         Writer << Type;
         Writer << Count;
         for (uint32 Index : Indices)
         {
-            auto It = Map.IndexToGuid.find(Index);
-            if (It == Map.IndexToGuid.end()) { continue; }
-            FGuid Guid = It->second;
+            auto It = Map.IndexToGuid.Find(Index);
+            if (It == nullptr) { continue; }
+            FGuid Guid = (*It);
             Writer << Index;
             Writer << Guid;
         }
@@ -1139,7 +1162,8 @@ namespace Lumina::Net
             Reader << Guid;
             if (Reader.HasError()) { break; }
             Map.IndexToGuid[Index] = Guid;
-            Map.IndexToObject.erase(Index); // re-resolve lazily against the latest GUID
+            Map.IndexToObject.Remove(Index); // re-resolve lazily against the latest GUID
+            Map.FailedIndices.Remove(Index);
         }
     }
 
@@ -1147,15 +1171,15 @@ namespace Lumina::Net
     {
         FNetArchive Writer(OutMsg);
         uint8  Type  = static_cast<uint8>(ENetMessage::AssetExport);
-        uint16 Count = static_cast<uint16>(Indices.size());
+        uint16 Count = static_cast<uint16>(Indices.Num());
         Writer << Type;
         Writer << Count;
         for (uint32 Index : Indices)
         {
-            auto It = Map.IndexToRef.find(Index);
-            if (It == Map.IndexToRef.end()) { continue; }
-            FString Path = It->second.Path;
-            FString Guid = It->second.Guid;
+            auto It = Map.IndexToRef.Find(Index);
+            if (It == nullptr) { continue; }
+            FString Path = It->Path;
+            FString Guid = It->Guid;
             Writer << Index;
             Writer << Path;
             Writer << Guid;
@@ -1188,14 +1212,14 @@ namespace Lumina::Net
     {
         FNetArchive Writer(OutMsg);
         uint8  Type  = static_cast<uint8>(ENetMessage::NameExport);
-        uint16 Count = static_cast<uint16>(Indices.size());
+        uint16 Count = static_cast<uint16>(Indices.Num());
         Writer << Type;
         Writer << Count;
         for (uint32 Index : Indices)
         {
-            auto It = Map.IndexToName.find(Index);
-            if (It == Map.IndexToName.end()) { continue; }
-            FString Str = It->second.ToString();
+            auto It = Map.IndexToName.Find(Index);
+            if (It == nullptr) { continue; }
+            FString Str = It->ToString();
             Writer << Index;
             Writer << Str;
         }

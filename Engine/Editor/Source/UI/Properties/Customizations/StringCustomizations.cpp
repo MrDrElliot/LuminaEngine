@@ -19,8 +19,8 @@ namespace Lumina
             if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
             {
                 FString* Str = static_cast<FString*>(Data->UserData);
-                Str->resize(Data->BufTextLen);
-                Data->Buf = Str->data();
+                Str->SetLen(Data->BufTextLen);
+                Data->Buf = Str->GetData();
             }
             return 0;
         }
@@ -29,13 +29,13 @@ namespace Lumina
         const INamePickerSource* ResolvePickerSource(FProperty* Property, FStringView& OutKind)
         {
             const FCStringView Kind = Property->GetMetadata("Picker");
-            if (Kind.empty())
+            if (Kind.IsEmpty())
             {
                 return nullptr;
             }
 
             OutKind = Kind;
-            return NamePicker::Find(FName(Kind.c_str()));
+            return NamePicker::Find(FName(*Kind));
         }
 
         void DrawUnknownPicker(FStringView Kind)
@@ -60,7 +60,7 @@ namespace Lumina
             return EPropertyChangeOp::None;
         }
 
-        if (!PickerKind.empty())
+        if (!PickerKind.IsEmpty())
         {
             DrawUnknownPicker(PickerKind);
             return EPropertyChangeOp::None;
@@ -68,7 +68,7 @@ namespace Lumina
 
         // None edits as an empty field, which also turns a cleared field back into None.
         char Buffer[256];
-        strncpy(Buffer, DisplayValue.IsNone() ? "" : DisplayValue.c_str(), sizeof(Buffer));
+        strncpy(Buffer, DisplayValue.IsNone() ? "" : *DisplayValue, sizeof(Buffer));
         Buffer[sizeof(Buffer) - 1] = 0;
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
@@ -105,18 +105,18 @@ namespace Lumina
         if (const INamePickerSource* Source = ResolvePickerSource(Property->Property, PickerKind))
         {
             const FNamePickerArgs PickerArgs{ "##Pick", Args.Context,
-                DisplayValue.empty() ? FName() : FName(DisplayValue.c_str()), &PickerState };
+                DisplayValue.IsEmpty() ? FName() : FName(*DisplayValue), &PickerState };
 
             const FNamePickerResult PickerResult = NamePicker::Draw(*Source, PickerArgs);
             if (PickerResult.bChanged)
             {
-                DisplayValue = PickerResult.Value.IsNone() ? FString() : FString(PickerResult.Value.c_str());
+                DisplayValue = PickerResult.Value.IsNone() ? FString() : FString(*PickerResult.Value);
                 return EPropertyChangeOp::Updated;
             }
             return EPropertyChangeOp::None;
         }
 
-        if (!PickerKind.empty())
+        if (!PickerKind.IsEmpty())
         {
             DrawUnknownPicker(PickerKind);
             return EPropertyChangeOp::None;
@@ -133,14 +133,14 @@ namespace Lumina
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
         char Buffer[1024];
-        strncpy(Buffer, DisplayValue.c_str(), sizeof(Buffer));
+        strncpy(Buffer, *DisplayValue, sizeof(Buffer));
         Buffer[sizeof(Buffer) - 1] = '\0';
 
         if (bMultiline)
         {
             const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 4.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
             // Edited in place through the resize callback, since the text can be arbitrarily long.
-            ImGui::InputTextMultiline("##ParamName", DisplayValue.data(), DisplayValue.capacity() + 1, Size,
+            ImGui::InputTextMultiline("##ParamName", DisplayValue.GetData(), DisplayValue.GetCapacity() + 1, Size,
                                       ImGuiInputTextFlags_CallbackResize, StringResizeCallback, &DisplayValue);
         }
         else
@@ -158,14 +158,14 @@ namespace Lumina
                 for (ETextAssetKind Kind : TextKinds)
                 {
                     FStringView Ext = TextAsset::ExtensionForKind(Kind);
-                    if (!Ext.empty() && Ext[0] == '.')
+                    if (!Ext.IsEmpty() && Ext[0] == '.')
                     {
-                        Ext = Ext.substr(1);
+                        Ext = Ext.Mid(1);
                     }
                     FFixedString Dropped;
                     if (DragDrop::AcceptFile(Ext, Dropped))
                     {
-                        DisplayValue = FString(Dropped.c_str(), Dropped.size());
+                        DisplayValue = FString(*Dropped, Dropped.Len());
                         Result = EPropertyChangeOp::Updated;
                         break;
                     }
@@ -202,11 +202,11 @@ namespace Lumina
                 {
                     auto Offer = [&](const FString& Path)
                     {
-                        if (!ImGuiX::PassSearchFilter(SearchFilter, Path.c_str()))
+                        if (!ImGuiX::PassSearchFilter(SearchFilter, *Path))
                         {
                             return;
                         }
-                        if (ImGui::Selectable(Path.c_str()))
+                        if (ImGui::Selectable(*Path))
                         {
                             DisplayValue = Path;
                             Result = EPropertyChangeOp::Updated;
@@ -220,7 +220,7 @@ namespace Lumina
                         {
                             for (const FTextAssetData* Data : FAssetRegistry::Get().GetTextAssetsOfKind(Kind))
                             {
-                                Offer(FString(Data->Path.c_str(), Data->Path.size()));
+                                Offer(FString(*Data->Path, Data->Path.Len()));
                             }
                         }
                     }
@@ -228,7 +228,7 @@ namespace Lumina
                     {
                         for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
                         {
-                            Offer(FString(Asset->Path.c_str()));
+                            Offer(FString(*Asset->Path));
                         }
                     }
                 }
@@ -240,12 +240,12 @@ namespace Lumina
             if (bTextAsset)
             {
                 ImGui::SameLine(0, 0);
-                ImGui::BeginDisabled(DisplayValue.empty());
+                ImGui::BeginDisabled(DisplayValue.IsEmpty());
                 if (ImGui::Button(LE_ICON_OPEN_IN_NEW "##OpenTextAsset", ImVec2(ImGui::GetFrameHeight(), 0)))
                 {
                     if (IEditorToolContext* Tools = SessionOps::GetToolContext())
                     {
-                        Tools->OpenFileEditor(FStringView(DisplayValue.c_str(), DisplayValue.size()));
+                        Tools->OpenFileEditor(FStringView(*DisplayValue, DisplayValue.Len()));
                     }
                 }
                 ImGui::EndDisabled();

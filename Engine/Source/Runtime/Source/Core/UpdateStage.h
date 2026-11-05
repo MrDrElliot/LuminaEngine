@@ -11,7 +11,6 @@ namespace Lumina
     {
         FrameStart,
         PrePhysics,
-        DuringPhysics,
         PostPhysics,
         FrameEnd,
         Paused,
@@ -22,7 +21,6 @@ namespace Lumina
     {
         "FrameStart",
         "PrePhysics",
-        "DuringPhysics",
         "PostPhysics",
         "FrameEnd",
         "Paused"

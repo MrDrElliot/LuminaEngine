@@ -3,36 +3,38 @@
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentGameThread.h"
 #include "Agent/AgentToolRegistry.h"
-#include "Containers/ConcurrentQueue.h"
-#include "Core/Delegates/CoreDelegates.h"
-#include "Core/Windows/Window.h"
-#include "Core/Windows/WindowInput.h"
-#include "Core/Threading/Thread.h"
-#include "Input/InputContext.h"
-#include "Input/InputViewport.h"
 #include "Containers/Algorithm.h"
-#include "Core/Math/Math.h"
+#include "Containers/ConcurrentQueue.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Delegates/CoreDelegates.h"
+#include "Core/Engine/Engine.h"
+#include "Core/Engine/EngineURL.h"
+#include "Core/Math/Math.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Threading/Thread.h"
+#include "Core/Windows/Window.h"
+#include "Core/Windows/WindowInput.h"
+#include "FileSystem/FileSystem.h"
+#include "Input/InputContext.h"
+#include "Input/InputViewport.h"
 #include "Log/Log.h"
+#include "MCPTextMatch.h"
 #include "Platform/Time/PlatformTime.h"
+#include "Renderer/RenderManager.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Session/SessionOps.h"
-#include "Renderer/RenderManager.h"
-#include "FileSystem/FileSystem.h"
-#include "UI/Tools/EditorToolContext.h"
-#include "MCPTextMatch.h"
 #include "Tools/Screenshot/ScreenshotCapture.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "World/World.h"
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPEditorSessionToolsInternal
     {
         constexpr const char* GNoWorldEditorSession = "No world editor is open.";
 
-        void FillPlayState(SPlayState& Out)
+        void FillEditorPlayState(SPlayState& Out)
         {
             FString Error;
             SessionOps::FPlayState State;
@@ -62,7 +64,7 @@ namespace Lumina::MCP
             }
         }
 
-        const char* LevelName(ELogLevel Level)
+        const char* EditorLogLevelName(ELogLevel Level)
         {
             switch (Level)
             {
@@ -76,12 +78,12 @@ namespace Lumina::MCP
             }
         }
 
-        bool ParseLevel(const FString& Text, ELogLevel& OutLevel)
+        bool ParseEditorLogLevel(const FString& Text, ELogLevel& OutLevel)
         {
             for (uint8 Index = 0; Index <= static_cast<uint8>(ELogLevel::Critical); ++Index)
             {
                 const ELogLevel Level = static_cast<ELogLevel>(Index);
-                if (EqualsTextFold(FStringView(LevelName(Level)), FStringView(Text)))
+                if (EqualsTextFold(FStringView(EditorLogLevelName(Level)), FStringView(Text)))
                 {
                     OutLevel = Level;
                     return true;
@@ -91,543 +93,593 @@ namespace Lumina::MCP
             return false;
         }
 
-        void RegisterUndoRedo(FStringView Owner)
+        // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
+        TConcurrentQueue<FKeyInput> EditorInjectedKeys;
+        TConcurrentQueue<uint32> EditorInjectedCharacters;
+        TConcurrentQueue<FMouseButtonInput> EditorInjectedButtons;
+        TConcurrentQueue<FMouseMoveInput> EditorInjectedMoves;
+        FDelegateHandle EditorInputPumpedHandle;
+
+        void ForwardEditorInjectedInput()
         {
-            Agent::FToolRegistry::Get().Register<SUndoParams, SUndoResult>(
-                Owner, "editor.undo",
-                "Undo the last steps in the scene target, or in Tab when given, which is any open tab such as a material or animation graph editor.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SUndoParams& In, SUndoResult& Out)
-                {
-                    FString SessionError;
-                    const FStringView Tab(In.Tab);
-                    if (Tab.empty() && !SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
+            FWindow* Window = Windowing::GetPrimaryWindowHandle();
+            FKeyInput Input;
+            while (EditorInjectedKeys.TryDequeue(Input))
+            {
+                Window->OnKey.Broadcast(Window, Input);
+            }
 
-                    if (!SessionOps::HasUndoTarget(Tab, SessionError))
-                    {
-                        return Agent::FToolResult::Error(SessionError);
-                    }
+            uint32 Codepoint;
+            while (EditorInjectedCharacters.TryDequeue(Codepoint))
+            {
+                Window->OnChar.Broadcast(Window, Codepoint);
+            }
 
-                    if (Tab.empty() && SessionOps::IsSceneTargetSimulating())
-                    {
-                        return Agent::FToolResult::Error("Undo is blocked while playing in editor.");
-                    }
+            // Moves before buttons, so a click is evaluated at the position it was aimed at.
+            FMouseMoveInput Move;
+            while (EditorInjectedMoves.TryDequeue(Move))
+            {
+                Window->OnMouseMove.Broadcast(Window, Move);
+            }
 
-                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Undo(1, Tab) > 0; ++Step)
-                    {
-                        ++Out.Applied;
-                    }
-
-                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState(Tab);
-                    Out.NextUndo = Undo.NextUndo;
-                    Out.NextRedo = Undo.NextRedo;
-
-                    if (Out.Applied == 0)
-                    {
-                        return Agent::FToolResult::Error("Nothing to undo.");
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Undid {} step(s). Next undo: {}.",
-                        Out.Applied, Out.NextUndo.empty() ? FString("nothing") : Out.NextUndo));
-                });
-
-            Agent::FToolRegistry::Get().Register<SUndoParams, SUndoResult>(
-                Owner, "editor.redo",
-                "Redo steps last undone in the scene target, or in Tab when given.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SUndoParams& In, SUndoResult& Out)
-                {
-                    FString SessionError;
-                    const FStringView Tab(In.Tab);
-                    if (Tab.empty() && !SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
-
-                    if (!SessionOps::HasUndoTarget(Tab, SessionError))
-                    {
-                        return Agent::FToolResult::Error(SessionError);
-                    }
-
-                    if (Tab.empty() && SessionOps::IsSceneTargetSimulating())
-                    {
-                        return Agent::FToolResult::Error("Redo is blocked while playing in editor.");
-                    }
-
-                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Redo(1, Tab) > 0; ++Step)
-                    {
-                        ++Out.Applied;
-                    }
-
-                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState(Tab);
-                    Out.NextUndo = Undo.NextUndo;
-                    Out.NextRedo = Undo.NextRedo;
-
-                    if (Out.Applied == 0)
-                    {
-                        return Agent::FToolResult::Error("Nothing to redo.");
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Redid {} step(s). Next redo: {}.",
-                        Out.Applied, Out.NextRedo.empty() ? FString("nothing") : Out.NextRedo));
-                });
+            FMouseButtonInput Button;
+            while (EditorInjectedButtons.TryDequeue(Button))
+            {
+                Window->OnMouseButton.Broadcast(Window, Button);
+            }
         }
 
-        void RegisterPlayControl(FStringView Owner)
+        // Injected input only reaches the viewport that owns input, which the editor moves only while its window is foreground.
+        bool FocusEditorGameViewport(bool& bOutFocused)
         {
-            Agent::FToolRegistry::Get().Register<SPlayStateParams, SPlayState>(
-                Owner, "editor.play_state",
-                "Report whether the editor is playing, paused, and which world is open.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SPlayStateParams&, SPlayState& Out)
-                {
-                    FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
-
-                    FillPlayState(Out);
-                    return Agent::FToolResult::Ok(Out.bPlaying
-                        ? Lumina::Format("Playing{} in {}.", Out.bPaused ? " (paused)" : "", Out.World)
-                        : Lumina::Format("Editing {}.", Out.World));
-                });
-
-            Agent::FToolRegistry::Get().Register<SStartPlayParams, SPlayState>(
-                Owner, "editor.play",
-                "Start play-in-editor on the open world, optionally as a networked session with several players.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SStartPlayParams& In, SPlayState& Out)
-                {
-                    FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
-
-                    if (In.Players > 0 || !In.NetMode.empty())
-                    {
-                        const FString Mode = In.NetMode.empty() ? FString("listen") : In.NetMode;
-                        const int32 Players = In.Players > 0 ? In.Players : 1;
-                        if (!SessionOps::SetPlayNetwork(Players, FStringView(Mode.c_str(), Mode.size()), SessionError))
-                        {
-                            return Agent::FToolResult::Error(SessionError);
-                        }
-                    }
-
-                    if (!SessionOps::StartPlay(SessionError))
-                    {
-                        FillPlayState(Out);
-                        return Agent::FToolResult::Error("Already playing.");
-                    }
-
-                    LOG_INFO("[MCP] An agent started play-in-editor.");
-                    FillPlayState(Out);
-                    return Agent::FToolResult::Ok("Playing.");
-                });
-
-            Agent::FToolRegistry::Get().Register<SPlayStateParams, SPlayState>(
-                Owner, "editor.stop",
-                "Stop play-in-editor or simulation and return to editing.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SPlayStateParams&, SPlayState& Out)
-                {
-                    FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
-
-                    if (!SessionOps::IsSimulating())
-                    {
-                        FillPlayState(Out);
-                        return Agent::FToolResult::Error("Nothing is playing.");
-                    }
-
-                    SessionOps::StopPlay(SessionError);
-                    LOG_INFO("[MCP] An agent stopped play-in-editor.");
-                    FillPlayState(Out);
-                    return Agent::FToolResult::Ok("Stopped.");
-                });
-
-            Agent::FToolRegistry::Get().Register<SPauseParams, SPlayState>(
-                Owner, "editor.pause",
-                "Pause or resume the running play-in-editor session.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SPauseParams& In, SPlayState& Out)
-                {
-                    FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
-                    {
-                        return Agent::FToolResult::Error(GNoWorldEditorSession);
-                    }
-
-                    if (!SessionOps::IsSimulating())
-                    {
-                        FillPlayState(Out);
-                        return Agent::FToolResult::Error("Nothing is playing.");
-                    }
-
-                    SessionOps::SetPaused(In.bPaused, SessionError);
-                    FillPlayState(Out);
-                    return Agent::FToolResult::Ok(In.bPaused ? "Paused." : "Resumed.");
-                });
+            return Agent::FGameThreadGate::Run([&bOutFocused]()
+            {
+                FInputViewportRegistry& Viewports = FInputViewportRegistry::Get();
+                FString SceneError;
+                CWorld* World = SessionOps::GetSceneWorld(SceneError);
+                Viewports.TakeGameFocus(World != nullptr ? Viewports.FindViewportForWorld(World) : nullptr);
+                bOutFocused = Viewports.GetActiveViewport() != nullptr;
+            }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds()) == Agent::EGameThreadResult::Ran;
         }
 
-        void RegisterSaveAndQuit(FStringView Owner)
+        TVector<uint32> DecodeEditorInputUtf8(FStringView Text)
         {
-            Agent::FToolRegistry::Get().Register<SSaveAllParams, SSaveAllResult>(
-                Owner, "editor.save_all",
-                "Save every package with unsaved changes, as File > Save All does. Open asset editors do their own save work.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SSaveAllParams&, SSaveAllResult& Out)
+            TVector<uint32> Codepoints;
+            for (int32 i = 0; i < Text.Len();)
+            {
+                const uint8 Lead = uint8(Text[i]);
+                const int Length = Lead < 0x80 ? 1 : (Lead >> 5) == 0x6 ? 2 : (Lead >> 4) == 0xE ? 3 : 4;
+                uint32 Codepoint = Length == 1 ? Lead : Lead & (0x3F >> (Length - 1));
+                for (int j = 1; j < Length && i + j < Text.Len(); ++j)
                 {
-                    uint32 Saved = 0;
-                    FString Error;
-                    const bool bAllSaved = SessionOps::SaveAll(Saved, Out.Failed, Error);
-                    Out.Saved = (int32)Saved;
-                    if (!bAllSaved)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    FString WorldError;
-                    CWorld* SceneWorld = SessionOps::GetSceneWorld(WorldError);
-                    Out.bWorldUnsaved = SceneWorld != nullptr && SceneWorld->GetPackage() == nullptr;
-                    if (Out.bWorldUnsaved)
-                    {
-                        return Agent::FToolResult::Ok(Lumina::Format("Saved {} package(s), but the open level is a transient world with no package, so its "
-                            "entities were not saved. Open a world asset with editor.open_asset and build the level there.", Saved));
-                    }
-
-                    return Agent::FToolResult::Ok(Saved == 0 ? FString("Nothing to save.") : Lumina::Format("Saved {} package(s).", Saved));
-                });
-
-            Agent::FToolRegistry::Get().Register<SQuitParams, SQuitResult>(
-                Owner, "editor.quit",
-                "Close the editor without the unsaved-changes prompt or any other popup. Refuses while packages are "
-                "unsaved unless bSaveFirst or bDiscardUnsaved. Play is stopped first and the exit lands a few frames later.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SQuitParams& In, SQuitResult& Out)
-                {
-                    if (In.bSaveFirst && In.bDiscardUnsaved)
-                    {
-                        return Agent::FToolResult::Error("Pass bSaveFirst or bDiscardUnsaved, not both.");
-                    }
-
-                    const SessionOps::EQuitUnsaved Unsaved = In.bSaveFirst ? SessionOps::EQuitUnsaved::Save
-                        : In.bDiscardUnsaved ? SessionOps::EQuitUnsaved::Discard
-                        : SessionOps::EQuitUnsaved::Refuse;
-
-                    FString Error;
-                    Out.bQuitting = SessionOps::Quit(Unsaved, Error);
-                    if (!Out.bQuitting)
-                    {
-                        Out.Unsaved = SessionOps::GetDirtyPackagePaths();
-                        for (const FString& Path : Out.Unsaved)
-                        {
-                            Error.append(Lumina::Format(" {}", Path));
-                        }
-                        return Agent::FToolResult::Error(Unsaved == SessionOps::EQuitUnsaved::Refuse
-                            ? Error + " Call editor.save_all, or pass bSaveFirst or bDiscardUnsaved."
-                            : Error);
-                    }
-
-                    LOG_INFO("[MCP] An agent closed the editor.");
-                    return Agent::FToolResult::Ok("Quitting.");
-                });
+                    Codepoint = (Codepoint << 6) | (uint8(Text[i + j]) & 0x3F);
+                }
+                Codepoints.Add(Codepoint);
+                i += Length;
+            }
+            return Codepoints;
         }
 
-        void RegisterTabs(FStringView Owner)
+        void FillEditorWindowState(FWindow& Window, SWindowState& Out)
         {
-            Agent::FToolRegistry::Get().Register<SListTabsParams, SListTabsResult>(
-                Owner, "editor.list_tabs",
-                "List every open editor tab, which asset it edits, and which one has focus.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SListTabsParams&, SListTabsResult& Out)
-                {
-                    SessionOps::ForEachTab([&Out](const SessionOps::FTabInfo& Tab)
-                    {
-                        STabInfo Info;
-                        Info.Name      = Tab.Name;
-                        Info.Id        = Tab.Id;
-                        Info.AssetGuid = Tab.AssetGuid;
-                        Info.bUnsaved  = Tab.bUnsaved;
-                        Info.bFocused  = Tab.bFocused;
-                        Info.bClosable = Tab.bClosable;
-                        Out.Tabs.push_back(Move(Info));
-                    });
-
-                    FString Text;
-                    for (const STabInfo& Tab : Out.Tabs)
-                    {
-                        Text.append(Lumina::Format("{}{}{}\n", Tab.Name, Tab.bFocused ? " (focused)" : "", Tab.bUnsaved ? " *" : ""));
-                    }
-
-                    return Agent::FToolResult::Ok(Text.empty() ? FString("No tabs are open.") : Text);
-                });
-
-            Agent::FToolRegistry::Get().Register<SOpenAssetParams, SOpenAssetResult>(
-                Owner, "editor.open_asset",
-                "Open an asset in its editor tab, or focus the tab it already has. Edits made while open are undoable.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SOpenAssetParams& In, SOpenAssetResult& Out)
-                {
-                    const TOptional<FGuid> Guid = Agent::ParseAssetGuid(FStringView(In.Asset));
-                    if (!Guid.IsSet())
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("'{}' is neither a GUID nor an asset path.", In.Asset));
-                    }
-
-                    FString Error;
-                    if (!SessionOps::OpenAsset(*Guid, Out.Tab, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Open in tab '{}'.", Out.Tab));
-                });
-
-            Agent::FToolRegistry::Get().Register<SOpenFileParams, SOpenAssetResult>(
-                Owner, "editor.open_file",
-                "Open a text file that has an editor of its own, such as an .rml or .rcss in the UI editor, by virtual path.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SOpenFileParams& In, SOpenAssetResult& Out)
-                {
-                    IEditorToolContext* Tools = SessionOps::GetToolContext();
-                    if (Tools == nullptr)
-                    {
-                        return Agent::FToolResult::Error("The editor UI is not running.");
-                    }
-                    if (!VFS::Exists(FStringView(In.Path.c_str(), In.Path.size())))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("No file at '{}'.", In.Path));
-                    }
-                    Tools->OpenFileEditor(FStringView(In.Path.c_str(), In.Path.size()));
-                    Out.Tab = In.Path;
-                    return Agent::FToolResult::Ok(Lumina::Format("Opened '{}'.", In.Path));
-                });
-
-            Agent::FToolRegistry::Get().Register<SBrowseFolderParams, SBrowseFolderResult>(
-                Owner, "contentbrowser.browse",
-                "Show a folder in the content browser, optionally with text in its search box. The tiles build on the next frame.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SBrowseFolderParams& In, SBrowseFolderResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::BrowseContentFolder(FStringView(In.Folder), FStringView(In.Search), Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    return Agent::FToolResult::Ok(Lumina::Format("Browsing '{}'.", In.Folder));
-                });
-
-            Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
-                Owner, "editor.focus_tab",
-                "Bring a tab to the front. Focus lands on the next frame.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const STabNameParams& In, STabActionResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::FocusTab(FStringView(In.Tab), Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error + " Call editor.list_tabs.");
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Focusing '{}'.", In.Tab));
-                });
-
-            Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
-                Owner, "editor.target_scene",
-                "Point the scene, entity and undo tools at another scene tab, such as an open prefab editor. An empty Tab "
-                "restores the world editor. Play controls always stay on the world editor.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const STabNameParams& In, STabActionResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::SetSceneTarget(FStringView(In.Tab), Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error + " Call editor.list_tabs.");
-                    }
-
-                    return Agent::FToolResult::Ok(In.Tab.empty()
-                        ? FString("Scene tools target the world editor.")
-                        : Lumina::Format("Scene tools target '{}'.", In.Tab));
-                });
-
-            Agent::FToolRegistry::Get().Register<SCloseTabParams, STabActionResult>(
-                Owner, "editor.close_tab",
-                "Close a tab as its X button would. Refuses unsaved changes unless bDiscardUnsaved.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SCloseTabParams& In, STabActionResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::CloseTab(FStringView(In.Tab), In.bDiscardUnsaved, Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Closing '{}'.", In.Tab));
-                });
+            const FUIntVector2 Extent = Window.GetExtent();
+            Out.Width  = (int32)Extent.x;
+            Out.Height = (int32)Extent.y;
+            Window.GetWindowPosition(Out.X, Out.Y);
+            Out.bMinimized = Window.IsWindowMinimized();
+            Out.bMaximized = Window.IsWindowMaximized();
         }
 
-        void RegisterScriptReload(FStringView Owner)
+        Agent::FToolResult StepEditorHistory(const SEditorHistoryParams& In, SEditorHistoryResult& Out)
         {
-            // Any, not GameThread: the reload is serviced at a fixed point in the frame, so this has to let
-            // the game thread run between polls rather than occupy it.
-            Agent::FToolRegistry::Get().Register<SScriptReloadParams, SScriptReloadResult>(
-                Owner, "scripts.reload",
-                "Recompile and reload the project's C# scripts, waiting for the new generation to come up. "
-                "Reports the generation before and after, so a caller can tell a reload from a no-op, and "
-                "how many script types the new generation registered (zero means compilation failed; read "
-                "editor.log_tail for the errors).",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
-                [](const SScriptReloadParams& Params, SScriptReloadResult& Out)
-                {
-                    if (!DotNet::IsInitialized())
-                    {
-                        return Agent::FToolResult::Error("The .NET host is not running, so there is nothing to reload.");
-                    }
+            const bool bUndo = In.Action == EEditorHistoryAction::Undo;
+            FString SessionError;
+            const FStringView Tab(In.Tab);
+            if (Tab.IsEmpty() && !SessionOps::HasSceneEditor())
+            {
+                return Agent::FToolResult::Error(GNoWorldEditorSession);
+            }
 
-                    const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
+            if (!SessionOps::HasUndoTarget(Tab, SessionError))
+            {
+                return Agent::FToolResult::Error(SessionError);
+            }
 
-                    int32 Before = 0;
-                    int32 FinishedBefore = 0;
-                    if (Agent::FGameThreadGate::Run([&Before, &FinishedBefore]()
-                        {
-                            Before = DotNet::GetScriptGeneration();
-                            FinishedBefore = DotNet::GetFinishedScriptReloads();
-                            DotNet::RequestScriptReload();
-                        }, GateTimeout) != Agent::EGameThreadResult::Ran)
-                    {
-                        return Agent::FToolResult::Error("The game thread did not pick up the reload request.");
-                    }
+            if (Tab.IsEmpty() && SessionOps::IsSceneTargetSimulating())
+            {
+                return Agent::FToolResult::Error(bUndo ? "Undo is blocked while playing in editor." : "Redo is blocked while playing in editor.");
+            }
 
-                    Out.PreviousGeneration = Before;
-                    Out.Generation = Before;
+            for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && (bUndo ? SessionOps::Undo(1, Tab) : SessionOps::Redo(1, Tab)) > 0; ++Step)
+            {
+                ++Out.Applied;
+            }
 
-                    const double Deadline = PlatformTime::Seconds() + Math::Max(0.0f, Params.TimeoutSeconds);
-                    int32 FailedResult = 0;
-                    while (PlatformTime::Seconds() < Deadline)
-                    {
-                        Threading::Sleep(50);
+            const SessionOps::FUndoState Undo = SessionOps::GetUndoState(Tab);
+            Out.NextUndo = Undo.NextUndo;
+            Out.NextRedo = Undo.NextRedo;
 
-                        int32 Now = Before;
-                        int32 Finished = FinishedBefore;
-                        int32 LastResult = 0;
-                        if (Agent::FGameThreadGate::Run([&Now, &Finished, &LastResult]()
-                            {
-                                Now = DotNet::GetScriptGeneration();
-                                Finished = DotNet::GetFinishedScriptReloads();
-                                LastResult = DotNet::GetLastScriptReloadResult();
-                            }, GateTimeout) != Agent::EGameThreadResult::Ran)
-                        {
-                            break;
-                        }
-                        if (Now != Before)
-                        {
-                            Out.Generation = Now;
-                            Out.bReloaded = true;
-                            break;
-                        }
-                        // A failed compile never changes the generation, so the finished count is what ends the wait.
-                        if (Finished != FinishedBefore && LastResult != 0)
-                        {
-                            FailedResult = LastResult;
-                            break;
-                        }
-                    }
+            if (Out.Applied == 0)
+            {
+                return Agent::FToolResult::Error(bUndo ? "Nothing to undo." : "Nothing to redo.");
+            }
 
-                    if (FailedResult != 0)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "The reload failed with host error {} and the previous scripts stay loaded; editor.log_tail has the compiler output.",
-                            FailedResult));
-                    }
-
-                    DotNet::FScriptDiagnostics Diagnostics{};
-                    bool bHaveDiagnostics = false;
-                    (void)Agent::FGameThreadGate::Run([&Diagnostics, &bHaveDiagnostics]()
-                        {
-                            bHaveDiagnostics = DotNet::GetRuntimeDiagnostics(Diagnostics);
-                        }, GateTimeout);
-
-                    if (bHaveDiagnostics)
-                    {
-                        Out.AliveContexts = Diagnostics.AliveScriptAlcCount;
-                        Out.LoadedTypes = Diagnostics.LoadedTypeCount;
-                    }
-
-                    if (!Out.bReloaded)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "The reload is still queued after {} seconds; generation is still {}.",
-                            Params.TimeoutSeconds, Out.Generation));
-                    }
-
-                    LOG_INFO("[MCP] An agent reloaded scripts; generation {} -> {}.", Before, Out.Generation);
-
-                    if (Out.LoadedTypes == 0)
-                    {
-                        return Agent::FToolResult::Ok(Lumina::Format(
-                            "Reloaded to generation {}, but no script types registered. Compilation most "
-                            "likely failed; read editor.log_tail for the errors.", Out.Generation));
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format(
-                        "Reloaded to generation {}: {} script type(s), {} script context(s) resident.",
-                        Out.Generation, Out.LoadedTypes, Out.AliveContexts));
-                });
+            const FString& Next = bUndo ? Out.NextUndo : Out.NextRedo;
+            return Agent::FToolResult::Ok(Lumina::Format("{} {} step(s). Next {}: {}.", bUndo ? "Undid" : "Redid",
+                Out.Applied, bUndo ? "undo" : "redo", Next.IsEmpty() ? FString("nothing") : Next));
         }
 
-        Agent::FToolResult CaptureScene(const SScreenshotParams& In, SScreenshotResult& Out);
-        Agent::FToolResult CaptureEditorWindow(const SScreenshotParams& In, SScreenshotResult& Out, int32 GateTimeout);
-
-        void RegisterScreenshot(FStringView Owner)
+        Agent::FToolResult StartEditorPlay(const SEditorPlayParams& In, SPlayState& Out)
         {
-            Agent::FToolRegistry::Get().Register<SScreenshotParams, SScreenshotResult>(
-                Owner, "editor.screenshot",
-                "Capture the active viewport, or with Source EditorUI the whole editor window, to an image file and report where it landed.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
-                [](const SScreenshotParams& In, SScreenshotResult& Out)
+            FString SessionError;
+            if (In.Players > 0 || !In.NetMode.IsEmpty())
+            {
+                const FString Mode = In.NetMode.IsEmpty() ? FString("listen") : In.NetMode;
+                const int32 Players = In.Players > 0 ? In.Players : 1;
+                if (!SessionOps::SetPlayNetwork(Players, FStringView(*Mode, Mode.Len()), SessionError))
                 {
-                    const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
-                    if (In.Source == "EditorUI")
-                    {
-                        return CaptureEditorWindow(In, Out, GateTimeout);
-                    }
+                    return Agent::FToolResult::Error(SessionError);
+                }
+            }
 
-                    Agent::FToolResult Result = Agent::FToolResult::Error("The game thread did not run the capture.");
-                    if (Agent::FGameThreadGate::Run([&In, &Out, &Result] { Result = CaptureScene(In, Out); }, GateTimeout)
-                        != Agent::EGameThreadResult::Ran)
-                    {
-                        return Agent::FToolResult::Error("The game thread did not pick up the capture.");
-                    }
-                    return Result;
-                });
+            if (!SessionOps::StartPlay(SessionError))
+            {
+                FillEditorPlayState(Out);
+                return Agent::FToolResult::Error("Already playing.");
+            }
+
+            LOG_INFO("[MCP] An agent started play-in-editor.");
+            FillEditorPlayState(Out);
+            return Agent::FToolResult::Ok("Playing.");
         }
 
-        Agent::FToolResult CaptureScene(const SScreenshotParams& In, SScreenshotResult& Out)
+        Agent::FToolResult ControlEditorPlay(EEditorPlayAction Action, SPlayState& Out)
+        {
+            if (!SessionOps::IsSimulating())
+            {
+                FillEditorPlayState(Out);
+                return Agent::FToolResult::Error("Nothing is playing.");
+            }
+
+            FString SessionError;
+            if (Action == EEditorPlayAction::Stop)
+            {
+                SessionOps::StopPlay(SessionError);
+                LOG_INFO("[MCP] An agent stopped play-in-editor.");
+                FillEditorPlayState(Out);
+                return Agent::FToolResult::Ok("Stopped.");
+            }
+
+            const bool bPause = Action == EEditorPlayAction::Pause;
+            SessionOps::SetPaused(bPause, SessionError);
+            FillEditorPlayState(Out);
+            return Agent::FToolResult::Ok(bPause ? "Paused." : "Resumed.");
+        }
+
+        Agent::FToolResult ListEditorTabs(SEditorTabsResult& Out)
+        {
+            SessionOps::ForEachTab([&Out](const SessionOps::FTabInfo& Tab)
+            {
+                STabInfo Info;
+                Info.Name      = Tab.Name;
+                Info.Id        = Tab.Id;
+                Info.AssetGuid = Tab.AssetGuid;
+                Info.bUnsaved  = Tab.bUnsaved;
+                Info.bFocused  = Tab.bFocused;
+                Info.bClosable = Tab.bClosable;
+                Out.Tabs.Add(Move(Info));
+            });
+
+            FString Text;
+            for (const STabInfo& Tab : Out.Tabs)
+            {
+                Text.Append(Lumina::Format("{}{}{}\n", Tab.Name, Tab.bFocused ? " (focused)" : "", Tab.bUnsaved ? " *" : ""));
+            }
+
+            return Agent::FToolResult::Ok(Text.IsEmpty() ? FString("No tabs are open.") : Text);
+        }
+
+        Agent::FToolResult FocusEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::FocusTab(FStringView(In.Tab), Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error + " Call editor.tabs List.");
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Focusing '{}'.", In.Tab));
+        }
+
+        Agent::FToolResult CloseEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::CloseTab(FStringView(In.Tab), In.bDiscardUnsaved, Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Closing '{}'.", In.Tab));
+        }
+
+        Agent::FToolResult FloatEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        {
+            if (In.Width <= 0 || In.Height <= 0)
+            {
+                return Agent::FToolResult::Error("Width and Height have to be positive.");
+            }
+
+            FString Error;
+            Out.bDone = SessionOps::FloatTab(FStringView(In.Tab), FVector2((float)In.X, (float)In.Y),
+                                             FVector2((float)In.Width, (float)In.Height), Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+            return Agent::FToolResult::Ok(Lumina::Format("Floating {} at ({}, {}), {}x{}.", In.Tab, In.X, In.Y, In.Width, In.Height));
+        }
+
+        Agent::FToolResult TargetEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::SetSceneTarget(FStringView(In.Tab), Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error + " Call editor.tabs List.");
+            }
+
+            return Agent::FToolResult::Ok(In.Tab.IsEmpty()
+                ? FString("Scene tools target the world editor.")
+                : Lumina::Format("Scene tools target '{}'.", In.Tab));
+        }
+
+        Agent::FToolResult OpenEditorAsset(const FString& Asset, SEditorOpenResult& Out)
+        {
+            const TOptional<FGuid> Guid = Agent::ParseAssetGuid(FStringView(Asset));
+            if (!Guid.IsSet())
+            {
+                return Agent::FToolResult::Error(Lumina::Format("'{}' is neither a GUID nor an asset path.", Asset));
+            }
+
+            FString Error;
+            if (!SessionOps::OpenAsset(*Guid, Out.Tab, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Open in tab '{}'.", Out.Tab));
+        }
+
+        Agent::FToolResult OpenEditorFile(const FString& Path, SEditorOpenResult& Out)
+        {
+            IEditorToolContext* Tools = SessionOps::GetToolContext();
+            if (Tools == nullptr)
+            {
+                return Agent::FToolResult::Error("The editor UI is not running.");
+            }
+            if (!VFS::Exists(FStringView(*Path, Path.Len())))
+            {
+                return Agent::FToolResult::Error(Lumina::Format("No file at '{}'.", Path));
+            }
+            Tools->OpenFileEditor(FStringView(*Path, Path.Len()));
+            Out.Tab = Path;
+            return Agent::FToolResult::Ok(Lumina::Format("Opened '{}'.", Path));
+        }
+
+        Agent::FToolResult OpenEditorLevel(const FString& Level, SEditorOpenResult& Out)
+        {
+            if (GEngine == nullptr)
+            {
+                return Agent::FToolResult::Error("The engine is not running.");
+            }
+
+            const FURL Url = FURL::Parse(FStringView(*Level, Level.Len()));
+            Out.Map = Url.Map;
+            GEngine->OpenLevel(Url);
+            return Agent::FToolResult::Ok(Lumina::Format("Opening {}.", Url.Map));
+        }
+
+        Agent::FToolResult SendEditorText(const SEditorInputParams& In, SEditorInputResult& Out)
+        {
+            if (!FocusEditorGameViewport(Out.bGameInputFocused))
+            {
+                return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+            }
+
+            // ImGui releases the keyboard at the next frame start, so text sent this frame would be swallowed.
+            Threading::Sleep(100);
+
+            const TVector<uint32> Codepoints = DecodeEditorInputUtf8(In.Text);
+            for (uint32 Codepoint : Codepoints)
+            {
+                EditorInjectedCharacters.Enqueue(Codepoint);
+            }
+            return Agent::FToolResult::Ok(Lumina::Format("Typed {} characters.", Codepoints.Num()));
+        }
+
+        Agent::FToolResult SendEditorMouse(const SEditorInputParams& In, SEditorInputResult& Out)
+        {
+            const bool bPress   = In.Action == "Tap" || In.Action == "Press";
+            const bool bRelease = In.Action == "Tap" || In.Action == "Release";
+            const bool bMove    = In.Action == "Move" || bPress || bRelease;
+            if (!bMove)
+            {
+                return Agent::FToolResult::Error("Action has to be Tap, Press, Release or Move.");
+            }
+            if (In.Button < 0 || In.Button > 7)
+            {
+                return Agent::FToolResult::Error("Button has to be 0 to 7, where 0 is left.");
+            }
+
+            if (!FocusEditorGameViewport(Out.bGameInputFocused))
+            {
+                return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+            }
+
+            Out.X = In.X;
+            Out.Y = In.Y;
+            const int32 HoldMilliseconds = Math::Max(In.HoldMilliseconds > 0 ? In.HoldMilliseconds : 40, 1);
+
+            double WindowX = In.X;
+            double WindowY = In.Y;
+            (void)Agent::FGameThreadGate::Run([&]()
+            {
+                if (FInputViewport* Viewport = FInputViewportRegistry::Get().GetActiveViewport())
+                {
+                    Viewport->GetContext().ContextToWindow(In.X, In.Y, WindowX, WindowY);
+                }
+            }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds());
+
+            FMouseMoveInput Move;
+            Move.X = (float)WindowX;
+            Move.Y = (float)WindowY;
+            EditorInjectedMoves.Enqueue(Move);
+
+            // The move has to land before the button, or the click resolves against the old position.
+            Threading::Sleep(HoldMilliseconds);
+
+            auto Send = [&](bool bPressed)
+            {
+                FMouseButtonInput Button;
+                Button.Button   = static_cast<EMouseKey>(In.Button);
+                Button.bPressed = bPressed;
+                Button.X        = (float)WindowX;
+                Button.Y        = (float)WindowY;
+                EditorInjectedButtons.Enqueue(Button);
+            };
+
+            if (bPress)
+            {
+                Send(true);
+            }
+
+            // Both halves in one pump would leave the button Held before any press edge is evaluated.
+            if (bPress && bRelease)
+            {
+                Threading::Sleep(HoldMilliseconds);
+            }
+
+            if (bRelease)
+            {
+                Send(false);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Sent {} at ({}, {}).", In.Action, In.X, In.Y));
+        }
+
+        Agent::FToolResult SendEditorKey(const SEditorInputParams& In, SEditorInputResult& Out)
+        {
+            const bool bPress   = In.Action == "Tap" || In.Action == "Press";
+            const bool bRelease = In.Action == "Tap" || In.Action == "Release";
+            if (!bPress && !bRelease)
+            {
+                return Agent::FToolResult::Error("Action has to be Tap, Press or Release.");
+            }
+
+            if (!FocusEditorGameViewport(Out.bGameInputFocused))
+            {
+                return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+            }
+
+            const int32 HoldMilliseconds = Math::Max(In.HoldMilliseconds > 0 ? In.HoldMilliseconds : 100, 1);
+
+            // ImGui releases the keyboard at the next frame start, so a key sent this frame would be swallowed.
+            Threading::Sleep(HoldMilliseconds);
+
+            auto Send = [&](bool bPressed)
+            {
+                FKeyInput Input;
+                Input.Key      = In.Key;
+                Input.bPressed = bPressed;
+                Input.bCtrl    = In.bCtrl;
+                Input.bShift   = In.bShift;
+                Input.bAlt     = In.bAlt;
+                EditorInjectedKeys.Enqueue(Input);
+            };
+
+            if (bPress)
+            {
+                Send(true);
+            }
+
+            // Both halves in one pump would leave the key Held before any action edge is evaluated.
+            if (bPress && bRelease)
+            {
+                Threading::Sleep(HoldMilliseconds);
+            }
+
+            if (bRelease)
+            {
+                Send(false);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Sent {}.", In.Action));
+        }
+
+        Agent::FToolResult ViewEditorGraph(const SEditorGraphParams& In, SEditorGraphResult& Out)
+        {
+            FString Error;
+            SessionOps::FGraphView View;
+            if (!SessionOps::GetGraphView(FStringView(In.Tab), View, Error))
+            {
+                return Agent::FToolResult::Error(Error + " Call editor.tabs List.");
+            }
+
+            Out.bDrawn    = View.bDrawn;
+            Out.MinX      = View.MinX;
+            Out.MinY      = View.MinY;
+            Out.MaxX      = View.MaxX;
+            Out.MaxY      = View.MaxY;
+            Out.Zoom      = View.Zoom;
+            Out.NodeCount = View.NodeCount;
+            Out.Offscreen = Move(View.Offscreen);
+
+            if (!Out.bDrawn)
+            {
+                return Agent::FToolResult::Ok("That canvas has not been drawn yet, so it has no view. Focus the tab first.");
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Showing ({:.0f}, {:.0f}) to ({:.0f}, {:.0f}) at zoom {:.2f}, {} of {} node(s) off screen.",
+                Out.MinX, Out.MinY, Out.MaxX, Out.MaxY, Out.Zoom, Out.Offscreen.Num(), Out.NodeCount));
+        }
+
+        Agent::FToolResult FrameEditorGraph(const SEditorGraphParams& In, SEditorGraphResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::FrameGraph(FStringView(In.Tab), In.Nodes, Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            return Agent::FToolResult::Ok(In.Nodes.IsEmpty()
+                ? Lumina::Format("Framing every node in '{}'.", In.Tab)
+                : Lumina::Format("Framing {} node(s) in '{}'.", In.Nodes.Num(), In.Tab));
+        }
+
+        Agent::FToolResult ArrangeEditorGraph(const SEditorGraphParams& In, SEditorGraphResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::ArrangeGraph(FStringView(In.Tab), Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Arranging '{}'.", In.Tab));
+        }
+
+        Agent::FToolResult ReloadEditorScripts(const SScriptReloadParams& Params, SScriptReloadResult& Out)
+        {
+            if (!DotNet::IsInitialized())
+            {
+                return Agent::FToolResult::Error("The .NET host is not running, so there is nothing to reload.");
+            }
+
+            const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
+            int32 Before = 0;
+            int32 FinishedBefore = 0;
+            if (Agent::FGameThreadGate::Run([&Before, &FinishedBefore]()
+                {
+                    Before = DotNet::GetScriptGeneration();
+                    FinishedBefore = DotNet::GetFinishedScriptReloads();
+                    DotNet::RequestScriptReload();
+                }, GateTimeout) != Agent::EGameThreadResult::Ran)
+            {
+                return Agent::FToolResult::Error("The game thread did not pick up the reload request.");
+            }
+
+            Out.PreviousGeneration = Before;
+            Out.Generation = Before;
+
+            const double Deadline = PlatformTime::Seconds() + Math::Max(0.0f, Params.TimeoutSeconds);
+            int32 FailedResult = 0;
+            while (PlatformTime::Seconds() < Deadline)
+            {
+                Threading::Sleep(50);
+
+                int32 Now = Before;
+                int32 Finished = FinishedBefore;
+                int32 LastResult = 0;
+                if (Agent::FGameThreadGate::Run([&Now, &Finished, &LastResult]()
+                    {
+                        Now = DotNet::GetScriptGeneration();
+                        Finished = DotNet::GetFinishedScriptReloads();
+                        LastResult = DotNet::GetLastScriptReloadResult();
+                    }, GateTimeout) != Agent::EGameThreadResult::Ran)
+                {
+                    break;
+                }
+                if (Now != Before)
+                {
+                    Out.Generation = Now;
+                    Out.bReloaded = true;
+                    break;
+                }
+                // A failed compile never changes the generation, so the finished count is what ends the wait.
+                if (Finished != FinishedBefore && LastResult != 0)
+                {
+                    FailedResult = LastResult;
+                    break;
+                }
+            }
+
+            if (FailedResult != 0)
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "The reload failed with host error {} and the previous scripts stay loaded; editor.log_tail has the compiler output.",
+                    FailedResult));
+            }
+
+            DotNet::FScriptDiagnostics Diagnostics{};
+            bool bHaveDiagnostics = false;
+            (void)Agent::FGameThreadGate::Run([&Diagnostics, &bHaveDiagnostics]()
+                {
+                    bHaveDiagnostics = DotNet::GetRuntimeDiagnostics(Diagnostics);
+                }, GateTimeout);
+
+            if (bHaveDiagnostics)
+            {
+                Out.AliveContexts = Diagnostics.AliveScriptAlcCount;
+                Out.LoadedTypes = Diagnostics.LoadedTypeCount;
+            }
+
+            if (!Out.bReloaded)
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "The reload is still queued after {} seconds; generation is still {}.",
+                    Params.TimeoutSeconds, Out.Generation));
+            }
+
+            LOG_INFO("[MCP] An agent reloaded scripts; generation {} -> {}.", Before, Out.Generation);
+
+            if (Out.LoadedTypes == 0)
+            {
+                return Agent::FToolResult::Ok(Lumina::Format(
+                    "Reloaded to generation {}, but no script types registered. Compilation most "
+                    "likely failed; read editor.log_tail for the errors.", Out.Generation));
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format(
+                "Reloaded to generation {}: {} script type(s), {} script context(s) resident.",
+                Out.Generation, Out.LoadedTypes, Out.AliveContexts));
+        }
+
+        Agent::FToolResult CaptureEditorScene(const SScreenshotParams& In, SScreenshotResult& Out)
         {
             Screenshot::ECaptureSource Source = Screenshot::ECaptureSource::FinalLDR;
             if (In.Source == "SceneHDR")
             {
                 Source = Screenshot::ECaptureSource::SceneHDR;
             }
-            else if (!In.Source.empty() && In.Source != "FinalLDR")
+            else if (!In.Source.IsEmpty() && In.Source != "FinalLDR")
             {
                 return Agent::FToolResult::Error("Source has to be FinalLDR, SceneHDR or EditorUI.");
             }
 
             Screenshot::FCaptureResult Captured;
-            if (In.Tab.empty())
+            if (In.Tab.IsEmpty())
             {
                 Captured = Screenshot::CaptureActiveWorld(Source, In.OutputPath);
             }
@@ -638,14 +690,14 @@ namespace Lumina::MCP
                 IRenderScene* Scene = World != nullptr ? World->GetRenderer() : nullptr;
                 if (Scene == nullptr)
                 {
-                    return Agent::FToolResult::Error(Error.empty() ? FString("That tab's world has no renderer right now.") : Error);
+                    return Agent::FToolResult::Error(Error.IsEmpty() ? FString("That tab's world has no renderer right now.") : Error);
                 }
                 Captured = Screenshot::Capture(Scene, Source, In.OutputPath);
             }
             if (!Captured.bSuccess)
             {
                 // A world with no viewport showing it has had its renderer reclaimed, so there is nothing to read back.
-                return Agent::FToolResult::Error(Captured.ErrorMessage.empty()
+                return Agent::FToolResult::Error(Captured.ErrorMessage.IsEmpty()
                     ? FString("The capture failed.")
                     : Captured.ErrorMessage + " Bring a world viewport tab to the front in the editor and try again.");
             }
@@ -684,7 +736,7 @@ namespace Lumina::MCP
             const Screenshot::FCaptureResult Saved = Screenshot::SaveWindowCapture(Capture.Pixels, Capture.Width, Capture.Height, In.OutputPath);
             if (!Saved.bSuccess)
             {
-                return Agent::FToolResult::Error(Saved.ErrorMessage.empty() ? FString("Writing the capture failed.") : Saved.ErrorMessage);
+                return Agent::FToolResult::Error(Saved.ErrorMessage.IsEmpty() ? FString("Writing the capture failed.") : Saved.ErrorMessage);
             }
 
             Out.Path   = Saved.OutputPath;
@@ -693,535 +745,433 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Wrote the {}x{} editor window to {}.", Out.Width, Out.Height, Out.Path));
         }
 
-        void RegisterLogTail(FStringView Owner)
+        Agent::FToolResult TailEditorLog(const SLogTailParams& In, SLogTailResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SLogTailParams, SLogTailResult>(
-                Owner, "editor.log_tail",
-                "Return the newest lines from the editor log, so a failure can be read rather than guessed.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const SLogTailParams& In, SLogTailResult& Out)
+            ELogLevel MinLevel = ELogLevel::Info;
+            if (!In.MinLevel.IsEmpty() && !ParseEditorLogLevel(In.MinLevel, MinLevel))
+            {
+                return Agent::FToolResult::Error("MinLevel has to be Trace, Debug, Info, Warn, Error or Critical.");
+            }
+
+            const int32 Count = In.Count > 0 ? In.Count : 50;
+            Logging::FLogQueue& Queue = Logging::GetConsoleLogQueue();
+
+            // Walked newest first so the cap keeps the recent lines, then flipped to read in order.
+            for (int32 Index = Queue.Num(); Index > 0; --Index)
+            {
+                const FConsoleMessage& Entry = Queue[Index - 1];
+                if (Entry.Level < MinLevel || !ContainsTextFold(FStringView(*Entry.Message), In.Contains))
                 {
-                    ELogLevel MinLevel = ELogLevel::Info;
-                    if (!In.MinLevel.empty() && !ParseLevel(In.MinLevel, MinLevel))
+                    ++Out.Dropped;
+                    continue;
+                }
+
+                if (Out.Lines.Num() >= Count)
+                {
+                    ++Out.Dropped;
+                    continue;
+                }
+
+                SLogLine Line;
+                Line.Time    = FString(*Entry.Time);
+                Line.Logger  = FString(Entry.LoggerName.GetData(), Entry.LoggerName.Len());
+                Line.Level   = EditorLogLevelName(Entry.Level);
+                Line.Message = FString(*Entry.Message);
+                Out.Lines.Add(Move(Line));
+            }
+
+            Algo::Reverse(Out.Lines.begin(), Out.Lines.end());
+
+            FString Text;
+            for (const SLogLine& Line : Out.Lines)
+            {
+                Text.Append(Lumina::Format("[{}] [{}] {}\n", Line.Time, Line.Level, Line.Message));
+            }
+
+            return Agent::FToolResult::Ok(Text.IsEmpty() ? FString("No matching log lines.") : Text);
+        }
+
+        Agent::FToolResult ExecEditorConsole(const SConsoleExecParams& In, SConsoleExecResult& Out)
+        {
+            const FStringView Line(In.Line);
+            const int32 Space = Line.FindFirstOf(' ');
+            const FStringView Name  = Space == Constants::kIndexNone ? Line : Line.Mid(0, Space);
+            const FStringView Value = Space == Constants::kIndexNone ? FStringView() : Line.Mid(Space + 1);
+
+            if (Name.IsEmpty())
+            {
+                return Agent::FToolResult::Error("A console line is needed.");
+            }
+
+            // An agent has no business ending the process it is driving.
+            for (const char* Denied : { "quit", "exit", "crash" })
+            {
+                if (Name == Denied)
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("'{}' is not allowed from an agent.", Name));
+                }
+            }
+
+            const FConsoleLineResult Result = FConsoleRegistry::Get().ExecuteLine(Line, false);
+            switch (Result.Kind)
+            {
+            case EConsoleLineResult::RanCommand:
+                Out.Output = "executed";
+                return Agent::FToolResult::Ok(Lumina::Format("Ran {}.", Name));
+            case EConsoleLineResult::RejectedValue:
+                return Agent::FToolResult::Error(Lumina::Format("'{}' did not accept '{}'.", Name, Value));
+            case EConsoleLineResult::ReadVariable:
+            case EConsoleLineResult::SetVariable:
+                Out.Output = Result.Value;
+                return Agent::FToolResult::Ok(Lumina::Format("{} = {}", Name, Out.Output));
+            case EConsoleLineResult::Empty:
+            case EConsoleLineResult::Unknown:
+                break;
+            }
+            return Agent::FToolResult::Error(Lumina::Format("No console command or variable named '{}'.", Name));
+        }
+
+        Agent::FToolResult SetEditorWindow(const SWindowParams& In, SWindowState& Out)
+        {
+            FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+            if (Window == nullptr)
+            {
+                return Agent::FToolResult::Error("There is no main window, which a headless editor does not have.");
+            }
+
+            if (In.Action == "Resize")
+            {
+                if (In.Width <= 0 || In.Height <= 0)
+                {
+                    return Agent::FToolResult::Error("Resize needs a positive Width and Height; use Minimize for a zero-size window.");
+                }
+                if (Window->IsWindowMaximized() || Window->IsWindowMinimized())
+                {
+                    Window->Restore();
+                }
+                Window->SetWindowSize(In.Width, In.Height);
+            }
+            else if (In.Action == "Move")
+            {
+                Window->SetWindowPosition(In.X, In.Y);
+            }
+            else if (In.Action == "Minimize")
+            {
+                Window->Minimize();
+            }
+            else if (In.Action == "Restore")
+            {
+                Window->Restore();
+            }
+            else if (In.Action == "Maximize")
+            {
+                Window->Maximize();
+            }
+            else if (In.Action != "Query")
+            {
+                return Agent::FToolResult::Error("Action has to be Query, Resize, Move, Minimize, Restore or Maximize.");
+            }
+
+            FillEditorWindowState(*Window, Out);
+            return Agent::FToolResult::Ok(Lumina::Format("{}x{} at ({}, {}){}{}.", Out.Width, Out.Height, Out.X, Out.Y,
+                Out.bMinimized ? ", minimized" : "", Out.bMaximized ? ", maximized" : ""));
+        }
+
+        Agent::FToolResult SaveAllEditorPackages(SSaveAllResult& Out)
+        {
+            uint32 Saved = 0;
+            FString Error;
+            const bool bAllSaved = SessionOps::SaveAll(Saved, Out.Failed, Error);
+            Out.Saved = (int32)Saved;
+            if (!bAllSaved)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            FString WorldError;
+            CWorld* SceneWorld = SessionOps::GetSceneWorld(WorldError);
+            Out.bWorldUnsaved = SceneWorld != nullptr && SceneWorld->GetPackage() == nullptr;
+            if (Out.bWorldUnsaved)
+            {
+                return Agent::FToolResult::Ok(Lumina::Format("Saved {} package(s), but the open level is a transient world with no package, so its "
+                    "entities were not saved. Open a world asset with editor.open and build the level there.", Saved));
+            }
+
+            return Agent::FToolResult::Ok(Saved == 0 ? FString("Nothing to save.") : Lumina::Format("Saved {} package(s).", Saved));
+        }
+
+        Agent::FToolResult QuitEditor(const SQuitParams& In, SQuitResult& Out)
+        {
+            if (In.bSaveFirst && In.bDiscardUnsaved)
+            {
+                return Agent::FToolResult::Error("Pass bSaveFirst or bDiscardUnsaved, not both.");
+            }
+
+            const SessionOps::EQuitUnsaved Unsaved = In.bSaveFirst ? SessionOps::EQuitUnsaved::Save
+                : In.bDiscardUnsaved ? SessionOps::EQuitUnsaved::Discard
+                : SessionOps::EQuitUnsaved::Refuse;
+
+            FString Error;
+            Out.bQuitting = SessionOps::Quit(Unsaved, Error);
+            if (!Out.bQuitting)
+            {
+                Out.Unsaved = SessionOps::GetDirtyPackagePaths();
+                for (const FString& Path : Out.Unsaved)
+                {
+                    Error.Append(Lumina::Format(" {}", Path));
+                }
+                return Agent::FToolResult::Error(Unsaved == SessionOps::EQuitUnsaved::Refuse
+                    ? Error + " Call editor.save_all, or pass bSaveFirst or bDiscardUnsaved."
+                    : Error);
+            }
+
+            LOG_INFO("[MCP] An agent closed the editor.");
+            return Agent::FToolResult::Ok("Quitting.");
+        }
+
+        void RegisterEditorHistory(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorHistoryParams, SEditorHistoryResult>(
+                Owner, "editor.history",
+                "Undo or Redo steps in the scene target, or in Tab when given, which is any open tab such as a material or animation graph editor.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &StepEditorHistory);
+        }
+
+        void RegisterEditorPlay(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorPlayParams, SPlayState>(
+                Owner, "editor.play",
+                "Start, Stop, Pause or Resume play-in-editor on the open world, or report its State. Start can run a networked "
+                "session with several players.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorPlayParams& In, SPlayState& Out)
+                {
+                    if (!SessionOps::HasSceneEditor())
                     {
-                        return Agent::FToolResult::Error("MinLevel has to be Trace, Debug, Info, Warn, Error or Critical.");
+                        return Agent::FToolResult::Error(GNoWorldEditorSession);
                     }
 
-                    const int32 Count = In.Count > 0 ? In.Count : 50;
-                    Logging::FLogQueue& Queue = Logging::GetConsoleLogQueue();
-
-                    // Walked newest first so the cap keeps the recent lines, then flipped to read in order.
-                    for (size_t Index = Queue.size(); Index > 0; --Index)
+                    switch (In.Action)
                     {
-                        const FConsoleMessage& Entry = Queue[Index - 1];
-                        if (Entry.Level < MinLevel || !ContainsTextFold(FStringView(Entry.Message.c_str()), In.Contains))
-                        {
-                            ++Out.Dropped;
-                            continue;
-                        }
-
-                        if (static_cast<int32>(Out.Lines.size()) >= Count)
-                        {
-                            ++Out.Dropped;
-                            continue;
-                        }
-
-                        SLogLine Line;
-                        Line.Time    = FString(Entry.Time.c_str());
-                        Line.Logger  = FString(Entry.LoggerName.data(), Entry.LoggerName.size());
-                        Line.Level   = LevelName(Entry.Level);
-                        Line.Message = FString(Entry.Message.c_str());
-                        Out.Lines.push_back(Move(Line));
+                    case EEditorPlayAction::Start:
+                        return StartEditorPlay(In, Out);
+                    case EEditorPlayAction::State:
+                        FillEditorPlayState(Out);
+                        return Agent::FToolResult::Ok(Out.bPlaying
+                            ? Lumina::Format("Playing{} in {}.", Out.bPaused ? " (paused)" : "", Out.World)
+                            : Lumina::Format("Editing {}.", Out.World));
+                    default:
+                        return ControlEditorPlay(In.Action, Out);
                     }
-
-                    Algo::Reverse(Out.Lines.begin(), Out.Lines.end());
-
-                    FString Text;
-                    for (const SLogLine& Line : Out.Lines)
-                    {
-                        Text.append(Lumina::Format("[{}] [{}] {}\n", Line.Time, Line.Level, Line.Message));
-                    }
-
-                    return Agent::FToolResult::Ok(Text.empty() ? FString("No matching log lines.") : Text);
                 });
         }
 
-        void RegisterConsoleExec(FStringView Owner)
+        void RegisterEditorTabs(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorTabsParams, SEditorTabsResult>(
+                Owner, "editor.tabs",
+                "List open editor tabs, Focus or Close one, Float it to a screen rect, or Target it so the scene, entity and undo "
+                "tools act on it, such as a prefab editor. Changes land on the next frames.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorTabsParams& In, SEditorTabsResult& Out)
+                {
+                    switch (In.Action)
+                    {
+                    case EEditorTabsAction::Focus:  return FocusEditorTab(In, Out);
+                    case EEditorTabsAction::Close:  return CloseEditorTab(In, Out);
+                    case EEditorTabsAction::Float:  return FloatEditorTab(In, Out);
+                    case EEditorTabsAction::Target: return TargetEditorTab(In, Out);
+                    default:                        return ListEditorTabs(Out);
+                    }
+                });
+        }
+
+        void RegisterEditorOpen(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorOpenParams, SEditorOpenResult>(
+                Owner, "editor.open",
+                "Open an Asset in its editor tab, a text File in its own editor, or travel the running game to a Level at the start "
+                "of the next frame. Set exactly one.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorOpenParams& In, SEditorOpenResult& Out)
+                {
+                    const int32 Set = (In.Asset.IsEmpty() ? 0 : 1) + (In.File.IsEmpty() ? 0 : 1) + (In.Level.IsEmpty() ? 0 : 1);
+                    if (Set != 1)
+                    {
+                        return Agent::FToolResult::Error(Set == 0 ? "Set one of Asset, File or Level." : "Set only one of Asset, File or Level.");
+                    }
+
+                    if (!In.Asset.IsEmpty())
+                    {
+                        return OpenEditorAsset(In.Asset, Out);
+                    }
+                    if (!In.File.IsEmpty())
+                    {
+                        return OpenEditorFile(In.File, Out);
+                    }
+                    return OpenEditorLevel(In.Level, Out);
+                });
+        }
+
+        // Any thread on purpose: a tap needs the release to land a frame after the press.
+        void RegisterEditorInput(FStringView Owner)
+        {
+            EditorInputPumpedHandle = FCoreDelegates::Get().OnInputPumped.AddStatic(&ForwardEditorInjectedInput);
+
+            Agent::FToolRegistry::Get().Register<SEditorInputParams, SEditorInputResult>(
+                Owner, "editor.input",
+                "Send Text, Mouse or Key input to the game viewport as a real device would, giving it input focus first. Mouse "
+                "moves to a viewport pixel and optionally clicks.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
+                [](const SEditorInputParams& In, SEditorInputResult& Out)
+                {
+                    switch (In.Kind)
+                    {
+                    case EEditorInputKind::Mouse: return SendEditorMouse(In, Out);
+                    case EEditorInputKind::Key:   return SendEditorKey(In, Out);
+                    default:                      return SendEditorText(In, Out);
+                    }
+                });
+        }
+
+        void RegisterEditorGraph(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorGraphParams, SEditorGraphResult>(
+                Owner, "editor.graph",
+                "For a material, material function, animation or audio graph tab: View reports the visible canvas rect and offscreen "
+                "nodes, Frame pans to Nodes, Arrange lays the canvas out by its links as one undo step.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorGraphParams& In, SEditorGraphResult& Out)
+                {
+                    switch (In.Action)
+                    {
+                    case EEditorGraphAction::Frame:   return FrameEditorGraph(In, Out);
+                    case EEditorGraphAction::Arrange: return ArrangeEditorGraph(In, Out);
+                    default:                          return ViewEditorGraph(In, Out);
+                    }
+                });
+        }
+
+        void RegisterEditorContentBrowser(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SBrowseFolderParams, SBrowseFolderResult>(
+                Owner, "editor.content_browser",
+                "Show a folder in the content browser, optionally with text in its search box. The tiles build on the next frame.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SBrowseFolderParams& In, SBrowseFolderResult& Out)
+                {
+                    FString Error;
+                    Out.bDone = SessionOps::BrowseContentFolder(FStringView(In.Folder), FStringView(In.Search), Error);
+                    if (!Out.bDone)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("Browsing '{}'.", In.Folder));
+                });
+        }
+
+        // Any, not GameThread: the reload is serviced at a fixed point in the frame, so polls have to let the game thread run.
+        void RegisterEditorReloadScripts(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SScriptReloadParams, SScriptReloadResult>(
+                Owner, "editor.reload_scripts",
+                "Recompile and reload the project's C# scripts and wait for the new generation. LoadedTypes of zero means "
+                "compilation failed; editor.log_tail has the errors.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any, &ReloadEditorScripts);
+        }
+
+        void RegisterEditorSaveAll(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSaveAllParams, SSaveAllResult>(
+                Owner, "editor.save_all",
+                "Save every package with unsaved changes, as File > Save All does. Open asset editors do their own save work.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSaveAllParams&, SSaveAllResult& Out) { return SaveAllEditorPackages(Out); });
+        }
+
+        void RegisterEditorQuit(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SQuitParams, SQuitResult>(
+                Owner, "editor.quit",
+                "Close the editor without any prompt. Refuses while packages are unsaved unless bSaveFirst or bDiscardUnsaved. "
+                "Play is stopped first and the exit lands a few frames later.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &QuitEditor);
+        }
+
+        void RegisterEditorWindow(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SWindowParams, SWindowState>(
+                Owner, "editor.window",
+                "Query, Resize, Move, Minimize, Restore or Maximize the editor's main window. The OS window changes at once; "
+                "the swapchain and viewports follow on the next frames.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &SetEditorWindow);
+        }
+
+        void RegisterEditorScreenshot(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SScreenshotParams, SScreenshotResult>(
+                Owner, "editor.screenshot",
+                "Capture the active viewport, or with Source EditorUI the whole editor window, to an image file and report where it landed.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
+                [](const SScreenshotParams& In, SScreenshotResult& Out)
+                {
+                    const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
+                    if (In.Source == "EditorUI")
+                    {
+                        return CaptureEditorWindow(In, Out, GateTimeout);
+                    }
+
+                    Agent::FToolResult Result = Agent::FToolResult::Error("The game thread did not run the capture.");
+                    if (Agent::FGameThreadGate::Run([&In, &Out, &Result] { Result = CaptureEditorScene(In, Out); }, GateTimeout)
+                        != Agent::EGameThreadResult::Ran)
+                    {
+                        return Agent::FToolResult::Error("The game thread did not pick up the capture.");
+                    }
+                    return Result;
+                });
+        }
+
+        void RegisterEditorLogTail(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SLogTailParams, SLogTailResult>(
+                Owner, "editor.log_tail",
+                "Return the newest lines from the editor log, filtered by level and text.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread, &TailEditorLog);
+        }
+
+        void RegisterEditorConsoleExec(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SConsoleExecParams, SConsoleExecResult>(
                 Owner, "editor.console_exec",
                 "Run a console command, or read or set a console variable, as the console panel would.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SConsoleExecParams& In, SConsoleExecResult& Out)
-                {
-                    const FStringView Line(In.Line);
-                    const size_t Space = Line.find_first_of(' ');
-                    const FStringView Name  = Space == FStringView::npos ? Line : Line.substr(0, Space);
-                    const FStringView Value = Space == FStringView::npos ? FStringView() : Line.substr(Space + 1);
-
-                    if (Name.empty())
-                    {
-                        return Agent::FToolResult::Error("A console line is needed.");
-                    }
-
-                    // An agent has no business ending the process it is driving.
-                    for (const char* Denied : { "quit", "exit", "crash" })
-                    {
-                        if (Name == Denied)
-                        {
-                            return Agent::FToolResult::Error(Lumina::Format("'{}' is not allowed from an agent.", Name));
-                        }
-                    }
-
-                    const FConsoleLineResult Result = FConsoleRegistry::Get().ExecuteLine(Line, false);
-                    switch (Result.Kind)
-                    {
-                    case EConsoleLineResult::RanCommand:
-                        Out.Output = "executed";
-                        return Agent::FToolResult::Ok(Lumina::Format("Ran {}.", Name));
-                    case EConsoleLineResult::RejectedValue:
-                        return Agent::FToolResult::Error(Lumina::Format("'{}' did not accept '{}'.", Name, Value));
-                    case EConsoleLineResult::ReadVariable:
-                    case EConsoleLineResult::SetVariable:
-                        Out.Output = Result.Value;
-                        return Agent::FToolResult::Ok(Lumina::Format("{} = {}", Name, Out.Output));
-                    case EConsoleLineResult::Empty:
-                    case EConsoleLineResult::Unknown:
-                        break;
-                    }
-                    return Agent::FToolResult::Error(Lumina::Format("No console command or variable named '{}'.", Name));
-                });
-        }
-
-        // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
-        TConcurrentQueue<FKeyInput> InjectedKeys;
-        TConcurrentQueue<uint32> InjectedCharacters;
-        TConcurrentQueue<FMouseButtonInput> InjectedButtons;
-        TConcurrentQueue<FMouseMoveInput> InjectedMoves;
-        FDelegateHandle InputPumpedHandle;
-
-        void ForwardInjectedKeys()
-        {
-            FWindow* Window = Windowing::GetPrimaryWindowHandle();
-            FKeyInput Input;
-            while (InjectedKeys.TryDequeue(Input))
-            {
-                Window->OnKey.Broadcast(Window, Input);
-            }
-
-            uint32 Codepoint;
-            while (InjectedCharacters.TryDequeue(Codepoint))
-            {
-                Window->OnChar.Broadcast(Window, Codepoint);
-            }
-
-            // Moves before buttons, so a click is evaluated at the position it was aimed at.
-            FMouseMoveInput Move;
-            while (InjectedMoves.TryDequeue(Move))
-            {
-                Window->OnMouseMove.Broadcast(Window, Move);
-            }
-
-            FMouseButtonInput Button;
-            while (InjectedButtons.TryDequeue(Button))
-            {
-                Window->OnMouseButton.Broadcast(Window, Button);
-            }
-        }
-
-        // Shared by send_key and send_mouse, since injected input only reaches the viewport that owns input.
-        bool FocusGameViewport(bool& bOutFocused)
-        {
-            return Agent::FGameThreadGate::Run([&bOutFocused]()
-            {
-                FInputViewportRegistry& Viewports = FInputViewportRegistry::Get();
-                FString SceneError;
-                CWorld* World = SessionOps::GetSceneWorld(SceneError);
-                Viewports.TakeGameFocus(World != nullptr ? Viewports.FindViewportForWorld(World) : nullptr);
-                bOutFocused = Viewports.GetActiveViewport() != nullptr;
-            }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds()) == Agent::EGameThreadResult::Ran;
-        }
-
-        TVector<uint32> DecodeUtf8(FStringView Text)
-        {
-            TVector<uint32> Codepoints;
-            for (size_t i = 0; i < Text.size();)
-            {
-                const uint8 Lead = uint8(Text[i]);
-                const int Length = Lead < 0x80 ? 1 : (Lead >> 5) == 0x6 ? 2 : (Lead >> 4) == 0xE ? 3 : 4;
-                uint32 Codepoint = Length == 1 ? Lead : Lead & (0x3F >> (Length - 1));
-                for (int j = 1; j < Length && i + j < Text.size(); ++j)
-                {
-                    Codepoint = (Codepoint << 6) | (uint8(Text[i + j]) & 0x3F);
-                }
-                Codepoints.push_back(Codepoint);
-                i += Length;
-            }
-            return Codepoints;
-        }
-
-        void RegisterSendText(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SSendTextParams, SSendKeyResult>(
-                Owner, "editor.send_text",
-                "Type text into the game viewport as character input, giving it input focus first. "
-                "Use it to fill a focused RmlUi text field or chat box; send_key covers keys that type nothing.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
-                [](const SSendTextParams& In, SSendKeyResult& Out)
-                {
-                    if (!FocusGameViewport(Out.bGameInputFocused))
-                    {
-                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
-                    }
-
-                    // ImGui releases the keyboard at the next frame start, so text sent this frame would be swallowed.
-                    Threading::Sleep(100);
-
-                    const TVector<uint32> Codepoints = DecodeUtf8(In.Text);
-                    for (uint32 Codepoint : Codepoints)
-                    {
-                        InjectedCharacters.Enqueue(Codepoint);
-                    }
-                    return Agent::FToolResult::Ok(Lumina::Format("Typed {} characters.", Codepoints.size()));
-                });
-        }
-
-        void FillWindowState(FWindow& Window, SWindowState& Out)
-        {
-            const FUIntVector2 Extent = Window.GetExtent();
-            Out.Width  = (int32)Extent.x;
-            Out.Height = (int32)Extent.y;
-            Window.GetWindowPosition(Out.X, Out.Y);
-            Out.bMinimized = Window.IsWindowMinimized();
-            Out.bMaximized = Window.IsWindowMaximized();
-        }
-
-        void RegisterWindow(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SWindowParams, SWindowState>(
-                Owner, "editor.window",
-                "Read or change the editor's main window: Query, Resize (Width, Height), Move (X, Y), Minimize, Restore "
-                "or Maximize. A change lands on the OS window at once; the swapchain and viewports follow on the next frames.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SWindowParams& In, SWindowState& Out)
-                {
-                    FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
-                    if (Window == nullptr)
-                    {
-                        return Agent::FToolResult::Error("There is no main window, which a headless editor does not have.");
-                    }
-
-                    if (In.Action == "Resize")
-                    {
-                        if (In.Width <= 0 || In.Height <= 0)
-                        {
-                            return Agent::FToolResult::Error("Resize needs a positive Width and Height; use Minimize for a zero-size window.");
-                        }
-                        if (Window->IsWindowMaximized() || Window->IsWindowMinimized())
-                        {
-                            Window->Restore();
-                        }
-                        Window->SetWindowSize(In.Width, In.Height);
-                    }
-                    else if (In.Action == "Move")
-                    {
-                        Window->SetWindowPosition(In.X, In.Y);
-                    }
-                    else if (In.Action == "Minimize")
-                    {
-                        Window->Minimize();
-                    }
-                    else if (In.Action == "Restore")
-                    {
-                        Window->Restore();
-                    }
-                    else if (In.Action == "Maximize")
-                    {
-                        Window->Maximize();
-                    }
-                    else if (In.Action != "Query")
-                    {
-                        return Agent::FToolResult::Error("Action has to be Query, Resize, Move, Minimize, Restore or Maximize.");
-                    }
-
-                    FillWindowState(*Window, Out);
-                    return Agent::FToolResult::Ok(Lumina::Format("{}x{} at ({}, {}){}{}.", Out.Width, Out.Height, Out.X, Out.Y,
-                        Out.bMinimized ? ", minimized" : "", Out.bMaximized ? ", maximized" : ""));
-                });
-        }
-
-        void RegisterFloatTab(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SFloatTabParams, SFloatTabResult>(
-                Owner, "editor.float_tab",
-                "Undock a tab and place it at a screen rect. Outside the main window it becomes its own OS window with its "
-                "own swapchain; over the main window it merges back. Lands over the next two frames.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SFloatTabParams& In, SFloatTabResult& Out)
-                {
-                    if (In.Width <= 0 || In.Height <= 0)
-                    {
-                        return Agent::FToolResult::Error("Width and Height have to be positive.");
-                    }
-
-                    FString Error;
-                    Out.bQueued = SessionOps::FloatTab(FStringView(In.Tab), FVector2((float)In.X, (float)In.Y),
-                                                       FVector2((float)In.Width, (float)In.Height), Error);
-                    if (!Out.bQueued)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    return Agent::FToolResult::Ok(Lumina::Format("Floating {} at ({}, {}), {}x{}.", In.Tab, In.X, In.Y, In.Width, In.Height));
-                });
-        }
-
-        void RegisterSendMouse(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SSendMouseParams, SSendMouseResult>(
-                Owner, "editor.send_mouse",
-                "Move the mouse to a viewport pixel and optionally click there, as a real cursor would. "
-                "Use it to drive play-in-editor pointing: click-to-move, selecting, dragging a look around.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
-                [](const SSendMouseParams& In, SSendMouseResult& Out)
-                {
-                    const bool bPress   = In.Action == "Tap" || In.Action == "Press";
-                    const bool bRelease = In.Action == "Tap" || In.Action == "Release";
-                    const bool bMove    = In.Action == "Move" || bPress || bRelease;
-                    if (!bMove)
-                    {
-                        return Agent::FToolResult::Error("Action has to be Tap, Press, Release or Move.");
-                    }
-                    if (In.Button < 0 || In.Button > 7)
-                    {
-                        return Agent::FToolResult::Error("Button has to be 0 to 7, where 0 is left.");
-                    }
-
-                    if (!FocusGameViewport(Out.bGameInputFocused))
-                    {
-                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
-                    }
-
-                    Out.X = In.X;
-                    Out.Y = In.Y;
-
-                    double WindowX = In.X;
-                    double WindowY = In.Y;
-                    (void)Agent::FGameThreadGate::Run([&]()
-                    {
-                        if (FInputViewport* Viewport = FInputViewportRegistry::Get().GetActiveViewport())
-                        {
-                            Viewport->GetContext().ContextToWindow(In.X, In.Y, WindowX, WindowY);
-                        }
-                    }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds());
-
-                    FMouseMoveInput Move;
-                    Move.X = (float)WindowX;
-                    Move.Y = (float)WindowY;
-                    InjectedMoves.Enqueue(Move);
-
-                    // The move has to land before the button, or the click resolves against the old position.
-                    Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
-
-                    auto Send = [&](bool bPressed)
-                    {
-                        FMouseButtonInput Button;
-                        Button.Button   = static_cast<EMouseKey>(In.Button);
-                        Button.bPressed = bPressed;
-                        Button.X        = (float)WindowX;
-                        Button.Y        = (float)WindowY;
-                        InjectedButtons.Enqueue(Button);
-                    };
-
-                    if (bPress)
-                    {
-                        Send(true);
-                    }
-
-                    // Both halves in one pump would leave the button Held before any press edge is evaluated.
-                    if (bPress && bRelease)
-                    {
-                        Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
-                    }
-
-                    if (bRelease)
-                    {
-                        Send(false);
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Sent {} at ({}, {}).", In.Action, In.X, In.Y));
-                });
-        }
-
-        // Runs on the transport thread on purpose: a tap needs the release to land a frame after the press.
-        void RegisterSendKey(FStringView Owner)
-        {
-            InputPumpedHandle = FCoreDelegates::Get().OnInputPumped.AddStatic(&ForwardInjectedKeys);
-
-            Agent::FToolRegistry::Get().Register<SSendKeyParams, SSendKeyResult>(
-                Owner, "editor.send_key",
-                "Send a key to the editor as if typed, giving the game viewport input focus first. "
-                "Use it to drive play-in-editor: open menus, toggle panels, trigger bindings.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
-                [](const SSendKeyParams& In, SSendKeyResult& Out)
-                {
-                    const bool bPress   = In.Action == "Tap" || In.Action == "Press";
-                    const bool bRelease = In.Action == "Tap" || In.Action == "Release";
-                    if (!bPress && !bRelease)
-                    {
-                        return Agent::FToolResult::Error("Action has to be Tap, Press or Release.");
-                    }
-
-                    auto OnGameThread = [](TMoveOnlyFunction<void()>&& Work)
-                    {
-                        return Agent::FGameThreadGate::Run(Move(Work), Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds())
-                            == Agent::EGameThreadResult::Ran;
-                    };
-
-                    const bool bFocused = OnGameThread([&]()
-                    {
-                        // Keys route to the active viewport, which the editor only moves while its OS window is foreground.
-                        FInputViewportRegistry& Viewports = FInputViewportRegistry::Get();
-                        FString SceneError;
-                        CWorld* World = SessionOps::GetSceneWorld(SceneError);
-                        Viewports.TakeGameFocus(World != nullptr ? Viewports.FindViewportForWorld(World) : nullptr);
-                        Out.bGameInputFocused = Viewports.GetActiveViewport() != nullptr;
-                    });
-                    if (!bFocused)
-                    {
-                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
-                    }
-
-                    // ImGui releases the keyboard at the next frame start, so a key sent this frame would be swallowed.
-                    Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
-
-                    auto Send = [&](bool bPressed)
-                    {
-                        FKeyInput Input;
-                        Input.Key      = In.Key;
-                        Input.bPressed = bPressed;
-                        Input.bCtrl    = In.bCtrl;
-                        Input.bShift   = In.bShift;
-                        Input.bAlt     = In.bAlt;
-                        InjectedKeys.Enqueue(Input);
-                    };
-
-                    if (bPress)
-                    {
-                        Send(true);
-                    }
-
-                    // Both halves in one pump would leave the key Held before any action edge is evaluated.
-                    if (bPress && bRelease)
-                    {
-                        Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
-                    }
-
-                    if (bRelease)
-                    {
-                        Send(false);
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Sent {}.", In.Action));
-                });
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &ExecEditorConsole);
         }
     }
 
-    namespace
-    {
-        void RegisterGraphView(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<STabNameParams, SGraphViewResult>(
-                Owner, "graph.view",
-                "Report the canvas rectangle a graph editor tab is showing, in the same units as node X and Y, its zoom, "
-                "and which nodes lie outside it. Works for material, material function, animation and audio graph tabs.",
-                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
-                [](const STabNameParams& In, SGraphViewResult& Out)
-                {
-                    FString Error;
-                    SessionOps::FGraphView View;
-                    if (!SessionOps::GetGraphView(FStringView(In.Tab), View, Error))
-                    {
-                        return Agent::FToolResult::Error(Error + " Call editor.list_tabs.");
-                    }
-
-                    Out.bDrawn    = View.bDrawn;
-                    Out.MinX      = View.MinX;
-                    Out.MinY      = View.MinY;
-                    Out.MaxX      = View.MaxX;
-                    Out.MaxY      = View.MaxY;
-                    Out.Zoom      = View.Zoom;
-                    Out.NodeCount = View.NodeCount;
-                    Out.Offscreen = Move(View.Offscreen);
-
-                    if (!Out.bDrawn)
-                    {
-                        return Agent::FToolResult::Ok("That canvas has not been drawn yet, so it has no view. Focus the tab first.");
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Showing ({:.0f}, {:.0f}) to ({:.0f}, {:.0f}) at zoom {:.2f}, {} of {} node(s) off screen.",
-                        Out.MinX, Out.MinY, Out.MaxX, Out.MaxY, Out.Zoom, Out.Offscreen.size(), Out.NodeCount));
-                });
-
-            Agent::FToolRegistry::Get().Register<SGraphFrameParams, STabActionResult>(
-                Owner, "graph.frame",
-                "Pan and zoom a graph editor tab to the given node ids, selecting them, or to every node when Nodes is empty. "
-                "The tab is brought to the front, and the view lands on its next frame, so read it back with graph.view.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SGraphFrameParams& In, STabActionResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::FrameGraph(FStringView(In.Tab), In.Nodes, Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    return Agent::FToolResult::Ok(In.Nodes.empty()
-                        ? Lumina::Format("Framing every node in '{}'.", In.Tab)
-                        : Lumina::Format("Framing {} node(s) in '{}'.", In.Nodes.size(), In.Tab));
-                });
-
-            Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
-                Owner, "graph.arrange",
-                "Lay out a graph editor tab's canvas by its links, with each input to the left of what it feeds, as one undo "
-                "step in that tab. Applied on the tab's next frame, after which describe reports the new X and Y.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const STabNameParams& In, STabActionResult& Out)
-                {
-                    FString Error;
-                    Out.bDone = SessionOps::ArrangeGraph(FStringView(In.Tab), Error);
-                    if (!Out.bDone)
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Arranging '{}'.", In.Tab));
-                });
-        }
-    }
+    using namespace MCPEditorSessionToolsInternal;
 
     void RegisterEditorSessionTools(FStringView Owner)
     {
-        RegisterGraphView(Owner);
-        RegisterSendKey(Owner);
-        RegisterSendText(Owner);
-        RegisterUndoRedo(Owner);
-        RegisterPlayControl(Owner);
-        RegisterTabs(Owner);
-        RegisterSaveAndQuit(Owner);
-        RegisterScreenshot(Owner);
-        RegisterLogTail(Owner);
-        RegisterConsoleExec(Owner);
-        RegisterScriptReload(Owner);
-        RegisterSendMouse(Owner);
-        RegisterWindow(Owner);
-        RegisterFloatTab(Owner);
+        RegisterEditorHistory(Owner);
+        RegisterEditorPlay(Owner);
+        RegisterEditorTabs(Owner);
+        RegisterEditorOpen(Owner);
+        RegisterEditorInput(Owner);
+        RegisterEditorGraph(Owner);
+        RegisterEditorContentBrowser(Owner);
+        RegisterEditorReloadScripts(Owner);
+        RegisterEditorSaveAll(Owner);
+        RegisterEditorQuit(Owner);
+        RegisterEditorWindow(Owner);
+        RegisterEditorScreenshot(Owner);
+        RegisterEditorLogTail(Owner);
+        RegisterEditorConsoleExec(Owner);
     }
 
     void UnregisterEditorSessionTools()
     {
         // The pump delegate outlives this DLL, so a stale entry would be destroyed after unload.
-        FCoreDelegates::Get().OnInputPumped.Remove(InputPumpedHandle);
-        InputPumpedHandle = {};
+        FCoreDelegates::Get().OnInputPumped.Remove(EditorInputPumpedHandle);
+        EditorInputPumpedHandle = {};
     }
 }

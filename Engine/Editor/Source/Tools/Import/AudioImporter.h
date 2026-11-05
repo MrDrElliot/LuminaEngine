@@ -15,7 +15,7 @@ namespace Lumina
 
         void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
         {
-            OutExtensions.insert(OutExtensions.end(), { ".wav" });
+            OutExtensions.Add({ ".wav" });
         }
 
         void BuildAssets(const FImportRequest& Request, FImportResult& OutResult, FScopedSlowTask* Progress) override;

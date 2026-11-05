@@ -163,7 +163,7 @@ namespace Lumina::Reflection
                 { "Lumina::FString",          EPropertyTypeFlags::String          },
                 { "Lumina::FFixedString",     EPropertyTypeFlags::String          },
                 { "Lumina::TVector",          EPropertyTypeFlags::Vector          },
-                { "Lumina::TFixedVector",     EPropertyTypeFlags::Vector          },
+                { "Lumina::TInlineVector",    EPropertyTypeFlags::Vector          },
                 { "Lumina::THashMap",         EPropertyTypeFlags::Map             },
                 { "Lumina::TOptional",        EPropertyTypeFlags::Optional        },
                 { "Lumina::TStrongObjectPtr", EPropertyTypeFlags::Object          },

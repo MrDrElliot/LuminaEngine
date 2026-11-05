@@ -139,7 +139,7 @@ namespace Lumina
             return Out + DefaultValue + ";\n";
         }
         // A function-call output binds its own local, while everything else reads the node's FullName.
-        FString NodeName              = ConnectedPin->ResolvedVar.empty()
+        FString NodeName              = ConnectedPin->ResolvedVar.IsEmpty()
                                       ? ConnectedPin->GetOwningNode()->GetNodeFullName()
                                       : ConnectedPin->ResolvedVar;
         int32 ConnectedComponents     = FMaterialCompiler::GetComponentCount(ConnectedPin->GetComponentMask());
@@ -149,9 +149,9 @@ namespace Lumina
             ConnectedComponents = FMaterialCompiler::GetComponentCount(ConnectedPin->InputType);
         }
         FString Swizzle               = GetSwizzleForMask(ConnectedPin->GetComponentMask());
-        if (!Swizzle.empty())
+        if (!Swizzle.IsEmpty())
         {
-            ConnectedComponents = (int32)Swizzle.length() - 1;
+            ConnectedComponents = Swizzle.Len() - 1;
         }
         FString Value = NodeName + Swizzle;
 
@@ -163,7 +163,7 @@ namespace Lumina
         else if (RequiredComponents == 3)
         {
             if (ConnectedComponents == 3)      Out += Value + ";\n";
-            else if (ConnectedComponents == 4) Out += (Swizzle.empty() ? Value + ".rgb;\n" : Value + ";\n");
+            else if (ConnectedComponents == 4) Out += (Swizzle.IsEmpty() ? Value + ".rgb;\n" : Value + ";\n");
             else if (ConnectedComponents == 2) Out += "float3(" + Value + ", 0.0);\n";
             else                               Out += "float3(" + Value + ");\n";
         }
@@ -205,10 +205,10 @@ namespace Lumina
             SelfShadowPin, ClearcoatPin, ClearcoatRoughnessPin, TransmissionPin, ThicknessPin,
         };
 
-        OutPins.reserve(OutPins.size() + std::size(Pins));
+        OutPins.Reserve(OutPins.Num() + std::size(Pins));
         for (CEdNodeGraphPin* Pin : Pins)
         {
-            OutPins.push_back(Pin);
+            OutPins.Add(Pin);
         }
     }
 

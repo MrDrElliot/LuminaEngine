@@ -60,7 +60,7 @@ public static class ScriptProjectGenerator
                     : "Plugins/" + Plugin.Name,
                 OutputPath = PathUtils.Combine(Plugin.RootDirectory, "Binaries/DotNet") + "/",
                 IntermediateOutputPath = PathUtils.Combine(Plugin.RootDirectory, "Intermediates/DotNet", Plugin.Name) + "/",
-                Dependencies = Plugin.Dependencies,
+                Dependencies = Plugin.Dependencies.Select(Dependency => Dependency.Name).ToList(),
             });
 
             PluginsWithScripts.Add(Plugin.Name);

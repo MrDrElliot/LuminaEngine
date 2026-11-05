@@ -556,6 +556,7 @@ internal static class ScriptPropertyRewriter
             string Name = Member.Symbol.Name;
             SyntaxNode Declarator = Member.At;
             string Type = Member.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            string AnnotatedType = Member.Type.ToDisplayString(NullableQualifiedFormat);
             string Offset = $"__lazyoff_{Name}.Get(typeof({TypeName}), \"{Name}\")";
             string Token = $"__lazyprop_{Name}.Get(typeof({TypeName}), \"{Name}\")";
             bool bWritable = !Classification.IsView && !Member.bReadOnly;
@@ -666,7 +667,10 @@ internal static class ScriptPropertyRewriter
                 return BuildComponentFieldRef(Member, Type, Offset);
             }
             AppendCarriedAttributes(Body, Member);
-            Body.Append(MemberModifiers(Member.Declaration.Modifiers)).Append(' ').Append(Type).Append(' ').AppendLine(Name);
+            string DeclaredType = Classification.Access is EScriptAccess.Object or EScriptAccess.AssetPath or EScriptAccess.String
+                ? AnnotatedType
+                : Type;
+            Body.Append(MemberModifiers(Member.Declaration.Modifiers)).Append(' ').Append(DeclaredType).Append(' ').AppendLine(Name);
             Body.AppendLine("{");
             // Gated, since the schema pass describes each type through an unbound instance whose handle is null, which a component never is.
             if (bComponentOwner)
@@ -917,5 +921,8 @@ internal static class ScriptPropertyRewriter
         // Fully qualified, so a view's element type resolves wherever the user's own usings point.
         private static string Qualified(ITypeSymbol Type) =>
             Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+        private static readonly SymbolDisplayFormat NullableQualifiedFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
     }
 }

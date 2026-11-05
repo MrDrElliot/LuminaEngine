@@ -185,7 +185,7 @@ namespace Lumina
         void AddWheel(FVector3 Position, float Radius, float SuspensionTravel, bool bSteer, bool bDrive, bool bInHandbrake = false,
                       uint32 Visual = 0xFFFFFFFF)
         {
-            SVehicleWheel& Wheel = Wheels.emplace_back();
+            SVehicleWheel& Wheel = Wheels.EmplaceGetRef();
             Wheel.Position         = Position;
             Wheel.Radius           = Radius;
             Wheel.SuspensionTravel = SuspensionTravel;

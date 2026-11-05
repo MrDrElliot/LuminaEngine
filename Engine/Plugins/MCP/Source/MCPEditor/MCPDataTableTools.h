@@ -16,11 +16,11 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        /** Reflected type name, such as Float or Name or Map. */
+        // Reflected type name, such as Float or Name or Map.
         PROPERTY()
         FString Type;
 
-        /** False for a field datatable.set_row_property cannot write. */
+        // False for a field datatable.set_row_property cannot write.
         PROPERTY()
         bool bWritable = true;
     };
@@ -30,7 +30,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID of the table, from assets.search. */
+        // GUID or content path of the table.
         PROPERTY()
         FString Asset;
     };
@@ -40,7 +40,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Struct every row is an instance of; empty when the table has none picked yet. */
+        // Struct every row is an instance of; empty until one is picked.
         PROPERTY()
         FString RowStruct;
 
@@ -53,7 +53,7 @@ namespace Lumina
         PROPERTY()
         TVector<SDataTableColumnInfo> Columns;
 
-        /** Every row struct a table could use, for assets.set_property on RowStructName. */
+        // Every usable row struct, for assets.set_property on RowStructName.
         PROPERTY()
         TVector<FString> RowStructs;
     };
@@ -66,7 +66,7 @@ namespace Lumina
         PROPERTY()
         FString Asset;
 
-        /** Row name, from datatable.describe. */
+        // Row name, from datatable.describe.
         PROPERTY()
         FString Row;
     };
@@ -79,11 +79,11 @@ namespace Lumina
         PROPERTY()
         FString Row;
 
-        /** Every field as JSON, in the shape datatable.set_row_property takes back. */
+        // Every field as JSON, in the shape datatable.set_row_property takes back.
         PROPERTY()
         FString Value;
 
-        /** Field paths that cannot be written. */
+        // Field paths that cannot be written.
         PROPERTY()
         TVector<FString> UnwritableFields;
     };
@@ -99,11 +99,11 @@ namespace Lumina
         PROPERTY()
         FString Row;
 
-        /** Field path inside the row, such as MaxStackSize or RaceMeshes or Meshes[0].Socket. */
+        // Field path inside the row, such as MaxStackSize or Meshes[0].Socket.
         PROPERTY()
         FString Path;
 
-        /** The new value as JSON. */
+        // The new value as JSON.
         PROPERTY(RawJson)
         FString Value;
     };
@@ -113,156 +113,128 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** What the field held before the change, as JSON. */
+        // Value before the change, as JSON.
         PROPERTY()
         FString Previous;
 
-        /** What it holds now, read back after applying. */
+        // Value read back after the change, as JSON.
         PROPERTY()
         FString Current;
 
-        /** True when the table's open editor recorded the edit, so editor.undo can reach it. */
+        // True when the table's open editor recorded the edit, so editor.history can undo it.
         PROPERTY()
         bool bUndoable = false;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddRowParams
+    enum class EDataTableRowAction : uint8
+    {
+        Add,
+        Remove,
+        Rename,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDataTableRowParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        EDataTableRowAction Action = EDataTableRowAction::Add;
+
+        PROPERTY()
         FString Asset;
 
-        /** Wanted row name. Empty or taken names get a numbered suffix. */
+        // Remove and Rename only. Existing row name.
+        PROPERTY()
+        FString Row;
+
+        // Add only. Wanted row name; empty or taken names get a numbered suffix.
         PROPERTY()
         FString Name;
 
-        /** Existing row to copy fields from, applied before Value. */
+        // Rename only.
+        PROPERTY()
+        FString NewName;
+
+        // Add only. Existing row to copy fields from, applied before Value.
         PROPERTY()
         FString CopyFrom;
 
-        /** Fields to set on the new row, as a JSON object. */
+        // Add only. Fields to set on the new row, as a JSON object.
         PROPERTY(RawJson)
         FString Value;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddRowResult
+    struct MCPEDITOR_API SDataTableRowResult
     {
         GENERATED_BODY()
 
-        /** The name the row ended up with. */
+        // Add and Rename. The name the row ended up with.
         PROPERTY()
         FString Row;
 
+        // Add only.
         PROPERTY()
         int32 Index = 0;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SRemoveRowParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Asset;
-
-        PROPERTY()
-        FString Row;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SRemoveRowResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        bool bRemoved = false;
-
+        // Remove only. Rows left in the table.
         PROPERTY()
         int32 RemainingCount = 0;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SRenameRowParams
+    enum class EDataTableCsvAction : uint8
+    {
+        Import,
+        Export,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDataTableCsvParams
     {
         GENERATED_BODY()
+
+        PROPERTY()
+        EDataTableCsvAction Action = EDataTableCsvAction::Export;
 
         PROPERTY()
         FString Asset;
 
-        PROPERTY()
-        FString Row;
-
-        PROPERTY()
-        FString NewName;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SRenameRowResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Row;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SImportCsvParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Asset;
-
-        /** CSV content, not a path: the first line is the header and its first column is the row name. */
+        // Import only. CSV content, not a path; the header's first column is the row name.
         PROPERTY()
         FString Text;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SImportCsvResult
+    struct MCPEDITOR_API SDataTableCsvResult
     {
         GENERATED_BODY()
 
+        // Export only. CSV text in the shape Import takes back.
+        PROPERTY()
+        FString Text;
+
+        // Import only. Rows imported.
         PROPERTY()
         int32 RowCount = 0;
 
+        // Import only.
         PROPERTY()
         int32 Skipped = 0;
 
-        /** Per-cell problems the import worked around. */
+        // Import only. Per-cell problems the import worked around.
         PROPERTY()
         TVector<FString> Errors;
 
-        /** Header columns the row struct has no field for. */
+        // Import only. Header columns the row struct has no field for.
         PROPERTY()
         TVector<FString> UnknownColumns;
     };
 
-    REFLECT()
-    struct MCPEDITOR_API SExportCsvParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Asset;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SExportCsvResult
-    {
-        GENERATED_BODY()
-
-        /** CSV text in the shape datatable.import_csv takes back. */
-        PROPERTY()
-        FString Text;
-    };
-
     namespace MCP
     {
-        // Row-level access to CDataTable, whose rows are instanced structs reflection alone cannot reach.
         void RegisterDataTableTools(FStringView Owner);
     }
 }

@@ -50,9 +50,9 @@ namespace Lumina
         {
             return RHI::FShaderSource
             {
-                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()), Spirv.size() * sizeof(uint32)),
+                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()), Spirv.Num() * sizeof(uint32)),
                 .EntryPoint = "main",
-                .DebugName  = Path.c_str()
+                .DebugName  = *Path
             };
         }
     };

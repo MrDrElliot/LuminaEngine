@@ -367,8 +367,8 @@ namespace Lumina
                 const float  Alpha = (float)(Position - (double)Index);
 
                 const uint32 Channels = Wave->NumChannels;
-                const float* A = Wave->Samples.data() + Index * Channels;
-                const float* B = Wave->Samples.data() + Next * Channels;
+                const float* A = Wave->Samples.GetData() + Index * Channels;
+                const float* B = Wave->Samples.GetData() + Next * Channels;
 
                 OutLeftSample  = A[0] + (B[0] - A[0]) * Alpha;
                 OutRightSample = Channels > 1 ? A[1] + (B[1] - A[1]) * Alpha : OutLeftSample;

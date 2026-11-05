@@ -17,13 +17,13 @@ namespace Lumina
 
         void Reset()
         {
-            Positions.clear();
-            Normals.clear();
-            UVs.clear();
-            Indices.clear();
+            Positions.Reset();
+            Normals.Reset();
+            UVs.Reset();
+            Indices.Reset();
         }
 
-        NODISCARD bool IsEmpty() const { return Positions.empty() || Indices.empty(); }
+        NODISCARD bool IsEmpty() const { return Positions.IsEmpty() || Indices.IsEmpty(); }
     };
 
     namespace BlockoutMesh

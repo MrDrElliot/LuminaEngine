@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <iterator>
 #include <new>
 #include <type_traits>
@@ -19,7 +20,7 @@ namespace Lumina::Containers
     public:
 
         using value_type      = T;
-        using size_type       = size_t;
+        using size_type       = int32;
         using difference_type = ptrdiff_t;
         using reference       = T&;
         using const_reference = const T&;
@@ -56,10 +57,13 @@ namespace Lumina::Containers
             TIterator& operator--() noexcept { --Index; return *this; }
             TIterator operator--(int) noexcept { TIterator Copy = *this; --Index; return Copy; }
 
-            TIterator& operator+=(difference_type Offset) noexcept { Index += static_cast<size_t>(Offset); return *this; }
-            TIterator& operator-=(difference_type Offset) noexcept { Index -= static_cast<size_t>(Offset); return *this; }
+            TIterator& operator+=(difference_type Offset) noexcept { Index += static_cast<int32>(Offset); return *this; }
+            TIterator& operator-=(difference_type Offset) noexcept { Index -= static_cast<int32>(Offset); return *this; }
+
+            NODISCARD reference operator[](difference_type Offset) const noexcept { return (*Owner)[Index + static_cast<int32>(Offset)]; }
 
             NODISCARD friend TIterator operator+(TIterator It, difference_type Offset) noexcept { return It += Offset; }
+            NODISCARD friend TIterator operator+(difference_type Offset, TIterator It) noexcept { return It += Offset; }
             NODISCARD friend TIterator operator-(TIterator It, difference_type Offset) noexcept { return It -= Offset; }
 
             NODISCARD friend difference_type operator-(const TIterator& Left, const TIterator& Right) noexcept
@@ -72,34 +76,42 @@ namespace Lumina::Containers
                 return Left.Index == Right.Index && Left.Owner == Right.Owner;
             }
 
+            // Ordered by position, which is all random access needs; comparing iterators of two deques means nothing.
+            NODISCARD friend std::strong_ordering operator<=>(const TIterator& Left, const TIterator& Right) noexcept
+            {
+                return Left.Index <=> Right.Index;
+            }
+
         private:
 
-            TIterator(FOwner* InOwner, size_t InIndex) noexcept : Owner(InOwner), Index(InIndex) {}
+            TIterator(FOwner* InOwner, int32 InIndex) noexcept : Owner(InOwner), Index(InIndex) {}
 
             FOwner* Owner = nullptr;
-            size_t  Index = 0;
+            int32  Index = 0;
         };
 
         using iterator       = TIterator<false>;
         using const_iterator = TIterator<true>;
 
+        static_assert(std::random_access_iterator<iterator> && std::random_access_iterator<const_iterator>);
+
         TDeque() noexcept = default;
 
-        explicit TDeque(size_t InitialCapacity) { reserve(InitialCapacity); }
+        explicit TDeque(size_type InitialCapacity) { Reserve(InitialCapacity); }
 
         TDeque(const TDeque& Other)
         {
-            reserve(Other.Count);
-            for (size_t Index = 0; Index < Other.Count; ++Index)
+            Reserve(Other.Count);
+            for (int32 Index = 0; Index < Other.Count; ++Index)
             {
-                push_back(Other[Index]);
+                PushLast(Other[Index]);
             }
         }
 
         TDeque(TDeque&& Other) noexcept
             : Storage(Other.Storage)
-            , Capacity(Other.Capacity)
-            , First(Other.First)
+            , Cap(Other.Cap)
+            , Head(Other.Head)
             , Count(Other.Count)
         {
             Other.AdoptEmpty();
@@ -111,11 +123,11 @@ namespace Lumina::Containers
         {
             if (this != &Other)
             {
-                clear();
-                reserve(Other.Count);
-                for (size_t Index = 0; Index < Other.Count; ++Index)
+                Reset();
+                Reserve(Other.Count);
+                for (int32 Index = 0; Index < Other.Count; ++Index)
                 {
-                    push_back(Other[Index]);
+                    PushLast(Other[Index]);
                 }
             }
             return *this;
@@ -126,112 +138,112 @@ namespace Lumina::Containers
             if (this != &Other)
             {
                 ReleaseBlock();
-                Storage  = Other.Storage;
-                Capacity = Other.Capacity;
-                First    = Other.First;
-                Count    = Other.Count;
+                Storage = Other.Storage;
+                Cap     = Other.Cap;
+                Head    = Other.Head;
+                Count   = Other.Count;
                 Other.AdoptEmpty();
             }
             return *this;
         }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Count; }
-        NODISCARD FORCEINLINE size_t capacity() const noexcept { return Capacity; }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Count == 0; }
-        NODISCARD FORCEINLINE size_t Num() const noexcept { return Count; }
+        NODISCARD FORCEINLINE size_type Num() const noexcept { return Count; }
+        NODISCARD FORCEINLINE size_type Max() const noexcept { return Cap; }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Count == 0; }
 
-        NODISCARD FORCEINLINE T& operator[](size_t Index) noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto operator[](this TSelf&& Self, size_type Index) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Storage[SlotFor(Index)];
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Self.Count);
+            return Self.Storage[Self.SlotFor(Index)];
         }
 
-        NODISCARD FORCEINLINE const T& operator[](size_t Index) const noexcept
-        {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Storage[SlotFor(Index)];
-        }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto First(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self[0]; }
 
-        NODISCARD FORCEINLINE T& at(size_t Index) noexcept { return (*this)[Index]; }
-        NODISCARD FORCEINLINE const T& at(size_t Index) const noexcept { return (*this)[Index]; }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Last(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self[Self.Count - 1]; }
 
-        NODISCARD FORCEINLINE T& front() noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE const T& front() const noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE T& back() noexcept { return (*this)[Count - 1]; }
-        NODISCARD FORCEINLINE const T& back() const noexcept { return (*this)[Count - 1]; }
+        template <typename TSelf>
+        NODISCARD auto begin(this TSelf&& Self) noexcept { return TIterator<std::is_const_v<std::remove_reference_t<TSelf>>>(&Self, 0); }
 
-        NODISCARD iterator begin() noexcept { return iterator(this, 0); }
-        NODISCARD const_iterator begin() const noexcept { return const_iterator(this, 0); }
-        NODISCARD iterator end() noexcept { return iterator(this, Count); }
-        NODISCARD const_iterator end() const noexcept { return const_iterator(this, Count); }
+        template <typename TSelf>
+        NODISCARD auto end(this TSelf&& Self) noexcept { return TIterator<std::is_const_v<std::remove_reference_t<TSelf>>>(&Self, Self.Count); }
         NODISCARD const_iterator cbegin() const noexcept { return begin(); }
         NODISCARD const_iterator cend() const noexcept { return end(); }
 
-        void reserve(size_t NewCapacity)
+        void Reserve(size_type InNewCapacity)
         {
-            if (NewCapacity > Capacity)
+            const int32 NewCapacity = static_cast<int32>(Private::CheckCapacity(static_cast<uint32>(InNewCapacity), 0x7FFFFFFFu));
+            if (NewCapacity > Cap)
             {
                 Reallocate(NewCapacity);
             }
         }
 
+        // Built before growing when full, since an argument may name an element the growth is about to free.
         template <typename... TArgs>
-        T& emplace_back(TArgs&&... Args)
+        T& EmplaceLast(TArgs&&... Args)
         {
-            GrowIfFull();
-            T* Slot = Storage + SlotFor(Count);
-            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
-            ++Count;
-            return *Slot;
+            if (Count == Cap) [[unlikely]]
+            {
+                T Staged(std::forward<TArgs>(Args)...);
+                GrowIfFull();
+                return ConstructBack(std::move(Staged));
+            }
+            return ConstructBack(std::forward<TArgs>(Args)...);
         }
 
         template <typename... TArgs>
-        T& emplace_front(TArgs&&... Args)
+        T& EmplaceFirst(TArgs&&... Args)
         {
-            GrowIfFull();
-            First = First == 0 ? Capacity - 1 : First - 1;
-            T* Slot = Storage + First;
-            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
-            ++Count;
-            return *Slot;
+            if (Count == Cap) [[unlikely]]
+            {
+                T Staged(std::forward<TArgs>(Args)...);
+                GrowIfFull();
+                return ConstructFront(std::move(Staged));
+            }
+            return ConstructFront(std::forward<TArgs>(Args)...);
         }
 
-        FORCEINLINE T& push_back(const T& Value) { return emplace_back(Value); }
-        FORCEINLINE T& push_back(T&& Value) { return emplace_back(std::move(Value)); }
-        FORCEINLINE T& push_front(const T& Value) { return emplace_front(Value); }
-        FORCEINLINE T& push_front(T&& Value) { return emplace_front(std::move(Value)); }
+        FORCEINLINE T& PushLast(const T& Value) { return EmplaceLast(Value); }
+        FORCEINLINE T& PushLast(T&& Value) { return EmplaceLast(std::move(Value)); }
+        FORCEINLINE T& PushFirst(const T& Value) { return EmplaceFirst(Value); }
+        FORCEINLINE T& PushFirst(T&& Value) { return EmplaceFirst(std::move(Value)); }
 
-        void pop_back() noexcept
+        void PopLast() noexcept
         {
             LUMINA_CONTAINER_CHECK(Count != 0);
             --Count;
             Storage[SlotFor(Count)].~T();
         }
 
-        void pop_front() noexcept
+        void PopFirst() noexcept
         {
             LUMINA_CONTAINER_CHECK(Count != 0);
-            Storage[First].~T();
-            First = First + 1 == Capacity ? 0 : First + 1;
+            Storage[Head].~T();
+            Head = Head + 1 == Cap ? 0 : Head + 1;
             --Count;
         }
 
-        void clear() noexcept
+        void Reset() noexcept
         {
-            for (size_t Index = 0; Index < Count; ++Index)
+            for (int32 Index = 0; Index < Count; ++Index)
             {
                 Storage[SlotFor(Index)].~T();
             }
             Count = 0;
-            First = 0;
+            Head = 0;
         }
 
-        void swap(TDeque& Other) noexcept
+        void Empty() noexcept { ReleaseBlock(); }
+
+        friend void swap(TDeque& Left, TDeque& Right) noexcept
         {
-            std::swap(Storage, Other.Storage);
-            std::swap(Capacity, Other.Capacity);
-            std::swap(First, Other.First);
-            std::swap(Count, Other.Count);
+            std::swap(Left.Storage, Right.Storage);
+            std::swap(Left.Cap, Right.Cap);
+            std::swap(Left.Head, Right.Head);
+            std::swap(Left.Count, Right.Count);
         }
 
         NODISCARD friend bool operator==(const TDeque& Left, const TDeque& Right)
@@ -240,7 +252,7 @@ namespace Lumina::Containers
             {
                 return false;
             }
-            for (size_t Index = 0; Index < Left.Count; ++Index)
+            for (int32 Index = 0; Index < Left.Count; ++Index)
             {
                 if (!(Left[Index] == Right[Index]))
                 {
@@ -252,17 +264,17 @@ namespace Lumina::Containers
 
     private:
 
-        NODISCARD FORCEINLINE size_t SlotFor(size_t Index) const noexcept
+        NODISCARD FORCEINLINE int32 SlotFor(int32 Index) const noexcept
         {
-            const size_t Slot = First + Index;
-            return Slot < Capacity ? Slot : Slot - Capacity;
+            const int32 Slot = Head + Index;
+            return Slot < Cap ? Slot : Slot - Cap;
         }
 
         void AdoptEmpty() noexcept
         {
             Storage  = nullptr;
-            Capacity = 0;
-            First    = 0;
+            Cap = 0;
+            Head    = 0;
             Count    = 0;
         }
 
@@ -272,54 +284,74 @@ namespace Lumina::Containers
             {
                 return;
             }
-            clear();
-            TAllocator::Deallocate(Storage, Capacity * sizeof(T), alignof(T));
+            Reset();
+            TAllocator::Deallocate(Storage, static_cast<size_t>(Cap) * sizeof(T), alignof(T));
             AdoptEmpty();
         }
 
         FORCEINLINE void GrowIfFull()
         {
-            if (Count == Capacity) [[unlikely]]
+            if (Count == Cap) [[unlikely]]
             {
-                Reallocate(Capacity == 0 ? 8 : Capacity * 2);
+                Reallocate(static_cast<int32>(Private::CheckCapacity(Cap == 0 ? uint64(8) : static_cast<uint64>(Cap) * 2, 0x7FFFFFFFu)));
             }
+        }
+
+        template <typename... TArgs>
+        FORCEINLINE T& ConstructBack(TArgs&&... Args)
+        {
+            T* Slot = Storage + SlotFor(Count);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
+            ++Count;
+            return *Slot;
+        }
+
+        template <typename... TArgs>
+        FORCEINLINE T& ConstructFront(TArgs&&... Args)
+        {
+            Head = Head == 0 ? Cap - 1 : Head - 1;
+            T* Slot = Storage + Head;
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
+            ++Count;
+            return *Slot;
         }
 
         /** Growth unwraps the ring into a fresh block, so the elements come out contiguous and in order. */
-        void Reallocate(size_t NewCapacity)
+        void Reallocate(int32 NewCapacity)
         {
-            T* NewStorage = static_cast<T*>(TAllocator::Allocate(NewCapacity * sizeof(T), alignof(T)));
+            T* NewStorage = static_cast<T*>(TAllocator::Allocate(static_cast<size_t>(NewCapacity) * sizeof(T), alignof(T)));
 
-            for (size_t Index = 0; Index < Count; ++Index)
-            {
-                ElementOps::RelocateRange(NewStorage + Index, Storage + SlotFor(Index), 1);
-            }
+            // The live run is at most two pieces of the ring, so it moves as two bulk relocations.
+            const int32 FirstPiece = Count < Cap - Head ? Count : Cap - Head;
+            ElementOps::RelocateRange(NewStorage, Storage + Head, FirstPiece);
+            ElementOps::RelocateRange(NewStorage + FirstPiece, Storage, Count - FirstPiece);
 
             if (Storage != nullptr)
             {
-                TAllocator::Deallocate(Storage, Capacity * sizeof(T), alignof(T));
+                TAllocator::Deallocate(Storage, static_cast<size_t>(Cap) * sizeof(T), alignof(T));
             }
 
             Storage  = NewStorage;
-            Capacity = NewCapacity;
-            First    = 0;
+            Cap = NewCapacity;
+            Head    = 0;
         }
 
         T*     Storage  = nullptr;
-        size_t Capacity = 0;
-        size_t First    = 0;
-        size_t Count    = 0;
+        int32 Cap   = 0;
+        int32 Head  = 0;
+        int32 Count = 0;
     };
 
-    template <typename T, ContainerAllocatorType TAllocator>
-    FORCEINLINE void swap(TDeque<T, TAllocator>& Left, TDeque<T, TAllocator>& Right) noexcept
-    {
-        Left.swap(Right);
-    }
 }
 
 namespace Lumina
 {
     template <typename T>
     using TDeque = Containers::TDeque<T>;
+
+    template <typename T, typename TAllocator>
+    struct TIsTriviallyRelocatable<Containers::TDeque<T, TAllocator>>
+    {
+        static constexpr bool Value = true;
+    };
 }

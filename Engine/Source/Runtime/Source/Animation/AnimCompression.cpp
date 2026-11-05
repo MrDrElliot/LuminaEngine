@@ -41,34 +41,34 @@ namespace Lumina
 
         float MedianKeyDelta(const TVector<float>& Times)
         {
-            if (Times.size() < 2)
+            if (Times.Num() < 2)
             {
                 return 0.0f;
             }
 
             TVector<float> Deltas;
-            Deltas.reserve(Times.size() - 1);
-            for (size_t i = 1; i < Times.size(); ++i)
+            Deltas.Reserve(Times.Num() - 1);
+            for (int32 i = 1; i < Times.Num(); ++i)
             {
                 const float Delta = Times[i] - Times[i - 1];
                 if (Delta > 1e-6f)
                 {
-                    Deltas.push_back(Delta);
+                    Deltas.Add(Delta);
                 }
             }
 
-            if (Deltas.empty())
+            if (Deltas.IsEmpty())
             {
                 return 0.0f;
             }
 
             Algo::Sort(Deltas);
-            return Deltas[Deltas.size() / 2];
+            return Deltas[Deltas.Num() / 2];
         }
 
         bool IsConstantVec3(const TVector<FVector3>& Values, float Tolerance)
         {
-            for (size_t i = 1; i < Values.size(); ++i)
+            for (int32 i = 1; i < Values.Num(); ++i)
             {
                 const FVector3 Delta = Values[i] - Values[0];
                 if (Math::Abs(Delta.x) > Tolerance || Math::Abs(Delta.y) > Tolerance || Math::Abs(Delta.z) > Tolerance)
@@ -81,7 +81,7 @@ namespace Lumina
 
         bool IsConstantQuat(const TVector<FQuat>& Values, float Tolerance)
         {
-            for (size_t i = 1; i < Values.size(); ++i)
+            for (int32 i = 1; i < Values.Num(); ++i)
             {
                 if (Math::Abs(Math::Dot(Values[i], Values[0])) < 1.0f - Tolerance)
                 {
@@ -130,37 +130,37 @@ namespace Lumina
                                      Extent.z > 0.0f ? 1.0f / Extent.z : 0.0f);
 
             Track.Format      = EAnimTrackFormat::Quantized;
-            Track.DataOffset  = (uint32)Pool.size();
+            Track.DataOffset  = (uint32)Pool.Num();
             Track.RangeMin    = Min;
             Track.RangeExtent = Extent;
 
-            Pool.reserve(Pool.size() + Values.size() * 3);
+            Pool.Reserve(Pool.Num() + Values.Num() * 3);
             for (const FVector3& Value : Values)
             {
-                Pool.push_back(QuantizeUnit((Value.x - Min.x) * InvExtent.x));
-                Pool.push_back(QuantizeUnit((Value.y - Min.y) * InvExtent.y));
-                Pool.push_back(QuantizeUnit((Value.z - Min.z) * InvExtent.z));
+                Pool.Add(QuantizeUnit((Value.x - Min.x) * InvExtent.x));
+                Pool.Add(QuantizeUnit((Value.y - Min.y) * InvExtent.y));
+                Pool.Add(QuantizeUnit((Value.z - Min.z) * InvExtent.z));
             }
         }
 
         void MakeRawVec3Track(FCompressedAnimTrack& Track, const TVector<FVector3>& Values, TVector<float>& Pool)
         {
             Track.Format     = EAnimTrackFormat::Raw;
-            Track.DataOffset = (uint32)Pool.size();
+            Track.DataOffset = (uint32)Pool.Num();
 
-            Pool.reserve(Pool.size() + Values.size() * 3);
+            Pool.Reserve(Pool.Num() + Values.Num() * 3);
             for (const FVector3& Value : Values)
             {
-                Pool.push_back(Value.x);
-                Pool.push_back(Value.y);
-                Pool.push_back(Value.z);
+                Pool.Add(Value.x);
+                Pool.Add(Value.y);
+                Pool.Add(Value.z);
             }
         }
 
         void MakeQuantizedQuatTrack(FCompressedAnimTrack& Track, TVector<FQuat>& Values, TVector<uint16>& Pool)
         {
             // Aligning here means decode never needs the hemisphere dot that a raw nlerp would.
-            for (size_t i = 1; i < Values.size(); ++i)
+            for (int32 i = 1; i < Values.Num(); ++i)
             {
                 if (Math::Dot(Values[i], Values[i - 1]) < 0.0f)
                 {
@@ -169,15 +169,15 @@ namespace Lumina
             }
 
             Track.Format     = EAnimTrackFormat::Quantized;
-            Track.DataOffset = (uint32)Pool.size();
+            Track.DataOffset = (uint32)Pool.Num();
 
-            Pool.reserve(Pool.size() + Values.size() * 4);
+            Pool.Reserve(Pool.Num() + Values.Num() * 4);
             for (const FQuat& Value : Values)
             {
-                Pool.push_back(QuantizeSigned(Value.x));
-                Pool.push_back(QuantizeSigned(Value.y));
-                Pool.push_back(QuantizeSigned(Value.z));
-                Pool.push_back(QuantizeSigned(Value.w));
+                Pool.Add(QuantizeSigned(Value.x));
+                Pool.Add(QuantizeSigned(Value.y));
+                Pool.Add(QuantizeSigned(Value.z));
+                Pool.Add(QuantizeSigned(Value.w));
             }
         }
 
@@ -203,7 +203,7 @@ namespace Lumina
 
         int32 FindOrAddBone(TVector<FCompressedAnimBone>& Bones, const FName& BoneName)
         {
-            for (int32 i = 0; i < (int32)Bones.size(); ++i)
+            for (int32 i = 0; i < Bones.Num(); ++i)
             {
                 if (Bones[i].BoneName == BoneName)
                 {
@@ -213,8 +213,8 @@ namespace Lumina
 
             FCompressedAnimBone Bone;
             Bone.BoneName = BoneName;
-            Bones.push_back(Bone);
-            return (int32)Bones.size() - 1;
+            Bones.Add(Bone);
+            return Bones.Num() - 1;
         }
     }
 
@@ -248,7 +248,7 @@ namespace Lumina
         // The decoders index the pools by these offsets unchecked, so a corrupt clip loads empty instead.
         if (Ar.IsReading() && !Data.HasConsistentTracks())
         {
-            LOG_ERROR("Compressed animation with {} frames and {} bones has tracks outside its data; the clip loads empty", Data.NumFrames, Data.Bones.size());
+            LOG_ERROR("Compressed animation with {} frames and {} bones has tracks outside its data; the clip loads empty", Data.NumFrames, Data.Bones.Num());
             Ar.SetHasError(true);
             Data.Reset();
         }
@@ -270,9 +270,9 @@ namespace Lumina
             case EAnimTrackFormat::Constant:
                 return true;
             case EAnimTrackFormat::Quantized:
-                return (uint64)Track.DataOffset + (uint64)NumFrames * QuantizedLanes <= QuantizedData.size();
+                return (uint64)Track.DataOffset + (uint64)NumFrames * QuantizedLanes <= static_cast<uint64>(QuantizedData.Num());
             case EAnimTrackFormat::Raw:
-                return RawLanes == 0 || (uint64)Track.DataOffset + (uint64)NumFrames * RawLanes <= RawData.size();
+                return RawLanes == 0 || (uint64)Track.DataOffset + (uint64)NumFrames * RawLanes <= static_cast<uint64>(RawData.Num());
             default:
                 return false;
             }
@@ -315,12 +315,12 @@ namespace Lumina
             return FVector3(Track.Constant.x, Track.Constant.y, Track.Constant.z);
 
         case EAnimTrackFormat::Quantized:
-            return DecodeQuantizedVec3(QuantizedData.data(), Track, Frame0, Frame1, Alpha);
+            return DecodeQuantizedVec3(QuantizedData.GetData(), Track, Frame0, Frame1, Alpha);
 
         case EAnimTrackFormat::Raw:
         {
-            const float* A = RawData.data() + Track.DataOffset + (SIZE_T)Frame0 * 3;
-            const float* B = RawData.data() + Track.DataOffset + (SIZE_T)Frame1 * 3;
+            const float* A = RawData.GetData() + Track.DataOffset + (SIZE_T)Frame0 * 3;
+            const float* B = RawData.GetData() + Track.DataOffset + (SIZE_T)Frame1 * 3;
             return Math::Mix(FVector3(A[0], A[1], A[2]), FVector3(B[0], B[1], B[2]), Alpha);
         }
 
@@ -336,7 +336,7 @@ namespace Lumina
             return FVector3(Track.Constant.x, Track.Constant.y, Track.Constant.z);
         }
 
-        return DecodeQuantizedVec3(QuantizedData.data(), Track, Frame0, Frame1, Alpha);
+        return DecodeQuantizedVec3(QuantizedData.GetData(), Track, Frame0, Frame1, Alpha);
     }
 
     FQuat FCompressedAnimData::DecodeRotation(const FCompressedAnimTrack& Track, uint32 Frame0, uint32 Frame1, float Alpha) const
@@ -346,8 +346,8 @@ namespace Lumina
             return FQuat(Track.Constant.w, Track.Constant.x, Track.Constant.y, Track.Constant.z);
         }
 
-        const uint16* A = QuantizedData.data() + Track.DataOffset + (SIZE_T)Frame0 * 4;
-        const uint16* B = QuantizedData.data() + Track.DataOffset + (SIZE_T)Frame1 * 4;
+        const uint16* A = QuantizedData.GetData() + Track.DataOffset + (SIZE_T)Frame0 * 4;
+        const uint16* B = QuantizedData.GetData() + Track.DataOffset + (SIZE_T)Frame1 * 4;
 
         // Stored frames are hemisphere-aligned by the builder, so this needs no sign fixup.
         const FQuat Q0(DequantizeSigned(A[3]), DequantizeSigned(A[0]), DequantizeSigned(A[1]), DequantizeSigned(A[2]));
@@ -359,7 +359,7 @@ namespace Lumina
     void FCompressedAnimData::DecodeQuantizedRotationBatch(const uint32* TrackOffsets, uint32 Frame0, uint32 Frame1, float Alpha,
                                                            float (&OutXYZW)[4][RotationBatchSize]) const
     {
-        const uint16* Pool = QuantizedData.data();
+        const uint16* Pool = QuantizedData.GetData();
         const SIZE_T First = (SIZE_T)Frame0 * 4;
         const SIZE_T Second = (SIZE_T)Frame1 * 4;
 
@@ -408,8 +408,8 @@ namespace Lumina
 
 FVector3 AnimCompression::SampleKeysVec3(const TVector<float>& Times, const TVector<FVector3>& Values, float Time)
     {
-        const size_t N = Times.size();
-        if (N == 0 || Values.empty())
+        const int32 N = Times.Num();
+        if (N == 0 || Values.IsEmpty())
         {
             return FVector3(0.0f);
         }
@@ -423,11 +423,11 @@ FVector3 AnimCompression::SampleKeysVec3(const TVector<float>& Times, const TVec
         }
 
         // Binary search keyframe interval; clips routinely have hundreds of keys.
-        size_t Lo = 0;
-        size_t Hi = N - 1;
+        int32 Lo = 0;
+        int32 Hi = N - 1;
         while (Lo + 1 < Hi)
         {
-            const size_t Mid = (Lo + Hi) >> 1;
+            const int32 Mid = (Lo + Hi) >> 1;
             (Time < Times[Mid] ? Hi : Lo) = Mid;
         }
 
@@ -438,8 +438,8 @@ FVector3 AnimCompression::SampleKeysVec3(const TVector<float>& Times, const TVec
 
 FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector<FQuat>& Values, float Time)
     {
-        const size_t N = Times.size();
-        if (N == 0 || Values.empty())
+        const int32 N = Times.Num();
+        if (N == 0 || Values.IsEmpty())
         {
             return FQuat(1.0f, 0.0f, 0.0f, 0.0f);
         }
@@ -452,11 +452,11 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             return Values[N - 1];
         }
 
-        size_t Lo = 0;
-        size_t Hi = N - 1;
+        int32 Lo = 0;
+        int32 Hi = N - 1;
         while (Lo + 1 < Hi)
         {
-            const size_t Mid = (Lo + Hi) >> 1;
+            const int32 Mid = (Lo + Hi) >> 1;
             (Time < Times[Mid] ? Hi : Lo) = Mid;
         }
 
@@ -509,7 +509,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
         FCompressedAnimData& Compressed = Resource.Compressed;
         Compressed.Reset();
 
-        if (Resource.Channels.empty())
+        if (Resource.Channels.IsEmpty())
         {
             return;
         }
@@ -524,14 +524,14 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             if (Requested > (float)MaxFrames)
             {
                 LOG_WARN("Animation '{}': {} frames at {} Hz exceeds the {} frame cap, clamping.",
-                         Resource.Name.c_str(), (uint32)Requested, (uint32)Rate, MaxFrames);
+                         *Resource.Name, (uint32)Requested, (uint32)Rate, MaxFrames);
             }
             NumFrames = Math::Clamp((uint32)Math::Min(Requested, (float)MaxFrames), 2u, MaxFrames);
         }
 
         Compressed.NumFrames  = NumFrames;
         Compressed.SampleRate = NumFrames > 1 && Duration > 0.0f ? (float)(NumFrames - 1) / Duration : 0.0f;
-        Compressed.Bones.reserve(Resource.Channels.size() / 3 + 1);
+        Compressed.Bones.Reserve(Resource.Channels.Num() / 3 + 1);
 
         const float FrameStep = NumFrames > 1 ? Duration / (float)(NumFrames - 1) : 0.0f;
 
@@ -545,7 +545,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
 
             if (Channel.TargetPath == FAnimationChannel::ETargetPath::Rotation)
             {
-                SampledQuats.resize(NumFrames);
+                SampledQuats.SetNum(NumFrames);
                 for (uint32 Frame = 0; Frame < NumFrames; ++Frame)
                 {
                     SampledQuats[Frame] = SampleKeysQuat(Channel.Timestamps, Channel.Rotations, (float)Frame * FrameStep);
@@ -569,7 +569,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             }
 
             const TVector<FVector3>& Source = bTranslation ? Channel.Translations : Channel.Scales;
-            SampledVectors.resize(NumFrames);
+            SampledVectors.SetNum(NumFrames);
             for (uint32 Frame = 0; Frame < NumFrames; ++Frame)
             {
                 SampledVectors[Frame] = SampleKeysVec3(Channel.Timestamps, Source, (float)Frame * FrameStep);
@@ -601,17 +601,17 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
 
         FValidationReport Report;
         Report.bHasCompressedData = Compressed.IsValid();
-        Report.bHasSourceChannels = !Resource.Channels.empty();
+        Report.bHasSourceChannels = !Resource.Channels.IsEmpty();
         Report.NumFrames  = Compressed.NumFrames;
         Report.SampleRate = Compressed.SampleRate;
         Report.CompressedBytes = Compressed.GetMemoryUsage();
 
         for (const FAnimationChannel& Channel : Resource.Channels)
         {
-            Report.SourceBytes += Channel.Timestamps.size() * sizeof(float)
-                                + Channel.Translations.size() * sizeof(FVector3)
-                                + Channel.Rotations.size() * sizeof(FQuat)
-                                + Channel.Scales.size() * sizeof(FVector3);
+            Report.SourceBytes += Channel.Timestamps.Num() * sizeof(float)
+                                + Channel.Translations.Num() * sizeof(FVector3)
+                                + Channel.Rotations.Num() * sizeof(FQuat)
+                                + Channel.Scales.Num() * sizeof(FVector3);
         }
 
         if (!Report.bHasCompressedData || !Report.bHasSourceChannels)
@@ -626,11 +626,11 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             int32 Scale       = Constants::kIndexNone;
         };
 
-        TVector<FBoneChannels> BoneChannels(Compressed.Bones.size());
-        for (int32 c = 0; c < (int32)Resource.Channels.size(); ++c)
+        TVector<FBoneChannels> BoneChannels(Compressed.Bones.Num());
+        for (int32 c = 0; c < Resource.Channels.Num(); ++c)
         {
             const FAnimationChannel& Channel = Resource.Channels[c];
-            for (int32 b = 0; b < (int32)Compressed.Bones.size(); ++b)
+            for (int32 b = 0; b < Compressed.Bones.Num(); ++b)
             {
                 if (Compressed.Bones[b].BoneName != Channel.TargetBone)
                 {
@@ -648,8 +648,8 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             }
         }
 
-        Report.Bones.resize(Compressed.Bones.size());
-        for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+        Report.Bones.SetNum(Compressed.Bones.Num());
+        for (int32 b = 0; b < Compressed.Bones.Num(); ++b)
         {
             Report.Bones[b].BoneName = Compressed.Bones[b].BoneName;
         }
@@ -667,7 +667,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             float Alpha;
             Compressed.GetFrameBlend(Time, Resource.Duration, Frame0, Frame1, Alpha);
 
-            for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+            for (int32 b = 0; b < Compressed.Bones.Num(); ++b)
             {
                 const FCompressedAnimBone& Bone = Compressed.Bones[b];
                 const FBoneChannels& Sources = BoneChannels[b];
@@ -725,27 +725,27 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
     {
         if (!Report.bHasCompressedData)
         {
-            LOG_WARN("Animation '{}': no compressed data, re-import to build it.", ClipName.c_str());
+            LOG_WARN("Animation '{}': no compressed data, re-import to build it.", *ClipName);
             return;
         }
 
         if (!Report.bHasSourceChannels)
         {
             LOG_WARN("Animation '{}': source channels were dropped on load, so re-import it to measure error.",
-                     ClipName.c_str());
+                     *ClipName);
             return;
         }
 
         const float Ratio = Report.CompressedBytes > 0 ? (float)Report.SourceBytes / (float)Report.CompressedBytes : 0.0f;
 
         LOG_INFO("Animation '{}': {} KB -> {} KB ({:.2f}x), {} frames at {:.1f} Hz, {} samples over {} bones.",
-                 ClipName.c_str(), (uint32)(Report.SourceBytes / 1024), (uint32)(Report.CompressedBytes / 1024),
-                 Ratio, Report.NumFrames, Report.SampleRate, Report.NumSamples, (uint32)Report.Bones.size());
+                 *ClipName, (uint32)(Report.SourceBytes / 1024), (uint32)(Report.CompressedBytes / 1024),
+                 Ratio, Report.NumFrames, Report.SampleRate, Report.NumSamples, (uint32)Report.Bones.Num());
 
         LOG_INFO("  Worst translation {:.6f} on '{}', rotation {:.4f} deg on '{}', scale {:.6f} on '{}'.",
-                 Report.MaxTranslationError, Report.WorstTranslationBone.c_str(),
-                 Math::Degrees(Report.MaxRotationRadians), Report.WorstRotationBone.c_str(),
-                 Report.MaxScaleError, Report.WorstScaleBone.c_str());
+                 Report.MaxTranslationError, *Report.WorstTranslationBone,
+                 Math::Degrees(Report.MaxRotationRadians), *Report.WorstRotationBone,
+                 Report.MaxScaleError, *Report.WorstScaleBone);
     }
 
     namespace

@@ -84,7 +84,7 @@ namespace Lumina
             {
                 if (Loaded == nullptr)
                 {
-                    LOG_WARN("SpawnPrefabAsync: asset '{}' is not a CPrefab", Path.c_str());
+                    LOG_WARN("SpawnPrefabAsync: asset '{}' is not a CPrefab", *Path);
                 }
                 Scripting::InvokeScriptCallback(OnSpawned, (uint64)(uint32)ECS::NullEntity);
                 return;

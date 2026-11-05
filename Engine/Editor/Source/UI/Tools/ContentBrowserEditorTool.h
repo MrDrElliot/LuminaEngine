@@ -58,7 +58,7 @@ namespace Lumina
         // Shows Folder with Search typed into the search box, the way a user browsing there would.
         void BrowseToFolder(FStringView Folder, FStringView Search);
 
-        NODISCARD FStringView GetBrowsedFolder() const { return FStringView(SelectedPath.c_str(), SelectedPath.size()); }
+        NODISCARD FStringView GetBrowsedFolder() const { return FStringView(*SelectedPath, SelectedPath.Len()); }
 
         // Selects a just-created asset and opens its inline rename as soon as its tile appears.
         void QueueRenameAfterCreate(FStringView VirtualPath);
@@ -83,7 +83,7 @@ namespace Lumina
         {
             TUniquePtr<FDirectoryWatcher>   Watcher;
             FFixedString                    VirtualPrefix;
-            size_t                          WatchRootLen = 0;
+            int32                           WatchRootLen = 0;
         };
 
         struct FListingEntry
@@ -158,8 +158,8 @@ namespace Lumina
         void NavigateTo(FStringView Path);
         void NavigateBack();
         void NavigateForward();
-        NODISCARD bool CanNavigateBack() const { return !NavBackStack.empty(); }
-        NODISCARD bool CanNavigateForward() const { return !NavForwardStack.empty(); }
+        NODISCARD bool CanNavigateBack() const { return !NavBackStack.IsEmpty(); }
+        NODISCARD bool CanNavigateForward() const { return !NavForwardStack.IsEmpty(); }
 
         // Rebuilds FilterState from the asset registry, keeping the user's choices.
         void RefreshFilterClasses();

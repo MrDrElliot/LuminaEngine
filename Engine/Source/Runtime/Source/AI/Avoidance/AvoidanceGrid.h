@@ -45,10 +45,10 @@ namespace Lumina::Avoidance
             if (Count <= 0)
             {
                 DimX = DimZ = 0;
-                CellStart.clear();
-                SortedIndices.clear();
-                SortedPosX.clear();
-                SortedPosZ.clear();
+                CellStart.Reset();
+                SortedIndices.Reset();
+                SortedPosX.Reset();
+                SortedPosZ.Reset();
                 return;
             }
 
@@ -71,30 +71,31 @@ namespace Lumina::Avoidance
             DimZ = Math::Max((int32)((MaxZ - MinZ) * InvCellSize) + 1, 1);
 
             const int32 Cells = DimX * DimZ;
-            CellStart.assign((size_t)Cells + 1, 0);
+            CellStart.Init(0, Cells + 1);
 
             for (int32 i = 0; i < Count; ++i)
             {
                 const int32 Cell = ClampCellZ(PosZ[i]) * DimX + ClampCellX(PosX[i]);
-                ++CellStart[(size_t)Cell + 1];
+                ++CellStart[Cell + 1];
             }
             for (int32 c = 1; c <= Cells; ++c)
             {
                 CellStart[c] += CellStart[c - 1];
             }
 
-            SortedIndices.resize((size_t)Count);
-            SortedPosX.resize((size_t)Count);
-            SortedPosZ.resize((size_t)Count);
-            Cursor.assign(CellStart.begin(), CellStart.end());
+            SortedIndices.SetNum(Count);
+            SortedPosX.SetNum(Count);
+            SortedPosZ.SetNum(Count);
+            Cursor.Reset();
+            Cursor.Append(CellStart.begin(), CellStart.end());
 
             for (int32 i = 0; i < Count; ++i)
             {
                 const int32 Cell = ClampCellZ(PosZ[i]) * DimX + ClampCellX(PosX[i]);
-                const int32 Slot = Cursor[(size_t)Cell]++;
-                SortedIndices[(size_t)Slot] = i;
-                SortedPosX[(size_t)Slot]    = PosX[i];
-                SortedPosZ[(size_t)Slot]    = PosZ[i];
+                const int32 Slot = Cursor[Cell]++;
+                SortedIndices[Slot] = i;
+                SortedPosX[Slot]    = PosX[i];
+                SortedPosZ[Slot]    = PosZ[i];
             }
         }
 
@@ -115,8 +116,8 @@ namespace Lumina::Avoidance
             for (int32 cz = MinCZ; cz <= MaxCZ; ++cz)
             {
                 const int32 RowBase = cz * DimX;
-                const int32 Begin   = CellStart[(size_t)(RowBase + MinCX)];
-                const int32 End     = CellStart[(size_t)(RowBase + MaxCX) + 1];
+                const int32 Begin   = CellStart[RowBase + MinCX];
+                const int32 End     = CellStart[RowBase + MaxCX + 1];
                 if (End > Begin)
                 {
                     Func(Begin, End);
@@ -166,8 +167,8 @@ namespace Lumina::Avoidance
 
         Grid.ForEachRowSpan(SelfX, SelfZ, Range, [&](int32 Begin, int32 End)
         {
-            const float* PX = Grid.SortedPosX.data();
-            const float* PZ = Grid.SortedPosZ.data();
+            const float* PX = Grid.SortedPosX.GetData();
+            const float* PZ = Grid.SortedPosZ.GetData();
 
             const SIMD::VFloat8 SX(SelfX);
             const SIMD::VFloat8 SZ(SelfZ);
@@ -194,7 +195,7 @@ namespace Lumina::Avoidance
                     const int32 Lane = (int32)Math::CountTrailingZeros64((uint64)(uint32)Mask);
                     Mask &= Mask - 1;
 
-                    const int32 Candidate = Grid.SortedIndices[(size_t)(i + Lane)];
+                    const int32 Candidate = Grid.SortedIndices[i + Lane];
                     if (Candidate != SelfIndex)
                     {
                         RangeSq = InsertNeighbor(OutHeap, Count, MaxNeighbors, Lanes[Lane], Candidate, RangeSq);
@@ -212,7 +213,7 @@ namespace Lumina::Avoidance
                     continue;
                 }
 
-                const int32 Candidate = Grid.SortedIndices[(size_t)i];
+                const int32 Candidate = Grid.SortedIndices[i];
                 if (Candidate != SelfIndex)
                 {
                     RangeSq = InsertNeighbor(OutHeap, Count, MaxNeighbors, D2, Candidate, RangeSq);

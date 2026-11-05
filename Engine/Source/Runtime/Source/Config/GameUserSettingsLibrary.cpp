@@ -70,10 +70,10 @@ namespace Lumina
     void CGameUserSettingsLibrary::SetActionToggled(const FName& Action, bool bToggled)
     {
         TVector<FName>& Toggles = CGameUserSettings::Get().Input.ToggleActions;
-        Toggles.erase(Algo::Remove(Toggles, Action), Toggles.end());
+        Toggles.Remove(Action);
         if (bToggled && !Action.IsNone())
         {
-            Toggles.push_back(Action);
+            Toggles.Add(Action);
         }
     }
 
@@ -113,7 +113,7 @@ namespace Lumina
     int32 CGameUserSettingsLibrary::GetDisplayModeCount()
     {
         const FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
-        return Window != nullptr ? (int32)Window->GetDisplayModes().size() : 0;
+        return Window != nullptr ? Window->GetDisplayModes().Num() : 0;
     }
 
     SDisplayMode CGameUserSettingsLibrary::GetDisplayMode(int32 Index)
@@ -124,7 +124,7 @@ namespace Lumina
             return SDisplayMode{};
         }
         const TVector<SDisplayMode> Modes = Window->GetDisplayModes();
-        return Index >= 0 && Index < (int32)Modes.size() ? Modes[Index] : SDisplayMode{};
+        return Index >= 0 && Index < Modes.Num() ? Modes[Index] : SDisplayMode{};
     }
 
     bool CGameUserSettingsLibrary::GetVSync()
@@ -235,7 +235,7 @@ namespace Lumina
             {
                 if (Upscaler != nullptr && Upscaler->IsSupported())
                 {
-                    Types.push_back(Upscaler->GetType());
+                    Types.Add(Upscaler->GetType());
                 }
             }
             return Types;
@@ -244,13 +244,13 @@ namespace Lumina
 
     int32 CGameUserSettingsLibrary::GetAvailableUpscalerCount()
     {
-        return (int32)AvailableUpscalers().size();
+        return AvailableUpscalers().Num();
     }
 
     EUpscaler CGameUserSettingsLibrary::GetAvailableUpscaler(int32 Index)
     {
         const TVector<EUpscaler> Types = AvailableUpscalers();
-        return Index >= 0 && Index < (int32)Types.size() ? Types[Index] : EUpscaler::None;
+        return Index >= 0 && Index < Types.Num() ? Types[Index] : EUpscaler::None;
     }
 
     void CGameUserSettingsLibrary::RevertSettings()

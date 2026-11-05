@@ -16,7 +16,7 @@ namespace ECSBench
 
             // The same matched set with both pools filled in lockstep, which is the state a group holds.
             ECS::FRegistry Grouped;
-            size_t         Matched = 0;
+            int32         Matched = 0;
 
             // The absolute floor, two flat arrays with no pool machinery at all.
             TVector<ECS::FEntity> FlatDense;
@@ -25,30 +25,30 @@ namespace ECSBench
         };
 
         // One driver element in MatchInN carries the second component, and bShuffle scatters its fill order.
-        void BuildPair(FBuild& Out, size_t EntityCount, uint32 MatchInN, bool bShuffle)
+        void BuildPair(FBuild& Out, int32 EntityCount, uint32 MatchInN, bool bShuffle)
         {
             TVector<ECS::FEntity> Entities;
-            Entities.reserve(EntityCount);
+            Entities.Reserve(EntityCount);
 
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 const ECS::FEntity Entity = Out.Registry.Create();
                 Out.Registry.Emplace<FPosition>(Entity);
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             TVector<ECS::FEntity> Carriers;
-            Carriers.reserve(EntityCount / MatchInN + 1);
-            for (size_t Index = 0; Index < EntityCount; Index += MatchInN)
+            Carriers.Reserve(EntityCount / static_cast<int32>(MatchInN) + 1);
+            for (int32 Index = 0; Index < EntityCount; Index += MatchInN)
             {
-                Carriers.push_back(Entities[Index]);
+                Carriers.Add(Entities[Index]);
             }
 
             // A real world fills the second pool at some other time, so its dense order is unrelated.
             if (bShuffle)
             {
                 FSplitMix Random(0xC0FFEEull);
-                for (size_t Index = Carriers.size(); Index > 1; --Index)
+                for (int32 Index = Carriers.Num(); Index > 1; --Index)
                 {
                     const uint32 Pick = Random.NextBelow(static_cast<uint32>(Index));
                     std::swap(Carriers[Index - 1], Carriers[Pick]);
@@ -60,25 +60,25 @@ namespace ECSBench
                 Out.Registry.Emplace<FPose>(Entity);
             }
 
-            Out.Matched = Carriers.size();
+            Out.Matched = Carriers.Num();
 
             //~ The grouped copy holds only the matched entities, both pools in the same dense order.
 
-            Out.FlatDense.reserve(Carriers.size());
-            Out.FlatA.resize(Carriers.size());
-            Out.FlatB.resize(Carriers.size());
+            Out.FlatDense.Reserve(Carriers.Num());
+            Out.FlatA.SetNum(Carriers.Num());
+            Out.FlatB.SetNum(Carriers.Num());
 
-            for (size_t Index = 0; Index < Carriers.size(); ++Index)
+            for (int32 Index = 0; Index < Carriers.Num(); ++Index)
             {
                 const ECS::FEntity Mirror = Out.Grouped.Create();
                 Out.Grouped.Emplace<FPosition>(Mirror);
                 Out.Grouped.Emplace<FPose>(Mirror);
 
-                Out.FlatDense.push_back(Mirror);
+                Out.FlatDense.Add(Mirror);
             }
         }
 
-        double MeasureView(FBuild& Build, size_t Passes)
+        double MeasureView(FBuild& Build, int32 Passes)
         {
             float Sink = 0.0f;
             const double Nanos = MeasureNanosPerOp(Build.Matched, Passes, [&]
@@ -95,7 +95,7 @@ namespace ECSBench
         }
 
         // Exactly what an owning group's steady state walk is, two pools indexed by one dense cursor.
-        double MeasureGroup(FBuild& Build, size_t Passes)
+        double MeasureGroup(FBuild& Build, int32 Passes)
         {
             const ECS::TComponentStorage<FPosition> A = Build.Grouped.GetStorage<FPosition>();
             const ECS::TComponentStorage<FPose> B = Build.Grouped.GetStorage<FPose>();
@@ -105,10 +105,10 @@ namespace ECSBench
             const double Nanos = MeasureNanosPerOp(Build.Matched, Passes, [&]
             {
                 float Total = 0.0f;
-                const size_t Count = Set->GetDenseSize();
+                const int32 Count = Set->GetDenseSize();
                 const ECS::FEntity* Dense = Set->GetDenseData();
 
-                for (size_t Index = 0; Index < Count; ++Index)
+                for (int32 Index = 0; Index < Count; ++Index)
                 {
                     const ECS::FEntity Entity = Dense[Index];
                     FPosition& P = A.GetAtDense(static_cast<uint32>(Index));
@@ -121,18 +121,18 @@ namespace ECSBench
         }
 
         // No pool at all, which bounds how much of the gap is the paged indirection rather than the probe.
-        double MeasureFlat(FBuild& Build, size_t Passes)
+        double MeasureFlat(FBuild& Build, int32 Passes)
         {
             float Sink = 0.0f;
             const double Nanos = MeasureNanosPerOp(Build.Matched, Passes, [&]
             {
                 float Total = 0.0f;
-                const size_t Count = Build.FlatDense.size();
-                const ECS::FEntity* Dense = Build.FlatDense.data();
-                const FPosition* A = Build.FlatA.data();
-                const FPose* B = Build.FlatB.data();
+                const int32 Count = Build.FlatDense.Num();
+                const ECS::FEntity* Dense = Build.FlatDense.GetData();
+                const FPosition* A = Build.FlatA.GetData();
+                const FPose* B = Build.FlatB.GetData();
 
-                for (size_t Index = 0; Index < Count; ++Index)
+                for (int32 Index = 0; Index < Count; ++Index)
                 {
                     Total += A[Index].X + B[Index].M[0] + float(Dense[Index].GetIndex() & 1u);
                 }
@@ -142,18 +142,18 @@ namespace ECSBench
         }
 
         // The atom of group maintenance, moving one entity across the owned prefix boundary.
-        double MeasureSwapAtom(size_t EntityCount, size_t Passes)
+        double MeasureSwapAtom(int32 EntityCount, int32 Passes)
         {
             ECS::FRegistry Registry;
             TVector<ECS::FEntity> Entities;
-            Entities.reserve(EntityCount);
+            Entities.Reserve(EntityCount);
 
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FPosition>(Entity);
                 Registry.Emplace<FPose>(Entity);
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             const ECS::TComponentStorage<FPosition> A = Registry.GetStorage<FPosition>();
@@ -163,7 +163,7 @@ namespace ECSBench
             const double Nanos = MeasureNanosPerOp(EntityCount, Passes, [&]
             {
                 float Total = 0.0f;
-                const uint32 Count = static_cast<uint32>(Entities.size());
+                const uint32 Count = static_cast<uint32>(Entities.Num());
 
                 for (uint32 Index = 0; Index + 1 < Count; ++Index)
                 {
@@ -178,17 +178,17 @@ namespace ECSBench
         }
 
         // The structural change a group has to react to, measured with no group present.
-        double MeasureEmplaceRemove(size_t EntityCount, size_t Passes)
+        double MeasureEmplaceRemove(int32 EntityCount, int32 Passes)
         {
             ECS::FRegistry Registry;
             TVector<ECS::FEntity> Entities;
-            Entities.reserve(EntityCount);
+            Entities.Reserve(EntityCount);
 
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FPosition>(Entity);
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             (void)Registry.GetStorage<FPose>();
@@ -207,7 +207,7 @@ namespace ECSBench
         }
 
         // What the driver pays to reach entities that do not match, which no payload layout recovers.
-        double MeasureDriverScan(FBuild& Build, size_t Passes)
+        double MeasureDriverScan(FBuild& Build, int32 Passes)
         {
             float Sink = 0.0f;
             const double Nanos = MeasureNanosPerOp(Build.Matched, Passes, [&]
@@ -221,7 +221,7 @@ namespace ECSBench
         }
     }
 
-    void RunGroupHeadroomCases(size_t EntityCount, size_t Passes)
+    void RunGroupHeadroomCases(int32 EntityCount, int32 Passes)
     {
         std::printf("\nHeadroom an owning group could recover on a two component walk.\n");
         std::printf("Nanoseconds per matched entity, all three doing the same work per entity.\n");
@@ -248,7 +248,7 @@ namespace ECSBench
             const double Group = MeasureGroup(Build, Passes);
             const double Flat = MeasureFlat(Build, Passes);
 
-            std::printf("%-32s %9zu %10.3f %10.3f %9.3f %9.2fx\n",
+            std::printf("%-32s %9d %10.3f %10.3f %9.3f %9.2fx\n",
                 Case.Name, Build.Matched, View, Group, Flat, View / Group);
         }
 

@@ -22,7 +22,7 @@ namespace Lumina
         {
             Audio::FAudioInfo Info;
             TVector<float> Samples;
-            if (!Audio::DecodePCM(Stream->AudioData->Bytes.data(), Stream->AudioData->Bytes.size(), Info, Samples))
+            if (!Audio::DecodePCM(Stream->AudioData->Bytes.GetData(), Stream->AudioData->Bytes.Num(), Info, Samples))
             {
                 return;
             }
@@ -32,7 +32,7 @@ namespace Lumina
 
             constexpr uint8 BgR = 24,  BgG = 24,  BgB = 28;
             constexpr uint8 WvR = 96,  WvG = 200, WvB = 255;
-            for (size_t i = 0; i < (size_t)Res * Res; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(static_cast<int64>(Res) * Res); i < Limit; ++i)
             {
                 Pixels[i * 4 + 0] = BgR;
                 Pixels[i * 4 + 1] = BgG;
@@ -50,12 +50,12 @@ namespace Lumina
                 const uint64 End   = Math::Max(Frames * (X + 1) / Res, Begin + 1);
 
                 float MinS = 0.0f, MaxS = 0.0f;
-                for (uint64 F = Begin; F < End && F < Frames; ++F)
+                for (int32 F = IntCastChecked<int32>(Begin), Limit = IntCastChecked<int32>(Math::Min(End, Frames)); F < Limit; ++F)
                 {
                     float Mixed = 0.0f;
                     for (uint32 C = 0; C < Channels; ++C)
                     {
-                        Mixed += Samples[(size_t)F * Channels + C];
+                        Mixed += Samples[F * Channels + C];
                     }
                     Mixed /= (float)Channels;
                     MinS = Math::Min(MinS, Mixed);
@@ -66,7 +66,7 @@ namespace Lumina
                 const int32 Y1 = Math::Clamp((int32)(HalfH - MinS * (HalfH - 2.0f)), 0, (int32)Res - 1);
                 for (int32 Y = Y0; Y <= Y1; ++Y)
                 {
-                    uint8* P = &Pixels[((size_t)Y * Res + X) * 4];
+                    uint8* P = &Pixels[(Y * Res + X) * 4];
                     P[0] = WvR;
                     P[1] = WvG;
                     P[2] = WvB;
@@ -74,27 +74,27 @@ namespace Lumina
             }
 
             ThumbnailUtils::StoreDownsampledRGBA(*Stream->GetPackage()->GetPackageThumbnail(),
-                Pixels.data(), Res, Res, (size_t)Res * 4);
+                Pixels.GetData(), Res, Res, (size_t)Res * 4);
         }
 #endif
 
         bool LoadStreamFromFile(CAudioStream* Stream, const FFixedString& SourcePath, FString& OutError)
         {
             TVector<uint8> Bytes;
-            if (!FileHelper::LoadFileToArray(Bytes, SourcePath.c_str()) || Bytes.empty())
+            if (!FileHelper::LoadFileToArray(Bytes, *SourcePath) || Bytes.IsEmpty())
             {
-                OutError = FString("Failed to read audio file ") + FString(SourcePath.c_str());
+                OutError = FString("Failed to read audio file ") + FString(*SourcePath);
                 return false;
             }
 
             Audio::FAudioInfo Info;
-            if (!Audio::Probe(Bytes.data(), Bytes.size(), Info))
+            if (!Audio::Probe(Bytes.GetData(), Bytes.Num(), Info))
             {
-                OutError = FString(SourcePath.c_str()) + FString(" is not a decodable audio file");
+                OutError = FString(*SourcePath) + FString(" is not a decodable audio file");
                 return false;
             }
 
-            Stream->SourcePath  = FString(SourcePath.c_str());
+            Stream->SourcePath  = FString(*SourcePath);
             Stream->SampleRate  = Info.SampleRate;
             Stream->NumChannels = Info.NumChannels;
             Stream->NumFrames   = Info.NumFrames;
@@ -121,7 +121,7 @@ namespace Lumina
         CAudioStream* Stream = CFactory::CreateNewOf<CAudioStream>(PackagePath);
         if (Stream == nullptr)
         {
-            OutResult.Error = FString("A package already exists at ") + FString(PackagePath.c_str());
+            OutResult.Error = FString("A package already exists at ") + FString(*PackagePath);
             return;
         }
 
@@ -139,13 +139,13 @@ namespace Lumina
         CPackage* Package = Stream->GetPackage();
         if (!CPackage::SavePackage(Package, Package->GetPackagePath()))
         {
-            OutResult.Error = FString("Could not save ") + FString(Package->GetPackagePath().c_str());
+            OutResult.Error = FString("Could not save ") + FString(*Package->GetPackagePath());
             CFactory::DiscardNew(Stream);
             return;
         }
 
         FAssetRegistry::Get().AssetCreated(Stream);
-        OutResult.CreatedObjects.push_back(Stream);
+        OutResult.CreatedObjects.Add(Stream);
     }
 
     bool CAudioImporter::CanReimport(const CStruct* AssetClass) const

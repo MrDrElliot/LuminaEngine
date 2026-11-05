@@ -221,7 +221,7 @@ namespace Lumina
 			Channels     = (uint32)WantedChannels;
 			PeriodFrames = (uint32)WantedPeriod;
 
-			Scratch.assign((size_t)PeriodFrames * Channels, 0.0f);
+			Scratch.Init(0.0f, IntCastChecked<int32>(static_cast<int64>(PeriodFrames) * Channels));
 
 			LOG_INFO("[Audio] ALSA at {0} Hz, {1} channels, {2} frame period", SampleRate, Channels, PeriodFrames);
 			return true;
@@ -272,9 +272,9 @@ namespace Lumina
 		{
 			while (!Stop.ShouldStop())
 			{
-				Callback->RenderAudio(Scratch.data(), PeriodFrames);
+				Callback->RenderAudio(Scratch.GetData(), PeriodFrames);
 
-				const float* At = Scratch.data();
+				const float* At = Scratch.GetData();
 				unsigned long Remaining = PeriodFrames;
 
 				while (Remaining > 0 && !Stop.ShouldStop())

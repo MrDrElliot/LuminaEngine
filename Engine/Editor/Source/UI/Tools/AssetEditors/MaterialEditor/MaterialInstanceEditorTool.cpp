@@ -30,7 +30,7 @@ namespace Lumina
     static const char* MaterialInstanceParametersName = "Material Parameters";
 
     FMaterialInstanceEditorTool::FMaterialInstanceEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
         , MeshEntity()
         , DirectionalLightEntity()
     {
@@ -70,11 +70,12 @@ namespace Lumina
         CMaterialInterface* Material = CastAsserted<CMaterialInterface>(Asset.Get());
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
-            StaticMeshComponent.MaterialOverrides.push_back(Material);
+            StaticMeshComponent.MaterialOverrides.Add(Material);
+            StaticMeshComponent.MarkRenderStateDirty();
         }
         else if (Material->GetMaterialType() == EMaterialType::PostProcess)
         {
-            World->GetComponent<SCameraComponent>(EditorEntity).PostProcessMaterials.push_back(Material);
+            World->GetComponent<SCameraComponent>(EditorEntity).PostProcessMaterials.Add(Material);
         }
     }
 
@@ -235,7 +236,7 @@ namespace Lumina
             else
             {
                 ImGuiX::Notifications::NotifyError("'{0}' cannot be the parent of '{1}'.",
-                    NewParent != nullptr ? NewParent->GetName().c_str() : "<none>", Instance->GetName().c_str());
+                    NewParent != nullptr ? *NewParent->GetName() : "<none>", *Instance->GetName());
             }
         }
 
@@ -247,7 +248,7 @@ namespace Lumina
         TVector<CMaterialInterface*> Chain;
         for (CMaterialInterface* Level = Instance; Level != nullptr; Level = Level->GetParentMaterial())
         {
-            Chain.push_back(Level);
+            Chain.Add(Level);
         }
 
         ImGui::AlignTextToFramePadding();
@@ -255,15 +256,15 @@ namespace Lumina
         ImGui::SameLine(120.0f);
 
         // Root first, the order values resolve in, so the chain reads like the override stack.
-        for (size_t i = Chain.size(); i-- > 0; )
+        for (int32 i = Chain.Num(); i-- > 0; )
         {
             if (Chain[i] == Instance)
             {
-                ImGui::TextUnformatted(Chain[i]->GetName().c_str());
+                ImGui::TextUnformatted(*Chain[i]->GetName());
             }
             else
             {
-                ImGui::TextDisabled("%s", Chain[i]->GetName().c_str());
+                ImGui::TextDisabled("%s", *Chain[i]->GetName());
             }
 
             if (i > 0)
@@ -292,13 +293,13 @@ namespace Lumina
         if (Root == nullptr)
         {
             ImGui::TextWrapped("'%s' does not resolve to a base material, so there is nothing to inherit "
-                               "parameters from. Reassign the parent above.", Instance->GetName().c_str());
+                               "parameters from. Reassign the parent above.", *Instance->GetName());
         }
         else
         {
             ImGui::TextWrapped("'%s' has no usable shaders, so this instance renders nothing and exposes no "
                                "parameters. Open it to see the compile errors, which are marked on the failing "
-                               "nodes in its graph.", Root->GetName().c_str());
+                               "nodes in its graph.", *Root->GetName());
         }
         ImGui::PopStyleColor();
 
@@ -351,7 +352,7 @@ namespace Lumina
         DrawStaticSwitchSection(Instance);
         ImGui::PopStyleColor(3);
 
-        if (Instance->GetMaterialParams().empty())
+        if (Instance->GetMaterialParams().IsEmpty())
         {
             ImGui::TextUnformatted("Parent material exposes no parameters.");
             return;
@@ -381,7 +382,7 @@ namespace Lumina
                 const TVector<SMaterialParameter>& Params = Instance->GetMaterialParams();
                 for (const SMaterialParameter& Param : Params)
                 {
-                    ImGui::PushID(Param.ParameterName.c_str());
+                    ImGui::PushID(*Param.ParameterName);
                     ImGui::TableNextRow();
 
                     ImGui::TableNextColumn();
@@ -397,11 +398,11 @@ namespace Lumina
                     ImGui::AlignTextToFramePadding();
                     if (bEnabled)
                     {
-                        ImGui::TextUnformatted(Param.ParameterName.c_str());
+                        ImGui::TextUnformatted(*Param.ParameterName);
                     }
                     else
                     {
-                        ImGui::TextDisabled("%s", Param.ParameterName.c_str());
+                        ImGui::TextDisabled("%s", *Param.ParameterName);
                     }
 
                     // Which level the shown value actually comes from, which is the whole point of a chain.
@@ -409,7 +410,7 @@ namespace Lumina
                     {
                         const CMaterialInterface* Source = FindOverridingAncestor(Instance, Param);
                         ImGui::SetTooltip("Inherited from %s",
-                            Source != nullptr ? Source->GetName().c_str() : "the base material's default");
+                            Source != nullptr ? *Source->GetName() : "the base material's default");
                     }
 
                     ImGui::TableNextColumn();
@@ -477,7 +478,7 @@ namespace Lumina
     void FMaterialInstanceEditorTool::DrawStaticSwitchSection(CMaterialInstance* Instance)
     {
         CMaterial* Root = Instance->GetMaterial();
-        if (Root == nullptr || Root->StaticSwitches.empty())
+        if (Root == nullptr || Root->StaticSwitches.IsEmpty())
         {
             return;
         }
@@ -505,7 +506,7 @@ namespace Lumina
 
             for (const SMaterialStaticSwitch& Switch : Root->StaticSwitches)
             {
-                ImGui::PushID(Switch.ParameterName.c_str());
+                ImGui::PushID(*Switch.ParameterName);
                 ImGui::TableNextRow();
 
                 ImGui::TableNextColumn();
@@ -527,11 +528,11 @@ namespace Lumina
                 ImGui::AlignTextToFramePadding();
                 if (bOverridden)
                 {
-                    ImGui::TextUnformatted(Switch.ParameterName.c_str());
+                    ImGui::TextUnformatted(*Switch.ParameterName);
                 }
                 else
                 {
-                    ImGui::TextDisabled("%s", Switch.ParameterName.c_str());
+                    ImGui::TextDisabled("%s", *Switch.ParameterName);
                 }
 
                 ImGui::TableNextColumn();
@@ -614,7 +615,7 @@ namespace Lumina
         ImGuiID leftDockID = 0, rightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.4f, &rightDockID, &leftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialInstanceParametersName).c_str(), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MaterialInstanceParametersName), rightDockID);
     }
 }

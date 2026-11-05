@@ -59,7 +59,7 @@ namespace Lumina
         Key.DepthFormat = DepthFormat;
         for (const RHI::FColorTarget& Target : ColorTargets)
         {
-            Key.ColorTargets.push_back(Target);
+            Key.ColorTargets.Add(Target);
         }
 
         return GetOrCreatePipeline(Key);
@@ -154,8 +154,8 @@ namespace Lumina
         bSceneColorClearedForCallbacks = false;
 
         constexpr ERenderStage SceneColorStages = ERenderStage::FrameStart | ERenderStage::AfterOpaque | ERenderStage::AfterTranslucency;
-        const bool bEngineWritesSceneColor = !Frame.Geometry.DrawCommands.empty() || FrameFlags.bHasEnvironment
-                                          || !Frame.Extracts.TerrainExtracts.empty();
+        const bool bEngineWritesSceneColor = !Frame.Geometry.DrawCommands.IsEmpty() || FrameFlags.bHasEnvironment
+                                          || !Frame.Extracts.TerrainExtracts.IsEmpty();
         if (bEngineWritesSceneColor || !HasRenderCallbacks(SceneColorStages))
         {
             return;

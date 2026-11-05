@@ -83,7 +83,7 @@ namespace
 
         bool HitsAt(ECS::FEntity Entity, float X)
         {
-            return Scene().CastRayAgainst(Entity, FVector3(X, 5.0f, 0.0f), FVector3(X, -5.0f, 0.0f)).has_value();
+            return Scene().CastRayAgainst(Entity, FVector3(X, 5.0f, 0.0f), FVector3(X, -5.0f, 0.0f)).IsSet();
         }
     };
 }
@@ -131,6 +131,6 @@ TEST(PhysicsHierarchy, ASimulatedChildWritesBackItsLocalPose)
     EXPECT_LT(World.y, 10.0f) << "it falls from where it started";
     EXPECT_GT(World.y, 0.0f) << "not the world pose added onto the parent a second time";
 
-    EXPECT_TRUE(W.Scene().CastRayAgainst(Child, FVector3(3.0f, World.y + 2.0f, 0.0f), FVector3(3.0f, World.y - 2.0f, 0.0f)).has_value())
+    EXPECT_TRUE(W.Scene().CastRayAgainst(Child, FVector3(3.0f, World.y + 2.0f, 0.0f), FVector3(3.0f, World.y - 2.0f, 0.0f)).IsSet())
         << "the entity and its body agree";
 }

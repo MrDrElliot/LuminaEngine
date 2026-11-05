@@ -29,12 +29,12 @@ namespace Lumina
 
         FString StandaloneLauncherJoin(FStringView Left, FStringView Right)
         {
-            FString Result(Left.data(), Left.size());
-            if (!Result.empty() && Result.back() != '/' && Result.back() != '\\')
+            FString Result(Left.GetData(), Left.Len());
+            if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
             {
-                Result.push_back('/');
+                Result.AppendChar('/');
             }
-            Result.append(Right.data(), Right.size());
+            Result.Append(Right.GetData(), Right.Len());
             return Result;
         }
 
@@ -46,37 +46,37 @@ namespace Lumina
         FString GameExecutablePath()
         {
             const FFixedString Name = Paths::MakeGameApplicationName();
-            return StandaloneLauncherJoin(EngineBinariesDirectory(), FStringView(Name.c_str(), Name.size()));
+            return StandaloneLauncherJoin(EngineBinariesDirectory(), FStringView(*Name, Name.Len()));
         }
 
         FString ProjectDirectory()
         {
             const FStringView Path = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
-            return FString(Path.data(), Path.size());
+            return FString(Path.GetData(), Path.Len());
         }
 
         FString ProjectName()
         {
             const FStringView Name = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
-            return FString(Name.data(), Name.size());
+            return FString(Name.GetData(), Name.Len());
         }
 
         FString ProjectBinaryPath(const FFixedString& FileName)
         {
             const FString Directory = ProjectDirectory();
-            if (Directory.empty())
+            if (Directory.IsEmpty())
             {
                 return {};
             }
             return StandaloneLauncherJoin(StandaloneLauncherJoin(Directory, StandaloneLauncherJoin("Binaries", LUMINA_PLATFORM_NAME)),
-                        FStringView(FileName.c_str(), FileName.size()));
+                        FStringView(*FileName, FileName.Len()));
         }
 
         // A project with no editor-flavor module has no C++ at all, so a game build would produce nothing.
         bool ProjectHasNativeModule()
         {
             const FString EditorModule = ProjectBinaryPath(Paths::MakeModuleFileName(ProjectName()));
-            return !EditorModule.empty() && Filesystem::Exists(EditorModule);
+            return !EditorModule.IsEmpty() && Filesystem::Exists(EditorModule);
         }
 
         FString ProjectGameModulePath()
@@ -102,12 +102,12 @@ namespace Lumina
             if (!Filesystem::Exists(Executable))
             {
                 OutError = Format("The game application is missing at {}. Build the Game target first.",
-                                  Executable.c_str());
+                                  *Executable);
                 return false;
             }
 
             const FStringView ProjectFile = GEngine->GetProjectFile();
-            if (ProjectFile.empty())
+            if (ProjectFile.IsEmpty())
             {
                 OutError = "No .lproject file for the loaded project, so the game has nothing to open.";
                 return false;
@@ -117,7 +117,7 @@ namespace Lumina
             Params += ProjectFile;
             Params += "\"";
 
-            if (!Options.MapPath.empty())
+            if (!Options.MapPath.IsEmpty())
             {
                 Params += " --map=";
                 Params += Options.MapPath;
@@ -130,14 +130,14 @@ namespace Lumina
             Quoted += Executable;
             Quoted += "\"";
 
-            const int Error = Platform::LaunchProcess(UTF8_TO_TCHAR(Quoted.c_str()), UTF8_TO_TCHAR(Params.c_str()));
+            const int Error = Platform::LaunchProcess(UTF8_TO_TCHAR(*Quoted), UTF8_TO_TCHAR(*Params));
             if (Error != 0)
             {
-                OutError = Format("Could not start {} (system error {}).", Executable.c_str(), Error);
+                OutError = Format("Could not start {} (system error {}).", *Executable, Error);
                 return false;
             }
 
-            LOG_DISPLAY("Standalone: launched {} {}", Executable.c_str(), Params.c_str());
+            LOG_DISPLAY("Standalone: launched {} {}", *Executable, *Params);
             return true;
         }
 
@@ -150,8 +150,8 @@ namespace Lumina
                 return;
             }
 
-            LOG_ERROR("Standalone: {}", Error.c_str());
-            ImGuiX::Notifications::NotifyError("{}", Error.c_str());
+            LOG_ERROR("Standalone: {}", *Error);
+            ImGuiX::Notifications::NotifyError("{}", *Error);
         }
     }
 
@@ -203,8 +203,8 @@ namespace Lumina
             }
 
             const FString Command = GetBuildCommandLine();
-            LOG_ERROR("Standalone: the project's Game binaries are missing. Run: {}", Command.c_str());
-            ImGuiX::Notifications::NotifyError("Game binaries are missing. Run: {}", Command.c_str());
+            LOG_ERROR("Standalone: the project's Game binaries are missing. Run: {}", *Command);
+            ImGuiX::Notifications::NotifyError("Game binaries are missing. Run: {}", *Command);
             return;
         }
 
@@ -221,14 +221,14 @@ namespace Lumina
         GWorker = FThread([Session, Tool, Args, WorkingDirectory]()
         {
             const int ExitCode = Platform::RunProcessAndWaitCapture(
-                UTF8_TO_TCHAR(Tool.c_str()),
-                UTF8_TO_TCHAR(Args.c_str()),
-                UTF8_TO_TCHAR(WorkingDirectory.c_str()),
+                UTF8_TO_TCHAR(*Tool),
+                UTF8_TO_TCHAR(*Args),
+                UTF8_TO_TCHAR(*WorkingDirectory),
                 [](FStringView Line)
                 {
-                    if (!Line.empty())
+                    if (!Line.IsEmpty())
                     {
-                        LOG_INFO("[Standalone build] {}", FString(Line.data(), Line.size()).c_str());
+                        LOG_INFO("[Standalone build] {}", *FString(Line.GetData(), Line.Len()));
                     }
                 });
 
@@ -259,8 +259,8 @@ namespace Lumina
 
         if (!Finished->bSuccess.load(std::memory_order_acquire))
         {
-            LOG_ERROR("Standalone: {}", Finished->ErrorMessage.c_str());
-            ImGuiX::Notifications::NotifyError("{}", Finished->ErrorMessage.c_str());
+            LOG_ERROR("Standalone: {}", *Finished->ErrorMessage);
+            ImGuiX::Notifications::NotifyError("{}", *Finished->ErrorMessage);
             return;
         }
 

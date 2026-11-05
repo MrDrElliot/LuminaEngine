@@ -322,17 +322,21 @@ internal sealed class TypeLibrary
     }
 
     /// <summary>Get-or-build the description for any type (used recursively for nested struct members).</summary>
+    // Locked whole, since an entry is published before it is built and a parallel system must not read it half done.
     public TypeDescription Describe(Type Type)
     {
-        if (ByType.TryGetValue(Type, out TypeDescription? Cached))
+        lock (ByType)
         {
-            return Cached;
-        }
+            if (ByType.TryGetValue(Type, out TypeDescription? Cached))
+            {
+                return Cached;
+            }
 
-        TypeDescription Description = new(Type);
-        ByType[Type] = Description; // insert before building members so self/cyclic references resolve
-        Description.Build(this);
-        return Description;
+            TypeDescription Description = new(Type);
+            ByType[Type] = Description; // insert before building members so self/cyclic references resolve
+            Description.Build(this);
+            return Description;
+        }
     }
 
     // The reflected shape of a CLR type, which names any struct, enum or class rather than describing it, or None when it has none.

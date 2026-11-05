@@ -25,15 +25,26 @@ internal static unsafe partial class ScriptStructLayout
     // Weak, so a hot reload's old struct types are not pinned.
     private static readonly ConditionalWeakTable<Type, FScriptStructLayout> Layouts = new();
 
-    // The same fields TypeLibrary.BuildMembers exports for a struct, in the same order, or the two layouts would disagree.
-    public static IEnumerable<FieldInfo> StoredFields(Type Type)
+    // The members TypeLibrary.BuildMembers exports for a struct, each with the field holding its value and the name native stores it under.
+    public static IEnumerable<(FieldInfo Field, string Name)> StoredFields(Type Type)
     {
         const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
             if (TypeLibrary.RuleFor(Field, EScriptMemberKind.Field, bOwnerIsNativeObject: false).bStored)
             {
-                yield return Field;
+                yield return (Field, Field.Name);
+            }
+        }
+
+        // An auto-property is stored by native under its own name, and its value lives in the compiler's backing field.
+        foreach (PropertyInfo Property in Type.GetProperties(Flags))
+        {
+            if (Property.CanRead && Property.CanWrite && Property.GetIndexParameters().Length == 0
+                && TypeLibrary.RuleFor(Property, EScriptMemberKind.WritableProperty, bOwnerIsNativeObject: false).bStored
+                && Type.GetField($"<{Property.Name}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic) is FieldInfo Backing)
+            {
+                yield return (Backing, Property.Name);
             }
         }
     }
@@ -44,9 +55,19 @@ internal static unsafe partial class ScriptStructLayout
         return IsScriptValueStruct(Type) && Of(Type).bMarshalled;
     }
 
+    // Kept only once native has minted the type, so a layout guessed before then is never the one used afterwards.
     public static FScriptStructLayout Of(Type Type)
     {
-        return Layouts.GetValue(Type, Build);
+        if (Layouts.TryGetValue(Type, out FScriptStructLayout? Cached))
+        {
+            return Cached;
+        }
+        FScriptStructLayout Built = Build(Type, out bool bFromNative);
+        if (bFromNative)
+        {
+            Layouts.AddOrUpdate(Type, Built);
+        }
+        return Built;
     }
 
     private static bool IsScriptValueStruct(Type Type)
@@ -60,21 +81,46 @@ internal static unsafe partial class ScriptStructLayout
         return Type.GetCustomAttribute<NativeTypeAttribute>()?.Name ?? Type.GetCustomAttribute<NativeLayoutAttribute>()?.NativeType;
     }
 
-    private static FScriptStructLayout Build(Type Type)
+    private static FScriptStructLayout Build(Type Type, out bool bFromNative)
     {
         var Layout = new FScriptStructLayout();
         var Fields = new List<FScriptStructField>();
+        string NativeName = NativeTypeName.Of(Type);
+        long NativeLayout = CScriptInteropLibrary.GetValueLayout((int)EPropertyType.Struct, NativeName);
+        bFromNative = NativeLayout >= 0;
+
         int Running = 0;
-        foreach (FieldInfo Field in StoredFields(Type))
+        foreach ((FieldInfo Field, string Name) in StoredFields(Type))
         {
             (int Size, int Alignment, bool bMarshalled) = SizeAlignOf(Field.FieldType);
-            int Offset = AlignUp(Running, Alignment);
+            int Offset;
+            if (bFromNative)
+            {
+                Offset = NativeBindings.TryPropertyOffset(NativeName, Name);
+                if (Offset < 0)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                Offset = AlignUp(Running, Alignment);
+                Running = Offset + Size;
+            }
             Fields.Add(new FScriptStructField(Field, Offset));
-            Running = Offset + Size;
             Layout.Alignment = Math.Max(Layout.Alignment, Alignment);
             Layout.bMarshalled |= bMarshalled;
         }
-        Layout.Size = Running > 0 ? AlignUp(Running, Layout.Alignment) : 0;
+
+        if (bFromNative)
+        {
+            Layout.Size = (int)(NativeLayout & 0xFFFFFFFF);
+            Layout.Alignment = Math.Max(1, (int)(NativeLayout >> 32));
+        }
+        else
+        {
+            Layout.Size = Running > 0 ? AlignUp(Running, Layout.Alignment) : 0;
+        }
         Layout.Fields = Fields.ToArray();
         return Layout;
     }

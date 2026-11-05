@@ -51,15 +51,15 @@ namespace
         {
             const FBox Region = RandomBox(State);
             TVector<uint32> Found;
-            Octree.Query(Region.Min, Region.Max, [&Found](uint32 Payload, const FVector3&, const FVector3&) { Found.push_back(Payload); });
+            Octree.Query(Region.Min, Region.Max, [&Found](uint32 Payload, const FVector3&, const FVector3&) { Found.Add(Payload); });
             Algo::Sort(Found);
 
             TVector<uint32> Expected;
-            for (uint32 Index = 0; Index < (uint32)Boxes.size(); ++Index)
+            for (int32 Index = 0; Index < Boxes.Num(); ++Index)
             {
                 if (Alive[Index] && Overlaps(Boxes[Index], Region))
                 {
-                    Expected.push_back(Index);
+                    Expected.Add(Index);
                 }
             }
             ASSERT_EQ(Found, Expected);
@@ -76,19 +76,19 @@ TEST(NavOctree, QueriesMatchABruteForceScanThroughMovesAndRemovals)
     TVector<bool> Alive;
     for (uint32 Index = 0; Index < 3000; ++Index)
     {
-        Boxes.push_back(RandomBox(State));
-        Elements.push_back(Octree.Add(Boxes.back().Min, Boxes.back().Max, Index));
-        Alive.push_back(true);
+        Boxes.Add(RandomBox(State));
+        Elements.Add(Octree.Add(Boxes.Last().Min, Boxes.Last().Max, Index));
+        Alive.Add(true);
     }
-    EXPECT_EQ(Octree.Num(), 3000u);
+    EXPECT_EQ(Octree.Num(), 3000);
     ExpectQueriesMatch(Octree, Boxes, Alive, State);
 
-    for (uint32 Index = 0; Index < (uint32)Boxes.size(); Index += 3)
+    for (int32 Index = 0; Index < Boxes.Num(); Index += 3)
     {
         Boxes[Index] = RandomBox(State);
         Octree.Update(Elements[Index], Boxes[Index].Min, Boxes[Index].Max);
     }
-    for (uint32 Index = 1; Index < (uint32)Boxes.size(); Index += 7)
+    for (int32 Index = 1; Index < Boxes.Num(); Index += 7)
     {
         Octree.Remove(Elements[Index]);
         Alive[Index] = false;
@@ -169,9 +169,9 @@ TEST(NavSourceTracking, TheSweepSurvivesEverySourceUnloading)
     TVector<ECS::FEntity> Sources;
     for (ECS::FEntity Entity : World.Registry().View<SBoxColliderComponent>())
     {
-        Sources.push_back(Entity);
+        Sources.Add(Entity);
     }
-    ASSERT_FALSE(Sources.empty());
+    ASSERT_FALSE(Sources.IsEmpty());
     for (ECS::FEntity Entity : Sources)
     {
         World.Registry().Destroy(Entity);
@@ -215,9 +215,9 @@ TEST(NavSourceTracking, AnIdleWorldDirtiesNothing)
     {
         World.Tick();
     }
-    EXPECT_TRUE(World.Nav().Runtime.DirtyTiles.empty());
-    EXPECT_TRUE(World.Nav().Runtime.SettlingTiles.empty());
-    EXPECT_TRUE(World.Nav().Runtime.PendingRebakes.empty());
+    EXPECT_TRUE(World.Nav().Runtime.DirtyTiles.IsEmpty());
+    EXPECT_TRUE(World.Nav().Runtime.SettlingTiles.IsEmpty());
+    EXPECT_TRUE(World.Nav().Runtime.PendingRebakes.IsEmpty());
     World.Stop();
 }
 
@@ -343,7 +343,7 @@ TEST(PathFollow, ACrowdOwingPathsIsServedAFewPerTick)
         Transform.SetLocation(FVector3(-25.0f + (float)i * 2.5f, 0.1f, -20.0f));
         World.Registry().Emplace<STransformComponent>(Agent, Transform);
         World.Registry().Emplace<SPathFollowComponent>(Agent).SetTargetLocation(FVector3(-25.0f + (float)i * 2.5f, 0.0f, 20.0f));
-        Agents.push_back(Agent);
+        Agents.Add(Agent);
     }
     auto WithPaths = [&]
     {
@@ -357,6 +357,32 @@ TEST(PathFollow, ACrowdOwingPathsIsServedAFewPerTick)
         World.TickFollow();
     }
     EXPECT_EQ(WithPaths(), 20) << "every agent is served once the round comes back to it";
+    World.Stop();
+}
+
+TEST(PathFollow, AFollowerWithoutATransformIsSkipped)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    World.Start(true);
+    ASSERT_TRUE(World.WaitReady());
+
+    ECS::FRegistry& R = World.Registry();
+    const ECS::FEntity Bare = R.Create();
+    R.Emplace<SPathFollowComponent>(Bare).SetTargetLocation(FVector3(0.0f, 0.0f, 12.0f));
+
+    const ECS::FEntity Placed = R.Create();
+    R.Emplace<STransformComponent>(Placed).SetLocation(FVector3(0.0f, 0.0f, -12.0f));
+    R.Emplace<SPathFollowComponent>(Placed).SetTargetLocation(FVector3(0.0f, 0.0f, 12.0f));
+
+    for (int32 Tick = 0; Tick < 3; ++Tick)
+    {
+        World.TickFollow();
+    }
+
+    EXPECT_EQ(R.Get<SPathFollowComponent>(Bare).CornerCount, 0);
+    EXPECT_EQ(R.Get<SPathFollowComponent>(Bare).Status, EPathFollowStatus::Searching);
+    EXPECT_TRUE(R.Get<SPathFollowComponent>(Placed).IsFollowing());
     World.Stop();
 }
 

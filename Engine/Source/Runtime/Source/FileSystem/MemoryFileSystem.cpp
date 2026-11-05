@@ -25,13 +25,13 @@ namespace Lumina::VFS
 
     FFixedString FMemoryFileSystem::NormalizeKey(FStringView Path) const
     {
-        FFixedString Key(Path.data(), Path.size());
+        FFixedString Key(Path.GetData(), Path.Len());
         Paths::Normalize(Key);
 
         // Strip a single trailing slash so "/A/" and "/A" map to the same key.
-        if (Key.size() > 1 && Key.back() == '/')
+        if (Key.Len() > 1 && Key.Last() == '/')
         {
-            Key.pop_back();
+            Key.LeftChopInline(1);
         }
 
         return Key;
@@ -40,19 +40,19 @@ namespace Lumina::VFS
     void FMemoryFileSystem::EnsureDirectoryChain(FStringView VirtualPath)
     {
         FStringView Parent = ParentOf(VirtualPath);
-        while (!Parent.empty() && Parent != "/")
+        while (!Parent.IsEmpty() && Parent != "/")
         {
-            FFixedString Key(Parent.data(), Parent.size());
+            FFixedString Key(Parent.GetData(), Parent.Len());
 
-            auto It = Entries.find(Key);
-            if (It == Entries.end())
+            auto It = Entries.Find(Key);
+            if (It == nullptr)
             {
                 FEntry Entry;
                 Entry.bIsDirectory = true;
                 Entry.LastModifyTime = NowAsNanos();
-                Entries.emplace(Move(Key), Move(Entry));
+                Entries.TryAdd(Move(Key), Move(Entry));
             }
-            else if (!It->second.bIsDirectory)
+            else if (!It->bIsDirectory)
             {
                 // A file already exists here, so refuse rather than silently corrupt the chain.
                 break;
@@ -87,13 +87,13 @@ namespace Lumina::VFS
 
         EnsureDirectoryChain(Key);
 
-        auto It = Entries.find(Key);
-        if (It == Entries.end())
+        auto It = Entries.Find(Key);
+        if (It == nullptr)
         {
             FEntry Entry;
             Entry.bIsDirectory = true;
             Entry.LastModifyTime = NowAsNanos();
-            Entries.emplace(Move(Key), Move(Entry));
+            Entries.TryAdd(Move(Key), Move(Entry));
         }
     }
 
@@ -112,20 +112,20 @@ namespace Lumina::VFS
 
     void FMemoryFileSystem::Clear()
     {
-        Entries.clear();
+        Entries.Reset();
     }
 
     bool FMemoryFileSystem::ReadFile(TVector<uint8>& Result, FStringView Path)
     {
         FFixedString Key = NormalizeKey(Path);
 
-        auto It = Entries.find(Key);
-        if (It == Entries.end() || It->second.bIsDirectory)
+        auto It = Entries.Find(Key);
+        if (It == nullptr || It->bIsDirectory)
         {
             return false;
         }
 
-        Result = It->second.Data;
+        Result = It->Data;
         return true;
     }
 
@@ -133,14 +133,14 @@ namespace Lumina::VFS
     {
         FFixedString Key = NormalizeKey(Path);
 
-        auto It = Entries.find(Key);
-        if (It == Entries.end() || It->second.bIsDirectory)
+        auto It = Entries.Find(Key);
+        if (It == nullptr || It->bIsDirectory)
         {
             return false;
         }
 
-        const TVector<uint8>& Data = It->second.Data;
-        OutString.assign(reinterpret_cast<const char*>(Data.data()), Data.size());
+        const TVector<uint8>& Data = It->Data;
+        OutString = FStringView(reinterpret_cast<const char*>(Data.GetData()), Data.Num());
         return true;
     }
 
@@ -151,7 +151,7 @@ namespace Lumina::VFS
             return false;
         }
 
-        TVector<uint8> Bytes(Data.data(), Data.data() + Data.size());
+        TVector<uint8> Bytes(Data.GetData(), Data.GetData() + Data.Len());
         AddFile(Path, Move(Bytes));
         return true;
     }
@@ -170,31 +170,31 @@ namespace Lumina::VFS
     bool FMemoryFileSystem::Exists(FStringView Path) const
     {
         FFixedString Key = NormalizeKey(Path);
-        return Entries.find(Key) != Entries.end();
+        return Entries.Contains(Key);
     }
 
     bool FMemoryFileSystem::IsDirectory(FStringView Path) const
     {
         FFixedString Key = NormalizeKey(Path);
-        auto It = Entries.find(Key);
-        return It != Entries.end() && It->second.bIsDirectory;
+        auto It = Entries.Find(Key);
+        return It != nullptr && It->bIsDirectory;
     }
 
     bool FMemoryFileSystem::IsEmpty(FStringView Path) const
     {
         FFixedString Key = NormalizeKey(Path);
-        auto It = Entries.find(Key);
-        if (It == Entries.end())
+        auto It = Entries.Find(Key);
+        if (It == nullptr)
         {
             return true;
         }
 
-        if (!It->second.bIsDirectory)
+        if (!It->bIsDirectory)
         {
-            return It->second.Data.empty();
+            return It->Data.IsEmpty();
         }
 
-        FStringView Prefix(Key.data(), Key.size());
+        FStringView Prefix(Key.GetData(), Key.Len());
         for (const auto& [OtherKey, Entry] : Entries)
         {
             if (OtherKey == Key)
@@ -202,10 +202,10 @@ namespace Lumina::VFS
                 continue;
             }
 
-            FStringView OtherView(OtherKey.data(), OtherKey.size());
-            if (OtherView.size() > Prefix.size() &&
-                OtherView.starts_with(Prefix) &&
-                OtherView[Prefix.size()] == '/')
+            FStringView OtherView(OtherKey.GetData(), OtherKey.Len());
+            if (OtherView.Len() > Prefix.Len() &&
+                OtherView.StartsWith(Prefix) &&
+                OtherView[Prefix.Len()] == '/')
             {
                 return false;
             }
@@ -213,15 +213,15 @@ namespace Lumina::VFS
         return true;
     }
 
-    size_t FMemoryFileSystem::Size(FStringView Path) const
+    int64 FMemoryFileSystem::Size(FStringView Path) const
     {
         FFixedString Key = NormalizeKey(Path);
-        auto It = Entries.find(Key);
-        if (It == Entries.end() || It->second.bIsDirectory)
+        auto It = Entries.Find(Key);
+        if (It == nullptr || It->bIsDirectory)
         {
             return 0;
         }
-        return It->second.Data.size();
+        return It->Data.Num();
     }
 
     bool FMemoryFileSystem::CreateDir(FStringView Path)
@@ -243,7 +243,7 @@ namespace Lumina::VFS
         }
 
         FFixedString Key = NormalizeKey(Path);
-        return Entries.erase(Key) > 0;
+        return Entries.Remove(Key) > 0;
     }
 
     bool FMemoryFileSystem::RemoveAll(FStringView Path)
@@ -254,21 +254,21 @@ namespace Lumina::VFS
         }
 
         FFixedString Key = NormalizeKey(Path);
-        FStringView Prefix(Key.data(), Key.size());
+        FStringView Prefix(Key.GetData(), Key.Len());
 
         bool bRemovedAny = false;
         for (auto It = Entries.begin(); It != Entries.end(); )
         {
-            FStringView OtherView(It->first.data(), It->first.size());
+            FStringView OtherView(It->Key.GetData(), It->Key.Len());
             const bool bMatches =
                 OtherView == Prefix ||
-                (OtherView.size() > Prefix.size() &&
-                 OtherView.starts_with(Prefix) &&
-                 OtherView[Prefix.size()] == '/');
+                (OtherView.Len() > Prefix.Len() &&
+                 OtherView.StartsWith(Prefix) &&
+                 OtherView[Prefix.Len()] == '/');
 
             if (bMatches)
             {
-                It = Entries.erase(It);
+                It = Entries.Remove(It);
                 bRemovedAny = true;
             }
             else
@@ -289,14 +289,14 @@ namespace Lumina::VFS
         FFixedString OldKey = NormalizeKey(Old);
         FFixedString NewKey = NormalizeKey(New);
 
-        auto It = Entries.find(OldKey);
-        if (It == Entries.end())
+        auto It = Entries.Find(OldKey);
+        if (It == nullptr)
         {
             return false;
         }
 
-        FEntry Entry = Move(It->second);
-        Entries.erase(It);
+        FEntry Entry = Move(*It);
+        Entries.Remove(OldKey);
 
         EnsureDirectoryChain(NewKey);
         Entries[NewKey] = Move(Entry);
@@ -310,15 +310,15 @@ namespace Lumina::VFS
 
     void FMemoryFileSystem::EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(FFileInfo&)>& Callback) const
     {
-        FStringView KeyView(Key.data(), Key.size());
+        FStringView KeyView(Key.GetData(), Key.Len());
 
         FFileInfo Info
         {
-            .Name           = FString(FileNameOf(KeyView).data(), FileNameOf(KeyView).size()),
-            .VirtualPath    = FString(Key.c_str(), Key.size()),
-            .PathSource     = FString(Key.c_str(), Key.size()),
+            .Name           = FString(FileNameOf(KeyView).GetData(), FileNameOf(KeyView).Len()),
+            .VirtualPath    = FString(*Key, Key.Len()),
+            .PathSource     = FString(*Key, Key.Len()),
             .LastModifyTime = Entry.LastModifyTime,
-            .Size           = Entry.bIsDirectory ? 0 : (uint64)Entry.Data.size(),
+            .Size           = Entry.bIsDirectory ? 0 : (uint64)Entry.Data.Num(),
             .Flags          = FlagsForPath(KeyView, Entry.bIsDirectory, false),
         };
 
@@ -328,11 +328,11 @@ namespace Lumina::VFS
     void FMemoryFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         FFixedString Key = NormalizeKey(Path);
-        FStringView Prefix(Key.data(), Key.size());
+        FStringView Prefix(Key.GetData(), Key.Len());
 
         for (const auto& [OtherKey, Entry] : Entries)
         {
-            FStringView OtherView(OtherKey.data(), OtherKey.size());
+            FStringView OtherView(OtherKey.GetData(), OtherKey.Len());
             if (OtherView == Prefix)
             {
                 continue;
@@ -348,19 +348,19 @@ namespace Lumina::VFS
     void FMemoryFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         FFixedString Key = NormalizeKey(Path);
-        FStringView Prefix(Key.data(), Key.size());
+        FStringView Prefix(Key.GetData(), Key.Len());
 
         for (const auto& [OtherKey, Entry] : Entries)
         {
-            FStringView OtherView(OtherKey.data(), OtherKey.size());
+            FStringView OtherView(OtherKey.GetData(), OtherKey.Len());
             if (OtherView == Prefix)
             {
                 continue;
             }
 
-            if (OtherView.size() > Prefix.size() &&
-                OtherView.starts_with(Prefix) &&
-                OtherView[Prefix.size()] == '/')
+            if (OtherView.Len() > Prefix.Len() &&
+                OtherView.StartsWith(Prefix) &&
+                OtherView[Prefix.Len()] == '/')
             {
                 EmitFileInfo(OtherKey, Entry, Callback);
             }

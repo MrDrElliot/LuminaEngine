@@ -33,7 +33,7 @@ namespace Lumina
         const THashSet<CClass*>& GetNodesForGraphClass(CClass* GraphClass);
 
         /** Drops every cached answer; the next ask rescans. */
-        void Invalidate() { Cache.clear(); ++Generation; }
+        void Invalidate() { Cache.Reset(); ++Generation; }
 
         /**
          * Bumped by every Invalidate. A graph that already filled its palette compares this against the

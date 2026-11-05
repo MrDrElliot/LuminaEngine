@@ -1,47 +1,27 @@
 #include "RuntimePCH.h"
 #include "ProjectileSystem.h"
-#include "World/ECS/Registry.h"
 
 #include "Physics/PhysicsScene.h"
-#include "World/World.h"
-#include "World/Subsystems/WorldSettings.h"
-#include "World/Entity/Components/ProjectileComponent.h"
-#include "World/Entity/Components/TransformComponent.h"
-#include "World/Entity/Systems/SystemContext.h"
 
 namespace Lumina
 {
     void SProjectileSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SProjectileComponent, STransformComponent>();
-        SendsEvent<SProjectileHitEvent>();
-        Reads<SystemResource::PhysicsQuery>();
     }
 
     void SProjectileSystem::OnUpdate(const SSystemContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-
-        const float Dt = (float)Context.GetDeltaTime();
+        const float Dt = Context.GetDeltaTime();
         if (Dt <= 0.0f)
         {
             return;
         }
 
-        Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
+        Physics::IPhysicsQueries* Queries = Context.GetPhysics();
+        const FVector3 Gravity = WorldSettings->Gravity;
 
-        // World gravity vector, for arced projectiles (GravityScale != 0).
-        FVector3 Gravity(0.0f);
-        if (CWorld* CW = Context.GetRegistry().Ctx().Get<CWorld*>())
-        {
-            const SDefaultWorldSettings& Settings = CW->GetDefaultWorldSettings();
-            Gravity = Settings.GravityDirection * (9.81f * Settings.GravityScale);
-        }
-
-        auto View = Context.CreateView<SProjectileComponent, STransformComponent>();
-        View.ForEach([&](ECS::FEntity Entity, SProjectileComponent& Projectile, STransformComponent& Transform)
+        Flyers.ParallelForEach([&](ECS::FEntity Entity, SProjectileComponent& Projectile, STransformComponent& Transform)
         {
             if (Projectile.bHasHit)
             {
@@ -59,12 +39,8 @@ namespace Lumina
 
             // Sweep this frame's movement and take the nearest hit, ignoring own body and shooter.
             TOptional<SRayResult> Hit;
-            if (Scene != nullptr)
+            if (Queries != nullptr)
             {
-                const ECS::FEntity SelfBody = Entity;
-                const ECS::FEntity InstigatorBody = (Projectile.Instigator != ECS::NullEntity)
-                    ? Projectile.Instigator : ECS::NullEntity;
-
                 if (Projectile.Radius > 0.0f)
                 {
                     SSphereCastSettings Settings;
@@ -72,10 +48,13 @@ namespace Lumina
                     Settings.End = End;
                     Settings.Radius = Projectile.Radius;
                     Settings.LayerMask = Projectile.CollisionMask;
-                    if (SelfBody != ECS::NullEntity)       { Settings.AddIgnoredEntity(SelfBody); }
-                    if (InstigatorBody != ECS::NullEntity) { Settings.AddIgnoredEntity(InstigatorBody); }
+                    Settings.AddIgnoredEntity(Entity);
+                    if (Projectile.Instigator != ECS::NullEntity)
+                    {
+                        Settings.AddIgnoredEntity(Projectile.Instigator);
+                    }
 
-                    Hit = Scene->CastSphereClosest(Settings);
+                    Hit = Queries->CastSphereClosest(Settings);
                 }
                 else
                 {
@@ -83,14 +62,17 @@ namespace Lumina
                     Settings.Start = Start;
                     Settings.End = End;
                     Settings.LayerMask = Projectile.CollisionMask;
-                    if (SelfBody != ECS::NullEntity)       { Settings.AddIgnoredEntity(SelfBody); }
-                    if (InstigatorBody != ECS::NullEntity) { Settings.AddIgnoredEntity(InstigatorBody); }
+                    Settings.AddIgnoredEntity(Entity);
+                    if (Projectile.Instigator != ECS::NullEntity)
+                    {
+                        Settings.AddIgnoredEntity(Projectile.Instigator);
+                    }
 
-                    Hit = Scene->CastRay(Settings);
+                    Hit = Queries->CastRay(Settings);
                 }
             }
 
-            if (Hit.has_value())
+            if (Hit.IsSet())
             {
                 Transform.SetLocalLocation(Hit->Location);
 
@@ -102,7 +84,7 @@ namespace Lumina
                 Event.Damage = Projectile.Damage;
 
                 // Committed ahead of the deferred destroy below, so OnHit still reaches the projectile.
-                Context.SendEvent(Event);
+                HitEvents.Send(Event);
 
                 Projectile.bHasHit = true;
                 Projectile.Velocity = FVector3(0.0f);

@@ -17,7 +17,7 @@ namespace Lumina::PrefabOverride
         // An opaque struct has an empty property chain, so its bytes still copy through the leaf path.
         bool StructHasReflectedProperties(CStruct* Struct)
         {
-            return Struct != nullptr && !Struct->GetProperties().empty();
+            return Struct != nullptr && !Struct->GetProperties().IsEmpty();
         }
 
         // Such a component exposes no reflected leaf, so it is treated as one atomic leaf instead.
@@ -73,11 +73,11 @@ namespace Lumina::PrefabOverride
 
         FString JoinPath(const FString& Prefix, const FName& Name)
         {
-            if (Prefix.empty())
+            if (Prefix.IsEmpty())
             {
-                return FString(Name.c_str());
+                return FString(*Name);
             }
-            return Prefix + "." + Name.c_str();
+            return Prefix + "." + *Name;
         }
 
         // Recurses into reflected nested structs and treats containers and opaque structs as leaves.
@@ -127,7 +127,7 @@ namespace Lumina::PrefabOverride
         {
             if (WholeValueDiffers(Struct, Instance, Prefab))
             {
-                OutPaths.push_back(WholeValuePath());
+                OutPaths.Add(WholeValuePath());
             }
             return;
         }
@@ -136,7 +136,7 @@ namespace Lumina::PrefabOverride
         {
             if (!Property->Identical_InContainer(Inst, Pref))
             {
-                OutPaths.push_back(FName(Path.c_str()));
+                OutPaths.Emplace(*Path);
             }
         };
 
@@ -152,7 +152,7 @@ namespace Lumina::PrefabOverride
 
         if (!HasSerializableLeaf(Struct))
         {
-            if (OverriddenPaths.find(WholeValuePath()) == OverriddenPaths.end())
+            if (!OverriddenPaths.Contains(WholeValuePath()))
             {
                 CopyWholeValue(Struct, Instance, Prefab);
             }
@@ -162,7 +162,7 @@ namespace Lumina::PrefabOverride
         auto Visit = [&](FProperty* Property, void* Inst, const void* Pref, const FString& Path)
         {
             // An overridden leaf keeps the instance value rather than pulling the prefab's.
-            if (OverriddenPaths.find(FName(Path.c_str())) != OverriddenPaths.end())
+            if (OverriddenPaths.Contains(FName(*Path)))
             {
                 return;
             }
@@ -181,7 +181,7 @@ namespace Lumina::PrefabOverride
 
         if (!HasSerializableLeaf(Struct))
         {
-            if (OverriddenPaths.find(WholeValuePath()) != OverriddenPaths.end())
+            if (OverriddenPaths.Contains(WholeValuePath()))
             {
                 CopyWholeValue(Struct, Dest, Authored);
             }
@@ -190,7 +190,7 @@ namespace Lumina::PrefabOverride
 
         auto Visit = [&](FProperty* Property, void* Dst, const void* Src, const FString& Path)
         {
-            if (OverriddenPaths.find(FName(Path.c_str())) == OverriddenPaths.end())
+            if (!OverriddenPaths.Contains(FName(*Path)))
             {
                 return;
             }

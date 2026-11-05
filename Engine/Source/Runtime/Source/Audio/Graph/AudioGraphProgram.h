@@ -94,7 +94,7 @@ namespace Lumina
         /** Trigger slot the graph raises when the voice has nothing left to play. */
         uint16 FinishedSlot = kAudioGraphInvalidSlot;
 
-        bool IsValid() const { return Version == kAudioGraphProgramVersion && !Nodes.empty(); }
+        bool IsValid() const { return Version == kAudioGraphProgramVersion && !Nodes.IsEmpty(); }
 
         void Reset();
 

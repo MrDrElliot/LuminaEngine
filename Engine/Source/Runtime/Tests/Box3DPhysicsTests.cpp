@@ -202,7 +202,7 @@ TEST(Box3DPhysics, TaskBridgeMatchesSingleThreadedResult)
         TVector<b3BodyId> Bodies;
         for (int32 i = 0; i < 48; ++i)
         {
-            Bodies.push_back(AddFallingSphere(World.WorldId, 2.0f + (float)i * 1.05f, 0.5f));
+            Bodies.Add(AddFallingSphere(World.WorldId, 2.0f + (float)i * 1.05f, 0.5f));
         }
 
         for (int32 i = 0; i < 180; ++i)
@@ -281,23 +281,23 @@ TEST(Box3DPhysics, HullGeneratorReducesPointCloud)
     TVector<FVector3> Points;
     for (int32 i = 0; i < 8; ++i)
     {
-        Points.push_back(FVector3((i & 1) ? 1.0f : -1.0f, (i & 2) ? 1.0f : -1.0f, (i & 4) ? 1.0f : -1.0f));
+        Points.Emplace((i & 1) ? 1.0f : -1.0f, (i & 2) ? 1.0f : -1.0f, (i & 4) ? 1.0f : -1.0f);
     }
     // An interior point must not survive the reduction.
-    Points.push_back(FVector3(0.0f, 0.0f, 0.0f));
+    Points.Emplace(0.0f, 0.0f, 0.0f);
 
     TVector<FVector3> Hull;
     ASSERT_TRUE(Physics::CollisionGen::BuildHullPoints(Points, Hull));
-    EXPECT_EQ(Hull.size(), 8u);
+    EXPECT_EQ(Hull.Num(), 8);
 
     TVector<FVector3> Vertices;
     TVector<uint32> Edges;
     ASSERT_TRUE(Physics::CollisionGen::BuildHullWireframe(Points, Vertices, Edges));
-    EXPECT_EQ(Edges.size(), 24u);
+    EXPECT_EQ(Edges.Num(), 24);
 
     TVector<uint32> Indices;
     ASSERT_TRUE(Physics::CollisionGen::BuildHullTriangles(Points, Vertices, Indices));
-    EXPECT_EQ(Indices.size(), 36u);
+    EXPECT_EQ(Indices.Num(), 36);
 }
 
 TEST(Box3DPhysics, FittedCapsuleEnclosesPointsAlongTheLongestAxis)
@@ -308,14 +308,14 @@ TEST(Box3DPhysics, FittedCapsuleEnclosesPointsAlongTheLongestAxis)
         TVector<FVector3> Points;
         for (int32 i = 0; i < 8; ++i)
         {
-            Points.push_back(FVector3((i & 1) ? Half.x : -Half.x, (i & 2) ? Half.y : -Half.y, (i & 4) ? Half.z : -Half.z) + FVector3(3.0f, -1.0f, 2.0f));
+            Points.Add(FVector3((i & 1) ? Half.x : -Half.x, (i & 2) ? Half.y : -Half.y, (i & 4) ? Half.z : -Half.z) + FVector3(3.0f, -1.0f, 2.0f));
         }
         for (int32 Axis = 0; Axis < 3; ++Axis)
         {
             FVector3 Face(0.0f);
             Face[Axis] = Half[Axis];
-            Points.push_back(Face + FVector3(3.0f, -1.0f, 2.0f));
-            Points.push_back(-Face + FVector3(3.0f, -1.0f, 2.0f));
+            Points.Add(Face + FVector3(3.0f, -1.0f, 2.0f));
+            Points.Add(-Face + FVector3(3.0f, -1.0f, 2.0f));
         }
         return Points;
     };
@@ -351,7 +351,7 @@ TEST(Box3DPhysics, DegenerateHullInputIsRejected)
 
     TVector<FVector3> Hull;
     EXPECT_FALSE(Physics::CollisionGen::BuildHullPoints(Points, Hull));
-    EXPECT_TRUE(Hull.empty());
+    EXPECT_TRUE(Hull.IsEmpty());
 }
 
 namespace
@@ -754,12 +754,12 @@ TEST(Box3DPhysics, HeightFieldIsIndexedFromTheBodyOrigin)
     constexpr float FlatHeight = 3.0f;
 
     TVector<float> Heights;
-    Heights.resize((size_t)Resolution * (size_t)Resolution, FlatHeight);
+    Heights.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Resolution) * Resolution), FlatHeight);
 
     const float Stride = TileWorldSize / float(Resolution - 1);
 
     b3HeightFieldDef Def{};
-    Def.heights = Heights.data();
+    Def.heights = Heights.GetData();
     Def.countX = Resolution;
     Def.countZ = Resolution;
     Def.scale = b3Vec3{ Stride, 1.0f, Stride };

@@ -31,9 +31,9 @@ namespace Lumina::Physics
 
         {
             FReadScopeLock Lock(HullCacheMutex);
-            if (auto It = BoxHullCache.find(Key); It != BoxHullCache.end())
+            if (auto It = BoxHullCache.Find(Key); It != nullptr)
             {
-                return &It->second->base;
+                return &(*It)->base;
             }
         }
 
@@ -48,12 +48,11 @@ namespace Lumina::Physics
         b3BoxHull* Box = Memory::New<b3BoxHull>(b3MakeBoxHull(HalfExtent.x, HalfExtent.y, HalfExtent.z));
 
         TScopeLock Lock(HullCacheMutex);
-        auto [It, bInserted] = BoxHullCache.try_emplace(Key, Box);
-        if (!bInserted)
+        if (!BoxHullCache.TryAdd(Key, Box))
         {
             Memory::Delete(Box);
         }
-        return &It->second->base;
+        return &BoxHullCache.FindChecked(Key)->base;
     }
 
     const b3HullData* FBox3DPhysicsScene::GetOrCreateCylinderHull(float Radius, float HalfHeight)
@@ -62,9 +61,9 @@ namespace Lumina::Physics
 
         {
             FReadScopeLock Lock(HullCacheMutex);
-            if (auto It = HullCache.find(Key); It != HullCache.end())
+            if (auto It = HullCache.Find(Key); It != nullptr)
             {
-                return It->second;
+                return (*It);
             }
         }
 
@@ -75,12 +74,11 @@ namespace Lumina::Physics
         }
 
         TScopeLock Lock(HullCacheMutex);
-        auto [It, bInserted] = HullCache.try_emplace(Key, Hull);
-        if (!bInserted)
+        if (!HullCache.TryAdd(Key, Hull))
         {
             b3DestroyHull(Hull);
         }
-        return It->second;
+        return HullCache.FindChecked(Key);
     }
 
     const b3HullData* FBox3DPhysicsScene::GetOrCreateTaperedCylinderHull(float HalfHeight, float TopRadius, float BottomRadius)
@@ -89,9 +87,9 @@ namespace Lumina::Physics
 
         {
             FReadScopeLock Lock(HullCacheMutex);
-            if (auto It = HullCache.find(Key); It != HullCache.end())
+            if (auto It = HullCache.Find(Key); It != nullptr)
             {
-                return It->second;
+                return (*It);
             }
         }
 
@@ -102,12 +100,11 @@ namespace Lumina::Physics
         }
 
         TScopeLock Lock(HullCacheMutex);
-        auto [It, bInserted] = HullCache.try_emplace(Key, Hull);
-        if (!bInserted)
+        if (!HullCache.TryAdd(Key, Hull))
         {
             b3DestroyHull(Hull);
         }
-        return It->second;
+        return HullCache.FindChecked(Key);
     }
 
     bool GatherMeshResourceGeometry(const FMeshResource& Resource, const FVector3& Scale,
@@ -127,12 +124,12 @@ namespace Lumina::Physics
                 for (uint32 i = 0; i < Count; ++i)
                 {
                     const FMeshlet& M = MD.Meshlets[Offset + i];
-                    const uint32 BaseVertex = (uint32)OutPositions.size();
+                    const uint32 BaseVertex = (uint32)OutPositions.Num();
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
                         const FVector3 Decoded = GetMeshletVertexPosition(MD, M, v, false);
-                        OutPositions.push_back(Box3DUtils::ToB3Vec3(Decoded * Scale));
+                        OutPositions.Add(Box3DUtils::ToB3Vec3(Decoded * Scale));
                     }
 
                     if (OutIndices != nullptr)
@@ -140,15 +137,15 @@ namespace Lumina::Physics
                         for (uint32 t = 0; t < M.TriangleCount; ++t)
                         {
                             const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                            OutIndices->push_back((int32)(BaseVertex + ((Packed) & 0xFFu)));
-                            OutIndices->push_back((int32)(BaseVertex + ((Packed >> 8) & 0xFFu)));
-                            OutIndices->push_back((int32)(BaseVertex + ((Packed >> 16) & 0xFFu)));
+                            OutIndices->Add((int32)(BaseVertex + ((Packed) & 0xFFu)));
+                            OutIndices->Add((int32)(BaseVertex + ((Packed >> 8) & 0xFFu)));
+                            OutIndices->Add((int32)(BaseVertex + ((Packed >> 16) & 0xFFu)));
                         }
                     }
                 }
             }
 
-        return !OutPositions.empty();
+        return !OutPositions.IsEmpty();
     }
 
     const b3HullData* FBox3DPhysicsScene::GetOrCreateMeshHull(const CMesh* Mesh)
@@ -158,9 +155,9 @@ namespace Lumina::Physics
 
         {
             FReadScopeLock Lock(HullCacheMutex);
-            if (auto It = HullCache.find(Key); It != HullCache.end())
+            if (auto It = HullCache.Find(Key); It != nullptr)
             {
-                return It->second;
+                return (*It);
             }
         }
 
@@ -171,28 +168,27 @@ namespace Lumina::Physics
         }
 
         // Box3D simplifies past B3_MAX_HULL_VERTICES, so a dense mesh comes back as a coarser hull.
-        b3HullData* Hull = b3CreateHull(Positions.data(), (int)Positions.size(), B3_MAX_HULL_VERTICES);
+        b3HullData* Hull = b3CreateHull(Positions.GetData(), Positions.Num(), B3_MAX_HULL_VERTICES);
         if (Hull == nullptr)
         {
             return nullptr;
         }
 
         TScopeLock Lock(HullCacheMutex);
-        auto [It, bInserted] = HullCache.try_emplace(Key, Hull);
-        if (!bInserted)
+        if (!HullCache.TryAdd(Key, Hull))
         {
             b3DestroyHull(Hull);
         }
-        return It->second;
+        return HullCache.FindChecked(Key);
     }
 
     const b3MeshData* FBox3DPhysicsScene::GetOrCreateTriangleMesh(const CMesh* Mesh)
     {
         {
             FReadScopeLock Lock(MeshCacheMutex);
-            if (auto It = MeshCache.find(Mesh); It != MeshCache.end())
+            if (auto It = MeshCache.Find(Mesh); It != nullptr)
             {
-                return It->second;
+                return (*It);
             }
         }
 
@@ -200,16 +196,16 @@ namespace Lumina::Physics
         TVector<int32> Indices;
 
         // Scale rides on b3CreateMeshShape, so the cached geometry stays unit scale and is shared.
-        if (!GatherMeshResourceGeometry(Mesh->GetMeshResource(), FVector3(1.0f), Positions, &Indices) || Indices.empty())
+        if (!GatherMeshResourceGeometry(Mesh->GetMeshResource(), FVector3(1.0f), Positions, &Indices) || Indices.IsEmpty())
         {
             return nullptr;
         }
 
         b3MeshDef Def = b3MeshDef{};
-        Def.vertices = Positions.data();
-        Def.vertexCount = (int)Positions.size();
-        Def.indices = Indices.data();
-        Def.triangleCount = (int)(Indices.size() / 3);
+        Def.vertices = Positions.GetData();
+        Def.vertexCount = Positions.Num();
+        Def.indices = Indices.GetData();
+        Def.triangleCount = Indices.Num() / 3;
         Def.weldVertices = true;
         Def.identifyEdges = true;
 
@@ -220,12 +216,11 @@ namespace Lumina::Physics
         }
 
         TScopeLock Lock(MeshCacheMutex);
-        auto [It, bInserted] = MeshCache.try_emplace(Mesh, Built);
-        if (!bInserted)
+        if (!MeshCache.TryAdd(Mesh, Built))
         {
             b3DestroyMesh(Built);
         }
-        return It->second;
+        return MeshCache.FindChecked(Mesh);
     }
 
     bool FBox3DPhysicsScene::BuildCompoundShapes(const SCompoundColliderComponent& Comp, const STransformComponent& Transform, TVector<FPendingShape>& OutShapes)
@@ -244,32 +239,32 @@ namespace Lumina::Physics
                 {
                     if (const b3HullData* Hull = GetOrCreateBoxHull(Child.HalfExtent * Scale))
                     {
-                        OutShapes.push_back(MakeHullShape(Hull, ChildOffset, ChildRotation));
+                        OutShapes.Add(MakeHullShape(Hull, ChildOffset, ChildRotation));
                     }
                     break;
                 }
                 case ECompoundShapeType::Sphere:
                 {
-                    OutShapes.push_back(MakeSphereShape(ChildOffset, Child.Radius * UniformScale));
+                    OutShapes.Add(MakeSphereShape(ChildOffset, Child.Radius * UniformScale));
                     break;
                 }
                 case ECompoundShapeType::Capsule:
                 {
-                    OutShapes.push_back(MakeCapsuleShape(ChildOffset, ChildRotation, Child.Radius * UniformScale, Child.HalfHeight * UniformScale));
+                    OutShapes.Add(MakeCapsuleShape(ChildOffset, ChildRotation, Child.Radius * UniformScale, Child.HalfHeight * UniformScale));
                     break;
                 }
                 default:
                 {
                     if (const b3HullData* Hull = GetOrCreateBoxHull(Child.HalfExtent * Scale))
                     {
-                        OutShapes.push_back(MakeHullShape(Hull, ChildOffset, ChildRotation));
+                        OutShapes.Add(MakeHullShape(Hull, ChildOffset, ChildRotation));
                     }
                     break;
                 }
             }
         }
 
-        return !OutShapes.empty();
+        return !OutShapes.IsEmpty();
     }
 
     bool FBox3DPhysicsScene::BuildMeshCollision(const SMeshCollision& Collision, const FVector3& Scale, TVector<FPendingShape>& OutShapes)
@@ -287,39 +282,39 @@ namespace Lumina::Physics
                 {
                     if (const b3HullData* Hull = GetOrCreateBoxHull(Primitive.HalfExtent * Scale))
                     {
-                        OutShapes.push_back(MakeHullShape(Hull, Offset, Rotation));
+                        OutShapes.Add(MakeHullShape(Hull, Offset, Rotation));
                     }
                     break;
                 }
                 case ECollisionPrimitiveType::Sphere:
                 {
-                    OutShapes.push_back(MakeSphereShape(Offset, Primitive.Radius * UniformScale));
+                    OutShapes.Add(MakeSphereShape(Offset, Primitive.Radius * UniformScale));
                     break;
                 }
                 case ECollisionPrimitiveType::Capsule:
                 {
-                    OutShapes.push_back(MakeCapsuleShape(Offset, Rotation, Primitive.Radius * UniformScale, Primitive.HalfHeight * UniformScale));
+                    OutShapes.Add(MakeCapsuleShape(Offset, Rotation, Primitive.Radius * UniformScale, Primitive.HalfHeight * UniformScale));
                     break;
                 }
                 case ECollisionPrimitiveType::ConvexHull:
                 {
                     TVector<b3Vec3> Points;
-                    Points.reserve(Primitive.HullPoints.size());
+                    Points.Reserve(Primitive.HullPoints.Num());
                     for (const FVector3& P : Primitive.HullPoints)
                     {
-                        Points.push_back(Box3DUtils::ToB3Vec3(P * Scale));
+                        Points.Add(Box3DUtils::ToB3Vec3(P * Scale));
                     }
 
-                    if (Points.size() < 4)
+                    if (Points.Num() < 4)
                     {
                         break;
                     }
 
                     // A hull point set belongs to one asset, so there is nothing a shared cache could hit.
-                    if (b3HullData* Hull = b3CreateHull(Points.data(), (int)Points.size(), B3_MAX_HULL_VERTICES))
+                    if (b3HullData* Hull = b3CreateHull(Points.GetData(), Points.Num(), B3_MAX_HULL_VERTICES))
                     {
                         TrackOwnedHull(Hull);
-                        OutShapes.push_back(MakeHullShape(Hull, Offset, Rotation));
+                        OutShapes.Add(MakeHullShape(Hull, Offset, Rotation));
                     }
                     break;
                 }
@@ -328,26 +323,26 @@ namespace Lumina::Physics
             }
         }
 
-        if (Collision.IsConcave() && !Collision.TriangleVertices.empty() && !Collision.TriangleIndices.empty())
+        if (Collision.IsConcave() && !Collision.TriangleVertices.IsEmpty() && !Collision.TriangleIndices.IsEmpty())
         {
             TVector<b3Vec3> Points;
             TVector<int32> Indices;
-            Points.reserve(Collision.TriangleVertices.size());
+            Points.Reserve(Collision.TriangleVertices.Num());
             for (const FVector3& P : Collision.TriangleVertices)
             {
-                Points.push_back(Box3DUtils::ToB3Vec3(P));
+                Points.Add(Box3DUtils::ToB3Vec3(P));
             }
-            Indices.reserve(Collision.TriangleIndices.size());
+            Indices.Reserve(Collision.TriangleIndices.Num());
             for (uint32 Index : Collision.TriangleIndices)
             {
-                Indices.push_back((int32)Index);
+                Indices.Add((int32)Index);
             }
 
             b3MeshDef Def = b3MeshDef{};
-            Def.vertices = Points.data();
-            Def.vertexCount = (int)Points.size();
-            Def.indices = Indices.data();
-            Def.triangleCount = (int)(Indices.size() / 3);
+            Def.vertices = Points.GetData();
+            Def.vertexCount = Points.Num();
+            Def.indices = Indices.GetData();
+            Def.triangleCount = Indices.Num() / 3;
             Def.weldVertices = true;
             Def.identifyEdges = true;
 
@@ -359,10 +354,10 @@ namespace Lumina::Physics
                 Shape.Type = b3_meshShape;
                 Shape.Mesh = Built;
                 Shape.Scale = Box3DUtils::ToB3Vec3(Scale);
-                OutShapes.push_back(Shape);
+                OutShapes.Add(Shape);
             }
         }
 
-        return !OutShapes.empty();
+        return !OutShapes.IsEmpty();
     }
 }

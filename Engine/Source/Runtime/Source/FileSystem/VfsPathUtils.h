@@ -13,32 +13,32 @@ namespace Lumina::VFS
     // Empty when the path has no separator; "/" for a root-level entry.
     FORCEINLINE FStringView ParentOf(FStringView Path)
     {
-        if (!Path.empty() && Path.back() == '/')
+        if (!Path.IsEmpty() && Path.Last() == '/')
         {
-            Path = Path.substr(0, Path.size() - 1);
+            Path = Path.Mid(0, Path.Len() - 1);
         }
 
-        const size_t Pos = Path.find_last_of('/');
+        const int32 Pos = Path.FindLastOf('/');
 
-        if (Pos == FStringView::npos)
+        if (Pos == Constants::kIndexNone)
         {
             return {};
         }
 
         // Keep the leading slash for root-level entries.
-        return Pos == 0 ? Path.substr(0, 1) : Path.substr(0, Pos);
+        return Pos == 0 ? Path.Mid(0, 1) : Path.Mid(0, Pos);
     }
 
     // Final component of a virtual path, ignoring a single trailing slash.
     FORCEINLINE FStringView FileNameOf(FStringView Path)
     {
-        if (!Path.empty() && Path.back() == '/')
+        if (!Path.IsEmpty() && Path.Last() == '/')
         {
-            Path = Path.substr(0, Path.size() - 1);
+            Path = Path.Mid(0, Path.Len() - 1);
         }
 
-        const size_t Pos = Path.find_last_of('/');
-        return Pos == FStringView::npos ? Path : Path.substr(Pos + 1);
+        const int32 Pos = Path.FindLastOf('/');
+        return Pos == Constants::kIndexNone ? Path : Path.Mid(Pos + 1);
     }
 
     // Entry flags implied by a path. bReadOnly is the backend's answer, not the path's: a pak is
@@ -52,9 +52,9 @@ namespace Lumina::VFS
             Flags |= EFileFlags::ReadOnly;
         }
 
-        const size_t Dot = Path.find_last_of('.');
+        const int32 Dot = Path.FindLastOf('.');
 
-        if (Dot != FStringView::npos && Path.substr(Dot) == ".lasset")
+        if (Dot != Constants::kIndexNone && Path.Mid(Dot) == ".lasset")
         {
             Flags |= EFileFlags::LAssetFile;
         }

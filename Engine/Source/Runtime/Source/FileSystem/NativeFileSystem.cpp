@@ -21,7 +21,7 @@ namespace Lumina::VFS
             if (EnumHasAnyFlags(Attributes, Filesystem::EAttributes::Hidden))    { Flags |= EFileFlags::Hidden; }
             if (EnumHasAnyFlags(Attributes, Filesystem::EAttributes::ReadOnly))  { Flags |= EFileFlags::ReadOnly; }
 
-            if (Name.ends_with(".lasset"))
+            if (Name.EndsWith(".lasset"))
             {
                 Flags |= EFileFlags::LAssetFile;
             }
@@ -38,27 +38,27 @@ namespace Lumina::VFS
 
     FPathString FNativeFileSystem::ResolveVirtualPath(FStringView Path) const
     {
-        const size_t AliasLength = AliasPath.size();
+        const int32 AliasLength = AliasPath.Len();
 
-        if (Path.size() < AliasLength || ::memcmp(Path.data(), AliasPath.data(), AliasLength) != 0)
+        if (Path.Len() < AliasLength || ::memcmp(Path.GetData(), AliasPath.GetData(), AliasLength) != 0)
         {
             return {};
         }
 
         // Without the boundary test "/GameData/x" would resolve under the "/Game" mount as "Data/x".
-        if (Path.size() > AliasLength && Path[AliasLength] != '/')
+        if (Path.Len() > AliasLength && Path[AliasLength] != '/')
         {
             return {};
         }
 
-        const size_t BaseLength     = BasePath.size();
-        const size_t RelativeLength = Path.size() - AliasLength;
+        const int32 BaseLength     = BasePath.Len();
+        const size_t RelativeLength = Path.Len() - AliasLength;
 
         FPathString FullPath;
-        FullPath.resize(BaseLength + RelativeLength);
+        FullPath.SetLen(IntCastChecked<int32>(BaseLength + RelativeLength));
 
-        ::memcpy(FullPath.data(), BasePath.data(), BaseLength);
-        ::memcpy(FullPath.data() + BaseLength, Path.data() + AliasLength, RelativeLength);
+        ::memcpy(FullPath.GetData(), BasePath.GetData(), BaseLength);
+        ::memcpy(FullPath.GetData() + BaseLength, Path.GetData() + AliasLength, RelativeLength);
 
         return FullPath;
     }
@@ -68,19 +68,24 @@ namespace Lumina::VFS
         return Filesystem::ReadFile(Result, ResolveVirtualPath(Path));
     }
 
+    bool FNativeFileSystem::ReadFile(TVector64<uint8>& Result, FStringView Path)
+    {
+        return Filesystem::ReadFile(Result, ResolveVirtualPath(Path));
+    }
+
     bool FNativeFileSystem::ReadFile(FString& OutString, FStringView Path)
     {
         return Filesystem::ReadFile(OutString, ResolveVirtualPath(Path));
     }
 
-    bool FNativeFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    bool FNativeFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size)
     {
         return Filesystem::ReadFileRange(Result, ResolveVirtualPath(Path), Offset, Size);
     }
 
     bool FNativeFileSystem::WriteFile(FStringView Path, FStringView Data)
     {
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Data.data()), Data.size());
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Data.GetData()), Data.Len());
         return Filesystem::WriteFile(ResolveVirtualPath(Path), Bytes);
     }
 
@@ -95,13 +100,13 @@ namespace Lumina::VFS
     }
 
     bool FNativeFileSystem::AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
-                                                   FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                                   FStringView SrcPath, int64 SrcOffset, int64 SrcSize,
                                                    TSpan<const uint8> Suffix)
     {
         const FPathString FullPath = ResolveVirtualPath(Path);
         const FPathString FullSrc  = ResolveVirtualPath(SrcPath);
 
-        if (FullPath.empty() || FullSrc.empty())
+        if (FullPath.IsEmpty() || FullSrc.IsEmpty())
         {
             return false;
         }
@@ -119,7 +124,7 @@ namespace Lumina::VFS
         return Filesystem::IsDirectory(ResolveVirtualPath(Path));
     }
 
-    size_t FNativeFileSystem::Size(FStringView Path) const
+    int64 FNativeFileSystem::Size(FStringView Path) const
     {
         return static_cast<size_t>(Filesystem::FileSize(ResolveVirtualPath(Path)));
     }
@@ -161,36 +166,36 @@ namespace Lumina::VFS
 
     void FNativeFileSystem::PlatformOpen(FStringView Path) const
     {
-        Platform::LaunchURL(UTF8_TO_TCHAR(ResolveVirtualPath(Path).c_str()));
+        Platform::LaunchURL(UTF8_TO_TCHAR(*ResolveVirtualPath(Path)));
     }
 
     void FNativeFileSystem::Iterate(FStringView Path, bool bRecursive, const TFunction<void(FFileInfo&)>& Callback) const
     {
         const FPathString ResolvedPath = ResolveVirtualPath(Path);
-        if (ResolvedPath.empty())
+        if (ResolvedPath.IsEmpty())
         {
             LOG_WARN("DirectoryIterator: path '{0}' does not resolve under alias '{1}'", Path, AliasPath);
             return;
         }
 
-        const size_t BaseLength = BasePath.size();
+        const int32 BaseLength = BasePath.Len();
 
         auto Visit = [this, &Callback, BaseLength](const Filesystem::FDirectoryEntry& Entry)
         {
-            const FStringView Relative = Entry.FullPath.size() >= BaseLength
-                ? Entry.FullPath.substr(BaseLength)
+            const FStringView Relative = Entry.FullPath.Len() >= BaseLength
+                ? Entry.FullPath.Mid(BaseLength)
                 : Entry.FullPath;
 
             FString VirtualPath;
-            VirtualPath.reserve(AliasPath.size() + Relative.size());
-            VirtualPath.append(AliasPath.data(), AliasPath.size());
-            VirtualPath.append(Relative.data(), Relative.size());
+            VirtualPath.Reserve(AliasPath.Len() + Relative.Len());
+            VirtualPath.Append(AliasPath.GetData(), AliasPath.Len());
+            VirtualPath.Append(Relative.GetData(), Relative.Len());
 
             FFileInfo FileInfo
             {
-                .Name           = FString(Entry.Name.data(), Entry.Name.size()),
+                .Name           = FString(Entry.Name.GetData(), Entry.Name.Len()),
                 .VirtualPath    = Move(VirtualPath),
-                .PathSource     = FString(Entry.FullPath.data(), Entry.FullPath.size()),
+                .PathSource     = FString(Entry.FullPath.GetData(), Entry.FullPath.Len()),
                 .LastModifyTime = Entry.LastModifyTime,
                 .Size           = Entry.Size,
                 .Flags          = TranslateFlags(Entry.Attributes, Entry.Name)

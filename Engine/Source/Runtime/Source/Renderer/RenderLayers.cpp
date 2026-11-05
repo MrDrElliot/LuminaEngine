@@ -12,7 +12,7 @@ namespace Lumina
             return FName("Foreground");
         }
         const TVector<FName>& Names = GetDefault<CRenderLayerSettings>()->LayerNames;
-        return Layer >= 0 && Layer < (int32)Names.size() ? Names[Layer] : NAME_None;
+        return Layer >= 0 && Layer < Names.Num() ? Names[Layer] : NAME_None;
     }
 
     int32 SRenderLayerMask::FindLayer(FName Name)

@@ -5,54 +5,89 @@
 
 
 #include "ModuleAPI.h"
+#include "Containers/Algorithm.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "SystemResources.h"
 
 namespace Lumina
 {
-    // Declared component/resource access for an ECS system, used to decide which systems may run
-    // concurrently. Two systems conflict (must serialize) if their writes overlap, or one writes what
-    // the other reads. IDs are component type id values for the component or SystemResource:: tag types.
-    //
-    // A system opts in from CEntitySystem::Configure; one that declares nothing runs exclusive.
+    // Components an access is limited to holding and lacking, so two systems that can never touch the same entity run together.
+    struct FAccessMembership
+    {
+        TVector<uint32> With;
+        TVector<uint32> Without;
+
+        NODISCARD static bool AreDisjoint(const FAccessMembership& A, const FAccessMembership& B)
+        {
+            return Algo::AnyOf(A.With, [&B](uint32 Id) { return Algo::Contains(B.Without, Id); })
+                || Algo::AnyOf(A.Without, [&B](uint32 Id) { return Algo::Contains(B.With, Id); });
+        }
+    };
+
+    // One component access and the membership it goes through; Membership is kIndexNone when it may reach any entity.
+    struct FComponentAccess
+    {
+        uint32 Id         = 0;
+        int32  Membership = Constants::kIndexNone;
+        bool   bWrite     = false;
+
+        NODISCARD bool operator==(const FComponentAccess&) const = default;
+    };
+
+    // What a system reads and writes, so the scheduler runs non-conflicting systems together; a CExclusiveSystem conflicts with all.
     struct FSystemAccess
     {
         TVector<uint32> Writes;
         TVector<uint32> Reads;
 
-        // The declared component pools, created before a parallel batch since creating one resizes the shared pool table.
+        // The declared component pools, created before a parallel segment since creating one resizes the shared pool table.
         TVector<ECS::FComponentTypeID> Pools;
+        // Pools a Changed or Added query filters on, so their change tracking is on before the system goes wide.
+        TVector<ECS::FComponentTypeID> TrackedPools;
+
+        // Event types it sends, which reach a reader only once the sender's segment flushes.
+        TVector<uint32> SentEvents;
+
+        // Every component access with the entities it is limited to, so filters that exclude each other do not conflict.
+        TVector<FComponentAccess>  ComponentAccesses;
+        TVector<FAccessMembership> Memberships;
 
         bool            bExclusive = false;
-
-        // Events alone say nothing about the components a system touches, so they leave it exclusive.
-        bool            bDeclaresComponents = false;
 
         template<typename... Ts>
         FSystemAccess& Write()
         {
-            (Writes.push_back(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
+            (Writes.AddGetRef(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
+            (AddUnfiltered<Ts>(true), ...);
             (AddPoolAssurer<Ts>(), ...);
-            bDeclaresComponents = true;
             return *this;
         }
 
         template<typename... Ts>
         FSystemAccess& Read()
         {
-            (Reads.push_back(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
+            (Reads.AddGetRef(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
+            (AddUnfiltered<Ts>(false), ...);
             (AddPoolAssurer<Ts>(), ...);
-            bDeclaresComponents = true;
             return *this;
+        }
+
+        template<typename T>
+        void AddUnfiltered(bool bWrite)
+        {
+            if constexpr (!ECS::CResource<T>)
+            {
+                ComponentAccesses.Add(FComponentAccess{ static_cast<uint32>(ECS::GetComponentTypeID<T>()), Constants::kIndexNone, bWrite });
+            }
         }
 
         template<typename T>
         void AddPoolAssurer()
         {
-            if constexpr (!TIsSystemResource<T>)
+            if constexpr (!ECS::CResource<T>)
             {
-                Pools.push_back(ECS::GetComponentTypeID<T>());
+                Pools.Add(ECS::GetComponentTypeID<T>());
             }
         }
 
@@ -69,15 +104,71 @@ namespace Lumina
             return Algo::AnyOf(X, [&Y](uint32 A) { return Algo::Contains(Y, A); });
         }
 
+        // Ids that overlap with a write conflict unless every pair of component accesses on them is limited to disjoint entities.
         static bool Conflicts(const FSystemAccess& A, const FSystemAccess& B)
         {
             if (A.bExclusive || B.bExclusive)
             {
                 return true;
             }
-            return Intersects(A.Writes, B.Writes)
-                || Intersects(A.Writes, B.Reads)
-                || Intersects(B.Writes, A.Reads);
+            uint32 Unused = 0;
+            return FindConflictingId(A, B, Unused);
+        }
+
+        // The first component, resource or event id that makes two shared systems conflict; ignores bExclusive.
+        static bool FindConflictingId(const FSystemAccess& A, const FSystemAccess& B, uint32& OutId)
+        {
+            for (const uint32 Id : A.Writes)
+            {
+                if ((Algo::Contains(B.Writes, Id) || Algo::Contains(B.Reads, Id)) && Overlaps(A, B, Id))
+                {
+                    OutId = Id;
+                    return true;
+                }
+            }
+            for (const uint32 Id : A.Reads)
+            {
+                if (Algo::Contains(B.Writes, Id) && Overlaps(A, B, Id))
+                {
+                    OutId = Id;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Resources, events and tokens carry no membership, so any overlap on them conflicts.
+        static bool Overlaps(const FSystemAccess& A, const FSystemAccess& B, uint32 Id)
+        {
+            const auto Touches = [Id](const FComponentAccess& Access) { return Access.Id == Id; };
+            if (!Algo::AnyOf(A.ComponentAccesses, Touches) || !Algo::AnyOf(B.ComponentAccesses, Touches))
+            {
+                return true;
+            }
+            for (const FComponentAccess& First : A.ComponentAccesses)
+            {
+                if (First.Id != Id)
+                {
+                    continue;
+                }
+                for (const FComponentAccess& Second : B.ComponentAccesses)
+                {
+                    if (Second.Id == Id && (First.bWrite || Second.bWrite) && !A.IsDisjointFrom(First, B, Second))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        NODISCARD bool IsDisjointFrom(const FComponentAccess& Mine, const FSystemAccess& Other, const FComponentAccess& Theirs) const
+        {
+            if (Mine.Membership == Constants::kIndexNone || Theirs.Membership == Constants::kIndexNone)
+            {
+                return false;
+            }
+            return FAccessMembership::AreDisjoint(Memberships[Mine.Membership], Other.Memberships[Theirs.Membership]);
         }
 
         // An exclusive system implicitly declares everything; otherwise the id must be in the matching set.
@@ -97,27 +188,42 @@ namespace Lumina
         }
     };
 
-    // Debug/Development honest-access validation. The stage scheduler binds the executing system's access on
-    // the current thread for the duration of its Update (see CWorld::TickSystems); access-implying helpers
-    // (transform resolve, SetEntityWorldTransform, physics, structural ECS changes) then call
-    // ValidateSystemAccess to assert the system actually declared what it touched. Catches the silent
-    // under-declaration race that parallel systems are prone to. Compiled to a no-op in Shipping.
-    //
-    // bWrite picks the required access kind. What is a human label naming the access to add (e.g.
-    // "Write<STransformComponent>"). No-op when no system access is bound (i.e. called outside the scheduler,
-    // such as gameplay code or editor tools) or when the bound system is exclusive (declares everything).
-    // ConnectComponentAccessValidators hooks the pool signals, catching a structural write through the raw
-    // registry that never reaches an SSystemContext helper.
+    // Moves the epochs of each untracked pool the access writes, or of every untracked pool for an exclusive system. A tracked pool stamps its own writes.
+    inline void MarkDeclaredWrites(ECS::FRegistry& Registry, const FSystemAccess& Access)
+    {
+        if (Access.bExclusive)
+        {
+            for (ECS::FSparseSet* Storage : Registry.GetActiveStorages())
+            {
+                Storage->MarkScheduledWrite();
+            }
+            return;
+        }
+
+        // Resource and event ids share the list but own no pool, so the lookup skips them.
+        for (const uint32 Id : Access.Writes)
+        {
+            if (ECS::FSparseSet* Storage = Registry.FindStorage(Id))
+            {
+                Storage->MarkScheduledWrite();
+            }
+        }
+    }
+
+    // Development-only check that a running system declared what it touched; a no-op outside the scheduler, for exclusive systems, and in Shipping.
 #if defined(LE_SHIPPING)
-    inline void SetExecutingSystemAccess(const FSystemAccess*) {}
-    inline const FSystemAccess* GetExecutingSystemAccess() { return nullptr; }
+    inline const FSystemAccess* SetExecutingSystemAccess(const FSystemAccess*) { return nullptr; }
     inline void ValidateSystemAccess(uint32, bool, const char*) {}
+    inline void ValidateNotInParallelSystem(const char*) {}
     inline void RegisterComponentAccessValidator(void (*)(ECS::FRegistry&)) {}
     inline void ConnectComponentAccessValidators(ECS::FRegistry&) {}
 #else
-    RUNTIME_API void SetExecutingSystemAccess(const FSystemAccess* Access);
-    RUNTIME_API const FSystemAccess* GetExecutingSystemAccess();
+    // Returns the access it replaced, so a system that helps run another one nested on its thread gets its own back.
+    RUNTIME_API const FSystemAccess* SetExecutingSystemAccess(const FSystemAccess* Access);
     RUNTIME_API void ValidateSystemAccess(uint32 ComponentId, bool bWrite, const char* What);
+
+    // For calls that edit shared engine state at once, which a system running alongside others has to defer to the flush instead.
+    RUNTIME_API void ValidateNotInParallelSystem(const char* What);
     RUNTIME_API void RegisterComponentAccessValidator(void (*Connect)(ECS::FRegistry&));
     RUNTIME_API void ConnectComponentAccessValidators(ECS::FRegistry& Registry);
 #endif

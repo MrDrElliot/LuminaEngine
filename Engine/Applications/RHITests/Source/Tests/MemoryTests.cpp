@@ -75,7 +75,7 @@ namespace Lumina::RHITests
         RHI::GetGPUMemoryStats(Stats);
 
         RHI_CHECK(Stats.TotalBudget > 0);
-        RHI_CHECK(!Stats.Heaps.empty());
+        RHI_CHECK(!Stats.Heaps.IsEmpty());
         RHI_CHECK(Stats.TotalUsage <= Stats.TotalBudget);
     }
 }

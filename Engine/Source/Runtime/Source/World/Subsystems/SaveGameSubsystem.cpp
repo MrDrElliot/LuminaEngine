@@ -36,27 +36,27 @@ namespace Lumina
             {
                 Clean += IsSlotCharacter(Character) ? Character : '_';
             }
-            while (!Clean.empty() && (Clean.front() == '.' || Clean.front() == ' '))
+            while (!Clean.IsEmpty() && (Clean[0] == '.' || Clean[0] == ' '))
             {
-                Clean.erase(Clean.begin());
+                Clean.RemoveAt(0);
             }
-            while (!Clean.empty() && (Clean.back() == '.' || Clean.back() == ' '))
+            while (!Clean.IsEmpty() && (Clean.Last() == '.' || Clean.Last() == ' '))
             {
-                Clean.pop_back();
+                Clean.LeftChopInline(1);
             }
             return Clean;
         }
 
         FStringView View(const FString& String)
         {
-            return FStringView(String.c_str(), String.size());
+            return FStringView(*String, String.Len());
         }
 
         void SendRequest(CWorld* World, const SSaveGameRequestEvent& Request)
         {
             if (World == nullptr)
             {
-                LOG_WARN("A save game request for slot '{}' was given no world.", Request.SlotName.c_str());
+                LOG_WARN("A save game request for slot '{}' was given no world.", *Request.SlotName);
                 return;
             }
             ECS::SendEvent(World->GetEvents(), Request);

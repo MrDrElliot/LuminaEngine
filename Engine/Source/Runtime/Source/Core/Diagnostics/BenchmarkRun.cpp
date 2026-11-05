@@ -43,12 +43,12 @@ namespace Lumina::Benchmark
 
         double Percentile(const TVector<double>& Sorted, double Fraction)
         {
-            if (Sorted.empty())
+            if (Sorted.IsEmpty())
             {
                 return 0.0;
             }
 
-            const SIZE_T Index = (SIZE_T)(Fraction * (double)(Sorted.size() - 1));
+            const int32 Index = static_cast<int32>(Fraction * (Sorted.Num() - 1));
             return Sorted[Index];
         }
 
@@ -84,13 +84,13 @@ namespace Lumina::Benchmark
                 }
             }
 
-            if (Name.empty())
+            if (Name.IsEmpty())
             {
                 Name = "CurrentWorld";
             }
 
             FString Directory = Paths::GetEngineDirectory() + "/Saved/Benchmarks";
-            Paths::CreateDirectories(FStringView(Directory.c_str(), Directory.size()));
+            Paths::CreateDirectories(FStringView(*Directory, Directory.Len()));
 
             return Directory + "/" + Name + ".csv";
         }
@@ -109,36 +109,36 @@ namespace Lumina::Benchmark
 
         if (TOptional<FFixedString> MapValue = CommandLine.Get("benchmark"))
         {
-            GState.Map.assign(MapValue.value().c_str(), MapValue.value().size());
+            GState.Map = FStringView(*MapValue.GetValue(), MapValue.GetValue().Len());
         }
 
         if (TOptional<int> Warmup = CommandLine.GetInt("warmup"))
         {
-            GState.WarmupFrames = Math::Max(0, Warmup.value());
+            GState.WarmupFrames = Math::Max(0, Warmup.GetValue());
         }
 
         if (TOptional<int> Frames = CommandLine.GetInt("frames"))
         {
-            GState.MeasureFrames = Math::Max(1, Frames.value());
+            GState.MeasureFrames = Math::Max(1, Frames.GetValue());
         }
 
         // A capped run measures the cap, so any change to the frame's cost is invisible behind it.
         if (TOptional<int> Cap = CommandLine.GetInt("benchmarkfps"))
         {
-            GState.FrameRateCap = Math::Max(0, Cap.value());
+            GState.FrameRateCap = Math::Max(0, Cap.GetValue());
         }
 
         if (TOptional<FFixedString> Output = CommandLine.Get("benchmarkout"))
         {
-            GState.OutputPath.assign(Output.value().c_str(), Output.value().size());
+            GState.OutputPath = FStringView(*Output.GetValue(), Output.GetValue().Len());
         }
 
-        GState.FrameMilliseconds.reserve((SIZE_T)GState.MeasureFrames);
+        GState.FrameMilliseconds.Reserve((SIZE_T)GState.MeasureFrames);
 
         LOG_DISPLAY("Benchmark: {} warmup frames then {} measured{}.",
             GState.WarmupFrames,
             GState.MeasureFrames,
-            GState.Map.empty() ? FString(", on the world already loaded") : FString(", on ") + GState.Map);
+            GState.Map.IsEmpty() ? FString(", on the world already loaded") : FString(", on ") + GState.Map);
     }
 
     bool IsActive()
@@ -148,7 +148,7 @@ namespace Lumina::Benchmark
 
     FStringView GetRequestedMap()
     {
-        return FStringView(GState.Map.c_str(), GState.Map.size());
+        return FStringView(*GState.Map, GState.Map.Len());
     }
 
     void Start()
@@ -171,13 +171,13 @@ namespace Lumina::Benchmark
             LOG_WARN("Benchmark: no engine to set the frame rate cap on, so the run measures the saved cap.");
         }
 
-        if (GState.Map.empty() || GEngine == nullptr)
+        if (GState.Map.IsEmpty() || GEngine == nullptr)
         {
             return;
         }
 
         LOG_DISPLAY("Benchmark: opening {}", GState.Map);
-        GEngine->OpenLevel(FURL::Parse(FStringView(GState.Map.c_str(), GState.Map.size())));
+        GEngine->OpenLevel(FURL::Parse(FStringView(*GState.Map, GState.Map.Len())));
     }
 
     bool Tick(double DeltaSeconds)
@@ -200,7 +200,7 @@ namespace Lumina::Benchmark
         {
             GState.bVerified = true;
 
-            if (!GState.Map.empty() && !IsRequestedMapLoaded())
+            if (!GState.Map.IsEmpty() && !IsRequestedMapLoaded())
             {
                 LOG_ERROR("Benchmark: '{}' is not the world that loaded, so there is nothing to measure. "
                           "Check the path against the project's Content, and note that a shell may rewrite "
@@ -215,9 +215,9 @@ namespace Lumina::Benchmark
             RHI::LogGPUPoolStats("after warmup");
         }
 
-        GState.FrameMilliseconds.push_back(DeltaSeconds * 1000.0);
+        GState.FrameMilliseconds.Add(DeltaSeconds * 1000.0);
 
-        if ((int32)GState.FrameMilliseconds.size() < GState.MeasureFrames)
+        if (GState.FrameMilliseconds.Num() < GState.MeasureFrames)
         {
             return true;
         }
@@ -235,7 +235,7 @@ namespace Lumina::Benchmark
 
         GState.bFinished = true;
 
-        if (GState.FrameMilliseconds.empty())
+        if (GState.FrameMilliseconds.IsEmpty())
         {
             LOG_WARN("Benchmark: the run ended before any frame was measured.");
             return;
@@ -250,30 +250,30 @@ namespace Lumina::Benchmark
             Total += Frame;
         }
 
-        const double Mean = Total / (double)Sorted.size();
+        const double Mean = Total / (double)Sorted.Num();
         const double Median = Percentile(Sorted, 0.50);
 
         FString Csv = "frame,milliseconds\n";
-        for (SIZE_T Index = 0; Index < GState.FrameMilliseconds.size(); ++Index)
+        for (int32 Index = 0; Index < GState.FrameMilliseconds.Num(); ++Index)
         {
             Csv += Format("{},{:.4f}\n", (uint64)Index, GState.FrameMilliseconds[Index]);
         }
 
-        const FString Path = GState.OutputPath.empty()
+        const FString Path = GState.OutputPath.IsEmpty()
             ? ResolveDefaultOutputPath(GState.Map)
             : GState.OutputPath;
 
         const bool bWritten = Filesystem::WriteFile(
-            FStringView(Path.c_str(), Path.size()),
-            TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), Csv.size()));
+            FStringView(*Path, Path.Len()),
+            TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.GetData()), Csv.Len()));
 
         RHI::LogGPUPoolStats("end of run");
         MeshGeometryStats::Log("end of run");
 
         LOG_DISPLAY("Benchmark: {} frames, mean {:.3f} ms ({:.1f} fps), median {:.3f}, "
                     "p95 {:.3f}, p99 {:.3f}, min {:.3f}, max {:.3f}",
-            (uint64)Sorted.size(), Mean, Mean > 0.0 ? 1000.0 / Mean : 0.0, Median,
-            Percentile(Sorted, 0.95), Percentile(Sorted, 0.99), Sorted.front(), Sorted.back());
+            (uint64)Sorted.Num(), Mean, Mean > 0.0 ? 1000.0 / Mean : 0.0, Median,
+            Percentile(Sorted, 0.95), Percentile(Sorted, 0.99), Sorted[0], Sorted.Last());
 
         if (bWritten)
         {

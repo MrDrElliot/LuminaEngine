@@ -267,13 +267,13 @@ namespace Lumina::Platform
 
     FSocketConnectionPtr ConnectSocket(FStringView Host, uint16 Port, int32 TimeoutMilliseconds)
     {
-        const FString HostText(Host.data(), Host.size());
+        const FString HostText(Host.GetData(), Host.Len());
 
         sockaddr_in Address = {};
         Address.sin_family = AF_INET;
         Address.sin_port   = htons(Port);
 
-        if (inet_pton(AF_INET, HostText.c_str(), &Address.sin_addr) != 1)
+        if (inet_pton(AF_INET, *HostText, &Address.sin_addr) != 1)
         {
             LOG_ERROR("[Socket] '{}' is not a dotted address.", HostText);
             return FSocketConnectionPtr();

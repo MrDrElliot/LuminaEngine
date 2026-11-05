@@ -6,7 +6,7 @@
 #include "Renderer/CustomPrimitiveData.h"
 #include "Renderer/RenderLayers.h"
 #include "Containers/Vector.h"
-#include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Lumina.h"
 #include "MeshComponent.generated.h"
 
@@ -27,8 +27,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Everything the cull-reject path reads is grouped first so it lands in the component's first cache
-        // line; a culled entity then never touches the second one. Keep new fields out of this block.
+        // Grouped first so a culled entity never touches the second cache line. Keep new fields out of this block.
 
         /** Mesh-local bounding sphere, cached at resolve so culling never touches the mesh asset. */
         FVector3        CachedLocalCenter;
@@ -72,8 +71,7 @@ namespace Lumina
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
 
-        // LOD override. -1 = automatic (distance/radius); >= 0 pins that LOD. Clamped to the surface's
-        // NumLODs, so out-of-range values safely degrade to the coarsest LOD.
+        // -1 picks the LOD by distance; anything else pins it, clamped to the surface's coarsest LOD.
         PROPERTY(Editable, Category = "Rendering")
         int32 ForcedLODIndex = -1;
         
@@ -97,16 +95,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering|Custom Depth", EditCondition = "bRenderCustomDepth")
         uint8 CustomDepthStencilValue = 0;
 
-        // Compared against the live mesh field so a direct assignment self-heals after one frame.
+        // Compared against the live mesh field, so a direct assignment is noticed whenever this component is next resolved.
         const void*     CachedMeshKey = nullptr;
 
         // True while the cached fields still describe the last mesh that could draw, kept on screen until the new one is resident.
         bool            bShowingPreviousMesh = false;
 
-        /**
-         * Staleness token of the resolve entry this component last copied from
-         * (FMeshResolveCache::GetEntryState).
-         */
+        // Staleness token of the resolve entry this component last copied from (FMeshResolveCache::GetEntryState).
         uint32  CachedEntryState = MESH_RESOLVE_STATE_STALE;
 
         // Hash of the override list this component last resolved with.
@@ -115,13 +110,14 @@ namespace Lumina
         // FMeshResolveCache::GetEpoch() at the last resolve.
         uint32  CachedResolveEpoch = 0;
 
+        mutable FMeshResolveBinding ResolveBinding;
+
         FUNCTION()
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
         {
-            // Grow to cover Slot, then assign.
-            if (MaterialOverrides.size() <= Slot)
+            if (static_cast<uint32>(MaterialOverrides.Num()) <= Slot)
             {
-                MaterialOverrides.resize(Slot + 1);
+                MaterialOverrides.SetNum(Slot + 1);
             }
 
             MaterialOverrides[Slot] = Material;
@@ -132,7 +128,11 @@ namespace Lumina
         FUNCTION()
         void MarkRenderStateDirty() { InvalidateRenderResolve(); }
 
+        // Any thread. Stales this component's resolve and queues its entity for the next resolve pass.
         void InvalidateRenderResolve();
+
+        // Any thread. Queues the entity without touching the cached resolve, for a reader that holds the component const.
+        void QueueRenderResolve() const { ResolveBinding.Enqueue(); }
 
         #if USING(WITH_EDITOR)
         void PostEditChange(const FPropertyChangedEvent& Event) { InvalidateRenderResolve(); }

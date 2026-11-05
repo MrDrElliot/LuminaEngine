@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Containers/HashTable.h"
 #include "Core/Object/Object.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Memory/Memory.h"
@@ -9,6 +10,17 @@
 namespace Lumina
 {
     class CPackage;
+
+    // One load and every reference it reaches through the archive; a graph load names the packages whose PostLoad it runs itself.
+    struct FLoadRequest
+    {
+        const THashSet<CPackage*>* DeferredPostLoad = nullptr;
+
+        NODISCARD bool DefersPostLoad(const CObject* Object) const
+        {
+            return DeferredPostLoad != nullptr && Object != nullptr && DeferredPostLoad->Contains(Object->GetPackage());
+        }
+    };
     
     // A package's file bytes, read only once loaded and shared by every reader over them. Held by
     // shared pointer so a reader in flight keeps the buffer alive after the package drops its cache.
@@ -56,6 +68,9 @@ namespace Lumina
         // held, not borrowed, so a concurrent save cannot replace it under a read in flight
         void SetNameTable(TSharedPtr<const FPackageNameTable> InNames) { Names = Move(InNames); }
 
+        // References read through this archive join Request, so they share its PostLoad deferral.
+        void SetLoadRequest(FLoadRequest* InRequest) { Request = InRequest; }
+
         // Every four-byte window is a candidate, so the tables come out a superset of what the bytes refer to.
         bool DescribeCutBytes(FPortableBytes& Cut) const override;
 
@@ -67,6 +82,7 @@ namespace Lumina
         // Owns the read, not the bytes; the shared reference is what keeps them alive.
         TSharedPtr<FPackageFileBytes> Bytes;
         CPackage* Package;
+        FLoadRequest* Request = nullptr;
         TSharedPtr<const FPackageNameTable> Names;
     };
 }

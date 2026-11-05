@@ -31,7 +31,7 @@ namespace Lumina
 
     void CFactoryRegistry::RegistryFactory(CFactory* Factory)
     {
-        Factories.push_back(Factory);
+        Factories.Add(Factory);
     }
 
     CFactory* CFactoryRegistry::FindFactory(CClass* Class) const
@@ -72,7 +72,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            Package->ExportTable.emplace_back(New);
+            Package->ExportTable.Emplace(New);
             New->SetFlag(OF_Public);
             return New;
         }
@@ -138,25 +138,26 @@ namespace Lumina
         if (Factory->DrawCreationDialogue(Path, bShouldClose))
         {
             // Modal capture dies when the modal closes; async task needs an owned copy.
-            FFixedString OwnedPath(Path.data(), Path.size());
-            Task::AsyncTask(1, 1, [Factory, OwnedPath = Move(OwnedPath)](uint32, uint32, uint32)
+            FFixedString OwnedPath(Path.GetData(), Path.Len());
+            Jobs::Spawn(Jobs::EJobPriority::Normal, [](CFactory* Owner, FFixedString TargetPath) -> Jobs::TTask<void>
             {
                 FString Error;
-                const bool bCreated = CreateAsset(Factory, Factory->GetAssetClass(), OwnedPath, Error).IsValid();
+                const bool bCreated = CreateAsset(Owner, Owner->GetAssetClass(), TargetPath, Error).IsValid();
 
                 // Reported only once the task knows, since the dialog closed before the asset existed.
-                MainThread::Enqueue([bCreated, OwnedPath, Error = Move(Error)]
+                MainThread::Enqueue([bCreated, TargetPath, Error = Move(Error)]
                 {
                     if (bCreated)
                     {
-                        ImGuiX::Notifications::NotifySuccess("Successfully Created: \"{0}\"", OwnedPath);
+                        ImGuiX::Notifications::NotifySuccess("Successfully Created: \"{0}\"", TargetPath);
                     }
                     else
                     {
-                        ImGuiX::Notifications::NotifyError("Failed to create \"{0}\": {1}", OwnedPath, Error);
+                        ImGuiX::Notifications::NotifyError("Failed to create \"{0}\": {1}", TargetPath, Error);
                     }
                 });
-            });
+                co_return;
+            }, Factory, Move(OwnedPath));
 
             bOutCreating = true;
             return true;

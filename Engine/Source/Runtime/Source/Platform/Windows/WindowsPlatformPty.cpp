@@ -191,18 +191,18 @@ namespace Lumina::Platform
             StartupInfo.StartupInfo.hStdOutput = nullptr;
             StartupInfo.StartupInfo.hStdError  = nullptr;
 
-            const FString Shell = Params.Shell.empty() ? GetDefaultShell() : Params.Shell;
+            const FString Shell = Params.Shell.IsEmpty() ? GetDefaultShell() : Params.Shell;
             FWString WideCommand = StringUtils::ToWideString(Shell);
 
             TVector<wchar_t> CommandBuffer(WideCommand.begin(), WideCommand.end());
-            CommandBuffer.push_back(L'\0');
+            CommandBuffer.Add(L'\0');
 
             FWString WideWorkingDirectory;
             const wchar_t* WorkingDirectory = nullptr;
-            if (!Params.WorkingDirectory.empty())
+            if (!Params.WorkingDirectory.IsEmpty())
             {
                 WideWorkingDirectory = StringUtils::ToWideString(Params.WorkingDirectory);
-                WorkingDirectory = WideWorkingDirectory.c_str();
+                WorkingDirectory = *WideWorkingDirectory;
             }
 
             PROCESS_INFORMATION ProcessInfo = {};
@@ -210,7 +210,7 @@ namespace Lumina::Platform
             // Handle inheritance stays off; the pseudoconsole attribute is what hands the child its ends.
             const BOOL bSpawned = CreateProcessW(
                 nullptr,
-                CommandBuffer.data(),
+                CommandBuffer.GetData(),
                 nullptr,
                 nullptr,
                 FALSE,
@@ -299,17 +299,17 @@ namespace Lumina::Platform
                 }
 
                 const DWORD Wanted = Math::Min(static_cast<DWORD>(MaxBytes - Total), Available);
-                const size_t Offset = OutBytes.size();
-                OutBytes.resize(Offset + Wanted);
+                const int32 Offset = OutBytes.Num();
+                OutBytes.SetNum(Offset + Wanted);
 
                 DWORD BytesRead = 0;
-                if (!ReadFile(OutputRead, OutBytes.data() + Offset, Wanted, &BytesRead, nullptr) || BytesRead == 0)
+                if (!ReadFile(OutputRead, OutBytes.GetData() + Offset, Wanted, &BytesRead, nullptr) || BytesRead == 0)
                 {
-                    OutBytes.resize(Offset);
+                    OutBytes.SetNum(Offset);
                     break;
                 }
 
-                OutBytes.resize(Offset + BytesRead);
+                OutBytes.SetNum(Offset + BytesRead);
                 Total += static_cast<int32>(BytesRead);
             }
 
@@ -392,7 +392,7 @@ namespace Lumina::Platform
     FString GetDefaultShell()
     {
         const FString Preferred = GetEnvVariable("COMSPEC");
-        return Preferred.empty() ? FString("cmd.exe") : Preferred;
+        return Preferred.IsEmpty() ? FString("cmd.exe") : Preferred;
     }
 
     FPtySessionPtr CreatePtySession(const FPtyLaunchParams& Params)

@@ -43,8 +43,8 @@ namespace
 
         Rig->BoneNameToIndex[Root.Name]  = 0;
         Rig->BoneNameToIndex[Spine.Name] = 1;
-        Rig->Bones.push_back(Root);
-        Rig->Bones.push_back(Spine);
+        Rig->Bones.Add(Root);
+        Rig->Bones.Add(Spine);
         Rig->BuildBindPoseCache();
         return Rig;
     }
@@ -77,7 +77,7 @@ namespace
             Channel.TargetPath = Path;
             for (uint32 i = 0; i < RetargetKeys; ++i)
             {
-                Channel.Timestamps.push_back(RetargetDuration * (float)i / (float)(RetargetKeys - 1));
+                Channel.Timestamps.Add(RetargetDuration * (float)i / (float)(RetargetKeys - 1));
             }
             return Channel;
         };
@@ -91,11 +91,11 @@ namespace
         for (uint32 i = 0; i < RetargetKeys; ++i)
         {
             const float Time = RetargetDuration * (float)i / (float)(RetargetKeys - 1);
-            RootTranslation.Translations.push_back(RootT);
-            RootRotation.Rotations.push_back(RootR);
-            RootScale.Scales.push_back(RootS);
-            SpineTranslation.Translations.push_back(SpineT);
-            SpineRotation.Rotations.push_back(SpineRotationAt(Time));
+            RootTranslation.Translations.Add(RootT);
+            RootRotation.Rotations.Add(RootR);
+            RootScale.Scales.Add(RootS);
+            SpineTranslation.Translations.Add(SpineT);
+            SpineRotation.Rotations.Add(SpineRotationAt(Time));
         }
 
         Resource.Channels = { RootTranslation, RootRotation, RootScale, SpineTranslation, SpineRotation };
@@ -130,7 +130,7 @@ TEST(AnimRetarget, SameSkeletonNeedsNoFixes)
 
     const FAnimationResource::FResolvedSkeleton* Resolved = Clip->GetAnimationResource()->GetResolvedSkeleton(
         Rigs.Source->GetSkeletonResource(), Clip->GetSourceSkeletonResource());
-    EXPECT_TRUE(Resolved->RetargetFixes.empty());
+    EXPECT_TRUE(Resolved->RetargetFixes.IsEmpty());
 }
 
 TEST(AnimRetarget, LocalPoseLandsInTargetSpace)
@@ -163,7 +163,7 @@ TEST(AnimRetarget, MatrixAndSingleBonePathsAgreeWithLocalPose)
 
     TVector<FMatrix4> Matrices;
     Clip->SamplePose(Time, Target, Matrices);
-    ASSERT_EQ(Matrices.size(), 2u);
+    ASSERT_EQ(Matrices.Num(), 2);
     EXPECT_NEAR(Math::Length(FVector3(Matrices[0][3])), 0.0f, RetargetPositionTolerance);
     EXPECT_NEAR(Math::Length(FVector3(Matrices[1][3]) - FVector3(0.0f, 0.25f, 0.0f)), 0.0f, RetargetPositionTolerance);
 

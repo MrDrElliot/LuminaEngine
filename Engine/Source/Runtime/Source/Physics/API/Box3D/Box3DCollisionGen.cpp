@@ -12,28 +12,28 @@ namespace Lumina::Physics::CollisionGen
         // Box3D caps a hull at B3_MAX_HULL_VERTICES, so a denser point cloud comes back simplified.
         b3HullData* CreateHullFrom(const TVector<FVector3>& Points)
         {
-            if (Points.size() < 4)
+            if (Points.Num() < 4)
             {
                 return nullptr;
             }
 
             TVector<b3Vec3> Input;
-            Input.reserve(Points.size());
+            Input.Reserve(Points.Num());
             for (const FVector3& P : Points)
             {
-                Input.push_back(b3Vec3{ P.x, P.y, P.z });
+                Input.Add(b3Vec3{ P.x, P.y, P.z });
             }
 
-            return b3CreateHull(Input.data(), (int)Input.size(), B3_MAX_HULL_VERTICES);
+            return b3CreateHull(Input.GetData(), Input.Num(), B3_MAX_HULL_VERTICES);
         }
 
         void CopyHullPoints(const b3HullData* Hull, TVector<FVector3>& Out)
         {
             const b3Vec3* Points = b3GetHullPoints(Hull);
-            Out.reserve(Hull->vertexCount);
+            Out.Reserve(Hull->vertexCount);
             for (int32 i = 0; i < Hull->vertexCount; ++i)
             {
-                Out.push_back(FVector3(Points[i].x, Points[i].y, Points[i].z));
+                Out.Emplace(Points[i].x, Points[i].y, Points[i].z);
             }
         }
 
@@ -43,22 +43,22 @@ namespace Lumina::Physics::CollisionGen
             const b3HullHalfEdge* Edges = b3GetHullEdges(Hull);
             const b3HullFace* Faces = b3GetHullFaces(Hull);
 
-            Out.clear();
+            Out.Reset();
 
             const uint8 Start = Faces[FaceIndex].edge;
             uint8 Edge = Start;
             do
             {
-                Out.push_back(Edges[Edge].origin);
+                Out.Add(Edges[Edge].origin);
                 Edge = Edges[Edge].next;
             }
-            while (Edge != Start && Out.size() <= (size_t)Hull->edgeCount);
+            while (Edge != Start && static_cast<size_t>(Out.Num()) <= (size_t)Hull->edgeCount);
         }
     }
 
     bool BuildHullPoints(const TVector<FVector3>& Points, TVector<FVector3>& OutHull)
     {
-        OutHull.clear();
+        OutHull.Reset();
 
         b3HullData* Hull = CreateHullFrom(Points);
         if (Hull == nullptr)
@@ -69,13 +69,13 @@ namespace Lumina::Physics::CollisionGen
         CopyHullPoints(Hull, OutHull);
         b3DestroyHull(Hull);
 
-        return OutHull.size() >= 4;
+        return OutHull.Num() >= 4;
     }
 
     bool BuildHullWireframe(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices, TVector<uint32>& OutEdges)
     {
-        OutVertices.clear();
-        OutEdges.clear();
+        OutVertices.Reset();
+        OutEdges.Reset();
 
         b3HullData* Hull = CreateHullFrom(Points);
         if (Hull == nullptr)
@@ -95,19 +95,19 @@ namespace Lumina::Physics::CollisionGen
                 continue;
             }
 
-            OutEdges.push_back(Edges[i].origin);
-            OutEdges.push_back(Edges[Twin].origin);
+            OutEdges.Add(Edges[i].origin);
+            OutEdges.Add(Edges[Twin].origin);
         }
 
         b3DestroyHull(Hull);
 
-        return !OutEdges.empty();
+        return !OutEdges.IsEmpty();
     }
 
     bool BuildHullTriangles(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices, TVector<uint32>& OutIndices)
     {
-        OutVertices.clear();
-        OutIndices.clear();
+        OutVertices.Reset();
+        OutIndices.Reset();
 
         b3HullData* Hull = CreateHullFrom(Points);
         if (Hull == nullptr)
@@ -121,22 +121,22 @@ namespace Lumina::Physics::CollisionGen
         for (int32 Face = 0; Face < Hull->faceCount; ++Face)
         {
             GatherFaceVertices(Hull, Face, FaceVertices);
-            if (FaceVertices.size() < 3)
+            if (FaceVertices.Num() < 3)
             {
                 continue;
             }
 
             // Hull faces are convex and consistently wound, so a fan from the first vertex is valid.
-            for (size_t i = 1; i + 1 < FaceVertices.size(); ++i)
+            for (int32 i = 1; i + 1 < FaceVertices.Num(); ++i)
             {
-                OutIndices.push_back(FaceVertices[0]);
-                OutIndices.push_back(FaceVertices[i]);
-                OutIndices.push_back(FaceVertices[i + 1]);
+                OutIndices.Add(FaceVertices[0]);
+                OutIndices.Add(FaceVertices[i]);
+                OutIndices.Add(FaceVertices[i + 1]);
             }
         }
 
         b3DestroyHull(Hull);
 
-        return !OutIndices.empty();
+        return !OutIndices.IsEmpty();
     }
 }

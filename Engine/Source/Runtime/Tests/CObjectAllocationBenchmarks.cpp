@@ -86,7 +86,7 @@ TEST(CObjectAllocationBenchmark, DISABLED_Breakdown)
 {
     const CClass* Class = CObjectRefTest::StaticClass();
     const uint32  Size  = Class->GetSize();
-    printf("[Bench] class %s, %u bytes, %d objects, best of %d\n", Class->GetName().c_str(), Size, kObjects, kRounds);
+    printf("[Bench] class %s, %u bytes, %d objects, best of %d\n", *Class->GetName(), Size, kObjects, kRounds);
 
     TVector<CObject*> Objects(kObjects);
     TVector<void*>    Raw(kObjects);
@@ -156,7 +156,7 @@ TEST(CObjectAllocationBenchmark, DISABLED_Breakdown)
         const double Start = PlatformTime::Seconds();
         for (int32 i = 0; i < kObjects; ++i)
         {
-            const FName Name(Class->GetName().c_str(), i + 1);
+            const FName Name(*Class->GetName(), i + 1);
             (void)Name;
         }
         return PlatformTime::Seconds() - Start;
@@ -212,11 +212,11 @@ TEST(CObjectAllocationBenchmark, DISABLED_Threaded)
         const double Start = PlatformTime::Seconds();
         for (int32 t = 0; t < kThreads; ++t)
         {
-            Threads.emplace_back([&, t, bCreate]
+            Threads.Emplace([&, t, bCreate]
             {
                 Memory::InitializeThreadHeap();
                 TVector<CObject*>& Mine = PerThreadObjects[t];
-                Mine.resize(PerThread);
+                Mine.SetNum(PerThread);
                 if (bCreate)
                 {
                     CreateAll(Mine);
@@ -254,7 +254,7 @@ TEST(CObjectAllocationBenchmark, DISABLED_Threaded)
         const double Start = PlatformTime::Seconds();
         for (int32 t = 0; t < kThreads; ++t)
         {
-            Threads.emplace_back([&]
+            Threads.Emplace([&]
             {
                 Memory::InitializeThreadHeap();
                 TVector<int32> Indices(PerThread);

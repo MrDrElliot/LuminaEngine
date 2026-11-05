@@ -43,24 +43,24 @@ namespace Lumina
     {
         // Copied, because clearing the last managed listener unregisters the delegate from the set.
         TVector<FScriptDelegateBase*> Bound;
-        Bound.reserve(ManagedBoundDelegates().size());
+        Bound.Reserve(ManagedBoundDelegates().Num());
         for (FScriptDelegateBase* Delegate : ManagedBoundDelegates())
         {
-            Bound.push_back(Delegate);
+            Bound.Add(Delegate);
         }
 
         for (FScriptDelegateBase* Delegate : Bound)
         {
             Delegate->ClearManaged();
         }
-        ManagedBoundDelegates().clear();
+        ManagedBoundDelegates().Reset();
     }
 
     FScriptDelegateBase::~FScriptDelegateBase()
     {
         FBroadcastFrame* const Outermost = OutermostBroadcast();
         EndOpenBroadcasts();
-        ManagedBoundDelegates().erase(this);
+        ManagedBoundDelegates().Remove(this);
 
         // A handler destroying its own delegate is still running, so the broadcast that called it frees the callables.
         for (FListener& Listener : Listeners)
@@ -71,42 +71,53 @@ namespace Lumina
             }
             if (Outermost != nullptr)
             {
-                Outermost->PendingDestroy.push_back(Listener);
+                Outermost->PendingDestroy.Add(Listener);
             }
             else
             {
                 Listener.Destroy(Listener.Context);
             }
         }
-        Listeners.clear();
+        Listeners.Reset();
         LiveCount = 0;
     }
 
     FScriptDelegateBase::FScriptDelegateBase(FScriptDelegateBase&& Other) noexcept
     {
         FBroadcastFrame* const Outermost = Other.OutermostBroadcast();
-        Other.EndOpenBroadcasts();
+
+        // A handler that relocated its owner is still running, so the open broadcasts stop and unwind against the new address.
+        for (FBroadcastFrame* Frame = Other.ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
+        {
+            Frame->bAlive = false;
+            Frame->Relocated = this;
+        }
+        ActiveBroadcast = Other.ActiveBroadcast;
+        LockCount = Other.LockCount;
+        Other.ActiveBroadcast = nullptr;
+        Other.LockCount = 0;
+        Other.bCompactionPending = false;
 
         // Retired slots stay behind, since only an open broadcast needed them kept in place.
         for (const FListener& Listener : Other.Listeners)
         {
             if (Listener.Thunk != nullptr)
             {
-                Listeners.push_back(Listener);
+                Listeners.Add(Listener);
             }
             else if (Listener.Destroy != nullptr && Outermost != nullptr)
             {
-                Outermost->PendingDestroy.push_back(Listener);
+                Outermost->PendingDestroy.Add(Listener);
             }
         }
-        LiveCount = (uint16)Listeners.size();
+        LiveCount = (uint16)Listeners.Num();
 
-        Other.Listeners.clear();
+        Other.Listeners.Reset();
         Other.LiveCount = 0;
 
-        if (ManagedBoundDelegates().erase(&Other) != 0)
+        if (ManagedBoundDelegates().Remove(&Other) != 0)
         {
-            ManagedBoundDelegates().insert(this);
+            ManagedBoundDelegates().Add(this);
         }
     }
 
@@ -116,6 +127,7 @@ namespace Lumina
         for (FBroadcastFrame* Frame = ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
         {
             Frame->bAlive = false;
+            Frame->Relocated = nullptr;
         }
         ActiveBroadcast    = nullptr;
         LockCount          = 0;
@@ -142,7 +154,7 @@ namespace Lumina
         // Only a delegate in the set is known to be alive, so the address is never dereferenced on trust.
         THashSet<FScriptDelegateBase*>& Bound = ManagedBoundDelegates();
         FScriptDelegateBase* Hint = static_cast<FScriptDelegateBase*>(const_cast<void*>(LastKnownAddress));
-        if (Bound.contains(Hint) && Hint->UnbindManaged(Id))
+        if (Bound.Contains(Hint) && Hint->UnbindManaged(Id))
         {
             return true;
         }
@@ -170,7 +182,7 @@ namespace Lumina
         }
 
         const uint64 Id = GenerateId();
-        Listeners.push_back(FListener{ Id, Thunk, Context, Destroy });
+        Listeners.Emplace(Id, Thunk, Context, Destroy);
         ++LiveCount;
         return Id;
     }
@@ -182,7 +194,7 @@ namespace Lumina
             return false;
         }
 
-        for (size_t Index = 0; Index < Listeners.size(); ++Index)
+        for (int32 Index = 0; Index < Listeners.Num(); ++Index)
         {
             if (Listeners[Index].Id == Id)
             {
@@ -194,7 +206,7 @@ namespace Lumina
     }
 
     // During a broadcast the callable may be the one running, so it is kept until the compaction after the broadcast.
-    void FScriptDelegateBase::RetireAt(size_t Index)
+    void FScriptDelegateBase::RetireAt(int32 Index)
     {
         FListener& Listener = Listeners[Index];
         if (Listener.Thunk == nullptr)
@@ -213,7 +225,7 @@ namespace Lumina
         }
 
         const FListener Retired = Listener;
-        Listeners.erase(Listeners.begin() + Index);
+        Listeners.RemoveAt(Index);
         if (Retired.Destroy != nullptr)
         {
             Retired.Destroy(Retired.Context);
@@ -225,14 +237,14 @@ namespace Lumina
         bCompactionPending = false;
 
         TVector<FListener> Retired;
-        size_t Write = 0;
-        for (size_t Read = 0; Read < Listeners.size(); ++Read)
+        int32 Write = 0;
+        for (int32 Read = 0; Read < Listeners.Num(); ++Read)
         {
             if (Listeners[Read].Thunk == nullptr)
             {
                 if (Listeners[Read].Destroy != nullptr)
                 {
-                    Retired.push_back(Listeners[Read]);
+                    Retired.Add(Listeners[Read]);
                 }
                 continue;
             }
@@ -242,7 +254,7 @@ namespace Lumina
             }
             ++Write;
         }
-        Listeners.resize(Write);
+        Listeners.SetNum(Write);
 
         // Last, since freeing a callable can run a destructor that destroys this delegate's owner.
         for (const FListener& Listener : Retired)
@@ -266,7 +278,7 @@ namespace Lumina
             return 0;
         }
 
-        ManagedBoundDelegates().insert(this);
+        ManagedBoundDelegates().Add(this);
         return Id;
     }
 
@@ -297,7 +309,7 @@ namespace Lumina
             return false;
         }
 
-        for (size_t Index = 0; Index < Listeners.size(); ++Index)
+        for (int32 Index = 0; Index < Listeners.Num(); ++Index)
         {
             // Managed only, so an id collision can never free a native callable.
             if (Listeners[Index].Id == Id && Listeners[Index].Destroy == &FreeManagedListener)
@@ -305,7 +317,7 @@ namespace Lumina
                 RetireAt(Index);
                 if (!HasManagedBindings())
                 {
-                    ManagedBoundDelegates().erase(this);
+                    ManagedBoundDelegates().Remove(this);
                 }
                 return true;
             }
@@ -315,19 +327,19 @@ namespace Lumina
 
     void FScriptDelegateBase::ClearManaged()
     {
-        for (size_t Index = Listeners.size(); Index > 0; --Index)
+        for (int32 Index = Listeners.Num(); Index > 0; --Index)
         {
             if (Listeners[Index - 1].Destroy == &FreeManagedListener)
             {
                 RetireAt(Index - 1);
             }
         }
-        ManagedBoundDelegates().erase(this);
+        ManagedBoundDelegates().Remove(this);
     }
 
     void FScriptDelegateBase::RemoveAll()
     {
-        for (size_t Index = Listeners.size(); Index > 0; --Index)
+        for (int32 Index = Listeners.Num(); Index > 0; --Index)
         {
             RetireAt(Index - 1);
         }
@@ -383,8 +395,8 @@ namespace Lumina
         {
             const bool bNativePhase = (Phase == 0);
 
-            const size_t Count = Listeners.size();
-            for (size_t Index = 0; Index < Count && Frame.bAlive; ++Index)
+            const int32 Count = Listeners.Num();
+            for (int32 Index = 0; Index < Count && Frame.bAlive; ++Index)
             {
                 // Copy out before invoking; a handler may reallocate the vector mid-broadcast.
                 const FThunk Thunk   = Listeners[Index].Thunk;
@@ -400,6 +412,15 @@ namespace Lumina
 
         if (!Frame.bAlive)
         {
+            if (FScriptDelegateBase* Relocated = Frame.Relocated)
+            {
+                Relocated->ActiveBroadcast = Frame.Previous;
+                ASSERT(Relocated->LockCount > 0);
+                if (--Relocated->LockCount == 0 && Relocated->bCompactionPending)
+                {
+                    Relocated->Compact();
+                }
+            }
             for (const FListener& Listener : Frame.PendingDestroy)
             {
                 Listener.Destroy(Listener.Context);

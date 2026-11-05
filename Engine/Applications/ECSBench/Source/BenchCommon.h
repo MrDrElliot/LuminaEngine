@@ -68,14 +68,14 @@ namespace ECSBench
 
     // Runs the body until it has spent enough time to be stable, then reports the best pass.
     template<typename TFunc>
-    double MeasureNanosPerOp(size_t OpsPerPass, size_t Passes, TFunc&& Body)
+    double MeasureNanosPerOp(int32 OpsPerPass, int32 Passes, TFunc&& Body)
     {
         double BestSeconds = 1e30;
 
         // A random-access case is built once, so a cold TLB would otherwise land entirely in the timed passes.
         Body();
 
-        for (size_t Pass = 0; Pass < Passes; ++Pass)
+        for (int32 Pass = 0; Pass < Passes; ++Pass)
         {
             const uint64 Start = PlatformTime::Cycles();
             Body();
@@ -89,7 +89,7 @@ namespace ECSBench
         return OpsPerPass > 0 ? (BestSeconds * 1e9) / static_cast<double>(OpsPerPass) : 0.0;
     }
 
-    void ReportCase(const char* Name, size_t OpsPerPass, const FResult& Result);
+    void ReportCase(const char* Name, int32 OpsPerPass, const FResult& Result);
     void ReportHeader();
     void ReportFooter();
 

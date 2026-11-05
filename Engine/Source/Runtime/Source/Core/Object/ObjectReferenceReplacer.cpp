@@ -24,24 +24,24 @@ namespace Lumina
             return;
         }
 
-        HardEntries.push_back(FHardEntry{ ToReplace, Replacement });
+        HardEntries.Emplace(ToReplace, Replacement);
     }
 
     void FObjectReferenceReplacer::AddSoftReplacement(const FGuid& ToReplaceGUID, FStringView ToReplacePath,
         const FGuid& ReplacementGUID, FStringView ReplacementPath)
     {
-        if (!ToReplaceGUID.IsValid() && ToReplacePath.empty())
+        if (!ToReplaceGUID.IsValid() && ToReplacePath.IsEmpty())
         {
             return;
         }
 
         FSoftEntry Entry;
         Entry.ToReplaceGUID = ToReplaceGUID;
-        Entry.ToReplacePath.assign(ToReplacePath.data(), ToReplacePath.size());
+        Entry.ToReplacePath = FStringView(ToReplacePath.GetData(), ToReplacePath.Len());
         Entry.ReplacementGUID = ReplacementGUID;
-        Entry.ReplacementPath.assign(ReplacementPath.data(), ReplacementPath.size());
+        Entry.ReplacementPath = FStringView(ReplacementPath.GetData(), ReplacementPath.Len());
 
-        SoftEntries.push_back(Move(Entry));
+        SoftEntries.Add(Move(Entry));
     }
 
     uint32 FObjectReferenceReplacer::ApplyTo(CObject* Object)
@@ -53,7 +53,9 @@ namespace Lumina
 
         const uint32 Before = NumReplaced;
 
-        auto Hard = [this](CObject* Current) -> CObject*
+        // A swapped-out object is held until the walk ends, since its release can free the very object being walked.
+        TVector<TStrongObjectPtr<CObject>> Released;
+        auto Hard = [this, &Released](CObject* Current) -> CObject*
         {
             if (Current == nullptr)
             {
@@ -64,6 +66,10 @@ namespace Lumina
                 if (Entry.ToReplace == Current)
                 {
                     ++NumReplaced;
+                    if (Object::Internal::GetStrongRefCountByIndex(Current->GetInternalIndex()) > 0)
+                    {
+                        Released.Emplace(Current);
+                    }
                     return Entry.Replacement;
                 }
             }
@@ -76,15 +82,15 @@ namespace Lumina
             {
                 const bool bGUIDMatch = Entry.ToReplaceGUID.IsValid()
                     && Path.GetCachedGUID() == Entry.ToReplaceGUID;
-                const bool bPathMatch = !Entry.ToReplacePath.empty()
-                    && Path.GetPath() == FStringView(Entry.ToReplacePath.c_str(), Entry.ToReplacePath.size());
+                const bool bPathMatch = !Entry.ToReplacePath.IsEmpty()
+                    && Path.GetPath() == FStringView(*Entry.ToReplacePath, Entry.ToReplacePath.Len());
                 if (!bGUIDMatch && !bPathMatch)
                 {
                     continue;
                 }
 
                 Path = FSoftObjectPath(
-                    FStringView(Entry.ReplacementPath.c_str(), Entry.ReplacementPath.size()),
+                    FStringView(*Entry.ReplacementPath, Entry.ReplacementPath.Len()),
                     Entry.ReplacementGUID);
                 ++NumReplaced;
                 return;
@@ -95,7 +101,7 @@ namespace Lumina
         const FObjectHandle Handle = Object::Internal::GetHandleByObject(Object);
         auto IsAlive = [&Handle]() { return Object::Internal::ResolveHandle(Handle) != nullptr; };
 
-        if (SoftEntries.empty())
+        if (SoftEntries.IsEmpty())
         {
             FObjectReferenceVisitor::VisitStruct(Object->GetClass(), Object, Hard);
         }
@@ -134,7 +140,7 @@ namespace Lumina
         {
             if (Base != nullptr && !Base->HasAnyFlag(OF_MarkedDestroy))
             {
-                Live.push_back(Object::Internal::GetHandleByObject(Base));
+                Live.Add(Object::Internal::GetHandleByObject(Base));
             }
         });
 
@@ -147,7 +153,8 @@ namespace Lumina
         }
 
         // The holders no walk of the object graph can reach, which is most of what an ECS world is.
-        auto Hard = [this](CObject* Current) -> CObject*
+        TVector<TStrongObjectPtr<CObject>> Released;
+        auto Hard = [this, &Released](CObject* Current) -> CObject*
         {
             if (Current == nullptr)
             {
@@ -158,6 +165,10 @@ namespace Lumina
                 if (Entry.ToReplace == Current)
                 {
                     ++NumReplaced;
+                    if (Object::Internal::GetStrongRefCountByIndex(Current->GetInternalIndex()) > 0)
+                    {
+                        Released.Emplace(Current);
+                    }
                     return Entry.Replacement;
                 }
             }

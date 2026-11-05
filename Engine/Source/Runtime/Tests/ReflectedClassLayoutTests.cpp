@@ -32,7 +32,7 @@ namespace
         {
             if (Object != nullptr && Object->IsA<CStruct>())
             {
-                Structs.push_back(static_cast<CStruct*>(Object));
+                Structs.Add(static_cast<CStruct*>(Object));
             }
         });
         return Structs;
@@ -46,7 +46,7 @@ TEST(ReflectedClassLayout, EveryOwnPropertyReachesTheFlattenedList)
     for (CStruct* Struct : AllReflectedStructs())
     {
         const TSpan<FProperty* const> Own = Struct->GetOwnProperties();
-        if (Own.empty())
+        if (Own.IsEmpty())
         {
             continue;
         }
@@ -58,8 +58,8 @@ TEST(ReflectedClassLayout, EveryOwnPropertyReachesTheFlattenedList)
         for (FProperty* Property : Own)
         {
             EXPECT_TRUE(Contains(All, Property))
-                << Struct->GetName().ToString().c_str() << " declares '"
-                << Property->GetPropertyName().ToString().c_str() << "' but its flattened list does not carry it";
+                << *Struct->GetName().ToString() << " declares '"
+                << *Property->GetPropertyName().ToString() << "' but its flattened list does not carry it";
         }
     }
 }
@@ -70,7 +70,7 @@ TEST(ReflectedClassLayout, TheFlattenedListCarriesEverySuperProperty)
     for (CStruct* Struct : AllReflectedStructs())
     {
         CStruct* Super = Struct->GetSuperStruct();
-        if (Super == nullptr || Super->GetOwnProperties().empty())
+        if (Super == nullptr || Super->GetOwnProperties().IsEmpty())
         {
             continue;
         }
@@ -81,9 +81,9 @@ TEST(ReflectedClassLayout, TheFlattenedListCarriesEverySuperProperty)
         for (FProperty* Property : Super->GetOwnProperties())
         {
             EXPECT_TRUE(Contains(All, Property))
-                << Struct->GetName().ToString().c_str() << " does not carry '"
-                << Property->GetPropertyName().ToString().c_str() << "' from its base "
-                << Super->GetName().ToString().c_str();
+                << *Struct->GetName().ToString() << " does not carry '"
+                << *Property->GetPropertyName().ToString() << "' from its base "
+                << *Super->GetName().ToString();
         }
     }
 }

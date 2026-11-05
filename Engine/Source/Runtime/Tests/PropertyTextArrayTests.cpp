@@ -38,7 +38,7 @@ TEST(PropertyTextArray, IntArrayRoundTrips)
     EXPECT_EQ(Parsed.Frames, (TVector<int32>{7, 8, 9}));
 
     ASSERT_TRUE(Reflection::FromText(Frames, &Parsed, "()"));
-    EXPECT_TRUE(Parsed.Frames.empty());
+    EXPECT_TRUE(Parsed.Frames.IsEmpty());
     EXPECT_EQ(Reflection::ToText(Frames, &Parsed), "()");
 }
 
@@ -66,7 +66,7 @@ TEST(PropertyTextArray, TextElementsQuoteWhatWouldNotReadBack)
     EXPECT_EQ(Text, "(Plain,\"Has,Comma\",\"Say \"\"hi\"\"\",\" padded \",\"Paren)\")");
 
     SInputMappingContext Parsed;
-    ASSERT_TRUE(Reflection::FromText(Actions, &Parsed, FStringView(Text.c_str(), Text.size())));
+    ASSERT_TRUE(Reflection::FromText(Actions, &Parsed, FStringView(*Text, Text.Len())));
     EXPECT_EQ(Parsed.Actions, Context.Actions);
 }
 
@@ -78,7 +78,7 @@ TEST(PropertyTextArray, UnclosedQuoteFails)
     SInputMappingContext Context;
     EXPECT_FALSE(Reflection::FromText(Actions, &Context, "(\"open,b)"));
     EXPECT_FALSE(Reflection::FromText(Actions, &Context, "(\"a\"x,b)"));
-    EXPECT_TRUE(Context.Actions.empty());
+    EXPECT_TRUE(Context.Actions.IsEmpty());
 }
 
 namespace

@@ -8,58 +8,58 @@ namespace Lumina;
 // Typed sending and listening over the world's native message bus, so C++ and C# send to and hear each other.
 public unsafe partial class CMessageSubsystem
 {
-    public IDisposable Subscribe<T>(GameplayTag Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
+    public IDisposable Subscribe<T>(HierarchicalTag Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
         => Listen<T>(FEntity.Null, Channel, Message => { Handler(Message); return false; }, Match);
 
-    public IDisposable Subscribe<T>(string Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
-        => Subscribe(GameplayTag.Request(Channel), Handler, Match);
+    public IDisposable Subscribe<T>(string Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
+        => Subscribe(HierarchicalTag.Request(Channel), Handler, Match);
 
-    public IDisposable SubscribeOnce<T>(GameplayTag Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
+    public IDisposable SubscribeOnce<T>(HierarchicalTag Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
     {
         IDisposable? Subscription = null;
         Subscription = Subscribe<T>(Channel, Message => { Subscription?.Dispose(); Handler(Message); }, Match);
         return Subscription;
     }
 
-    public IDisposable SubscribeOnce<T>(string Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
-        => SubscribeOnce(GameplayTag.Request(Channel), Handler, Match);
+    public IDisposable SubscribeOnce<T>(string Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
+        => SubscribeOnce(HierarchicalTag.Request(Channel), Handler, Match);
 
     // Hears routed sends that reach Owner, and the bus drops it when the entity dies.
-    public IDisposable Subscribe<T>(FEntity Owner, GameplayTag Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
+    public IDisposable Subscribe<T>(FEntity Owner, HierarchicalTag Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
         => Owner.IsNull ? GameplayMessageSubscription.Empty : Listen<T>(Owner, Channel, Message => { Handler(Message); return false; }, Match);
 
-    public IDisposable Subscribe<T>(FEntity Owner, string Channel, Action<T> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
-        => Subscribe(Owner, GameplayTag.Request(Channel), Handler, Match);
+    public IDisposable Subscribe<T>(FEntity Owner, string Channel, Action<T> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
+        => Subscribe(Owner, HierarchicalTag.Request(Channel), Handler, Match);
 
     // Returning true marks the message handled, so no further ancestor or descendant receives it.
-    public IDisposable Subscribe<T>(FEntity Owner, GameplayTag Channel, Func<T, bool> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
+    public IDisposable Subscribe<T>(FEntity Owner, HierarchicalTag Channel, Func<T, bool> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
         => Owner.IsNull ? GameplayMessageSubscription.Empty : Listen(Owner, Channel, Handler, Match);
 
-    public IDisposable Subscribe<T>(FEntity Owner, string Channel, Func<T, bool> Handler, GameplayTagMatch Match = GameplayTagMatch.Partial)
-        => Subscribe(Owner, GameplayTag.Request(Channel), Handler, Match);
+    public IDisposable Subscribe<T>(FEntity Owner, string Channel, Func<T, bool> Handler, HierarchicalTagMatch Match = HierarchicalTagMatch.Partial)
+        => Subscribe(Owner, HierarchicalTag.Request(Channel), Handler, Match);
 
     // Partial listeners on the channel's ancestors hear it too.
-    public void Broadcast<T>(GameplayTag Channel, T Message) => SendMessage(MessageRoute.Broadcast, FEntity.Null, Channel, Message, true);
+    public void Broadcast<T>(HierarchicalTag Channel, T Message) => SendMessage(MessageRoute.Broadcast, FEntity.Null, Channel, Message, true);
 
-    public void Broadcast<T>(string Channel, T Message) => Broadcast(GameplayTag.Request(Channel), Message);
+    public void Broadcast<T>(string Channel, T Message) => Broadcast(HierarchicalTag.Request(Channel), Message);
 
-    public void SendUp<T>(FEntity Source, GameplayTag Channel, T Message, bool IncludeSelf = true)
+    public void SendUp<T>(FEntity Source, HierarchicalTag Channel, T Message, bool IncludeSelf = true)
         => SendMessage(MessageRoute.Up, Source, Channel, Message, IncludeSelf);
 
     public void SendUp<T>(FEntity Source, string Channel, T Message, bool IncludeSelf = true)
-        => SendUp(Source, GameplayTag.Request(Channel), Message, IncludeSelf);
+        => SendUp(Source, HierarchicalTag.Request(Channel), Message, IncludeSelf);
 
-    public void SendDown<T>(FEntity Source, GameplayTag Channel, T Message, bool IncludeSelf = true)
+    public void SendDown<T>(FEntity Source, HierarchicalTag Channel, T Message, bool IncludeSelf = true)
         => SendMessage(MessageRoute.Down, Source, Channel, Message, IncludeSelf);
 
     public void SendDown<T>(FEntity Source, string Channel, T Message, bool IncludeSelf = true)
-        => SendDown(Source, GameplayTag.Request(Channel), Message, IncludeSelf);
+        => SendDown(Source, HierarchicalTag.Request(Channel), Message, IncludeSelf);
 
-    public void SendTo<T>(FEntity Target, GameplayTag Channel, T Message) => SendMessage(MessageRoute.To, Target, Channel, Message, true);
+    public void SendTo<T>(FEntity Target, HierarchicalTag Channel, T Message) => SendMessage(MessageRoute.To, Target, Channel, Message, true);
 
-    public void SendTo<T>(FEntity Target, string Channel, T Message) => SendTo(Target, GameplayTag.Request(Channel), Message);
+    public void SendTo<T>(FEntity Target, string Channel, T Message) => SendTo(Target, HierarchicalTag.Request(Channel), Message);
 
-    private IDisposable Listen<T>(FEntity Owner, GameplayTag Channel, Func<T, bool> Handler, GameplayTagMatch Match)
+    private IDisposable Listen<T>(FEntity Owner, HierarchicalTag Channel, Func<T, bool> Handler, HierarchicalTagMatch Match)
     {
         if (!Channel.IsValid || !IsValid)
         {
@@ -67,12 +67,12 @@ public unsafe partial class CMessageSubsystem
         }
 
         // Handed to the native bus, which releases it when the listener goes.
-        ulong Id = Subscribe(Channel.Id, Owner, MessageType<T>.Key, Match == GameplayTagMatch.Exact,
+        ulong Id = Subscribe(Channel.Id, Owner, MessageType<T>.Key, Match == HierarchicalTagMatch.Exact,
                                              ScriptCallback.Bind(new MessageInvoker<T>(Handler)));
         return Id == 0 ? GameplayMessageSubscription.Empty : new GameplayMessageSubscription(GetWorld(), Id);
     }
 
-    private void SendMessage<T>(MessageRoute Route, FEntity Target, GameplayTag Channel, T Message, bool IncludeSelf)
+    private void SendMessage<T>(MessageRoute Route, FEntity Target, HierarchicalTag Channel, T Message, bool IncludeSelf)
     {
         if (!Channel.IsValid || (Route != MessageRoute.Broadcast && Target.IsNull) || Message is null || !IsValid)
         {

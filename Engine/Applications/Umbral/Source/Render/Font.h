@@ -154,7 +154,7 @@ namespace Umbral::Font
                         continue;
                     }
 
-                    FQuadInstance& Instance = Out.emplace_back();
+                    FQuadInstance& Instance = Out.EmplaceGetRef();
                     Instance.Center       = { GlyphX + Column * PixelSize + Half, Origin.y + Row * PixelSize + Half };
                     Instance.HalfSize     = { Half * 0.94f, Half * 0.94f };
                     Instance.Color        = Color;

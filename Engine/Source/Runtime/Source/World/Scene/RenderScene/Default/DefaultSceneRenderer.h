@@ -14,8 +14,10 @@
 #include "Renderer/RHICore.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/Vertex.h"
-#include "TaskSystem/TaskGraph.h"
+#include "Containers/Optional.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/LineBatcherComponent.h"
+#include "World/Entity/Components/TextComponent.h"
 #include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/RenderScene.h"
@@ -29,7 +31,7 @@
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
-#include "TaskSystem/FiberSync.h"
+#include "Core/Threading/Sync.h"
 #include "World/Entity/Components/PostProcessSettings.h"
 #include "World/Entity/Components/CloudComponent.h"
 #include "World/Entity/Systems/WeatherState.h"
@@ -56,14 +58,16 @@ namespace Lumina
     struct STransformComponent;
     struct STerrainComponent;
     struct SDecalComponent;
+    struct SSplineComponent;
+    struct SReflectionProbeComponent;
+    struct FSplineSample;
     class CMaterialInterface;
     class CStaticMesh;
+    class CGrassType;
     class CMaterial;
     enum class EMaterialShaderStage : uint8;
 
-    /** The engine's default scene renderer: GPU-driven meshlet culling into a visibility buffer, then
-     *  per-material GBuffer resolve and a clustered lighting pass. RenderSceneFactory falls back to this
-     *  whenever no override is installed. */
+    // RenderSceneFactory falls back to this whenever no override is installed.
     class FDefaultSceneRenderer : public IRenderScene
     {
     public:
@@ -98,9 +102,9 @@ namespace Lumina
 
             void ResetForFrame()
             {
-                SkinnedIndices.clear();
-                DeferredSlots.clear();
-                BoneUploadRanges.clear();
+                SkinnedIndices.Reset();
+                DeferredSlots.Reset();
+                BoneUploadRanges.Reset();
                 Stats = {};
                 bTouched = false;
             }
@@ -171,9 +175,11 @@ namespace Lumina
                 bool        bDepthTest    = false; // occluded by + writes scene depth, vs. always-on-top
             };
 
-            /** One species the scatter dispatches for, flattened from the material's GrassOutputs. */
             struct FGrassSpeciesExtract
             {
+                const CGrassType* Type = nullptr;
+                // Which repeat of this type and layer in the material's list, so duplicates keep separate blocks.
+                uint32 Occurrence      = 0;
                 CStaticMesh* Mesh      = nullptr;
                 // Resolved during extraction, since worlds render in parallel and the cache is not safe to mutate there.
                 uint32  ResolveHandle  = INVALID_MESH_RESOLVE_HANDLE;
@@ -212,7 +218,7 @@ namespace Lumina
 
                 bool                bStructuralChange = false;
 
-                /** Empty unless the terrain carries SGrassComponent and its material declares species. */
+                // Empty unless the terrain carries SGrassComponent and its material declares species.
                 TVector<FGrassSpeciesExtract> Grass;
                 uint32              GrassMaxInstances = 0;
 
@@ -400,7 +406,6 @@ namespace Lumina
                 // Camera, captures and the baking probe's faces. Rebuilt each extract before the light tasks.
                 TVector<FFrustum>                RelevanceFrusta;
                 TVector<FShadowRequest>          ShadowRequests;
-                FMutex                           ShadowRequestMutex;
 
                 struct FLightFunctionDraw
                 {
@@ -410,7 +415,6 @@ namespace Lumina
                     uint32                       Slot = 0;
                 };
                 TVector<FLightFunctionRequest>   LightFunctionRequests;
-                FMutex                           LightFunctionRequestMutex;
                 TVector<FLightFunctionDraw>      LightFunctionDraws;
                 TArray<FLightFunction, MAX_LIGHT_FUNCTIONS> LightFunctions = {};
                 TVector<FShadowTile>             AtlasTiles;
@@ -532,8 +536,7 @@ namespace Lumina
                 TVector<FWeatherWaterBodyGPU>    WaterBodies;
             } WeatherInteraction;
 
-            // Splines uploaded this frame. Headers index into the two shared arrays; everything is world
-            // space (SSplineComponent authors in entity-local space and the extract bakes the transform in).
+            // World space throughout: SSplineComponent authors in entity-local space and the extract bakes the transform in.
             struct FSplines
             {
                 TVector<FGPUSpline>              Splines;
@@ -694,8 +697,7 @@ namespace Lumina
             bool                                            bEnabled = false;
             bool                                            bReservedForProbeBake = false;
             TArray<FSceneImage, (int)ENamedImage::Num>      Images = {};
-            /// Tick each on-demand image was last needed on. Only the optional entries are ever read;
-            /// see EnsureOptionalViewImages.
+            /// Tick each on-demand image was last needed; only the optional entries are read (see EnsureOptionalViewImages).
             TArray<uint64, (int)ENamedImage::Num>           ImageLastUsedTick = {};
             FSceneImage                                     BloomChainImage;
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
@@ -757,10 +759,8 @@ namespace Lumina
         RHI::FGPUAllocation GetMeshletVisibility() const       { return MeshletVisibilityBuffer; }
         RHI::FGPUAllocation GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         RHI::FGPUAllocation GetSkinDispatchArgs()  const { return SkinDispatchArgsRing[CurrentFrameSlot]; }
-        /** One workgroup per written meshlet block, sized by BuildMeshletCullArgs. */
         RHI::FGPUAllocation GetMeshletCullDispatchArgs() const { return MeshletCullDispatchArgsRing[CurrentFrameSlot]; }
-        /** (base, count) per (visible instance, view): the one place the per-view meshlet range is
-            decided. CullInstances writes it when it reserves; BuildMeshletBlocks reads it to append. */
+        // (base, count) per (visible instance, view); CullInstances writes it on reserve, BuildMeshletBlocks reads it to append.
         RHI::FGPUAllocation GetInstanceViewRanges() const { return InstanceViewRangeRing[CurrentFrameSlot]; }
         // Every counter a pass accumulates into this frame lives in one scratch block, zeroed once in RenderView.
         RHI::FGPURange GetCullCounters()      const { return FrameScratchRange(kScratchCullCountersOffset, sizeof(uint32) * 4); }
@@ -768,9 +768,7 @@ namespace Lumina
         RHI::FGPURange GetLuminanceHistogram() const { return FrameScratchRange(kScratchHistogramOffset, sizeof(uint32) * kLuminanceHistogramBins); }
         RHI::FGPURange GetGrassCursor(uint32 Index) const { return FrameScratchRange(kScratchGrassCursorsOffset + Index * sizeof(uint32), sizeof(uint32)); }
 
-        /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
         RHI::FGPUAllocation GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
-        /** One packed screen position per classified pixel, grouped into one contiguous run per material. */
         RHI::FGPUAllocation GetMaterialPairList() const { return MaterialPairList; }
 
         uint32 GetDisplayResourceID() const override;
@@ -778,8 +776,7 @@ namespace Lumina
 
         RUNTIME_API void SettleResolveWork(int32 MaxIterations = 8);
 
-        /** Editor-only tripwire: warns if any dynamic-mesh surface is STILL resolved against superseded
-            shaders after a full resolve pass, i.e. a resolve gate is missing an input. */
+        // Editor-only tripwire: warns about, and queues, any mesh component a resolve pass left stale.
         void ValidateNoStaleResolves(ECS::FRegistry& Registry);
         RHI::FTextureH GetDisplayTexture() const override { return SceneViews[0].Output.Texture; }
         const FSceneImage& GetDisplayImage() const { return SceneViews[0].Output; }
@@ -807,8 +804,7 @@ namespace Lumina
         void ReleaseViewImages(FSceneView& View);
         void InitFrameResources();
 
-        // Shared body of SwapchainResized / SetPrimaryViewSize. Unconditional: callers decide whether the
-        // new size is worth the WaitDeviceIdle this costs.
+        // Unconditional: callers decide whether the new size is worth the WaitDeviceIdle this costs.
         RUNTIME_API void ResizePrimaryView(const FUIntVector2& NewSize);
 
         // Applies a deferred SetPrimaryViewSize. Called from Extract, which only runs for a ticking world.
@@ -823,7 +819,7 @@ namespace Lumina
         // Editor clicks arrive in display pixels and the picker is drawn at render resolution.
         FUIntVector2 DisplayToPickerTexel(uint32 X, uint32 Y) const;
 
-        /** Cleared the first time something sizes the primary view explicitly (an editor tool panel). */
+        // Cleared the first time something sizes the primary view explicitly (an editor tool panel).
         bool bPrimaryTracksSwapchain = true;
 
         FSceneView& AddSceneView(const FUIntVector2& Size, bool bPrimary);
@@ -846,20 +842,10 @@ namespace Lumina
 
         FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals);
 
-        /** Makes View current AND brings its on-demand targets in line with what this frame actually
-         *  draws. Out of line for that second half -- it is the one place every rendered view passes
-         *  through, so a view can never reach a pass with an optional target missing. */
+        // Every rendered view passes through here, so no pass can see a view with a missing optional target.
         void PointAtView(FSceneView& View);
 
-        /** Targets for features a scene may contain none of: OIT translucency (Accum, Revealage),
-         *  decals (DBufferA/B/C) and water (WaterRefraction). Sized into every view up front
-         *  they are ~230 MB at 1080p -- per view, resident for the session, in a scene that may have no
-         *  translucency, no decals and no water at all.
-         *
-         *  Created on the first frame the feature actually draws, released once it has been idle for a
-         *  while. "Not allocated" is a legal state rather than a crash because an absent FSceneImage
-         *  reports resource id -1, which reaches the shaders as the 0xFFFFFFFF sentinel they already
-         *  test for (DBuffer.slang, BasePixelPass.slang). */
+        // On-demand (~230 MB/view at 1080p); an absent FSceneImage reports id -1, which shaders already test for as 0xFFFFFFFF.
         static bool IsOptionalNamedImage(ENamedImage Image);
         static bool MakeOptionalImageDesc(ENamedImage Image, const FUIntVector2& Extent, RHI::FTextureDesc& OutDesc);
         void        EnsureOptionalViewImages(FSceneView& View);
@@ -890,7 +876,7 @@ namespace Lumina
         void TexturePaintPass(RHI::FCmdListH CL);
         void DepthPyramidPass(RHI::FCmdListH CL);
         void CascadePyramidPass(RHI::FCmdListH CL);
-        void BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
+        bool BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
                                uint32 SpdCounterIndex, uint32 SourceScale = 2);
 
         // Sizes and zeroes this frame's scratch counters, the one fill and barrier the counters share.
@@ -948,15 +934,24 @@ namespace Lumina
 
             void Add(uint32 CullView, int32 ShadowDataIndex, int32 ViewIndex, const RHI::FRect& Tile)
             {
-                if (Views.empty())
+                if (Views.IsEmpty())
                 {
                     FirstCullView = CullView;
                 }
-                bContiguous = bContiguous && CullView == FirstCullView + (uint32)Views.size();
-                Views.push_back({ ShadowDataIndex, ViewIndex, { (float)(Tile.MaxX - Tile.MinX), (float)(Tile.MaxY - Tile.MinY) } });
-                Tiles.push_back(Tile);
+                bContiguous = bContiguous && CullView == FirstCullView + (uint32)Views.Num();
+                Views.Add({ ShadowDataIndex, ViewIndex, { (float)(Tile.MaxX - Tile.MinX), (float)(Tile.MaxY - Tile.MinY) } });
+                Tiles.Add(Tile);
+            }
+
+            void Reset()
+            {
+                Views.Reset();
+                Tiles.Reset();
+                FirstCullView = Constants::kIndexNoneU32;
+                bContiguous   = true;
             }
         };
+        FShadowViewRun ShadowViewRunScratch;
 
         // One indirect draw per batch for each group of up to 16 views, or false when the run cannot be drawn that way.
         bool DrawShadowViewsTogether(RHI::FCmdListH CL, const FShadowViewRun& Run, FShaderH PixelShader);
@@ -974,6 +969,13 @@ namespace Lumina
         void TextPass(RHI::FCmdListH CL);
         void DebugTextPass(RHI::FCmdListH CL);
         void WidgetPickerPass(RHI::FCmdListH CL);
+        const FSceneImage& GetWidgetDepth(RHI::FCmdListH CL, const FUIntVector2& Extent);
+        FSceneImage WidgetDepth;
+
+        // Clear for the first overlay pass to write this view's HDR and Load after; bAfterParticles counts particles as a writer.
+        RHI::ELoadOp TakeHDRLoadOp(bool bAfterParticles);
+        uint64 HDRWrittenTick = 0;
+        const FSceneView* HDRWrittenView = nullptr;
         void ParticleSimulatePass(RHI::FCmdListH CL);
         void ParticleSortPass(RHI::FCmdListH CL);
         void ParticleRenderPass(RHI::FCmdListH CL);
@@ -987,19 +989,41 @@ namespace Lumina
         bool IsParticleEmitterCulled(const FFrameData::FParticleExtract& Item, bool bForDraw) const;
         void SortParticlesGlobal(RHI::FCmdListH CL, FParticleGPUState& State, uint32 SortMode, uint32 VertsPerParticle);
         void TerrainUpdatePass(RHI::FCmdListH CL);
+        void PruneTerrainStates();
         void TerrainCullPass(RHI::FCmdListH CL);
 
         // Every terrain pass asks the same question, so a terrain skipped by the cull is never drawn with last frame's count.
         bool IsTerrainInView(const FFrameData::FTerrainExtract& Terrain) const;
 
-        /** Generates grass instances on the GPU for every species the visible terrains declare. */
         void GrassScatterPass(RHI::FCmdListH CL);
+        void RetireGrassBlades(RHI::FCmdListH CL);
         // Returns whether it cleared the VisBuffer and depth, which it does when bClear and any terrain drew.
         bool TerrainDepthPrePass(RHI::FCmdListH CL, bool bClear);
         void TerrainRenderPass(RHI::FCmdListH CL);
         // The prefilter reads scene depth into GTAO's own working depth, and the trace reads only that.
         enum class EGTAOStage : uint8 { Prefilter, Trace };
         bool GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage);
+        struct FGTAOParams
+        {
+            uint32 Width                    = 0;
+            uint32 Height                   = 0;
+            bool   bHalfTrace               = false;
+            int32  DepthSlot                = -1;
+            float  EffectRadius             = 0.0f;
+            float  FalloffRange             = 0.615f;
+            float  SampleDistributionPower  = 2.0f;
+            float  ThinOccluderCompensation = 0.0f;
+            float  FinalValuePower          = 2.2f;
+            float  DepthMipSamplingOffset   = 3.3f;
+            float  Intensity                = 1.0f;
+            int32  QualityLevel             = 3;
+            int32  DenoisePasses            = 1;
+        };
+        bool MakeGTAOParams(FGTAOParams& P) const;
+        bool GTAOPrefilterDepth(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH PrefilterCS);
+        bool GTAOMain(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH MainCS);
+        bool GTAODenoise(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH DenoiseCS);
+        bool GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS);
         bool WantsSunFarShadowMask() const;
         bool SunFarShadowPass(RHI::FCmdListH CL);
         bool SunDFShadowCullPass(RHI::FCmdListH CL);
@@ -1008,6 +1032,8 @@ namespace Lumina
         void UnorderedTranslucentPass(RHI::FCmdListH CL);
         // Single source of truth for every fog consumer, including the translucent material pass.
         void PublishFogGlobals(FSceneGlobalData& Globals) const;
+        // The extract-time globals of the view being recorded, before its fog and weather terms were published.
+        const FSceneGlobalData& GetCurrentViewGlobals() const;
         bool CloudShadowMapPass(RHI::FCmdListH CL);
         bool BakeCloudNoiseIfNeeded(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
@@ -1018,12 +1044,32 @@ namespace Lumina
         void FogShaftPass(RHI::FCmdListH CL);
         void AtmosphereCompositePass(RHI::FCmdListH CL);
         void ScreenSpaceReflectionsPass(RHI::FCmdListH CL);
+        struct FSSRParams
+        {
+            uint32 ScreenW        = 0;
+            uint32 ScreenH        = 0;
+            uint32 TraceW         = 0;
+            uint32 TraceH         = 0;
+            uint32 Scale          = 1;
+            uint32 MipCount       = 1;
+            uint32 HDRUAV         = 0;
+            float  DepthTolerance = 0.01f;
+            float  FadeIn         = 0.0f;
+            float  FadeOut        = 0.0f;
+            float  MaxRoughness   = 0.0f;
+            float  Intensity      = 0.0f;
+        };
+        void SSRDownsample(RHI::FCmdListH CL, const FSSRParams& P, FShaderH DownsampleCS);
+        void SSRBuildChain(RHI::FCmdListH CL, const FSSRParams& P, FShaderH LevelCS, const FSceneImage& ChainImage);
+        void SSRTrace(RHI::FCmdListH CL, const FSSRParams& P, FShaderH TraceCS);
+        void SSRResolve(RHI::FCmdListH CL, const FSSRParams& P, FShaderH ResolveCS);
         void WaterPass(RHI::FCmdListH CL);
         void UnderwaterPass(RHI::FCmdListH CL);
         void EnvironmentPass(RHI::FCmdListH CL);
         void SkyCubeCapturePass(RHI::FCmdListH CL);
         void IrradianceConvolutionPass(RHI::FCmdListH CL);
         void PrefilterEnvMapPass(RHI::FCmdListH CL);
+        void DispatchPrefilterMips(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Target, uint32 DstLayerOffset);
         void BatchedLineDraw(RHI::FCmdListH CL);
         void BatchedTriangleDraw(RHI::FCmdListH CL);
         void DepthOfFieldPass(RHI::FCmdListH CL);
@@ -1063,48 +1109,71 @@ namespace Lumina
         // AreaTex slice the blend-weight pass resolves against, matched to the jitter this frame rendered.
         FVector4 GetSMAASubsampleIndices() const;
 
-        // Extract-phase half: ECS reads + parallel Process* tasks + cull/shadow setup.
+        // Extract-phase half: retained sync, then the draw and emit graphs, then the serial lighting tail.
         void CompileDrawCommands_Extract();
+        void PreparePostProcess(FFrameData& Frame, const SPostProcessSettings* PostProcess);
+        void PreparePrimaryGlobals(FFrameData& Frame, const FViewVolume& ViewVolume, const FViewLayerSettings& Layers);
+        bool IsDefaultMaterialReady();
+        void PrepareRetainedScene(ECS::FRegistry& Registry);
+        void LaunchExtracts(ECS::FRegistry& Registry, FFrameData& Frame);
+        void FinalizeLighting(ECS::FRegistry& Registry, FFrameData& Frame);
 
         void PrepareGatherScratch(FFrameData& Frame);
-        void ScheduleSkinnedGather(FTaskGraph& Graph);
-        void ScheduleLineBatching(FTaskGraph& EmitGraph, ECS::FRegistry& Registry);
+        void ScheduleSkinnedGather(ECS::FRegistry& Registry);
+        void ScheduleLineBatching(ECS::FRegistry& Registry);
 
-        // One emit task per primitive family, all joined before the serial tail below runs.
-        void ExtractBatchedTriangles(ECS::FRegistry& Registry);
-        void ExtractWidgets(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractText(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractSprites(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractBillboards(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractSelection(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractTerrain(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractParticles(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractDecals(ECS::FRegistry& Registry, FFrameData& Frame);
-        void ExtractWater(ECS::FRegistry& Registry, FFrameData& Frame);
+        // Each Schedule* builds its views on the main thread and spawns the tasks that use them; the templates take those views.
+        void SchedulePrimitiveExtracts(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ScheduleBillboardExtract(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ScheduleTerrainExtract(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ScheduleParticleExtract(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ScheduleFogExtract(ECS::FRegistry& Registry, FFrameData& Frame);
+
+        void ExtractBatchedTriangles(const auto& TriangleBatcherView);
+        void ExtractWidgets(FFrameData& Frame, const auto& WidgetView, const auto& Transforms);
+        void ExtractText(FFrameData& Frame, const auto& TextView, const auto& Transforms, bool bTextMayHaveChanged);
+        void ExtractSprites(FFrameData& Frame, const auto& SpriteView, const auto& Transforms);
+        void ExtractBillboards(FFrameData& Frame, const auto& BillboardView, const auto& Transforms);
+        void ExtractEditorIcons(FFrameData& Frame, const auto& Transforms, const auto& CameraView, const auto& CharacterView,
+                                const auto& SkyLightView, const auto& ParticleView, const auto& AudioSourceView, const auto& AudioListenerView);
+        void ExtractSelection(FFrameData& Frame, const auto& SelectedView);
+        void ExtractTerrain(FFrameData& Frame, const auto& TerrainView, const auto& Transforms);
+        void ExtractParticleFields(FFrameData& Frame, const auto& AttractorView, const auto& ColliderView, const auto& Transforms);
+        void ExtractParticles(FFrameData& Frame, const auto& ParticleView, const auto& Transforms);
+        void ExtractDecals(FFrameData& Frame, const auto& DecalView, const auto& Transforms);
+        void ExtractWater(FFrameData& Frame, const auto& WaterView, const auto& Transforms);
+        void ExtractFog(FFrameData& Frame, const auto& CloudView, const auto& FogView, const auto& FogVolumeView, const auto& Transforms);
         void ExtractDebugText(FFrameData& Frame);
 
         // Serial after the light tasks; the skylight reads the sun the directional pass resolved.
         const SEnvironmentComponent* ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractSkyLight(ECS::FRegistry& Registry, FFrameData& Frame, const SEnvironmentComponent* ActiveEnv);
-        void ExtractFog(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractWeather(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractWeatherInteraction(ECS::FRegistry& Registry, FFrameData& Frame);
         void ApplyWeatherToClouds(FFrameData& Frame);
 
         // Render-phase half: buffer resize + upload commands; reads extract-phase state.
         void CompileDrawCommands_Render(RHI::FCmdListH CL);
+        void PlanCullCapacities(RHI::FCmdListH CL, const FFrameData& Frame);
+        bool TrackCameraCut(const FFrameData& Frame);
+        void ReservePreSkinBuffers(RHI::FCmdListH CL, uint32 PreSkinWanted);
+        void ReserveMeshletDrawBuffers(RHI::FCmdListH CL, const FFrameData& Frame, uint32 DrawListWanted);
+        void ReserveVisibleInstanceBuffers(RHI::FCmdListH CL, const FFrameData& Frame);
+        void ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut);
+        void LogCullOverflow();
+        void UploadLightData(FFrameData& Frame);
+        void PublishSceneRoot(RHI::FCmdListH CL, FFrameData& Frame);
+        void PublishViewImageIndices(FFrameData& Frame);
+        uint32 CullOverflowLogCounter = 0;
 
-        // Serial pre-pass so the parallel gather is pure reads; skipped when nothing changed.
+        // Serial pre-pass so the parallel gather is pure reads; O(queued components).
         void ResolveDirtyMeshComponents();
 
         void ResolveDynamicMeshMaterials(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
 
-        uint32 LastResolvedPendingGeneration = 0;
-        uint32 LastDynamicResolveGeneration = 0;
-        TVector<uint8> DynamicResolveFlags;
-
-        // DependencyBits of the materials invalidated since the last dynamic resolve, filled by FMeshResolveCache.
-        std::atomic<uint64> DynamicMaterialInvalidations{ ~0ull };
+        // Reused by the resolve pass for one source's queued entities and one component's watch keys; keep capacity.
+        TVector<ECS::FEntity> ResolveDirtyScratch;
+        TVector<uint64> ResolveKeyScratch;
 
         // Dirty-slot runs for the partial retained upload; keeps capacity.
         TVector<FUIntVector2> RetainedRunScratch;
@@ -1116,11 +1185,11 @@ namespace Lumina
         void SyncScenePrimitives();
 
         // Skeletal primitives only; statics flow through the retained batch registry, not a per-frame gather.
-        void CullSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
-        void LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal);
-        void EmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
+        void CullSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local);
+        void LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal, const auto& FollowerStorage, const auto& SkeletalStorage);
+        void EmitSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage);
 
-        void BuildSceneCullContext();
+        void BuildSceneCullContext(const SDirectionalLightComponent* Sun);
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
 
         FThreadLocalDrawData& AcquireThreadLocalDrawData(uint32 Slot);
@@ -1147,8 +1216,18 @@ namespace Lumina
         static constexpr uint32                kBoneSliceGraceFrames = 300;
         uint32                                 BoneSliceFrameNumber = 0;
         TVector<uint64>                        BoneDirtyChunks;
+        // Leaders the layout packs itself because nothing else gathered them this frame.
+        TVector<uint32>                        UngatheredLeaderScratch;
 
-        // Lights one parallel range builds, committed with one reservation so the ranges never contend per light.
+        // An editor icon the light pass records while it already holds the light and its position.
+        struct FLightIcon
+        {
+            ECS::FEntity   Entity;
+            FVector3       Position;
+            FVector3       Color;
+        };
+
+        // One fixed chunk of dense light slots, so a chunk never overflows and the commit order never depends on scheduling.
         struct FLightBatch
         {
             static constexpr uint32 Capacity = 32;
@@ -1156,15 +1235,30 @@ namespace Lumina
             // LightIndex holds the slot within Lights until the batch is committed.
             FShadowRequest Shadows[Capacity];
             FLightFunctionRequest LightFunctions[Capacity];
+            FSceneCullContext::FLightSphere ShadowLights[Capacity];
+            FLightIcon     Icons[Capacity];
             uint32         NumLights  = 0;
             uint32         NumShadows = 0;
             uint32         NumLightFunctions = 0;
+            uint32         NumShadowLights = 0;
+            uint32         NumIcons = 0;
         };
 
-        void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
-        void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
-        void ProcessAreaLight(const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
-        void FlushLightBatch(FLightBatch& Batch, TAtomic<uint32>& LightCount);
+        // Point chunks first, then spot, then area, each in dense order.
+        TVector<FLightBatch>                   LightBatches;
+        uint32                                 NumPointLightChunks = 0;
+        uint32                                 NumSpotLightChunks  = 0;
+        uint32                                 NumAreaLightChunks  = 0;
+        TVector<FLightIcon>                    DirectionalLightIcons;
+        bool                                   bRecordLightIcons = false;
+
+        void ScheduleLightExtract(ECS::FRegistry& Registry);
+        const SDirectionalLightComponent* SelectActiveSun(const auto& DirectionalView, const auto& Transforms);
+        void ProcessLightChunk(uint32 Chunk, const auto& PointView, const auto& SpotView, const auto& AreaView, const auto& Transforms);
+        void CommitLightBatches(uint32 FirstLocalLight);
+        void ProcessPointLight(ECS::FEntity Entity, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
+        void ProcessSpotLight(ECS::FEntity Entity, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
+        void ProcessAreaLight(ECS::FEntity Entity, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
         void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight);
 
         void AllocateShadowTiles();
@@ -1175,18 +1269,16 @@ namespace Lumina
         bool HasCustomDepthPrimitives() const { return ScenePrimitives.GetCustomDepthPrimitiveCount() > 0u; }
         
         uint32 PrepareBatchedLines(FLineBatcherComponent& Batcher);
-        void   BatchLineChunks(const Task::FParallelRange& Range);
+        void   BatchLineChunks(const Jobs::FParallelRange& Range);
         void   FinalizeBatchedLines(FLineBatcherComponent& Batcher);
         void   ProcessBatchedTriangles(FTriangleBatcherComponent& Batcher);
 
         void NotifyMaxLightsHit();
-        
-        bool ShouldRequestShadow(const FVector3& LightPosition, float LightRadius) const;
 
         void BuildLightRelevanceVolumes();
 
-        // Every volume that shades from the shared light buffer, so a light rejected here reaches nothing.
-        bool IsLightRelevant(const FVector3& LightPosition, float LightRadius) const;
+        // Every volume that shades from the shared light buffer, so a light rejected here reaches nothing; bInCamera skips the camera's own test.
+        bool IsLightRelevant(const FVector3& LightPosition, float LightRadius, bool bInCamera) const;
         
         enum EShadingFeature : uint32
         {
@@ -1211,7 +1303,7 @@ namespace Lumina
             uint8           SkinnedMode = 2;                 // SPEC_SKINNED spec constant (id 5): 0=static, 1=skinned, 2=dynamic (runtime branch)
             uint8           TriCullMode = 0;
             uint8           SkyMode = (uint8)GSkyMode_Runtime;   // SPEC_SKY_MODE spec constant (id 8)
-            TFixedVector<RHI::FColorTarget, 4> ColorTargets;
+            TInlineVector<RHI::FColorTarget, 4> ColorTargets;
         };
 
         // Mirrors TRI_CULL_* in Includes/MeshletGeometry.slang.
@@ -1223,6 +1315,7 @@ namespace Lumina
         };
 
         RHI::FPipelineH      GetOrCreatePipeline(const FGraphicsPipelineKey& Key);
+        void BeginHDROverlayPass(RHI::FCmdListH CL, RHI::ELoadOp HDRLoadOp, bool bWithPicker, const RHI::FBlendDesc& HDRBlend, FGraphicsPipelineKey& Key);
 
         // Starts a background build on a miss and returns null until it lands, for pipelines a frame can draw without.
         RHI::FPipelineH      FindPipeline(const FGraphicsPipelineKey& Key);
@@ -1233,7 +1326,7 @@ namespace Lumina
         static TMoveOnlyFunction<RHI::FPipelineH()> MakeGraphicsBuild(const FGraphicsPipelineKey& Key);
         static TMoveOnlyFunction<RHI::FPipelineH()> MakeComputeBuild(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants);
 
-        /** Where a meshlet pass draws, as opposed to what. Everything here is per PASS, not per batch. */
+        // Everything here is per PASS, not per batch.
         struct FMeshletPassContext
         {
             uint32            CullViewIndex     = 0;
@@ -1243,13 +1336,11 @@ namespace Lumina
             float             ViewportH         = 0.0f;
             // Non-empty for a draw over consecutive shadow cull views starting at CullViewIndex.
             RHI::TGPUSpan<FShadowRasterViewGPU> ShadowViews;
-            /** Which part of the bucket's draw region to rasterize. The two VisBuffer phases each take
-                their own slice; every single-phase pass takes All, which is final by the time it runs. */
+            // The two VisBuffer phases each take their own slice; single-phase passes take All, which is final by the time it runs.
             EMeshletSlice     Slice             = EMeshletSlice::All;
         };
 
-        /** Culls every view's meshlets into the draw list and publishes the slice each pass draws.
-            The sole authority: nothing rasterizes a meshlet this did not keep. */
+        // The sole authority: nothing rasterizes a meshlet this did not keep.
         void MeshletCullPass(RHI::FCmdListH CL, EMeshletSlice Slice, bool bCascadePhase = false);
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
@@ -1308,7 +1399,6 @@ namespace Lumina
                                 [](FGraphicsPipelineKey&, const FMeshDrawCommand&) { return false; });
         }
 
-        /** Overload for passes with no per-batch dynamic state. */
         template<typename TSetup>
         void ForEachMeshletBatch(RHI::FCmdListH CL, const TVector<uint32>& DrawList,
                                  const FMeshletPassContext& Ctx, TSetup&& Setup)
@@ -1365,8 +1455,7 @@ namespace Lumina
 
         static void WriteBuffer(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Data, uint64 Size);
 
-        // Same staging as WriteBuffer, deferred so writes sharing a destination collapse into one copy
-        // command. Stage all of one buffer's runs before starting the next, or nothing groups.
+        // Stage all of one buffer's runs before starting the next, or nothing groups.
         void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size, bool bFillBeforeSubmit = false);
         // Launched once the retained slots are synced, so the bounds build on workers while the rest of the frame records.
         void LaunchInstanceBlockBounds();
@@ -1385,10 +1474,10 @@ namespace Lumina
         void WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
                              const TVector<FUIntVector2>& Runs, bool bFillBeforeSubmit = false);
 
-        // Stages each listed element compactly and scatters it to its slot on the GPU, for a fragmented dirty set.
         // Clears the active bit of each listed slot in the retained cull entries on the GPU.
         void DeactivateRetainedSlots(RHI::FCmdListH CL, const TVector<uint32>& Slots);
 
+        // Stages each listed element compactly and scatters it to its slot on the GPU, for a fragmented dirty set.
         void WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
                                 RHI::FGPURange Slots, const TVector<uint32>& SlotList, bool bFillBeforeSubmit = false);
 
@@ -1448,9 +1537,10 @@ namespace Lumina
         uint32                                             StaleValidationCursor = 0;
         uint32                                             StaleValidationSurfaces = 0;
         uint32                                             StaleValidationEntities = 0;
+        uint32                                             StaleValidationMissed = 0;
+        uint8                                              StaleValidationSource = 0;
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
 
-        /** Reconcile cached sample count with the world setting; reallocates every view's MS images when it changes. */
         
         static constexpr uint32                 BLOOM_MIP_COUNT = 8;
         
@@ -1464,17 +1554,19 @@ namespace Lumina
 
         FUIntVector3                            FroxelGridSize = FUIntVector3(160, 90, 128);
 
-        FEnvironmentParams                      LastIBLEnvironmentParams = {};
-        int32                                   LastIBLEnvironmentMapID  = -1;
-        FVector3                               LastIBLSunDirection      = FVector3(0.0f);
-        bool                                    bLastIBLHasSun           = false;
-        bool                                    bIBLValid                = false;
-
-        FEnvironmentParams                      LastConvolvedEnvironmentParams = {};
-        int32                                   LastConvolvedEnvironmentMapID  = -1;
-        FVector3                               LastConvolvedSunDirection      = FVector3(0.0f);
-        bool                                    bLastConvolvedHasSun           = false;
-        bool                                    bIBLConvolutionValid           = false;
+        // What an IBL bake last consumed, so a frame rebakes only when one of these moved.
+        struct FIBLBakeSource
+        {
+            FEnvironmentParams                  Params       = {};
+            int32                               MapID        = -1;
+            FVector3                            SunDirection = FVector3(0.0f);
+            bool                                bHasSun      = false;
+            bool                                bValid       = false;
+        };
+        FIBLBakeSource                          SkyCubeBakeSource;
+        FIBLBakeSource                          ConvolutionBakeSource;
+        bool TakeIBLSourceChange(FIBLBakeSource& Source, const FFrameData& Frame, float SunCosThreshold, bool bResolutionChanged);
+        void UpdateIBLDirty(FFrameData& Frame);
 
         FIBLBakeResolution                      AppliedIBLResolution           = {};
         FIBLBakeResolution                      LastExtractedIBLResolution     = {};
@@ -1511,26 +1603,68 @@ namespace Lumina
         uint32                                  LastSeenRebakeRequest = 0;
         uint32                                  AlwaysProbeCursor = 0;
 
-        // Addresses of this frame's uploaded spline arrays. Splines are extracted only for components with
-        // bSendToGPU, so a world that authors splines purely as data uploads nothing.
+        // Splines are extracted only for components with bSendToGPU, so a world that authors splines purely as data uploads nothing.
         RHI::TGPUSpan<FGPUSpline>               SplineBufferSpan;
         RHI::TGPUSpan<FGPUSplinePoint>          SplinePointBufferSpan;
         RHI::TGPUSpan<FGPUSplineSample>         SplineSampleBufferSpan;
         uint32                                  NumActiveSplines       = 0;
 
-        void ExtractSplines(ECS::FRegistry& Registry, FFrameData& Frame);
+        // The pool write epoch an incremental extract last acted on; see PoolMayHaveChanged.
+        struct FPoolWatch
+        {
+            uint64 Epoch = ~0ull;
+        };
+
+        // A spline's upload as of the inputs hashed into Key, rebuilt only when that key moves.
+        struct FSplineExtractCache
+        {
+            uint64                   Key = 0;
+            uint64                   DataKey = 0;
+            uint32                   SeenSerial = 0;
+            bool                     bValid = false;
+            FGPUSpline               Header = {};
+            TVector<FGPUSplinePoint> Points;
+            TVector<FGPUSplineSample> Samples;
+        };
+
+        struct FProbeSortEntry
+        {
+            int32                   Priority = 0;
+            FGPUReflectionProbe     Gpu = {};
+            FReflectionProbeCapture Capture = {};
+        };
+
+        struct FProbeExtractCache
+        {
+            uint64          Key = 0;
+            uint32          SeenSerial = 0;
+            bool            bValid = false;
+            FProbeSortEntry Entry;
+        };
+
+        ECS::TEntityMap<FSplineExtractCache>    SplineCache;
+        TVector<FSplineSample>                  SplineSampleScratch;
+        FPoolWatch                              SplinePoolWatch;
+        ECS::TEntityMap<FProbeExtractCache>     ProbeCache;
+        TVector<FProbeSortEntry>                ProbeSortScratch;
+        // Last extract's probe walk, so an unchanged set skips the sort and the bake diff.
+        TVector<ECS::FEntity>                   ProbeOrder;
+
+        void ScheduleSplineExtract(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractSplines(FFrameData& Frame, const auto& SplineView, bool bDataMayHaveChanged);
+        void BuildSplineCache(FSplineExtractCache& Cache, ECS::FEntity Entity, const SSplineComponent& Spline, const FMatrix4& LocalToWorld);
 
         void InitReflectionProbeTargets();
         void SyncProbeCaptureCube(uint32 FaceSize);
         void SyncCascadeAtlas(int32 CascadeCount);
         void ExtractReflectionProbes(ECS::FRegistry& Registry, FFrameData& Frame);
+        bool GatherReflectionProbes(ECS::FRegistry& Registry);
+        static FProbeSortEntry MakeProbeSortEntry(const SReflectionProbeComponent& Probe, const FMatrix4& WorldMatrix);
+        void DiffReflectionProbesAgainstBake(FFrameData& Frame);
         void ScheduleReflectionProbeBake(FFrameData& Frame);
         // Renders the six faces, copies each into the scratch cube, prefilters into the probe's slice.
         void ReflectionProbeBakePass(RHI::FCmdListH CL);
         
-        FEnvironmentParams                      LastUploadedEnvironmentParams = {};
-        bool                                    bEnvironmentParamsUploaded    = false;
-
         // Off unless the pass filling the volume dispatched, so the composite cannot read a stale one.
         struct FAtmosphereTerms
         {
@@ -1565,7 +1699,8 @@ namespace Lumina
             uint32          GatherWords = 0;
         };
         TVector<FDeferredStageFill>                                     DeferredStageFills;
-        FTaskHandle                                                     DeferredStageFillTask;
+        Jobs::FTaskEvent                                                DeferredStageFillsDone;
+        bool                                                            bDeferredStageFillsRunning = false;
         std::atomic<uint32>                                             DeferredFillCursor{0};
         bool                                                            bDeferredUploadsQueued = false;
         bool                                                            bDeferredGatherQueued  = false;
@@ -1576,9 +1711,7 @@ namespace Lumina
         uint64 BuildViewSceneRoot(FSceneView& View);
         void   EnsureClusterLightMaskCapacity(FSceneView& View);
 
-        /** Texture-streaming feedback (see RequestTextureResolution in SceneGlobals.slang). One uint per
-         *  bindless slot, OR-accumulated by the material lanes over STREAMING_FEEDBACK_WINDOW frames, then
-         *  copied to a readback slot and zeroed. Read kFramesInFlight later, once the copy has landed. */
+        // OR-accumulated by the material lanes over STREAMING_FEEDBACK_WINDOW frames, then copied to a readback slot; read kFramesInFlight later.
         void EnsureStreamingFeedbackBuffer();
         void CollectStreamingFeedback(RHI::FCmdListH CL);
         void PublishStreamingFeedback();
@@ -1648,7 +1781,8 @@ namespace Lumina
         bool                          bDistanceFieldBlocksDirty = true;
         TVector<FUIntVector2>         GPUWrittenSlotRanges;
         bool                          bInstanceBlockBoundsValid = false;
-        FTaskHandle                   InstanceBlockBoundsTask;
+        Jobs::FTaskEvent              InstanceBlockBoundsDone;
+        bool                          bBlockBoundsRunning = false;
         std::atomic<bool>             bBlockDFChanged{ false };
         bool                          bBlockBoundsLaunched   = false;
         bool                          bBlockBoundsRebuildAll = false;
@@ -1666,6 +1800,7 @@ namespace Lumina
         // Snapshots taken before each frame's incremental uploads land, so motion vectors have a past.
         RHI::FGPUAllocation                                        PrevRetainedTransformBuffer;
         bool                                                bPrevMotionStateValid = false;
+        TVector<FUIntVector2>                               MotionGrassRangeScratch;
         void SnapshotMotionState(RHI::FCmdListH CL);
         FSceneBuffer SkinnedFrameDataBuffer { "Skinning.FrameData", 1.25f };
         FSceneBuffer SkinnedSlotListBuffer { "Skinning.SlotList", 1.5f };
@@ -1689,22 +1824,28 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight> VisibleInstanceRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.VisibleInstances", kSceneBufferGrowth);
 
 
-        // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
-        // CullInstances never claims and therefore never writes a range for.
+        // CPU-fed head of the visible buffer, which CullInstances never claims and so never writes a range for.
 
         RHI::FGPUAllocation GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
 
 
-        // Sends only the arena slices this frame's gather wrote, coalesced. Must run before anything reads
-        // Bones() -- the skinning dispatch and the in-draw skinning fallback both do.
+        // Must run before anything reads Bones(): the skinning dispatch and the in-draw skinning fallback both do.
         void UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame);
 
-        // Ships the per-frame half of every gathered skinned slot's payload, plus the compact slot list the
-        // skinning passes iterate. Must run before CullInstances and before the skinning dispatch.
+        // Must run before CullInstances and before the skinning dispatch.
         void UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame);
         void SkinnedMeshletBoundsPass(RHI::FCmdListH CL, const FFrameData& Frame);
+        // Slots whose list and frame data reached the GPU this frame, zero when either buffer failed to grow.
+        uint32 SkinnedSlotsUploaded = 0;
 
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
+        bool UploadRetainedInstances(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
+        void WriteRetainedInstances(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
+        void UploadSurfaceDescs(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
+        void DispatchCullInstances(RHI::FCmdListH CL, const FFrameData& Frame, FShaderH CullInstancesShader);
+        void DispatchDrawPrefix(RHI::FCmdListH CL, const FFrameData& Frame, FShaderH DrawPrefixShader);
+        // False when the bucket list could not grow to every view and batch, which skips the frame's meshlet draws.
+        bool bCullBucketsValid = false;
 
         void PublishRetainedUpload();
 
@@ -1760,6 +1901,9 @@ namespace Lumina
         FIntVector2                                         WeatherFieldOriginTexel    = FIntVector2(0);
         uint32                                              WeatherFieldResolution     = 0;
         float                                               WeatherFieldTexelWorld     = 0.0f;
+
+        static constexpr uint32 kWeatherRainSplashCapacity   = 8192u;
+        static constexpr uint32 kWeatherImpactSplashCapacity = 512u;
 
         void PublishWeatherGlobals(FSceneGlobalData& Globals);
         void WeatherOcclusionPass(RHI::FCmdListH CL);
@@ -1861,8 +2005,7 @@ namespace Lumina
         
         THashMap<ECS::FEntity, FTerrainGPUState> TerrainGPUStates;
 
-        // One scatter target per (terrain, species slot). Keyed by entity; the vector is indexed by the
-        // species' position in the extract, which is stable for a given compiled material.
+        // One scatter cursor per (terrain, species position); each records the block it last scattered into, so a reshuffle retires stale blades.
         THashMap<ECS::FEntity, TVector<FGrassGPUState>> GrassGPUStates;
 
         // One per species scattered this frame, drained by the batched retire that follows the scatters.
@@ -1876,6 +2019,7 @@ namespace Lumina
         };
         TVector<FGrassRetireItem>                       GrassRetireScratch;
         uint32                                          GrassCursorCursor = 0;
+        FName                                           LastMissingMeshletDrawBuffer;
         
         THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
 
@@ -1953,6 +2097,7 @@ namespace Lumina
         TVector<FParticleDraw>                            ParticleDraws;
         TVector<uint8>                                    ParticleDrawConstants;
         TVector<uint8>                                    ParticleDrawArgSources;
+        TVector<uint32>                                   ParticleShadowVertexCounts;
         // Every particle draw's indirect arguments back to back, gathered on the GPU each frame.
         RHI::FGPUAllocation                               ParticleDrawArgsArena = {};
         uint32                                            ParticleDrawArgsArenaSlots = 0;
@@ -1960,6 +2105,16 @@ namespace Lumina
         TVector<FParticleSimStep>                         ParticleBatchedSteps;
         TVector<FParticleSimStep>                         ParticleSerialSteps;
         void RecordParticleSimSteps(RHI::FCmdListH CL);
+        struct FParticleSimFrame;
+        struct FParticleEmitterSim;
+        void PruneParticleStates();
+        void PrepareParticleSimFrame(FParticleSimFrame& Sim);
+        FParticleGPUState* AcquireParticleEmitterState(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleSimFrame& Sim);
+        RHI::FPipelineH ResolveParticleSimPipeline(const FFrameData::FParticleExtract& Item, FParticleSimFrame& Sim);
+        void SimulateParticleEmitter(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleSimFrame& Sim);
+        void PlanParticleSimStep(FParticleEmitterSim& E, FParticleSimFrame& Sim, uint32 StepIndex);
+        void QueueParticleEmitterOutputs(FParticleEmitterSim& E, FParticleSimFrame& Sim);
+        THashSet<ECS::FEntity>                            ParticleLiveScratch;
 
         FScenePrimitiveSet                      ScenePrimitives;
         TVector<ECS::FEntity>                   MovedTransformScratch;
@@ -1975,6 +2130,9 @@ namespace Lumina
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
         // Shader handle -> its dense bin, so binning stays linear in the visible material count.
         THashMap<uint64, uint32>                BinnedDeferredSlotLookup;
+        bool                                    bWarnedDeferredBinExtent = false;
+        bool                                    bWarnedDeferredSlotCap   = false;
+        double                                  LastDeferredSlotCapToast = -1.0e9;
 
         struct FMaterialClassifyLayout
         {
@@ -1999,9 +2157,7 @@ namespace Lumina
             uint32 ScatterArgsOffset  = 0;
             uint32 BlockSize          = 0;
         };
-        // Derived once by VisBufferClassifyPass and read by the material and lighting passes. Zeroed at
-        // the top of the classify pass before any early return, so a bail-out frame cannot leave the
-        // later passes dispatching against a stale slot table.
+        // Zeroed at the top of the classify pass before any early return, so a bail-out frame cannot leave later passes on a stale slot table.
         FMaterialClassifyLayout                 MaterialClassifyLayout;
 
         bool BuildDeferredMaterialBinning(RHI::FCmdListH CL);
@@ -2014,6 +2170,99 @@ namespace Lumina
 
         struct FDecalSortEntry { CMaterial* ShaderOwner; int32 SortOrder; FGPUDecal Gpu; };
         TVector<FDecalSortEntry>                DecalSortScratch;
+
+        struct FDecalMaterialState
+        {
+            CMaterial* ShaderOwner   = nullptr;
+            int32      MaterialIndex = -1;
+            bool       bUsable       = false;
+        };
+        // Reset every extract, so a material resolves once per frame however many decals share it.
+        TVector<FDecalMaterialState>            DecalMaterialStates;
+        THashMap<CMaterialInterface*, int32>    DecalMaterialLookup;
+
+        struct FDecalExtractCache
+        {
+            uint64   Key = 0;
+            uint32   SeenSerial = 0;
+            bool     bValid = false;
+            FMatrix4 DecalToWorld = FMatrix4(1.0f);
+            FMatrix4 WorldToDecal = FMatrix4(1.0f);
+        };
+        ECS::TEntityMap<FDecalExtractCache>     DecalCache;
+        FPoolWatch                              TextPoolWatch;
+        ECS::TEntityMap<FTextRenderCache>       TextCache;
+
+        FDecalMaterialState FindOrResolveDecalMaterial(CMaterialInterface* Material);
+
+        // What one emitter of an asset contributes whatever the instance, worked out once per asset per extract.
+        struct FParticleEmitterStatics
+        {
+            CParticleEmitter* Emitter            = nullptr;
+            int32             EmitterIndex       = 0;
+            int32             SourceEmitterIndex = -1;
+            uint32            RaisedEventMask    = 0u;
+            float             RaisedEventRate    = 0.0f;
+            uint32            MeshletHeaderSlot  = 0u;
+            uint32            MeshletCount       = 0u;
+            uint32            EmissionMeshSlot   = 0u;
+            uint32            TextureIndex       = 0u;
+            uint32            GridTargetSlot     = RHI::kInvalidHeapSlot;
+            FUIntVector2      GridTargetExtent   = FUIntVector2(0u);
+            bool              bReady             = false;
+        };
+
+        // A run of enabled emitters in ParticleEmitterStatics, and the asset's full emitter count.
+        struct FParticleAssetStatics
+        {
+            int32 FirstEmitter = 0;
+            int32 NumEmitters  = 0;
+            int32 EmitterCount = 0;
+        };
+
+        struct FParticleMaterialStatics
+        {
+            FShaderH   VertexShader = {};
+            FShaderH   PixelShader  = {};
+            int32      MaterialIndex = -1;
+            EBlendMode BlendMode     = EBlendMode::Translucent;
+            bool       bWritesDepth  = false;
+            bool       bResolved     = false;
+        };
+
+        // One system this extract fills, owning the items from FirstItem for its asset's enabled emitters.
+        struct FParticleSystemWork
+        {
+            ECS::FEntity              Entity;
+            SParticleSystemComponent* Component = nullptr;
+            int32                     Asset     = -1;
+            int32                     FirstItem = 0;
+        };
+
+        TVector<FParticleEmitterStatics>        ParticleEmitterStatics;
+        TVector<FParticleAssetStatics>          ParticleAssetStatics;
+        THashMap<const CParticleSystem*, int32> ParticleAssetLookup;
+        TVector<FParticleMaterialStatics>       ParticleMaterialStatics;
+        THashMap<CMaterialInterface*, int32>    ParticleMaterialLookup;
+        // Per particle item, its slot in ParticleMaterialStatics or -1.
+        TVector<int32>                          ParticleItemMaterials;
+        TVector<FParticleSystemWork>            ParticleSystemWork;
+
+        int32 PrepareParticleSystems(const auto& ParticleView);
+        int32 FindOrBuildParticleAssetStatics(CParticleSystem* PS);
+        int32 FindOrResolveParticleMaterial(CMaterialInterface* Candidate);
+        void  FillParticleSystemExtracts(FFrameData& Frame, const FParticleSystemWork& Work, const FMatrix4& WorldMatrix);
+        void  FillParticleExtract(FFrameData::FParticleExtract& Item, const FParticleEmitterStatics& Statics, const SParticleSystemComponent& Component, int32 MaterialSlot) const;
+        void  WriteBackParticleComponents();
+
+        // The dense entities the live lists were last built from, so an unchanged pool rebuilds nothing.
+        TVector<ECS::FEntity>                   TerrainDenseSnapshot;
+        TVector<ECS::FEntity>                   ParticleDenseSnapshot;
+        void RefreshLiveEntities(TSpan<const ECS::FEntity> DenseSlots, TVector<ECS::FEntity>& Live, TVector<ECS::FEntity>& DenseSnapshot);
+
+        // Stamped on cache entries each extract, so the sweep finds the ones nobody visited.
+        uint32                                  ExtractSerial = 0;
+        static bool PoolMayHaveChanged(const ECS::FRegistry& Registry, ECS::FComponentTypeID TypeID, FPoolWatch& Watch);
 
         // Sorted before batching so alpha blending composites back to front.
         struct FSpriteSortEntry
@@ -2048,9 +2297,8 @@ namespace Lumina
         struct FLineChunk { const FLineBatcherComponent::FLineInstance* Data; uint32 Count; };
         TVector<FLineChunk>                     LineChunkScratch;
 
-        FTaskGraph                              DrawTaskGraph;   // mesh gather critical path; dispatched first
-        FTaskGraph                              EmitTaskGraph;   // lights/primitives/extract emitters; built while DrawTaskGraph runs
-        FTaskGraph                              DedupTaskGraph;  // nested inside MergeMeshDrawData
+        Jobs::FLatch                            ExtractLatch{0};
+        Jobs::FTaskEvent                        LightsReady;
 
         FFrameData                              FrameData;
 
@@ -2069,7 +2317,8 @@ namespace Lumina
         uint32                                  PrimarySizeStableFrames = 0;
 
 #if USING(WITH_EDITOR)
-        static constexpr uint32                 PickerReadbackRingSize = RHI::kFramesInFlight + 1;
+        // One past the frames in flight plus one, so the newest landed copy is never the one this frame rewrites.
+        static constexpr uint32                 PickerReadbackRingSize = RHI::kFramesInFlight + 2;
         static constexpr uint32                 PickerRegionExtent = 64;
         struct FPickerReadbackSlot
         {
@@ -2088,12 +2337,14 @@ namespace Lumina
             uint32              Height = 0;
             uint64              SubmittedFrame = 0;
             bool                bPending = false;
+            bool                bHasDepth = false;
         };
         mutable TArray<FPickerReadbackSlot,     PickerReadbackRingSize> PickerReadbackRing;
         uint64                                  PickerReadbackFrame = 0;
         uint32                                  PickerReadbackWriteIndex = 0;
 
         TAtomic<uint64>                         PickerCursorPacked = 0;
+        uint64                                  PickerCursorThisFrame = 0;
 
         // Requests bump the serial on the game thread, and the render thread copies once per serial it has not served.
         FPickerReadbackSlot                     SurfaceSnapshot;

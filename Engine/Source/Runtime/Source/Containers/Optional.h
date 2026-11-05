@@ -38,6 +38,10 @@ namespace Lumina::Containers
             bool bEngaged = false;
 
             constexpr TOptionalStorage() noexcept : Empty() {}
+
+            template <typename... TArgs>
+            constexpr explicit TOptionalStorage(FInPlace, TArgs&&... Args) : Value(std::forward<TArgs>(Args)...), bEngaged(true) {}
+
             ~TOptionalStorage()
             {
                 if (bEngaged)
@@ -63,6 +67,11 @@ namespace Lumina::Containers
             bool bEngaged = false;
 
             constexpr TOptionalStorage() noexcept : Empty() {}
+
+            // Value and flag built together, so the compiler can write them as one store a later whole-object copy reads back.
+            template <typename... TArgs>
+            constexpr explicit TOptionalStorage(FInPlace, TArgs&&... Args) : Value(std::forward<TArgs>(Args)...), bEngaged(true) {}
+
             ~TOptionalStorage() = default;
         };
     }
@@ -73,7 +82,10 @@ namespace Lumina::Containers
     class TOptional : private Private::TOptionalStorage<T>
     {
         using FStorage = Private::TOptionalStorage<T>;
-    
+
+        // Trivially copyable with such a T, so a moved-from one keeps its value as std::optional's does; any other T leaves it unset.
+        static constexpr bool bTrivial = std::is_trivially_copyable_v<T>;
+
     public:
 
         using value_type = T;
@@ -87,19 +99,25 @@ namespace Lumina::Containers
                && !std::is_same_v<std::remove_cvref_t<U>, FNullOpt>
                && !std::is_same_v<std::remove_cvref_t<U>, FInPlace>)
         constexpr TOptional(U&& Value)
+            : FStorage(InPlace, std::forward<U>(Value))
         {
-            Construct(std::forward<U>(Value));
         }
 
         template <typename... TArgs>
         requires std::is_constructible_v<T, TArgs...>
         constexpr explicit TOptional(FInPlace, TArgs&&... Args)
+            : FStorage(InPlace, std::forward<TArgs>(Args)...)
         {
-            Construct(std::forward<TArgs>(Args)...);
         }
 
         ~TOptional() = default;
-        TOptional(const TOptional& Other)
+
+        TOptional(const TOptional&) requires bTrivial = default;
+        TOptional(TOptional&&) requires bTrivial = default;
+        TOptional& operator=(const TOptional&) requires bTrivial = default;
+        TOptional& operator=(TOptional&&) requires bTrivial = default;
+
+        constexpr TOptional(const TOptional& Other) requires (!bTrivial)
         {
             if (Other.bEngaged)
             {
@@ -107,149 +125,127 @@ namespace Lumina::Containers
             }
         }
 
-        TOptional(TOptional&& Other) noexcept(std::is_nothrow_move_constructible_v<T>)
+        constexpr TOptional(TOptional&& Other) noexcept(std::is_nothrow_move_constructible_v<T>) requires (!bTrivial)
         {
             if (Other.bEngaged)
             {
                 Construct(std::move(Other.Value));
-                Other.reset();
+                Other.Reset();
             }
         }
 
-        TOptional& operator=(FNullOpt) noexcept
-        {
-            reset();
-            return *this;
-        }
-
-        TOptional& operator=(const TOptional& Other)
+        constexpr TOptional& operator=(const TOptional& Other) requires (!bTrivial)
         {
             if (this != &Other)
             {
-                Assign(Other);
+                if (Other.bEngaged)
+                {
+                    AssignValue(Other.Value);
+                }
+                else
+                {
+                    Reset();
+                }
             }
             return *this;
         }
 
-        TOptional& operator=(TOptional&& Other) noexcept(std::is_nothrow_move_constructible_v<T>)
+        constexpr TOptional& operator=(TOptional&& Other)
+            noexcept(std::is_nothrow_move_constructible_v<T> && std::is_nothrow_move_assignable_v<T>) requires (!bTrivial)
         {
             if (this != &Other)
             {
                 if (Other.bEngaged)
                 {
                     AssignValue(std::move(Other.Value));
-                    Other.reset();
+                    Other.Reset();
                 }
                 else
                 {
-                    reset();
+                    Reset();
                 }
             }
+            return *this;
+        }
+
+        constexpr TOptional& operator=(FNullOpt) noexcept
+        {
+            Reset();
             return *this;
         }
 
         template <typename U = T>
         requires (std::is_constructible_v<T, U&&> && !std::is_same_v<std::remove_cvref_t<U>, TOptional>)
-        TOptional& operator=(U&& Value)
+        constexpr TOptional& operator=(U&& Value)
         {
             AssignValue(std::forward<U>(Value));
             return *this;
         }
 
-        NODISCARD FORCEINLINE constexpr bool has_value() const noexcept { return this->bEngaged; }
         NODISCARD FORCEINLINE constexpr bool IsSet() const noexcept { return this->bEngaged; }
         NODISCARD FORCEINLINE constexpr explicit operator bool() const noexcept { return this->bEngaged; }
 
-        NODISCARD FORCEINLINE constexpr T& value() & noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE constexpr auto&& GetValue(this TSelf&& Self) noexcept
         {
-            LUMINA_CONTAINER_CHECK(this->bEngaged);
-            return this->Value;
+            LUMINA_CONTAINER_CHECK(Self.bEngaged);
+            return std::forward_like<TSelf>(Self.Value);
         }
 
-        NODISCARD FORCEINLINE constexpr const T& value() const& noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE constexpr auto&& operator*(this TSelf&& Self) noexcept
         {
-            LUMINA_CONTAINER_CHECK(this->bEngaged);
-            return this->Value;
+            return std::forward<TSelf>(Self).GetValue();
         }
 
-        NODISCARD FORCEINLINE constexpr T&& value() && noexcept
+        /** The value when set, else Fallback. */
+        template <typename TSelf, typename U>
+        NODISCARD constexpr T Get(this TSelf&& Self, U&& Fallback)
         {
-            LUMINA_CONTAINER_CHECK(this->bEngaged);
-            return std::move(this->Value);
+            return Self.bEngaged ? T(std::forward_like<TSelf>(Self.Value)) : static_cast<T>(std::forward<U>(Fallback));
         }
 
-        NODISCARD FORCEINLINE constexpr T& GetValue() & noexcept { return value(); }
-        NODISCARD FORCEINLINE constexpr const T& GetValue() const& noexcept { return value(); }
-
-        template <typename U>
-        NODISCARD constexpr T value_or(U&& Fallback) const&
+        template <typename TSelf>
+        NODISCARD FORCEINLINE constexpr auto* operator->(this TSelf&& Self) noexcept
         {
-            return this->bEngaged ? this->Value : static_cast<T>(std::forward<U>(Fallback));
-        }
-
-        template <typename U>
-        NODISCARD constexpr T value_or(U&& Fallback) &&
-        {
-            return this->bEngaged ? std::move(this->Value) : static_cast<T>(std::forward<U>(Fallback));
-        }
-
-        template <typename U>
-        NODISCARD FORCEINLINE constexpr T Get(U&& Fallback) const { return value_or(std::forward<U>(Fallback)); }
-
-        NODISCARD FORCEINLINE constexpr T& operator*() & noexcept { return value(); }
-        NODISCARD FORCEINLINE constexpr const T& operator*() const& noexcept { return value(); }
-        NODISCARD FORCEINLINE constexpr T&& operator*() && noexcept { return std::move(value()); }
-
-        NODISCARD FORCEINLINE constexpr T* operator->() noexcept
-        {
-            LUMINA_CONTAINER_CHECK(this->bEngaged);
-            return &this->Value;
-        }
-
-        NODISCARD FORCEINLINE constexpr const T* operator->() const noexcept
-        {
-            LUMINA_CONTAINER_CHECK(this->bEngaged);
-            return &this->Value;
+            LUMINA_CONTAINER_CHECK(Self.bEngaged);
+            return &Self.Value;
         }
 
         template <typename... TArgs>
-        T& emplace(TArgs&&... Args)
+        constexpr T& Emplace(TArgs&&... Args)
         {
-            reset();
+            Reset();
             Construct(std::forward<TArgs>(Args)...);
             return this->Value;
         }
 
-        template <typename... TArgs>
-        FORCEINLINE T& Emplace(TArgs&&... Args) { return emplace(std::forward<TArgs>(Args)...); }
-
-        void reset() noexcept
+        constexpr void Reset() noexcept
         {
             if (this->bEngaged)
             {
-                this->Value.~T();
+                Memory::DestroyAt(&this->Value);
                 this->bEngaged = false;
             }
         }
 
-        FORCEINLINE void Reset() noexcept { reset(); }
-
-        void swap(TOptional& Other) noexcept(std::is_nothrow_move_constructible_v<T>)
+        friend constexpr void swap(TOptional& Left, TOptional& Right)
+            noexcept(std::is_nothrow_move_constructible_v<T> && std::is_nothrow_swappable_v<T>)
         {
-            if (this->bEngaged && Other.bEngaged)
+            if (Left.bEngaged && Right.bEngaged)
             {
                 using std::swap;
-                swap(this->Value, Other.Value);
+                swap(Left.Value, Right.Value);
             }
-            else if (this->bEngaged)
+            else if (Left.bEngaged)
             {
-                Other.Construct(std::move(this->Value));
-                reset();
+                Right.Construct(std::move(Left.Value));
+                Left.Reset();
             }
-            else if (Other.bEngaged)
+            else if (Right.bEngaged)
             {
-                Construct(std::move(Other.Value));
-                Other.reset();
+                Left.Construct(std::move(Right.Value));
+                Right.Reset();
             }
         }
 
@@ -272,26 +268,14 @@ namespace Lumina::Containers
     private:
 
         template <typename... TArgs>
-        void Construct(TArgs&&... Args)
+        constexpr void Construct(TArgs&&... Args)
         {
             Memory::ConstructAt(&this->Value, std::forward<TArgs>(Args)...);
             this->bEngaged = true;
         }
 
-        void Assign(const TOptional& Other)
-        {
-            if (Other.bEngaged)
-            {
-                AssignValue(Other.Value);
-            }
-            else
-            {
-                reset();
-            }
-        }
-
         template <typename U>
-        void AssignValue(U&& NewValue)
+        constexpr void AssignValue(U&& NewValue)
         {
             if (this->bEngaged)
             {
@@ -318,10 +302,13 @@ namespace Lumina::Containers
     {
         return TOptional<T>(InPlace, std::forward<TArgs>(Args)...);
     }
+}
 
+namespace Lumina
+{
     template <typename T>
-    FORCEINLINE void swap(TOptional<T>& Left, TOptional<T>& Right) noexcept(noexcept(Left.swap(Right)))
+    struct TIsTriviallyRelocatable<Containers::TOptional<T>>
     {
-        Left.swap(Right);
-    }
+        static constexpr bool Value = TIsTriviallyRelocatable_V<T>;
+    };
 }

@@ -69,7 +69,7 @@ namespace
         {
             Sound.Post(Request);
         }
-        Pending.clear();
+        Pending.Reset();
 
         const FRunState& Run = Game.GetRun();
         Sound.SetMusic(true, MusicIntensityFor(Run, Game.IsPaused()), int32(Run.Elapsed / 45.0f));
@@ -131,7 +131,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("Umbral Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
@@ -176,7 +176,7 @@ int main(int ArgC, char** ArgV)
     GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     return bReady ? 0 : 1;

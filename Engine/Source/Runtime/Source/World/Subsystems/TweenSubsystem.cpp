@@ -35,24 +35,44 @@ namespace Lumina
         }
     }
 
-    void CTweenSubsystem::OnInitialize()
+    FTweenManager* CTweenSubsystem::EnsureTweenManager() const
     {
-        TweenManager.SetWorldRegistry(&GetWorld()->GetEntityRegistry());
+        if (GetWorld() == nullptr)
+        {
+            return nullptr;
+        }
+        ECS::FRegistry& Registry = GetWorld()->GetEntityRegistry();
+        FTweenManager& TweenManager = Registry.Ctx().GetOrEmplace<FTweenManager>();
+        TweenManager.SetWorldRegistry(&Registry);
+        return &TweenManager;
     }
 
     void CTweenSubsystem::OnTeardown()
     {
-        TweenManager.Clear();
+        if (GetWorld() == nullptr)
+        {
+            return;
+        }
+        if (FTweenManager* TweenManager = GetWorld()->GetEntityRegistry().Ctx().Find<FTweenManager>())
+        {
+            TweenManager->Clear();
+        }
     }
 
     FTween CTweenSubsystem::Resolve(uint32 Tween)
     {
-        return FTween(&TweenManager, FTweenHandle{ ECS::FEntity::FromPacked(Tween) });
+        FTweenManager* TweenManager = EnsureTweenManager();
+        return FTween(TweenManager, FTweenHandle{ ECS::FEntity::FromPacked(Tween) });
     }
 
     uint32 CTweenSubsystem::CreateId(ECS::FEntity Owner)
     {
-        const FTween Tween = Owner != ECS::NullEntity ? TweenManager.CreateForEntity(Owner) : TweenManager.Create();
+        FTweenManager* TweenManager = EnsureTweenManager();
+        if (TweenManager == nullptr)
+        {
+            return (uint32)ECS::NullEntity;
+        }
+        const FTween Tween = Owner != ECS::NullEntity ? TweenManager->CreateForEntity(Owner) : TweenManager->Create();
         return (uint32)Tween.GetHandle().Handle;
     }
 

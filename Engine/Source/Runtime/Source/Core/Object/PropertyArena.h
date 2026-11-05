@@ -43,7 +43,7 @@ namespace Lumina
         {
             void* Storage = Allocate(sizeof(T), alignof(T));
             T* Property = Memory::ConstructAt(static_cast<T*>(Storage), std::forward<TArgs>(Args)...);
-            Owned.push_back(Property);
+            Owned.Add(Property);
             return Property;
         }
 
@@ -66,9 +66,9 @@ namespace Lumina
 
         RUNTIME_API void Reset();
 
-        NODISCARD bool IsEmpty() const { return Owned.empty(); }
+        NODISCARD bool IsEmpty() const { return Owned.IsEmpty(); }
 
-        NODISCARD size_t Num() const { return Owned.size(); }
+        NODISCARD int32 Num() const { return Owned.Num(); }
 
     private:
 

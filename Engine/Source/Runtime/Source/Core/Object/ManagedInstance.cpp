@@ -89,7 +89,7 @@ namespace Lumina
                 FScopeLock Lock(Mutex);
 
                 const int32 Slot = Object->ManagedInstanceSlot;
-                if (!IsValidSlot(Slot) || Slot >= (int32)ScriptTwin.size() || !ScriptTwin[Slot])
+                if (!IsValidSlot(Slot) || Slot >= ScriptTwin.Num() || !ScriptTwin[Slot])
                 {
                     return nullptr;
                 }
@@ -143,7 +143,7 @@ namespace Lumina
             FScopeLock Lock(Mutex);
 
             const int32 Slot = Object->ManagedInstanceSlot;
-            return IsValidSlot(Slot) && Slot < (int32)ScriptTwin.size() && ScriptTwin[Slot];
+            return IsValidSlot(Slot) && Slot < ScriptTwin.Num() && ScriptTwin[Slot];
         }
 
         void Set(CObjectBase* Object, void* Handle, bool bScriptTwin)
@@ -232,7 +232,7 @@ namespace Lumina
                 ScriptTwin[Slot] = false;
                 WeakTwin[Slot] = false;
                 Owners[Slot] = nullptr;
-                FreeSlots.push_back(Slot);
+                FreeSlots.Add(Slot);
                 --LiveCount;
             }
 
@@ -247,11 +247,11 @@ namespace Lumina
             {
                 FScopeLock Lock(Mutex);
 
-                Released.reserve(Slots.size());
+                Released.Reserve(Slots.Num());
                 HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
 
                 // Cleared through the back-reference list, so a later Find sees Constants::kIndexNone, not a recycled slot.
-                for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
+                for (int32 Slot = 0; Slot < Slots.Num(); ++Slot)
                 {
                     if (Owners[Slot] != nullptr)
                     {
@@ -260,19 +260,15 @@ namespace Lumina
                     }
                     if (Slots[Slot] != nullptr)
                     {
-                        Released.push_back(Slots[Slot]);
-                        Slots[Slot] = nullptr;
+                        Released.Add(Slots[Slot]);
                     }
-                    ScriptTwin[Slot] = false;
-                    WeakTwin[Slot] = false;
                 }
 
-                FreeSlots.clear();
-                FreeSlots.reserve(Slots.size());
-                for (int32 Slot = (int32)Slots.size() - 1; Slot >= 0; --Slot)
-                {
-                    FreeSlots.push_back(Slot);
-                }
+                Slots.Reset();
+                ScriptTwin.Reset();
+                WeakTwin.Reset();
+                Owners.Reset();
+                FreeSlots.Reset();
                 LiveCount = 0;
             }
 
@@ -283,13 +279,13 @@ namespace Lumina
         }
 
         int32 GetLiveCount() const { FScopeLock Lock(Mutex); return LiveCount; }
-        int32 GetSlotCapacity() const { FScopeLock Lock(Mutex); return (int32)Slots.size(); }
+        int32 GetSlotCapacity() const { FScopeLock Lock(Mutex); return Slots.Num(); }
 
     private:
 
         bool IsValidSlot(int32 Slot) const
         {
-            return Slot >= 0 && (size_t)Slot < Slots.size();
+            return Slot >= 0 && (size_t)Slot < static_cast<size_t>(Slots.Num());
         }
 
         void NoteMutation()
@@ -312,24 +308,24 @@ namespace Lumina
             LOG_ERROR("ManagedInstances::{}: object {} carries slot {}, but the table has {} slots. "
                       "Object InternalIndex {}, flags {}. Caller on main thread: {}. Off-main-thread table "
                       "mutations so far: {}.",
-                Site, (const void*)Object, Slot, (int32)Slots.size(), Object->GetInternalIndex(),
+                Site, (const void*)Object, Slot, Slots.Num(), Object->GetInternalIndex(),
                 (uint32)Object->GetFlags(), Threading::IsMainThread(),
                 OffMainThreadMutations.load(std::memory_order_relaxed));
         }
 
         int32 AcquireSlot()
         {
-            if (!FreeSlots.empty())
+            if (!FreeSlots.IsEmpty())
             {
-                const int32 Slot = FreeSlots.back();
-                FreeSlots.pop_back();
+                const int32 Slot = FreeSlots.Last();
+                FreeSlots.Pop();
                 return Slot;
             }
-            Slots.push_back(nullptr);
-            ScriptTwin.push_back(false);
-            WeakTwin.push_back(false);
-            Owners.push_back(nullptr);
-            return (int32)Slots.size() - 1;
+            Slots.Add(nullptr);
+            ScriptTwin.Add(false);
+            WeakTwin.Add(false);
+            Owners.Add(nullptr);
+            return Slots.Num() - 1;
         }
 
         void FreeHandle(void* Handle)

@@ -1,5 +1,4 @@
 ﻿#include "RuntimePCH.h"
-#include <string>
 #include "JsonStructuredArchive.h"
 
 #include "Core/Object/Class.h"
@@ -7,8 +6,6 @@
 
 namespace Lumina
 {
-    using json = nlohmann::json;
-
     FArchive& FJsonLeafArchive::operator<<(CObject*& Value)
     {
         if (PendingNode == nullptr) { return *this; }
@@ -19,7 +16,7 @@ namespace Lumina
         }
         else
         {
-            *PendingNode = Value ? std::string(Value->GetName().c_str()) : std::string();
+            *PendingNode = Value ? FJsonValue(Value->GetName().ToString()) : FJsonValue("");
         }
         return *this;
     }
@@ -31,7 +28,7 @@ namespace Lumina
     }
 
 
-    FJsonStructuredArchive::FJsonStructuredArchive(json& InRoot, bool bLoading)
+    FJsonStructuredArchive::FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading)
         : Private::FJsonLeafHolder()
         , IStructuredArchive(Leaf)
     {
@@ -41,7 +38,7 @@ namespace Lumina
         Leaf.SetFlag(bLoading ? EArchiverFlags::Reading : EArchiverFlags::Writing);
     }
 
-    void FJsonStructuredArchive::SaveStruct(json& OutNode, const CStruct* Type, void* Data)
+    void FJsonStructuredArchive::SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data)
     {
         FJsonStructuredArchive Ar(OutNode, false);
         FArchiveSlot Root = Ar.Open();
@@ -49,7 +46,7 @@ namespace Lumina
         Type->SerializeProperties(Record, Data);
     }
 
-    void FJsonStructuredArchive::LoadStruct(json& InNode, const CStruct* Type, void* Data)
+    void FJsonStructuredArchive::LoadStruct(FJsonValue& InNode, const CStruct* Type, void* Data)
     {
         FJsonStructuredArchive Ar(InNode, true);
         FArchiveSlot Root = Ar.Open();
@@ -59,90 +56,82 @@ namespace Lumina
 
     void FJsonStructuredArchive::EnterRecord()
     {
-        json* Node = Leaf.PendingNode;
+        FJsonValue* Node = Leaf.PendingNode;
         if (IsSaving() && Node)
         {
-            *Node = json::object();
+            *Node = FJsonValue::MakeObject();
         }
-        Containers.push_back({ Node, false, 0 });
+        Containers.Emplace(Node, false, 0);
     }
 
     void FJsonStructuredArchive::LeaveRecord()
     {
-        if (!Containers.empty()) { Containers.pop_back(); }
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Record)
+        if (!Containers.IsEmpty()) { Containers.Pop(); }
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Record)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FJsonStructuredArchive::EnterField(FName FieldName)
     {
-        json* Container = CurrentContainer();
-        const std::string Key = FieldName.c_str();
+        FJsonValue* Container = CurrentContainer();
+        const FString Key = FieldName.ToString();
 
         if (IsSaving())
         {
             // CurrentContainer returns null for a null root, and this dereferenced it unconditionally.
-            Leaf.PendingNode = Container ? &(*Container)[Key] : &MissingNode;
+            Leaf.PendingNode = Container && (Container->IsObject() || Container->IsNull()) ? &Container->FindOrAdd(Key.View()) : &MissingNode;
         }
         else
         {
-            if (Container && Container->is_object())
-            {
-                auto It = Container->find(Key);
-                Leaf.PendingNode = (It != Container->end()) ? &(*It) : &MissingNode;
-            }
-            else
-            {
-                Leaf.PendingNode = &MissingNode;
-            }
+            FJsonValue* Found = Container ? Container->Find(Key.View()) : nullptr;
+            Leaf.PendingNode = Found != nullptr ? Found : &MissingNode;
         }
 
-        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.Num(), IDGenerator.Generate());
     }
 
     void FJsonStructuredArchive::EnterArray(int32& NumElements)
     {
-        json* Node = Leaf.PendingNode;
+        FJsonValue* Node = Leaf.PendingNode;
         if (IsSaving())
         {
-            if (Node) { *Node = json::array(); }
+            if (Node) { *Node = FJsonValue::MakeArray(); }
         }
         else
         {
-            NumElements = (Node && Node->is_array()) ? (int32)Node->size() : 0;
+            NumElements = (Node && Node->IsArray()) ? Node->Num() : 0;
         }
-        Containers.push_back({ Node, true, 0 });
+        Containers.Emplace(Node, true, 0);
     }
 
     void FJsonStructuredArchive::LeaveArray()
     {
-        if (!Containers.empty()) { Containers.pop_back(); }
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Array)
+        if (!Containers.IsEmpty()) { Containers.Pop(); }
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Array)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FJsonStructuredArchive::EnterArrayElement()
     {
         // Routes to the sentinel so an unbalanced Enter and Leave writes somewhere harmless.
-        if (Containers.empty())
+        if (Containers.IsEmpty())
         {
             Leaf.PendingNode = &MissingNode;
-            return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
+            return FArchiveSlot(*this, (uint32)CurrentScope.Num(), IDGenerator.Generate());
         }
 
-        FContainer& C = Containers.back();
-        json* Node = C.Node;
+        FContainer& C = Containers.Last();
+        FJsonValue* Node = C.Node;
 
         if (IsSaving())
         {
             if (Node)
             {
-                Node->push_back(json());
-                Leaf.PendingNode = &Node->back();
+                Leaf.PendingNode = &Node->Add(FJsonValue());
             }
             else
             {
@@ -152,11 +141,11 @@ namespace Lumina
         }
         else
         {
-            const size_t Index = C.ReadIndex++;
-            Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index] : &MissingNode;
+            const int32 Index = C.ReadIndex++;
+            Leaf.PendingNode = (Node && Node->IsArray() && Index < Node->Num()) ? &Node->AsArray()[Index] : &MissingNode;
         }
 
-        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.Num(), IDGenerator.Generate());
     }
 
     void FJsonStructuredArchive::EnterStream()
@@ -167,10 +156,10 @@ namespace Lumina
 
     void FJsonStructuredArchive::LeaveStream()
     {
-        if (!Containers.empty()) { Containers.pop_back(); }
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Stream)
+        if (!Containers.IsEmpty()) { Containers.Pop(); }
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Stream)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
@@ -182,60 +171,66 @@ namespace Lumina
     // No reflected property type drives this path, and it exists for interface completeness.
     void FJsonStructuredArchive::EnterMap(int32& NumElements)
     {
-        json* Node = Leaf.PendingNode;
+        FJsonValue* Node = Leaf.PendingNode;
         if (IsSaving())
         {
-            if (Node) { *Node = json::array(); }
+            if (Node) { *Node = FJsonValue::MakeArray(); }
         }
         else
         {
-            NumElements = (Node && Node->is_array()) ? (int32)Node->size() : 0;
+            NumElements = (Node && Node->IsArray()) ? Node->Num() : 0;
         }
-        Containers.push_back({ Node, true, 0 });
+        Containers.Emplace(Node, true, 0);
     }
 
     void FJsonStructuredArchive::LeaveMap()
     {
-        if (!Containers.empty()) { Containers.pop_back(); }
-        if (!CurrentScope.empty() && CurrentScope.back().Type == StructuredArchive::EElementType::Map)
+        if (!Containers.IsEmpty()) { Containers.Pop(); }
+        if (!CurrentScope.IsEmpty() && CurrentScope.Last().Type == StructuredArchive::EElementType::Map)
         {
-            CurrentScope.pop_back();
+            CurrentScope.Pop();
         }
     }
 
     FArchiveSlot FJsonStructuredArchive::EnterMapKey()
     {
-        FContainer& C = Containers.back();
-        json* Node = C.Node;
+        FContainer& C = Containers.Last();
+        FJsonValue* Node = C.Node;
         if (IsSaving())
         {
             if (Node)
             {
-                Node->push_back(json::array({ json(), json() }));
-                Leaf.PendingNode = &Node->back()[0];
+                FJsonValue& Pair = Node->Add(FJsonValue::MakeArray({ FJsonValue(), FJsonValue() }));
+                Leaf.PendingNode = &Pair.AsArray()[0];
             }
         }
         else
         {
-            const size_t Index = C.ReadIndex;
-            Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index][0] : &MissingNode;
+            const int32 Index = C.ReadIndex;
+            FJsonValue* Pair = (Node && Node->IsArray() && Index < Node->Num()) ? &Node->AsArray()[Index] : nullptr;
+            Leaf.PendingNode = Pair != nullptr && Pair->Num() > 0 && Pair->IsArray() ? &Pair->AsArray()[0] : &MissingNode;
         }
-        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.Num(), IDGenerator.Generate());
     }
 
     FArchiveSlot FJsonStructuredArchive::EnterMapValue()
     {
-        FContainer& C = Containers.back();
-        json* Node = C.Node;
+        FContainer& C = Containers.Last();
+        FJsonValue* Node = C.Node;
         if (IsSaving())
         {
-            if (Node) { Leaf.PendingNode = &Node->back()[1]; }
+            if (Node && Node->Num() > 0)
+            {
+                FJsonValue& Pair = Node->AsArray()[Node->Num() - 1];
+                Leaf.PendingNode = &Pair.AsArray()[1];
+            }
         }
         else
         {
-            const size_t Index = C.ReadIndex++;
-            Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index][1] : &MissingNode;
+            const int32 Index = C.ReadIndex++;
+            FJsonValue* Pair = (Node && Node->IsArray() && Index < Node->Num()) ? &Node->AsArray()[Index] : nullptr;
+            Leaf.PendingNode = Pair != nullptr && Pair->IsArray() && Pair->Num() > 1 ? &Pair->AsArray()[1] : &MissingNode;
         }
-        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.Num(), IDGenerator.Generate());
     }
 }

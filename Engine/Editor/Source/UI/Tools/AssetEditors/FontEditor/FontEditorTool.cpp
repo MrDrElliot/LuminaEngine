@@ -22,14 +22,14 @@ namespace Lumina
         CFont* Font = Cast<CFont>(Asset.Get());
         if (Font == nullptr || !Font->IsValid())
         {
-            PreviewFontBytes.clear();
+            PreviewFontBytes.Reset();
             return;
         }
 
         PreviewFontBytes = Font->GetFontData();
         ImFontConfig Config;
         Config.FontDataOwnedByAtlas = false;
-        PreviewFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(PreviewFontBytes.data(), (int)PreviewFontBytes.size(), 0.0f, &Config);
+        PreviewFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(PreviewFontBytes.GetData(), PreviewFontBytes.Num(), 0.0f, &Config);
     }
 
     void FFontEditorTool::OnAssetDataChangedExternally()
@@ -89,7 +89,7 @@ namespace Lumina
             }
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", FontAsset->GetName().c_str());
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", *FontAsset->GetName());
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
@@ -108,22 +108,22 @@ namespace Lumina
                     ImGui::TableSetColumnIndex(0);
                     ImGui::TextUnformatted(Label);
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(Value.c_str());
+                    ImGui::TextUnformatted(*Value);
                 };
 
-                Row("Family", FontAsset->FamilyName.empty() ? "Unknown" : FontAsset->FamilyName);
-                Row("Style", FontAsset->StyleName.empty() ? "Unknown" : FontAsset->StyleName);
+                Row("Family", FontAsset->FamilyName.IsEmpty() ? "Unknown" : FontAsset->FamilyName);
+                Row("Style", FontAsset->StyleName.IsEmpty() ? "Unknown" : FontAsset->StyleName);
                 Row("Glyphs", Format("{}", FontAsset->NumGlyphs));
                 Row("Scalable", FontAsset->bIsScalable ? "Yes" : "No");
                 Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
 
-                const size_t Bytes = FontAsset->GetFontData().size();
-                FString SizeStr = Bytes >= Constants::kMiB
+                const int32 Bytes = FontAsset->GetFontData().Num();
+                FString SizeStr = static_cast<uint64>(Bytes) >= Constants::kMiB
                     ? Format("{}", Bytes / Constants::kMiB) + " MB"
                     : Format("{}", Bytes / Constants::kKiB) + " KB";
                 Row("File Size", SizeStr);
 
-                if (!FontAsset->SourcePath.empty())
+                if (!FontAsset->SourcePath.IsEmpty())
                 {
                     Row("Source", FontAsset->SourcePath);
                 }
@@ -159,7 +159,7 @@ namespace Lumina
         ImGuiID LeftDockID = 0, RightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FontPreviewName).c_str(), LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FontDetailsName).c_str(), RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FontPreviewName), LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FontDetailsName), RightDockID);
     }
 }

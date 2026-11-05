@@ -6,12 +6,19 @@
 #include "EntitySystem.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
+#include "World/Entity/Components/PathFollowComponent.h"
+#include "World/Entity/Components/PerceptionComponent.h"
+#include "World/Entity/Components/RVOAgentComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/SystemSingletons.h"
 #include "SignificanceSystem.generated.h"
 
 namespace Lumina
 {
-    class CWorld;
-
     struct FEntitySignificance
     {
         // Stamped so a recycled entity slot never hands back the previous occupant's score.
@@ -32,8 +39,8 @@ namespace Lumina
         bool            bInView = true;
     };
 
-    // Per-world scores published into the registry context ahead of every consumer.
-    struct FSignificanceState
+    // Per-world scores published as a resource ahead of every consumer.
+    struct FSignificanceState : ECS::FResource
     {
         // Indexed by ECS::FEntity::GetIndex(), sparse, an entry whose Owner mismatches is unscored.
         TVector<FEntitySignificance> ByEntityIndex;
@@ -52,7 +59,7 @@ namespace Lumina
         NODISCARD FEntitySignificance Get(ECS::FEntity Entity) const
         {
             const uint32 Index = Entity.GetIndex();
-            if (!bEnabled || !bHasView || Index >= (uint32)ByEntityIndex.size())
+            if (!bEnabled || !bHasView || Index >= (uint32)ByEntityIndex.Num())
             {
                 return FEntitySignificance{};
             }
@@ -63,7 +70,7 @@ namespace Lumina
         }
     };
 
-    // Scores the entities whose components read significance, once per frame; the scores live in the registry context.
+    // Scores the entities whose components read significance, once per frame, into FSignificanceState.
     REFLECT()
     class RUNTIME_API SSignificanceSystem : public CEntitySystem
     {
@@ -73,17 +80,29 @@ namespace Lumina
         // Paused as well as FrameStart, since editor worlds tick only Paused.
         void Configure() override;
 
-        void OnStartup(const SSystemContext& Context) override;
+        // Every frame, since the view origin and the enabled flags are global state its readers check.
+        bool HasWork(const SSystemContext& Context) override { return true; }
+
         void OnUpdate(const SSystemContext& Context) override;
+
+    private:
+
+        ECS::TQuery<ECS::Read<SAudioSourceComponent>> AudioSourceConsumers;
+        ECS::TQuery<ECS::Read<SPathFollowComponent>> PathFollowConsumers;
+        ECS::TQuery<ECS::Read<SPerceptionComponent>> PerceptionConsumers;
+        ECS::TQuery<ECS::Read<SRVOAgentComponent>> AvoidanceConsumers;
+        ECS::TQuery<ECS::Read<STransformComponent>> Transforms;
+        ECS::TQuery<ECS::Read<SStaticMeshComponent>> StaticMeshes;
+        ECS::TQuery<ECS::Read<SSkeletalMeshComponent>> SkeletalMeshes;
+        ECS::TQuery<ECS::Read<SDynamicMeshComponent>> DynamicMeshes;
+        TRes<FResolvedSceneView> ResolvedView;
+        TResMut<FSignificanceState> State;
     };
 
     namespace Significance
     {
         // Reference radius for a meshless entity, which puts the bands at 30, 60 and 120 meters.
         inline constexpr float kDefaultRadius = 1.0f;
-
-        RUNTIME_API const FSignificanceState* GetState(const SSystemContext& Context);
-        RUNTIME_API const FSignificanceState* GetState(CWorld* World);
 
         // The one definition of the tick bands, shared with the metric SAnimationSystem gets from the gather.
         NODISCARD FORCEINLINE uint8 IntervalForDistanceOverRadius(float DistanceOverRadius)

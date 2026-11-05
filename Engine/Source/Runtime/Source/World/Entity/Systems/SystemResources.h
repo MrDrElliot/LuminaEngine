@@ -1,31 +1,99 @@
 #pragma once
 
-// Virtual "resources" a system can declare it touches, modeled as types in the same access graph as
-// real components (see FSystemAccess). Declaring one makes a system conflict with every other system
-// that touches it, so non-thread-safe shared state serializes correctly.
-namespace Lumina::SystemResource
+#include "World/ECS/Registry.h"
+#include "World/Entity/Systems/ResourceRegistry.h"
+#include "World/Entity/Systems/SystemParam.h"
+
+#include <type_traits>
+
+namespace Lumina::ECS
 {
-    struct EntityStructure {};  // does structural ECS changes (create/destroy/add/remove component)
-    struct PhysicsQuery {};     // issues physics queries against the live scene
-    struct Input {};            // mutates shared input state (layer stack, mouse/input mode)
-    struct Significance {};     // publishes the per-entity significance scores
-    struct Kinematics {};       // publishes the per-entity velocities
-    struct Timers {};           // creates, clears or ticks timers in the world's timer manager
-    struct Hierarchy {};        // walks or edits the registry's parent links
+    // A world singleton derives from this, so systems declare it like a component without it ever getting a pool.
+    struct FResource {};
+
+    template<typename T>
+    concept CResource = std::is_base_of_v<FResource, T>;
+}
+
+namespace Lumina::Meta
+{
+    // Emitted for every reflected FResource, so a script finds it by name and reaches the world's instance.
+    template<ECS::CResource T>
+    void RegisterResourceMeta()
+    {
+        ECS::FResourceTypeRegistry::Get().Register(ECS::FResourceType
+        {
+            .Struct       = T::StaticStruct(),
+            .TypeId       = static_cast<uint32>(ECS::GetComponentTypeID<T>()),
+            .GetOrEmplace = [](ECS::FRegistry& Registry) -> void* { return &Registry.Ctx().template GetOrEmplace<T>(); },
+            .Find         = [](ECS::FRegistry& Registry) -> void* { return Registry.Ctx().template Find<T>(); },
+        });
+    }
 }
 
 namespace Lumina
 {
-    // Resources are not components: they never get a registry pool, so the scheduler must not try to
-    // pre-create one for them (it would leave a permanent empty pool that no entity can ever join).
-    template<typename T>
-    inline constexpr bool TIsSystemResource = false;
+    // A system member reading the world's T, created on the main thread when the system is set up.
+    template<ECS::CResource T>
+    class TRes
+    {
+    public:
 
-    template<> inline constexpr bool TIsSystemResource<SystemResource::EntityStructure> = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::PhysicsQuery>    = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::Input>           = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::Significance>    = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::Kinematics>      = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::Timers>          = true;
-    template<> inline constexpr bool TIsSystemResource<SystemResource::Hierarchy>       = true;
+        TRes() { RegisterSystemParam(this, GetOps()); }
+
+        NODISCARD const T& Get() const { return std::as_const(*Registry).Ctx().template Get<T>(); }
+        NODISCARD const T& operator*() const { return Get(); }
+        NODISCARD const T* operator->() const { return &Get(); }
+
+    private:
+
+        ECS::FRegistry* Registry = nullptr;
+
+        static const FSystemParamOps& GetOps()
+        {
+            static const FSystemParamOps Ops
+            {
+                .Bind = [](void* Param, CWorld& World)
+                {
+                    ECS::FRegistry& Bound = GetSystemRegistry(World);
+                    Bound.Ctx().template GetOrEmplace<T>();
+                    static_cast<TRes*>(Param)->Registry = &Bound;
+                },
+                .Declare = [](const void*, FSystemAccess& Access) { DeclareParamRead(Access, static_cast<uint32>(ECS::GetComponentTypeID<T>()), false); },
+            };
+            return Ops;
+        }
+    };
+
+    // A system member writing the world's T; only one system writing it runs at a time.
+    template<ECS::CResource T>
+    class TResMut
+    {
+    public:
+
+        TResMut() { RegisterSystemParam(this, GetOps()); }
+
+        NODISCARD T& Get() const { return Registry->Ctx().template Get<T>(); }
+        NODISCARD T& operator*() const { return Get(); }
+        NODISCARD T* operator->() const { return &Get(); }
+
+    private:
+
+        ECS::FRegistry* Registry = nullptr;
+
+        static const FSystemParamOps& GetOps()
+        {
+            static const FSystemParamOps Ops
+            {
+                .Bind = [](void* Param, CWorld& World)
+                {
+                    ECS::FRegistry& Bound = GetSystemRegistry(World);
+                    Bound.Ctx().template GetOrEmplace<T>();
+                    static_cast<TResMut*>(Param)->Registry = &Bound;
+                },
+                .Declare = [](const void*, FSystemAccess& Access) { DeclareParamWrite(Access, static_cast<uint32>(ECS::GetComponentTypeID<T>()), false); },
+            };
+            return Ops;
+        }
+    };
 }

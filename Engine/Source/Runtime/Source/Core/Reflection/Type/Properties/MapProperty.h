@@ -11,10 +11,10 @@ namespace Lumina
     class LUMINA_VISIBLE_TYPE FMapProperty : public FProperty
     {
     public:
-        explicit FMapProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FMapProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            Ops = Desc.Type->GetMapOps();
+            Ops = InDesc.Type->GetMapOps();
             SetElementSize(Ops != nullptr ? Ops->ContainerSize : 0);
         }
 
@@ -46,23 +46,23 @@ namespace Lumina
         FProperty* GetKeyProperty()   const { return KeyProperty; }
         FProperty* GetValueProperty() const { return ValueProperty; }
 
-        SIZE_T GetNum(const void* InContainer) const { return Ops->Size(InContainer); }
+        int32 Num(const void* InContainer) const { return Ops->Num(InContainer); }
 
         // Insert-or-assign; InValue null => default-constructed value. Returns the stored value slot.
-        void*  Insert(void* InContainer, const void* InKey, const void* InValue) const { return Ops->Insert(InContainer, InKey, InValue); }
+        void*  Add(void* InContainer, const void* InKey, const void* InValue) const { return Ops->Add(InContainer, InKey, InValue); }
         void*  Find(void* InContainer, const void* InKey) const { return Ops->Find(InContainer, InKey); }
-        bool   RemoveByKey(void* InContainer, const void* InKey) const { return Ops->RemoveByKey(InContainer, InKey); }
-        void   Clear(void* InContainer) const { Ops->Clear(InContainer); }
-        void   Reserve(void* InContainer, size_t Count) const { Ops->Reserve(InContainer, Count); }
+        bool   Remove(void* InContainer, const void* InKey) const { return Ops->Remove(InContainer, InKey); }
+        void   Reset(void* InContainer) const { Ops->Reset(InContainer); }
+        void   Reserve(void* InContainer, int32 Number) const { Ops->Reserve(InContainer, Number); }
 
         uint32 GetKeySize()   const { return Ops->KeySize; }
 
         // Index-based access into the mutation-stable iteration order, re-resolved each call, so an editor can
         // address entries across container reallocations.
-        const void* GetKeyAt(void* InContainer, size_t Index)   const { const void* K = nullptr; Ops->At(InContainer, Index, &K, nullptr); return K; }
-        void*       GetValueAt(void* InContainer, size_t Index) const { void* V = nullptr; Ops->At(InContainer, Index, nullptr, &V); return V; }
+        const void* GetKeyAt(void* InContainer, int32 Index)   const { const void* K = nullptr; Ops->At(InContainer, Index, &K, nullptr); return K; }
+        void*       GetValueAt(void* InContainer, int32 Index) const { void* V = nullptr; Ops->At(InContainer, Index, nullptr, &V); return V; }
 
-        // Placement construct/destruct a scratch key, for building a temp key to Insert/Find with.
+        // Placement construct/destruct a scratch key, for building a temp key to Add/Find with.
         void ConstructKey(void* InContainer, void* Dst) const { Ops->ConstructKey(InContainer, Dst); }
         void DestructKey(void* InContainer, void* Dst)  const { Ops->DestructKey(InContainer, Dst); }
 

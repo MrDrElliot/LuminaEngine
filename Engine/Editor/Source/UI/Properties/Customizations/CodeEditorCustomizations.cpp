@@ -31,7 +31,7 @@ namespace Lumina
 
         bool IsFileName(FStringView Name)
         {
-            return !Name.empty() && Algo::NoneOf(Name.begin(), Name.end(), [](char C) { return C == '\0' || std::strchr("\\/:*?\"<>|", C) != nullptr; });
+            return !Name.IsEmpty() && Algo::NoneOf(Name.begin(), Name.end(), [](char C) { return C == '\0' || std::strchr("\\/:*?\"<>|", C) != nullptr; });
         }
     }
 
@@ -83,7 +83,7 @@ namespace Lumina
         }
 
         int32 Current = Constants::kIndexNone;
-        for (int32 Index = 0; Index < (int32)Themes.size(); ++Index)
+        for (int32 Index = 0; Index < Themes.Num(); ++Index)
         {
             if (Themes[Index] == DisplayValue.Name)
             {
@@ -95,17 +95,17 @@ namespace Lumina
         const float ButtonWidth = AssetPickerFilter::kButtonSize.x + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ButtonWidth);
         FFixedString Created;
-        const int32 Picked = ImGuiX::SearchableCombo("##CodeTheme", DisplayValue.Name.c_str(), (int32)Themes.size(), Current,
-            [this](int32 Index) { return FFixedString(Themes[Index].c_str()); }, LE_ICON_PALETTE, &Created);
+        const int32 Picked = ImGuiX::SearchableCombo("##CodeTheme", *DisplayValue.Name, Themes.Num(), Current,
+            [this](int32 Index) { return FFixedString(*Themes[Index]); }, LE_ICON_PALETTE, &Created);
         ImGuiX::TextTooltip("{}", "Type a name that is not listed to start a new theme from this one.");
         if (Picked != Constants::kIndexNone)
         {
             DisplayValue.Name = Themes[Picked];
             bCommitted = true;
         }
-        else if (!Created.empty())
+        else if (!Created.IsEmpty())
         {
-            const FStringView NewName(Created.c_str(), Created.size());
+            const FStringView NewName(*Created, Created.Len());
             FCodeEditorPalette Palette = FCodeEditorPalette::Dark();
             CodeEditorThemes::Load(DisplayValue.Name.View(), Palette);
             if (!IsFileName(NewName))
@@ -114,7 +114,7 @@ namespace Lumina
             }
             else if (CodeEditorThemes::Save(NewName, Palette))
             {
-                DisplayValue.Name.assign(NewName.data(), NewName.size());
+                DisplayValue.Name = FStringView(NewName.GetData(), NewName.Len());
                 NextListTime = 0.0;
                 bCommitted = true;
             }

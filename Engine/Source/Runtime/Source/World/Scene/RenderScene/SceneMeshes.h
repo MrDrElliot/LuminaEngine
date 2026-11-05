@@ -45,9 +45,9 @@ namespace Lumina::PrimitiveMeshes
             { 0,  1,  0}, { 0,  0, -1}, { 0,  0, -1}
         };
 
-        OutVertices.clear();
-        OutIndices.clear();
-        OutVertices.reserve(24);
+        OutVertices.Reset();
+        OutIndices.Reset();
+        OutVertices.Reserve(24);
 
         for (int face = 0; face < 6; ++face)
         {
@@ -64,16 +64,16 @@ namespace Lumina::PrimitiveMeshes
                 vertex.UV = Math::PackHalf2x16(uv);
                 vertex.Color = 0xFFFFFFFF; // White
 
-                OutVertices.push_back(vertex);
+                OutVertices.Add(vertex);
             }
 
             uint32 base = face * 4;
-            OutIndices.push_back(base + 0);
-            OutIndices.push_back(base + 1);
-            OutIndices.push_back(base + 2);
-            OutIndices.push_back(base + 2);
-            OutIndices.push_back(base + 3);
-            OutIndices.push_back(base + 0);
+            OutIndices.Add(base + 0);
+            OutIndices.Add(base + 1);
+            OutIndices.Add(base + 2);
+            OutIndices.Add(base + 2);
+            OutIndices.Add(base + 3);
+            OutIndices.Add(base + 0);
         }
     }
 
@@ -87,10 +87,10 @@ namespace Lumina::PrimitiveMeshes
 
         const FVector2 uvs[4] = { {0,0}, {1,0}, {1,1}, {0,1} };
 
-        OutVertices.clear();
-        OutIndices.clear();
-        OutVertices.reserve(4);
-        OutIndices.reserve(6);
+        OutVertices.Reset();
+        OutIndices.Reset();
+        OutVertices.Reserve(4);
+        OutIndices.Reserve(6);
 
         for (int i = 0; i < 4; ++i)
         {
@@ -100,7 +100,7 @@ namespace Lumina::PrimitiveMeshes
             v.Tangent = 0;
             v.UV     = Math::PackHalf2x16(uvs[i]);
             v.Color = 0xFFFFFFFF;
-            OutVertices.push_back(v);
+            OutVertices.Add(v);
         }
 
         OutIndices = { 0, 1, 2, 2, 3, 0 };
@@ -108,8 +108,8 @@ namespace Lumina::PrimitiveMeshes
 
     inline void GenerateSphere(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int LatitudeSegments = 16, int LongitudeSegments = 32)
     {
-        OutVertices.clear();
-        OutIndices.clear();
+        OutVertices.Reset();
+        OutIndices.Reset();
 
         for (int y = 0; y <= LatitudeSegments; ++y)
         {
@@ -134,7 +134,7 @@ namespace Lumina::PrimitiveMeshes
                 vert.Tangent = 0;
                 vert.UV     = Math::PackHalf2x16(FVector2(u, v));
                 vert.Color = 0xFFFFFFFF;
-                OutVertices.push_back(vert);
+                OutVertices.Add(vert);
             }
         }
 
@@ -145,22 +145,22 @@ namespace Lumina::PrimitiveMeshes
                 uint32 i0 = y * (LongitudeSegments + 1) + x;
                 uint32 i1 = i0 + LongitudeSegments + 1;
 
-                OutIndices.push_back(i0);
-                OutIndices.push_back(i0 + 1);
-                OutIndices.push_back(i1);
+                OutIndices.Add(i0);
+                OutIndices.Add(i0 + 1);
+                OutIndices.Add(i1);
 
                 // Second triangle - reversed
-                OutIndices.push_back(i0 + 1);
-                OutIndices.push_back(i1 + 1);
-                OutIndices.push_back(i1);
+                OutIndices.Add(i0 + 1);
+                OutIndices.Add(i1 + 1);
+                OutIndices.Add(i1);
             }
         }
     }
 
     inline void GenerateCylinder(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
     {
-        OutVertices.clear();
-        OutIndices.clear();
+        OutVertices.Reset();
+        OutIndices.Reset();
     
         const float halfHeight = PrimitiveHalfSize;
     
@@ -179,7 +179,7 @@ namespace Lumina::PrimitiveMeshes
                 v.Tangent = 0;
                 v.UV = Math::PackHalf2x16(FVector2(u, j));
                 v.Color = 0xFFFFFFFF;
-                OutVertices.push_back(v);
+                OutVertices.Add(v);
             }
         }
     
@@ -187,12 +187,12 @@ namespace Lumina::PrimitiveMeshes
         for (int i = 0; i < Segments; ++i)
         {
             uint32 base = i * 2;
-            OutIndices.push_back(base);
-            OutIndices.push_back(base + 1);
-            OutIndices.push_back(base + 2);
-            OutIndices.push_back(base + 2);
-            OutIndices.push_back(base + 1);
-            OutIndices.push_back(base + 3);
+            OutIndices.Add(base);
+            OutIndices.Add(base + 1);
+            OutIndices.Add(base + 2);
+            OutIndices.Add(base + 2);
+            OutIndices.Add(base + 1);
+            OutIndices.Add(base + 3);
         }
     
         for (int cap = 0; cap < 2; ++cap)
@@ -207,8 +207,8 @@ namespace Lumina::PrimitiveMeshes
             center.Tangent = 0;
             center.UV = Math::PackHalf2x16(FVector2(32768, 32768));
             center.Color = 0xFFFFFFFF;
-            OutVertices.push_back(center);
-            uint32 centerIdx = (uint32)OutVertices.size() - 1;
+            OutVertices.Add(center);
+            uint32 centerIdx = (uint32)OutVertices.Num() - 1;
 
             for (int i = 0; i <= Segments; ++i)
             {
@@ -222,7 +222,7 @@ namespace Lumina::PrimitiveMeshes
                 v.Tangent = 0;
                 v.UV    = Math::PackHalf2x16(FVector2(u, cap));
                 v.Color = 0xFFFFFFFF;
-                OutVertices.push_back(v);
+                OutVertices.Add(v);
     
                 if (i > 0)
                 {
@@ -231,11 +231,11 @@ namespace Lumina::PrimitiveMeshes
                     uint32 c = centerIdx + i + 1;
                     if (cap)
                     {
-                        OutIndices.insert(OutIndices.end(), { a, c, b });
+                        OutIndices.Append({ a, c, b });
                     }
                     else
                     {
-                        OutIndices.insert(OutIndices.end(), { a, b, c });
+                        OutIndices.Append({ a, b, c });
                     }
                 }
             }
@@ -244,8 +244,8 @@ namespace Lumina::PrimitiveMeshes
 
     inline void GenerateCone(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
     {
-        OutVertices.clear();
-        OutIndices.clear();
+        OutVertices.Reset();
+        OutIndices.Reset();
 
         const float halfHeight = PrimitiveHalfSize;
         const float radius     = PrimitiveHalfSize;
@@ -284,14 +284,14 @@ namespace Lumina::PrimitiveMeshes
             vTip.UV       = Math::PackHalf2x16(FVector2((u0 + u1) * 0.5f, 1));
             vTip.Color    = 0xFFFFFFFF;
 
-            uint32 base = (uint32)OutVertices.size();
-            OutVertices.push_back(v0);
-            OutVertices.push_back(v1);
-            OutVertices.push_back(vTip);
+            uint32 base = (uint32)OutVertices.Num();
+            OutVertices.Add(v0);
+            OutVertices.Add(v1);
+            OutVertices.Add(vTip);
 
-            OutIndices.push_back(base + 0);
-            OutIndices.push_back(base + 2);
-            OutIndices.push_back(base + 1);
+            OutIndices.Add(base + 0);
+            OutIndices.Add(base + 2);
+            OutIndices.Add(base + 1);
         }
 
         // Bottom cap
@@ -304,8 +304,8 @@ namespace Lumina::PrimitiveMeshes
         centerVert.UV       = Math::PackHalf2x16(FVector2(0.5f, 0.5f));
         centerVert.Color    = 0xFFFFFFFF;
 
-        uint32 centerIdx = (uint32)OutVertices.size();
-        OutVertices.push_back(centerVert);
+        uint32 centerIdx = (uint32)OutVertices.Num();
+        OutVertices.Add(centerVert);
 
         for (int i = 0; i <= Segments; ++i)
         {
@@ -319,22 +319,22 @@ namespace Lumina::PrimitiveMeshes
             v.Tangent  = 0;
             v.UV       = Math::PackHalf2x16(FVector2(0.5f + 0.5f * dir.x, 0.5f + 0.5f * dir.z));
             v.Color    = 0xFFFFFFFF;
-            OutVertices.push_back(v);
+            OutVertices.Add(v);
 
             if (i > 0)
             {
                 uint32 a = centerIdx;
                 uint32 b = centerIdx + i;
                 uint32 c = centerIdx + i + 1;
-                OutIndices.insert(OutIndices.end(), { a, b, c });
+                OutIndices.Append({ a, b, c });
             }
         }
     }
     
     inline void GenerateCapsule(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32, float Radius = 0.5f, float HalfHeight = 1.0f)
     {
-        OutVertices.clear();
-        OutIndices.clear();
+        OutVertices.Reset();
+        OutIndices.Reset();
 
         const float radius = Radius;
         const float halfHeight = HalfHeight;
@@ -351,7 +351,7 @@ namespace Lumina::PrimitiveMeshes
             v.Tangent  = 0;
             v.UV       = Math::PackHalf2x16(uv);
             v.Color    = 0xFFFFFFFF;
-            OutVertices.push_back(v);
+            OutVertices.Add(v);
         };
             
         for (int i = 0; i < circleSegments; ++i)
@@ -370,14 +370,14 @@ namespace Lumina::PrimitiveMeshes
             FVector3 n0 = Math::Normalize(FVector3(p0.x, 0, p0.z));
             FVector3 n1 = Math::Normalize(FVector3(p1.x, 0, p1.z));
     
-            uint32 base = (uint32)OutVertices.size();
+            uint32 base = (uint32)OutVertices.Num();
     
             addVertex(p0, n0, { u0, 0 });
             addVertex(p1, n1, { u1, 0 });
             addVertex(p2, n1, { u1, 1 });
             addVertex(p3, n0, { u0, 1 });
     
-            OutIndices.insert(OutIndices.end(),
+            OutIndices.Append(
             {
                 base + 0, base + 2, base + 1,
                 base + 0, base + 3, base + 2
@@ -434,7 +434,7 @@ namespace Lumina::PrimitiveMeshes
                     FVector3 n01 = Math::Normalize(p01);
                     FVector3 n11 = Math::Normalize(p11);
     
-                    uint32 base = (uint32)OutVertices.size();
+                    uint32 base = (uint32)OutVertices.Num();
     
                     addVertex(p00 * radius + centerOffset, n00, { u0, v0 });
                     addVertex(p10 * radius + centerOffset, n10, { u1, v0 });
@@ -443,7 +443,7 @@ namespace Lumina::PrimitiveMeshes
     
                     if (top)
                     {
-                        OutIndices.insert(OutIndices.end(),
+                        OutIndices.Append(
                         {
                             base + 0, base + 2, base + 1,
                             base + 0, base + 3, base + 2
@@ -451,7 +451,7 @@ namespace Lumina::PrimitiveMeshes
                     }
                     else
                     {
-                        OutIndices.insert(OutIndices.end(),
+                        OutIndices.Append(
                         {
                             base + 0, base + 1, base + 2,
                             base + 0, base + 2, base + 3

@@ -16,8 +16,8 @@ namespace
     {
         TVector<uint8> Bytes;
 
-        void Raw(const void* P, size_t N) { Bytes.insert(Bytes.end(), (const uint8*)P, (const uint8*)P + N); }
-        void U8(uint8 V)   { Bytes.push_back(V); }
+        void Raw(const void* P, size_t N) { Bytes.Append((const uint8*)P, (const uint8*)P + N); }
+        void U8(uint8 V)   { Bytes.Add(V); }
         void U16(uint16 V) { Raw(&V, 2); }
         void U32(uint32 V) { Raw(&V, 4); }
         void I32(int32 V)  { Raw(&V, 4); }
@@ -40,15 +40,15 @@ namespace
         size_t Open(EScriptSchemaRecord Tag)
         {
             U8((uint8)Tag);
-            const size_t LengthPos = Bytes.size();
+            const int32 LengthPos = Bytes.Num();
             U32(0);
             return LengthPos;
         }
 
         void Close(size_t LengthPos)
         {
-            const uint32 Length = (uint32)(Bytes.size() - LengthPos - sizeof(uint32));
-            memcpy(Bytes.data() + LengthPos, &Length, sizeof(uint32));
+            const uint32 Length = (uint32)(Bytes.Num() - LengthPos - sizeof(uint32));
+            memcpy(Bytes.GetData() + LengthPos, &Length, sizeof(uint32));
         }
 
         // bWriteFlags off reproduces a managed side older than the flags field, which must still parse.
@@ -121,8 +121,8 @@ namespace
             const size_t L = Open(EScriptSchemaRecord::Function);
             Str(Name);
             I32(ReturnIndex);
-            I32((int32)ParamNames.size());
-            for (size_t i = 0; i < ParamNames.size(); ++i)
+            I32(ParamNames.Num());
+            for (int32 i = 0; i < ParamNames.Num(); ++i)
             {
                 ScalarField(ParamNames[i], ParamKinds[i], "", 0, false, /*bTopLevel*/ false);
             }
@@ -142,8 +142,8 @@ TEST(ScriptSchemaCodec, ASchemaWithNoFunctionsStillParses)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    EXPECT_EQ(Schema.Fields.size(), 1u);
-    EXPECT_TRUE(Schema.Functions.empty());
+    EXPECT_EQ(Schema.Fields.Num(), 1);
+    EXPECT_TRUE(Schema.Functions.IsEmpty());
 }
 
 TEST(ScriptSchemaCodec, ADeclaredFunctionRoundTripsWithItsParameters)
@@ -160,17 +160,17 @@ TEST(ScriptSchemaCodec, ADeclaredFunctionRoundTripsWithItsParameters)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Functions.size(), 1u);
+    ASSERT_EQ(Schema.Functions.Num(), 1);
     const FScriptExportFunction& Function = Schema.Functions[0];
 
     EXPECT_EQ(Function.Name, FName("Add"));
     EXPECT_EQ(Function.ReturnIndex, 2);
-    ASSERT_EQ(Function.Params.size(), 3u);
+    ASSERT_EQ(Function.Params.Num(), 3);
     EXPECT_EQ(Function.Params[0].Name, FName("A"));
     EXPECT_EQ(Function.Params[2].Name, FName("ReturnValue"));
 
     // The fields are untouched by what follows them, which is what makes appending safe.
-    EXPECT_EQ(Schema.Fields.size(), 1u);
+    EXPECT_EQ(Schema.Fields.Num(), 1);
 }
 
 TEST(ScriptSchemaCodec, SeveralFunctionsKeepTheirOrder)
@@ -187,10 +187,10 @@ TEST(ScriptSchemaCodec, SeveralFunctionsKeepTheirOrder)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Functions.size(), 2u);
+    ASSERT_EQ(Schema.Functions.Num(), 2);
     EXPECT_EQ(Schema.Functions[0].Name, FName("First"));
     EXPECT_EQ(Schema.Functions[0].ReturnIndex, -1);
-    EXPECT_TRUE(Schema.Functions[0].Params.empty());
+    EXPECT_TRUE(Schema.Functions[0].Params.IsEmpty());
     EXPECT_EQ(Schema.Functions[1].Name, FName("Second"));
     EXPECT_EQ(Schema.Functions[1].ReturnIndex, 0);
 }
@@ -206,7 +206,7 @@ TEST(ScriptSchemaCodec, AWellFormedBufferRoundTrips)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Fields.size(), 2u);
+    ASSERT_EQ(Schema.Fields.Num(), 2);
     EXPECT_EQ(Schema.Fields[0].Name, FName("Speed"));
     EXPECT_EQ(Schema.Fields[0].Type->Kind, EPropertyTypeFlags::Float);
     EXPECT_EQ(Schema.Fields[1].Name, FName("Health"));
@@ -257,7 +257,7 @@ TEST(ScriptSchemaCodec, AnUnknownTrailingFieldIsSkippedRatherThanDesyncing)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Fields.size(), 2u);
+    ASSERT_EQ(Schema.Fields.Num(), 2);
     EXPECT_EQ(Schema.Fields[0].Name, FName("Speed"));
     EXPECT_EQ(Schema.Fields[1].Name, FName("Health")) << "the reader did not resync past the unknown payload";
     EXPECT_EQ(Schema.Fields[1].Type->Kind, EPropertyTypeFlags::Int32);
@@ -292,7 +292,7 @@ TEST(ScriptSchemaCodec, ATruncatedBufferIsReportedRatherThanPartiallyAccepted)
     W.ScalarField("Speed", EPropertyTypeFlags::Float);
     W.ScalarField("Health", EPropertyTypeFlags::Int32);
 
-    W.Bytes.resize(W.Bytes.size() - 12);
+    W.Bytes.SetNum(W.Bytes.Num() - 12);
 
     FScriptExportSchema Schema;
     EXPECT_FALSE(ParseSchemaBlob(W.Bytes, Schema));
@@ -332,7 +332,7 @@ TEST(ScriptSchemaCodec, DeclaredPropertyFlagsRoundTrip)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Fields.size(), 2u);
+    ASSERT_EQ(Schema.Fields.Num(), 2);
     EXPECT_EQ(Schema.Fields[0].Flags, Declared);
     EXPECT_EQ(Schema.Fields[1].Flags, 0u) << "a writer that omits the field must read as no flags, not garbage";
 }
@@ -348,7 +348,7 @@ TEST(ScriptSchemaCodec, AnOptionalCarriesItsPayloadType)
     FScriptExportSchema Schema;
     ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema));
 
-    ASSERT_EQ(Schema.Fields.size(), 1u);
+    ASSERT_EQ(Schema.Fields.Num(), 1);
     EXPECT_EQ(Schema.Fields[0].Name, FName("Maybe"));
     ASSERT_NE(Schema.Fields[0].Type, nullptr);
     EXPECT_EQ(Schema.Fields[0].Type->Kind, EPropertyTypeFlags::Optional);

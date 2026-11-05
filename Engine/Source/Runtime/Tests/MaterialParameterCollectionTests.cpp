@@ -24,17 +24,17 @@ namespace Lumina
             SCollectionScalarParameter Wetness;
             Wetness.ParameterName = "Wetness";
             Wetness.DefaultValue  = 0.25f;
-            Collection->ScalarParameters.push_back(Wetness);
+            Collection->ScalarParameters.Add(Wetness);
 
             SCollectionScalarParameter Snow;
             Snow.ParameterName = "SnowCoverage";
             Snow.DefaultValue  = 0.5f;
-            Collection->ScalarParameters.push_back(Snow);
+            Collection->ScalarParameters.Add(Snow);
 
             SCollectionVectorParameter Tint;
             Tint.ParameterName = "SeasonTint";
             Tint.DefaultValue  = FVector4(0.1f, 0.2f, 0.3f, 1.0f);
-            Collection->VectorParameters.push_back(Tint);
+            Collection->VectorParameters.Add(Tint);
 
             // Headless, so this only replays the declared defaults into the block.
             Collection->PostLoad();
@@ -116,7 +116,7 @@ namespace Lumina
 
         CMaterial* Material = NewObject<CMaterial>();
         ASSERT_NE(Material, nullptr);
-        EXPECT_TRUE(Material->ParameterCollections.empty());
+        EXPECT_TRUE(Material->ParameterCollections.IsEmpty());
 
         // Slot 0 is the reserved zero collection, so an unbound material reads zeros with no sentinel.
         for (uint32 i = 0; i < MAX_MATERIAL_COLLECTIONS; ++i)

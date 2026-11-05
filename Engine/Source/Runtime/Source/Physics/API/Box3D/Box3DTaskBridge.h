@@ -2,11 +2,11 @@
 
 #include <box3d/box3d.h>
 #include "Core/Threading/Atomic.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/TaskSystem.h"
 
 namespace Lumina::Physics
 {
-    // Routes Box3D's enqueue/finish task pair onto the engine fiber scheduler's shared worker pool.
+    // Routes Box3D's enqueue/finish task pair onto the engine job runtime's shared worker pool.
     class RUNTIME_API FBox3DTaskBridge
     {
     public:
@@ -27,11 +27,11 @@ namespace Lumina::Physics
         {
             b3TaskCallback* Task = nullptr;
             void*           Context = nullptr;
-            Jobs::FCounter* Counter = nullptr;
+            Jobs::FTaskEvent Done;
             TAtomic<bool>   bInUse{ false };
         };
 
-        static void RunTask(void* Arg, uint32 WorkerIndex);
+        static Jobs::TTask<void> RunTask(FTaskSlot* Slot);
 
         FTaskSlot       Slots[B3_MAX_TASKS];
         TAtomic<uint32> NextSlotHint{ 0 };

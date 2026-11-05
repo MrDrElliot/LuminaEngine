@@ -48,13 +48,13 @@ namespace Lumina
     bool FEditorEngine::ClaimStartupProject()
     {
         TOptional<FFixedString> Project = GCommandLine->Get("Project");
-        if (!Project.has_value())
+        if (!Project.IsSet())
         {
             return true;
         }
 
-        const FFixedString Normalized = Paths::Normalize(FStringView(Project.value()));
-        return ClaimProject(Filesystem::IsDirectory(Normalized) ? FStringView(Normalized) : FStringView(VFS::Parent(Normalized)));
+        const FFixedString Normalized = Paths::Normalize(FStringView(Project.GetValue()));
+        return ClaimProject(Filesystem::IsDirectory(Normalized) ? FStringView(Normalized) : VFS::Parent(Normalized));
     }
 
     bool FEditorEngine::ClaimProject(FStringView ProjectDirectory)
@@ -70,7 +70,7 @@ namespace Lumina
 
         Platform::FInstanceLock NewLock;
         uint32 OwnerId = 0;
-        if (!Platform::TryAcquireInstanceLock(FString(Paths::Combine(IntermediatesDirectory, "Editor.lock").c_str()), NewLock, OwnerId))
+        if (!Platform::TryAcquireInstanceLock(FString(*Paths::Combine(IntermediatesDirectory, "Editor.lock")), NewLock, OwnerId))
         {
             LOG_WARN("'{}' is already open in another editor (process {}), so it was not opened here.", ProjectDirectory, OwnerId);
             ImGuiX::Notifications::NotifyWarning("That project is already open in another editor window.");
@@ -80,7 +80,7 @@ namespace Lumina
 
         Platform::ReleaseInstanceLock(ProjectLock);
         ProjectLock = NewLock;
-        LockedProjectDirectory.assign(ProjectDirectory.data(), ProjectDirectory.size());
+        LockedProjectDirectory = FStringView(ProjectDirectory.GetData(), ProjectDirectory.Len());
         return true;
     }
 
@@ -108,15 +108,15 @@ namespace Lumina
     {
         auto ReplaceAll = [](FString& Str, const FString& From, const FString& To)
         {
-            if (From.empty())
+            if (From.IsEmpty())
             {
                 return;
             }
-            size_t Pos = 0;
-            while ((Pos = Str.find(From, Pos)) != FString::npos)
+            int32 Pos = 0;
+            while ((Pos = Str.Find(From, Pos)) != Constants::kIndexNone)
             {
-                Str.replace(Pos, From.size(), To);
-                Pos += To.size();
+                Str.RemoveAt(Pos, From.Len()).InsertAt(Pos, To);
+                Pos += To.Len();
             }
         };
 
@@ -145,15 +145,15 @@ namespace Lumina
     {
         auto ReplaceAll = [](FString& Str, const FString& From, const FString& To)
         {
-            if (From.empty())
+            if (From.IsEmpty())
             {
                 return;
             }
-            size_t Pos = 0;
-            while ((Pos = Str.find(From, Pos)) != FString::npos)
+            int32 Pos = 0;
+            while ((Pos = Str.Find(From, Pos)) != Constants::kIndexNone)
             {
-                Str.replace(Pos, From.size(), To);
-                Pos += To.size();
+                Str.RemoveAt(Pos, From.Len()).InsertAt(Pos, To);
+                Pos += To.Len();
             }
         };
 
@@ -177,15 +177,15 @@ namespace Lumina
         if (!Filesystem::MakeDirectoryTree(DestDir))
         {
             OutError = "Failed to create directory: ";
-            OutError.append(DestDir.c_str(), DestDir.size());
+            OutError.Append(*DestDir, DestDir.Len());
             return false;
         }
 
-        const size_t TemplateRootLength = TemplateDir.size();
+        const int32 TemplateRootLength = TemplateDir.Len();
 
         Filesystem::IterateDirectoryRecursive(TemplateDir, [&](const Filesystem::FDirectoryEntry& Entry)
         {
-            FString RelativePathStr(Entry.FullPath.substr(TemplateRootLength + 1));
+            FString RelativePathStr(Entry.FullPath.Mid(TemplateRootLength + 1));
 
             ReplaceTokens(RelativePathStr);
             FFixedString DestPath = Paths::Combine(DestDir, RelativePathStr);
@@ -225,7 +225,7 @@ namespace Lumina
 
                 ReplaceTokens(FileContents);
 
-                const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(FileContents.data()), FileContents.size());
+                const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(FileContents.GetData()), FileContents.Len());
                 if (Filesystem::WriteFile(DestPath, Bytes))
                 {
                     // A fresh write drops the executable bit a generated GenerateProject.sh needs.
@@ -240,13 +240,13 @@ namespace Lumina
     // It becomes the module name, the vcxproj name and part of source identifiers via the API macro.
     static bool ValidateProjectName(FStringView Name, FString& OutError)
     {
-        if (Name.empty())
+        if (Name.IsEmpty())
         {
             OutError = "Project name is empty.";
             return false;
         }
 
-        const char First = Name.front();
+        const char First = Name[0];
         if (!std::isalpha(static_cast<unsigned char>(First)) && First != '_')
         {
             OutError = "Project name must start with a letter or underscore.";
@@ -262,7 +262,7 @@ namespace Lumina
             }
         }
 
-        if (Name.size() > 64)
+        if (Name.Len() > 64)
         {
             OutError = "Project name is too long (max 64 chars).";
             return false;
@@ -273,22 +273,22 @@ namespace Lumina
 
     bool FEditorEngine::CreateProject(FStringView NewProjectName, FStringView NewProjectPath, FFixedString& OutProjectFile, FString& OutError)
     {
-        OutProjectFile.clear();
-        OutError.clear();
+        OutProjectFile.Reset();
+        OutError.Reset();
 
         if (!ValidateProjectName(NewProjectName, OutError))
         {
             return false;
         }
 
-        if (NewProjectPath.empty())
+        if (NewProjectPath.IsEmpty())
         {
             OutError = "Project location is empty.";
             return false;
         }
 
         const FString& EngineDir = Paths::GetEngineInstallDirectory();
-        if (EngineDir.empty())
+        if (EngineDir.IsEmpty())
         {
             OutError = "The engine root could not be found beside this editor.";
             return false;
@@ -298,7 +298,7 @@ namespace Lumina
         if (!Paths::Exists(BlankProjectPath))
         {
             OutError = "Blank template not found at: ";
-            OutError.append(BlankProjectPath.c_str(), BlankProjectPath.size());
+            OutError.Append(*BlankProjectPath, BlankProjectPath.Len());
             return false;
         }
 
@@ -306,19 +306,19 @@ namespace Lumina
         if (!Filesystem::Exists(NewProjectPath))
         {
             OutError = "Project location does not exist: ";
-            OutError.append(NewProjectPath.data(), NewProjectPath.size());
+            OutError.Append(NewProjectPath.GetData(), NewProjectPath.Len());
             return false;
         }
 
         if (Filesystem::Exists(Combined) && !Filesystem::IsDirectoryEmpty(Combined))
         {
             OutError = "A non-empty folder already exists at: ";
-            OutError.append(Combined.c_str(), Combined.size());
+            OutError.Append(*Combined, Combined.Len());
             return false;
         }
 
         FProjectTemplateContext Ctx;
-        Ctx.Name.assign(NewProjectName.data(), NewProjectName.size());
+        Ctx.Name = FStringView(NewProjectName.GetData(), NewProjectName.Len());
         Ctx.NameUpper = Ctx.Name;
         Algo::Transform(
             Ctx.NameUpper,
@@ -341,14 +341,14 @@ namespace Lumina
             return false;
         }
 
-        OutProjectFile = Paths::Combine(Combined, FFixedString(Ctx.Name.c_str()).append(".lproject"));
+        OutProjectFile = Paths::Combine(Combined, FFixedString(*Ctx.Name).Append(".lproject"));
         return true;
     }
 
     bool FEditorEngine::CreatePlugin(FStringView NewPluginName, FStringView Description, FFixedString& OutPluginDir, FString& OutError)
     {
-        OutPluginDir.clear();
-        OutError.clear();
+        OutPluginDir.Reset();
+        OutError.Reset();
 
         if (!ValidateProjectName(NewPluginName, OutError))
         {
@@ -356,14 +356,14 @@ namespace Lumina
         }
 
         // Project-local plugins live next to the .lproject; we need one loaded.
-        if (GetProjectName().empty())
+        if (GetProjectName().IsEmpty())
         {
             OutError = "No project is loaded. Open a project before creating a plugin.";
             return false;
         }
 
         const FString& EngineDir = Paths::GetEngineInstallDirectory();
-        if (EngineDir.empty())
+        if (EngineDir.IsEmpty())
         {
             OutError = "The engine root could not be found beside this editor.";
             return false;
@@ -373,12 +373,12 @@ namespace Lumina
         if (!Paths::Exists(TemplatePath))
         {
             OutError = "Plugin template not found at: ";
-            OutError.append(TemplatePath.c_str(), TemplatePath.size());
+            OutError.Append(*TemplatePath, TemplatePath.Len());
             return false;
         }
 
         // Plugin names must be globally unique, or discovery silently drops one of the pair.
-        const FString NameStr(NewPluginName.data(), NewPluginName.size());
+        const FString NameStr(NewPluginName.GetData(), NewPluginName.Len());
         if (FPluginManager::Get().FindPlugin(NameStr) != nullptr)
         {
             OutError = "A plugin named '";
@@ -393,7 +393,7 @@ namespace Lumina
         if (Filesystem::Exists(PluginDir) && !Filesystem::IsDirectoryEmpty(PluginDir))
         {
             OutError = "A non-empty folder already exists at: ";
-            OutError.append(PluginDir.c_str(), PluginDir.size());
+            OutError.Append(*PluginDir, PluginDir.Len());
             return false;
         }
 
@@ -405,8 +405,8 @@ namespace Lumina
 
         FPluginTemplateContext Ctx;
         Ctx.Name = NameStr;
-        Ctx.Description.assign(Description.data(), Description.size());
-        if (Ctx.Description.empty())
+        Ctx.Description = FStringView(Description.GetData(), Description.Len());
+        if (Ctx.Description.IsEmpty())
         {
             Ctx.Description = "A Lumina plugin";
         }
@@ -432,16 +432,16 @@ namespace Lumina
     {
         // This editor's own engine, which hands the work on if the project names another.
         const FString Script = Paths::GetBuildToolScript();
-        if (Script.empty())
+        if (Script.IsEmpty())
         {
             LOG_ERROR("GenerateProjectFiles: this engine has no build tool, so project files cannot be generated.");
             return false;
         }
 
         // Streams each line under a [BuildTool] tag so the user sees progress without a console window.
-        const std::string ScriptPathStr(Script.c_str(), Script.size());
-        const std::string ParamsStr = Format("GenerateProjectFiles -Project=\"{}\"", ProjectDirectory).c_str();
-        const std::string WorkingDirStr(ProjectDirectory.data(), ProjectDirectory.size());
+        const std::string ScriptPathStr(*Script, Script.Len());
+        const std::string ParamsStr = *Format("GenerateProjectFiles -Project=\"{}\"", ProjectDirectory);
+        const std::string WorkingDirStr(ProjectDirectory.GetData(), ProjectDirectory.Len());
 
         FThread([ScriptPathStr, ParamsStr, WorkingDirStr]()
         {
@@ -455,11 +455,11 @@ namespace Lumina
                 UTF8_TO_TCHAR(WorkingDirStr.c_str()),
                 [](FStringView Line)
                 {
-                    if (Line.empty())
+                    if (Line.IsEmpty())
                     {
                         return;
                     }
-                    LOG_INFO("[BuildTool] {0}", FString(Line.data(), Line.size()).c_str());
+                    LOG_INFO("[BuildTool] {0}", *FString(Line.GetData(), Line.Len()));
                 });
 
             if (ExitCode == 0)

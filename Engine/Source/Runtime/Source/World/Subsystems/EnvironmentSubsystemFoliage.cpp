@@ -10,11 +10,11 @@ namespace Lumina
     {
         SFoliageComponent* FindFoliage(CWorld* World, ECS::FEntity& OutEntity)
         {
-            auto View = World->View<SFoliageComponent>();
+            auto View = World->View<ECS::Write<SFoliageComponent>>();
             for (ECS::FEntity Entity : View)
             {
                 OutEntity = Entity;
-                return &View.Get<SFoliageComponent>(Entity);
+                return &View.Get<ECS::Write<SFoliageComponent>>(Entity);
             }
 
             return nullptr;
@@ -53,7 +53,7 @@ namespace Lumina
             return -1;
         }
 
-        SFoliageType& Type = Foliage->Types.emplace_back();
+        SFoliageType& Type = Foliage->Types.EmplaceGetRef();
         Type.Name           = Mesh->GetName().ToString();
         Type.Mesh           = Mesh;
         Type.bCastShadow    = bCastShadow;
@@ -61,7 +61,7 @@ namespace Lumina
         Type.bFollowTerrain = false;
 
         MarkFoliageChanged(*World, Entity, *Foliage);
-        return (int32)Foliage->Types.size() - 1;
+        return Foliage->Types.Num() - 1;
     }
 
     void CEnvironmentSubsystem::AddFoliageInstances(const SFoliageInstance* Instances, int32 Count)
@@ -74,12 +74,12 @@ namespace Lumina
             return;
         }
 
-        Foliage->Instances.reserve(Foliage->Instances.size() + Count);
+        Foliage->Instances.Reserve(Foliage->Instances.Num() + Count);
         for (int32 Index = 0; Index < Count; ++Index)
         {
             if (Foliage->IsValidType(Instances[Index].TypeIndex))
             {
-                Foliage->Instances.push_back(Instances[Index]);
+                Foliage->Instances.Add(Instances[Index]);
             }
         }
 
@@ -111,7 +111,7 @@ namespace Lumina
         SFoliageComponent* Foliage = World != nullptr ? FindFoliage(World, Entity) : nullptr;
         if (Foliage != nullptr && Index >= 0)
         {
-            Foliage->SetInstanceHidden((uint32)Index, bHidden);
+            Lumina::SetFoliageInstanceHidden(*World, Entity, *Foliage, static_cast<uint32>(Index), bHidden);
         }
     }
 
@@ -120,6 +120,6 @@ namespace Lumina
         CWorld* World = GetWorld();
         ECS::FEntity Entity = ECS::NullEntity;
         SFoliageComponent* Foliage = World != nullptr ? FindFoliage(World, Entity) : nullptr;
-        return Foliage != nullptr ? (int32)Foliage->Instances.size() : 0;
+        return Foliage != nullptr ? Foliage->Instances.Num() : 0;
     }
 }

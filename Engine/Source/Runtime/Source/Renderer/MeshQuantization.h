@@ -89,7 +89,7 @@ namespace Lumina
         }
 
         const bool bShort = (Hi - Lo) <= 0xFFFFu;
-        M.VertexOffset     = (uint32)Data.MeshletVertexRefs.size();
+        M.VertexOffset     = (uint32)Data.MeshletVertexRefs.Num();
         M.VertexCount      = Count;
         M.BaseVertex       = Lo;
         M.bShortVertexRefs = bShort ? 1u : 0u;
@@ -100,14 +100,14 @@ namespace Lumina
             {
                 const uint32 First  = Vertices[i] - Lo;
                 const uint32 Second = (i + 1 < Count) ? Vertices[i + 1] - Lo : 0u;
-                Data.MeshletVertexRefs.push_back(First | (Second << 16));
+                Data.MeshletVertexRefs.Add(First | (Second << 16));
             }
         }
         else
         {
             for (uint32 i = 0; i < Count; ++i)
             {
-                Data.MeshletVertexRefs.push_back(Vertices[i] - Lo);
+                Data.MeshletVertexRefs.Add(Vertices[i] - Lo);
             }
         }
     }

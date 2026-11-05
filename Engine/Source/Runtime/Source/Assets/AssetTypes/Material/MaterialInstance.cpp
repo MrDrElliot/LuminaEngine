@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Cast.h"
+#include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Renderer/RenderManager.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
@@ -34,7 +35,7 @@ namespace Lumina
             static THashSet<FName> Reported;
             {
                 FScopeLock Lock(Mutex);
-                if (!Reported.insert(Name).second)
+                if (!Reported.TryAdd(Name))
                 {
                     return;
                 }
@@ -108,13 +109,8 @@ namespace Lumina
         // Registered before the parent's PostLoad, so its PropagateToChildren reaches this level.
         Material->RegisterChild(this);
 
-        // The loader's own guard, so a parent that already ran, or is stale for good, never runs twice.
-        if (Material->HasAnyFlag(OF_NeedsPostLoad))
-        {
-            Material->ClearFlags(OF_NeedsPostLoad);
-            Material->PostLoad();
-        }
-        else
+        // A parent PostLoad reaches this child through PropagateToChildren; when it already ran, the child rebuilds itself.
+        if (!CPackage::ConditionalPostLoad(Material.Get()))
         {
             RebuildUniformsFromOverrides();
         }
@@ -433,7 +429,7 @@ namespace Lumina
             return *It;
         }
 
-        SMaterialParameterOverride& Added = Overrides.emplace_back();
+        SMaterialParameterOverride& Added = Overrides.EmplaceGetRef();
         Added.ParameterName = Name;
         Added.Type = Type;
         return Added;
@@ -507,12 +503,10 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        auto NewEnd = Algo::RemoveIf(Overrides, [&Name](const SMaterialParameterOverride& Override) { return Override.ParameterName == Name; });
-        if (NewEnd == Overrides.end())
+        if (Overrides.RemoveAll([&Name](const SMaterialParameterOverride& Override) { return Override.ParameterName == Name; }) == 0)
         {
             return;
         }
-        Overrides.erase(NewEnd, Overrides.end());
 
         // A texture restore means resolving the parent default this instance had been skipping.
         RefreshSubtree();
@@ -577,7 +571,7 @@ namespace Lumina
         // The slot count comes from the root, which declares the table, and the values from the parent.
         uint32 FirstChanged = MAX_TEXTURES;
         uint32 LastChanged  = 0;
-        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
+        const uint32 NumSlots = Math::Min<uint32>(Root->Textures.Num(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumSlots; ++i)
         {
             if ((OverriddenMask & (1u << i)) == 0 && MaterialUniforms.Textures[i] != Inherited.Textures[i])
@@ -648,7 +642,7 @@ namespace Lumina
         const uint32 OverriddenMask = GetOverriddenTextureMask();
         const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
         const uint32 Placeholder = RHI::Textures::DefaultResourceID();
-        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
+        const uint32 NumSlots = Math::Min<uint32>(Root->Textures.Num(), MAX_TEXTURES);
 
         bool bNeedsRebuild = false;
         for (uint32 i = 0; i < MAX_TEXTURES && !bNeedsRebuild; ++i)
@@ -669,7 +663,7 @@ namespace Lumina
     uint64 CMaterialInstance::GetStaticSwitchKey() const
     {
         CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->StaticSwitches.empty())
+        if (Root == nullptr || Root->StaticSwitches.IsEmpty())
         {
             return 0;
         }
@@ -677,7 +671,7 @@ namespace Lumina
         // The common chain overrides no switch at all, which skips the key build.
         THashMap<FName, bool> Values;
         GatherStaticSwitchValues(Values);
-        return Values.empty() ? Root->GetDefaultStaticSwitchKey() : Root->MakeStaticSwitchKey(Values);
+        return Values.IsEmpty() ? Root->GetDefaultStaticSwitchKey() : Root->MakeStaticSwitchKey(Values);
     }
 
     void CMaterialInstance::GatherStaticSwitchValues(THashMap<FName, bool>& OutValues, uint32 Depth) const
@@ -743,7 +737,7 @@ namespace Lumina
         }
         else
         {
-            SMaterialStaticSwitchOverride& Added = StaticSwitchOverrides.emplace_back();
+            SMaterialStaticSwitchOverride& Added = StaticSwitchOverrides.EmplaceGetRef();
             Added.ParameterName = Name;
             Added.bValue        = bValue;
         }
@@ -754,12 +748,10 @@ namespace Lumina
 
     void CMaterialInstance::RemoveStaticSwitchOverride(const FName& Name)
     {
-        auto NewEnd = Algo::RemoveIf(StaticSwitchOverrides, [&Name](const SMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; });
-        if (NewEnd == StaticSwitchOverrides.end())
+        if (StaticSwitchOverrides.RemoveAll([&Name](const SMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; }) == 0)
         {
             return;
         }
-        StaticSwitchOverrides.erase(NewEnd, StaticSwitchOverrides.end());
         OnStaticSwitchesChanged();
     }
 
@@ -794,7 +786,7 @@ namespace Lumina
     void CMaterialInstance::RequestStaticSwitchPermutation()
     {
         CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->StaticSwitches.empty())
+        if (Root == nullptr || Root->StaticSwitches.IsEmpty())
         {
             return;
         }

@@ -33,7 +33,7 @@ namespace Lumina
 
         void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
         {
-            OutExtensions.insert(OutExtensions.end(), { ".gltf", ".glb" });
+            OutExtensions.Append({ ".gltf", ".glb" });
         }
 
         // Embedded image payloads are views into the parsed buffers, so the parse outlives ParseMeshSource

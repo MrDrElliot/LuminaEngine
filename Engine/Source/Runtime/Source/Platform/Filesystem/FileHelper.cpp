@@ -10,7 +10,7 @@ namespace Lumina::FileHelper
 {
     bool SaveArrayToFile(const TVector<uint8>& Array, FStringView Path, uint32 WriteFlags)
     {
-        const TSpan<const uint8> Data(Array.data(), Array.size());
+        const TSpan<const uint8> Data(Array.GetData(), Array.Num());
 
         if (!Filesystem::WriteFile(Path, Data))
         {
@@ -38,12 +38,12 @@ namespace Lumina::FileHelper
 
         auto Visit = [&FileName, &Result](const Filesystem::FDirectoryEntry& Entry) -> Filesystem::EVisit
         {
-            if (Entry.IsDirectory() || Entry.Name != FStringView(FileName.data(), FileName.size()))
+            if (Entry.IsDirectory() || Entry.Name != FStringView(FileName.GetData(), FileName.Len()))
             {
                 return Filesystem::EVisit::Continue;
             }
 
-            Result.assign(Entry.FullPath.data(), Entry.FullPath.size());
+            Result = FStringView(Entry.FullPath.GetData(), Entry.FullPath.Len());
             return Filesystem::EVisit::Stop;
         };
 
@@ -67,12 +67,12 @@ namespace Lumina::FileHelper
             return false;
         }
 
-        return !OutString.empty();
+        return !OutString.IsEmpty();
     }
 
     bool SaveStringToFile(FStringView String, FStringView Path, uint32 WriteFlags)
     {
-        const TSpan<const uint8> Data(reinterpret_cast<const uint8*>(String.data()), String.size());
+        const TSpan<const uint8> Data(reinterpret_cast<const uint8*>(String.GetData()), String.Len());
 
         if (!Filesystem::WriteFile(Path, Data))
         {

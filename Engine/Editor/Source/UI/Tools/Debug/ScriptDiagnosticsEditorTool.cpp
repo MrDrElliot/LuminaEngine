@@ -22,10 +22,10 @@ namespace Lumina
 
         void PushCapped(TVector<float>& History, float Value)
         {
-            History.push_back(Value);
-            if (History.size() > kHistoryMax)
+            History.Add(Value);
+            if (static_cast<uint32>(History.Num()) > kHistoryMax)
             {
-                History.erase(History.begin());
+                History.RemoveAt(0);
             }
         }
 
@@ -34,9 +34,9 @@ namespace Lumina
             ImGui::TextDisabled("%s", Id + 2); // skip the "##"
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "%.1f %s", Last, Unit);
-            if (!History.empty())
+            if (!History.IsEmpty())
             {
-                ImGui::PlotLines(Id, History.data(), (int)History.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 46.0f));
+                ImGui::PlotLines(Id, History.GetData(), History.Num(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 46.0f));
             }
         }
     }
@@ -68,24 +68,24 @@ namespace Lumina
                 {
                     NativeBase = NativeBase->GetSuperClass();
                 }
-                auto Found = std::find_if(Counts.begin(), Counts.end(), [&](const TPair<const CClass*, int32>& Entry) { return Entry.first == NativeBase; });
+                auto Found = std::find_if(Counts.begin(), Counts.end(), [&](const TPair<const CClass*, int32>& Entry) { return Entry.Key == NativeBase; });
                 if (Found != Counts.end())
                 {
-                    ++Found->second;
+                    ++Found->Value;
                 }
                 else
                 {
-                    Counts.emplace_back(NativeBase, 1);
+                    Counts.Emplace(NativeBase, 1);
                 }
             }
 
             FString Summary;
             for (const TPair<const CClass*, int32>& Entry : Counts)
             {
-                Summary += Lumina::Format("{}{} {}", Summary.empty() ? "" : ", ", Entry.second,
-                    Entry.first != nullptr ? Entry.first->GetName().c_str() : "unparented");
+                Summary += Lumina::Format("{}{} {}", Summary.IsEmpty() ? "" : ", ", Entry.Value,
+                    Entry.Key != nullptr ? *Entry.Key->GetName() : "unparented");
             }
-            return Summary.empty() ? FString("no script classes") : Summary;
+            return Summary.IsEmpty() ? FString("no script classes") : Summary;
         }
     }
 
@@ -184,7 +184,7 @@ namespace Lumina
         }
         ImGui::SameLine(0.0f, 18.0f);
         ImGui::TextDisabled("Gen %d  |  %d type(s): %s",
-            Snapshot.Generation, Snapshot.LoadedTypeCount, MintedClassSummary.c_str());
+            Snapshot.Generation, Snapshot.LoadedTypeCount, *MintedClassSummary);
 
         ImGui::Separator();
 
@@ -202,7 +202,7 @@ namespace Lumina
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(Label);
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(Value.c_str());
+                ImGui::TextUnformatted(*Value);
             };
             auto Size = [](int64 Bytes) { return ImGuiX::FormatSize((size_t)(Bytes < 0 ? 0 : Bytes)); };
 
@@ -233,8 +233,8 @@ namespace Lumina
         ImGui::Spacing();
 
         // ---- Timelines ----------------------------------------------------------------------------
-        Timeline("##Managed heap (MB)", HistHeapMB,       "MB",   HistHeapMB.empty()       ? 0.0f : HistHeapMB.back());
+        Timeline("##Managed heap (MB)", HistHeapMB,       "MB",   HistHeapMB.IsEmpty()       ? 0.0f : HistHeapMB.Last());
         Timeline("##Alloc churn (MB/s)", HistAllocRateMB, "MB/s", AllocRateMBs);
-        Timeline("##Working set (MB)",  HistWorkingSetMB, "MB",   HistWorkingSetMB.empty() ? 0.0f : HistWorkingSetMB.back());
+        Timeline("##Working set (MB)",  HistWorkingSetMB, "MB",   HistWorkingSetMB.IsEmpty() ? 0.0f : HistWorkingSetMB.Last());
     }
 }

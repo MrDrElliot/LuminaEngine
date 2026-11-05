@@ -20,7 +20,7 @@ namespace Lumina
         // Everything the captured properties point at, such as sub-graphs and transitions, kept alive the same way.
         TVector<TStrongObjectPtr<CObject>> Referenced;
 
-        bool IsValid() const { return !Bytes.empty(); }
+        bool IsValid() const { return !Bytes.IsEmpty(); }
 
         static FNodeGraphImage Capture(CEdNodeGraph* Graph);
 

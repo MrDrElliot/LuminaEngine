@@ -14,7 +14,7 @@ namespace Lumina::Containers
     public:
 
         using value_type      = T;
-        using size_type       = size_t;
+        using size_type       = int32;
         using reference       = T&;
         using const_reference = const T&;
         using container_type  = TContainer;
@@ -22,28 +22,42 @@ namespace Lumina::Containers
         TQueue() = default;
         explicit TQueue(TContainer InStorage) : Storage(std::move(InStorage)) {}
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Storage.size(); }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Storage.empty(); }
-        NODISCARD FORCEINLINE size_t Num() const noexcept { return Storage.size(); }
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return Storage.Num(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Storage.IsEmpty(); }
 
-        NODISCARD FORCEINLINE T& front() noexcept { return Storage.front(); }
-        NODISCARD FORCEINLINE const T& front() const noexcept { return Storage.front(); }
-        NODISCARD FORCEINLINE T& back() noexcept { return Storage.back(); }
-        NODISCARD FORCEINLINE const T& back() const noexcept { return Storage.back(); }
+        /** The oldest entry, the one Pop removes next. */
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Peek(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self.Storage.First(); }
 
-        FORCEINLINE void push(const T& Value) { Storage.push_back(Value); }
-        FORCEINLINE void push(T&& Value) { Storage.push_back(std::move(Value)); }
+        FORCEINLINE void Enqueue(const T& Value) { Storage.PushLast(Value); }
+        FORCEINLINE void Enqueue(T&& Value) { Storage.PushLast(std::move(Value)); }
 
         template <typename... TArgs>
-        FORCEINLINE T& emplace(TArgs&&... Args) { return Storage.emplace_back(std::forward<TArgs>(Args)...); }
+        FORCEINLINE T& Emplace(TArgs&&... Args) { return Storage.EmplaceLast(std::forward<TArgs>(Args)...); }
 
-        FORCEINLINE void pop() noexcept { Storage.pop_front(); }
-        FORCEINLINE void clear() noexcept { Storage.clear(); }
+        FORCEINLINE void Pop() noexcept { Storage.PopFirst(); }
 
-        FORCEINLINE void swap(TQueue& Other) noexcept { Storage.swap(Other.Storage); }
+        bool Dequeue(T& OutValue)
+        {
+            if (Storage.IsEmpty())
+            {
+                return false;
+            }
+            OutValue = std::move(Storage.First());
+            Storage.PopFirst();
+            return true;
+        }
 
-        NODISCARD FORCEINLINE TContainer& GetContainer() noexcept { return Storage; }
-        NODISCARD FORCEINLINE const TContainer& GetContainer() const noexcept { return Storage; }
+        FORCEINLINE void Reset() noexcept { Storage.Reset(); }
+
+        friend void swap(TQueue& Left, TQueue& Right) noexcept
+        {
+            using std::swap;
+            swap(Left.Storage, Right.Storage);
+        }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto GetContainer(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, TContainer>& { return Self.Storage; }
 
         NODISCARD friend bool operator==(const TQueue& Left, const TQueue& Right)
         {
@@ -62,7 +76,7 @@ namespace Lumina::Containers
     public:
 
         using value_type      = T;
-        using size_type       = size_t;
+        using size_type       = int32;
         using reference       = T&;
         using const_reference = const T&;
         using container_type  = TContainer;
@@ -70,26 +84,29 @@ namespace Lumina::Containers
         TStack() = default;
         explicit TStack(TContainer InStorage) : Storage(std::move(InStorage)) {}
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Storage.size(); }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Storage.empty(); }
-        NODISCARD FORCEINLINE size_t Num() const noexcept { return Storage.size(); }
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return Storage.Num(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Storage.IsEmpty(); }
 
-        NODISCARD FORCEINLINE T& top() noexcept { return Storage.back(); }
-        NODISCARD FORCEINLINE const T& top() const noexcept { return Storage.back(); }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Top(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self.Storage.Last(); }
 
-        FORCEINLINE void push(const T& Value) { Storage.push_back(Value); }
-        FORCEINLINE void push(T&& Value) { Storage.push_back(std::move(Value)); }
+        FORCEINLINE void Push(const T& Value) { Storage.PushLast(Value); }
+        FORCEINLINE void Push(T&& Value) { Storage.PushLast(std::move(Value)); }
 
         template <typename... TArgs>
-        FORCEINLINE T& emplace(TArgs&&... Args) { return Storage.emplace_back(std::forward<TArgs>(Args)...); }
+        FORCEINLINE T& Emplace(TArgs&&... Args) { return Storage.EmplaceLast(std::forward<TArgs>(Args)...); }
 
-        FORCEINLINE void pop() noexcept { Storage.pop_back(); }
-        FORCEINLINE void clear() noexcept { Storage.clear(); }
+        FORCEINLINE void Pop() noexcept { Storage.PopLast(); }
+        FORCEINLINE void Reset() noexcept { Storage.Reset(); }
 
-        FORCEINLINE void swap(TStack& Other) noexcept { Storage.swap(Other.Storage); }
+        friend void swap(TStack& Left, TStack& Right) noexcept
+        {
+            using std::swap;
+            swap(Left.Storage, Right.Storage);
+        }
 
-        NODISCARD FORCEINLINE TContainer& GetContainer() noexcept { return Storage; }
-        NODISCARD FORCEINLINE const TContainer& GetContainer() const noexcept { return Storage; }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto GetContainer(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, TContainer>& { return Self.Storage; }
 
         NODISCARD friend bool operator==(const TStack& Left, const TStack& Right)
         {
@@ -101,11 +118,6 @@ namespace Lumina::Containers
         TContainer Storage;
     };
 
-    template <typename T, typename TContainer>
-    FORCEINLINE void swap(TQueue<T, TContainer>& Left, TQueue<T, TContainer>& Right) noexcept { Left.swap(Right); }
-
-    template <typename T, typename TContainer>
-    FORCEINLINE void swap(TStack<T, TContainer>& Left, TStack<T, TContainer>& Right) noexcept { Left.swap(Right); }
 }
 
 namespace Lumina

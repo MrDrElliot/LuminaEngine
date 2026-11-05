@@ -53,7 +53,7 @@ namespace Lumina::ImageWrite
         {
             auto* Out = static_cast<TVector<uint8>*>(Context);
             const uint8* Bytes = static_cast<const uint8*>(Data);
-            Out->insert(Out->end(), Bytes, Bytes + Size);
+            Out->Append(Bytes, Size);
         }
     }
 
@@ -65,7 +65,7 @@ namespace Lumina::ImageWrite
         const int Ok = stbi_write_png_to_func(&AppendEncodedBytes, &Encoded,
             (int)Width, (int)Height, (int)Channels, Pixels, (int)RowPitch);
 
-        if (Ok == 0 || Encoded.empty())
+        if (Ok == 0 || Encoded.IsEmpty())
         {
             return false;
         }

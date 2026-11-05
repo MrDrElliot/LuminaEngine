@@ -4,12 +4,11 @@
 #include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Containers/StringView.h"
+#include "Core/Json/Json.h"
 #include "Core/Templates/Optional.h"
 #include "Core/Threading/Sync.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
-
-#include "nlohmann/json.hpp"
 
 namespace Lumina::JsonRpc
 {
@@ -27,7 +26,7 @@ namespace Lumina::JsonRpc
     {
         int32          Code = static_cast<int32>(EErrorCode::InternalError);
         FString        Message;
-        nlohmann::json Data;
+        FJsonValue     Data;
     };
 
     struct FRequest
@@ -35,10 +34,10 @@ namespace Lumina::JsonRpc
         FString        Method;
 
         // An object or an array when the caller sent one, otherwise an empty object.
-        nlohmann::json Params;
+        FJsonValue     Params;
 
         // Echoed back untouched, so a client can match a reply to what it sent.
-        nlohmann::json Id;
+        FJsonValue     Id;
 
         // A request that arrived with no id at all wants no reply, and its result is dropped.
         bool bNotification = false;
@@ -46,13 +45,13 @@ namespace Lumina::JsonRpc
 
     struct FResponse
     {
-        nlohmann::json    Result;
+        FJsonValue        Result;
         TOptional<FError> Error;
 
         // Exported one by one, because a plugin registering a method has to reach these from its own DLL.
-        NODISCARD static RUNTIME_API FResponse Success(nlohmann::json Value);
+        NODISCARD static RUNTIME_API FResponse Success(FJsonValue Value);
         NODISCARD static RUNTIME_API FResponse Failure(EErrorCode Code, FStringView Message);
-        NODISCARD static RUNTIME_API FResponse Failure(EErrorCode Code, FStringView Message, nlohmann::json Data);
+        NODISCARD static RUNTIME_API FResponse Failure(EErrorCode Code, FStringView Message, FJsonValue Data);
     };
 
     using FMethodHandler = TFunction<FResponse(const FRequest&)>;
@@ -87,7 +86,7 @@ namespace Lumina::JsonRpc
         };
 
         // Unset when the message was a notification, which is answered with silence even after a failure.
-        NODISCARD TOptional<nlohmann::json> HandleOne(const nlohmann::json& Message);
+        NODISCARD TOptional<FJsonValue> HandleOne(const FJsonValue& Message);
 
         // Copied out rather than called under the lock, so a handler may register or unregister freely.
         NODISCARD TOptional<FMethodHandler> FindHandler(const FString& Method) const;

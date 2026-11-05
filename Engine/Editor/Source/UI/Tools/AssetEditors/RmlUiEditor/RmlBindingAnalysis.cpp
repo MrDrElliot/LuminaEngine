@@ -25,7 +25,7 @@ namespace Lumina::RmlBinding
 
         FString ToFString(std::string_view Text)
         {
-            return FString(Text.data(), Text.size());
+            return FString(Text.data(), IntCastChecked<int32>(Text.size()));
         }
 
         std::string_view Trim(std::string_view Text)
@@ -50,7 +50,7 @@ namespace Lumina::RmlBinding
                 {
                     if (Text[Index] == '\n')
                     {
-                        Newlines.push_back(Index);
+                        Newlines.Add(Index);
                     }
                 }
             }
@@ -140,7 +140,7 @@ namespace Lumina::RmlBinding
                 }
                 if (!Attribute.Name.empty())
                 {
-                    Out.push_back(Attribute);
+                    Out.Add(Attribute);
                 }
                 else
                 {
@@ -281,9 +281,9 @@ namespace Lumina::RmlBinding
                         continue;
                     }
                     Ref.Kind = ERefKind::Command;
-                    Ref.Member.clear();
+                    Ref.Member.Reset();
                 }
-                Out.push_back(Ref);
+                Out.Add(Ref);
             }
         }
 
@@ -330,14 +330,14 @@ namespace Lumina::RmlBinding
             Source = Trim(Source);
             const size_t Dot = Source.find('.');
             Scope.List = ToFString(Dot == std::string_view::npos ? Source : Source.substr(0, Dot));
-            Out.ForScopes.push_back(Scope);
+            Out.ForScopes.Add(Scope);
 
             FBindingRef Ref;
             Ref.Model = Model;
             Ref.Name = Scope.List;
             Ref.Kind = ERefKind::ListSource;
             Ref.Line = Line;
-            Out.Refs.push_back(Ref);
+            Out.Refs.Add(Ref);
         }
 
         struct FOpenElement
@@ -348,9 +348,9 @@ namespace Lumina::RmlBinding
 
         FString CurrentModel(const TVector<FOpenElement>& Stack)
         {
-            for (size_t Index = Stack.size(); Index > 0; --Index)
+            for (int32 Index = Stack.Num(); Index > 0; --Index)
             {
-                if (!Stack[Index - 1].Model.empty())
+                if (!Stack[Index - 1].Model.IsEmpty())
                 {
                     return Stack[Index - 1].Model;
                 }
@@ -363,7 +363,7 @@ namespace Lumina::RmlBinding
         {
             for (const T& Item : Items)
             {
-                if (FStringView(Item.Name.c_str(), Item.Name.size()) == Name)
+                if (FStringView(*Item.Name, Item.Name.Len()) == Name)
                 {
                     return true;
                 }
@@ -382,11 +382,11 @@ namespace Lumina::RmlBinding
     {
         for (const FForScope& Scope : ForScopes)
         {
-            if (FStringView(Scope.Model.c_str(), Scope.Model.size()) != Model)
+            if (FStringView(*Scope.Model, Scope.Model.Len()) != Model)
             {
                 continue;
             }
-            if (FStringView(Scope.Alias.c_str(), Scope.Alias.size()) == Name || FStringView(Scope.IndexAlias.c_str(), Scope.IndexAlias.size()) == Name)
+            if (FStringView(*Scope.Alias, Scope.Alias.Len()) == Name || FStringView(*Scope.IndexAlias, Scope.IndexAlias.Len()) == Name)
             {
                 return &Scope;
             }
@@ -424,11 +424,11 @@ namespace Lumina::RmlBinding
                     ++NameEnd;
                 }
                 const std::string_view Tag = Text.substr(Cursor + 2, NameEnd - Cursor - 2);
-                for (size_t Index = Stack.size(); Index > 0; --Index)
+                for (int32 Index = Stack.Num(); Index > 0; --Index)
                 {
                     if (Stack[Index - 1].Tag == Tag)
                     {
-                        Stack.resize(Index - 1);
+                        Stack.SetNum(Index - 1);
                         break;
                     }
                 }
@@ -456,12 +456,12 @@ namespace Lumina::RmlBinding
                     if (Attribute.Name == "data-model")
                     {
                         Element.Model = Scanning::ToFString(Scanning::Trim(Attribute.Value));
-                        Out.Models.push_back(Element.Model);
-                        Out.ModelLines.push_back(Lines.LineAt(Attribute.ValueOffset));
+                        Out.Models.Add(Element.Model);
+                        Out.ModelLines.Add(Lines.LineAt(Attribute.ValueOffset));
                     }
                 }
 
-                const FString Model = Element.Model.empty() ? Scanning::CurrentModel(Stack) : Element.Model;
+                const FString Model = Element.Model.IsEmpty() ? Scanning::CurrentModel(Stack) : Element.Model;
                 for (const Scanning::FRawAttribute& Attribute : Attributes)
                 {
                     if (!Scanning::StartsWith(Attribute.Name, "data-") || Attribute.Name == "data-model" || Scanning::StartsWith(Attribute.Name, "data-alias-"))
@@ -493,7 +493,7 @@ namespace Lumina::RmlBinding
                 }
                 if (!bSelfClosing && !Scanning::IsVoidTag(Tag))
                 {
-                    Stack.push_back(Element);
+                    Stack.Add(Element);
                 }
                 continue;
             }
@@ -524,15 +524,15 @@ namespace Lumina::RmlBinding
     {
         FUIDesignModel Model;
         Model.Name = ModelName;
-        const FStringView ModelView(ModelName.c_str(), ModelName.size());
+        const FStringView ModelView(*ModelName, ModelName.Len());
 
         for (const FForScope& Scope : Bindings.ForScopes)
         {
-            if (Scope.Model != ModelName || Scanning::ContainsName(Model.Lists, FStringView(Scope.List.c_str(), Scope.List.size())))
+            if (Scope.Model != ModelName || Scanning::ContainsName(Model.Lists, FStringView(*Scope.List, Scope.List.Len())))
             {
                 continue;
             }
-            FUIDesignList& List = Model.Lists.emplace_back();
+            FUIDesignList& List = Model.Lists.EmplaceGetRef();
             List.Name = Scope.List;
         }
 
@@ -542,12 +542,12 @@ namespace Lumina::RmlBinding
             {
                 continue;
             }
-            const FStringView Name(Ref.Name.c_str(), Ref.Name.size());
+            const FStringView Name(*Ref.Name, Ref.Name.Len());
             if (Ref.Kind == ERefKind::Command)
             {
                 if (!Scanning::ContainsName(Model.Commands, Name))
                 {
-                    Model.Commands.emplace_back().Name = Ref.Name;
+                    Model.Commands.EmplaceGetRef().Name = Ref.Name;
                 }
                 continue;
             }
@@ -558,7 +558,7 @@ namespace Lumina::RmlBinding
 
             if (const FForScope* Scope = Bindings.FindAlias(ModelView, Name))
             {
-                if (Ref.Member.empty())
+                if (Ref.Member.IsEmpty())
                 {
                     continue;
                 }
@@ -566,7 +566,7 @@ namespace Lumina::RmlBinding
                 {
                     if (List.Name == Scope->List && std::find(List.Members.begin(), List.Members.end(), Ref.Member) == List.Members.end())
                     {
-                        List.Members.push_back(Ref.Member);
+                        List.Members.Add(Ref.Member);
                     }
                 }
                 continue;
@@ -595,7 +595,7 @@ namespace Lumina::RmlBinding
                 continue;
             }
 
-            FUIDesignScalar& Scalar = Model.Scalars.emplace_back();
+            FUIDesignScalar& Scalar = Model.Scalars.EmplaceGetRef();
             Scalar.Name = Ref.Name;
             Scalar.bWritable = true;
             switch (Ref.Use)
@@ -615,20 +615,20 @@ namespace Lumina::RmlBinding
     {
         for (FUIDesignList& List : Model.Lists)
         {
-            if (!List.Rows.empty())
+            if (!List.Rows.IsEmpty())
             {
                 continue;
             }
             for (int32 Row = 1; Row <= 3; ++Row)
             {
-                TVector<FString>& Cells = List.Rows.emplace_back();
+                TVector<FString>& Cells = List.Rows.EmplaceGetRef();
                 for (const FString& Member : List.Members)
                 {
-                    Cells.push_back(Member + " " + std::to_string(Row).c_str());
+                    Cells.Add(Member + " " + std::to_string(Row).c_str());
                 }
-                if (List.Members.empty())
+                if (List.Members.IsEmpty())
                 {
-                    Cells.push_back(List.Name + " " + std::to_string(Row).c_str());
+                    Cells.Add(List.Name + " " + std::to_string(Row).c_str());
                 }
             }
         }
@@ -636,7 +636,7 @@ namespace Lumina::RmlBinding
 
     void Lint(const FDocumentBindings& Bindings, const TVector<FUIDesignModel>& Models, const TVector<bool>& Described, TVector<FProblem>& Out)
     {
-        Out.clear();
+        Out.Reset();
         auto Add = [&Out](int32 Line, FString Message, bool bError)
         {
             for (const FProblem& Existing : Out)
@@ -646,16 +646,16 @@ namespace Lumina::RmlBinding
                     return;
                 }
             }
-            Out.push_back(FProblem{ Line, Move(Message), bError });
+            Out.Emplace(Line, Move(Message), bError);
         };
 
         auto FindModel = [&](const FString& Name, bool& bOutDescribed) -> const FUIDesignModel*
         {
-            for (size_t Index = 0; Index < Models.size(); ++Index)
+            for (int32 Index = 0; Index < Models.Num(); ++Index)
             {
                 if (Models[Index].Name == Name)
                 {
-                    bOutDescribed = Index < Described.size() && Described[Index];
+                    bOutDescribed = Index < Described.Num() && Described[Index];
                     return &Models[Index];
                 }
             }
@@ -663,7 +663,7 @@ namespace Lumina::RmlBinding
             return nullptr;
         };
 
-        for (size_t Index = 0; Index < Bindings.Models.size(); ++Index)
+        for (int32 Index = 0; Index < Bindings.Models.Num(); ++Index)
         {
             bool bDescribed = false;
             FindModel(Bindings.Models[Index], bDescribed);
@@ -677,7 +677,7 @@ namespace Lumina::RmlBinding
 
         for (const FBindingRef& Ref : Bindings.Refs)
         {
-            if (Ref.Model.empty())
+            if (Ref.Model.IsEmpty())
             {
                 Add(Ref.Line, "'" + Ref.Name + "' is bound outside any element with data-model, so nothing provides it.", true);
                 continue;
@@ -688,8 +688,8 @@ namespace Lumina::RmlBinding
             {
                 continue;
             }
-            const FStringView Name(Ref.Name.c_str(), Ref.Name.size());
-            const FString& TypeName = Model->SourceType.empty() ? Model->Name : Model->SourceType;
+            const FStringView Name(*Ref.Name, Ref.Name.Len());
+            const FString& TypeName = Model->SourceType.IsEmpty() ? Model->Name : Model->SourceType;
 
             if (Ref.Kind == ERefKind::Command)
             {
@@ -707,9 +707,9 @@ namespace Lumina::RmlBinding
                 }
                 continue;
             }
-            if (const FForScope* Scope = Bindings.FindAlias(FStringView(Ref.Model.c_str(), Ref.Model.size()), Name))
+            if (const FForScope* Scope = Bindings.FindAlias(FStringView(*Ref.Model, Ref.Model.Len()), Name))
             {
-                if (Ref.Member.empty() || Ref.Name == Scope->IndexAlias)
+                if (Ref.Member.IsEmpty() || Ref.Name == Scope->IndexAlias)
                 {
                     continue;
                 }
@@ -727,12 +727,13 @@ namespace Lumina::RmlBinding
                 Add(Ref.Line, "'" + Ref.Name + "' is not a [Property(Bind)] member of " + TypeName + ".", true);
                 continue;
             }
-            const bool bStruct = !Ref.Member.empty() && Model->FindScalar(Name) == nullptr && !Scanning::ContainsName(Model->Lists, Name);
+            const bool bStruct = !Ref.Member.IsEmpty() && Model->FindScalar(Name) == nullptr && !Scanning::ContainsName(Model->Lists, Name);
             if (bStruct)
             {
-                const FString Field = Ref.Member.substr(0, Ref.Member.find_first_of(".["));
+                const int32 FieldEnd = Ref.Member.FindFirstOf(".[");
+                const FString Field = FieldEnd == Constants::kIndexNone ? Ref.Member : Ref.Member.Left(FieldEnd);
                 const FString Path = Ref.Name + "." + Field;
-                if (Model->FindScalar(FStringView(Path.c_str(), Path.size())) == nullptr)
+                if (Model->FindScalar(FStringView(*Path, Path.Len())) == nullptr)
                 {
                     Add(Ref.Line, "'" + Path + "' is not a member of " + Ref.Name + ".", true);
                 }
@@ -744,7 +745,7 @@ namespace Lumina::RmlBinding
 
     void ReadDataAttributes(std::string_view Text, size_t OpenLt, TVector<FAttribute>& Out)
     {
-        Out.clear();
+        Out.Reset();
         if (OpenLt >= Text.size() || Text[OpenLt] != '<')
         {
             return;
@@ -761,7 +762,7 @@ namespace Lumina::RmlBinding
         {
             if (Scanning::StartsWith(Attribute.Name, "data-"))
             {
-                Out.push_back(FAttribute{ Scanning::ToFString(Attribute.Name), Scanning::ToFString(Attribute.Value) });
+                Out.Emplace(Scanning::ToFString(Attribute.Name), Scanning::ToFString(Attribute.Value));
             }
         }
     }
@@ -790,7 +791,7 @@ namespace Lumina::RmlBinding
         if (Open != std::string_view::npos && (Close == std::string_view::npos || Close < Open))
         {
             Context.Alias = AliasBeforeDot();
-            Context.Kind = Context.Alias.empty() ? ECompletion::Value : ECompletion::AliasMember;
+            Context.Kind = Context.Alias.IsEmpty() ? ECompletion::Value : ECompletion::AliasMember;
             return Context;
         }
 
@@ -867,7 +868,7 @@ namespace Lumina::RmlBinding
             return Context;
         }
         Context.Alias = AliasBeforeDot();
-        if (!Context.Alias.empty())
+        if (!Context.Alias.IsEmpty())
         {
             Context.Kind = ECompletion::AliasMember;
             return Context;

@@ -20,7 +20,6 @@ namespace Lumina
         : IRenderScene(InWorld)
         , ShadowAtlas(FShadowAtlasConfig())
     {
-        FMeshResolveCache::Get().AddInvalidationSink(&DynamicMaterialInvalidations);
     }
 
         void FDefaultSceneRenderer::Init()
@@ -45,7 +44,7 @@ namespace Lumina
 
         SyncCascadeAtlas(ActiveCascadeCount);
 
-        SceneViews.reserve(MaxSceneViews);
+        SceneViews.Reserve(MaxSceneViews);
 
         // Primary view (index 0) tracks the swapchain size.
         AddSceneView(Windowing::GetPrimaryWindowHandle()->GetExtent(), /*bPrimary*/ true);
@@ -56,7 +55,8 @@ namespace Lumina
         {
             ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-            MovedTransformConsumer = ECS::Utils::AddMovedTransformConsumer(Registry);
+            MovedTransformConsumer = ECS::Utils::AddMovedTransformConsumer(Registry, true);
+            ScenePrimitives.SetMovedTransformConsumer(Registry, MovedTransformConsumer);
 
             ScenePrimitives.Reset(&Registry);
         }
@@ -64,8 +64,8 @@ namespace Lumina
 
     FDefaultSceneRenderer::FSceneView& FDefaultSceneRenderer::AddSceneView(const FUIntVector2& Size, bool bPrimary)
     {
-        SceneViews.emplace_back();
-        FSceneView& View = SceneViews.back();
+        SceneViews.Emplace();
+        FSceneView& View = SceneViews.Last();
         View.bIsPrimary  = bPrimary;
         View.DisplaySize = Math::Max(Size, FUIntVector2(1));
         // Captures and probe faces render at their own size with nothing to upscale them.
@@ -85,7 +85,7 @@ namespace Lumina
     int32 FDefaultSceneRenderer::RegisterCaptureView(const FUIntVector2& Size)
     {
         const FUIntVector2 ClampedSize = Math::Max(Size, FUIntVector2(1));
-        for (int32 i = 1; i < (int32)SceneViews.size(); ++i)
+        for (int32 i = 1; i < SceneViews.Num(); ++i)
         {
             if (!SceneViews[i].bEnabled && !SceneViews[i].bReservedForProbeBake && SceneViews[i].Size == ClampedSize)
             {
@@ -93,19 +93,19 @@ namespace Lumina
             }
         }
 
-        if (SceneViews.size() >= MaxSceneViews)
+        if (static_cast<uint32>(SceneViews.Num()) >= MaxSceneViews)
         {
             return -1;
         }
 
-        const int32 Handle = (int32)SceneViews.size();
+        const int32 Handle = SceneViews.Num();
         AddSceneView(ClampedSize, /*bPrimary*/ false);
         return Handle;
     }
 
     bool FDefaultSceneRenderer::SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled)
     {
-        if (Handle <= 0 || Handle >= (int32)SceneViews.size())
+        if (Handle <= 0 || Handle >= SceneViews.Num())
         {
             return false;
         }
@@ -116,7 +116,7 @@ namespace Lumina
 
     int32 FDefaultSceneRenderer::GetCaptureDisplayResourceID(int32 Handle) const
     {
-        if (Handle <= 0 || Handle >= (int32)SceneViews.size())
+        if (Handle <= 0 || Handle >= SceneViews.Num())
         {
             return -1;
         }
@@ -157,9 +157,9 @@ namespace Lumina
                         .Width  = Imported->Dimensions.x,
                         .Height = Imported->Dimensions.y,
                         .Format = Imported->Format,
-                        .DebugName = IconName.c_str()
+                        .DebugName = *IconName
                     });
-                    RHI::Textures::Upload(Shared.EditorIcons[i], 0, Imported->Pixels.data(), Imported->Pixels.size(), Imported->Dimensions.x);
+                    RHI::Textures::Upload(Shared.EditorIcons[i], 0, Imported->Pixels.GetData(), Imported->Pixels.Num(), Imported->Dimensions.x);
                 }
                 else
                 {
@@ -184,7 +184,7 @@ namespace Lumina
 
         FSharedRenderResources& SharedNow = Render().GetSharedRenderResources();
         NamedImages[(int)ENamedImage::BRDFLut]    = Alias(SharedNow.BRDFLut, EFormat::RG16_FLOAT, FUIntVector2(256, 256));
-        NamedImages[(int)ENamedImage::BRDFLut].MipUAVSlots.push_back(SharedNow.BRDFLutUAV);
+        NamedImages[(int)ENamedImage::BRDFLut].MipUAVSlots.Add(SharedNow.BRDFLutUAV);
         NamedImages[(int)ENamedImage::SMAAArea]   = Alias(SharedNow.SMAAArea, EFormat::RG8_UNORM, FUIntVector2(AREATEX_WIDTH, AREATEX_HEIGHT));
         NamedImages[(int)ENamedImage::SMAASearch] = Alias(SharedNow.SMAASearch, EFormat::R8_UNORM, FUIntVector2(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT));
 
@@ -206,7 +206,6 @@ namespace Lumina
 
     FDefaultSceneRenderer::~FDefaultSceneRenderer()
     {
-        FMeshResolveCache::Get().RemoveInvalidationSink(&DynamicMaterialInvalidations);
         JoinInstanceBlockBounds();
         RHI::WaitDeviceIdle();
 
@@ -215,14 +214,14 @@ namespace Lumina
         if (World != nullptr)
         {
             ECS::FRegistry& Registry = World->GetEntityRegistry();
-            ScenePrimitives.DisarmMoveStream(Registry);
+            // Before the consumer goes, so the interest the set raised is cleared on a consumer that still exists.
+            ScenePrimitives.Shutdown(Registry);
             ECS::Utils::RemoveMovedTransformConsumer(Registry, MovedTransformConsumer);
             MovedTransformConsumer = Constants::kIndexNoneU32;
-
-            ScenePrimitives.Reset(&Registry);
         }
 
         RetireSceneImage(LightFunctionAtlas);
+        RetireSceneImage(WidgetDepth);
 
         // Per-view images + cluster buffers.
         for (FSceneView& View : SceneViews)
@@ -244,7 +243,7 @@ namespace Lumina
                 View.ClusterLightMaskBuffer = {};
             }
         }
-        SceneViews.clear();
+        SceneViews.Reset();
         CurrentView = nullptr;
 
         for (FSceneImage& Image : NamedImages)
@@ -285,7 +284,7 @@ namespace Lumina
             Arena.Release();
         }
         BoneArenaSyncedSerial = {};
-        LastBoneUploadRanges.clear();
+        LastBoneUploadRanges.Reset();
         SkinnedFrameDataBuffer.Release();
         SkinnedSlotListBuffer.Release();
         InstanceVisibilityBuffers[0].Release();
@@ -348,7 +347,7 @@ namespace Lumina
             FreeBuffer(State.VisibleMeshletBuffer);
             FreeBuffer(State.IndirectDrawBuffer);
         }
-        TerrainGPUStates.clear();
+        TerrainGPUStates.Reset();
 
         // Through the same release as a dying emitter, so a buffer added to the state cannot be missed here.
         for (auto& [Entity, States] : ParticleGPUStates)
@@ -358,7 +357,7 @@ namespace Lumina
                 ReleaseParticleState(State);
             }
         }
-        ParticleGPUStates.clear();
+        ParticleGPUStates.Reset();
 
         for (auto& [Size, Pooled] : ParticleBufferPool)
         {
@@ -367,7 +366,7 @@ namespace Lumina
                 FreeBuffer(Allocation);
             }
         }
-        ParticleBufferPool.clear();
+        ParticleBufferPool.Reset();
         ParticlePoolBytes = 0;
         FreeBuffer(ParticleCounterArena);
         ParticleCounterArenaSlots = 0;
@@ -390,7 +389,7 @@ namespace Lumina
             }
             Readback = {};
         }
-        ParticleCollisionResults.clear();
+        ParticleCollisionResults.Reset();
 
         for (FParticleGridReadback& Readback : ParticleGridReadback)
         {
@@ -400,7 +399,7 @@ namespace Lumina
             }
             Readback = {};
         }
-        ParticleGridResults.clear();
+        ParticleGridResults.Reset();
 
         #if USING(WITH_EDITOR)
         for (FPickerReadbackSlot& Slot : PickerReadbackRing)
@@ -506,8 +505,8 @@ namespace Lumina
         PointAtView(SceneViews[0]);
         CurrentCameraEarlyView = 0u;                                // primary's early/frustum cull view
 
-        LUMINA_PROFILE_VALUE("View/Width",  (int64)GetNamedImage(ENamedImage::DepthAttachment).GetSizeX());
-        LUMINA_PROFILE_VALUE("View/Height", (int64)GetNamedImage(ENamedImage::DepthAttachment).GetSizeY());
+        LUMINA_PROFILE_VALUE("View/Width",  GetNamedImage(ENamedImage::DepthAttachment).GetSizeX());
+        LUMINA_PROFILE_VALUE("View/Height", GetNamedImage(ENamedImage::DepthAttachment).GetSizeY());
 
         Frame.SceneGlobalData.CullData.PyramidWidth      = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeX();
         Frame.SceneGlobalData.CullData.PyramidHeight     = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeY();
@@ -543,12 +542,6 @@ namespace Lumina
 
         // Publish this frame's stats for the editor-side GetRenderStats() reader.
         RenderStats = Frame.FrameStats;
-
-        // Published here, because a frozen cull skips DepthPyramidPass and rebuilds nothing.
-        if (!FrameSettings.bFreezeCulling)
-        {
-            bDepthPyramidValid.store(true, std::memory_order_release);
-        }
 
         RHI::FCmdListH CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
 
@@ -731,15 +724,15 @@ namespace Lumina
                 }
 
                 // Only what graphics reads goes back; GTAO's scratch images stay on compute and are rewritten each frame.
-                TFixedVector<RHI::FTextureH, 3> ComputeOutputs;
+                TInlineVector<RHI::FTextureH, 3> ComputeOutputs;
                 if (bGTAOWritten)
                 {
-                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::GTAOBlur).Texture);
+                    ComputeOutputs.Add(GetNamedImage(ENamedImage::GTAOBlur).Texture);
                 }
                 if (bAerialWritten)
                 {
-                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::AerialInScatter).Texture);
-                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::AerialTransmittance).Texture);
+                    ComputeOutputs.Add(GetNamedImage(ENamedImage::AerialInScatter).Texture);
+                    ComputeOutputs.Add(GetNamedImage(ENamedImage::AerialTransmittance).Texture);
                 }
 
                 if (bAsyncCompute)
@@ -1127,7 +1120,7 @@ namespace Lumina
 
                 for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
                 {
-                    if (Capture.SceneViewIndex <= 0 || Capture.SceneViewIndex >= (int32)SceneViews.size())
+                    if (Capture.SceneViewIndex <= 0 || Capture.SceneViewIndex >= SceneViews.Num())
                     {
                         continue;
                     }
@@ -1168,7 +1161,7 @@ namespace Lumina
                     bWaitCompute ? TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1} : TSpan<const RHI::FSemaphoreInfo>{});
 
         // Captures and probe bakes draw the scene again past the upscale, and a callback there may read anything.
-        const bool bLateSceneReaders = !Frame.Views.CaptureViews.empty() || Frame.ReflectionProbes.BakingProbe >= 0
+        const bool bLateSceneReaders = !Frame.Views.CaptureViews.IsEmpty() || Frame.ReflectionProbes.BakingProbe >= 0
                                     || HasRenderCallbacks(ERenderStage::AfterPostProcess) || HasRenderCallbacks(ERenderStage::Overlay);
         if (!bShadingWaitSubmitted || bLateSceneReaders)
         {
@@ -1272,7 +1265,7 @@ namespace Lumina
     {
         bPrimaryTracksSwapchain = false;
 
-        if (SceneViews.empty())
+        if (SceneViews.IsEmpty())
         {
             return;
         }
@@ -1354,7 +1347,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::RefreshPrimaryRenderSize()
     {
-        if (SceneViews.empty())
+        if (SceneViews.IsEmpty())
         {
             return;
         }
@@ -1403,8 +1396,8 @@ namespace Lumina
     {
         // Captures and probe bakes see the cascades from viewpoints the camera's receivers do not describe.
         return CVarShadowReceiverCull.GetValue() && !FrameSettings.bFreezeCulling && Frame.Lighting.LightData.bHasSun
-            && !Frame.Lighting.Lights.empty() && Frame.Lighting.Lights[0].ShadowDataIndex != Constants::kIndexNone
-            && Frame.Views.NumNearCascadeViews > 0u && Frame.Views.CaptureViews.empty() && Frame.ReflectionProbes.BakingProbe < 0;
+            && !Frame.Lighting.Lights.IsEmpty() && Frame.Lighting.Lights[0].ShadowDataIndex != Constants::kIndexNone
+            && Frame.Views.NumNearCascadeViews > 0u && Frame.Views.CaptureViews.IsEmpty() && Frame.ReflectionProbes.BakingProbe < 0;
     }
 
     void FDefaultSceneRenderer::ShadowReceiverMaskPass(RHI::FCmdListH CL)
@@ -1416,7 +1409,7 @@ namespace Lumina
         static const FShaderH DilateShader = FShaderLibrary::Get("ShadowReceiverDilate.slang");
         const int32 SunShadowIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
         const FSceneImage& Depth   = GetNamedImage(ENamedImage::DepthAttachment);
-        if (!AirShader || !DilateShader || SunShadowIndex < 0 || SunShadowIndex >= (int32)Frame.Lighting.Shadows.size())
+        if (!AirShader || !DilateShader || SunShadowIndex < 0 || SunShadowIndex >= Frame.Lighting.Shadows.Num())
         {
             return;
         }
@@ -1540,7 +1533,7 @@ namespace Lumina
     {
         for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
         {
-            if (!Terrain.Grass.empty() && Terrain.GrassMaxInstances != 0u)
+            if (!Terrain.Grass.IsEmpty() && Terrain.GrassMaxInstances != 0u)
             {
                 return true;
             }
@@ -1574,7 +1567,7 @@ namespace Lumina
         uint32 GrassCursors = 0;
         for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
         {
-            GrassCursors += (uint32)Terrain.Grass.size();
+            GrassCursors += (uint32)Terrain.Grass.Num();
         }
 
         const uint64 UsedBytes = kScratchGrassCursorsOffset + (uint64)GrassCursors * sizeof(uint32);
@@ -1697,8 +1690,8 @@ namespace Lumina
         Release(View.BloomChainImage);
 
         // Shared aliases, so just drop the copies and let the owners release them.
-        View.Images.fill(FSceneImage{});
-        View.ImageLastUsedTick.fill(0);
+        View.Images.Fill(FSceneImage{});
+        View.ImageLastUsedTick.Fill(0);
     }
 
     static const char* ENamedImageToString(FDefaultSceneRenderer::ENamedImage Image)
@@ -1992,9 +1985,9 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
 
         // Exactly the conditions the consuming passes early-out on, so a target exists when needed.
-        const bool bTranslucency = !Frame.Geometry.TranslucentDrawList.empty();
-        const bool bDecals       = !Frame.Primitives.DecalExtracts.empty();
-        const bool bWater        = !Frame.Water.Surfaces.empty();
+        const bool bTranslucency = !Frame.Geometry.TranslucentDrawList.IsEmpty();
+        const bool bDecals       = !Frame.Primitives.DecalExtracts.IsEmpty();
+        const bool bWater        = !Frame.Water.Surfaces.IsEmpty();
         const SPostProcessSettings* PostSettings = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
         const bool bDepthOfField = PostSettings != nullptr && PostSettings->bEnabled && PostSettings->DepthOfFieldFStop > 0.0f;
 
@@ -2739,19 +2732,19 @@ namespace Lumina
             TVector<uint32> Spirv;
             FName           Path;
 
-            bool IsSet() const { return !Spirv.empty(); }
+            bool IsSet() const { return !Spirv.IsEmpty(); }
 
             RHI::FShaderSource Source() const
             {
-                if (Spirv.empty())
+                if (Spirv.IsEmpty())
                 {
                     return {};
                 }
                 return RHI::FShaderSource
                 {
-                    .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()), Spirv.size() * sizeof(uint32)),
+                    .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()), Spirv.Num() * sizeof(uint32)),
                     .EntryPoint = "main",
-                    .DebugName  = Path.c_str()
+                    .DebugName  = *Path
                 };
             }
         };
@@ -2830,14 +2823,14 @@ namespace Lumina
             return RHI::FSpecializationConstant{ .ConstantID = Id, .AsInt = (uint64)Value, .Type = RHI::ESpecializationConstantType::UInt32 };
         };
 
-        TFixedVector<RHI::FSpecializationConstant, 7> SpecConsts;
-        SpecConsts.push_back(MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u));
-        SpecConsts.push_back(MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u));
-        SpecConsts.push_back(MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u));
-        SpecConsts.push_back(MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u));
-        SpecConsts.push_back(MakeUInt(5, (uint32)Key.SkinnedMode));   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
-        SpecConsts.push_back(MakeUInt(7, (uint32)Key.TriCullMode));   // SPEC_TRI_CULL, per-triangle rejects
-        SpecConsts.push_back(MakeUInt(8, (uint32)Key.SkyMode));       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
+        TInlineVector<RHI::FSpecializationConstant, 7> SpecConsts;
+        SpecConsts.Add(MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u));
+        SpecConsts.Add(MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u));
+        SpecConsts.Add(MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u));
+        SpecConsts.Add(MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u));
+        SpecConsts.Add(MakeUInt(5, (uint32)Key.SkinnedMode));   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
+        SpecConsts.Add(MakeUInt(7, (uint32)Key.TriCullMode));   // SPEC_TRI_CULL, per-triangle rejects
+        SpecConsts.Add(MakeUInt(8, (uint32)Key.SkyMode));       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
 
         const FShaderEntry* NamedEntry = PSEntry != nullptr ? PSEntry : (MSEntry != nullptr ? MSEntry : VSEntry);
 
@@ -2854,9 +2847,9 @@ namespace Lumina
             Desc.bAlphaToCoverage = Key.bAlphaToCoverage;
             Desc.SampleCount      = Key.SampleCount;
             Desc.DepthFormat      = Key.DepthFormat;
-            Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.data(), Key.ColorTargets.size());
+            Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.GetData(), Key.ColorTargets.Num());
 
-            const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts.data(), SpecConsts.size());
+            const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts.GetData(), SpecConsts.Num());
 
             // Task-less by construction, since MeshletCull.slang compacted before any draw was recorded.
             const RHI::FPipelineH Pipeline = MS.IsSet()
@@ -2883,7 +2876,7 @@ namespace Lumina
         return [Stage = CopyStage(CSEntry), OwnedConstants = Move(OwnedConstants), CS]() -> RHI::FPipelineH
         {
             const RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(Stage.Source(),
-                TSpan<const RHI::FSpecializationConstant>(OwnedConstants.data(), OwnedConstants.size()));
+                TSpan<const RHI::FSpecializationConstant>(OwnedConstants.GetData(), OwnedConstants.Num()));
 
             #if USING(WITH_EDITOR)
             PublishEditorPipelineInfo(Pipeline, CS, Stage.Path);
@@ -2997,20 +2990,20 @@ namespace Lumina
 
         TVector<RHI::FBufferCopy>& Copies = UploadCopyScratch;
         TVector<uint64>& Cursors = UploadCursorScratch;
-        Copies.clear();
-        Cursors.clear();
-        Copies.reserve(Runs.size());
-        Cursors.reserve(Runs.size());
+        Copies.Reset();
+        Cursors.Reset();
+        Copies.Reserve(Runs.Num());
+        Cursors.Reserve(Runs.Num());
 
         uint64 Cursor = 0;
         for (const FUIntVector2& Run : Runs)
         {
             const uint64 Bytes = (uint64)Run.y * Stride;
             const uint64 SrcOffset = (uint64)Run.x * Stride;
-            Cursors.push_back(Cursor);
+            Cursors.Add(Cursor);
             if (Bytes != 0)
             {
-                Copies.push_back(RHI::FBufferCopy{ { Dst + SrcOffset, Bytes }, { Staging.Gpu + Cursor, Bytes } });
+                Copies.Add(RHI::FBufferCopy{ { Dst + SrcOffset, Bytes }, { Staging.Gpu + Cursor, Bytes } });
             }
             Cursor += Bytes;
         }
@@ -3026,26 +3019,26 @@ namespace Lumina
         };
 
         constexpr uint64 ParallelUploadBytes = 256u * 1024u;
-        const uint32 NumRuns = (uint32)Runs.size();
+        const uint32 NumRuns = (uint32)Runs.Num();
         if (bFillBeforeSubmit)
         {
             // The fill workers walk this array once launched, so a push after the launch could move it under them.
-            ASSERT(!DeferredStageFillTask);
+            ASSERT(!bDeferredStageFillsRunning);
             for (uint32 i = 0; i < NumRuns; ++i)
             {
                 const uint64 Bytes = (uint64)Runs[i].y * Stride;
                 const uint8* RunSource = (const uint8*)Src + (uint64)Runs[i].x * Stride;
                 for (uint64 Offset = 0; Offset < Bytes; Offset += ParallelUploadBytes)
                 {
-                    DeferredStageFills.push_back({ StagingBytes + Cursors[i] + Offset, RunSource + Offset,
-                                                   Math::Min(ParallelUploadBytes, Bytes - Offset) });
+                    DeferredStageFills.Emplace(StagingBytes + Cursors[i] + Offset, RunSource + Offset,
+                                               Math::Min(ParallelUploadBytes, Bytes - Offset));
                 }
             }
         }
-        else if (Total >= ParallelUploadBytes && NumRuns > 1u)
+        else if (Total >= ParallelUploadBytes && static_cast<unsigned int>(NumRuns) > 1u)
         {
             const uint32 MinRunsPerTask = Math::Max(1u, (uint32)(NumRuns * (ParallelUploadBytes / 8u) / Total));
-            Task::ParallelFor(NumRuns, [&CopyRuns](const Task::FParallelRange& Range)
+            Jobs::ParallelFor(NumRuns, [&CopyRuns](const Jobs::FParallelRange& Range)
             {
                 CopyRuns(Range.Start, Range.End);
             }, MinRunsPerTask);
@@ -3055,7 +3048,7 @@ namespace Lumina
             CopyRuns(0u, NumRuns);
         }
 
-        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.GetData(), Copies.Num()));
     }
 
     namespace
@@ -3078,7 +3071,7 @@ namespace Lumina
                                                   RHI::FGPURange Slots, const TVector<uint32>& SlotList, bool bFillBeforeSubmit)
     {
         static const FShaderH ScatterCS = FShaderLibrary::Get("ScatterUpload.slang");
-        const uint32 Count = (uint32)SlotList.size();
+        const uint32 Count = (uint32)SlotList.Num();
         if (!ScatterCS || Count == 0 || Stride == 0 || (Stride % 16u) != 0)
         {
             return;
@@ -3091,24 +3084,24 @@ namespace Lumina
             return;
         }
 
-        const uint32* SlotData = SlotList.data();
+        const uint32* SlotData = SlotList.GetData();
         const uint32  Words    = (uint32)(Stride / 16u);
         if (bFillBeforeSubmit)
         {
             // The fill workers walk this array once launched, so a push after the launch could move it under them.
-            ASSERT(!DeferredStageFillTask);
+            ASSERT(!bDeferredStageFillsRunning);
             constexpr uint32 SlotsPerFill = 2048;
             for (uint32 First = 0; First < Count; First += SlotsPerFill)
             {
                 const uint32 Num = Math::Min(SlotsPerFill, Count - First);
-                DeferredStageFills.push_back({ StagingBytes + (uint64)First * Stride, (const uint8*)Src, (uint64)Num * Stride, 0,
-                                               SlotData + First, Words });
+                DeferredStageFills.Emplace(StagingBytes + (uint64)First * Stride, (const uint8*)Src, (uint64)Num * Stride, 0,
+                                           SlotData + First, Words);
                 bDeferredGatherQueued = true;
             }
         }
         else
         {
-            Task::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Task::FParallelRange& Range)
+            Jobs::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Jobs::FParallelRange& Range)
             {
                 GatherWords((FUIntVector4*)StagingBytes + (uint64)Range.Start * Words, (const FUIntVector4*)Src, SlotData + Range.Start,
                             Range.End - Range.Start, Words);
@@ -3141,7 +3134,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         static const FShaderH DeactivateCS = FShaderLibrary::Get("DeactivateInstances.slang");
-        const uint32 Count = (uint32)Slots.size();
+        const uint32 Count = (uint32)Slots.Num();
         if (!DeactivateCS || Count == 0 || !RetainedCullEntryBuffer)
         {
             return;
@@ -3158,7 +3151,7 @@ namespace Lumina
         } PC = {};
         static_assert(sizeof(FDeactivateInstancesPC) == 48, "FDeactivateInstancesPC must match DeactivateInstances.slang FDeactivateInstancesArgs.");
 
-        PC.Slots         = RHI::CopyTransientArray(Slots.data(), Count);
+        PC.Slots         = RHI::CopyTransientArray(Slots.GetData(), Count);
         PC.CullWords     = RHI::TGPUSpan<uint32>::FromAddress(RetainedCullEntryBuffer.Gpu,
                                                               (uint32)Math::Min<uint64>(RetainedCullEntryBuffer.Size / sizeof(uint32), 0xFFFFFFFFull));
         PC.Count         = Count;
@@ -3195,18 +3188,18 @@ namespace Lumina
             // Small enough that a full ring stalls one chunk at a time rather than one whole buffer.
             constexpr uint64 UploadChunkBytes = 4 * Constants::kMiB;
 
-            ASSERT(!DeferredStageFillTask);
-            const uint32 FirstChunk = (uint32)DeferredStageFills.size();
+            ASSERT(!bDeferredStageFillsRunning);
+            const uint32 FirstChunk = (uint32)DeferredStageFills.Num();
             for (uint64 Offset = 0; Offset < Size; Offset += UploadChunkBytes)
             {
-                DeferredStageFills.push_back({ nullptr, Source + Offset, Math::Min(UploadChunkBytes, Size - Offset), Dst + Offset });
+                DeferredStageFills.Emplace(nullptr, Source + Offset, Math::Min(UploadChunkBytes, Size - Offset), Dst + Offset);
             }
             bDeferredUploadsQueued = true;
 
             if (!bFillBeforeSubmit)
             {
-                const uint32 NumChunks = (uint32)DeferredStageFills.size() - FirstChunk;
-                Task::ParallelFor(NumChunks, [this, FirstChunk](const Task::FParallelRange& Range)
+                const uint32 NumChunks = (uint32)DeferredStageFills.Num() - FirstChunk;
+                Jobs::ParallelFor(NumChunks, [this, FirstChunk](const Jobs::FParallelRange& Range)
                 {
                     for (uint32 i = Range.Start; i < Range.End; ++i)
                     {
@@ -3214,7 +3207,7 @@ namespace Lumina
                         RHI::UploadBuffer(RHI::FGPUAllocation{ .Gpu = Fill.UploadDest, .Size = Fill.Bytes }, Fill.Source, Fill.Bytes);
                     }
                 });
-                DeferredStageFills.resize(FirstChunk);
+                DeferredStageFills.SetNum(FirstChunk);
                 RHI::FlushUploads();
             }
             return;
@@ -3225,42 +3218,48 @@ namespace Lumina
 
         if (bFillBeforeSubmit)
         {
-            ASSERT(!DeferredStageFillTask);
+            ASSERT(!bDeferredStageFillsRunning);
             constexpr uint64 DeferredFillBytes = 256u * 1024u;
             for (uint64 Offset = 0; Offset < Size; Offset += DeferredFillBytes)
             {
-                DeferredStageFills.push_back({ Dest + Offset, Source + Offset, Math::Min(DeferredFillBytes, Size - Offset) });
+                DeferredStageFills.Emplace(Dest + Offset, Source + Offset, Math::Min(DeferredFillBytes, Size - Offset));
             }
         }
         else
         {
             Memory::Memcpy(Dest, Source, Size);
         }
-        StagedWrites.push_back(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
+        StagedWrites.Add(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
     }
 
     void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)
     {
-        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(StagedWrites.data(), StagedWrites.size()));
-        StagedWrites.clear();
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(StagedWrites.GetData(), StagedWrites.Num()));
+        StagedWrites.Reset();
     }
 
     void FDefaultSceneRenderer::LaunchDeferredStageFills()
     {
-        if (DeferredStageFills.empty() || DeferredStageFillTask)
+        if (DeferredStageFills.IsEmpty() || bDeferredStageFillsRunning)
         {
             return;
         }
         // Contiguous copies saturate the PCIe write path with two workers, while a gather also waits on scattered reads.
         const uint32 FillWorkers = bDeferredGatherQueued ? 4u : 2u;
         bDeferredGatherQueued = false;
-        const uint32 NumFills = (uint32)DeferredStageFills.size();
+        const uint32 NumFills = (uint32)DeferredStageFills.Num();
         DeferredFillCursor.store(0, std::memory_order_relaxed);
 
-        DeferredStageFillTask = Task::AsyncTask(FillWorkers, 1, [this, NumFills](uint32, uint32, uint32)
+        bDeferredStageFillsRunning = true;
+        const auto RunFills = [this, NumFills](uint32)
         {
             RunDeferredStageFills(NumFills);
-        }, ETaskPriority::High);
+        };
+        DeferredStageFillsDone.Reset();
+        Jobs::Spawn(Jobs::EJobPriority::High, DeferredStageFillsDone, [FillWorkers, RunFills]() -> Jobs::TTask<void>
+        {
+            co_await Jobs::Call(Jobs::ForEach(FillWorkers, RunFills, 1));
+        });
     }
 
     void FDefaultSceneRenderer::RunDeferredStageFills(uint32 NumFills)
@@ -3287,15 +3286,15 @@ namespace Lumina
 
     void FDefaultSceneRenderer::WaitDeferredStageFills()
     {
-        if (DeferredStageFillTask)
+        if (bDeferredStageFillsRunning)
         {
             LUMINA_PROFILE_SECTION("Wait Deferred Stage Fills");
             // Fills no worker has claimed yet run here, since busy workers can leave them queued past the submit.
-            RunDeferredStageFills((uint32)DeferredStageFills.size());
-            DeferredStageFillTask->Wait();
-            DeferredStageFillTask = nullptr;
+            RunDeferredStageFills((uint32)DeferredStageFills.Num());
+            DeferredStageFillsDone.Wait();
+            bDeferredStageFillsRunning = false;
         }
-        DeferredStageFills.clear();
+        DeferredStageFills.Reset();
 
         // Submitted ahead of the scene list, so its reads of the retained buffers see the re-sent bytes.
         if (bDeferredUploadsQueued)
@@ -3407,7 +3406,7 @@ namespace Lumina
 
     uint32 FDefaultSceneRenderer::GetDisplayResourceID() const
     {
-        if (SceneViews.empty())
+        if (SceneViews.IsEmpty())
         {
             return Constants::kIndexNoneU32;
         }
@@ -3417,6 +3416,6 @@ namespace Lumina
 
     FUIntVector2 FDefaultSceneRenderer::GetRenderExtent() const
     {
-        return SceneViews.empty() ? FUIntVector2(0) : SceneViews[0].DisplaySize;
+        return SceneViews.IsEmpty() ? FUIntVector2(0) : SceneViews[0].DisplaySize;
     }
 }

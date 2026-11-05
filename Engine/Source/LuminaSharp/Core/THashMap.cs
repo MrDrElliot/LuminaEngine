@@ -35,7 +35,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     /// <summary>False when the property this came from did not resolve, so the view has no storage.</summary>
     public bool IsValid => Map != 0 && Ops != 0;
 
-    public int Count => IsValid ? (int)OpsPtr->Size((void*)Map) : 0;
+    public int Count => IsValid ? OpsPtr->Num((void*)Map) : 0;
 
     public bool IsReadOnly => false;
 
@@ -68,9 +68,10 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
             return;
         }
 
-        // A null value makes native default-construct the slot, which is then assigned through its accessor.
-        void* Slot = InsertKey(key, null);
-        if (Slot != null)
+        // A handle read out of a container is copied by native before inserting can rehash it away.
+        nint Source = ElementMarshal.BoundAddress(value);
+        void* Slot = InsertKey(key, (void*)Source);
+        if (Slot != null && Source == 0)
         {
             ElementMarshal.Write<V>((nint)Slot, value);
         }
@@ -81,15 +82,20 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     {
         if (!ElementKind<K>.IsMarshalled)
         {
-            return OpsPtr->Insert((void*)Map, Unsafe.AsPointer(ref key), value);
+            return OpsPtr->Add((void*)Map, Unsafe.AsPointer(ref key), value);
         }
 
         byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
         OpsPtr->ConstructKey((void*)Map, Scratch);
-        ElementMarshal.Write<K>((nint)Scratch, key);
-        void* Slot = OpsPtr->Insert((void*)Map, Scratch, value);
-        OpsPtr->DestructKey((void*)Map, Scratch);
-        return Slot;
+        try
+        {
+            ElementMarshal.Write<K>((nint)Scratch, key);
+            return OpsPtr->Add((void*)Map, Scratch, value);
+        }
+        finally
+        {
+            OpsPtr->DestructKey((void*)Map, Scratch);
+        }
     }
 
     private void* FindKey(K key)
@@ -101,25 +107,35 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
 
         byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
         OpsPtr->ConstructKey((void*)Map, Scratch);
-        ElementMarshal.Write<K>((nint)Scratch, key);
-        void* Slot = OpsPtr->Find((void*)Map, Scratch);
-        OpsPtr->DestructKey((void*)Map, Scratch);
-        return Slot;
+        try
+        {
+            ElementMarshal.Write<K>((nint)Scratch, key);
+            return OpsPtr->Find((void*)Map, Scratch);
+        }
+        finally
+        {
+            OpsPtr->DestructKey((void*)Map, Scratch);
+        }
     }
 
     private bool RemoveKey(K key)
     {
         if (!ElementKind<K>.IsMarshalled)
         {
-            return OpsPtr->RemoveByKey((void*)Map, Unsafe.AsPointer(ref key)) != 0;
+            return OpsPtr->Remove((void*)Map, Unsafe.AsPointer(ref key)) != 0;
         }
 
         byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
         OpsPtr->ConstructKey((void*)Map, Scratch);
-        ElementMarshal.Write<K>((nint)Scratch, key);
-        bool bRemoved = OpsPtr->RemoveByKey((void*)Map, Scratch) != 0;
-        OpsPtr->DestructKey((void*)Map, Scratch);
-        return bRemoved;
+        try
+        {
+            ElementMarshal.Write<K>((nint)Scratch, key);
+            return OpsPtr->Remove((void*)Map, Scratch) != 0;
+        }
+        finally
+        {
+            OpsPtr->DestructKey((void*)Map, Scratch);
+        }
     }
 
     public bool TryGetValue(K key, out V value)
@@ -149,7 +165,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     {
         if (IsValid)
         {
-            OpsPtr->Clear((void*)Map);
+            OpsPtr->Reset((void*)Map);
         }
     }
 
@@ -158,7 +174,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     {
         if (IsValid && count > 0)
         {
-            OpsPtr->Reserve((void*)Map, (nuint)count);
+            OpsPtr->Reserve((void*)Map, count);
         }
     }
 
@@ -265,7 +281,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     {
         private readonly nint Map;
         private readonly nint Ops;
-        private nuint Cursor;
+        private int Cursor;
         private nint Key;
         private nint Value;
 
@@ -293,7 +309,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
                 return false;
             }
 
-            nuint Next = Cursor;
+            int Next = Cursor;
             void* FoundKey = null;
             void* FoundValue = null;
             bool bFound = ((MapOps*)Ops)->Next((void*)Map, &Next, &FoundKey, &FoundValue) != 0;

@@ -1,55 +1,106 @@
 #pragma once
 
 #include "EntitySystem.h"
-#include "Core/Object/ObjectMacros.h"
+#include "MovedTransforms.h"
+#include "SignificanceSystem.h"
 #include "AI/Navigation/NavTypes.h"
+#include "Core/Object/ObjectMacros.h"
+#include "Memory/SmartPtr.h"
+#include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
+#include "World/Entity/Components/FoliageComponent.h"
+#include "World/Entity/Components/NavLinkComponent.h"
+#include "World/Entity/Components/NavMeshComponent.h"
+#include "World/Entity/Components/NavModifierComponent.h"
+#include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "NavMeshSystem.generated.h"
 
 namespace Lumina
 {
-    struct SNavMeshComponent;
+    struct FNavSourceTracker;
 
-    /** Owns SNavMeshComponent lifecycle: rehydrate, drain bakes, rebuild on Tiles change. */
+    // Owns SNavMeshComponent lifecycle: rehydrate, drain bakes, rebuild on Tiles change.
     REFLECT()
     class RUNTIME_API SNavMeshSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
 
+        SNavMeshSystem();
+        ~SNavMeshSystem() override;
+
         // Paused stage required so editor-mode ticks for bake button, debug draw, dirty detection.
         void Configure() override;
 
-    public:
+        // Source tracking runs every frame, so a volume added later finds it current.
+        bool HasWork(const SSystemContext&) override { return true; }
 
-        // Update only reads colliders/transforms and writes SNavMeshComponent (no structural changes),
-        // so it overlaps animation/camera in the editor (Paused) stage. Defined in the .cpp.
-
-        void OnStartup(const SSystemContext& Context) override;
+        void OnStartup(const SExclusiveContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
-        void OnTeardown(const SSystemContext& Context) override;
+        void OnTeardown(const SExclusiveContext& Context) override;
 
-        /** Kick async bake; no-op if one is already in flight. */
-        static void RequestBake(const SSystemContext& Context, SNavMeshComponent& Component);
+        // The colliders and authored volumes that feed the navmesh, walked by the helpers in the .cpp.
+        struct FSourceQueries
+        {
+            template<typename T>
+            using TSource = ECS::TQuery<ECS::Read<T>, ECS::Read<STransformComponent>>;
+
+            TSource<SBoxColliderComponent>          Boxes;
+            TSource<SSphereColliderComponent>       Spheres;
+            TSource<SMeshColliderComponent>         MeshColliders;
+            TSource<SDynamicMeshColliderComponent>  DynamicMeshColliders;
+            TSource<SCapsuleColliderComponent>      Capsules;
+            TSource<SCylinderColliderComponent>     Cylinders;
+            TSource<SCharacterPhysicsComponent>     Characters;
+            TSource<SCompoundColliderComponent>     Compounds;
+            TSource<SNavModifierComponent>          Modifiers;
+            TSource<SNavLinkComponent>              Links;
+            TSource<STerrainColliderComponent>      TerrainColliders;
+
+            ECS::TQuery<ECS::Read<SFoliageComponent>>               Foliage;
+            ECS::TQuery<ECS::Read<STerrainColliderComponent>>       TerrainPool;
+            ECS::TQuery<ECS::Read<SDynamicMeshColliderComponent>>   DynamicMeshPool;
+
+            // Lookups only, each strict to its one component, for what a source reads beside its collider.
+            ECS::TQuery<ECS::Read<STransformComponent>>             Transforms;
+            ECS::TQuery<ECS::Read<SRigidBodyComponent>>             RigidBodies;
+            ECS::TQuery<ECS::Read<STerrainComponent>>               Terrains;
+            ECS::TQuery<ECS::Read<SStaticMeshComponent>>            StaticMeshes;
+            ECS::TQuery<ECS::Read<SDynamicMeshComponent>>           DynamicMeshes;
+
+            // Watched only, so a world of moving props never reaches the drain.
+            FMovedTransforms Moved{ EMovedTransforms::Watched };
+        };
+
+    private:
+
+        ECS::TQuery<ECS::Write<SNavMeshComponent>> Volumes;
+        FSourceQueries                             SourceQueries;
+        TRes<FSignificanceState>                   SignificanceState;
+        TUniquePtr<FNavSourceTracker>              Tracker;
     };
 
     class CWorld;
     class FNavMesh;
 
-    /** Navigation helpers; each function dispatches to the first ready SNavMeshComponent. */
+    // Navigation helpers; each function dispatches to the first ready SNavMeshComponent.
     namespace Nav
     {
-        /** First ready navmesh in the world, or null. Resolve once and reuse across a batch of queries. */
-        // An unnamed agent takes a volume with no agent name, or failing that any ready volume. A named one takes only its own.
-        RUNTIME_API FNavMesh* GetReadyNavMesh(const SSystemContext& Context, FName Agent = FName());
+        using FNavMeshQuery = ECS::TQuery<ECS::Read<SNavMeshComponent>>;
 
-        RUNTIME_API bool FindPath(const SSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavPath& Out, FName Agent = FName());
-        RUNTIME_API bool ProjectPoint(const SSystemContext& Context, const FVector3& World, const FVector3& Extents, const FNavQueryFilter& Filter, FVector3& Out, FName Agent = FName());
-        RUNTIME_API bool Raycast(const SSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, SNavRaycastResult& Out, FName Agent = FName());
+        // An unnamed agent takes a volume with no agent name, or failing that any ready volume. A named one takes only its own.
+        RUNTIME_API FNavMesh* GetReadyNavMesh(const FNavMeshQuery& NavMeshes, FName Agent = FName());
+
+        RUNTIME_API bool FindPath(const FNavMeshQuery& NavMeshes, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavPath& Out, FName Agent = FName());
+        RUNTIME_API bool ProjectPoint(const FNavMeshQuery& NavMeshes, const FVector3& World, const FVector3& Extents, const FNavQueryFilter& Filter, FVector3& Out, FName Agent = FName());
+        RUNTIME_API bool Raycast(const FNavMeshQuery& NavMeshes, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, SNavRaycastResult& Out, FName Agent = FName());
 
         RUNTIME_API bool IsReady(CWorld* World, FName Agent = FName());
 
-        /** Flag every navmesh volume in the world for an async rebuild (consumed next tick). Returns the
-         *  number of volumes flagged. The script-facing "rebuild navigation" entry point. */
+        // Flags every navmesh volume for an async rebuild next tick and returns how many were flagged.
         RUNTIME_API int32 RequestRebuild(CWorld* World);
 
         RUNTIME_API bool FindPath(CWorld* World, const FVector3& Start, const FVector3& End, FNavPath& Out, FName Agent = FName());

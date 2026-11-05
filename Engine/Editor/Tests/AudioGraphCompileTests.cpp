@@ -58,7 +58,7 @@ TEST(AudioGraphCompile, DroppedWavePlaysOnPlay)
 
     const FAudioGraphParameterDecl* OnPlayDecl = Result.Program.FindInput(FName(kAudioGraphOnPlayInput));
     ASSERT_NE(OnPlayDecl, nullptr);
-    ASSERT_EQ(Result.Program.Nodes.size(), 1u);
+    ASSERT_EQ(Result.Program.Nodes.Num(), 1);
 
     const FAudioGraphNodeInstance& Compiled = Result.Program.Nodes[0];
     EXPECT_EQ(Compiled.InputSlots[1], OnPlayDecl->Slot);
@@ -86,19 +86,19 @@ TEST(AudioGraphCompile, RandomWaveListBecomesWaveSlots)
     ASSERT_NE(Picker, nullptr);
     ASSERT_NE(Player, nullptr);
 
-    Picker->Waves.push_back(WaveA);
-    Picker->Waves.push_back(TStrongObjectPtr<CAudioStream>());
-    Picker->Waves.push_back(WaveB);
-    Picker->Waves.push_back(WaveA);
+    Picker->Waves.Add(WaveA);
+    Picker->Waves.AddDefaulted();
+    Picker->Waves.Add(WaveB);
+    Picker->Waves.Add(WaveA);
 
     ASSERT_TRUE(Graph->ConnectPins(Picker->GetOutputPins()[0].Get(), Player->GetInputPins()[0].Get()));
     Graph->WireDroppedWavePlayer(Player);
 
     const FAudioGraphCompileResult Result = FAudioGraphCompiler::Compile(Graph);
     ASSERT_TRUE(Result.bSuccess);
-    EXPECT_TRUE(Result.Warnings.empty());
+    EXPECT_TRUE(Result.Warnings.IsEmpty());
 
-    ASSERT_EQ(Result.Waves.size(), 2u);
+    ASSERT_EQ(Result.Waves.Num(), 2);
     EXPECT_EQ(Result.Waves[0].Get(), WaveA);
     EXPECT_EQ(Result.Waves[1].Get(), WaveB);
 
@@ -108,23 +108,23 @@ TEST(AudioGraphCompile, RandomWaveListBecomesWaveSlots)
         Compiled = Node.OperatorName == FName("RandomWave") ? &Node : Compiled;
     }
     ASSERT_NE(Compiled, nullptr);
-    ASSERT_EQ(Compiled->InputSlots.size(), Picker->GetInputPins().size() + 3u);
+    ASSERT_EQ(Compiled->InputSlots.Num(), Picker->GetInputPins().Num() + 3u);
 
     TVector<int32> ListedWaves;
-    for (size_t Index = Picker->GetInputPins().size(); Index < Compiled->InputSlots.size(); ++Index)
+    for (int32 Index = Picker->GetInputPins().Num(); Index < Compiled->InputSlots.Num(); ++Index)
     {
         for (const FAudioGraphSlotInit& Init : Result.Program.SlotInits)
         {
             if (Init.Type == EAudioGraphType::Wave && Init.Slot == Compiled->InputSlots[Index])
             {
-                ListedWaves.push_back(Init.WaveIndex);
+                ListedWaves.Add(Init.WaveIndex);
             }
         }
     }
     EXPECT_TRUE(ListedWaves == (TVector<int32>{ 0, 1, 0 }));
 
-    Picker->Waves.clear();
+    Picker->Waves.Reset();
     const FAudioGraphCompileResult Empty = FAudioGraphCompiler::Compile(Graph);
     EXPECT_TRUE(Empty.bSuccess);
-    EXPECT_EQ(Empty.Warnings.size(), 1u);
+    EXPECT_EQ(Empty.Warnings.Num(), 1);
 }

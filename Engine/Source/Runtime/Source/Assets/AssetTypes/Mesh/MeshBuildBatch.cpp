@@ -25,40 +25,38 @@ namespace Lumina
                 if (Mesh.bCommitPending)
                 {
                     Mesh.bCommitPending = false;
-                    Pending.push_back(&Mesh);
+                    Pending.Add(&Mesh);
                 }
             }
 
-            if (Pending.empty())
+            if (Pending.IsEmpty())
             {
                 return;
             }
 
             // Each commit touches only its own component, and nothing adds or removes components while this runs.
             LUMINA_PROFILE_SECTION("Batched Dynamic Mesh Commits");
-            Task::ParallelFor((uint32)Pending.size(), [&Pending](uint32 Index)
+            Jobs::ParallelFor((uint32)Pending.Num(), [&Pending](uint32 Index)
             {
-                Task::FInlineNestedScope Inline;
                 Pending[Index]->CommitNow();
             });
         }
 
         void FinishStaticMeshes()
         {
-            if (GPendingMeshes.empty())
+            if (GPendingMeshes.IsEmpty())
             {
                 return;
             }
 
             TVector<TStrongObjectPtr<CMesh>> Meshes = Move(GPendingMeshes);
-            GPendingMeshes.clear();
+            GPendingMeshes.Reset();
 
             LUMINA_PROFILE_SECTION("Batched Mesh Builds");
-            Task::ParallelFor((uint32)Meshes.size(), [&Meshes](uint32 Index)
+            Jobs::ParallelFor((uint32)Meshes.Num(), [&Meshes](uint32 Index)
             {
                 if (CMesh* Mesh = Meshes[Index].Get())
                 {
-                    Task::FInlineNestedScope Inline;
                     Mesh->BuildDeferredMeshlets();
                 }
             });
@@ -98,6 +96,6 @@ namespace Lumina
 
     void FMeshBuildBatchScope::DeferMeshlets(CMesh* Mesh)
     {
-        GPendingMeshes.emplace_back(Mesh);
+        GPendingMeshes.Emplace(Mesh);
     }
 }

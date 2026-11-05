@@ -34,7 +34,7 @@ namespace Lumina
 
         FString Error;
 
-        NODISCARD bool Succeeded() const { return Error.empty(); }
+        NODISCARD bool Succeeded() const { return Error.IsEmpty(); }
 
         // Turns an import that made nothing into an error, then lets every created asset go and frees the names of unsaved ones.
         EDITOR_API void Finish(const FImportRequest& Request);

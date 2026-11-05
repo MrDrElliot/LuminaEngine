@@ -78,7 +78,7 @@ namespace Lumina
         // Built in the arena that owns the property, since a script's keys and values are not static strings.
         void ApplyMeta(FPropertyArena& Arena, FProperty* Property, const FScriptExportMeta* Meta, const FKindTag& Extra)
         {
-            const size_t MaxEntries = (Meta != nullptr ? Meta->Entries.size() : 0) + (Extra.Key != nullptr ? 1 : 0);
+            const size_t MaxEntries = (Meta != nullptr ? Meta->Entries.Num() : 0) + (Extra.Key != nullptr ? 1 : 0);
             if (MaxEntries == 0)
             {
                 // A script property never passes through ConstructProperty, so its label is derived here or not at all.
@@ -246,33 +246,40 @@ namespace Lumina
             return Ops.bArithmetic && Ops.GetFixedLayout(Size, Align);
         }
 
-        SIZE_T ArraySize(const void* Vector)
+        int32 ElementStride(const FScriptDynamicArray& Array)
         {
-            const FScriptDynamicArray* Array = static_cast<const FScriptDynamicArray*>(Vector);
-            return (Array->Element && Array->Element->Size > 0) ? Array->Bytes.size() / Array->Element->Size : 0;
+            return Array.Element != nullptr ? static_cast<int32>(Array.Element->Size) : 0;
         }
 
-        void* ArrayData(void* Vector)
+        int32 ArrayNum(const void* Vector)
         {
-            return static_cast<FScriptDynamicArray*>(Vector)->Bytes.data();
+            const FScriptDynamicArray* Array = static_cast<const FScriptDynamicArray*>(Vector);
+            const int32 Stride = ElementStride(*Array);
+            return Stride > 0 ? Array->Bytes.Num() / Stride : 0;
+        }
+
+        void* ArrayGetData(void* Vector)
+        {
+            return static_cast<FScriptDynamicArray*>(Vector)->Bytes.GetData();
         }
 
         // A raw byte move breaks an element that points into itself, such as an inline instanced struct, so a reallocation copies each one through its ops.
         template<typename TCopyInto>
-        TVector<uint8> GrowCapacity(TVector<uint8>& Bytes, SIZE_T Stride, SIZE_T WantedBytes, TCopyInto&& CopyInto)
+        TVector<uint8> GrowCapacity(TVector<uint8>& Bytes, int32 Stride, int64 WantedBytes, TCopyInto&& CopyInto)
         {
             TVector<uint8> Retired;
-            if (WantedBytes <= Bytes.capacity())
+            if (WantedBytes <= Bytes.Max())
             {
                 return Retired;
             }
 
+            const int64 Doubled = Math::Min<int64>(static_cast<int64>(Bytes.Max()) * 2, TNumericLimits<int32>::Max());
             TVector<uint8> Grown;
-            Grown.reserve(Math::Max<SIZE_T>(WantedBytes, Bytes.capacity() * 2));
-            Grown.resize(Bytes.size());
-            for (SIZE_T Offset = 0; Offset + Stride <= Bytes.size(); Offset += Stride)
+            Grown.Reserve(IntCastChecked<int32>(Math::Max(WantedBytes, Doubled)));
+            Grown.SetNum(Bytes.Num());
+            for (int32 Offset = 0, Last = Bytes.Num() - Stride; Offset <= Last; Offset += Stride)
             {
-                CopyInto(Grown.data() + Offset, Bytes.data() + Offset);
+                CopyInto(Grown.GetData() + Offset, Bytes.GetData() + Offset);
             }
 
             Retired = Move(Bytes);
@@ -282,18 +289,18 @@ namespace Lumina
 
         // Run after the caller is done reading a source that may have lived in the old block.
         template<typename TDestruct>
-        void DestroyRetired(TVector<uint8>& Retired, SIZE_T Stride, TDestruct&& Destruct)
+        void DestroyRetired(TVector<uint8>& Retired, int32 Stride, TDestruct&& Destruct)
         {
-            for (SIZE_T Offset = 0; Offset + Stride <= Retired.size(); Offset += Stride)
+            for (int32 Offset = 0, Last = Retired.Num() - Stride; Offset <= Last; Offset += Stride)
             {
-                Destruct(Retired.data() + Offset);
+                Destruct(Retired.GetData() + Offset);
             }
         }
 
-        TVector<uint8> GrowElements(FScriptDynamicArray& Array, SIZE_T WantedBytes)
+        TVector<uint8> GrowElements(FScriptDynamicArray& Array, int64 WantedBytes)
         {
             const FScriptArrayElementDesc* Element = Array.Element;
-            return GrowCapacity(Array.Bytes, Element->Size, WantedBytes, [Element](void* Dst, const void* Src)
+            return GrowCapacity(Array.Bytes, ElementStride(Array), WantedBytes, [Element](void* Dst, const void* Src)
             {
                 Element->ConstructElement(Dst);
                 Element->CopyElement(Dst, Src);
@@ -303,97 +310,99 @@ namespace Lumina
         void DestroyRetiredElements(const FScriptDynamicArray& Array, TVector<uint8>& Retired)
         {
             const FScriptArrayElementDesc* Element = Array.Element;
-            DestroyRetired(Retired, Element->Size, [Element](void* Value) { Element->DestructElement(Value); });
+            DestroyRetired(Retired, ElementStride(Array), [Element](void* Value) { Element->DestructElement(Value); });
         }
 
-        void ArrayPushBack(void* Vector, const void* InElement)
+        void ArrayAdd(void* Vector, const void* InElement)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
+            const int32 ES = ElementStride(*Array);
             if (ES == 0) { return; }
-            const SIZE_T Old = Array->Bytes.size();
-            TVector<uint8> Retired = GrowElements(*Array, Old + ES);
-            Array->Bytes.resize(Old + ES);
-            uint8* Slot = Array->Bytes.data() + Old;
+            const int32 Old = Array->Bytes.Num();
+            TVector<uint8> Retired = GrowElements(*Array, static_cast<int64>(Old) + ES);
+            Array->Bytes.SetNum(Old + ES);
+            uint8* Slot = Array->Bytes.GetData() + Old;
             Array->Element->ConstructElement(Slot);
             if (InElement != nullptr) { Array->Element->CopyElement(Slot, InElement); }
             DestroyRetiredElements(*Array, Retired);
         }
 
-        void ArrayRemoveAt(void* Vector, SIZE_T Index)
+        void ArrayRemoveAt(void* Vector, int32 Index)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
-            const SIZE_T Count = ArraySize(Vector);
-            if (ES == 0 || Index >= Count) { return; }
-            uint8* Data = Array->Bytes.data();
-            for (SIZE_T J = Index; J + 1 < Count; ++J)
+            const int32 ES = ElementStride(*Array);
+            const int32 Count = ArrayNum(Vector);
+            if (static_cast<uint32>(Index) >= static_cast<uint32>(Count)) { return; }
+            uint8* Data = Array->Bytes.GetData();
+            for (int32 J = Index; J + 1 < Count; ++J)
             {
                 Array->Element->CopyElement(Data + J * ES, Data + (J + 1) * ES);
             }
             Array->Element->DestructElement(Data + (Count - 1) * ES);
-            Array->Bytes.resize((Count - 1) * ES);
+            Array->Bytes.SetNum((Count - 1) * ES);
         }
 
-        void ArrayClear(void* Vector)
+        void ArrayReset(void* Vector)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
-            const SIZE_T Count = ArraySize(Vector);
-            uint8* Data = Array->Bytes.data();
-            for (SIZE_T Index = 0; Index < Count && ES > 0; ++Index)
+            const int32 ES = ElementStride(*Array);
+            const int32 Count = ArrayNum(Vector);
+            uint8* Data = Array->Bytes.GetData();
+            for (int32 Index = 0; Index < Count; ++Index)
             {
                 Array->Element->DestructElement(Data + Index * ES);
             }
-            Array->Bytes.clear();
+            Array->Bytes.Reset();
         }
 
-        void ArrayResize(void* Vector, SIZE_T NewCount)
+        // A negative count fails in the byte vector's SetNum, as it does for TVector.
+        void ArraySetNum(void* Vector, int32 NewNum)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
+            const int32 ES = ElementStride(*Array);
             if (ES == 0) { return; }
-            const SIZE_T Count = ArraySize(Vector);
-            if (NewCount > Count)
+            const int32 Count = ArrayNum(Vector);
+            const int64 NewBytes = static_cast<int64>(NewNum) * ES;
+            if (static_cast<uint32>(NewNum) > static_cast<uint32>(Count))
             {
-                TVector<uint8> Retired = GrowElements(*Array, NewCount * ES);
+                TVector<uint8> Retired = GrowElements(*Array, NewBytes);
                 DestroyRetiredElements(*Array, Retired);
-                Array->Bytes.resize(NewCount * ES);
-                uint8* Data = Array->Bytes.data();
-                for (SIZE_T Index = Count; Index < NewCount; ++Index)
+                Array->Bytes.SetNum(IntCastChecked<int32>(NewBytes));
+                uint8* Data = Array->Bytes.GetData();
+                for (int32 Index = Count; Index < NewNum; ++Index)
                 {
                     Array->Element->ConstructElement(Data + Index * ES);
                 }
             }
-            else if (NewCount < Count)
+            else if (NewNum < Count)
             {
-                uint8* Data = Array->Bytes.data();
-                for (SIZE_T Index = NewCount; Index < Count; ++Index)
+                uint8* Data = Array->Bytes.GetData();
+                for (int32 Index = NewNum; Index < Count; ++Index)
                 {
                     Array->Element->DestructElement(Data + Index * ES);
                 }
-                Array->Bytes.resize(NewCount * ES);
+                Array->Bytes.SetNum(static_cast<int32>(NewBytes));
             }
         }
 
-        void ArrayReserve(void* Vector, SIZE_T NewCount)
+        void ArrayReserve(void* Vector, int32 Number)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
+            const int32 ES = ElementStride(*Array);
             if (ES > 0)
             {
-                TVector<uint8> Retired = GrowElements(*Array, NewCount * ES);
+                TVector<uint8> Retired = GrowElements(*Array, static_cast<int64>(Number) * ES);
                 DestroyRetiredElements(*Array, Retired);
             }
         }
 
-        void ArraySwap(void* Vector, SIZE_T A, SIZE_T B)
+        void ArraySwap(void* Vector, int32 A, int32 B)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
-            const uint32 ES = Array->Element ? Array->Element->Size : 0;
-            const SIZE_T Count = ArraySize(Vector);
-            if (ES == 0 || A >= Count || B >= Count || A == B) { return; }
-            uint8* Data = Array->Bytes.data();
+            const int32 ES = ElementStride(*Array);
+            const uint32 Count = static_cast<uint32>(ArrayNum(Vector));
+            if (static_cast<uint32>(A) >= Count || static_cast<uint32>(B) >= Count || A == B) { return; }
+            uint8* Data = Array->Bytes.GetData();
             void* Temp = Memory::Malloc(ES, 16);
             Array->Element->ConstructElement(Temp);
             Array->Element->CopyElement(Temp, Data + A * ES);
@@ -405,12 +414,12 @@ namespace Lumina
 
         void FillArrayOps(FVectorOps& Ops, uint32 ElementSize, const FScriptArrayElementDesc* Desc)
         {
-            Ops.Size        = &ArraySize;
-            Ops.Data        = &ArrayData;
-            Ops.PushBack    = &ArrayPushBack;
+            Ops.Num         = &ArrayNum;
+            Ops.GetData     = &ArrayGetData;
+            Ops.Add         = &ArrayAdd;
             Ops.RemoveAt    = &ArrayRemoveAt;
-            Ops.Clear       = &ArrayClear;
-            Ops.Resize      = &ArrayResize;
+            Ops.Reset       = &ArrayReset;
+            Ops.SetNum      = &ArraySetNum;
             Ops.Reserve     = &ArrayReserve;
             Ops.Swap        = &ArraySwap;
             Ops.ElementSize = ElementSize;
@@ -435,7 +444,7 @@ namespace Lumina
 
         // ---- Script dynamic optional (a heap payload, so an engaged optional is a non-null pointer) ----
 
-        bool OptionalHasValue(const void* Container)
+        bool OptionalIsSet(const void* Container)
         {
             return static_cast<const FScriptDynamicOptional*>(Container)->Payload != nullptr;
         }
@@ -483,7 +492,7 @@ namespace Lumina
 
         void FillOptionalOps(FScriptOptionalDesc& Desc)
         {
-            Desc.Ops.HasValue = &OptionalHasValue;
+            Desc.Ops.IsSet    = &OptionalIsSet;
             Desc.Ops.GetValue = &OptionalGetValue;
             Desc.Ops.SetValue = &OptionalSetValue;
             Desc.Ops.Reset    = &OptionalReset;
@@ -499,6 +508,7 @@ namespace Lumina
                 static_cast<FScriptDynamicOptional*>(Container)->~FScriptDynamicOptional();
             };
             Desc.Ops.ContainerContext = &Desc;
+            Desc.Ops.ContainerSize = static_cast<uint32>(sizeof(FScriptDynamicOptional));
         }
 
         FProperty* MakeOptional(const FPropertyOwner& Owner, const FName& Name, uint32 Offset, const FOptionalOps* Ops)
@@ -513,22 +523,29 @@ namespace Lumina
             return MakeResolved<FMapProperty>(Owner, Name, Offset, EPropertyTypeFlags::Map, Ops);
         }
 
-        SIZE_T MapSize(const void* InMap)
+        int32 PairStride(const FScriptDynamicMap& Map)
+        {
+            return Map.Desc != nullptr ? static_cast<int32>(Map.Desc->PairStride) : 0;
+        }
+
+        int32 MapNum(const void* InMap)
         {
             const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
-            return (Map->Desc && Map->Desc->PairStride > 0) ? Map->Bytes.size() / Map->Desc->PairStride : 0;
+            const int32 Stride = PairStride(*Map);
+            return Stride > 0 ? Map->Bytes.Num() / Stride : 0;
         }
 
         void* MapFind(void* InMap, const void* KeyPtr)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
             const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc == nullptr || Desc->Key.Inner == nullptr || Desc->PairStride == 0) { return nullptr; }
-            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
-            uint8* Data = Map->Bytes.data();
-            for (SIZE_T i = 0; i < Count; ++i)
+            if (Desc == nullptr || Desc->Key.Inner == nullptr) { return nullptr; }
+            const int32 Stride = PairStride(*Map);
+            const int32 Count = MapNum(InMap);
+            uint8* Data = Map->Bytes.GetData();
+            for (int32 i = 0; i < Count; ++i)
             {
-                void* Pair = Data + i * Desc->PairStride;
+                void* Pair = Data + i * Stride;
                 if (Desc->Key.Inner->Identical(Desc->KeyAt(Pair), KeyPtr))
                 {
                     return Desc->ValueAt(Pair);
@@ -537,10 +554,10 @@ namespace Lumina
             return nullptr;
         }
 
-        TVector<uint8> GrowPairs(FScriptDynamicMap& Map, SIZE_T WantedBytes)
+        TVector<uint8> GrowPairs(FScriptDynamicMap& Map, int64 WantedBytes)
         {
             const FScriptMapElementDesc* Desc = Map.Desc;
-            return GrowCapacity(Map.Bytes, Desc->PairStride, WantedBytes, [Desc](void* Dst, const void* Src)
+            return GrowCapacity(Map.Bytes, PairStride(Map), WantedBytes, [Desc](void* Dst, const void* Src)
             {
                 Desc->ConstructPair(Dst);
                 Desc->CopyPair(Dst, Src);
@@ -550,14 +567,15 @@ namespace Lumina
         void DestroyRetiredPairs(const FScriptDynamicMap& Map, TVector<uint8>& Retired)
         {
             const FScriptMapElementDesc* Desc = Map.Desc;
-            DestroyRetired(Retired, Desc->PairStride, [Desc](void* Pair) { Desc->DestructPair(Pair); });
+            DestroyRetired(Retired, PairStride(Map), [Desc](void* Pair) { Desc->DestructPair(Pair); });
         }
 
-        void* MapInsert(void* InMap, const void* KeyPtr, const void* ValuePtr)
+        void* MapAdd(void* InMap, const void* KeyPtr, const void* ValuePtr)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
             const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc == nullptr || Desc->PairStride == 0) { return nullptr; }
+            const int32 Stride = PairStride(*Map);
+            if (Stride == 0) { return nullptr; }
 
             if (void* Existing = MapFind(InMap, KeyPtr))
             {
@@ -565,10 +583,10 @@ namespace Lumina
                 return Existing;
             }
 
-            const SIZE_T Old = Map->Bytes.size();
-            TVector<uint8> Retired = GrowPairs(*Map, Old + Desc->PairStride);
-            Map->Bytes.resize(Old + Desc->PairStride);
-            uint8* Pair = Map->Bytes.data() + Old;
+            const int32 Old = Map->Bytes.Num();
+            TVector<uint8> Retired = GrowPairs(*Map, static_cast<int64>(Old) + Stride);
+            Map->Bytes.SetNum(Old + Stride);
+            uint8* Pair = Map->Bytes.GetData() + Old;
             Desc->ConstructPair(Pair);
             if (KeyPtr != nullptr)   { Desc->Key.CopyElement(Desc->KeyAt(Pair), KeyPtr); }
             if (ValuePtr != nullptr) { Desc->Value.CopyElement(Desc->ValueAt(Pair), ValuePtr); }
@@ -576,51 +594,50 @@ namespace Lumina
             return Desc->ValueAt(Pair);
         }
 
-        bool MapRemoveByKey(void* InMap, const void* KeyPtr)
+        bool MapRemove(void* InMap, const void* KeyPtr)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
             const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc == nullptr || Desc->Key.Inner == nullptr || Desc->PairStride == 0) { return false; }
-            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
-            uint8* Data = Map->Bytes.data();
-            for (SIZE_T i = 0; i < Count; ++i)
+            if (Desc == nullptr || Desc->Key.Inner == nullptr) { return false; }
+            const int32 Stride = PairStride(*Map);
+            const int32 Count = MapNum(InMap);
+            uint8* Data = Map->Bytes.GetData();
+            for (int32 i = 0; i < Count; ++i)
             {
-                void* Pair = Data + i * Desc->PairStride;
+                void* Pair = Data + i * Stride;
                 if (Desc->Key.Inner->Identical(Desc->KeyAt(Pair), KeyPtr))
                 {
                     // Order-independent removal, overwriting the hole with the last pair then shrinking.
-                    void* Last = Data + (Count - 1) * Desc->PairStride;
+                    void* Last = Data + (Count - 1) * Stride;
                     if (Pair != Last) { Desc->CopyPair(Pair, Last); }
                     Desc->DestructPair(Last);
-                    Map->Bytes.resize((Count - 1) * Desc->PairStride);
+                    Map->Bytes.SetNum((Count - 1) * Stride);
                     return true;
                 }
             }
             return false;
         }
 
-        void MapClear(void* InMap)
+        void MapReset(void* InMap)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
-            const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc != nullptr && Desc->PairStride > 0)
+            const int32 Stride = PairStride(*Map);
+            const int32 Count = MapNum(InMap);
+            uint8* Data = Map->Bytes.GetData();
+            for (int32 i = 0; i < Count; ++i)
             {
-                const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
-                uint8* Data = Map->Bytes.data();
-                for (SIZE_T i = 0; i < Count; ++i)
-                {
-                    Desc->DestructPair(Data + i * Desc->PairStride);
-                }
+                Map->Desc->DestructPair(Data + i * Stride);
             }
-            Map->Bytes.clear();
+            Map->Bytes.Reset();
         }
 
-        void MapReserve(void* InMap, SIZE_T Count)
+        void MapReserve(void* InMap, int32 Number)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
-            if (Map->Desc && Map->Desc->PairStride > 0)
+            const int32 Stride = PairStride(*Map);
+            if (Stride > 0)
             {
-                TVector<uint8> Retired = GrowPairs(*Map, Count * Map->Desc->PairStride);
+                TVector<uint8> Retired = GrowPairs(*Map, static_cast<int64>(Number) * Stride);
                 DestroyRetiredPairs(*Map, Retired);
             }
         }
@@ -628,33 +645,31 @@ namespace Lumina
         void MapForEach(const void* InMap, void (*Visitor)(const void*, void*, void*), void* UserData)
         {
             const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
-            const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc == nullptr || Desc->PairStride == 0) { return; }
-            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
-            uint8* Data = const_cast<uint8*>(Map->Bytes.data());
-            for (SIZE_T i = 0; i < Count; ++i)
+            const int32 Stride = PairStride(*Map);
+            const int32 Count = MapNum(InMap);
+            uint8* Data = const_cast<uint8*>(Map->Bytes.GetData());
+            for (int32 i = 0; i < Count; ++i)
             {
-                void* Pair = Data + i * Desc->PairStride;
-                Visitor(Desc->KeyAt(Pair), Desc->ValueAt(Pair), UserData);
+                void* Pair = Data + i * Stride;
+                Visitor(Map->Desc->KeyAt(Pair), Map->Desc->ValueAt(Pair), UserData);
             }
         }
 
-        void MapAt(void* InMap, SIZE_T Index, const void** OutKey, void** OutValue)
+        void MapAt(void* InMap, int32 Index, const void** OutKey, void** OutValue)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
-            const FScriptMapElementDesc* Desc = Map->Desc;
-            if (Desc != nullptr && Desc->PairStride > 0 && Index < Map->Bytes.size() / Desc->PairStride)
+            if (static_cast<uint32>(Index) < static_cast<uint32>(MapNum(InMap)))
             {
-                void* Pair = Map->Bytes.data() + Index * Desc->PairStride;
-                if (OutKey)   { *OutKey = Desc->KeyAt(Pair); }
-                if (OutValue) { *OutValue = Desc->ValueAt(Pair); }
+                void* Pair = Map->Bytes.GetData() + Index * PairStride(*Map);
+                if (OutKey)   { *OutKey = Map->Desc->KeyAt(Pair); }
+                if (OutValue) { *OutValue = Map->Desc->ValueAt(Pair); }
                 return;
             }
             if (OutKey)   { *OutKey = nullptr; }
             if (OutValue) { *OutValue = nullptr; }
         }
 
-        bool MapNext(void* InMap, SIZE_T* Cursor, const void** OutKey, void** OutValue)
+        bool MapNext(void* InMap, int32* Cursor, const void** OutKey, void** OutValue)
         {
             MapAt(InMap, (*Cursor)++, OutKey, OutValue);
             return *OutKey != nullptr;
@@ -674,11 +689,11 @@ namespace Lumina
 
         void FillMapOps(FMapOps& Ops, uint32 KeySize, uint32 ValueSize, const FScriptMapElementDesc* Desc)
         {
-            Ops.Size         = &MapSize;
-            Ops.Insert       = &MapInsert;
+            Ops.Num          = &MapNum;
+            Ops.Add          = &MapAdd;
             Ops.Find         = &MapFind;
-            Ops.RemoveByKey  = &MapRemoveByKey;
-            Ops.Clear        = &MapClear;
+            Ops.Remove       = &MapRemove;
+            Ops.Reset        = &MapReset;
             Ops.Reserve      = &MapReserve;
             Ops.ForEach      = &MapForEach;
             Ops.ConstructKey = &MapConstructKey;
@@ -830,7 +845,7 @@ namespace Lumina
             {
                 TVector<FKindResolver> Entries((size_t)EPropertyTypeFlags::Count);
 
-                for (size_t Index = 0; Index < Entries.size(); ++Index)
+                for (int32 Index = 0; Index < Entries.Num(); ++Index)
                 {
                     if (GetPropertyKindOps((EPropertyTypeFlags)Index).bArithmetic)
                     {
@@ -838,19 +853,19 @@ namespace Lumina
                     }
                 }
 
-                Entries[(size_t)EPropertyTypeFlags::String]          = { &ResolveFixedLayout, &CreateBasicProperty };
-                Entries[(size_t)EPropertyTypeFlags::Name]            = { &ResolveFixedLayout, &CreateBasicProperty };
-                Entries[(size_t)EPropertyTypeFlags::Object]          = { &ResolveFixedLayout, &CreateObjectProperty };
-                Entries[(size_t)EPropertyTypeFlags::SoftObject]      = { &ResolveFixedLayout, &CreateSoftObjectProperty };
-                Entries[(size_t)EPropertyTypeFlags::Enum]            = { &ResolveEnumLayout, &CreateEnumProperty };
-                Entries[(size_t)EPropertyTypeFlags::Struct]          = { &ResolveStructLayout, &CreateStructProperty };
-                Entries[(size_t)EPropertyTypeFlags::InstancedStruct] = { &ResolveInstancedLayout, &CreateInstancedProperty };
-                Entries[(size_t)EPropertyTypeFlags::ComponentRef]    = { &ResolveComponentRefLayout, &CreateComponentRefProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::String)]          = { &ResolveFixedLayout, &CreateBasicProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::Name)]            = { &ResolveFixedLayout, &CreateBasicProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::Object)]          = { &ResolveFixedLayout, &CreateObjectProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::SoftObject)]      = { &ResolveFixedLayout, &CreateSoftObjectProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::Enum)]            = { &ResolveEnumLayout, &CreateEnumProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::Struct)]          = { &ResolveStructLayout, &CreateStructProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::InstancedStruct)] = { &ResolveInstancedLayout, &CreateInstancedProperty };
+                Entries[std::to_underlying(EPropertyTypeFlags::ComponentRef)]    = { &ResolveComponentRefLayout, &CreateComponentRefProperty };
                 return Entries;
             }();
 
-            const size_t Index = (size_t)Kind;
-            return Index < Table.size() && Table[Index].ResolveLayout != nullptr ? &Table[Index] : nullptr;
+            const int32 Index = (size_t)Kind;
+            return Index < Table.Num() && Table[Index].ResolveLayout != nullptr ? &Table[Index] : nullptr;
         }
 
         bool ResolveKindLayout(const FScriptExportType& Type, const FName& DiagName, FKindLayout& Out)
@@ -910,7 +925,7 @@ namespace Lumina
         if (Type.Kind == EPropertyTypeFlags::Vector && Type.ElementType)
         {
             FScriptArrayElementDesc* Desc = Memory::New<FScriptArrayElementDesc>();
-            ElementDescs.push_back(Desc);
+            ElementDescs.Add(Desc);
             if (!ResolveElement(*Type.ElementType, Field.Name, *Desc))
             {
                 return false;
@@ -926,7 +941,7 @@ namespace Lumina
         if (Type.Kind == EPropertyTypeFlags::Optional && Type.ElementType)
         {
             FScriptOptionalDesc* Desc = Memory::New<FScriptOptionalDesc>();
-            OptionalDescs.push_back(Desc);
+            OptionalDescs.Add(Desc);
             if (!ResolveElement(*Type.ElementType, Field.Name, Desc->Payload))
             {
                 return false;
@@ -942,15 +957,15 @@ namespace Lumina
         if (Type.Kind == EPropertyTypeFlags::Map && Type.KeyType && Type.ValueType)
         {
             FScriptMapElementDesc* Desc = Memory::New<FScriptMapElementDesc>();
-            MapDescs.push_back(Desc);
+            MapDescs.Add(Desc);
             if (!ResolveElement(*Type.KeyType, Field.Name, Desc->Key)
                 || !ResolveElement(*Type.ValueType, Field.Name, Desc->Value))
             {
                 return false;
             }
             // 16-byte pair layout keeps any key/value aligned in the 16-aligned backing buffer.
-            Desc->ValueOffset = (uint32)Align(Desc->Key.Size, 16u);
-            Desc->PairStride  = (uint32)Align(Desc->ValueOffset + Desc->Value.Size, 16u);
+            Desc->ValueOffset = Align(Desc->Key.Size, 16u);
+            Desc->PairStride  = Align(Desc->ValueOffset + Desc->Value.Size, 16u);
             FillMapOps(Desc->Ops, Desc->Key.Size, Desc->Value.Size, Desc);
             Out.bMap = true;
             Out.MapDesc = Desc;
@@ -1036,16 +1051,16 @@ namespace Lumina
         }
 
         // Fields plus their container inners, so a schema's whole property set lands in one block.
-        GetPropertyArena().Reserve(Schema.Fields.size() * 3 * 192);
+        GetPropertyArena().Reserve(Schema.Fields.Num() * 3 * 192);
 
         TVector<FFieldPlan> Plans;
-        Plans.reserve(Schema.Fields.size());
+        Plans.Reserve(Schema.Fields.Num());
         for (const FScriptExportField& Field : Schema.Fields)
         {
             FFieldPlan Plan;
             if (ResolvePlan(Field, Plan))
             {
-                Plans.push_back(Plan);
+                Plans.Add(Plan);
             }
         }
 
@@ -1058,7 +1073,7 @@ namespace Lumina
             {
                 // The offset field is a uint16, so past that a field would silently alias something else.
                 LOG_ERROR("Script layout '{}': field '{}' lands past the 64KB property-offset limit; dropped.",
-                    Target->GetName().c_str(), Plan.Field->Name.c_str());
+                    *Target->GetName(), *Plan.Field->Name);
                 break;
             }
 
@@ -1068,7 +1083,7 @@ namespace Lumina
                 continue;
             }
 
-            Result.Properties.push_back(Property);
+            Result.Properties.Add(Property);
             RunningSize = Offset + Plan.Size;
             MaxAlign = Math::Max(MaxAlign, Plan.Align);
         }
@@ -1174,6 +1189,23 @@ namespace Lumina
         }
     }
 
+    void CScriptStruct::RelocateInto(void* Dst, void* Src) const
+    {
+        if (Dst == nullptr || Src == nullptr)
+        {
+            return;
+        }
+        Memory::Memzero(Dst, Size);
+        if (NativeBase != nullptr)
+        {
+            NativeBase->RelocateStruct(Dst, Src);
+        }
+        for (FProperty* Property : OwnProperties)
+        {
+            Property->RelocateValue(static_cast<uint8*>(Dst) + Property->Offset, static_cast<uint8*>(Src) + Property->Offset);
+        }
+    }
+
     void CScriptStruct::ResetHotReloadFields(void* Buffer) const
     {
         if (Buffer == nullptr || Defaults == nullptr)
@@ -1207,7 +1239,7 @@ namespace Lumina
         }
 
         // Every property this record emitted lives in its arena, whichever type they were attached to.
-        OwnProperties.clear();
+        OwnProperties.Reset();
         GetPropertyArena().Reset();
         Unlink();
 
@@ -1215,19 +1247,19 @@ namespace Lumina
         {
             Memory::Delete(Desc);
         }
-        ElementDescs.clear();
+        ElementDescs.Reset();
 
         for (FScriptMapElementDesc* Desc : MapDescs)
         {
             Memory::Delete(Desc);
         }
-        MapDescs.clear();
+        MapDescs.Reset();
 
         for (FScriptOptionalDesc* Desc : OptionalDescs)
         {
             Memory::Delete(Desc);
         }
-        OptionalDescs.clear();
+        OptionalDescs.Reset();
 
     }
 
@@ -1278,10 +1310,10 @@ namespace Lumina::Scripting
 
     FScriptDynamicArray::~FScriptDynamicArray()
     {
-        if (Element != nullptr && Element->Size > 0 && !Bytes.empty())
+        if (Element != nullptr && Element->Size > 0 && !Bytes.IsEmpty())
         {
-            const SIZE_T Count = Bytes.size() / Element->Size;
-            uint8* Data = Bytes.data();
+            const SIZE_T Count = Bytes.Num() / Element->Size;
+            uint8* Data = Bytes.GetData();
             for (SIZE_T Index = 0; Index < Count; ++Index)
             {
                 Element->DestructElement(Data + Index * Element->Size);
@@ -1310,10 +1342,10 @@ namespace Lumina::Scripting
 
     FScriptDynamicMap::~FScriptDynamicMap()
     {
-        if (Desc != nullptr && Desc->PairStride > 0 && !Bytes.empty())
+        if (Desc != nullptr && Desc->PairStride > 0 && !Bytes.IsEmpty())
         {
-            const SIZE_T Count = Bytes.size() / Desc->PairStride;
-            uint8* Data = Bytes.data();
+            const SIZE_T Count = Bytes.Num() / Desc->PairStride;
+            uint8* Data = Bytes.GetData();
             for (SIZE_T Index = 0; Index < Count; ++Index)
             {
                 Desc->DestructPair(Data + Index * Desc->PairStride);
@@ -1326,7 +1358,7 @@ namespace Lumina::Scripting
         // Metadata and defaults are compared apart from shape, so each gets its own remedy on a reload.
         bool FieldMetadataMatches(const FScriptExportMeta& A, const FScriptExportMeta& B)
         {
-            if (A.Entries.size() != B.Entries.size())
+            if (A.Entries.Num() != B.Entries.Num())
             {
                 return false;
             }
@@ -1350,7 +1382,7 @@ namespace Lumina::Scripting
     uint32 AppendScriptPropertiesToClass(CScriptClass* Target, const FScriptExportSchema& Schema)
     {
         // A behavior-only type still gets a record, since its functions are laid out in it.
-        if (Target == nullptr || (Schema.Fields.empty() && Schema.Functions.empty()))
+        if (Target == nullptr || (Schema.Fields.IsEmpty() && Schema.Functions.IsEmpty()))
         {
             return 0;
         }
@@ -1358,7 +1390,7 @@ namespace Lumina::Scripting
         // A CScriptStruct because that is where the planner lives, and nothing ever instantiates it.
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         FString RecordName = "ScriptClassLayout_";
-        RecordName += Target->GetName().c_str();
+        RecordName += *Target->GetName();
         Params.Name    = FName(RecordName);
         Params.Flags   = OF_Transient;
         Params.Package = CPackage::GetTransientPackage();
@@ -1372,7 +1404,7 @@ namespace Lumina::Scripting
         if (const CClass* Parent = Target->GetSuperClass())
         {
             Target->Alignment = Math::Max(Target->GetAlignment(), Parent->GetAlignment());
-            Target->Size      = Math::Max(Target->GetSize(), (uint32)Align(Parent->GetSize(), Target->GetAlignment()));
+            Target->Size      = Math::Max(Target->GetSize(), Align(Parent->GetSize(), Target->GetAlignment()));
         }
 
         // Appended properties start past the shim, so they can never overlap a native member.
@@ -1381,7 +1413,7 @@ namespace Lumina::Scripting
         const CScriptStruct::FEmittedLayout Layout = Record->EmitLayoutInto(Target, ShimSize, Schema);
 
         // A behaviour-only type has no block to append, and still wants its record and its functions.
-        if (!Layout.Properties.empty())
+        if (!Layout.Properties.IsEmpty())
         {
             Target->ScriptProperties = Layout.Properties;
             for (FProperty* Property : Layout.Properties)
@@ -1389,7 +1421,7 @@ namespace Lumina::Scripting
                 // Asking the property means a type that learns to construct is picked up with no change here.
                 if (Property->OwnsStorage())
                 {
-                    Target->ScriptLifecycleProperties.push_back(Property);
+                    Target->ScriptLifecycleProperties.Add(Property);
                 }
             }
 
@@ -1413,9 +1445,9 @@ namespace Lumina::Scripting
         }
         Target->ShimSize = ShimSize;
         Target->ShimAlign = ShimAlign;
-        Target->bHasAppendedBlock = !Layout.Properties.empty();
+        Target->bHasAppendedBlock = !Layout.Properties.IsEmpty();
 
-        return (uint32)Layout.Properties.size();
+        return (uint32)Layout.Properties.Num();
     }
 
 
@@ -1439,9 +1471,9 @@ namespace Lumina::Scripting
                 Out += "?";
                 return;
             }
-            Out += Format("{}", (int32)Type->Kind).c_str();
+            Out += *Format("{}", (int32)Type->Kind);
             if (Type->bInputAction) { Out += "a"; }
-            if (!Type->EnumName.IsNone())    { Out += "#"; Out += Type->EnumName.ToString(); Out += Format("/{}", (int32)Type->EnumUnderlying).c_str(); }
+            if (!Type->EnumName.IsNone())    { Out += "#"; Out += Type->EnumName.ToString(); Out += *Format("/{}", (int32)Type->EnumUnderlying); }
             if (!Type->NativeName.IsNone())  { Out += "@"; Out += Type->NativeName.ToString(); }
             if (!Type->TargetClass.IsNone()) { Out += ">"; Out += Type->TargetClass.ToString(); }
             if (!Type->BaseName.IsNone())    { Out += "^"; Out += Type->BaseName.ToString(); }
@@ -1483,19 +1515,19 @@ namespace Lumina::Scripting
     {
         bool FunctionsMatch(const TVector<FScriptExportFunction>& Old, const TVector<FScriptExportFunction>& New)
         {
-            if (Old.size() != New.size())
+            if (Old.Num() != New.Num())
             {
                 return false;
             }
-            for (size_t Index = 0; Index < New.size(); ++Index)
+            for (int32 Index = 0; Index < New.Num(); ++Index)
             {
                 const FScriptExportFunction& A = Old[Index];
                 const FScriptExportFunction& B = New[Index];
-                if (A.Name != B.Name || A.ReturnIndex != B.ReturnIndex || A.Flags != B.Flags || A.Params.size() != B.Params.size())
+                if (A.Name != B.Name || A.ReturnIndex != B.ReturnIndex || A.Flags != B.Flags || A.Params.Num() != B.Params.Num())
                 {
                     return false;
                 }
-                for (size_t Param = 0; Param < B.Params.size(); ++Param)
+                for (int32 Param = 0; Param < B.Params.Num(); ++Param)
                 {
                     FString OldShape;
                     FString NewShape;
@@ -1563,7 +1595,7 @@ namespace Lumina::Scripting
             }
         }
 
-        if (Applied.Fields.size() != Schema.Fields.size())
+        if (Applied.Fields.Num() != Schema.Fields.Num())
         {
             return EScriptTypeDirty::Layout;
         }
@@ -1575,7 +1607,7 @@ namespace Lumina::Scripting
         }
 
         EScriptTypeDirty Dirty = EScriptTypeDirty::None;
-        for (size_t Index = 0; Index < Schema.Fields.size(); ++Index)
+        for (int32 Index = 0; Index < Schema.Fields.Num(); ++Index)
         {
             const FScriptExportField& Old = Applied.Fields[Index];
             const FScriptExportField& New = Schema.Fields[Index];
@@ -1606,19 +1638,31 @@ namespace Lumina::Scripting
             // Nothing appended yet, so anything the schema asks for is a layout change.
             return Schema.IsValid() ? EScriptTypeDirty::Layout : EScriptTypeDirty::None;
         }
+
+        // A parameter's signature names its struct, so a reshaped struct is only seen through the minted parameter.
+        for (const FFunction* Function : Target->GetFunctions())
+        {
+            for (const FProperty* Param : Function->GetParams())
+            {
+                if (ReferencesSupersededStruct(Param))
+                {
+                    return EScriptTypeDirty::Layout;
+                }
+            }
+        }
         return DiffScriptLayout(Record->GetAppliedSchema(), Target->ScriptProperties, Schema);
     }
 
     void RefreshScriptPropertyMetadata(CScriptClass* Target, const FScriptExportSchema& Schema)
     {
         CScriptStruct* Record = GetLayoutRecord(Target);
-        if (Record == nullptr || Target->ScriptProperties.size() != Schema.Fields.size())
+        if (Record == nullptr || Target->ScriptProperties.Num() != Schema.Fields.Num())
         {
             return;
         }
 
         // Positional, which is exactly what the caller has already proven by finding no Layout change.
-        for (size_t Index = 0; Index < Schema.Fields.size(); ++Index)
+        for (int32 Index = 0; Index < Schema.Fields.Num(); ++Index)
         {
             ApplyMeta(Record->GetPropertyArena(), Target->ScriptProperties[Index],
                 &Schema.Fields[Index].Meta, KindTag(*Schema.Fields[Index].Type));
@@ -1639,8 +1683,8 @@ namespace Lumina::Scripting
         }
 
         // The type is gone with no live instances, so releasing the record frees the arena its properties live in.
-        Target->ScriptProperties.clear();
-        Target->ScriptLifecycleProperties.clear();
+        Target->ScriptProperties.Reset();
+        Target->ScriptLifecycleProperties.Reset();
         Target->LayoutRecord = nullptr;
         Target->bHasAppendedBlock = false;
     }

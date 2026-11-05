@@ -20,7 +20,7 @@ namespace Lumina::AssetExport
         bool StartsWith(const TVector<uint8>& Bytes, const char (&Magic)[N], size_t Offset = 0)
         {
             constexpr size_t Length = N - 1;
-            return Bytes.size() >= Offset + Length && Memory::Memcmp(Bytes.data() + Offset, Magic, Length) == 0;
+            return static_cast<size_t>(Bytes.Num()) >= Offset + Length && Memory::Memcmp(Bytes.GetData() + Offset, Magic, Length) == 0;
         }
 
         // The file's own signature, for an asset that never recorded the path it came from.
@@ -35,7 +35,7 @@ namespace Lumina::AssetExport
             if (StartsWith(Bytes, "RIFF") && StartsWith(Bytes, "WAVE", 8)) { return ".wav"; }
             if (StartsWith(Bytes, "OggS"))                             { return ".ogg"; }
             if (StartsWith(Bytes, "fLaC"))                             { return ".flac"; }
-            if (StartsWith(Bytes, "ID3") || (Bytes.size() > 1 && Bytes[0] == 0xFF && (Bytes[1] & 0xE0) == 0xE0)) { return ".mp3"; }
+            if (StartsWith(Bytes, "ID3") || (Bytes.Num() > 1 && Bytes[0] == 0xFF && (Bytes[1] & 0xE0) == 0xE0)) { return ".mp3"; }
             if (StartsWith(Bytes, "OTTO"))                             { return ".otf"; }
             if (StartsWith(Bytes, "ttcf"))                             { return ".ttc"; }
             if (StartsWith(Bytes, "\x00\x01\x00\x00") || StartsWith(Bytes, "true")) { return ".ttf"; }
@@ -45,20 +45,20 @@ namespace Lumina::AssetExport
         FString ExtensionFor(const TVector<uint8>& Bytes, const FString& SourcePath, const char* Fallback)
         {
             FString Extension = Paths::GetExtension(SourcePath);
-            if (Extension.empty())
+            if (Extension.IsEmpty())
             {
                 Extension = SniffExtension(Bytes);
             }
-            return Extension.empty() ? FString(Fallback) : Extension;
+            return Extension.IsEmpty() ? FString(Fallback) : Extension;
         }
 
         // Never overwrites, so exporting twice into one folder keeps both copies.
         FString FreePath(FStringView Directory, const FString& Name, const FString& Extension)
         {
-            FString Candidate(Paths::Combine(Directory, FStringView(Name + Extension)).c_str());
+            FString Candidate(*Paths::Combine(Directory, FStringView(Name + Extension)));
             for (int32 Suffix = 1; Paths::Exists(Candidate); ++Suffix)
             {
-                Candidate = FString(Paths::Combine(Directory, FStringView(Format("{}_{}{}", Name, Suffix, Extension))).c_str());
+                Candidate = FString(*Paths::Combine(Directory, FStringView(Format("{}_{}{}", Name, Suffix, Extension))));
             }
             return Candidate;
         }
@@ -131,8 +131,8 @@ namespace Lumina::AssetExport
             return false;
         }
 
-        OutPath = FreePath(Directory, FString(Asset->GetName().c_str()), ExtensionFor(*Bytes, SourcePath, Fallback));
-        if (!FileHelper::SaveArrayToFile(*Bytes, FStringView(OutPath.c_str(), OutPath.size())))
+        OutPath = FreePath(Directory, FString(*Asset->GetName()), ExtensionFor(*Bytes, SourcePath, Fallback));
+        if (!FileHelper::SaveArrayToFile(*Bytes, FStringView(*OutPath, OutPath.Len())))
         {
             OutError = Format("could not be written to {}", OutPath);
             return false;

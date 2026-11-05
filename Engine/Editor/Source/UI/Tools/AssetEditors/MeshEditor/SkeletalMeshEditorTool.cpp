@@ -41,11 +41,11 @@
 
 namespace Lumina
 {
-    // Bounded by Meshlets.size() so a malformed asset can't overrun during UI rendering.
+    // Bounded by Meshlets.Num() so a malformed asset can't overrun during UI rendering.
     static uint32 SumSkinnedTrianglesInRange(const TVector<FMeshlet>& Meshlets, uint32 Offset, uint32 Count)
     {
         uint32 Tris = 0;
-        const uint32 End = Math::Min(Offset + Count, (uint32)Meshlets.size());
+        const uint32 End = Math::Min(Offset + Count, (uint32)Meshlets.Num());
         for (uint32 m = Offset; m < End; ++m)
         {
             Tris += Meshlets[m].TriangleCount;
@@ -58,13 +58,13 @@ namespace Lumina
     // JointIndices address the owning meshlet's bone palette, so every reader has to come back through it.
     static uint32 ResolveGlobalJoint(const FMeshletData& MD, uint32 MeshletIndex, uint32 PaletteSlot)
     {
-        if (MeshletIndex >= MD.MeshletBonePalettes.size())
+        if (MeshletIndex >= static_cast<uint32>(MD.MeshletBonePalettes.Num()))
         {
             return PaletteSlot;
         }
 
         const FMeshletBonePalette& Palette = MD.MeshletBonePalettes[MeshletIndex];
-        if (PaletteSlot >= Palette.Count || (SIZE_T)Palette.Offset + PaletteSlot >= MD.MeshletBoneIndices.size())
+        if (PaletteSlot >= Palette.Count || (SIZE_T)Palette.Offset + PaletteSlot >= static_cast<size_t>(MD.MeshletBoneIndices.Num()))
         {
             return PaletteSlot;
         }
@@ -80,13 +80,13 @@ namespace Lumina
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
             const uint32 End = Math::Min(Surface.LODMeshletOffset[0] + Surface.LODMeshletCount[0],
-                                         (uint32)MD.Meshlets.size());
+                                         (uint32)MD.Meshlets.Num());
 
             for (uint32 m = Surface.LODMeshletOffset[0]; m < End; ++m)
             {
                 const FMeshlet& Meshlet = MD.Meshlets[m];
                 const uint32 VertEnd = Math::Min(Meshlet.VertexOffset + Meshlet.VertexCount,
-                                                 (uint32)MD.MeshletSkinnedVertices.size());
+                                                 (uint32)MD.MeshletSkinnedVertices.Num());
 
                 for (uint32 v = Meshlet.VertexOffset; v < VertEnd; ++v)
                 {
@@ -97,7 +97,7 @@ namespace Lumina
     }
 
     FSkeletalMeshEditorTool::FSkeletalMeshEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
         , PreviewClips(CAnimation::StaticClass())
     {
     }
@@ -130,7 +130,7 @@ namespace Lumina
         const FSkeletonResource* SkeletonResource = (Skeleton != nullptr) ? Skeleton->GetSkeletonResource() : nullptr;
         const uint32 BoneCount = (SkeletonResource != nullptr) ? (uint32)SkeletonResource->GetNumBones() : 0u;
 
-        Skinning.PerBone.resize(BoneCount);
+        Skinning.PerBone.SetNum(BoneCount);
 
         // Every LOD, since a coarse level can weight to a bone the base mesh never touches.
         const FMeshletData& MD = Resource.MeshletData;
@@ -144,9 +144,9 @@ namespace Lumina
             Skinning.MaxPaletteBones    = Math::Max(Skinning.MaxPaletteBones, Palette.Count);
             Skinning.PaletteOverflows  += (Palette.Count > (uint32)SKIN_GROUP_PALETTE_BONES) ? 1u : 0u;
         }
-        if (!MD.MeshletBonePalettes.empty())
+        if (!MD.MeshletBonePalettes.IsEmpty())
         {
-            Skinning.AvgPaletteBones = (float)MD.MeshletBoneIndices.size() / (float)MD.MeshletBonePalettes.size();
+            Skinning.AvgPaletteBones = (float)MD.MeshletBoneIndices.Num() / (float)MD.MeshletBonePalettes.Num();
         }
 
         ForEachLOD0SkinnedVertex(Resource, [&](const FMeshlet&, uint32 MeshletIndex, const FMeshletSkinnedVertex& V)
@@ -209,7 +209,7 @@ namespace Lumina
             return;
         }
 
-        SelectedBonePoints.clear();
+        SelectedBonePoints.Reset();
         SelectedBoneTotalPoints = 0;
         PointsCachedForBone     = SelectedBoneIndex;
 
@@ -235,9 +235,9 @@ namespace Lumina
                 }
 
                 ++SelectedBoneTotalPoints;
-                if (SelectedBonePoints.size() < kMaxInfluencePoints)
+                if (static_cast<uint32>(SelectedBonePoints.Num()) < kMaxInfluencePoints)
                 {
-                    SelectedBonePoints.push_back(DecodeMeshPosition(MD.PositionGrid, V.Position));
+                    SelectedBonePoints.Add(DecodeMeshPosition(MD.PositionGrid, V.Position));
                 }
                 return;
             }
@@ -246,7 +246,7 @@ namespace Lumina
 
     void FSkeletalMeshEditorTool::BuildBonePoseTransforms(TVector<FMatrix4>& OutTransforms) const
     {
-        OutTransforms.clear();
+        OutTransforms.Reset();
 
         CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
         if (SkeletalMesh == nullptr || !SkeletalMesh->Skeleton.IsValid() || MeshEntity == ECS::NullEntity)
@@ -261,11 +261,11 @@ namespace Lumina
         }
 
         const FMatrix4 EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
-        OutTransforms.resize(SkeletonResource->GetNumBones());
+        OutTransforms.SetNum(SkeletonResource->GetNumBones());
 
         // A playing clip leaves skinning matrices here, and skinning times the global bind is the posed bone.
         const TVector<FMatrix4>& Pose = World->GetComponent<SSkeletalMeshComponent>(MeshEntity).BoneTransforms;
-        if ((int32)Pose.size() == SkeletonResource->GetNumBones() && SkeletonResource->HasBindGlobalMatrices())
+        if (Pose.Num() == SkeletonResource->GetNumBones() && SkeletonResource->HasBindGlobalMatrices())
         {
             for (int32 i = 0; i < SkeletonResource->GetNumBones(); ++i)
             {
@@ -328,7 +328,7 @@ namespace Lumina
             return;
         }
 
-        ImGui::Text("Skeleton: %s", Skeleton->GetName().c_str());
+        ImGui::Text("Skeleton: %s", *Skeleton->GetName());
         ImGui::Text("Bones: %u", BoneCount);
         ImGui::Text("Bones this mesh needs: %u", Skinning.RequiredBones);
         ImGui::Text("Bones per meshlet: %.1f average, %u peak", Skinning.AvgPaletteBones, Skinning.MaxPaletteBones);
@@ -474,7 +474,7 @@ namespace Lumina
             ImGui::TableHeadersRow();
 
             ImGuiListClipper Clipper;
-            Clipper.Begin((int)Skinning.PerBone.size());
+            Clipper.Begin(Skinning.PerBone.Num());
 
             while (Clipper.Step())
             {
@@ -500,11 +500,11 @@ namespace Lumina
                     ImGui::TableSetColumnIndex(1);
                     if (bUnused)
                     {
-                        ImGui::TextDisabled("%s", SkeletonResource->GetBone(i).Name.c_str());
+                        ImGui::TextDisabled("%s", *SkeletonResource->GetBone(i).Name);
                     }
                     else
                     {
-                        ImGui::TextUnformatted(SkeletonResource->GetBone(i).Name.c_str());
+                        ImGui::TextUnformatted(*SkeletonResource->GetBone(i).Name);
                     }
 
                     ImGui::TableSetColumnIndex(2);
@@ -518,17 +518,17 @@ namespace Lumina
             ImGui::EndTable();
         }
 
-        if (SelectedBoneIndex >= 0 && SelectedBoneIndex < (int32)Skinning.PerBone.size())
+        if (SelectedBoneIndex >= 0 && SelectedBoneIndex < Skinning.PerBone.Num())
         {
             RebuildSelectedBonePoints();
 
             ImGui::Spacing();
             ImGui::Text("'%s' drives %u vertices.",
-                        SkeletonResource->GetBone(SelectedBoneIndex).Name.c_str(), SelectedBoneTotalPoints);
+                        *SkeletonResource->GetBone(SelectedBoneIndex).Name, SelectedBoneTotalPoints);
 
-            if (SelectedBoneTotalPoints > (uint32)SelectedBonePoints.size())
+            if (SelectedBoneTotalPoints > (uint32)SelectedBonePoints.Num())
             {
-                ImGui::TextDisabled("Overlay shows the first %zu.", SelectedBonePoints.size());
+                ImGui::TextDisabled("Overlay shows the first %d.", SelectedBonePoints.Num());
             }
         }
     }
@@ -594,7 +594,7 @@ namespace Lumina
                     {
                         ImGui::PushStyleColor(ImGuiCol_Text, *color);
                     }
-                    ImGui::TextUnformatted(value.c_str());
+                    ImGui::TextUnformatted(*value);
                     if (color)
                     {
                         ImGui::PopStyleColor();
@@ -610,9 +610,9 @@ namespace Lumina
                     LOD0Triangles += SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
                 }
 
-                PropertyRow("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.size()));
+                PropertyRow("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.Num()));
                 PropertyRow("Triangles (LOD 0)", Format("{}", LOD0Triangles));
-                PropertyRow("Meshlets", Format("{}", MD.Meshlets.size()));
+                PropertyRow("Meshlets", Format("{}", MD.Meshlets.Num()));
                 PropertyRow("Surfaces", Format("{}", Resource.GetNumSurfaces()));
                 PropertyRow("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
 
@@ -620,11 +620,11 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(0);
                 ImGui::Dummy(ImVec2(0, 4));
 
-                const float vertexSizeKB  = (MD.MeshletSkinnedVertices.size() * sizeof(FMeshletSkinnedVertex)) / 1024.0f;
-                const float meshletSizeKB = (MD.Meshlets.size() * sizeof(FMeshlet)
-                                           + MD.MeshletSpheres.size() * sizeof(FMeshletSphere)
-                                           + MD.MeshletCones.size() * sizeof(FMeshletCone)
-                                           + MD.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
+                const float vertexSizeKB  = (MD.MeshletSkinnedVertices.Num() * sizeof(FMeshletSkinnedVertex)) / 1024.0f;
+                const float meshletSizeKB = (MD.Meshlets.Num() * sizeof(FMeshlet)
+                                           + MD.MeshletSpheres.Num() * sizeof(FMeshletSphere)
+                                           + MD.MeshletCones.Num() * sizeof(FMeshletCone)
+                                           + MD.MeshletTriangles.Num() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB   = vertexSizeKB + meshletSizeKB;
 
                 PropertyRow("Vertex Buffer", Format("{}", static_cast<int>(vertexSizeKB)) + " KB");
@@ -637,11 +637,11 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(0);
                 ImGui::Dummy(ImVec2(0, 4));
 
-                PropertyRow("Bounds Min", Math::ToString(BoundingBox.Min).c_str());
-                PropertyRow("Bounds Max", Math::ToString(BoundingBox.Max).c_str());
+                PropertyRow("Bounds Min", *Math::ToString(BoundingBox.Min));
+                PropertyRow("Bounds Max", *Math::ToString(BoundingBox.Max));
 
                 FVector3 extents = BoundingBox.Max - BoundingBox.Min;
-                PropertyRow("Bounds Extents", Math::ToString(extents).c_str());
+                PropertyRow("Bounds Extents", *Math::ToString(extents));
 
                 ImGui::EndTable();
             }
@@ -758,13 +758,13 @@ namespace Lumina
 
             ImGui::Spacing();
 
-            if (Resource.GeometrySurfaces.empty())
+            if (Resource.GeometrySurfaces.IsEmpty())
             {
                 ImGui::TextDisabled("No surfaces defined");
             }
             else
             {
-                for (size_t i = 0; i < Resource.GeometrySurfaces.size(); ++i)
+                for (int32 i = 0; i < Resource.GeometrySurfaces.Num(); ++i)
                 {
                     const FGeometrySurface& Surface = Resource.GeometrySurfaces[i];
                     ImGui::PushID(static_cast<int>(i));
@@ -772,7 +772,7 @@ namespace Lumina
                     const bool bSelected = ((int32)i == SelectedSurfaceIndex);
 
                     FString headerLabel = "Surface " + Format("{}", i) + ": " + Surface.ID.ToString();
-                    const bool bOpen = ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+                    const bool bOpen = ImGui::CollapsingHeader(*headerLabel, ImGuiTreeNodeFlags_DefaultOpen);
 
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
                     {
@@ -795,7 +795,7 @@ namespace Lumina
                                 ImGui::TableSetColumnIndex(0);
                                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", label);
                                 ImGui::TableSetColumnIndex(1);
-                                ImGui::TextUnformatted(value.c_str());
+                                ImGui::TextUnformatted(*value);
                             };
 
                             const uint32 SurfaceTris = SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0],
@@ -808,7 +808,7 @@ namespace Lumina
 
                             if (CMaterialInterface* Material = SkeletalMesh->GetMaterialAtSlot(Surface.MaterialIndex))
                             {
-                                DetailRow("Material:", FString(Material->GetName().c_str()));
+                                DetailRow("Material:", FString(*Material->GetName()));
                             }
 
                             ImGui::EndTable();
@@ -819,13 +819,13 @@ namespace Lumina
 
                     ImGui::PopID();
 
-                    if (i < Resource.GeometrySurfaces.size() - 1)
+                    if (i < Resource.GeometrySurfaces.Num() - 1)
                     {
                         ImGui::Spacing();
                     }
                 }
 
-                if (SelectedSurfaceIndex >= (int32)Resource.GeometrySurfaces.size())
+                if (SelectedSurfaceIndex >= Resource.GeometrySurfaces.Num())
                 {
                     SelectedSurfaceIndex = -1;
                 }
@@ -945,7 +945,7 @@ namespace Lumina
         const TVector<FCompatibleAssetList::FEntry>& Clips = PreviewClips.Get(Skeleton);
 
         int32 CurrentIndex = Constants::kIndexNone;
-        for (int32 i = 0; i < (int32)Clips.size(); ++i)
+        for (int32 i = 0; i < Clips.Num(); ++i)
         {
             if (PreviewClip.IsValid() && Clips[i].GUID == PreviewClip->GetGUID())
             {
@@ -961,8 +961,8 @@ namespace Lumina
         ImGui::SetNextItemWidth(PreviewClip.IsValid() ? ImGui::GetContentRegionAvail().x - kClearButtonWidth : -1.0f);
 
         const FString Preview = PreviewClip.IsValid() ? PreviewClip->GetName().ToString() : FString("None (bind pose)");
-        const int32 Picked = ImGuiX::SearchableCombo("##PreviewClip", Preview.c_str(), (int32)Clips.size(), CurrentIndex,
-            [&Clips](int32 Index) { return FFixedString(Clips[Index].Name.c_str()); }, LE_ICON_ANIMATION);
+        const int32 Picked = ImGuiX::SearchableCombo("##PreviewClip", *Preview, Clips.Num(), CurrentIndex,
+            [&Clips](int32 Index) { return FFixedString(*Clips[Index].Name); }, LE_ICON_ANIMATION);
 
         if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
@@ -982,7 +982,7 @@ namespace Lumina
             }
         }
 
-        if (Clips.empty())
+        if (Clips.IsEmpty())
         {
             ImGui::TextDisabled("No clips match this skeleton's bones.");
         }
@@ -1069,7 +1069,7 @@ namespace Lumina
         if (SelectedSurfaceIndex >= 0)
         {
             const FMeshResource& Resource = SkeletalMesh->GetMeshResource();
-            if (SelectedSurfaceIndex < (int32)Resource.GeometrySurfaces.size())
+            if (SelectedSurfaceIndex < Resource.GeometrySurfaces.Num())
             {
                 const FGeometrySurface& Surface = Resource.GeometrySurfaces[SelectedSurfaceIndex];
                 const FMeshletData&     MD      = Resource.MeshletData;
@@ -1079,7 +1079,7 @@ namespace Lumina
                     : 0u;
 
                 const uint32 Offset = Surface.LODMeshletOffset[OverlayLOD];
-                const uint32 End    = Math::Min(Offset + Surface.LODMeshletCount[OverlayLOD], (uint32)MD.MeshletSpheres.size());
+                const uint32 End    = Math::Min(Offset + Surface.LODMeshletCount[OverlayLOD], (uint32)MD.MeshletSpheres.Num());
 
                 if (End > Offset)
                 {
@@ -1105,7 +1105,7 @@ namespace Lumina
         TVector<FMatrix4> BoneWorld;
         BuildBonePoseTransforms(BoneWorld);
 
-        if (BoneWorld.empty())
+        if (BoneWorld.IsEmpty())
         {
             return;
         }
@@ -1115,7 +1115,7 @@ namespace Lumina
 
         if (bShowBones)
         {
-            for (int32 i = 0; i < (int32)BoneWorld.size(); ++i)
+            for (int32 i = 0; i < BoneWorld.Num(); ++i)
             {
                 const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
                 const FVector3 BonePosition = FVector3(BoneWorld[i][3]);
@@ -1129,7 +1129,7 @@ namespace Lumina
             }
         }
 
-        if (SelectedBoneIndex >= 0 && SelectedBoneIndex < (int32)BoneWorld.size())
+        if (SelectedBoneIndex >= 0 && SelectedBoneIndex < BoneWorld.Num())
         {
             const FMatrix4& Selected = BoneWorld[SelectedBoneIndex];
             const FVector3  Position = FVector3(Selected[3]);
@@ -1208,7 +1208,7 @@ namespace Lumina
         Skinning = FSkinningAnalysis();
         SelectedBoneIndex = -1;
         PointsCachedForBone = -1;
-        SelectedBonePoints.clear();
+        SelectedBonePoints.Reset();
         SelectedSurfaceIndex = -1;
         PreviewLODIndex = -1;
 
@@ -1324,9 +1324,9 @@ namespace Lumina
 
             if (Skeleton != nullptr && Skeleton->GetSkeletonResource() != nullptr)
             {
-                ImGuiX::Text("{0}", Skeleton->GetName().c_str());
+                ImGuiX::Text("{0}", *Skeleton->GetName());
                 ImGuiX::Text("{0} bones, {1} skeleton sockets, {2} mesh sockets",
-                             Skeleton->GetSkeletonResource()->GetNumBones(), (int32)Skeleton->Sockets.size(), (int32)SkeletalMesh->Sockets.size());
+                             Skeleton->GetSkeletonResource()->GetNumBones(), Skeleton->Sockets.Num(), SkeletalMesh->Sockets.Num());
             }
             else
             {
@@ -1367,12 +1367,12 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Left, 0.25f, &hierarchyDockID, &leftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);
         // The unwrap wants the same large canvas, and this is an inspect-one-then-the-other workflow.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SkinningName.data()).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationPreviewName.data()).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(HierarchyName.data()).c_str(), hierarchyDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(UVViewerName.GetData()), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MeshPropertiesName.GetData()), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(SkinningName.GetData()), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationPreviewName.GetData()), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(HierarchyName.GetData()), hierarchyDockID);
     }
 }

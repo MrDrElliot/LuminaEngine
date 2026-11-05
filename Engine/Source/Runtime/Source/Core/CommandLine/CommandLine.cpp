@@ -27,7 +27,7 @@ namespace Lumina
         // A negative number is a value, so "--offset -5" reads -5 rather than an option named "5".
         static bool IsOptionToken(FStringView Token)
         {
-            if (Token.size() < 2 || Token[0] != '-')
+            if (Token.Len() < 2 || Token[0] != '-')
             {
                 return false;
             }
@@ -41,24 +41,24 @@ namespace Lumina
     {
         for (int i = 1; i < argc; ++i)
         {
-            FStringView Arg(argv[i], strlen(argv[i]));
+            FStringView Arg(argv[i], IntCastChecked<int32>(strlen(argv[i])));
 
             if (Detail::IsOptionToken(Arg))
             {
-                const size_t Dashes = Arg.starts_with("--") ? 2 : 1;
+                const size_t Dashes = Arg.StartsWith("--") ? 2 : 1;
 
                 // Lowercase the key but preserve the value's case (paths/identifiers).
-                const FStringView Raw = Arg.substr(Dashes);
+                const FStringView Raw = Arg.Mid(IntCastChecked<int32>(Dashes));
                 FFixedString Key;
                 FFixedString Value;
 
-                const size_t Equals = Raw.find('=');
-                if (Equals != FStringView::npos)
+                const int32 Equals = Raw.Find('=');
+                if (Equals != Constants::kIndexNone)
                 {
-                    Key   = Detail::Normalize(Raw.substr(0, Equals));
+                    Key   = Detail::Normalize(Raw.Mid(0, Equals));
                     // Passing 0 as the count used to silently empty the value, and the rest of the string is wanted.
-                    const FStringView ValueView = Raw.substr(Equals + 1);
-                    Value.assign(ValueView.data(), ValueView.size());
+                    const FStringView ValueView = Raw.Mid(Equals + 1);
+                    Value = FStringView(ValueView.GetData(), ValueView.Len());
                 }
                 else
                 {
@@ -77,7 +77,7 @@ namespace Lumina
             }
             else
             {
-                PositionalArgs.emplace_back(FFixedString(Arg.begin(), Arg.end()));
+                PositionalArgs.Emplace(FFixedString(Arg.begin(), Arg.end()));
             }
         }
     }
@@ -90,31 +90,31 @@ namespace Lumina
 
     bool FCommandLine::Has(const FString& name) const
     {
-        return Args.find(LookupKey(name)) != Args.end();
+        return Args.Contains(LookupKey(name));
     }
 
     TOptional<FFixedString> FCommandLine::Get(const FString& Name) const
     {
-        auto it = Args.find(LookupKey(Name));
-        return it != Args.end() ? TOptional(it->second) : NullOpt;
+        auto it = Args.Find(LookupKey(Name));
+        return it != nullptr ? TOptional(*it) : NullOpt;
     }
 
     TOptional<int> FCommandLine::GetInt(const FString& name) const
     {
-        auto it = Args.find(LookupKey(name));
-        return it != Args.end() ? TOptional(std::stoi(it->second.c_str())) : NullOpt;
+        auto it = Args.Find(LookupKey(name));
+        return it != nullptr ? TOptional(std::stoi(*(*it))) : NullOpt;
     }
 
     TOptional<bool> FCommandLine::GetBool(const FString& name) const
     {
-        auto it = Args.find(LookupKey(name));
-        if (it == Args.end())
+        auto it = Args.Find(LookupKey(name));
+        if (it == nullptr)
         {
             return NullOpt;
         }
     
-        const FFixedString& Val = it->second;
-        return Val.empty() || Val == "1" || Val == "true" || Val == "yes";
+        const FFixedString& Val = (*it);
+        return Val.IsEmpty() || Val == "1" || Val == "true" || Val == "yes";
     }
 
     const TVector<FFixedString>& FCommandLine::GetPositionalArgs() const

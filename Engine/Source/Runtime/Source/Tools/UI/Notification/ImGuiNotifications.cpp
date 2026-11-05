@@ -55,12 +55,12 @@ namespace Lumina::ImGuiX::Notifications
 
         NODISCARD bool Matches(EType InType, FStringView InMessage) const
         {
-            if (Type != InType || Message.size() != InMessage.size())
+            if (Type != InType || Message.Len() != InMessage.Len())
             {
                 return false;
             }
 
-            return Message.empty() || memcmp(Message.data(), InMessage.data(), Message.size()) == 0;
+            return Message.IsEmpty() || memcmp(Message.GetData(), InMessage.GetData(), Message.Len()) == 0;
         }
 
         // A repeat restarts lifetime at the end of the fade-in, so the toast never blinks.
@@ -170,7 +170,7 @@ namespace Lumina::ImGuiX::Notifications
     constexpr static size_t MaxNotifications = 6;
 
     static FMutex NotificationMutex;
-    static TFixedVector<FNotification, MaxNotifications> GNotifications;
+    static TInlineVector<FNotification, MaxNotifications> GNotifications;
     static float GBottomInset = 0.0f;
 
     void SetBottomInset(float Pixels)
@@ -200,11 +200,11 @@ namespace Lumina::ImGuiX::Notifications
         FScopeLock Lock(NotificationMutex);
 
         // Sweep expired entries up front so the height budget below only accounts for live toasts.
-        for (size_t i = 0; i < GNotifications.size();)
+        for (int32 i = 0; i < GNotifications.Num();)
         {
             if (GNotifications[i].GetPhase() == FNotification::EPhase::Expired)
             {
-                GNotifications.erase(GNotifications.begin() + i);
+                GNotifications.RemoveAt(i);
             }
             else
             {
@@ -222,11 +222,11 @@ namespace Lumina::ImGuiX::Notifications
         const float MinNotificationHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
 
         float NotificationStartPosY = 0.0f;
-        size_t NumHidden = 0;
-        size_t NumDrawn = 0;
+        int32 NumHidden = 0;
+        int32 NumDrawn = 0;
 
         // Newest to oldest, so the newest sits in the corner and lost height drops the oldest.
-        for (size_t i = GNotifications.size(); i-- > 0;)
+        for (int32 i = GNotifications.Num(); i-- > 0;)
         {
             const FNotification& Notification = GNotifications[i];
 
@@ -259,50 +259,50 @@ namespace Lumina::ImGuiX::Notifications
             ImGui::SetNextWindowPos(WorkPos + ImVec2(WorkSize.x - PaddingX, WorkSize.y - PaddingY - GBottomInset - NotificationStartPosY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1);
             ImGui::PushStyleColor(ImGuiCol_Border, TextColor);
-            if (ImGui::Begin(WindowName.c_str(), nullptr, Flags))
+            if (ImGui::Begin(*WindowName, nullptr, Flags))
             {
                 ImGui::PushTextWrapPos(WorkSize.x / 3.0f);
 
                 bool DrawSeparator = false;
 
-                if (!Icon.empty())
+                if (!Icon.IsEmpty())
                 {
-                    ImGui::TextColored(TextColor, "%s", Icon.data());
+                    ImGui::TextColored(TextColor, "%s", Icon.GetData());
                     DrawSeparator = true;
                 }
 
-                if (!Title.empty())
+                if (!Title.IsEmpty())
                 {
-                    if (!Icon.empty())
+                    if (!Icon.IsEmpty())
                     {
                         ImGui::SameLine();
                     }
 
                     if (Notification.GetRepeatCount() > 1)
                     {
-                        ImGui::Text("%.*s (x%u)", (int)Title.size(), Title.data(), Notification.GetRepeatCount());
+                        ImGui::Text("%.*s (x%u)", Title.Len(), Title.GetData(), Notification.GetRepeatCount());
                     }
                     else
                     {
-                        ImGui::TextUnformatted(Title.data(), Title.data() + Title.size());
+                        ImGui::TextUnformatted(Title.GetData(), Title.GetData() + Title.Len());
                     }
 
                     DrawSeparator = true;
                 }
 
-                if (DrawSeparator && !Message.empty())
+                if (DrawSeparator && !Message.IsEmpty())
                 {
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5.0f);
                 }
 
-                if (!Message.empty())
+                if (!Message.IsEmpty())
                 {
                     if (DrawSeparator)
                     {
                         ImGui::Separator();
                     }
 
-                    ImGui::TextUnformatted(Message.data(), Message.data() + Message.size());
+                    ImGui::TextUnformatted(Message.GetData(), Message.GetData() + Message.Len());
                 }
 
                 ImGui::PopTextWrapPos();
@@ -329,7 +329,7 @@ namespace Lumina::ImGuiX::Notifications
             ImGui::SetNextWindowPos(WorkPos + ImVec2(WorkSize.x - PaddingX, WorkSize.y - PaddingY - GBottomInset - NotificationStartPosY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
             if (ImGui::Begin("##NotificationOverflow", nullptr, Flags))
             {
-                ImGui::Text("%zu more...", NumHidden);
+                ImGui::Text("%d more...", NumHidden);
             }
 
             ImGui::End();
@@ -351,13 +351,13 @@ namespace Lumina::ImGuiX::Notifications
         }
 
         // Bounded stack - the oldest notification makes way for the newest.
-        while (GNotifications.size() >= MaxNotifications)
+        while (static_cast<size_t>(GNotifications.Num()) >= MaxNotifications)
         {
-            GNotifications.erase(GNotifications.begin());
+            GNotifications.RemoveAt(0);
         }
 
         FFixedString MessageContent(Msg.begin(), Msg.end());
-        GNotifications.emplace_back(Type, Move(MessageContent));
+        GNotifications.Emplace(Type, Move(MessageContent));
     }
     
 }

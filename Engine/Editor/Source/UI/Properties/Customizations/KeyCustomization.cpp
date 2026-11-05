@@ -47,7 +47,7 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  St.Colors[ImGuiCol_FrameBgActive]);
         ImGui::PushStyleColor(ImGuiCol_Text, bCapturing ? EditorColors::Accent() : bValid ? St.Colors[ImGuiCol_Text] : EditorColors::TextMuted());
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-        if (ImGui::Button(Label.c_str(), ImVec2(FieldW > 1.0f ? FieldW : 1.0f, 0.0f)) && !bCapturing)
+        if (ImGui::Button(*Label, ImVec2(FieldW > 1.0f ? FieldW : 1.0f, 0.0f)) && !bCapturing)
         {
             bCapturing      = true;
             bArmed          = false;

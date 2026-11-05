@@ -43,18 +43,18 @@ namespace LuminaVocabularyTests
     TEST(PairBasics, ConstructCompareAndSwap)
     {
         constexpr TPair<int, int> Literal(1, 2);
-        static_assert(Literal.first == 1);
-        static_assert(Literal.second == 2);
+        static_assert(Literal.Key == 1);
+        static_assert(Literal.Value == 2);
 
         TPair<int, Lumina::FString> Mixed(7, Lumina::FString("seven"));
-        EXPECT_EQ(Mixed.first, 7);
-        EXPECT_EQ(Mixed.second, Lumina::FString("seven"));
+        EXPECT_EQ(Mixed.Key, 7);
+        EXPECT_EQ(Mixed.Value, Lumina::FString("seven"));
 
         TPair<int, int> Left(1, 2);
         TPair<int, int> Right(3, 4);
-        Left.swap(Right);
-        EXPECT_EQ(Left.first, 3);
-        EXPECT_EQ(Right.first, 1);
+        swap(Left, Right);
+        EXPECT_EQ(Left.Key, 3);
+        EXPECT_EQ(Right.Key, 1);
 
         EXPECT_TRUE((TPair<int, int>(1, 2) == TPair<int, int>(1, 2)));
         EXPECT_LT((TPair<int, int>(1, 2)), (TPair<int, int>(1, 3)));
@@ -65,14 +65,14 @@ namespace LuminaVocabularyTests
     {
         const auto Made = MakePair(1, Lumina::FString("value"));
         static_assert(std::is_same_v<decltype(Made), const TPair<int, Lumina::FString>>);
-        EXPECT_EQ(Made.first, 1);
+        EXPECT_EQ(Made.Key, 1);
     }
 
     TEST(PairBasics, ConvertsToAndFromTheStandardPair)
     {
         const std::pair<int, int> Standard(3, 4);
         const TPair<int, int> Ours(Standard);
-        EXPECT_EQ(Ours.first, 3);
+        EXPECT_EQ(Ours.Key, 3);
 
         const std::pair<int, int> Back = Ours;
         EXPECT_EQ(Back.second, 4);
@@ -86,7 +86,7 @@ namespace LuminaVocabularyTests
         EXPECT_EQ(Text, Lumina::FString("five"));
 
         Number = 6;
-        EXPECT_EQ(Value.first, 6);
+        EXPECT_EQ(Value.Key, 6);
     }
 
     TEST(PairBasics, PiecewiseConstructionBuildsInPlace)
@@ -96,8 +96,8 @@ namespace LuminaVocabularyTests
             Lumina::ForwardAsTuple("abc", 3),
             Lumina::ForwardAsTuple(4, 'x'));
 
-        EXPECT_EQ(Built.first, Lumina::FString("abc"));
-        EXPECT_EQ(Built.second, Lumina::FString("xxxx"));
+        EXPECT_EQ(Built.Key, Lumina::FString("abc"));
+        EXPECT_EQ(Built.Value, Lumina::FString("xxxx"));
     }
 
     TEST(PairLifetime, DestroysBothMembers)
@@ -105,7 +105,7 @@ namespace LuminaVocabularyTests
         FTracked::Live = 0;
         {
             TPair<FTracked, FTracked> Value(FTracked(1), FTracked(2));
-            EXPECT_EQ(Value.first.Value, 1);
+            EXPECT_EQ(Value.Key.Value, 1);
             EXPECT_EQ(FTracked::Live, 2);
         }
         EXPECT_EQ(FTracked::Live, 0);
@@ -114,16 +114,16 @@ namespace LuminaVocabularyTests
     TEST(SpanBasics, EmptyAndFromPointerAndSize)
     {
         constexpr TSpan<const int> Empty;
-        static_assert(Empty.empty());
-        static_assert(Empty.size() == 0);
-        EXPECT_EQ(Empty.data(), nullptr);
+        static_assert(Empty.IsEmpty());
+        static_assert(Empty.Num() == 0);
+        EXPECT_EQ(Empty.GetData(), nullptr);
 
         int Values[] = { 1, 2, 3, 4 };
         const TSpan<int> Span(Values, 4);
-        EXPECT_EQ(Span.size(), 4u);
-        EXPECT_EQ(Span.size_bytes(), 4u * sizeof(int));
-        EXPECT_EQ(Span.front(), 1);
-        EXPECT_EQ(Span.back(), 4);
+        EXPECT_EQ(Span.Num(), 4);
+        EXPECT_EQ(Span.NumBytes(), 4u * sizeof(int));
+        EXPECT_EQ(Span[0], 1);
+        EXPECT_EQ(Span.Last(), 4);
         EXPECT_EQ(Span[2], 3);
     }
 
@@ -131,19 +131,19 @@ namespace LuminaVocabularyTests
     {
         int RawArray[] = { 1, 2, 3 };
         const TSpan<int> FromArray(RawArray);
-        EXPECT_EQ(FromArray.size(), 3u);
+        EXPECT_EQ(FromArray.Num(), 3);
 
         std::vector<int> Vector{ 4, 5, 6, 7 };
         const TSpan<int> FromVector(Vector);
-        EXPECT_EQ(FromVector.size(), 4u);
+        EXPECT_EQ(FromVector.Num(), 4);
         EXPECT_EQ(FromVector[0], 4);
 
         Lumina::Containers::TVector<int> Ours;
-        Ours.push_back(8);
-        Ours.push_back(9);
+        Ours.Add(8);
+        Ours.Add(9);
         const TSpan<int> FromOurs(Ours);
-        EXPECT_EQ(FromOurs.size(), 2u);
-        EXPECT_EQ(FromOurs.back(), 9);
+        EXPECT_EQ(FromOurs.Num(), 2);
+        EXPECT_EQ(FromOurs.Last(), 9);
     }
 
     TEST(SpanBasics, MutableSpanWritesThrough)
@@ -167,7 +167,7 @@ namespace LuminaVocabularyTests
         const TSpan<int> Mutable(Values);
 
         const TSpan<const int> Constant = Mutable;
-        EXPECT_EQ(Constant.size(), 3u);
+        EXPECT_EQ(Constant.Num(), 3);
 
         const std::span<int> Standard = Mutable;
         EXPECT_EQ(Standard.size(), 3u);
@@ -181,13 +181,13 @@ namespace LuminaVocabularyTests
         int Values[] = { 0, 1, 2, 3, 4, 5 };
         const TSpan<int> Span(Values);
 
-        EXPECT_EQ(Span.first(2).size(), 2u);
-        EXPECT_EQ(Span.first(2).back(), 1);
-        EXPECT_EQ(Span.last(2).front(), 4);
-        EXPECT_EQ(Span.subspan(2).size(), 4u);
-        EXPECT_EQ(Span.subspan(2, 2).back(), 3);
-        EXPECT_EQ(Span.subspan(2, 100).size(), 4u);
-        EXPECT_TRUE(Span.subspan(6).empty());
+        EXPECT_EQ(Span.Left(2).Num(), 2);
+        EXPECT_EQ(Span.Left(2).Last(), 1);
+        EXPECT_EQ(Span.Right(2)[0], 4);
+        EXPECT_EQ(Span.Mid(2).Num(), 4);
+        EXPECT_EQ(Span.Mid(2, 2).Last(), 3);
+        EXPECT_EQ(Span.Mid(2, 100).Num(), 4);
+        EXPECT_TRUE(Span.Mid(6).IsEmpty());
     }
 
     TEST(SpanSearch, ContainsAndIndexOf)
@@ -197,52 +197,52 @@ namespace LuminaVocabularyTests
 
         EXPECT_TRUE(Span.Contains(20));
         EXPECT_FALSE(Span.Contains(40));
-        EXPECT_EQ(Span.IndexOf(30), 2u);
-        EXPECT_EQ(Span.IndexOf(40), TSpan<int>::npos);
+        EXPECT_EQ(Span.Find(30), 2);
+        EXPECT_EQ(Span.Find(40), Lumina::Constants::kIndexNone);
     }
 
     TEST(OptionalBasics, DisengagedByDefault)
     {
         const TOptional<int> Value;
-        EXPECT_FALSE(Value.has_value());
+        EXPECT_FALSE(Value.IsSet());
         EXPECT_FALSE(Value.IsSet());
         EXPECT_FALSE(static_cast<bool>(Value));
-        EXPECT_EQ(Value.value_or(7), 7);
+        EXPECT_EQ(Value.Get(7), 7);
         EXPECT_TRUE(Value == NullOpt);
     }
 
     TEST(OptionalBasics, EngagedFromAValue)
     {
         TOptional<int> Value = 5;
-        EXPECT_TRUE(Value.has_value());
-        EXPECT_EQ(Value.value(), 5);
+        EXPECT_TRUE(Value.IsSet());
+        EXPECT_EQ(Value.GetValue(), 5);
         EXPECT_EQ(*Value, 5);
-        EXPECT_EQ(Value.value_or(7), 5);
+        EXPECT_EQ(Value.Get(7), 5);
 
         Value = 9;
         EXPECT_EQ(*Value, 9);
 
         Value = NullOpt;
-        EXPECT_FALSE(Value.has_value());
+        EXPECT_FALSE(Value.IsSet());
     }
 
     TEST(OptionalBasics, ArrowReachesTheHeldValue)
     {
         TOptional<Lumina::FString> Text(Lumina::FString("hello"));
-        EXPECT_EQ(Text->size(), 5u);
-        EXPECT_TRUE(Text->starts_with(Lumina::FStringView("hel")));
+        EXPECT_EQ(Text->Len(), 5);
+        EXPECT_TRUE(Text->StartsWith(Lumina::FStringView("hel")));
     }
 
     TEST(OptionalBasics, EmplaceAndReset)
     {
         TOptional<Lumina::FString> Text;
-        Text.emplace(4, 'x');
+        Text.Emplace(4, 'x');
         EXPECT_EQ(*Text, Lumina::FString("xxxx"));
 
-        Text.reset();
-        EXPECT_FALSE(Text.has_value());
+        Text.Reset();
+        EXPECT_FALSE(Text.IsSet());
 
-        Text.emplace("rebuilt");
+        Text.Emplace("rebuilt");
         EXPECT_EQ(*Text, Lumina::FString("rebuilt"));
     }
 
@@ -259,10 +259,10 @@ namespace LuminaVocabularyTests
             TOptional<FTracked> Value(FTracked(1));
             EXPECT_EQ(FTracked::Live, 1);
 
-            Value.reset();
+            Value.Reset();
             EXPECT_EQ(FTracked::Live, 0);
 
-            Value.emplace(2);
+            Value.Emplace(2);
             EXPECT_EQ(FTracked::Live, 1);
         }
         EXPECT_EQ(FTracked::Live, 0);
@@ -276,23 +276,23 @@ namespace LuminaVocabularyTests
         TOptional<FTracked> Disengaged;
 
         TOptional<FTracked> Copy = Engaged;
-        EXPECT_TRUE(Copy.has_value());
+        EXPECT_TRUE(Copy.IsSet());
         EXPECT_EQ(Copy->Value, 1);
-        EXPECT_TRUE(Engaged.has_value());
+        EXPECT_TRUE(Engaged.IsSet());
 
         Copy = Disengaged;
-        EXPECT_FALSE(Copy.has_value());
+        EXPECT_FALSE(Copy.IsSet());
 
         Copy = Engaged;
-        EXPECT_TRUE(Copy.has_value());
+        EXPECT_TRUE(Copy.IsSet());
 
         TOptional<FTracked> Moved = std::move(Copy);
-        EXPECT_TRUE(Moved.has_value());
-        EXPECT_FALSE(Copy.has_value());
+        EXPECT_TRUE(Moved.IsSet());
+        EXPECT_FALSE(Copy.IsSet());
 
-        Engaged.reset();
-        Disengaged.reset();
-        Moved.reset();
+        Engaged.Reset();
+        Disengaged.Reset();
+        Moved.Reset();
         EXPECT_EQ(FTracked::Live, 0);
     }
 
@@ -301,12 +301,12 @@ namespace LuminaVocabularyTests
         TOptional<int> Left = 1;
         TOptional<int> Right;
 
-        Left.swap(Right);
-        EXPECT_FALSE(Left.has_value());
+        swap(Left, Right);
+        EXPECT_FALSE(Left.IsSet());
         EXPECT_EQ(*Right, 1);
 
         TOptional<int> Other = 2;
-        Right.swap(Other);
+        swap(Right, Other);
         EXPECT_EQ(*Right, 2);
         EXPECT_EQ(*Other, 1);
     }
@@ -331,7 +331,7 @@ namespace LuminaVocabularyTests
     {
         const TVariant<int, float, Lumina::FString> Value;
         EXPECT_EQ(Value.GetIndex(), 0u);
-        EXPECT_TRUE(Value.Is<int>());
+        EXPECT_TRUE(Value.IsType<int>());
         EXPECT_TRUE(Value.IsValid());
         EXPECT_EQ(Value.Get<int>(), 0);
     }
@@ -340,20 +340,20 @@ namespace LuminaVocabularyTests
     {
         TVariant<int, Lumina::FString> Value(Lumina::FString("text"));
         EXPECT_EQ(Value.GetIndex(), 1u);
-        EXPECT_TRUE(Value.Is<Lumina::FString>());
+        EXPECT_TRUE(Value.IsType<Lumina::FString>());
         EXPECT_EQ(Value.Get<Lumina::FString>(), Lumina::FString("text"));
 
         Value = 42;
-        EXPECT_TRUE(Value.Is<int>());
+        EXPECT_TRUE(Value.IsType<int>());
         EXPECT_EQ(Value.Get<int>(), 42);
     }
 
     TEST(VariantBasics, GetIfReportsTheHeldAlternative)
     {
         TVariant<int, float> Value(1.5f);
-        EXPECT_EQ(Value.GetIf<int>(), nullptr);
-        ASSERT_NE(Value.GetIf<float>(), nullptr);
-        EXPECT_FLOAT_EQ(*Value.GetIf<float>(), 1.5f);
+        EXPECT_EQ(Value.TryGet<int>(), nullptr);
+        ASSERT_NE(Value.TryGet<float>(), nullptr);
+        EXPECT_FLOAT_EQ(*Value.TryGet<float>(), 1.5f);
 
         EXPECT_TRUE(Lumina::Containers::HoldsAlternative<float>(Value));
         EXPECT_FALSE(Lumina::Containers::HoldsAlternative<int>(Value));
@@ -467,10 +467,10 @@ namespace LuminaVocabularyTests
         TVariant<int, Lumina::FString> Left(1);
         TVariant<int, Lumina::FString> Right(Lumina::FString("right"));
 
-        Left.swap(Right);
-        EXPECT_TRUE(Left.Is<Lumina::FString>());
+        swap(Left, Right);
+        EXPECT_TRUE(Left.IsType<Lumina::FString>());
         EXPECT_EQ(Left.Get<Lumina::FString>(), Lumina::FString("right"));
-        EXPECT_TRUE(Right.Is<int>());
+        EXPECT_TRUE(Right.IsType<int>());
         EXPECT_EQ(Right.Get<int>(), 1);
     }
 }

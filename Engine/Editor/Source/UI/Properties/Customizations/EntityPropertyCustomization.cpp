@@ -25,11 +25,11 @@ namespace Lumina
             FFixedString Label;
             if (const SNameComponent* Name = Registry.TryGet<SNameComponent>(Entity))
             {
-                Label.append(Name->Name.c_str());
+                Label.Append(*Name->Name);
             }
             else
             {
-                Label.append("Entity");
+                Label.Append("Entity");
             }
             AppendFormat(Label, " ({})", Entity.Value);
             return Label;
@@ -80,19 +80,19 @@ namespace Lumina
 
         // Index 0 is always "None"; the rest are the same named entities the outliner shows.
         TVector<ECS::FEntity> Candidates;
-        Candidates.push_back(ECS::NullEntity);
+        Candidates.Add(ECS::NullEntity);
 
         const ECS::FEntity CurrentEntity = CachedValue;
         const bool bHasCurrent = CurrentEntity != ECS::NullEntity && Registry.IsValid(CurrentEntity);
 
         int32 CurrentIndex = 0; // default to None
-        for (ECS::FEntity Entity : Registry.View<SNameComponent>(ECS::TExclude<FHideInSceneOutliner>{}))
+        for (ECS::FEntity Entity : Registry.View<SNameComponent, ECS::Without<FHideInSceneOutliner>>())
         {
             if (bHasCurrent && Entity == CurrentEntity)
             {
-                CurrentIndex = static_cast<int32>(Candidates.size());
+                CurrentIndex = Candidates.Num();
             }
-            Candidates.push_back(Entity);
+            Candidates.Add(Entity);
         }
 
         const FFixedString Preview = bHasCurrent ? MakeEntityLabel(Registry, CurrentEntity) : FFixedString("None");
@@ -104,7 +104,7 @@ namespace Lumina
 
         // Grouped so the whole combo is one drop target for an entity dragged from the outliner.
         ImGui::BeginGroup();
-        const int32 Picked = ImGuiX::SearchableCombo("##entity", Preview.c_str(), static_cast<int32>(Candidates.size()), CurrentIndex,
+        const int32 Picked = ImGuiX::SearchableCombo("##entity", *Preview, Candidates.Num(), CurrentIndex,
             [&Registry, &Candidates](int32 Index) -> FFixedString
             {
                 if (Index == 0)

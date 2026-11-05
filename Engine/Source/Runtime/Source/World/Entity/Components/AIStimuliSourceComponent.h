@@ -3,7 +3,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "AI/Perception/PerceptionTypes.h"
-#include "GameplayTags/GameplayTag.h"
+#include "HierarchicalTags/HierarchicalTag.h"
 #include "AIStimuliSourceComponent.generated.h"
 
 namespace Lumina
@@ -19,7 +19,7 @@ namespace Lumina
         // Affiliation/identity tags this source broadcasts (e.g. "Team.Red"). A perceiver senses it only when
         // its DetectableTags matches any of these; an empty perceiver filter senses everyone.
         PROPERTY(Editable, Category = "AI|Perception")
-        SGameplayTagContainer AffiliationTags;
+        SHierarchicalTagContainer AffiliationTags;
 
         // Senses this source registers for passive detection. Damage is always event-driven regardless.
         PROPERTY(Editable, Category = "AI|Perception")

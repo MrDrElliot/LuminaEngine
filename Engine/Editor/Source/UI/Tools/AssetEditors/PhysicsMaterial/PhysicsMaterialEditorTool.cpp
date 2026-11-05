@@ -9,7 +9,7 @@ namespace Lumina
     static const char* PhysicsMaterialWindowName = "Physics Material";
 
     FPhysicsMaterialEditorTool::FPhysicsMaterialEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -27,6 +27,6 @@ namespace Lumina
     void FPhysicsMaterialEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& /*InDockspaceSize*/) const
     {
         ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(PhysicsMaterialWindowName).c_str(), InDockspaceID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(PhysicsMaterialWindowName), InDockspaceID);
     }
 }

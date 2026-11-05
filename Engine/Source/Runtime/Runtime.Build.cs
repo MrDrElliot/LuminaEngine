@@ -28,11 +28,9 @@ public class Runtime : LuminaModuleRules
         // dependent compiling against those headers needs the same third-party declarations.
         PublicDependencyModuleNames.AddRange(new[]
         {
-            "NlohmannJson",
             "StbImage",
             "RenderDoc",
             "RPMalloc",
-            "XXHash",
             "Miniz",
             "Zstd",
 
@@ -91,13 +89,14 @@ public class Runtime : LuminaModuleRules
             CompilerWarning.ShadowMember,
             CompilerWarning.NonstandardExtension);
 
-        if (Target.Platform == BuildPlatform.Windows64)
+        if (Target.Platform != BuildPlatform.Windows64)
         {
-            AddPerFileOption("JobScheduler.cpp", "/GT");
-        }
-        else
-        {
-            AddPerFileOption("JobScheduler.cpp", "-ftls-model=initial-exec");
+            // The fork-join hot path reads its thread context on every fork, which the default dynamic TLS model makes a call.
+            AddPerFileOption("ForkRuntime.cpp", "-ftls-model=initial-exec");
+
+            // Their AVX2 paths repeat the scalar math op for op, so the scalar side must not fuse into FMA (MSVC never does by default).
+            AddPerFileOption("AnimCompression.cpp", "-ffp-contract=off");
+            AddPerFileOption("AnimTaskExecutor.cpp", "-ffp-contract=off");
 
             // libstdc++ declares std::stacktrace but leaves the backtrace implementation in its own
             // archive, so Assert.h's HAS_STD_STACKTRACE path only links with this. The name here is

@@ -167,7 +167,7 @@ namespace Lumina
 
         for (FTextureResource::FMip& Mip : TextureResource->Mips)
         {
-            if (!Mip.BulkRef.IsValid() || !Mip.Pixels.empty())
+            if (!Mip.BulkRef.IsValid() || !Mip.Pixels.IsEmpty())
             {
                 continue;
             }
@@ -230,7 +230,7 @@ namespace Lumina
             : TextureResource->GetNumMips();
 
         const uint32 NumMipsTotal = TextureResource->GetNumMips();
-        for (uint32 Index = 0; Index < (uint32)TextureResource->Mips.size(); ++Index)
+        for (int32 Index = 0; Index < TextureResource->Mips.Num(); ++Index)
         {
             if (NumMipsTotal > 0 && (Index % NumMipsTotal) >= KeepFrom)
             {
@@ -238,8 +238,8 @@ namespace Lumina
             }
 
             FTextureResource::FMip& Mip = TextureResource->Mips[Index];
-            Mip.Pixels.clear();
-            Mip.Pixels.shrink_to_fit();
+            Mip.Pixels.Reset();
+            Mip.Pixels.Shrink();
         }
 #endif
     }
@@ -274,7 +274,7 @@ namespace Lumina
         const FTextureResource::FDescription& Desc = TextureResource->ImageDescription;
 
         // Nothing to describe a GPU image with, as for an empty asset or one whose description failed to load.
-        if (TextureResource->Mips.empty() || Desc.Format == EFormat::UNKNOWN)
+        if (TextureResource->Mips.IsEmpty() || Desc.Format == EFormat::UNKNOWN)
         {
             return false;
         }
@@ -301,7 +301,7 @@ namespace Lumina
             for (uint32 Mip = InFirstMip; Mip < RetainedFrom; ++Mip)
             {
                 const uint32 Index = TextureResource->MipIndex(Layer, Mip);
-                if (Index < TextureResource->Mips.size() && TextureResource->Mips[Index].Pixels.empty())
+                if (Index < static_cast<uint32>(TextureResource->Mips.Num()) && TextureResource->Mips[Index].Pixels.IsEmpty())
                 {
                     LOG_ERROR("CTexture::ApplyMipResidency: {} asked for mip {} but its pixels are not resident",
                         GetName(), Mip);
@@ -327,7 +327,7 @@ namespace Lumina
                 .Layers = NumLayers,
                 .Mips   = ResidentNum,
                 .Format = Desc.Format,
-                .DebugName = DebugName.c_str(),
+                .DebugName = *DebugName,
                 .Swizzle = Desc.Swizzle,
             });
         }
@@ -340,7 +340,7 @@ namespace Lumina
                 .Height = Extent.y,
                 .Mips   = ResidentNum,
                 .Format = Desc.Format,
-                .DebugName = DebugName.c_str(),
+                .DebugName = *DebugName,
                 .Swizzle = Desc.Swizzle,
             });
         }
@@ -493,14 +493,14 @@ namespace Lumina
         while (PendingFill.NextMip < PendingFill.CpuEndMip)
         {
             const uint32 Index = TextureResource->MipIndex(PendingFill.NextLayer, PendingFill.NextMip);
-            if (Index >= TextureResource->Mips.size())
+            if (Index >= static_cast<uint32>(TextureResource->Mips.Num()))
             {
                 AdvanceSlice();
                 continue;
             }
 
             const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
-            const uint64 SliceBytes = Mip.Pixels.size();
+            const uint64 SliceBytes = Mip.Pixels.Num();
             if (SliceBytes == 0)
             {
                 AdvanceSlice();
@@ -563,7 +563,7 @@ namespace Lumina
             // RowPitchTexels describes the SOURCE row length, not the destination.
             if (!RHI::Textures::UploadLayer(TextureResource->NewTexture, PendingFill.NextLayer,
                     PendingFill.NextMip - PendingFill.FirstMip,
-                    Mip.Pixels.data() + (uint64)FirstRow * RowBytes, BandBytes,
+                    Mip.Pixels.GetData() + (uint64)FirstRow * RowBytes, BandBytes,
                     Mip.Width, Mip.Width, BandHeight, OffsetY))
             {
                 // Committing with a band missing bakes the hole in permanently, so retry bounded rather than advance.
@@ -596,10 +596,10 @@ namespace Lumina
         // The image holds them now and the package can re-read them, so keeping the bytes only doubles the texture.
         for (FTextureResource::FMip& Mip : TextureResource->Mips)
         {
-            if (Mip.BulkRef.IsValid() && !Mip.Pixels.empty())
+            if (Mip.BulkRef.IsValid() && !Mip.Pixels.IsEmpty())
             {
-                Mip.Pixels.clear();
-                Mip.Pixels.shrink_to_fit();
+                Mip.Pixels.Reset();
+                Mip.Pixels.Shrink();
             }
         }
     }

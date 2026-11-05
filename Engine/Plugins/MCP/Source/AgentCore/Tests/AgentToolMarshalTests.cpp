@@ -28,14 +28,23 @@
 using namespace Lumina;
 using namespace Lumina::Agent;
 
-namespace
+namespace AgentToolMarshalTestsInternal
 {
+    FJsonValue ParseJson(const char* Text)
+    {
+        FJsonValue Out;
+        EXPECT_TRUE(FJsonValue::Parse(Text, Out));
+        return Out;
+    }
+
     // Reflection is off for this module, so every fixture is a type the engine already reflects and exports.
     FMarshalResult ReadInto(FStructInstance& Instance, const char* Json)
     {
-        return ReadStruct(nlohmann::json::parse(Json), Instance.GetType(), Instance.Get());
+        return ReadStruct(ParseJson(Json), Instance.GetType(), Instance.Get());
     }
 }
+
+using namespace AgentToolMarshalTestsInternal;
 
 TEST(AgentToolMarshal, AScalarIsApplied)
 {
@@ -44,7 +53,7 @@ TEST(AgentToolMarshal, AScalarIsApplied)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"Lifetime":2.5})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_FLOAT_EQ(static_cast<SLifetimeComponent*>(Instance.Get())->Lifetime, 2.5f);
 }
 
@@ -55,7 +64,7 @@ TEST(AgentToolMarshal, AStringIsApplied)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"Name":"Torch"})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(static_cast<SNameComponent*>(Instance.Get())->Name, FName("Torch"));
 }
 
@@ -66,7 +75,7 @@ TEST(AgentToolMarshal, ABoolIsApplied)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"bCastShadow":false})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_FALSE(static_cast<SMeshComponent*>(Instance.Get())->bCastShadow);
 }
 
@@ -80,7 +89,7 @@ TEST(AgentToolMarshal, AnOmittedFieldKeepsItsDefault)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"bCastShadow":false})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(static_cast<SMeshComponent*>(Instance.Get())->bReceiveShadow, Before);
 }
 
@@ -90,7 +99,7 @@ TEST(AgentToolMarshal, AnEmptyObjectLeavesEverythingAtItsDefault)
     ASSERT_TRUE(Instance.IsValid());
 
     const FMarshalResult Result = ReadInto(Instance, "{}");
-    EXPECT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    EXPECT_TRUE(Result.IsValid()) << *Result.Error;
 }
 
 TEST(AgentToolMarshal, ANestedStructIsApplied)
@@ -100,7 +109,7 @@ TEST(AgentToolMarshal, ANestedStructIsApplied)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"bEnabled":true,"LowPassFrequency":900.0})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
 
     const SAudioOcclusion* Typed = static_cast<SAudioOcclusion*>(Instance.Get());
     EXPECT_TRUE(Typed->bEnabled);
@@ -116,7 +125,7 @@ TEST(AgentToolMarshal, AnUnknownFieldIsRefusedByName)
     const FMarshalResult Result = ReadInto(Instance, R"({"Lifetim":2.5})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Lifetim"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Lifetim"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AWrongTypeIsRefusedByPath)
@@ -127,7 +136,7 @@ TEST(AgentToolMarshal, AWrongTypeIsRefusedByPath)
     const FMarshalResult Result = ReadInto(Instance, R"({"Lifetime":"soon"})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Lifetime"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Lifetime"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, ANonObjectIsRefused)
@@ -141,7 +150,7 @@ TEST(AgentToolMarshal, ANonObjectIsRefused)
 
 TEST(AgentToolMarshal, ANullInstanceIsRefused)
 {
-    const FMarshalResult Result = ReadStruct(nlohmann::json::object(), nullptr, nullptr);
+    const FMarshalResult Result = ReadStruct(FJsonValue::MakeObject(), nullptr, nullptr);
     EXPECT_FALSE(Result.IsValid());
 }
 
@@ -154,7 +163,7 @@ TEST(AgentToolMarshal, AWrongTypeInANestedStructNamesTheWholePath)
     const FMarshalResult Result = ReadInto(Instance, R"({"LowPassFrequency":true})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("LowPassFrequency"), FString::npos);
+    EXPECT_NE(Result.Error.Find("LowPassFrequency"), Constants::kIndexNone);
 }
 
 // An invalid enum name would otherwise resolve to whatever the lookup falls back to.
@@ -166,8 +175,8 @@ TEST(AgentToolMarshal, AnUnknownEnumNameIsRefusedAndListsTheChoices)
     const FMarshalResult Result = ReadInto(Instance, R"({"Bus":"NotARealBus"})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Bus"), FString::npos);
-    EXPECT_NE(Result.Error.find("SFX"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Bus"), Constants::kIndexNone);
+    EXPECT_NE(Result.Error.Find("SFX"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AValidEnumNameIsApplied)
@@ -177,7 +186,7 @@ TEST(AgentToolMarshal, AValidEnumNameIsApplied)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"Bus":"Music"})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(static_cast<SAudioSourceComponent*>(Instance.Get())->Bus, EAudioBus::Music);
 }
 
@@ -190,7 +199,7 @@ TEST(AgentToolMarshal, AnUnsupportedFieldIsRefusedEvenWhenSupplied)
     const FMarshalResult Result = ReadInto(Instance, R"({"Sound":"/Game/Audio/Beep"})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Sound"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Sound"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, WritingProducesTheFieldsBack)
@@ -200,12 +209,12 @@ TEST(AgentToolMarshal, WritingProducesTheFieldsBack)
 
     static_cast<SLifetimeComponent*>(Instance.Get())->Lifetime = 7.25f;
 
-    nlohmann::json Out;
+    FJsonValue Out;
     const FMarshalResult Result = WriteStruct(Instance.GetType(), Instance.Get(), Out);
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
-    ASSERT_TRUE(Out.contains("Lifetime"));
-    EXPECT_FLOAT_EQ(Out["Lifetime"].get<float>(), 7.25f);
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
+    ASSERT_TRUE(Out.Contains("Lifetime"));
+    EXPECT_FLOAT_EQ(Out["Lifetime"].AsFloat(), 7.25f);
 }
 
 // Read then write then read has to land on the same values, or a result cannot be trusted.
@@ -216,7 +225,7 @@ TEST(AgentToolMarshal, AStructSurvivesARoundTrip)
 
     ASSERT_TRUE(ReadInto(First, R"({"bEnabled":true,"LowPassFrequency":1234.0,"InterpTime":0.75})").IsValid());
 
-    nlohmann::json Written;
+    FJsonValue Written;
     ASSERT_TRUE(WriteStruct(First.GetType(), First.Get(), Written).IsValid());
 
     FStructInstance Second(SAudioOcclusion::StaticStruct());
@@ -233,7 +242,7 @@ TEST(AgentToolMarshal, AStructSurvivesARoundTrip)
 
 TEST(AgentToolMarshal, WritingANullInstanceIsRefused)
 {
-    nlohmann::json Out;
+    FJsonValue Out;
     const FMarshalResult Result = WriteStruct(nullptr, nullptr, Out);
 
     EXPECT_FALSE(Result.IsValid());
@@ -245,21 +254,21 @@ TEST(AgentToolMarshal, AnObjectReferenceIsSchemaExpressible)
     const FSchemaResult Result = GeneratePropertySchema(
         SAudioSourceComponent::StaticStruct()->GetProperty(FName("Sound")));
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
 
-    ASSERT_TRUE(Result.Schema.contains("description"));
-    const std::string Description = Result.Schema["description"].get<std::string>();
-    EXPECT_NE(Description.find("GUID"), std::string::npos);
-    EXPECT_NE(Description.find("CSoundBase"), std::string::npos);
+    ASSERT_TRUE(Result.Schema.Contains("description"));
+    const FStringView Description = Result.Schema["description"].AsString();
+    EXPECT_NE(Description.Find("GUID"), Constants::kIndexNone);
+    EXPECT_NE(Description.Find("CSoundBase"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AStructHoldingAnObjectReferenceIsNowDescribable)
 {
     const FSchemaResult Result = GenerateSchema(SAudioSourceComponent::StaticStruct());
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
-    EXPECT_TRUE(Result.Schema["properties"].contains("Sound"));
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
+    EXPECT_TRUE(Result.Schema["properties"].Contains("Sound"));
 }
 
 // An empty string is how a caller clears a reference, and it must not be read as a bad GUID.
@@ -270,7 +279,7 @@ TEST(AgentToolMarshal, AnEmptyObjectReferenceClearsIt)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"Sound":""})");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(static_cast<SAudioSourceComponent*>(Instance.Get())->Sound.Get(), nullptr);
 }
 
@@ -282,7 +291,7 @@ TEST(AgentToolMarshal, AMalformedGuidIsRefusedByPath)
     const FMarshalResult Result = ReadInto(Instance, R"({"Sound":"not-a-guid"})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Sound"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Sound"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, ANonStringObjectReferenceIsRefused)
@@ -304,7 +313,7 @@ TEST(AgentToolMarshal, AnUnresolvableGuidIsReported)
         R"({"Sound":"1D9B7A44-0000-4000-8000-000000000001"})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Sound"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Sound"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, ANullReferenceWritesAsAnEmptyString)
@@ -312,12 +321,12 @@ TEST(AgentToolMarshal, ANullReferenceWritesAsAnEmptyString)
     FStructInstance Instance(SAudioSourceComponent::StaticStruct());
     ASSERT_TRUE(Instance.IsValid());
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteStruct(Instance.GetType(), Instance.Get(), Out).IsValid());
 
-    ASSERT_TRUE(Out.contains("Sound"));
-    ASSERT_TRUE(Out["Sound"].is_string());
-    EXPECT_TRUE(Out["Sound"].get<std::string>().empty());
+    ASSERT_TRUE(Out.Contains("Sound"));
+    ASSERT_TRUE(Out["Sound"].IsString());
+    EXPECT_TRUE(Out["Sound"].AsString().IsEmpty());
 }
 
 // An array of references is the common case for material overrides, so it travels element by element.
@@ -326,7 +335,7 @@ TEST(AgentToolMarshal, AnArrayOfObjectReferencesIsDescribableAndEmptyByDefault)
     const FSchemaResult Schema = GeneratePropertySchema(
         SMeshComponent::StaticStruct()->GetProperty(FName("MaterialOverrides")));
 
-    ASSERT_TRUE(Schema.IsValid()) << Schema.Error.c_str();
+    ASSERT_TRUE(Schema.IsValid()) << *Schema.Error;
     EXPECT_EQ(Schema.Schema["type"], "array");
     EXPECT_EQ(Schema.Schema["items"]["type"], "string");
 
@@ -334,8 +343,8 @@ TEST(AgentToolMarshal, AnArrayOfObjectReferencesIsDescribableAndEmptyByDefault)
     ASSERT_TRUE(Instance.IsValid());
 
     const FMarshalResult Result = ReadInto(Instance, R"({"MaterialOverrides":[]})");
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
-    EXPECT_EQ(static_cast<SMeshComponent*>(Instance.Get())->MaterialOverrides.size(), 0u);
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
+    EXPECT_EQ(static_cast<SMeshComponent*>(Instance.Get())->MaterialOverrides.Num(), 0u);
 }
 
 TEST(AgentToolMarshal, AMalformedGuidInsideAnArrayNamesItsIndex)
@@ -346,12 +355,12 @@ TEST(AgentToolMarshal, AMalformedGuidInsideAnArrayNamesItsIndex)
     const FMarshalResult Result = ReadInto(Instance, R"({"MaterialOverrides":["","nope"]})");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("[1]"), FString::npos);
+    EXPECT_NE(Result.Error.Find("[1]"), Constants::kIndexNone);
 }
 
 // Container and reference kinds, built from descriptors the way generated code builds them.
 
-namespace
+namespace AgentToolMarshalTestsInternal
 {
     constexpr FPropertyDesc GNameToIntMap{ .Name = "Table", .Type = PropertyTypeOf<THashMap<FName, int32>> };
     constexpr FPropertyDesc GOptionalFloat{ .Name = "Regen", .Type = PropertyTypeOf<TOptional<float>> };
@@ -378,6 +387,8 @@ namespace
     };
 }
 
+using namespace AgentToolMarshalTestsInternal;
+
 TEST(AgentToolMarshal, ASoftObjectPathIsAppliedAndWrittenBack)
 {
     FContainerFixtures Fixtures;
@@ -385,10 +396,10 @@ TEST(AgentToolMarshal, ASoftObjectPathIsAppliedAndWrittenBack)
 
     FSoftObjectPath Path;
     const FMarshalResult Read = ReadProperty("/Game/Content/Maps/GameWorld.lasset", Property, &Path, "GameStartupMap");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
     EXPECT_EQ(Path.GetPath(), FStringView("/Game/Content/Maps/GameWorld.lasset"));
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteProperty(Property, &Path, Out).IsValid());
     EXPECT_EQ(Out, "/Game/Content/Maps/GameWorld.lasset");
 }
@@ -400,7 +411,7 @@ TEST(AgentToolMarshal, ASoftObjectRefusesANonString)
 
     const FMarshalResult Result = ValidatePropertyValue(42, Property, "GameStartupMap");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("GameStartupMap"), FString::npos);
+    EXPECT_NE(Result.Error.Find("GameStartupMap"), Constants::kIndexNone);
 }
 
 // A GUID that names nothing must say so, since the path form would otherwise be stored as-is.
@@ -411,7 +422,7 @@ TEST(AgentToolMarshal, ASoftObjectGuidNamingNothingIsReported)
 
     const FMarshalResult Result = ValidatePropertyValue("1D9B7A44-0000-4000-8000-000000000001", Property, "GameStartupMap");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("GUID"), FString::npos);
+    EXPECT_NE(Result.Error.Find("GUID"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AClassIsResolvedByName)
@@ -424,11 +435,11 @@ TEST(AgentToolMarshal, AClassIsResolvedByName)
 
     CClass* Value = nullptr;
     const FMarshalResult Read = ReadProperty("CEntityScript", Property, &Value, "ScriptClass");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
     ASSERT_NE(Value, nullptr);
     EXPECT_EQ(Value->GetName(), FName("CEntityScript"));
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteProperty(Property, &Value, Out).IsValid());
     EXPECT_EQ(Out, "CEntityScript");
 }
@@ -443,7 +454,7 @@ TEST(AgentToolMarshal, AClassOutsideTheConstraintIsRefused)
 
     const FMarshalResult Result = ValidatePropertyValue("CWorld", Property, "ScriptClass");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("subclass"), FString::npos);
+    EXPECT_NE(Result.Error.Find("subclass"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AnUnknownClassNameIsRefused)
@@ -465,7 +476,7 @@ TEST(AgentToolMarshal, ASubStructIsResolvedByName)
 
     CStruct* Value = nullptr;
     const FMarshalResult Read = ReadProperty("SAnimNotify_Log", Property, &Value, "NotifyType");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
     EXPECT_EQ(Value, SAnimNotify_Log::StaticStruct());
 }
 
@@ -478,7 +489,7 @@ TEST(AgentToolMarshal, ASubStructOutsideTheConstraintIsRefused)
 
     const FMarshalResult Result = ValidatePropertyValue("SLifetimeComponent", Property, "NotifyType");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("derive"), FString::npos);
+    EXPECT_NE(Result.Error.Find("derive"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AnOptionalTakesNullAsReset)
@@ -488,8 +499,8 @@ TEST(AgentToolMarshal, AnOptionalTakesNullAsReset)
 
     TOptional<float> Value(1.0f);
     const FMarshalResult Read = ReadProperty(nullptr, Property, &Value, "Regen");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
-    EXPECT_FALSE(Value.has_value());
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
+    EXPECT_FALSE(Value.IsSet());
 }
 
 TEST(AgentToolMarshal, AnOptionalTakesABareValueAsEngaged)
@@ -499,8 +510,8 @@ TEST(AgentToolMarshal, AnOptionalTakesABareValueAsEngaged)
 
     TOptional<float> Value;
     const FMarshalResult Read = ReadProperty(2.5, Property, &Value, "Regen");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
-    ASSERT_TRUE(Value.has_value());
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
+    ASSERT_TRUE(Value.IsSet());
     EXPECT_FLOAT_EQ(*Value, 2.5f);
 }
 
@@ -510,15 +521,15 @@ TEST(AgentToolMarshal, AnOptionalRoundTripsItsRecordForm)
     FOptionalProperty* Property = Fixtures.OptionalFloat();
 
     TOptional<float> Value;
-    const FMarshalResult Read = ReadProperty(nlohmann::json::parse(R"({"Engaged":true,"Value":3.0})"), Property, &Value, "Regen");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
-    ASSERT_TRUE(Value.has_value());
+    const FMarshalResult Read = ReadProperty(ParseJson(R"({"Engaged":true,"Value":3.0})"), Property, &Value, "Regen");
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
+    ASSERT_TRUE(Value.IsSet());
     EXPECT_FLOAT_EQ(*Value, 3.0f);
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteProperty(Property, &Value, Out).IsValid());
     EXPECT_EQ(Out["Engaged"], true);
-    EXPECT_FLOAT_EQ(Out["Value"].get<float>(), 3.0f);
+    EXPECT_FLOAT_EQ(Out["Value"].AsFloat(), 3.0f);
 }
 
 TEST(AgentToolMarshal, AnOptionalWithAWrongInnerTypeNamesThePath)
@@ -528,7 +539,7 @@ TEST(AgentToolMarshal, AnOptionalWithAWrongInnerTypeNamesThePath)
 
     const FMarshalResult Result = ValidatePropertyValue("soon", Property, "Regen");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Regen.Value"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Regen.Value"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AMapTakesAnObject)
@@ -537,9 +548,9 @@ TEST(AgentToolMarshal, AMapTakesAnObject)
     FMapProperty* Property = Fixtures.NameToIntMap();
 
     THashMap<FName, int32> Value;
-    const FMarshalResult Read = ReadProperty(nlohmann::json::parse(R"({"A":1,"B":2})"), Property, &Value, "Table");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
-    ASSERT_EQ(Value.size(), 2u);
+    const FMarshalResult Read = ReadProperty(ParseJson(R"({"A":1,"B":2})"), Property, &Value, "Table");
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
+    ASSERT_EQ(Value.Num(), 2u);
     EXPECT_EQ(Value[FName("A")], 1);
     EXPECT_EQ(Value[FName("B")], 2);
 }
@@ -550,15 +561,15 @@ TEST(AgentToolMarshal, AMapTakesAFlatArrayAndWritesOneBack)
     FMapProperty* Property = Fixtures.NameToIntMap();
 
     THashMap<FName, int32> Value;
-    const FMarshalResult Read = ReadProperty(nlohmann::json::parse(R"(["C",3])"), Property, &Value, "Table");
-    ASSERT_TRUE(Read.IsValid()) << Read.Error.c_str();
-    ASSERT_EQ(Value.size(), 1u);
+    const FMarshalResult Read = ReadProperty(ParseJson(R"(["C",3])"), Property, &Value, "Table");
+    ASSERT_TRUE(Read.IsValid()) << *Read.Error;
+    ASSERT_EQ(Value.Num(), 1u);
     EXPECT_EQ(Value[FName("C")], 3);
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteProperty(Property, &Value, Out).IsValid());
-    ASSERT_TRUE(Out.is_array());
-    ASSERT_EQ(Out.size(), 2u);
+    ASSERT_TRUE(Out.IsArray());
+    ASSERT_EQ(Out.Num(), 2);
     EXPECT_EQ(Out[0], "C");
     EXPECT_EQ(Out[1], 3);
 }
@@ -568,7 +579,7 @@ TEST(AgentToolMarshal, AMapWithAnOddArrayIsRefused)
     FContainerFixtures Fixtures;
     FMapProperty* Property = Fixtures.NameToIntMap();
 
-    const FMarshalResult Result = ValidatePropertyValue(nlohmann::json::parse(R"(["C"])"), Property, "Table");
+    const FMarshalResult Result = ValidatePropertyValue(ParseJson(R"(["C"])"), Property, "Table");
     EXPECT_FALSE(Result.IsValid());
 }
 
@@ -577,9 +588,9 @@ TEST(AgentToolMarshal, AMapWithAWrongValueTypeNamesItsIndex)
     FContainerFixtures Fixtures;
     FMapProperty* Property = Fixtures.NameToIntMap();
 
-    const FMarshalResult Result = ValidatePropertyValue(nlohmann::json::parse(R"({"A":"one"})"), Property, "Table");
+    const FMarshalResult Result = ValidatePropertyValue(ParseJson(R"({"A":"one"})"), Property, "Table");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Table[1]"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Table[1]"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, AnInstancedStructIsAppliedByTypeName)
@@ -591,13 +602,13 @@ TEST(AgentToolMarshal, AnInstancedStructIsAppliedByTypeName)
 
     const FMarshalResult Result = ReadInto(Instance,
         R"({"Notify":{"StructType":"SAnimNotify_Log","Data":{"Message":"hello"}}})");
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
 
     const SAnimMontageNotify* Typed = static_cast<SAnimMontageNotify*>(Instance.Get());
     ASSERT_EQ(Typed->Notify.GetScriptStruct(), SAnimNotify_Log::StaticStruct());
     EXPECT_EQ(static_cast<const SAnimNotify_Log*>(Typed->Notify.GetMemory())->Message, FString("hello"));
 
-    nlohmann::json Out;
+    FJsonValue Out;
     ASSERT_TRUE(WriteStruct(Instance.GetType(), Instance.Get(), Out).IsValid());
     EXPECT_EQ(Out["Notify"]["StructType"], "SAnimNotify_Log");
     EXPECT_EQ(Out["Notify"]["Data"]["Message"], "hello");
@@ -610,7 +621,7 @@ TEST(AgentToolMarshal, AnInstancedStructWithAnUnknownTypeIsRefused)
 
     const FMarshalResult Result = ReadInto(Instance, R"({"Notify":{"StructType":"SNoSuchNotify","Data":{}}})");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Notify"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Notify"), Constants::kIndexNone);
 }
 
 // The struct the type picks is validated field by field, so a typo inside Data is caught before the archive.
@@ -624,7 +635,7 @@ TEST(AgentToolMarshal, AnInstancedStructValidatesItsDataFields)
     const FMarshalResult Result = ReadInto(Instance,
         R"({"Notify":{"StructType":"SAnimNotify_Log","Data":{"Mesage":"typo"}}})");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("Notify.Data.Mesage"), FString::npos);
+    EXPECT_NE(Result.Error.Find("Notify.Data.Mesage"), Constants::kIndexNone);
 }
 
 TEST(AgentToolMarshal, ADelegateIsRefusedAsNotSettable)
@@ -632,7 +643,7 @@ TEST(AgentToolMarshal, ADelegateIsRefusedAsNotSettable)
     FProperty* Property = SRigidBodyComponent::StaticStruct()->GetProperty(FName("OnWake"));
     ASSERT_NE(Property, nullptr);
 
-    const FMarshalResult Result = ValidatePropertyValue(nlohmann::json::object(), Property, "OnWake");
+    const FMarshalResult Result = ValidatePropertyValue(FJsonValue::MakeObject(), Property, "OnWake");
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("delegate"), FString::npos);
+    EXPECT_NE(Result.Error.Find("delegate"), Constants::kIndexNone);
 }

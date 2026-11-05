@@ -47,7 +47,7 @@ namespace Lumina
             float StartTime = 0.0f;
         };
 
-        FSyncTrack() { Events.push_back(FSyncEvent()); }
+        FSyncTrack() { Events.AddDefaulted(); }
 
         // Markers must arrive sorted and free of duplicates; an empty list yields the default track.
         void BuildFromMarkers(const TVector<FMarker>& Markers);
@@ -55,11 +55,11 @@ namespace Lumina
         // Averaging start times is meaningless, so only durations blend and start times are rebuilt from them.
         void BuildBlended(const FSyncTrack& A, const FSyncTrack& B, float Alpha);
 
-        int32 NumEvents() const { return (int32)Events.size(); }
+        int32 NumEvents() const { return Events.Num(); }
         const FSyncEvent& GetEvent(int32 Index) const { return Events[WrapIndex(Index)]; }
         FName GetEventID(int32 Index) const { return Events[WrapIndex(Index)].ID; }
 
-        bool IsDefault() const { return Events.size() == 1; }
+        bool IsDefault() const { return Events.Num() == 1; }
 
         float GetPercentThrough(const FSyncPosition& Position) const;
 

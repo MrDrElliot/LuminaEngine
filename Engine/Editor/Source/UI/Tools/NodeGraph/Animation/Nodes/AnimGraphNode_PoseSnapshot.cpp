@@ -23,7 +23,7 @@ namespace Lumina
 
     FString CAnimGraphNode_SavePoseSnapshot::GetNodeTitleText() const
     {
-        return SnapshotName.IsNone() ? FString("Save Pose Snapshot") : Format("Save {}", SnapshotName.c_str());
+        return SnapshotName.IsNone() ? FString("Save Pose Snapshot") : Format("Save {}", *SnapshotName);
     }
 
     void CAnimGraphNode_PoseSnapshot::BuildNode()
@@ -38,6 +38,6 @@ namespace Lumina
 
     FString CAnimGraphNode_PoseSnapshot::GetNodeTitleText() const
     {
-        return SnapshotName.IsNone() ? FString("Pose Snapshot") : FString(SnapshotName.c_str());
+        return SnapshotName.IsNone() ? FString("Pose Snapshot") : FString(*SnapshotName);
     }
 }

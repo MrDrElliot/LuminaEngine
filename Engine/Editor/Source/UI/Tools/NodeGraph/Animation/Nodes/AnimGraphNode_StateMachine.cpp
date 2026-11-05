@@ -35,7 +35,7 @@ namespace Lumina
 
     void CAnimGraphNode_StateMachine::SetRenameText(const FString& InText)
     {
-        MachineName = InText.empty() ? NAME_None : FName(InText.c_str());
+        MachineName = InText.IsEmpty() ? NAME_None : FName(*InText);
     }
 
     CAnimStateMachineGraph* CAnimGraphNode_StateMachine::AllocateStateMachineGraph()
@@ -120,7 +120,7 @@ namespace Lumina
         TVector<TPair<CEdGraphNode*, int32>> StateNodesForDebug;
 
         // Machine-relative, since a nested machine's entries belong to its own owner.
-        const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().size();
+        const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().Num();
 
         uint16 NumStateNodes = 0;
         for (const auto& NodeRef : SMGraph->Nodes)
@@ -134,17 +134,17 @@ namespace Lumina
             CEdGraphNode* Node = NodeRef.Get();
             if (Node->IsA<CAnimGraphNode_StateAny>())
             {
-                AnyStateNodeIDs.insert(Node->GetNodeID());
+                AnyStateNodeIDs.Add(Node->GetNodeID());
             }
 
             if (Node->IsA<CAnimGraphNode_StateConduit>())
             {
-                ConduitNodeIDs.insert(Node->GetNodeID());
+                ConduitNodeIDs.Add(Node->GetNodeID());
             }
 
             if (CAnimGraphNode_StateAlias* AliasNode = Cast<CAnimGraphNode_StateAlias>(Node))
             {
-                AliasNodes.emplace(AliasNode->GetNodeID(), AliasNode);
+                AliasNodes.TryAdd(AliasNode->GetNodeID(), AliasNode);
             }
 
             CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(Node);
@@ -160,9 +160,9 @@ namespace Lumina
 
             CAnimationGraphNodeGraph* BlendTree = StateNode->GetOrCreateBlendTree();
 
-            const uint16 ClockSlotFirst   = (uint16)Compiler.GetClockSlots().size() - MachineClockFirst;
+            const uint16 ClockSlotFirst   = (uint16)Compiler.GetClockSlots().Num() - MachineClockFirst;
             const uint16 ChildMachineFirst = Compiler.GetStateMachineCount();
-            const int32 StateIndex = (int32)StateMachine.StatePoseRegisters.size();
+            const int32 StateIndex = StateMachine.StatePoseRegisters.Num();
 
             Compiler.BeginStateCode(EnterOp, (uint16)StateIndex);
             Compiler.BeginStateCapture();
@@ -175,22 +175,23 @@ namespace Lumina
             }
 
             Compiler.EndStateCode(EnterOp, (uint16)StateIndex);
-            StateMachine.StatePoseRegisters.push_back(PoseReg);
-            StateMachine.StateFinishedRegisters.push_back(Compiler.EndStateCapture());
+            StateMachine.StatePoseRegisters.Add(PoseReg);
+            StateMachine.StateFinishedRegisters.Add(Compiler.EndStateCapture());
 
             // Machines emitted while this state compiled, descendants included, since they are contiguous.
-            StateMachine.StateChildMachineFirst.push_back(ChildMachineFirst);
-            StateMachine.StateChildMachineEnd.push_back(Compiler.GetStateMachineCount());
-            StateMachine.StateClockSlotFirst.push_back(ClockSlotFirst);
-            StateMachine.StateClockSlotEnd.push_back((uint16)Compiler.GetClockSlots().size() - MachineClockFirst);
+            StateMachine.StateChildMachineFirst.Add(ChildMachineFirst);
+            StateMachine.StateChildMachineEnd.Add(Compiler.GetStateMachineCount());
+            StateMachine.StateClockSlotFirst.Add(ClockSlotFirst);
+            StateMachine.StateClockSlotEnd.Add((uint16)Compiler.GetClockSlots().Num() - MachineClockFirst);
             NodeIDToStateIndex[StateNode->GetNodeID()] = StateIndex;
-            StateNodesForDebug.emplace_back(StateNode, StateIndex);
+            StateNodesForDebug.Emplace(StateNode, StateIndex);
         }
 
         const TVector<uint16>& CompiledClockSlots = Compiler.GetClockSlots();
-        StateMachine.ClockSlots.assign(CompiledClockSlots.begin() + MachineClockFirst, CompiledClockSlots.end());
+        StateMachine.ClockSlots.Reset();
+        StateMachine.ClockSlots.Append(CompiledClockSlots.begin() + MachineClockFirst, CompiledClockSlots.end());
 
-        if (StateMachine.StatePoseRegisters.empty())
+        if (StateMachine.StatePoseRegisters.IsEmpty())
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Empty State Machine";
@@ -216,14 +217,14 @@ namespace Lumina
                 CAnimGraphNode_State* TargetState = Cast<CAnimGraphNode_State>(TargetPin->GetOwningNode());
                 if (TargetState != nullptr)
                 {
-                    auto It = NodeIDToStateIndex.find(TargetState->GetNodeID());
-                    if (It != NodeIDToStateIndex.end())
+                    auto It = NodeIDToStateIndex.Find(TargetState->GetNodeID());
+                    if (It != nullptr)
                     {
-                        StateMachine.EntryState = It->second;
+                        StateMachine.EntryState = (*It);
                     }
                 }
             }
-            else if (!StateMachine.StatePoseRegisters.empty())
+            else if (!StateMachine.StatePoseRegisters.IsEmpty())
             {
                 EdNodeGraph::FError NodeError;
                 NodeError.Name        = "No Entry State";
@@ -236,12 +237,12 @@ namespace Lumina
 
         // The VM takes the first passing edge, so author Priority decides the emission order.
         TVector<CAnimStateTransition*> SortedTransitions;
-        SortedTransitions.reserve(SMGraph->GetTransitions().size());
+        SortedTransitions.Reserve(SMGraph->GetTransitions().Num());
         for (const TStrongObjectPtr<CAnimStateTransition>& Transition : SMGraph->GetTransitions())
         {
             if (Transition.IsValid())
             {
-                SortedTransitions.push_back(Transition.Get());
+                SortedTransitions.Add(Transition.Get());
             }
         }
         Algo::StableSort(SortedTransitions,
@@ -273,18 +274,18 @@ namespace Lumina
         // An OR group cannot be ANDed with another rule without a term tree, so it is rejected instead.
         const auto CanCombine = [](const CAnimStateTransition* Edge)
         {
-            return Edge->Conditions.size() <= 1 || Edge->bRequireAll;
+            return Edge->Conditions.Num() <= 1 || Edge->bRequireAll;
         };
 
         TVector<FResolvedEdge> ResolvedEdges;
-        ResolvedEdges.reserve(SortedTransitions.size());
+        ResolvedEdges.Reserve(SortedTransitions.Num());
 
         for (CAnimStateTransition* Transition : SortedTransitions)
         {
             Transition->MigrateLegacyCondition();
 
             // Out-edges of a conduit are consumed when their in-edge is paired with them.
-            if (ConduitNodeIDs.find(Transition->FromStateNodeID) != ConduitNodeIDs.end())
+            if (ConduitNodeIDs.Contains(Transition->FromStateNodeID))
             {
                 continue;
             }
@@ -293,15 +294,14 @@ namespace Lumina
             TVector<int64> Sources;
             bool bFromAnyState = false;
 
-            if (AnyStateNodeIDs.find(Transition->FromStateNodeID) != AnyStateNodeIDs.end())
+            if (AnyStateNodeIDs.Contains(Transition->FromStateNodeID))
             {
                 bFromAnyState = true;
-                Sources.push_back(0);
+                Sources.Add(0);
             }
-            else if (AliasNodes.find(Transition->FromStateNodeID) != AliasNodes.end())
+            else if (CAnimGraphNode_StateAlias* Alias = AliasNodes.FindRef(Transition->FromStateNodeID))
             {
-                CAnimGraphNode_StateAlias* Alias = AliasNodes[Transition->FromStateNodeID];
-                if (Alias->SourceStates.empty())
+                if (Alias->SourceStates.IsEmpty())
                 {
                     EdNodeGraph::FError NodeWarning;
                     NodeWarning.Name        = "Empty State Alias";
@@ -312,8 +312,8 @@ namespace Lumina
 
                 for (const FName& StateName : Alias->SourceStates)
                 {
-                    auto NameIt = StateNameToNodeID.find(StateName);
-                    if (NameIt == StateNameToNodeID.end())
+                    auto NameIt = StateNameToNodeID.Find(StateName);
+                    if (NameIt == nullptr)
                     {
                         EdNodeGraph::FError NodeWarning;
                         NodeWarning.Name        = "Unknown Aliased State";
@@ -323,17 +323,17 @@ namespace Lumina
                         Compiler.AddWarning(NodeWarning);
                         continue;
                     }
-                    Sources.push_back(NameIt->second);
+                    Sources.Add(*NameIt);
                 }
             }
             else
             {
-                Sources.push_back(Transition->FromStateNodeID);
+                Sources.Add(Transition->FromStateNodeID);
             }
 
             // One target, or every exit of the conduit this edge feeds.
             TVector<CAnimStateTransition*> Exits;
-            const bool bToConduit = ConduitNodeIDs.find(Transition->ToStateNodeID) != ConduitNodeIDs.end();
+            const bool bToConduit = ConduitNodeIDs.Contains(Transition->ToStateNodeID);
             if (bToConduit)
             {
                 for (CAnimStateTransition* Exit : SortedTransitions)
@@ -343,7 +343,7 @@ namespace Lumina
                         continue;
                     }
 
-                    if (ConduitNodeIDs.find(Exit->ToStateNodeID) != ConduitNodeIDs.end())
+                    if (ConduitNodeIDs.Contains(Exit->ToStateNodeID))
                     {
                         EdNodeGraph::FError CompileError;
                         CompileError.Name        = "Chained Conduits";
@@ -352,10 +352,10 @@ namespace Lumina
                         Compiler.AddError(CompileError);
                         continue;
                     }
-                    Exits.push_back(Exit);
+                    Exits.Add(Exit);
                 }
 
-                if (Exits.empty())
+                if (Exits.IsEmpty())
                 {
                     EdNodeGraph::FError NodeWarning;
                     NodeWarning.Name        = "Conduit Routes Nowhere";
@@ -366,7 +366,7 @@ namespace Lumina
             }
             else
             {
-                Exits.push_back(nullptr);
+                Exits.Add(nullptr);
             }
 
             for (int64 SourceNodeID : Sources)
@@ -401,19 +401,19 @@ namespace Lumina
                         Resolved.bRequireAll = true;
                         for (const SAnimTransitionCondition& Condition : Exit->Conditions)
                         {
-                            Resolved.Conditions.push_back(Condition);
+                            Resolved.Conditions.Add(Condition);
                         }
                     }
 
-                    ResolvedEdges.push_back(Move(Resolved));
+                    ResolvedEdges.Add(Move(Resolved));
                 }
             }
         }
 
         for (const FResolvedEdge& Edge : ResolvedEdges)
         {
-            auto ToIt = NodeIDToStateIndex.find(Edge.ToNodeID);
-            if (ToIt == NodeIDToStateIndex.end())
+            auto ToIt = NodeIDToStateIndex.Find(Edge.ToNodeID);
+            if (ToIt == nullptr)
             {
                 // The endpoint state is missing, so skip rather than emit a bad index.
                 continue;
@@ -422,17 +422,17 @@ namespace Lumina
             int32 FromIndex = -1;
             if (!Edge.bFromAnyState)
             {
-                auto FromIt = NodeIDToStateIndex.find(Edge.FromNodeID);
-                if (FromIt == NodeIDToStateIndex.end())
+                auto FromIt = NodeIDToStateIndex.Find(Edge.FromNodeID);
+                if (FromIt == nullptr)
                 {
                     continue;
                 }
-                FromIndex = FromIt->second;
+                FromIndex = (*FromIt);
             }
 
             FAnimGraphTransition Runtime;
             Runtime.FromState     = FromIndex;
-            Runtime.ToState       = ToIt->second;
+            Runtime.ToState       = (*ToIt);
             Runtime.bRequireAll   = Edge.bRequireAll;
             Runtime.BlendDuration = Edge.BlendDuration;
             Runtime.bCanInterrupt = Edge.bCanInterrupt;
@@ -472,10 +472,10 @@ namespace Lumina
                     break;
                 }
 
-                Runtime.Terms.push_back(Term);
+                Runtime.Terms.Add(Term);
             }
 
-            StateMachine.Transitions.push_back(Runtime);
+            StateMachine.Transitions.Add(Runtime);
         }
 
         StateMachine.bResetOnEntry = bResetOnEntry;
@@ -495,7 +495,7 @@ namespace Lumina
         // What lets the debug overlay find the live state and the transition being blended through.
         for (const TPair<CEdGraphNode*, int32>& Entry : StateNodesForDebug)
         {
-            Compiler.AddDebugStateNode(Entry.first, CurrentStateSlot, FromStateSlot, MachineIndex, Entry.second);
+            Compiler.AddDebugStateNode(Entry.Key, CurrentStateSlot, FromStateSlot, MachineIndex, Entry.Value);
         }
 
         Compiler.SetPinRegister(ResultPin, ResultReg);
@@ -506,9 +506,9 @@ namespace Lumina
         FAnimMachineStatus Status{ "Not running" };
         if (View != nullptr)
         {
-            if (auto It = View->Machines.find(this); It != View->Machines.end())
+            if (auto It = View->Machines.Find(this); It != nullptr)
             {
-                Status = It->second;
+                Status = (*It);
             }
         }
         AnimDebugDraw::MachineStatus(Status, kAnimNodePreviewWidth);

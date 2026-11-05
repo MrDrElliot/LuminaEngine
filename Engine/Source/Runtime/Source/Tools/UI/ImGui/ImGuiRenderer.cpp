@@ -96,11 +96,11 @@ namespace Lumina
                 {
                     continue;
                 }
-                if (GSecondaryWindowLastMouse.find(W) == GSecondaryWindowLastMouse.end())
+                if (!GSecondaryWindowLastMouse.Contains(W))
                 {
                     double X, Y;
                     glfwGetCursorPos(W, &X, &Y);
-                    GSecondaryWindowLastMouse[W] = ImVec2(static_cast<float>(X), static_cast<float>(Y));
+                    GSecondaryWindowLastMouse.Add(W, ImVec2(static_cast<float>(X), static_cast<float>(Y)));
                 }
                 glfwSetKeyCallback(W, SecondaryKeyCallback);
                 glfwSetCharCallback(W, SecondaryCharCallback);
@@ -282,15 +282,15 @@ namespace Lumina
     	auto AddFontFromVirtualPath = [&io] (FStringView Path, float Size, const ImFontConfig& Config, const ImWchar* Ranges = nullptr) -> ImFont*
     	{
     		TVector<uint8> Bytes;
-    		if (!VFS::ReadFile(Bytes, Path) || Bytes.empty())
+    		if (!VFS::ReadFile(Bytes, Path) || Bytes.IsEmpty())
     		{
     			return nullptr;
     		}
-    		void* Data = IM_ALLOC(Bytes.size());
-    		Memory::Memcpy(Data, Bytes.data(), Bytes.size());
+    		void* Data = IM_ALLOC(Bytes.Num());
+    		Memory::Memcpy(Data, Bytes.GetData(), Bytes.Num());
     		ImFontConfig Owned = Config;
     		Owned.FontDataOwnedByAtlas = true;
-    		return io.Fonts->AddFontFromMemoryTTF(Data, (int)Bytes.size(), Size, &Owned, Ranges);
+    		return io.Fonts->AddFontFromMemoryTTF(Data, Bytes.Num(), Size, &Owned, Ranges);
     	};
 
     	auto CreateFontFromFile = [&] (FStringView Path, float FontSize, float IconFontSize, ImGuiX::Font::EFont FontID, const ImVec2& GlyphOffset)
@@ -369,14 +369,14 @@ namespace Lumina
     	{
     		Filesystem::Copy("imgui.ini", LayoutFilePath, false);
     	}
-    	io.IniFilename = LayoutFilePath.c_str();
+    	io.IniFilename = *LayoutFilePath;
 #else
     	// Window positions persist per project, so a debug panel stays where it was dragged between runs.
-    	if (GEngine != nullptr && !GEngine->GetProjectPath().empty())
+    	if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
     	{
-    		LayoutFilePath = FString(Paths::Combine(GEngine->GetProjectPath(), "Saved", "DevUILayout.ini").c_str());
+    		LayoutFilePath = FString(*Paths::Combine(GEngine->GetProjectPath(), "Saved", "DevUILayout.ini"));
     		Filesystem::MakeParentDirectoryTree(LayoutFilePath);
-    		io.IniFilename = LayoutFilePath.c_str();
+    		io.IniFilename = *LayoutFilePath;
     	}
     	else
     	{

@@ -21,12 +21,12 @@ namespace Lumina
         {
             FString PathStr;
             Slot.Serialize(PathStr);
-            Path->SetPath(FStringView(PathStr.c_str(), PathStr.size()));
+            Path->SetPath(FStringView(*PathStr, PathStr.Len()));
         }
         else
         {
             const FStringView View = Path->GetPath();
-            FString PathStr(View.data(), View.size());
+            FString PathStr(View.GetData(), View.Len());
             Slot.Serialize(PathStr);
         }
     }

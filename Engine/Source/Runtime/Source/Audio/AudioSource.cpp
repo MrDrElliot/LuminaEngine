@@ -15,24 +15,24 @@ namespace Lumina
 
 	bool FWaveAudioSource::Open(const TSharedPtr<FAudioData>& Data)
 	{
-		if (!Data || Data->Bytes.empty())
+		if (!Data || Data->Bytes.IsEmpty())
 		{
 			return false;
 		}
 
 		Shared = Data;
-		return OpenReader(Shared->Bytes.data(), Shared->Bytes.size());
+		return OpenReader(Shared->Bytes.GetData(), Shared->Bytes.Num());
 	}
 
 	bool FWaveAudioSource::Open(TVector<uint8>&& Bytes)
 	{
 		Owned = Move(Bytes);
-		if (Owned.empty())
+		if (Owned.IsEmpty())
 		{
 			return false;
 		}
 
-		return OpenReader(Owned.data(), Owned.size());
+		return OpenReader(Owned.GetData(), Owned.Num());
 	}
 
 	bool FWaveAudioSource::IsAtEnd() const

@@ -1,16 +1,25 @@
 #pragma once
 
 #include "World/Entity/Systems/EntitySystem.h"
+#include "World/Entity/Systems/SystemResources.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Components/NetworkComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "Components/RepTransformComponent.h"
 #include "NetMovementInterpSystem.generated.h"
 
 namespace Lumina
 {
-    // Bulk transform-replication update pass. Reads each proxy's FRepTransform sample ring and writes the
-    // interpolated/extrapolated pose back into STransformComponent, in parallel. Runs in PostPhysics, so it
-    // sees the step that just ran and Kinematic proxy bodies follow the next one. Separate
-    // from SNetworkSystem because that system is exclusive (transport pump, scripts, structural spawn/destroy);
-    // this one declares a disjoint write set so the scheduler can overlap it.
+    // The client's render clock behind the server, advanced by SNetMovementInterpSystem from what SNetworkSystem last received.
+    struct FNetInterpClock : ECS::FResource
+    {
+        double LatestServerTime   = 0.0;
+        double ServerPlaybackTime = 0.0;
+        bool   bNetworked         = false;
+        bool   bInitialized       = false;
+    };
+
+    // Writes each proxy's interpolated pose from its FRepTransform ring in PostPhysics, apart from the exclusive SNetworkSystem so it can overlap other systems.
     REFLECT()
     class NETWORKINGRUNTIME_API SNetMovementInterpSystem : public CEntitySystem
     {
@@ -20,5 +29,10 @@ namespace Lumina
         void Configure() override;
 
         void OnUpdate(const SSystemContext& Context) override;
+
+    private:
+
+        ECS::TQuery<ECS::Write<FRepTransform>, ECS::Write<STransformComponent>, ECS::Read<SNetworkComponent>> Proxies;
+        TResMut<FNetInterpClock> Clock;
     };
 }

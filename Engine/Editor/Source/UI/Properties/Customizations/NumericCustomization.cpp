@@ -119,12 +119,12 @@ namespace Lumina
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
         FStructProperty* Prop = static_cast<FStructProperty*>(Property->Property);
 
-        const float Min = Prop->GetMetadataNumber<float>("ClampMin").value_or(0.0f);
-        const float Max = Prop->GetMetadataNumber<float>("ClampMax").value_or(0.0f);
+        const float Min = Prop->GetMetadataNumber<float>("ClampMin").Get(0.0f);
+        const float Max = Prop->GetMetadataNumber<float>("ClampMax").Get(0.0f);
 
         float Speed = ResolveDragSpeed(Prop, 0.01f);
         const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
-        const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
+        const char* Format = UnitFormat.IsEmpty() ? "%.3f" : *UnitFormat;
         if (Prop->HasEditorFlag(EPropertyEditorFlags::NoDrag))
         {
             // An UNSCALED base, so the plus and minus buttons step the same amount every press.
@@ -184,12 +184,12 @@ namespace Lumina
         }
         else
         {
-            const float Min = Prop->GetMetadataNumber<float>("ClampMin").value_or(0.0f);
-            const float Max = Prop->GetMetadataNumber<float>("ClampMax").value_or(0.0f);
+            const float Min = Prop->GetMetadataNumber<float>("ClampMin").Get(0.0f);
+            const float Max = Prop->GetMetadataNumber<float>("ClampMax").Get(0.0f);
 
             float Speed = ResolveDragSpeed(Prop, 0.01f);
             const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
-            const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
+            const char* Format = UnitFormat.IsEmpty() ? "%.3f" : *UnitFormat;
             if (Prop->HasEditorFlag(EPropertyEditorFlags::NoDrag))
             {
                 // An UNSCALED base, so the plus and minus buttons step the same amount every press.
@@ -250,12 +250,12 @@ namespace Lumina
         }
         else
         {
-            const float Min = Prop->GetMetadataNumber<float>("ClampMin").value_or(0.0f);
-            const float Max = Prop->GetMetadataNumber<float>("ClampMax").value_or(0.0f);
+            const float Min = Prop->GetMetadataNumber<float>("ClampMin").Get(0.0f);
+            const float Max = Prop->GetMetadataNumber<float>("ClampMax").Get(0.0f);
 
             float Speed = ResolveDragSpeed(Prop, 0.01f);
             const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
-            const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
+            const char* Format = UnitFormat.IsEmpty() ? "%.3f" : *UnitFormat;
             if (Prop->HasEditorFlag(EPropertyEditorFlags::NoDrag))
             {
                 // An UNSCALED base, so the plus and minus buttons step the same amount every press.

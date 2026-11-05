@@ -43,7 +43,7 @@ namespace Lumina::Agent
 
     CClass* FindClassByName(FStringView Name, CClass* Base, FString& OutError)
     {
-        if (Name.empty())
+        if (Name.IsEmpty())
         {
             OutError = "A class name is needed.";
             return nullptr;
@@ -54,12 +54,12 @@ namespace Lumina::Agent
         // Script classes are named Namespace.Class, so a bare class name finds the one script class that ends with it.
         if (Class == nullptr)
         {
-            const FString Suffix = FString(".") + FString(Name.data(), Name.size());
+            const FString Suffix = FString(".") + FString(Name.GetData(), Name.Len());
             int32 Matches = 0;
             for (TObjectIterator<CClass> It; It; ++It)
             {
                 const FString Candidate = (*It)->GetName().ToString();
-                if (Candidate.size() > Suffix.size() && Candidate.compare(Candidate.size() - Suffix.size(), Suffix.size(), Suffix) == 0)
+                if (Candidate.Len() > Suffix.Len() && Candidate.EndsWith(Suffix))
                 {
                     Class = *It;
                     ++Matches;

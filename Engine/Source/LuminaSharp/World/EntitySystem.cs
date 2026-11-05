@@ -1,13 +1,16 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using LuminaSharp;
 
 namespace Lumina;
 
-// One stage scheduled worker over a world's component store, instanced once per world.
+// One stage scheduled worker over a world's component store, instanced once per world. Its TQuery, TEventReader and TEventWriter fields are its declaration.
+[DispatchWhen(nameof(Configure), nameof(HoldsSystemParams))]
 public partial class CEntitySystem
 {
-    // Valid from Configure onwards, read from the native object that owns the value for both languages.
-    public CWorld World => GetWorld();
-
+    // Held here as well as in the fields, since native keeps pointing at each member's block for as long as the system lives.
+    private readonly List<SystemParam> BoundParams = new();
 
     // Runs after system T and anything deriving from it, in every stage both tick in.
     protected void RunsAfter<T>() where T : CEntitySystem => RunsAfterSystem(NativeTypeName.Of<T>());
@@ -15,19 +18,29 @@ public partial class CEntitySystem
     // Runs before system T and anything deriving from it, in every stage both tick in.
     protected void RunsBefore<T>() where T : CEntitySystem => RunsBeforeSystem(NativeTypeName.Of<T>());
 
-    // Declares that this system writes component T, so it serializes against anything else reading or writing T.
-    protected void Writes<T>() => DeclareWrite(typeof(T).Name);
+    partial void __BeforeScriptEvent_Configure() => BindSystemParams();
 
-    // Declares that this system only reads component T, so it runs concurrently with any other reader of T.
-    protected void Reads<T>() => DeclareRead(typeof(T).Name);
-
-    // Declares the read and hands back the reader that OnUpdate drains with Context.ReadEvents.
-    protected LuminaSharp.EventReader<T> ReadsEvent<T>() where T : struct, LuminaSharp.IEvent
+    internal void BindSystemParams()
     {
-        DeclareRead(LuminaSharp.EventType<T>.Name);
-        return default;
+        foreach (FieldInfo Field in SystemParams.FieldsOf(GetType()))
+        {
+            if (Field.GetValue(this) is not SystemParam Param)
+            {
+                if (Field.FieldType.IsAbstract)
+                {
+                    continue;
+                }
+                Param = (SystemParam)Activator.CreateInstance(Field.FieldType)!;
+                Field.SetValue(this, Param);
+            }
+
+            Param.Bind(this, Field);
+            if (!BoundParams.Contains(Param))
+            {
+                BoundParams.Add(Param);
+            }
+        }
     }
 
-    // Declares that OnUpdate sends T with Context.SendEvent, so readers of T run after this system's batch.
-    protected void SendsEvent<T>() where T : struct, LuminaSharp.IEvent => DeclareWrite(LuminaSharp.EventType<T>.Name);
+    private static bool HoldsSystemParams(TypeLibrary Library, Type ScriptType) => SystemParams.FieldsOf(ScriptType).Length > 0;
 }

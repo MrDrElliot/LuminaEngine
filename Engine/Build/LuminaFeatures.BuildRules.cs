@@ -104,10 +104,6 @@ public static class LuminaFeatures
 
                 // TRACY_CALLSTACK is absent on purpose; a valueless /D is 1, which stack-walks every zone.
                 "TRACY_ON_DEMAND",
-
-                // The scheduler brackets fiber switches with TracyFiberEnter and Leave; without
-                // this the zones double-end.
-                "TRACY_FIBERS",
                 "TRACY_ALLOW_SHADOW_WARNING",
             });
 

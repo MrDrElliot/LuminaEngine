@@ -79,7 +79,7 @@ namespace Lumina::RHI
         // Debug name (from GFSDK_Aftermath_GetShaderDebugNameSpirv) -> shader hash
         THashMap<FString, uint64> DebugNameToHash;
         TVector<FShaderRegistration> RegistrationOrder;
-        size_t                       RegistrationHead = 0;
+        int32                        RegistrationHead = 0;
         size_t                       RegisteredBytes  = 0;
         uint64                       NextSequence     = 0;
 

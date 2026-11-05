@@ -153,7 +153,7 @@ namespace Lumina
 
     void FEditorTool::Initialize()
     {
-        ToolName = Format("{0} {1}", GetTitlebarIcon(), GetToolName().c_str()).c_str();
+        ToolName = *Format("{0} {1}", GetTitlebarIcon(), *GetToolName());
 
         if (HasWorld())
         {
@@ -193,7 +193,7 @@ namespace Lumina
     {
         OnDeinitialize(UpdateContext);
 
-        ToolWindows.clear();
+        ToolWindows.Reset();
 
         // A tool closed mid look would otherwise leave the cursor captured with nothing left to release it.
         if (CameraState.bWasLooking)
@@ -225,7 +225,7 @@ namespace Lumina
     void FEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
-        LUMINA_PROFILE_TAG(GetToolName().c_str());
+        LUMINA_PROFILE_TAG(*GetToolName());
         
         TickEditorCamera(UpdateContext.GetDeltaTime());
         TickEditorActions();
@@ -286,7 +286,7 @@ namespace Lumina
 
         TVector<SkeletonDebugDraw::FBoneLabel> Labels;
         SkeletonDebugDraw::GatherWorldBoneLabels(World.Get(), CameraPos, MaxDist, Labels);
-        if (Labels.empty())
+        if (Labels.IsEmpty())
         {
             return;
         }
@@ -312,7 +312,7 @@ namespace Lumina
             const float ScreenX = (NdcX * 0.5f + 0.5f) * ViewportSize.x + ViewportOrigin.x;
             const float ScreenY = (1.0f - (NdcY * 0.5f + 0.5f)) * ViewportSize.y + ViewportOrigin.y;
 
-            const char* Text = Label.Name.c_str();
+            const char* Text = *Label.Name;
             const ImVec2 TextSize = ImGui::CalcTextSize(Text);
 
             // A dark rounded pill keeps names legible against any geometry, with a small marker dot.
@@ -410,15 +410,15 @@ namespace Lumina
             const bool bInvocable = (bool)Action.Callback;
 
             ImGui::BeginDisabled(!bInvocable);
-            if (ImGui::MenuItem(Action.Name.c_str(), Shortcut.empty() ? nullptr : Shortcut.c_str()))
+            if (ImGui::MenuItem(*Action.Name, Shortcut.IsEmpty() ? nullptr : *Shortcut))
             {
                 Action.Callback();
             }
             ImGui::EndDisabled();
 
-            if (!Action.Description.empty())
+            if (!Action.Description.IsEmpty())
             {
-                ImGuiX::WrappedTooltip("{}", Action.Description.c_str());
+                ImGuiX::WrappedTooltip("{}", *Action.Description);
             }
         }
 
@@ -427,7 +427,7 @@ namespace Lumina
 
     void FEditorTool::TickEditorActions()
     {
-        if (EditorActions.empty())
+        if (EditorActions.IsEmpty())
         {
             return;
         }
@@ -591,11 +591,11 @@ namespace Lumina
         }
 
         const FFixedString AssetVirtualPath = GetAssetVirtualPath();
-        if (!AssetVirtualPath.empty())
+        if (!AssetVirtualPath.IsEmpty())
         {
             if (ImGui::MenuItem(LE_ICON_MAGNIFY"##BrowseToAsset"))
             {
-                ToolContext->BrowseToAsset(FStringView(AssetVirtualPath.c_str(), AssetVirtualPath.size()));
+                ToolContext->BrowseToAsset(FStringView(*AssetVirtualPath, AssetVirtualPath.Len()));
             }
 
             ImGuiX::TextTooltip("Browse to asset in Content Browser");
@@ -603,14 +603,14 @@ namespace Lumina
             // Polled, since another program can flip the flag without touching the file.
             if (ImGui::GetFrameCount() % 30 == 0)
             {
-                bAssetReadOnlyOnDisk = VFS::IsReadOnlyOnDisk(FStringView(AssetVirtualPath.c_str(), AssetVirtualPath.size()));
+                bAssetReadOnlyOnDisk = VFS::IsReadOnlyOnDisk(FStringView(*AssetVirtualPath, AssetVirtualPath.Len()));
             }
             if (bAssetReadOnlyOnDisk)
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
                 if (ImGui::MenuItem(LE_ICON_LOCK " Read-only##ReadOnly"))
                 {
-                    ToolContext->ConfirmWritable({ FString(AssetVirtualPath.c_str()) }, {}, false);
+                    ToolContext->ConfirmWritable({ FString(*AssetVirtualPath) }, {}, false);
                 }
                 ImGui::PopStyleColor();
                 ImGuiX::TextTooltip("{}", "Read-only on disk, so saving will fail. Click to make it writable.");
@@ -627,7 +627,7 @@ namespace Lumina
         
         if (CanUndo())
         {
-            ImGuiX::TextTooltip("Undo {} (Ctrl+Z)", PeekUndoLabel().c_str());
+            ImGuiX::TextTooltip("Undo {} (Ctrl+Z)", *PeekUndoLabel());
         }
         else
         {
@@ -644,7 +644,7 @@ namespace Lumina
         
         if (CanRedo())
         {
-            ImGuiX::TextTooltip("Redo {} (Ctrl+Y)", PeekRedoLabel().c_str());
+            ImGuiX::TextTooltip("Redo {} (Ctrl+Y)", *PeekRedoLabel());
         }
         else
         {
@@ -1098,7 +1098,7 @@ namespace Lumina
 
         // ImGui keys windows globally by name, so a shared literal made every tool share one bar.
         const FFixedString WindowName = GetToolWindowName("##ViewportToolbar", CurrDockspaceID);
-        return ImGui::Begin(WindowName.c_str(), nullptr, WindowFlags);
+        return ImGui::Begin(*WindowName, nullptr, WindowFlags);
     }
 
     void FEditorTool::EndViewportToolbarWindow()
@@ -1146,16 +1146,16 @@ namespace Lumina
 
             for (auto&& [Struct, Visualizer] : CComponentVisualizerRegistry::Get().GetVisualizers())
             {
-                bool bVisible = HiddenVisualizerTypes.find(Struct) == HiddenVisualizerTypes.end();
-                if (ImGui::Checkbox(Struct->MakeDisplayName().c_str(), &bVisible))
+                bool bVisible = !HiddenVisualizerTypes.Contains(Struct);
+                if (ImGui::Checkbox(*Struct->MakeDisplayName(), &bVisible))
                 {
                     if (bVisible)
                     {
-                        HiddenVisualizerTypes.erase(Struct);
+                        HiddenVisualizerTypes.Remove(Struct);
                     }
                     else
                     {
-                        HiddenVisualizerTypes.insert(Struct);
+                        HiddenVisualizerTypes.Add(Struct);
                     }
                 }
             }
@@ -2114,16 +2114,16 @@ namespace Lumina
         }));
         
         auto ToolWindow = MakeUnique<FToolWindow>(InName, DrawFunction, WindowPadding, DisableScrolling);
-        return ToolWindows.emplace_back(Move(ToolWindow)).get();
+        return ToolWindows.EmplaceGetRef(Move(ToolWindow)).get();
     }
 
     void FEditorTool::RemoveToolWindow(const FName& InName)
     {
-        for (auto It = ToolWindows.begin(); It != ToolWindows.end(); ++It)
+        for (int32 i = 0; i < ToolWindows.Num(); ++i)
         {
-            if ((*It)->Name == InName)
+            if (ToolWindows[i]->Name == InName)
             {
-                ToolWindows.erase(It);
+                ToolWindows.RemoveAt(i);
                 return;
             }
         }
@@ -2131,7 +2131,7 @@ namespace Lumina
     
     void FEditorTool::DrawKeybindsMenu()
     {
-        const bool bDisabled = EditorActions.empty();
+        const bool bDisabled = EditorActions.IsEmpty();
         ImGui::BeginDisabled(bDisabled);
         const bool bOpen = ImGui::BeginMenu(LE_ICON_KEYBOARD" Keybinds");
 
@@ -2147,11 +2147,11 @@ namespace Lumina
         THashMap<FString, TVector<const FEditorAction*>> ByCategory;
         for (const FEditorAction& A : EditorActions)
         {
-            if (ByCategory.find(A.Category) == ByCategory.end())
+            if (!ByCategory.Contains(A.Category))
             {
-                CategoryOrder.push_back(A.Category);
+                CategoryOrder.Add(A.Category);
             }
-            ByCategory[A.Category].push_back(&A);
+            ByCategory.FindOrAdd(A.Category).Add(&A);
         }
 
         if (ImGui::BeginTable("KeybindsTable", 2,
@@ -2164,7 +2164,7 @@ namespace Lumina
             {
                 ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
                 ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", Category.empty() ? "General" : Category.c_str());
+                ImGui::TextDisabled("%s", Category.IsEmpty() ? "General" : *Category);
                 ImGui::TableNextColumn();
 
                 for (const FEditorAction* A : ByCategory[Category])
@@ -2172,15 +2172,15 @@ namespace Lumina
                     ImGui::TableNextRow();
 
                     ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(A->Name.c_str());
-                    if (!A->Description.empty() && ImGui::IsItemHovered())
+                    ImGui::TextUnformatted(*A->Name);
+                    if (!A->Description.IsEmpty() && ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("%s", A->Description.c_str());
+                        ImGui::SetTooltip("%s", *A->Description);
                     }
 
                     ImGui::TableNextColumn();
                     const FString Chord = A->DefaultChord.ToDisplayString();
-                    ImGui::TextUnformatted(Chord.empty() ? "-" : Chord.c_str());
+                    ImGui::TextUnformatted(Chord.IsEmpty() ? "-" : *Chord);
                 }
             }
             ImGui::EndTable();
@@ -2308,7 +2308,7 @@ namespace Lumina
         // Deleting an inherited instance node writes its root's ledger, which undo has to roll back with it.
         TVector<ECS::FEntity> InstanceRoots;
         CPrefab::CollectRemovedNodeRoots(Registry, Candidates, InstanceRoots);
-        if (!InstanceRoots.empty())
+        if (!InstanceRoots.IsEmpty())
         {
             TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), InstanceRoots, SPrefabOverrideComponent::StaticStruct()));
             CPrefab::NoteEntitiesRemoved(Registry, Candidates);
@@ -2698,7 +2698,7 @@ namespace Lumina
         FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
         if (AssetData == nullptr)
         {
-            LOG_WARN("Asset drop: no registry entry for '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+            LOG_WARN("Asset drop: no registry entry for '{}'", *FString(VirtualPath.GetData(), VirtualPath.Len()));
             return nullptr;
         }
 
@@ -2710,14 +2710,14 @@ namespace Lumina
         }
         if (Loaded == nullptr)
         {
-            LOG_WARN("Asset drop: failed to load '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+            LOG_WARN("Asset drop: failed to load '{}'", *FString(VirtualPath.GetData(), VirtualPath.Len()));
         }
         return Loaded;
     }
 
     ECS::FEntity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform)
     {
-        if (World == nullptr || VirtualPath.empty())
+        if (World == nullptr || VirtualPath.IsEmpty())
         {
             return ECS::NullEntity;
         }

@@ -98,3 +98,17 @@ TEST(LeaderPose, ADestroyedLeaderResolvesToNull)
 
     EXPECT_EQ(SkeletalUtils::ResolvePoseLeader(Registry, Helmet), ECS::FEntity{ECS::NullEntity});
 }
+
+TEST(LeaderPose, AChainBrokenPastTheFirstHopResolvesToNull)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Body = MakeMesh(Registry);
+    const ECS::FEntity Armor = MakeMesh(Registry);
+    const ECS::FEntity Helmet = MakeMesh(Registry);
+    Follow(Registry, Armor, Body);
+    Follow(Registry, Helmet, Armor);
+    Registry.Destroy(Body);
+
+    EXPECT_EQ(SkeletalUtils::ResolvePoseLeader(Registry, Helmet), ECS::FEntity{ECS::NullEntity})
+        << "the armor is still a follower, so copying its pose would race the pass that writes it";
+}

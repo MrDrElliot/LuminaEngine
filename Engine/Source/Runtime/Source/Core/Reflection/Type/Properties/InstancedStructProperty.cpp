@@ -5,15 +5,16 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Serialization/NetArchive.h"
 #include "Scripting/ScriptTypeRegistry.h"
 
 namespace Lumina
 {
-    FInstancedStructProperty::FInstancedStructProperty(const FPropertyDesc& Desc)
-        : FProperty(Desc)
+    FInstancedStructProperty::FInstancedStructProperty(const FPropertyDesc& InDesc)
+        : FProperty(InDesc)
     {
         // Null for a bare FInstancedStruct, which constrains nothing and accepts any reflected struct.
-        MetaStruct = Desc.Type->GetStruct();
+        MetaStruct = InDesc.Type->GetStruct();
         bResolvedStructBase = MetaStruct != nullptr;
         SetElementSize(sizeof(FInstancedStruct));
     }
@@ -23,9 +24,9 @@ namespace Lumina
         if (!bResolvedStructBase)
         {
             bResolvedStructBase = true;
-            if (const FCStringView Base = GetMetadata("StructBase"); !Base.empty())
+            if (const FCStringView Base = GetMetadata("StructBase"); !Base.IsEmpty())
             {
-                MetaStruct = FindObject<CStruct>(FName(Base.c_str()));
+                MetaStruct = FindObject<CStruct>(FName(*Base));
             }
         }
         return MetaStruct;
@@ -46,6 +47,10 @@ namespace Lumina
             if (Type != nullptr)
             {
                 Type->SerializeProperties(Ar, Instance->GetMutableMemory());
+            }
+            else if (!StructKey.IsNone())
+            {
+                CStruct::SkipSerializedProperties(Ar);
             }
         }
         else
@@ -111,8 +116,49 @@ namespace Lumina
         Memory::ConstructAt(static_cast<FInstancedStruct*>(Value));
     }
 
+    void FInstancedStructProperty::NetSerialize(FNetArchive& Ar, void* Value)
+    {
+        auto* Instance = static_cast<FInstancedStruct*>(Value);
+        if (Ar.IsWriting())
+        {
+            CStruct* Type = Instance->GetScriptStruct();
+            FName StructKey = Type ? StructIdentity(Type) : NAME_None;
+            Ar << StructKey;
+            if (Type != nullptr)
+            {
+                Type->NetSerializeAll(Ar, Instance->GetMutableMemory());
+            }
+            return;
+        }
+
+        FName StructKey;
+        Ar << StructKey;
+        CStruct* Type = StructKey.IsNone() ? nullptr : ResolveInstancedStructType(GetMetaStruct(), StructKey);
+        if (Type == nullptr)
+        {
+            Instance->Reset();
+            if (!StructKey.IsNone())
+            {
+                // A net payload carries no size, so nothing after a type this peer cannot resolve can be read safely.
+                Ar.SetHasError(true);
+            }
+            return;
+        }
+        if (Instance->GetScriptStruct() != Type)
+        {
+            Instance->InitializeAs(Type);
+        }
+        Type->NetSerializeAll(Ar, Instance->GetMutableMemory());
+    }
+
     void FInstancedStructProperty::DestructValue(void* Value) const
     {
         static_cast<FInstancedStruct*>(Value)->~FInstancedStruct();
+    }
+
+    void FInstancedStructProperty::RelocateValue(void* Dest, void* Source) const
+    {
+        Memory::ConstructAt(static_cast<FInstancedStruct*>(Dest), std::move(*static_cast<FInstancedStruct*>(Source)));
+        static_cast<FInstancedStruct*>(Source)->~FInstancedStruct();
     }
 }

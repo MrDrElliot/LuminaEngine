@@ -173,7 +173,7 @@ namespace Lumina
         // Drops every lease and restores the earlier modes.
         void ClearInputModes();
 
-        int32 NumInputModeLeases() const { return (int32)Leases.size(); }
+        int32 NumInputModeLeases() const { return Leases.Num(); }
 
         void OnTeardown() override;
 

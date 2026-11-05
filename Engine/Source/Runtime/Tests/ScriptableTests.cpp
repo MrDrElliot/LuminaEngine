@@ -55,7 +55,7 @@ TEST(Scriptable, MintBuildsFunctionsForTheDeclaredOverrides)
 
     const FFunction* Base = CScriptableTest::StaticClass()->FindFunction(FName("OnTest"));
     ASSERT_NE(Base, nullptr);
-    EXPECT_EQ(Overridden0->GetParams().size(), Base->GetParams().size())
+    EXPECT_EQ(Overridden0->GetParams().Num(), Base->GetParams().Num())
         << "an override shares the base's parameters, so the frame the shim fills is the same one";
     EXPECT_EQ(Overridden0->GetParmsSize(), Base->GetParmsSize());
 

@@ -41,7 +41,7 @@ namespace
         const uint32 QuadCount = (N - 1u) * (N - 1u);
         const uint32 Stride    = bScramble ? 7919u : 1u;
 
-        Resource.Indices.reserve(QuadCount * 6u);
+        Resource.Indices.Reserve(QuadCount * 6u);
         for (uint32 Step = 0; Step < QuadCount; ++Step)
         {
             const uint32 Quad = bScramble ? (uint32)(((uint64)Step * Stride) % QuadCount) : Step;
@@ -53,18 +53,18 @@ namespace
             const uint32 v01 = v00 + N;
             const uint32 v11 = v01 + 1u;
 
-            Resource.Indices.push_back(v00);
-            Resource.Indices.push_back(v01);
-            Resource.Indices.push_back(v10);
-            Resource.Indices.push_back(v10);
-            Resource.Indices.push_back(v01);
-            Resource.Indices.push_back(v11);
+            Resource.Indices.Add(v00);
+            Resource.Indices.Add(v01);
+            Resource.Indices.Add(v10);
+            Resource.Indices.Add(v10);
+            Resource.Indices.Add(v01);
+            Resource.Indices.Add(v11);
         }
 
-        FGeometrySurface& Surface = Resource.GeometrySurfaces.emplace_back();
+        FGeometrySurface& Surface = Resource.GeometrySurfaces.EmplaceGetRef();
         Surface.ID            = "Grid";
         Surface.StartIndex    = 0;
-        Surface.IndexCount    = (uint32)Resource.Indices.size();
+        Surface.IndexCount    = (uint32)Resource.Indices.Num();
         Surface.MaterialIndex = 0;
     }
 
@@ -195,10 +195,10 @@ TEST(MeshletBuild, StaticVerticesAreSharedAcrossMeshlets)
     Import::Mesh::GenerateMeshlets(Resource);
 
     const FMeshletData& Data = Resource.MeshletData;
-    EXPECT_EQ(Data.VertexPositions.size(), (size_t)N * N);
-    EXPECT_EQ(Data.VertexAttributes.size(), (size_t)N * N);
-    EXPECT_TRUE(Data.VertexColors.empty());
-    EXPECT_TRUE(Data.MeshletSkinnedVertices.empty());
+    EXPECT_EQ(Data.VertexPositions.Num(), (size_t)N * N);
+    EXPECT_EQ(Data.VertexAttributes.Num(), (size_t)N * N);
+    EXPECT_TRUE(Data.VertexColors.IsEmpty());
+    EXPECT_TRUE(Data.MeshletSkinnedVertices.IsEmpty());
 
     size_t Slots = 0;
     for (const FMeshlet& M : Data.Meshlets)
@@ -206,7 +206,7 @@ TEST(MeshletBuild, StaticVerticesAreSharedAcrossMeshlets)
         EXPECT_TRUE(M.HasShortVertexRefs());
         Slots += M.VertexCount;
     }
-    EXPECT_GT(Slots, Data.VertexPositions.size());
+    EXPECT_GT(Slots, Data.VertexPositions.Num());
     EXPECT_TRUE(Resource.HasConsistentMeshlets());
 }
 

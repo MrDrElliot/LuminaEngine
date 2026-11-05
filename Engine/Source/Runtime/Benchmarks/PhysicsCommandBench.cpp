@@ -74,14 +74,14 @@ namespace
                 Bone.LocalTransform = Math::Translate(FMatrix4(1.0f), kHumanoid[i].Offset);
                 Bone.InvBindMatrix = Math::Inverse(Globals[i]);
                 Skeleton.BoneNameToIndex[Bone.Name] = i;
-                Skeleton.Bones.push_back(Bone);
+                Skeleton.Bones.Add(Bone);
             }
             BindGlobals = Move(Globals);
         }
 
         ~FBenchScene()
         {
-            Ragdolls.clear();
+            Ragdolls.Reset();
             Scene->StopSimulate();
             Scene.reset();
         }
@@ -102,7 +102,7 @@ namespace
                 Body.bUseGravity = false;
                 Body.LinearDamping = 0.0f;
                 Registry->Emplace<SSphereColliderComponent>(Entity).Radius = 0.25f;
-                Bodies.push_back(Entity);
+                Bodies.Add(Entity);
             }
             Scene->Update(0.0);
             for (ECS::FEntity Entity : Bodies)
@@ -122,8 +122,8 @@ namespace
                 Desc.ComponentBoneGlobals = &BindGlobals;
                 Desc.EntityToWorld = Math::Translate(FMatrix4(1.0f), FVector3((float)(i % 25) * 4.0f, 0.0f, (float)(i / 25) * 4.0f));
                 Desc.CollisionGroupID = Scene->AllocateRagdollGroupID();
-                Ragdolls.push_back(Scene->CreateRagdoll(Desc));
-                RagdollOwners.push_back(Owner);
+                Ragdolls.Add(Scene->CreateRagdoll(Desc));
+                RagdollOwners.Add(Owner);
             }
             Scene->Update(0.0);
         }
@@ -149,19 +149,19 @@ namespace
             {
                 uint64 Start = PlatformTime::Cycles();
                 Scene->Update(Dt);
-                Plain.push_back(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start));
+                Plain.Add(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start));
 
                 Start = PlatformTime::Cycles();
                 PerFrame();
                 const uint64 Queued = PlatformTime::Cycles();
                 Scene->Update(Dt);
-                Worked.push_back(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start));
-                Queue.push_back(PlatformTime::ToMilliseconds(Queued - Start) * 1000.0);
+                Worked.Add(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start));
+                Queue.Add(PlatformTime::ToMilliseconds(Queued - Start) * 1000.0);
             }
             Algo::Sort(Plain);
             Algo::Sort(Worked);
             Algo::Sort(Queue);
-            return { Plain[Plain.size() / 2], Worked[Worked.size() / 2], Queue[Queue.size() / 2] };
+            return { Plain[Plain.Num() / 2], Worked[Worked.Num() / 2], Queue[Queue.Num() / 2] };
         }
 
         // Median of one pass of Work over every ragdoll, in microseconds, with no step in between.
@@ -173,10 +173,10 @@ namespace
             {
                 const uint64 Start = PlatformTime::Cycles();
                 Work();
-                Times.push_back(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) * 1000.0);
+                Times.Add(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) * 1000.0);
             }
             Algo::Sort(Times);
-            return Times[Times.size() / 2];
+            return Times[Times.Num() / 2];
         }
 
         CWorld* World = nullptr;
@@ -215,14 +215,14 @@ TEST(PhysicsCommandBench, WholeRagdollAndPerLimbCalls)
     const TVector<ECS::FEntity>& Owners = Bench.RagdollOwners;
     Physics::FBox3DPhysicsScene& Scene = *Bench.Scene;
 
-    TVector<SPhysicsBodyTarget> Heads(Owners.size());
+    TVector<SPhysicsBodyTarget> Heads(Owners.Num());
     const double LimbLookupUs = Bench.MedianPassUs([&]
     {
-        for (size_t i = 0; i < Owners.size(); ++i) { Heads[i] = Scene.GetRagdollBoneTarget(Owners[i], FName("head")); }
+        for (int32 i = 0; i < Owners.Num(); ++i) { Heads[i] = Scene.GetRagdollBoneTarget(Owners[i], FName("head")); }
     });
     FVector3 Sink(0.0f);
     const double ReadUs = Bench.MedianPassUs([&] { for (ECS::FEntity E : Owners) { Sink += Scene.GetLinearVelocity(E); } });
-    EXPECT_TRUE(Heads.front().IsSet());
+    EXPECT_TRUE(Heads[0].IsSet());
 
     struct FCase { const char* Label; TFunction<void()> Work; };
     const FCase Cases[] =
@@ -252,7 +252,7 @@ TEST(PhysicsCommandBench, RagdollLookupMissPerCommand)
     ECS::TEntityMap<void*> Ragdolls;
     for (int32 i = 0; i < kRigidBodies + kRagdolls; ++i)
     {
-        Entities.push_back(Registry.Create());
+        Entities.Add(Registry.Create());
     }
     for (int32 i = kRigidBodies; i < kRigidBodies + kRagdolls; ++i)
     {
@@ -268,9 +268,9 @@ TEST(PhysicsCommandBench, RagdollLookupMissPerCommand)
         {
             Hits += Ragdolls.Find(Entities[i]) != nullptr;
         }
-        Times.push_back(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) * 1e6 / kRigidBodies);
+        Times.Add(PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start) * 1e6 / kRigidBodies);
     }
     Algo::Sort(Times);
     EXPECT_EQ(Hits, 0u);
-    std::printf("\n  ragdoll map miss for a rigid body command  %5.2f ns\n\n", Times[Times.size() / 2]);
+    std::printf("\n  ragdoll map miss for a rigid body command  %5.2f ns\n\n", Times[Times.Num() / 2]);
 }

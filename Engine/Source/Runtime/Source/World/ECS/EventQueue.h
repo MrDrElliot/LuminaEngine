@@ -1,5 +1,6 @@
 #pragma once
 
+#include "World/Entity/Systems/SystemParam.h"
 #include "World/ECS/ComponentType.h"
 #include "Containers/Span.h"
 #include "Containers/StaticArray.h"
@@ -138,11 +139,62 @@ namespace Lumina::ECS
     // A script event's queue type, laid out from what the script reports and laid out again when it reshapes.
     RUNTIME_API FComponentTypeID AcquireScriptEventType(FName Name, uint32 Size, uint32 Alignment);
 
-    // How far one reader has read a queue, kept by whoever reads it so every reader sees each event exactly once.
+    template<typename T> struct TEventRange;
+
+    // How far one reader has read a queue, so it sees each event once; as a system member it declares the read and binds to the world.
     template<typename T>
     struct TEventReader
     {
+        TEventReader() { RegisterSystemParam(this, GetOps()); }
+        TEventReader(const TEventReader&) = default;
+        TEventReader& operator=(const TEventReader&) = default;
+
+        // Every T sent since this reader last read, oldest first.
+        NODISCARD TEventRange<T> Read();
+        NODISCARD bool HasUnread() const;
+
         uint64 Cursor = 0;
+
+    private:
+
+        FEventQueues* Queues = nullptr;
+
+        static const FSystemParamOps& GetOps()
+        {
+            static const FSystemParamOps Ops
+            {
+                .Bind    = [](void* Param, CWorld& World) { static_cast<TEventReader*>(Param)->Queues = &GetSystemEvents(World); },
+                .Declare = [](const void*, FSystemAccess& Access) { DeclareParamRead(Access, static_cast<uint32>(GetComponentTypeID<T>()), false); },
+                .HasWork = [](const void* Param) { return static_cast<const TEventReader*>(Param)->HasUnread(); },
+            };
+            return Ops;
+        }
+    };
+
+    // A system member that sends T, which reaches readers at the flush after its segment.
+    template<typename T>
+    class TEventWriter
+    {
+    public:
+
+        TEventWriter() { RegisterSystemParam(this, GetOps()); }
+
+        void Send(const T& Event) const;
+        void Send(TSpan<const T> Events) const;
+
+    private:
+
+        FEventQueues* Queues = nullptr;
+
+        static const FSystemParamOps& GetOps()
+        {
+            static const FSystemParamOps Ops
+            {
+                .Bind    = [](void* Param, CWorld& World) { static_cast<TEventWriter*>(Param)->Queues = &GetSystemEvents(World); },
+                .Declare = [](const void*, FSystemAccess& Access) { DeclareParamSends(Access, static_cast<uint32>(GetComponentTypeID<T>())); },
+            };
+            return Ops;
+        }
     };
 
     // A typed view over unread events, iterated oldest first.
@@ -159,7 +211,7 @@ namespace Lumina::ECS
 
             const T& operator*() const
             {
-                const uint32 FirstNum = (uint32)Range->First.size();
+                const uint32 FirstNum = (uint32)Range->First.Num();
                 return Index < FirstNum ? Range->First[Index] : Range->Second[Index - FirstNum];
             }
             FIterator& operator++() { ++Index; return *this; }
@@ -168,7 +220,7 @@ namespace Lumina::ECS
 
         NODISCARD FIterator begin() const { return FIterator{ this, 0 }; }
         NODISCARD FIterator end() const { return FIterator{ this, Num() }; }
-        NODISCARD uint32 Num() const { return (uint32)(First.size() + Second.size()); }
+        NODISCARD uint32 Num() const { return (uint32)(First.Num() + Second.Num()); }
         NODISCARD bool IsEmpty() const { return Num() == 0; }
     };
 
@@ -190,9 +242,9 @@ namespace Lumina::ECS
     template<typename T>
     void SendEvents(FEventQueues& Queues, TSpan<const T> Events)
     {
-        if (!Events.empty())
+        if (!Events.IsEmpty())
         {
-            Queues.Get(GetComponentTypeID<T>()).SendMany(Events.data(), (uint32)Events.size());
+            Queues.Get(GetComponentTypeID<T>()).SendMany(Events.GetData(), (uint32)Events.Num());
         }
     }
 
@@ -210,5 +262,32 @@ namespace Lumina::ECS
     {
         const FEventQueue* Queue = Queues.Find(GetComponentTypeID<T>());
         return Queue != nullptr && Queue->NumUnread(Reader.Cursor) != 0;
+    }
+
+    template<typename T>
+    TEventRange<T> TEventReader<T>::Read()
+    {
+        DEBUG_ASSERT(Queues != nullptr, "An event reader reads through Read only as a member of an entity system");
+        return ReadEvents(*Queues, *this);
+    }
+
+    template<typename T>
+    bool TEventReader<T>::HasUnread() const
+    {
+        return Queues != nullptr && HasUnreadEvents(*Queues, *this);
+    }
+
+    template<typename T>
+    void TEventWriter<T>::Send(const T& Event) const
+    {
+        DEBUG_ASSERT(Queues != nullptr, "An event writer sends only as a member of an entity system");
+        SendEvent(*Queues, Event);
+    }
+
+    template<typename T>
+    void TEventWriter<T>::Send(TSpan<const T> Events) const
+    {
+        DEBUG_ASSERT(Queues != nullptr, "An event writer sends only as a member of an entity system");
+        SendEvents(*Queues, Events);
     }
 }

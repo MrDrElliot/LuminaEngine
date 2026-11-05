@@ -27,7 +27,7 @@ namespace Lumina
         const FString Path = "/Engine/Resources/Fonts/Lexend/Lexend-Regular.ttf";
 
         TVector<uint8> Bytes;
-        if (!VFS::ReadFile(Bytes, Path) || Bytes.empty())
+        if (!VFS::ReadFile(Bytes, Path) || Bytes.IsEmpty())
         {
             LOG_ERROR("FontManager: failed to load default font '{0}'", Path);
             return;

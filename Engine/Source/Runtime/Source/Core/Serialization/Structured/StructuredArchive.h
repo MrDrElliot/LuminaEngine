@@ -288,7 +288,7 @@ namespace Lumina
         NODISCARD bool IsSaving() const { return InnerAr.IsWriting(); }
 
     protected:
-        TFixedVector<FElement, 32>      CurrentScope;
+        TInlineVector<FElement, 32>     CurrentScope;
         FIDGenerator                    IDGenerator;
         StructuredArchive::FSlotID      RootElementID;
         StructuredArchive::FSlotID      CurrentSlotID;

@@ -121,7 +121,7 @@ namespace Lumina::Physics
                 return -1.0f;
             }
 
-            SRayResult& Result = Query.Hits->emplace_back();
+            SRayResult& Result = Query.Hits->EmplaceGetRef();
             FillRayResult(Result, *Query.Scene, ShapeId, Query.Start, Query.End, Query.Length, Point, Normal, Fraction);
 
             return 1.0f;
@@ -171,7 +171,7 @@ namespace Lumina::Physics
         }
 
         // Inline for the common single-shape body, spilling only for a large compound.
-        using FBodyShapes = TFixedVector<b3ShapeId, 8>;
+        using FBodyShapes = TInlineVector<b3ShapeId, 8>;
 
         bool GatherShapes(b3BodyId Body, FBodyShapes& Out)
         {
@@ -179,9 +179,9 @@ namespace Lumina::Physics
             {
                 return false;
             }
-            Out.resize((size_t)b3Body_GetShapeCount(Body));
-            Out.resize((size_t)b3Body_GetShapes(Body, Out.data(), (int)Out.size()));
-            return !Out.empty();
+            Out.SetNum(b3Body_GetShapeCount(Body));
+            Out.SetNum(b3Body_GetShapes(Body, Out.GetData(), Out.Num()));
+            return !Out.IsEmpty();
         }
 
         bool OverlapCallback(b3ShapeId ShapeId, void* Context)
@@ -209,7 +209,7 @@ namespace Lumina::Physics
                 }
             }
 
-            if (Written >= (int32)Query.OutEntities.size())
+            if (Written >= Query.OutEntities.Num())
             {
                 return false;
             }
@@ -236,18 +236,18 @@ namespace Lumina::Physics
 
         // Ragdolls are a handful of bodies, so a linear scan beats maintaining a body-to-bone map.
         const FPhysicsRagdollHandle& Handle = *RagdollComp->Ragdoll;
-        for (size_t i = 0; i < Handle.Bodies.size(); ++i)
+        for (int32 i = 0; i < Handle.Bodies.Num(); ++i)
         {
             if (B3_ID_EQUALS(Handle.Bodies[i], BodyId))
             {
-                return i < Handle.JointToBone.size() ? Handle.JointToBone[i] : Constants::kIndexNone;
+                return i < Handle.JointToBone.Num() ? Handle.JointToBone[i] : Constants::kIndexNone;
             }
         }
 
         return Constants::kIndexNone;
     }
 
-    // Queries carry no zone, since gameplay runs thousands a frame on every worker and fiber builds serialize Tracy events.
+    // Queries carry no zone, since gameplay runs thousands a frame on every worker.
     TOptional<SRayResult> FBox3DPhysicsScene::CastRay(const SRayCastSettings& Settings)
     {
         TOptional<SRayResult> Hit = CastRayClosest(Settings);
@@ -270,7 +270,7 @@ namespace Lumina::Physics
         const b3QueryFilter Filter = MakeLayerFilter(Settings.LayerMask);
         SRayResult Result{};
 
-        if (Settings.IgnoreEntities.empty())
+        if (Settings.IgnoreEntities.IsEmpty())
         {
             const b3RayResult Hit = b3World_CastRayClosest(WorldId, Box3DUtils::ToB3Vec3(Settings.Start),
                                                            Box3DUtils::ToB3Vec3(Delta), Filter);
@@ -285,7 +285,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.GetData(), Settings.IgnoreEntities.Num());
         Query.Closest = &Result;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -311,7 +311,7 @@ namespace Lumina::Physics
 
         const FVector4 HitColor = FColor(Settings.DebugHitColor);
         const FVector4 MissColor = FColor(Settings.DebugMissColor);
-        if (Hits.empty())
+        if (Hits.IsEmpty())
         {
             Debug->DrawLine(Settings.Start, Settings.End, MissColor, 3.0f, true, Settings.DebugDuration);
             return;
@@ -328,7 +328,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits)
     {
-        OutHits.clear();
+        OutHits.Reset();
 
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
@@ -339,7 +339,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.GetData(), Settings.IgnoreEntities.Num());
         Query.Hits = &OutHits;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -350,7 +350,7 @@ namespace Lumina::Physics
         SortNearToFar(OutHits);
         if (Settings.bDrawDebug)
         {
-            DrawRayDebug(Settings, TSpan<const SRayResult>(OutHits.data(), OutHits.size()));
+            DrawRayDebug(Settings, TSpan<const SRayResult>(OutHits.GetData(), OutHits.Num()));
         }
     }
 
@@ -363,7 +363,7 @@ namespace Lumina::Physics
         }
 
         FQueryContext Query;
-        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.GetData(), Settings.IgnoreEntities.Num());
         b3World_CastRay(WorldId, Box3DUtils::ToB3Vec3(Settings.Start), Box3DUtils::ToB3Vec3(Delta),
                         MakeLayerFilter(Settings.LayerMask), &AnyHitCastCallback, &Query);
         return Query.bFound;
@@ -383,9 +383,9 @@ namespace Lumina::Physics
         for (b3ShapeId Shape : Shapes)
         {
             const b3WorldCastOutput Hit = b3Shape_RayCast(Shape, Box3DUtils::ToB3Vec3(Start), Box3DUtils::ToB3Vec3(Delta));
-            if (Hit.hit && (!Nearest.has_value() || Hit.fraction < Nearest->Fraction))
+            if (Hit.hit && (!Nearest.IsSet() || Hit.fraction < Nearest->Fraction))
             {
-                Nearest.emplace();
+                Nearest.Emplace();
                 FillRayResult(*Nearest, *this, Shape, Start, End, Length, Hit.point, Hit.normal, Hit.fraction);
             }
         }
@@ -395,7 +395,7 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::CastShapeAll(const SQueryShape& Shape, const FVector3& Start, const FVector3& End, ECollisionProfiles LayerMask,
                                           TSpan<const ECS::FEntity> IgnoreEntities, TVector<SRayResult>& OutHits)
     {
-        OutHits.clear();
+        OutHits.Reset();
 
         const FVector3 Delta = End - Start;
         const float Length = Math::Length(Delta);

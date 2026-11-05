@@ -24,10 +24,10 @@ namespace Lumina
 
 	FMaterialCompiler::FMaterialCompiler()
 	{
-		PixelChunks.reserve(2000);
-		VertexChunks.reserve(512);
-		PixelOutputChunks.reserve(512);
-		VertexOutputChunks.reserve(128);
+		PixelChunks.Reserve(2000);
+		VertexChunks.Reserve(512);
+		PixelOutputChunks.Reserve(512);
+		VertexOutputChunks.Reserve(128);
 	}
 
 	// Pixel-only references stub to neutral values, which WPO-sourced nodes never reach.
@@ -74,18 +74,18 @@ namespace Lumina
 	static bool SubstituteToken(FString& Source, const char* Token, const FString& Replacement)
 	{
 		const size_t TokenLen = strlen(Token);
-		size_t Pos = Source.find(Token);
-		if (Pos == FString::npos)
+		int32 Pos = Source.Find(Token);
+		if (Pos == Constants::kIndexNone)
 		{
 			LOG_ERROR("Missing [{}] in base shader!", Token);
 			return false;
 		}
 
 		// Every occurrence, because a template may evaluate the same graph twice at different times.
-		while (Pos != FString::npos)
+		while (Pos != Constants::kIndexNone)
 		{
-			Source.replace(Pos, TokenLen, Replacement);
-			Pos = Source.find(Token, Pos + Replacement.size());
+			Source.RemoveAt(Pos, IntCastChecked<int32>(TokenLen)).InsertAt(Pos, Replacement);
+			Pos = Source.Find(Token, Pos + Replacement.Len());
 		}
 		return true;
 	}
@@ -105,15 +105,15 @@ namespace Lumina
 		}
 
 		const char* Token = "$MATERIAL_INPUTS";
-		size_t Pos = LoadedString.find(Token);
+		int32 Pos = LoadedString.Find(Token);
 
 		FString Combined = PixelChunks + PixelOutputChunks;
 
-		if (Pos != FString::npos)
+		if (Pos != Constants::kIndexNone)
 		{
 			StartReplacement = Pos;
-			LoadedString.replace(Pos, strlen(Token), Combined);
-			EndReplacement = Pos + Combined.length();
+			LoadedString.RemoveAt(Pos, IntCastChecked<int32>(strlen(Token))).InsertAt(Pos, Combined);
+			EndReplacement = Pos + Combined.Len();
 		}
 		else
 		{
@@ -148,7 +148,7 @@ namespace Lumina
 		const FString PixelPath   = BasePath + PixelTemplateName(MaterialType);
 
 		// The output node declares the pixel input struct, so only the body and assignments are appended.
-		OutPixelShader.clear();
+		OutPixelShader.Reset();
 		if (FileHelper::LoadFileIntoString(OutPixelShader, PixelPath))
 		{
 			SubstituteToken(OutPixelShader, "$MATERIAL_INPUTS", PixelChunks + PixelOutputChunks);
@@ -161,7 +161,7 @@ namespace Lumina
 		// A fullscreen domain rasters a fixed quad, so there is no vertex graph to substitute.
 		if (MaterialDomain::IsFullscreen(MaterialType))
 		{
-			OutVertexShader.clear();
+			OutVertexShader.Reset();
 			const FString FullscreenQuadPath = Paths::GetEngineResourceDirectory() + "/Shaders/FullscreenQuad.slang";
 			if (!FileHelper::LoadFileIntoString(OutVertexShader, FullscreenQuadPath))
 			{
@@ -173,7 +173,7 @@ namespace Lumina
 		// A decal uses a fixed unit-cube vertex stage and projects onto scene depth, so it has no WPO.
 		if (bIsDecal)
 		{
-			OutVertexShader.clear();
+			OutVertexShader.Reset();
 			const FString DecalVertexPath = BasePath + "DecalVertexPass.slang";
 			if (!FileHelper::LoadFileIntoString(OutVertexShader, DecalVertexPath))
 			{
@@ -325,7 +325,7 @@ namespace Lumina
 	const FString& FMaterialCompiler::GetCurrentInlinePrefix() const
 	{
 		static const FString Empty;
-		return InlinePrefixStack.empty() ? Empty : InlinePrefixStack.back();
+		return InlinePrefixStack.IsEmpty() ? Empty : InlinePrefixStack.Last();
 	}
 
 	bool FMaterialCompiler::BeginInlineFunction(CMaterialFunction* Function)
@@ -337,15 +337,15 @@ namespace Lumina
 				return false;
 			}
 		}
-		InlineFunctionStack.push_back(Function);
+		InlineFunctionStack.Add(Function);
 		return true;
 	}
 
 	void FMaterialCompiler::EndInlineFunction(CMaterialFunction* Function)
 	{
-		if (!InlineFunctionStack.empty())
+		if (!InlineFunctionStack.IsEmpty())
 		{
-			InlineFunctionStack.pop_back();
+			InlineFunctionStack.Pop();
 		}
 	}
 
@@ -396,12 +396,12 @@ namespace Lumina
 	{
 		for (int32 Width = 2; Width <= 4; ++Width)
 		{
-			if (Literal.starts_with(Format("float{}(", Width).c_str()))
+			if (Literal.StartsWith(Format("float{}*(", Width)))
 			{
 				return Width;
 			}
 		}
-		if (Literal.empty())
+		if (Literal.IsEmpty())
 		{
 			return 0;
 		}
@@ -429,7 +429,7 @@ namespace Lumina
 			}
 
 			// A function-call output binds its own emitted local, while everything else uses the node name.
-			FString NodeName		= Conn->ResolvedVar.empty() ? Conn->GetOwningNode()->GetNodeFullName() : Conn->ResolvedVar;
+			FString NodeName		= Conn->ResolvedVar.IsEmpty() ? Conn->GetOwningNode()->GetNodeFullName() : Conn->ResolvedVar;
 
 			Result.Type				= Conn->InputType;
 			Result.ComponentCount	= GetComponentCount(Result.Type);
@@ -437,12 +437,12 @@ namespace Lumina
 			Result.Mask  			= Conn->GetComponentMask();
 
 			// Absent means Unknown, or a node with no rule silently samples the wrong mip.
-			auto It = DerivByVar.find(Result.Value);
-			if (It != DerivByVar.end())
+			auto It = DerivByVar.Find(Result.Value);
+			if (It != nullptr)
 			{
-				Result.Deriv = It->second.State;
-				Result.DDX   = It->second.DDX;
-				Result.DDY   = It->second.DDY;
+				Result.Deriv = It->State;
+				Result.DDX   = It->DDX;
+				Result.DDY   = It->DDY;
 			}
 			else
 			{
@@ -484,7 +484,7 @@ namespace Lumina
 		}
 
 		// The vertex templates declare none of the pairs, and nothing samples with gradients there.
-		if (Alias.empty() || CurrentStage == EMaterialCompileStage::Vertex)
+		if (Alias.IsEmpty() || CurrentStage == EMaterialCompileStage::Vertex)
 		{
 			return;
 		}
@@ -496,15 +496,15 @@ namespace Lumina
 
 	void FMaterialCompiler::EmitDedupedParamFetch(const FString& TypeStr, const FString& NodeID, const FString& FetchExpr)
 	{
-		auto It = EmittedParamFetches.find(FetchExpr);
-		if (It != EmittedParamFetches.end())
+		auto It = EmittedParamFetches.Find(FetchExpr);
+		if (It != nullptr)
 		{
 			// Downstream nodes address it by name, so the variable still has to exist and just aliases.
-			GetActiveChunk().append(TypeStr + " " + NodeID + " = " + It->second + ";\n");
+			GetActiveChunk().Append(TypeStr + " " + NodeID + " = " + (*It) + ";\n");
 		}
 		else
 		{
-			GetActiveChunk().append(TypeStr + " " + NodeID + " = " + FetchExpr + ";\n");
+			GetActiveChunk().Append(TypeStr + " " + NodeID + " = " + FetchExpr + ";\n");
 			EmittedParamFetches[FetchExpr] = NodeID;
 		}
 
@@ -544,8 +544,8 @@ namespace Lumina
 			Info.DDY = ID + "_DDY";
 
 			const FString Type = GetVectorType(Math::Clamp(ComponentCount, 1, 4));
-			GetActiveChunk().append(Type + " " + Info.DDX + " = " + DdxExpr + ";\n");
-			GetActiveChunk().append(Type + " " + Info.DDY + " = " + DdyExpr + ";\n");
+			GetActiveChunk().Append(Type + " " + Info.DDX + " = " + DdxExpr + ";\n");
+			GetActiveChunk().Append(Type + " " + Info.DDY + " = " + DdyExpr + ";\n");
 		}
 
 		DerivByVar[ID] = Info;
@@ -585,7 +585,7 @@ namespace Lumina
 			return;
 		}
 		const FString Mask = GetSwizzleForMask(A.Mask);
-		const FString Scale = Factor.empty() ? FString() : " * (" + Factor + ")";
+		const FString Scale = Factor.IsEmpty() ? FString() : " * (" + Factor + ")";
 		RegisterDeriv(ID, EDerivState::Valid, "(" + A.DDX + Mask + Scale + ")", "(" + A.DDY + Mask + Scale + ")",
 		              Math::Clamp(A.ComponentCount, 1, 4));
 	}
@@ -745,13 +745,13 @@ namespace Lumina
 			Error.Description = "Cannot perform " + Op + " between " + GetVectorType(AValue.Type) + " and " + GetVectorType(BValue.Type);
 			AddError(Error);
 
-			GetActiveChunk().append("// ERROR: Type mismatch\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch\n");
 		}
 
 		FString RMask = GetSwizzleForMask(AValue.Mask);
 		FString GMask = GetSwizzleForMask(BValue.Mask);
 
-		GetActiveChunk().append(ResultTypeStr + " " + OwningNode + " = " + AValue.Value + RMask + " " + Op + " " + BValue.Value + GMask + ";\n");
+		GetActiveChunk().Append(ResultTypeStr + " " + OwningNode + " = " + AValue.Value + RMask + " " + Op + " " + BValue.Value + GMask + ";\n");
 
 		RegisterBinaryDeriv(OwningNode, Op, AValue, AValue.Value + RMask, BValue, BValue.Value + GMask, ResultType);
 
@@ -766,13 +766,13 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, DefaultA);
 		FString TypeStr = GetVectorType(AValue.Type);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
 
 		const FString X = "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ")";
 		const FString Safe = "max(abs(" + X + "), 1e-6)";
 		// Piecewise-constant functions have a zero gradient almost everywhere; frac keeps the UV's own, as tiling expects.
 		static const THashSet<FString> Flat = { "floor", "ceil", "round", "trunc", "sign" };
-		if (Flat.find(Func) != Flat.end() && AValue.Deriv != EDerivState::Unknown)
+		if (Flat.Contains(Func) && AValue.Deriv != EDerivState::Unknown)
 		{
 			RegisterDeriv(OwningNode, EDerivState::Zero);
 		}
@@ -820,12 +820,12 @@ namespace Lumina
 			Error.Name = "Type Mismatch";
 			Error.Description = "Cannot perform " + Func + " between " + GetVectorType(AValue.Type) + " and " + GetVectorType(BValue.Type);
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch\n");
 		}
 
 		const FString AExpr = "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ")";
 		const FString BExpr = "(" + BValue.Value + GetSwizzleForMask(BValue.Mask) + ")";
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AExpr + ", " + BExpr + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + Func + "(" + AExpr + ", " + BExpr + ");\n");
 
 		RegisterBinaryFuncDeriv(OwningNode, Func, AValue, AExpr, BValue, BExpr, ResultType);
 
@@ -902,7 +902,7 @@ namespace Lumina
 		int32 Widest = 1;
 		for (int32 I = 0; I < 3; ++I)
 		{
-			Widths[I] = GetSwizzleForMask(Values[I]->Mask).empty() ? Values[I]->ComponentCount : GetComponentCount(Values[I]->Mask);
+			Widths[I] = GetSwizzleForMask(Values[I]->Mask).IsEmpty() ? Values[I]->ComponentCount : GetComponentCount(Values[I]->Mask);
 			if (Widths[I] > 1)
 			{
 				Narrowest = Math::Min(Narrowest, Widths[I]);
@@ -925,18 +925,18 @@ namespace Lumina
 		auto Operand = [&](int32 I)
 		{
 			const FString Expr = Values[I]->Value + GetSwizzleForMask(Values[I]->Mask);
-			return (Widths[I] > ResultWidth) ? "(" + Expr + ")." + FString("xyzw").substr(0, ResultWidth) : Expr;
+			return (Widths[I] > ResultWidth) ? "(" + Expr + ")." + FString("xyzw").Mid(0, ResultWidth) : Expr;
 		};
 
 		EMaterialInputType ResultType = GetTypeFromComponentCount(ResultWidth);
 		FString TypeStr = GetVectorType(ResultType);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + Operand(0) + ", " + Operand(1) + ", " + Operand(2) + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + Func + "(" + Operand(0) + ", " + Operand(1) + ", " + Operand(2) + ");\n");
 
 		auto OperandDeriv = [&](int32 I, bool bDdx)
 		{
 			const FString D = DerivOrZero(*Values[I], bDdx, GetVectorType(GetTypeFromComponentCount(Math::Max(Widths[I], 1))));
-			return (Widths[I] > ResultWidth) ? "(" + D + ")." + FString("xyzw").substr(0, ResultWidth) : D;
+			return (Widths[I] > ResultWidth) ? "(" + D + ")." + FString("xyzw").Mid(0, ResultWidth) : D;
 		};
 
 		const bool bAnyUnknown = AValue.Deriv == EDerivState::Unknown || BValue.Deriv == EDerivState::Unknown || CValue.Deriv == EDerivState::Unknown;
@@ -985,7 +985,7 @@ namespace Lumina
 
 	void FMaterialCompiler::DefineFloatParameter(const FString& NodeID, const FName& ParamID, float Value, CEdGraphNode* Node)
 	{
-		if (ScalarParameters.find(ParamID) == ScalarParameters.end())
+		if (!ScalarParameters.Contains(ParamID))
 		{
 			if (!ClaimUniformSlot(NumScalarParams, MAX_SCALARS, "scalar", ParamID, Node))
 			{
@@ -1004,7 +1004,7 @@ namespace Lumina
 
 	void FMaterialCompiler::DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2], CEdGraphNode* Node)
 	{
-		if (VectorParameters.find(ParamID) == VectorParameters.end())
+		if (!VectorParameters.Contains(ParamID))
 		{
 			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
 			{
@@ -1023,7 +1023,7 @@ namespace Lumina
 
 	void FMaterialCompiler::DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3], CEdGraphNode* Node)
 	{
-		if (VectorParameters.find(ParamID) == VectorParameters.end())
+		if (!VectorParameters.Contains(ParamID))
 		{
 			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
 			{
@@ -1042,7 +1042,7 @@ namespace Lumina
 
 	void FMaterialCompiler::DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4], CEdGraphNode* Node)
 	{
-		if (VectorParameters.find(ParamID) == VectorParameters.end())
+		if (!VectorParameters.Contains(ParamID))
 		{
 			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
 			{
@@ -1062,7 +1062,7 @@ namespace Lumina
 	void FMaterialCompiler::DefineConstantFloat(const FString& ID, float Value)
 	{
 		FString ValueString = Format("{}", Value);
-		GetActiveChunk().append("float " + ID + " = " + ValueString + ";\n");
+		GetActiveChunk().Append("float " + ID + " = " + ValueString + ";\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -1070,7 +1070,7 @@ namespace Lumina
 	{
 		FString ValueStringX = Format("{}", Value[0]);
 		FString ValueStringY = Format("{}", Value[1]);
-		GetActiveChunk().append("float2 " + ID + " = float2(" + ValueStringX + ", " + ValueStringY + ");\n");
+		GetActiveChunk().Append("float2 " + ID + " = float2(" + ValueStringX + ", " + ValueStringY + ");\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -1079,7 +1079,7 @@ namespace Lumina
 		FString ValueStringX = Format("{}", Value[0]);
 		FString ValueStringY = Format("{}", Value[1]);
 		FString ValueStringZ = Format("{}", Value[2]);
-		GetActiveChunk().append("float3 " + ID + " = float3(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ");\n");
+		GetActiveChunk().Append("float3 " + ID + " = float3(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ");\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -1089,7 +1089,7 @@ namespace Lumina
 		FString ValueStringY = Format("{}", Value[1]);
 		FString ValueStringZ = Format("{}", Value[2]);
 		FString ValueStringW = Format("{}", Value[3]);
-		GetActiveChunk().append("float4 " + ID + " = float4(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ", " + ValueStringW + ");\n");
+		GetActiveChunk().Append("float4 " + ID + " = float4(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ", " + ValueStringW + ");\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -1108,10 +1108,10 @@ namespace Lumina
 			Error.Name = "Type Mismatch";
 			Error.Description = "BreakFloat2 requires a Float2 input, got " + GetVectorType(ValueString.Type);
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in BreakFloat2\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in BreakFloat2\n");
 		}
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xy" + ";\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xy" + ";\n");
 		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 2)
 		{
 			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xy", ValueString.DDY + ".xy", 2);
@@ -1136,10 +1136,10 @@ namespace Lumina
 			Error.Name = "Type Mismatch";
 			Error.Description = "BreakFloat3 requires a Float3 input, got " + GetVectorType(ValueString.Type);
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in BreakFloat3\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in BreakFloat3\n");
 		}
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyz" + ";\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyz" + ";\n");
 		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 3)
 		{
 			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xyz", ValueString.DDY + ".xyz", 3);
@@ -1165,10 +1165,10 @@ namespace Lumina
 			Error.Name = "Type Mismatch";
 			Error.Description = "BreakFloat4 requires a Float4 input, got " + GetVectorType(ValueString.Type);
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in BreakFloat4\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in BreakFloat4\n");
 		}
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyzw" + ";\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyzw" + ";\n");
 		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 4)
 		{
 			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xyzw", ValueString.DDY + ".xyzw", 4);
@@ -1225,18 +1225,18 @@ namespace Lumina
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
 			Error.Description = Format("MakeFloat2 requires two Float inputs, got {} and {}",
-				GetVectorType(ValueR.Type).c_str(),
-				GetVectorType(ValueG.Type).c_str());
+				*GetVectorType(ValueR.Type),
+				*GetVectorType(ValueG.Type));
 
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in MakeFloat2\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in MakeFloat2\n");
 			return;
 		}
 
 		FString RMask = GetSwizzleForMask(ValueR.Mask);
 		FString GMask = GetSwizzleForMask(ValueG.Mask);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float2(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = float2(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ");\n");
 		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG });
 	}
 
@@ -1255,12 +1255,12 @@ namespace Lumina
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
 			Error.Description = Format("MakeFloat3 requires three Float inputs, got {}, {} and {}",
-				GetVectorType(ValueR.Type).c_str(),
-				GetVectorType(ValueG.Type).c_str(),
-				GetVectorType(ValueB.Type).c_str());
+				*GetVectorType(ValueR.Type),
+				*GetVectorType(ValueG.Type),
+				*GetVectorType(ValueB.Type));
 
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in MakeFloat3\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in MakeFloat3\n");
 			return;
 		}
 
@@ -1268,7 +1268,7 @@ namespace Lumina
 		FString GMask = GetSwizzleForMask(ValueG.Mask);
 		FString BMask = GetSwizzleForMask(ValueB.Mask);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float3(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ", " + ValueB.Value + BMask + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = float3(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ", " + ValueB.Value + BMask + ");\n");
 		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG, &ValueB });
 	}
 
@@ -1288,13 +1288,13 @@ namespace Lumina
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
 			Error.Description = Format("MakeFloat4 requires four Float inputs, got {}, {}, {} and {}",
-				GetVectorType(ValueR.Type).c_str(),
-				GetVectorType(ValueG.Type).c_str(),
-				GetVectorType(ValueB.Type).c_str(),
-				GetVectorType(ValueA.Type).c_str());
+				*GetVectorType(ValueR.Type),
+				*GetVectorType(ValueG.Type),
+				*GetVectorType(ValueB.Type),
+				*GetVectorType(ValueA.Type));
 
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Type mismatch in MakeFloat4\n");
+			GetActiveChunk().Append("// ERROR: Type mismatch in MakeFloat4\n");
 		}
 
 		FString RMask = GetSwizzleForMask(ValueR.Mask);
@@ -1302,7 +1302,7 @@ namespace Lumina
 		FString BMask = GetSwizzleForMask(ValueB.Mask);
 		FString AMask = GetSwizzleForMask(ValueA.Mask);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float4(" + ValueR.Value + RMask + ", "
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = float4(" + ValueR.Value + RMask + ", "
 			+  ValueG.Value + GMask + ", " + ValueB.Value + BMask + ", " + ValueA.Value + AMask + ");\n");
 		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG, &ValueB, &ValueA });
 	}
@@ -1327,7 +1327,7 @@ namespace Lumina
 		EMaterialInputType ResultType = GetTypeFromComponentCount(TotalComponents);
 		FString TypeStr = GetVectorType(ResultType);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + TypeStr + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + BValue.Value + GetSwizzleForMask(BValue.Mask) + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + TypeStr + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + BValue.Value + GetSwizzleForMask(BValue.Mask) + ");\n");
 
 		// This carries a uniform tiling value through to TexCoords instead of degrading the UV chain.
 		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero)
@@ -1344,7 +1344,7 @@ namespace Lumina
 		// Falling through used to append a bare masked scalar and surface later as a Slang syntax error.
 		auto EmitFallback = [&]
 		{
-			GetActiveChunk().append("float " + ResultName + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ResultName + " = 0.0;\n");
 			SetOwningOutputType(A, EMaterialInputType::Float);
 		};
 
@@ -1353,7 +1353,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Invalid Action";
-			Error.Description.append("ComponentMask is required to have an input value");
+			Error.Description.Append("ComponentMask is required to have an input value");
 
 			AddError(Error);
 			EmitFallback();
@@ -1382,21 +1382,21 @@ namespace Lumina
 
 			if (Index >= Available)
 			{
-				Missing.push_back(Channels[Index]);
+				Missing.AppendChar(Channels[Index]);
 				continue;
 			}
 
-			Swizzle.push_back(Channels[Index]);
+			Swizzle.AppendChar(Channels[Index]);
 			ComponentCount++;
 		}
 
-		if (!Missing.empty())
+		if (!Missing.IsEmpty())
 		{
 			EdNodeGraph::FError Error;
 			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
 			Error.Description = Format("ComponentMask selects channel(s) '{}' that its input does not have; the input is a {}.",
-				Missing.c_str(), GetVectorType(Available).c_str());
+				*Missing, *GetVectorType(Available));
 
 			AddError(Error);
 		}
@@ -1406,7 +1406,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Invalid Action";
-			Error.Description.append("ComponentMask has no channel selected that its input provides");
+			Error.Description.Append("ComponentMask has no channel selected that its input provides");
 
 			AddError(Error);
 			EmitFallback();
@@ -1414,7 +1414,7 @@ namespace Lumina
 		}
 
 		// A channel output pin hands back the whole vector and relies on the consumer to swizzle.
-		GetActiveChunk().append(GetVectorType(ComponentCount) + " " + ResultName + " = "
+		GetActiveChunk().Append(GetVectorType(ComponentCount) + " " + ResultName + " = "
 			+ Value.Value + GetSwizzleForMask(Value.Mask) + "." + Swizzle + ";\n");
 
 		// The derivative takes the same swizzle, so a world-space UV can arrive wide and leave narrow.
@@ -1446,33 +1446,33 @@ namespace Lumina
 			return (int32)std::distance(BoundImages.begin(), It);
 		}
 
-		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture",
+		if (!ClaimUniformSlot((uint32)BoundImages.Num(), MAX_TEXTURES, "texture",
 			Texture ? Texture->GetName() : NAME_None, Node))
 		{
 			return Constants::kIndexNone;
 		}
 
-		const int32 Index = (int32)BoundImages.size();
-		BoundImages.push_back(Texture);
+		const int32 Index = BoundImages.Num();
+		BoundImages.Add(Texture);
 		NumTextureParams++;
 		return Index;
 	}
 
 	int32 FMaterialCompiler::BindTextureParameter(const FName& ParamID, CTexture* Texture, CEdGraphNode* Node)
 	{
-		auto Existing = TextureParameters.find(ParamID);
-		if (Existing != TextureParameters.end())
+		auto Existing = TextureParameters.Find(ParamID);
+		if (Existing != nullptr)
 		{
-			return (int32)Existing->second.Index;
+			return (int32)Existing->Index;
 		}
 
-		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture", ParamID, Node))
+		if (!ClaimUniformSlot((uint32)BoundImages.Num(), MAX_TEXTURES, "texture", ParamID, Node))
 		{
 			return Constants::kIndexNone;
 		}
 
-		const int32 Index = (int32)BoundImages.size();
-		BoundImages.push_back(Texture);
+		const int32 Index = BoundImages.Num();
+		BoundImages.Add(Texture);
 		TextureParameters[ParamID] = FTextureParam{ (uint16)Index, Texture };
 		NumTextureParams++;
 		return Index;
@@ -1491,14 +1491,14 @@ namespace Lumina
 			return (int32)std::distance(BoundCollections.begin(), It);
 		}
 
-		if (!ClaimUniformSlot((uint32)BoundCollections.size(), MAX_MATERIAL_COLLECTIONS, "parameter collection",
+		if (!ClaimUniformSlot((uint32)BoundCollections.Num(), MAX_MATERIAL_COLLECTIONS, "parameter collection",
 			Collection->GetName(), Node))
 		{
 			return Constants::kIndexNone;
 		}
 
-		BoundCollections.push_back(Collection);
-		return (int32)BoundCollections.size() - 1;
+		BoundCollections.Add(Collection);
+		return BoundCollections.Num() - 1;
 	}
 
 	void FMaterialCompiler::DefineCollectionScalar(const FString& NodeID, CMaterialParameterCollection* Collection,
@@ -1569,13 +1569,14 @@ namespace Lumina
 		BoundCollections = Collections;
 
 		// Interior nulls stay, because dropping one would renumber every slot after it.
-		size_t NumTextures = Textures.size();
+		int32 NumTextures = Textures.Num();
 		while (NumTextures > 0 && Textures[NumTextures - 1] == nullptr)
 		{
 			--NumTextures;
 		}
 
-		BoundImages.assign(Textures.begin(), Textures.begin() + NumTextures);
+		BoundImages.Reset();
+		BoundImages.Append(Textures.begin(), Textures.begin() + NumTextures);
 		NumTextureParams = (uint16)NumTextures;
 
 		for (const SMaterialParameter& Param : Params)
@@ -1620,14 +1621,14 @@ namespace Lumina
 
 		if (Existing == StaticSwitches.end())
 		{
-			if ((uint32)StaticSwitches.size() >= kMaxStaticSwitches)
+			if ((uint32)StaticSwitches.Num() >= kMaxStaticSwitches)
 			{
 				EdNodeGraph::FError Error;
 				Error.Node        = Node;
 				Error.Name        = "Static Switch Budget";
 				Error.Description = Format("'{}' would be static switch number {}, and a permutation key is a "
 					"uint64 with one bit per switch. Fold two switches into one, or fix one of them at the "
-					"master by clearing its parameter name.", ParamID, (uint32)StaticSwitches.size() + 1u);
+					"master by clearing its parameter name.", ParamID, (uint32)StaticSwitches.Num() + 1u);
 				AddError(Error);
 				return bDefaultValue;
 			}
@@ -1635,7 +1636,7 @@ namespace Lumina
 			SMaterialStaticSwitch Switch;
 			Switch.ParameterName = ParamID;
 			Switch.bDefaultValue = bDefaultValue;
-			StaticSwitches.push_back(Switch);
+			StaticSwitches.Add(Switch);
 			Existing = StaticSwitches.end() - 1;
 		}
 		else if (Existing->bDefaultValue != bDefaultValue)
@@ -1649,8 +1650,8 @@ namespace Lumina
 			AddError(Error);
 		}
 
-		const auto Override = StaticSwitchOverrides.find(ParamID);
-		return Override != StaticSwitchOverrides.end() ? Override->second : Existing->bDefaultValue;
+		const auto Override = StaticSwitchOverrides.Find(ParamID);
+		return Override != nullptr ? (*Override) : Existing->bDefaultValue;
 	}
 
 	void FMaterialCompiler::GetStaticSwitches(TVector<SMaterialStaticSwitch>& OutSwitches) const
@@ -1660,11 +1661,11 @@ namespace Lumina
 		// By name, so adding a node above an existing one does not renumber every instance's key.
 		Algo::Sort(OutSwitches, [](const SMaterialStaticSwitch& A, const SMaterialStaticSwitch& B)
 		{
-			// Two c_str() calls per compare, well inside FName's 4-slot suffix buffer.
-			return std::strcmp(A.ParameterName.c_str(), B.ParameterName.c_str()) < 0;
+			// Two operator* calls per compare, well inside FName's 4-slot suffix buffer.
+			return std::strcmp(*A.ParameterName, *B.ParameterName) < 0;
 		});
 
-		for (uint32 i = 0; i < (uint32)OutSwitches.size(); ++i)
+		for (int32 i = 0; i < OutSwitches.Num(); ++i)
 		{
 			OutSwitches[i].BitIndex = (uint8)i;
 		}
@@ -1681,11 +1682,11 @@ namespace Lumina
 	}
 
 	// A node inside an inlined function is not in the open graph, so it can neither turn red nor be focused.
-	void FMaterialCompiler::RetargetDiagnosticsToCallNode(size_t FirstError, size_t FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName)
+	void FMaterialCompiler::RetargetDiagnosticsToCallNode(int32 FirstError, int32 FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName)
 	{
-		auto Retarget = [&](TVector<EdNodeGraph::FError>& Diagnostics, size_t First)
+		auto Retarget = [&](TVector<EdNodeGraph::FError>& Diagnostics, int32 First)
 		{
-			for (size_t i = First; i < Diagnostics.size(); ++i)
+			for (int32 i = First; i < Diagnostics.Num(); ++i)
 			{
 				EdNodeGraph::FError& Diag = Diagnostics[i];
 				if (Diag.Node == nullptr || Diag.Node->GetOwningGraph() == CallNode->GetOwningGraph())
@@ -1750,7 +1751,7 @@ namespace Lumina
 			Error.Description = Texture == nullptr ? FString("Texture Sample has no texture assigned.") : FString("Texture Sample's texture has no GPU resource.");
 			AddError(Error);
 			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
-			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
@@ -1771,16 +1772,16 @@ namespace Lumina
 		if (Index == Constants::kIndexNone)
 		{
 			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
-			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
 
-		const FString SamplerStr(SamplerName.data(), SamplerName.size());
+		const FString SamplerStr(SamplerName.GetData(), SamplerName.Len());
 
 		if (!LaneSamplesWithGradients())
 		{
-			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
+			GetActiveChunk().Append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
 				+ Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
@@ -1792,12 +1793,12 @@ namespace Lumina
 		// Names the variable that broke the chain, so a shader dump localizes the unruled node.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
-			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
+			GetActiveChunk().Append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
 				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().Append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node, FStringView SamplerName)
@@ -1818,16 +1819,16 @@ namespace Lumina
 		if (Index == Constants::kIndexNone)
 		{
 			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
-			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
 
-		const FString SamplerStr(SamplerName.data(), SamplerName.size());
+		const FString SamplerStr(SamplerName.GetData(), SamplerName.Len());
 
 		if (!LaneSamplesWithGradients())
 		{
-			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
+			GetActiveChunk().Append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
 				+ Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
@@ -1839,12 +1840,12 @@ namespace Lumina
 		// Names the variable that broke the chain, so a shader dump localizes the unruled node.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
-			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
+			GetActiveChunk().Append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
 				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().Append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
@@ -1923,39 +1924,39 @@ namespace Lumina
 		const int32 NumKeys = Curve.NumKeys();
 		if (NumKeys == 0)
 		{
-			Chunk.append("float " + ID + " = 0.0;\n");
+			Chunk.Append("float " + ID + " = 0.0;\n");
 			return;
 		}
 
 		if (NumKeys == 1)
 		{
-			Chunk.append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
+			Chunk.Append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
 			return;
 		}
 
 		TVector<FCurveSegment> Segments;
 		Curve.BakeSegments(Segments);
-		if (Segments.empty())
+		if (Segments.IsEmpty())
 		{
-			Chunk.append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
+			Chunk.Append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
 			return;
 		}
 
 		const FInputValue TimeValue = GetTypedInputValue(TimeInput, "0.0");
 		const FString TimeStr = TimeValue.ComponentCount >= 2 ? ("(" + TimeValue.Value + ").x") : TimeValue.Value;
 
-		const float FirstTime  = Curve.Keys.front().Time;
-		const float LastTime   = Curve.Keys.back().Time;
-		const float FirstValue = Curve.Keys.front().Value;
-		const float LastValue  = Curve.Keys.back().Value;
+		const float FirstTime  = Curve.Keys[0].Time;
+		const float LastTime   = Curve.Keys.Last().Time;
+		const float FirstValue = Curve.Keys[0].Value;
+		const float LastValue  = Curve.Keys.Last().Value;
 		const float Span       = LastTime - FirstTime;
 
-		Chunk.append("float " + ID + "_T = " + TimeStr + ";\n");
+		Chunk.Append("float " + ID + "_T = " + TimeStr + ";\n");
 
 		if (Span <= 1e-6f)
 		{
 			// Every key shares a time, so only the two end values are reachable.
-			Chunk.append("float " + ID + " = (" + ID + "_T > " + CurveFloat(LastTime) + ") ? " + CurveFloat(LastValue) + " : " + CurveFloat(FirstValue) + ";\n");
+			Chunk.Append("float " + ID + " = (" + ID + "_T > " + CurveFloat(LastTime) + ") ? " + CurveFloat(LastValue) + " : " + CurveFloat(FirstValue) + ";\n");
 			return;
 		}
 
@@ -1964,8 +1965,8 @@ namespace Lumina
 		Curve.GetExtrapolationSlopes(PreSlope, PostSlope);
 
 		// _L is the sample time remapped into the keyed range, _O an offset for the shifting modes.
-		Chunk.append("float " + ID + "_L = clamp(" + ID + "_T, " + CurveFloat(FirstTime) + ", " + CurveFloat(LastTime) + ");\n");
-		Chunk.append("float " + ID + "_O = 0.0;\n");
+		Chunk.Append("float " + ID + "_L = clamp(" + ID + "_T, " + CurveFloat(FirstTime) + ", " + CurveFloat(LastTime) + ");\n");
+		Chunk.Append("float " + ID + "_O = 0.0;\n");
 
 		// The two guards are mutually exclusive, so each side can declare its own locals.
 		auto EmitExtrapolation = [&](ECurveExtrapolation Mode, bool bBefore)
@@ -1980,7 +1981,7 @@ namespace Lumina
 				{
 					const float Slope = bBefore ? PreSlope : PostSlope;
 					const float Anchor = bBefore ? FirstTime : LastTime;
-					Chunk.append("if (" + Guard + ") { " + ID + "_O = " + CurveFloat(Slope) + " * (" + ID + "_T - " + CurveFloat(Anchor) + "); }\n");
+					Chunk.Append("if (" + Guard + ") { " + ID + "_O = " + CurveFloat(Slope) + " * (" + ID + "_T - " + CurveFloat(Anchor) + "); }\n");
 				}
 				break;
 
@@ -1989,23 +1990,23 @@ namespace Lumina
 			case ECurveExtrapolation::Oscillate:
 				{
 					FString Body;
-					Body.append("float " + ID + "_D = " + ID + "_T - " + CurveFloat(FirstTime) + "; ");
-					Body.append("float " + ID + "_C = floor(" + ID + "_D / " + CurveFloat(Span) + "); ");
-					Body.append("float " + ID + "_W = " + ID + "_D - " + ID + "_C * " + CurveFloat(Span) + "; ");
+					Body.Append("float " + ID + "_D = " + ID + "_T - " + CurveFloat(FirstTime) + "; ");
+					Body.Append("float " + ID + "_C = floor(" + ID + "_D / " + CurveFloat(Span) + "); ");
+					Body.Append("float " + ID + "_W = " + ID + "_D - " + ID + "_C * " + CurveFloat(Span) + "; ");
 
 					if (Mode == ECurveExtrapolation::Oscillate)
 					{
-						Body.append("if (abs(fmod(" + ID + "_C, 2.0)) >= 0.5) { " + ID + "_W = " + CurveFloat(Span) + " - " + ID + "_W; } ");
+						Body.Append("if (abs(fmod(" + ID + "_C, 2.0)) >= 0.5) { " + ID + "_W = " + CurveFloat(Span) + " - " + ID + "_W; } ");
 					}
 
-					Body.append(ID + "_L = " + CurveFloat(FirstTime) + " + " + ID + "_W; ");
+					Body.Append(ID + "_L = " + CurveFloat(FirstTime) + " + " + ID + "_W; ");
 
 					if (Mode == ECurveExtrapolation::CycleWithOffset)
 					{
-						Body.append(ID + "_O = " + ID + "_C * " + CurveFloat(LastValue - FirstValue) + "; ");
+						Body.Append(ID + "_O = " + ID + "_C * " + CurveFloat(LastValue - FirstValue) + "; ");
 					}
 
-					Chunk.append("if (" + Guard + ") { " + Body + "}\n");
+					Chunk.Append("if (" + Guard + ") { " + Body + "}\n");
 				}
 				break;
 
@@ -2018,7 +2019,7 @@ namespace Lumina
 		EmitExtrapolation(Curve.PreExtrapolation, true);
 		EmitExtrapolation(Curve.PostExtrapolation, false);
 
-		const int32 NumSegments = (int32)Segments.size();
+		const int32 NumSegments = Segments.Num();
 		FString Coefficients = "float4 " + ID + "_K[" + Format("{}", NumSegments) + "] = { ";
 		FString Ranges       = "float2 " + ID + "_R[" + Format("{}", NumSegments) + "] = { ";
 
@@ -2029,29 +2030,29 @@ namespace Lumina
 
 			if (Index > 0)
 			{
-				Coefficients.append(", ");
-				Ranges.append(", ");
+				Coefficients.Append(", ");
+				Ranges.Append(", ");
 			}
 
-			Coefficients.append("float4(" + CurveFloat(Segment.A) + ", " + CurveFloat(Segment.B) + ", " + CurveFloat(Segment.C) + ", " + CurveFloat(Segment.D) + ")");
-			Ranges.append("float2(" + CurveFloat(Segment.StartTime) + ", " + CurveFloat(InvDuration) + ")");
+			Coefficients.Append("float4(" + CurveFloat(Segment.A) + ", " + CurveFloat(Segment.B) + ", " + CurveFloat(Segment.C) + ", " + CurveFloat(Segment.D) + ")");
+			Ranges.Append("float2(" + CurveFloat(Segment.StartTime) + ", " + CurveFloat(InvDuration) + ")");
 		}
 
-		Coefficients.append(" };\n");
-		Ranges.append(" };\n");
-		Chunk.append(Coefficients);
-		Chunk.append(Ranges);
+		Coefficients.Append(" };\n");
+		Ranges.Append(" };\n");
+		Chunk.Append(Coefficients);
+		Chunk.Append(Ranges);
 
 		// _L is clamped into the range, so the last segment whose start is behind it is the right one.
 		const FString Loop = ID + "_i";
-		Chunk.append("float " + ID + "_V = " + CurveFloat(FirstValue) + ";\n");
-		Chunk.append("for (int " + Loop + " = 0; " + Loop + " < " + Format("{}", NumSegments) + "; ++" + Loop + ")\n");
-		Chunk.append("{\n");
-		Chunk.append("\tfloat " + ID + "_U = saturate((" + ID + "_L - " + ID + "_R[" + Loop + "].x) * " + ID + "_R[" + Loop + "].y);\n");
-		Chunk.append("\tfloat " + ID + "_E = " + ID + "_K[" + Loop + "].x + " + ID + "_U * (" + ID + "_K[" + Loop + "].y + " + ID + "_U * (" + ID + "_K[" + Loop + "].z + " + ID + "_U * " + ID + "_K[" + Loop + "].w));\n");
-		Chunk.append("\t" + ID + "_V = (" + ID + "_L >= " + ID + "_R[" + Loop + "].x) ? " + ID + "_E : " + ID + "_V;\n");
-		Chunk.append("}\n");
-		Chunk.append("float " + ID + " = " + ID + "_V + " + ID + "_O;\n");
+		Chunk.Append("float " + ID + "_V = " + CurveFloat(FirstValue) + ";\n");
+		Chunk.Append("for (int " + Loop + " = 0; " + Loop + " < " + Format("{}", NumSegments) + "; ++" + Loop + ")\n");
+		Chunk.Append("{\n");
+		Chunk.Append("\tfloat " + ID + "_U = saturate((" + ID + "_L - " + ID + "_R[" + Loop + "].x) * " + ID + "_R[" + Loop + "].y);\n");
+		Chunk.Append("\tfloat " + ID + "_E = " + ID + "_K[" + Loop + "].x + " + ID + "_U * (" + ID + "_K[" + Loop + "].y + " + ID + "_U * (" + ID + "_K[" + Loop + "].z + " + ID + "_U * " + ID + "_K[" + Loop + "].w));\n");
+		Chunk.Append("\t" + ID + "_V = (" + ID + "_L >= " + ID + "_R[" + Loop + "].x) ? " + ID + "_E : " + ID + "_V;\n");
+		Chunk.Append("}\n");
+		Chunk.Append("float " + ID + " = " + ID + "_V + " + ID + "_O;\n");
 	}
 
 	namespace
@@ -2059,15 +2060,15 @@ namespace Lumina
 		// Substring-only match; patterns like '.Sample(' and 'sin(' are unambiguous in generated shader code.
 		uint32 CountSubstring(const FString& Haystack, const char* Needle)
 		{
-			const size_t NeedleLen = strlen(Needle);
+			const int32 NeedleLen = FStringView(Needle).Len();
 			if (NeedleLen == 0)
 			{
 				return 0;
 			}
 
 			uint32 Count = 0;
-			size_t Pos = 0;
-			while ((Pos = Haystack.find(Needle, Pos)) != FString::npos)
+			int32 Pos = 0;
+			while ((Pos = Haystack.Find(Needle, Pos)) != Constants::kIndexNone)
 			{
 				++Count;
 				Pos += NeedleLen;
@@ -2077,13 +2078,13 @@ namespace Lumina
 
 		uint32 CountLines(const FString& Source)
 		{
-			if (Source.empty())
+			if (Source.IsEmpty())
 			{
 				return 0;
 			}
 
 			uint32 Count = 0;
-			for (size_t i = 0; i < Source.size(); ++i)
+			for (int32 i = 0; i < Source.Len(); ++i)
 			{
 				if (Source[i] == '\n')
 				{
@@ -2141,8 +2142,8 @@ namespace Lumina
 
 		Stats.PixelInstructions   = CountLines(PixelAll);
 		Stats.VertexInstructions  = CountLines(VertexAll);
-		Stats.PixelCharacters     = static_cast<uint32>(PixelAll.size());
-		Stats.VertexCharacters    = static_cast<uint32>(VertexAll.size());
+		Stats.PixelCharacters     = static_cast<uint32>(PixelAll.Len());
+		Stats.VertexCharacters    = static_cast<uint32>(VertexAll.Len());
 
 		Stats.TextureSamples      = CountSubstring(PixelAll, ".Sample(") + CountSubstring(VertexAll, ".Sample(");
 		Stats.MathOps             = CountMathOps(PixelAll) + CountMathOps(VertexAll);
@@ -2152,7 +2153,7 @@ namespace Lumina
 		Stats.ScalarParameters    = NumScalarParams;
 		Stats.VectorParameters    = NumVectorParams;
 		Stats.TextureParameters   = NumTextureParams;
-		Stats.BoundTextures       = static_cast<uint32>(BoundImages.size());
+		Stats.BoundTextures       = static_cast<uint32>(BoundImages.Num());
 		Stats.bUsesVertexStage    = UsesVertexStage();
 
 		Stats.EstimatedCost = EstimateCost(PixelAll, VertexAll);
@@ -2170,43 +2171,43 @@ namespace Lumina
 
 	void FMaterialCompiler::GetParameters(TVector<SMaterialParameter>& OutParams, FMaterialUniforms& OutUniforms) const
 	{
-		for (const auto& Pair : ScalarParameters)
+		for (const auto& [ParamName, Param] : ScalarParameters)
 		{
 			SMaterialParameter Out;
-			Out.ParameterName = Pair.first;
+			Out.ParameterName = ParamName;
 			Out.Type = EMaterialParameterType::Scalar;
-			Out.Index = Pair.second.Index;
-			Out.ScalarDefault = Pair.second.Value;
-			OutParams.push_back(Out);
+			Out.Index = Param.Index;
+			Out.ScalarDefault = Param.Value;
+			OutParams.Add(Out);
 
-			if (Pair.second.Index < MAX_SCALARS)
+			if (Param.Index < MAX_SCALARS)
 			{
-				OutUniforms.Scalars[Pair.second.Index] = Pair.second.Value;
+				OutUniforms.Scalars[Param.Index] = Param.Value;
 			}
 		}
 
-		for (const auto& Pair : VectorParameters)
+		for (const auto& [ParamName, Param] : VectorParameters)
 		{
 			SMaterialParameter Out;
-			Out.ParameterName = Pair.first;
+			Out.ParameterName = ParamName;
 			Out.Type = EMaterialParameterType::Vector;
-			Out.Index = Pair.second.Index;
-			Out.VectorDefault = Pair.second.Value;
-			OutParams.push_back(Out);
+			Out.Index = Param.Index;
+			Out.VectorDefault = Param.Value;
+			OutParams.Add(Out);
 
-			if (Pair.second.Index < MAX_VECTORS)
+			if (Param.Index < MAX_VECTORS)
 			{
-				OutUniforms.Vectors[Pair.second.Index] = Pair.second.Value;
+				OutUniforms.Vectors[Param.Index] = Param.Value;
 			}
 		}
 
-		for (const auto& Pair : TextureParameters)
+		for (const auto& [ParamName, Param] : TextureParameters)
 		{
 			SMaterialParameter Out;
-			Out.ParameterName = Pair.first;
+			Out.ParameterName = ParamName;
 			Out.Type = EMaterialParameterType::Texture;
-			Out.Index = Pair.second.Index;
-			OutParams.push_back(Out);
+			Out.Index = Param.Index;
+			OutParams.Add(Out);
 		}
 	}
 
@@ -2258,7 +2259,7 @@ namespace Lumina
 
 	void FMaterialCompiler::NewLine()
 	{
-		GetActiveChunk().append("\n");
+		GetActiveChunk().Append("\n");
 	}
 
 	// Built-in scene inputs
@@ -2267,43 +2268,43 @@ namespace Lumina
 	{
 		if (RejectInUI(Node, "Vertex Normal"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = WorldNormal.xyz;\n");
+		GetActiveChunk().Append("float3 " + ID + " = WorldNormal.xyz;\n");
 	}
 
 	void FMaterialCompiler::VertexTangent(const FString& ID, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "Vertex Tangent"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(1.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(1.0, 0.0, 0.0);\n");
 			return;
 		}
 		// Input is the pixel stage's interpolant struct, and both stages declare WorldTangent.
-		GetActiveChunk().append("float3 " + ID + " = WorldTangent.xyz;\n");
+		GetActiveChunk().Append("float3 " + ID + " = WorldTangent.xyz;\n");
 	}
 
 	void FMaterialCompiler::VertexBitangent(const FString& ID, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "Vertex Bitangent"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
 			return;
 		}
 		// WorldTangent's w carries the handedness sign the bitangent needs on mirrored UVs.
-		GetActiveChunk().append("float3 " + ID + " = cross(WorldNormal.xyz, WorldTangent.xyz) * WorldTangent.w;\n");
+		GetActiveChunk().Append("float3 " + ID + " = cross(WorldNormal.xyz, WorldTangent.xyz) * WorldTangent.w;\n");
 	}
 
 	void FMaterialCompiler::VertexColor(const FString& ID, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "Vertex Color"))
 		{
-			GetActiveChunk().append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
-		GetActiveChunk().append("float4 " + ID + " = VertexColor;\n");
+		GetActiveChunk().Append("float4 " + ID + " = VertexColor;\n");
 		RegisterDeriv(ID, EDerivState::Valid, "VertexColor_DDX", "VertexColor_DDY", 4);
 	}
 
@@ -2345,7 +2346,7 @@ namespace Lumina
 
 		if (!bHasRotation)
 		{
-			GetActiveChunk().append("float2 " + ID + " = " + SetName + " * " + Scale + ";\n");
+			GetActiveChunk().Append("float2 " + ID + " = " + SetName + " * " + Scale + ";\n");
 		}
 		else
 		{
@@ -2353,10 +2354,10 @@ namespace Lumina
 			const FString Cos    = ID + "_Cos";
 			const FString Sin    = ID + "_Sin";
 
-			GetActiveChunk().append("float2 " + Scaled + " = " + SetName + " * " + Scale + ";\n");
-			GetActiveChunk().append("float " + Cos + " = cos(" + RotationValue.Value + ");\n");
-			GetActiveChunk().append("float " + Sin + " = sin(" + RotationValue.Value + ");\n");
-			GetActiveChunk().append("float2 " + ID + " = float2("
+			GetActiveChunk().Append("float2 " + Scaled + " = " + SetName + " * " + Scale + ";\n");
+			GetActiveChunk().Append("float " + Cos + " = cos(" + RotationValue.Value + ");\n");
+			GetActiveChunk().Append("float " + Sin + " = sin(" + RotationValue.Value + ");\n");
+			GetActiveChunk().Append("float2 " + ID + " = float2("
 			                      + Scaled + ".x * " + Cos + " - " + Scaled + ".y * " + Sin + ", "
 			                      + Scaled + ".x * " + Sin + " + " + Scaled + ".y * " + Cos + ");\n");
 		}
@@ -2413,7 +2414,7 @@ namespace Lumina
 		FInputValue SpeedValue = GetTypedInputValue(Speed, "float2(" + Format("{}", PannerNode->SpeedX) + ", " + Format("{}", PannerNode->SpeedY) + ")");
 		const FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
 
-		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " + " + SpeedValue.Value + " * " + TimeValue.Value + ";\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = " + UVValue.Value + " + " + SpeedValue.Value + " * " + TimeValue.Value + ";\n");
 
 		// A pan is a translation, and panning must not change the mip.
 		const bool bOffsetIsConstant = SpeedValue.Deriv == EDerivState::Zero
@@ -2442,10 +2443,10 @@ namespace Lumina
 		FInputValue CenterValue = GetTypedInputValue(Center, "float2(0.5, 0.5)");
 		FInputValue RotValue = GetTypedInputValue(Rotation, 0.0f);
 
-		GetActiveChunk().append("float2 " + OwningNode + "_C = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
-		GetActiveChunk().append("float  " + OwningNode + "_S = sin(" + RotValue.Value + ");\n");
-		GetActiveChunk().append("float  " + OwningNode + "_K = cos(" + RotValue.Value + ");\n");
-		GetActiveChunk().append("float2 " + OwningNode + " = float2("
+		GetActiveChunk().Append("float2 " + OwningNode + "_C = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_S = sin(" + RotValue.Value + ");\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_K = cos(" + RotValue.Value + ");\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = float2("
 			+ OwningNode + "_C.x * " + OwningNode + "_K - " + OwningNode + "_C.y * " + OwningNode + "_S, "
 			+ OwningNode + "_C.x * " + OwningNode + "_S + " + OwningNode + "_C.y * " + OwningNode + "_K) + " + CenterValue.Value + ";\n");
 
@@ -2480,7 +2481,7 @@ namespace Lumina
 		FInputValue TilingValue = GetTypedInputValue(Tiling, "float2(1.0, 1.0)");
 		FInputValue OffsetValue = GetTypedInputValue(Offset, "float2(0.0, 0.0)");
 
-		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " * " + TilingValue.Value + " + " + OffsetValue.Value + ";\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = " + UVValue.Value + " * " + TilingValue.Value + " + " + OffsetValue.Value + ";\n");
 
 		// Affine in UV, provided the tiling and offset are themselves constant.
 		if (TilingValue.Deriv == EDerivState::Zero && OffsetValue.Deriv == EDerivState::Zero)
@@ -2504,12 +2505,12 @@ namespace Lumina
 		FInputValue TimeValue = GetTypedInputValue(Time, "GetTime()");
 		FInputValue FPSValue = GetTypedInputValue(FPS, 30.0f);
 
-		GetActiveChunk().append("float " + OwningNode + "_FN = floor((" + TimeValue.Value + ") * (" + FPSValue.Value + "));\n");
-		GetActiveChunk().append("float " + OwningNode + "_NF = max((" + ColsValue.Value + ") * (" + RowsValue.Value + "), 1.0);\n");
-		GetActiveChunk().append("float " + OwningNode + "_FI = fmod(" + OwningNode + "_FN, " + OwningNode + "_NF);\n");
-		GetActiveChunk().append("float " + OwningNode + "_CX = fmod(" + OwningNode + "_FI, max((" + ColsValue.Value + "), 1.0));\n");
-		GetActiveChunk().append("float " + OwningNode + "_CY = floor(" + OwningNode + "_FI / max((" + ColsValue.Value + "), 1.0));\n");
-		GetActiveChunk().append("float2 " + OwningNode + " = float2(((" + UVValue.Value + ").x + " + OwningNode + "_CX) / max((" + ColsValue.Value + "), 1.0), 1.0 - (((" + UVValue.Value + ").y + " + OwningNode + "_CY + 1.0) / max((" + RowsValue.Value + "), 1.0)));\n");
+		GetActiveChunk().Append("float " + OwningNode + "_FN = floor((" + TimeValue.Value + ") * (" + FPSValue.Value + "));\n");
+		GetActiveChunk().Append("float " + OwningNode + "_NF = max((" + ColsValue.Value + ") * (" + RowsValue.Value + "), 1.0);\n");
+		GetActiveChunk().Append("float " + OwningNode + "_FI = fmod(" + OwningNode + "_FN, " + OwningNode + "_NF);\n");
+		GetActiveChunk().Append("float " + OwningNode + "_CX = fmod(" + OwningNode + "_FI, max((" + ColsValue.Value + "), 1.0));\n");
+		GetActiveChunk().Append("float " + OwningNode + "_CY = floor(" + OwningNode + "_FI / max((" + ColsValue.Value + "), 1.0));\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = float2(((" + UVValue.Value + ").x + " + OwningNode + "_CX) / max((" + ColsValue.Value + "), 1.0), 1.0 - (((" + UVValue.Value + ").y + " + OwningNode + "_CY + 1.0) / max((" + RowsValue.Value + "), 1.0)));\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -2688,7 +2689,7 @@ namespace Lumina
 			}
 		}
 
-		const FString SamplerStr(SamplerName.data(), SamplerName.size());
+		const FString SamplerStr(SamplerName.GetData(), SamplerName.Len());
 		const FString Args = TextureStr + ", " + SamplerStr + ", "
 			+ AsFloat3(PositionValue.Value, PositionValue.ComponentCount) + ", " + PDdx + ", " + PDdy + ", "
 			+ AsFloat3(NormalValue.Value, NormalValue.ComponentCount);
@@ -2967,8 +2968,8 @@ namespace Lumina
 		FInputValue UVValue = GetTypedInputValue(UV, "float2(UV0)");
 		FInputValue CenterValue = GetTypedInputValue(Center, "float2(0.5, 0.5)");
 
-		GetActiveChunk().append("float2 " + OwningNode + "_D = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
-		GetActiveChunk().append("float2 " + OwningNode + " = float2(length(" + OwningNode + "_D), atan2(" + OwningNode + "_D.y, " + OwningNode + "_D.x) / 6.2831853 + 0.5);\n");
+		GetActiveChunk().Append("float2 " + OwningNode + "_D = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = float2(length(" + OwningNode + "_D), atan2(" + OwningNode + "_D.y, " + OwningNode + "_D.x) / 6.2831853 + 0.5);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -2979,10 +2980,10 @@ namespace Lumina
 		FInputValue CenterValue = GetTypedInputValue(Center, "float2(0.5, 0.5)");
 		FInputValue StrengthValue = GetTypedInputValue(Strength, 1.0f);
 
-		GetActiveChunk().append("float2 " + OwningNode + "_O = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
-		GetActiveChunk().append("float  " + OwningNode + "_R = length(" + OwningNode + "_O);\n");
-		GetActiveChunk().append("float  " + OwningNode + "_A = atan2(" + OwningNode + "_O.y, " + OwningNode + "_O.x) + " + StrengthValue.Value + " * " + OwningNode + "_R;\n");
-		GetActiveChunk().append("float2 " + OwningNode + " = " + CenterValue.Value + " + float2(cos(" + OwningNode + "_A), sin(" + OwningNode + "_A)) * " + OwningNode + "_R;\n");
+		GetActiveChunk().Append("float2 " + OwningNode + "_O = " + UVValue.Value + " - " + CenterValue.Value + ";\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_R = length(" + OwningNode + "_O);\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_A = atan2(" + OwningNode + "_O.y, " + OwningNode + "_O.x) + " + StrengthValue.Value + " * " + OwningNode + "_R;\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = " + CenterValue.Value + " + float2(cos(" + OwningNode + "_A), sin(" + OwningNode + "_A)) * " + OwningNode + "_R;\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -2990,7 +2991,7 @@ namespace Lumina
 	{
 		if (RejectInUI(Node, "World Position"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
@@ -2999,7 +3000,7 @@ namespace Lumina
 
 		// The camera position is frame-uniform, so subtracting it leaves the screen-space derivative alone.
 		const FString Value = bCameraRelative ? Source + " - GetCameraPosition()" : Source;
-		GetActiveChunk().append("float3 " + ID + " = " + Value + ";\n");
+		GetActiveChunk().Append("float3 " + ID + " = " + Value + ";\n");
 
 		// Every pixel template declares this pair, exact in the deferred lane and ddx/ddy in the forward ones.
 		RegisterDeriv(ID, EDerivState::Valid, Source + "_DDX", Source + "_DDY", 3);
@@ -3009,10 +3010,10 @@ namespace Lumina
 	{
 		if (RejectInUI(Node, "Camera Position"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = GetCameraPosition();\n");
+		GetActiveChunk().Append("float3 " + ID + " = GetCameraPosition();\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -3026,7 +3027,7 @@ namespace Lumina
 		                     : FString("GetInstance(Input.InstanceIndex).ModelMatrix");
 
 		// ObjectScale reads it three times, and each pixel-lane reference would re-fetch through a BDA load.
-		GetActiveChunk().append("float4x4 " + MatrixVar + " = " + Source + ";\n");
+		GetActiveChunk().Append("float4x4 " + MatrixVar + " = " + Source + ";\n");
 		return MatrixVar;
 	}
 
@@ -3035,14 +3036,14 @@ namespace Lumina
 		// Only PBR surface passes carry the per-instance FGPUInstance; others get a neutral 1.
 		if (RejectInUI(Node, "Object Scale") || CurrentMaterialType != EMaterialType::PBR)
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(1.0, 1.0, 1.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(1.0, 1.0, 1.0);\n");
 			return;
 		}
 
 		const FString M = EmitInstanceModelMatrix(ID);
 
 		// Scale = world-space length of each basis column of the object->world matrix.
-		GetActiveChunk().append(
+		GetActiveChunk().Append(
 			"float3 " + ID + " = float3("
 			"length(mul(" + M + ", float4(1.0, 0.0, 0.0, 0.0)).xyz), "
 			"length(mul(" + M + ", float4(0.0, 1.0, 0.0, 0.0)).xyz), "
@@ -3054,12 +3055,12 @@ namespace Lumina
 	{
 		if (RejectInUI(Node, "Object Position") || CurrentMaterialType != EMaterialType::PBR)
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			return;
 		}
 
 		const FString M = EmitInstanceModelMatrix(ID);
-		GetActiveChunk().append("float3 " + ID + " = mul(" + M + ", float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
+		GetActiveChunk().Append("float3 " + ID + " = mul(" + M + ", float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -3072,7 +3073,7 @@ namespace Lumina
 		                   ? FString("Inst.MeshletHeaderSlot")
 		                   : FString("GetInstance(Input.InstanceIndex).MeshletHeaderSlot");
 
-		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = MeshletHeaders().At(" + Slot + ");\n");
+		GetActiveChunk().Append("FMeshletHeader* " + HeaderVar + " = MeshletHeaders().At(" + Slot + ");\n");
 		return HeaderVar;
 	}
 
@@ -3091,21 +3092,21 @@ namespace Lumina
 		if (HalfExtentsOut) HalfExtentsOut->ResolvedVar = HalfVar;
 
 		// A unit box centered on the origin, so a graph dividing by the extents still divides by 1.
-		GetActiveChunk().append("float3 " + MinVar + " = float3(-0.5, -0.5, -0.5);\n");
-		GetActiveChunk().append("float3 " + MaxVar + " = float3(0.5, 0.5, 0.5);\n");
+		GetActiveChunk().Append("float3 " + MinVar + " = float3(-0.5, -0.5, -0.5);\n");
+		GetActiveChunk().Append("float3 " + MaxVar + " = float3(0.5, 0.5, 0.5);\n");
 
 		// Only the surface passes carry a mesh instance, and the null header reads as a degenerate box.
 		if (!RejectInUI(Node, "Local Bounds") && CurrentMaterialType == EMaterialType::PBR)
 		{
 			const FString Header = EmitInstanceMeshletHeader(Prefix);
-			GetActiveChunk().append("float3 " + Prefix + "_BMin = " + Header + "->LocalBoundsMin;\n");
-			GetActiveChunk().append("float3 " + Prefix + "_BMax = " + Header + "->LocalBoundsMax;\n");
-			GetActiveChunk().append("if (all(" + Prefix + "_BMax > " + Prefix + "_BMin)) { "
+			GetActiveChunk().Append("float3 " + Prefix + "_BMin = " + Header + "->LocalBoundsMin;\n");
+			GetActiveChunk().Append("float3 " + Prefix + "_BMax = " + Header + "->LocalBoundsMax;\n");
+			GetActiveChunk().Append("if (all(" + Prefix + "_BMax > " + Prefix + "_BMin)) { "
 				+ MinVar + " = " + Prefix + "_BMin; " + MaxVar + " = " + Prefix + "_BMax; }\n");
 		}
 
-		GetActiveChunk().append("float3 " + FullVar + " = " + MaxVar + " - " + MinVar + ";\n");
-		GetActiveChunk().append("float3 " + HalfVar + " = " + FullVar + " * 0.5;\n");
+		GetActiveChunk().Append("float3 " + FullVar + " = " + MaxVar + " - " + MinVar + ";\n");
+		GetActiveChunk().Append("float3 " + HalfVar + " = " + FullVar + " * 0.5;\n");
 	}
 
 	void FMaterialCompiler::TransformPosition(const FString& ID, CMaterialGraphNode* Node, CMaterialInput* Position,
@@ -3120,7 +3121,7 @@ namespace Lumina
 
 		if (SourceSpace == DestinationSpace)
 		{
-			GetActiveChunk().append("float3 " + ID + " = " + Source + ";\n");
+			GetActiveChunk().Append("float3 " + ID + " = " + Source + ";\n");
 			return;
 		}
 
@@ -3143,7 +3144,7 @@ namespace Lumina
 
 		if (!bHasScene)
 		{
-			GetActiveChunk().append("float3 " + ID + " = " + Source + ";\n");
+			GetActiveChunk().Append("float3 " + ID + " = " + Source + ";\n");
 			return;
 		}
 
@@ -3158,13 +3159,13 @@ namespace Lumina
 		}
 
 		const FString WorldVar = ID + "_W";
-		GetActiveChunk().append("float3 " + WorldVar + " = " + ToWorld + ";\n");
+		GetActiveChunk().Append("float3 " + WorldVar + " = " + ToWorld + ";\n");
 
 		FString FromWorld;
 		switch (DestinationSpace)
 		{
 		case EMaterialCoordinateSpace::Local:
-			GetActiveChunk().append("float4x4 " + ID + "_W2L = MakeInstanceWorldToLocal(" + ModelMatrix + ");\n");
+			GetActiveChunk().Append("float4x4 " + ID + "_W2L = MakeInstanceWorldToLocal(" + ModelMatrix + ");\n");
 			FromWorld = "mul(" + ID + "_W2L, float4(" + WorldVar + ", 1.0)).xyz";
 			break;
 		case EMaterialCoordinateSpace::View:
@@ -3175,18 +3176,18 @@ namespace Lumina
 			break;
 		}
 
-		GetActiveChunk().append("float3 " + ID + " = " + FromWorld + ";\n");
+		GetActiveChunk().Append("float3 " + ID + " = " + FromWorld + ";\n");
 	}
 
 	void FMaterialCompiler::EntityID(const FString& ID)
 	{
-		GetActiveChunk().append("float " + ID + " = float(EntityID);\n");
+		GetActiveChunk().Append("float " + ID + " = float(EntityID);\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
 	void FMaterialCompiler::Time(const FString& ID)
 	{
-		GetActiveChunk().append("float " + ID + " = GetTime();\n");
+		GetActiveChunk().Append("float " + ID + " = GetTime();\n");
 		// GetTime() is frame-uniform, so its screen-space derivative is zero.
 		RegisterDeriv(ID, EDerivState::Zero);
 	}
@@ -3195,11 +3196,11 @@ namespace Lumina
 	{
 		if (bRaw)
 		{
-			GetActiveChunk().append("float2 " + ID + " = Input.Position.xy;\n");
+			GetActiveChunk().Append("float2 " + ID + " = Input.Position.xy;\n");
 		}
 		else
 		{
-			GetActiveChunk().append("float2 " + ID + " = Input.Position.xy / max(float2(GetScreenSize()), float2(1.0, 1.0));\n");
+			GetActiveChunk().Append("float2 " + ID + " = Input.Position.xy / max(float2(GetScreenSize()), float2(1.0, 1.0));\n");
 		}
 		if (bRaw)
 		{
@@ -3215,48 +3216,48 @@ namespace Lumina
 	{
 		if (RejectInUI(Node, "View Direction"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = normalize(GetCameraPosition() - WorldPosition);\n");
+		GetActiveChunk().Append("float3 " + ID + " = normalize(GetCameraPosition() - WorldPosition);\n");
 	}
 
 	void FMaterialCompiler::ReflectionVector(const FString& ID, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "Reflection Vector"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 1.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = reflect(-normalize(GetCameraPosition() - WorldPosition), normalize(WorldNormal.xyz));\n");
+		GetActiveChunk().Append("float3 " + ID + " = reflect(-normalize(GetCameraPosition() - WorldPosition), normalize(WorldNormal.xyz));\n");
 	}
 
 	void FMaterialCompiler::FragmentDepth(const FString& ID, bool bLinear, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "Fragment Depth"))
 		{
-			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ID + " = 0.0;\n");
 			return;
 		}
 		if (bLinear)
 		{
-			GetActiveChunk().append("float " + ID + " = abs(ViewPosition.z);\n");
+			GetActiveChunk().Append("float " + ID + " = abs(ViewPosition.z);\n");
 		}
 		else
 		{
-			GetActiveChunk().append("float " + ID + " = Input.Position.z;\n");
+			GetActiveChunk().Append("float " + ID + " = Input.Position.z;\n");
 		}
 	}
 
 	void FMaterialCompiler::ViewportSize(const FString& ID)
 	{
-		GetActiveChunk().append("float2 " + ID + " = float2(GetScreenSize());\n");
+		GetActiveChunk().Append("float2 " + ID + " = float2(GetScreenSize());\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
 	void FMaterialCompiler::AspectRatio(const FString& ID)
 	{
-		GetActiveChunk().append("float " + ID + " = float(GetScreenSize().x) / max(float(GetScreenSize().y), 1.0);\n");
+		GetActiveChunk().Append("float " + ID + " = float(GetScreenSize().x) / max(float(GetScreenSize().y), 1.0);\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -3272,8 +3273,8 @@ namespace Lumina
 		Error.Name        = NodeName;
 		Error.Description = FString(NodeName) + " is only valid in materials with MaterialType = PostProcess.";
 		Error.Node        = UV ? UV->GetOwningNode() : nullptr;
-		Errors.push_back(Error);
-		GetActiveChunk().append(FString(Type) + " " + ID + " = " + Fallback + ";\n");
+		Errors.Add(Error);
+		GetActiveChunk().Append(FString(Type) + " " + ID + " = " + Fallback + ";\n");
 		return false;
 	}
 
@@ -3287,7 +3288,7 @@ namespace Lumina
 	{
 		if (RequirePostProcess(ID, UV, "SceneColor", "float4", "float4(0.0, 0.0, 0.0, 1.0)"))
 		{
-			GetActiveChunk().append("float4 " + ID + " = uSceneColor.Sample(" + ScreenUV(UV) + ");\n");
+			GetActiveChunk().Append("float4 " + ID + " = uSceneColor.Sample(" + ScreenUV(UV) + ");\n");
 		}
 	}
 
@@ -3296,7 +3297,7 @@ namespace Lumina
 		if (RequirePostProcess(ID, UV, "SceneDepth", "float", "1.0"))
 		{
 			const FString Raw = "uSceneDepth.Sample(" + ScreenUV(UV) + ").r";
-			GetActiveChunk().append("float " + ID + " = " + (bLinear ? "LinearizeSceneDepth(" + Raw + ")" : Raw) + ";\n");
+			GetActiveChunk().Append("float " + ID + " = " + (bLinear ? "LinearizeSceneDepth(" + Raw + ")" : Raw) + ";\n");
 		}
 	}
 
@@ -3304,7 +3305,7 @@ namespace Lumina
 	{
 		if (RequirePostProcess(ID, UV, "SceneHDRColor", "float4", "float4(0.0, 0.0, 0.0, 1.0)"))
 		{
-			GetActiveChunk().append("float4 " + ID + " = uHDRSceneColor.Sample(" + ScreenUV(UV) + ");\n");
+			GetActiveChunk().Append("float4 " + ID + " = uHDRSceneColor.Sample(" + ScreenUV(UV) + ");\n");
 		}
 	}
 
@@ -3313,7 +3314,7 @@ namespace Lumina
 		if (RequirePostProcess(ID, UV, "CustomDepth", "float", "0.0"))
 		{
 			const FString Raw = "uCustomDepth.Sample(" + ScreenUV(UV) + ")";
-			GetActiveChunk().append("float " + ID + " = " + (bLinear ? "LinearizeSceneDepth(" + Raw + ")" : Raw) + ";\n");
+			GetActiveChunk().Append("float " + ID + " = " + (bLinear ? "LinearizeSceneDepth(" + Raw + ")" : Raw) + ";\n");
 		}
 	}
 
@@ -3321,13 +3322,13 @@ namespace Lumina
 	{
 		if (RequirePostProcess(ID, UV, "CustomStencil", "float", "0.0"))
 		{
-			GetActiveChunk().append("float " + ID + " = float(uCustomStencil.Load(" + ScreenUV(UV) + "));\n");
+			GetActiveChunk().Append("float " + ID + " = float(uCustomStencil.Load(" + ScreenUV(UV) + "));\n");
 		}
 	}
 
 	void FMaterialCompiler::NumericConstant(const FString& ID, float Value)
 	{
-		GetActiveChunk().append("float " + ID + " = " + Format("{}", Value) + ";\n");
+		GetActiveChunk().Append("float " + ID + " = " + Format("{}", Value) + ";\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -3345,21 +3346,21 @@ namespace Lumina
 		switch (Type)
 		{
 		case ECustomPrimitiveDataType::Float:
-			GetActiveChunk().append("float " + ID + " = " + (bHasInstance ? Data + ".AsFloat" : FString("0.0")) + ";\n");
+			GetActiveChunk().Append("float " + ID + " = " + (bHasInstance ? Data + ".AsFloat" : FString("0.0")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::Int:
-			GetActiveChunk().append("int " + ID + " = " + (bHasInstance ? Data + ".AsInt" : FString("0")) + ";\n");
+			GetActiveChunk().Append("int " + ID + " = " + (bHasInstance ? Data + ".AsInt" : FString("0")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::UInt:
-			GetActiveChunk().append("uint " + ID + " = " + (bHasInstance ? Data + ".AsUInt" : FString("0u")) + ";\n");
+			GetActiveChunk().Append("uint " + ID + " = " + (bHasInstance ? Data + ".AsUInt" : FString("0u")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::Color:
-			GetActiveChunk().append("float4 " + ID + " = " + (bHasInstance ? Data + ".AsColor" : FString("float4(0.0, 0.0, 0.0, 0.0)")) + ";\n");
+			GetActiveChunk().Append("float4 " + ID + " = " + (bHasInstance ? Data + ".AsColor" : FString("float4(0.0, 0.0, 0.0, 0.0)")) + ";\n");
 			Node->Output->SetInputType(EMaterialInputType::Float4);
 			Node->Output->SetComponentMask(EComponentMask::RGBA);
 			break;
 		case ECustomPrimitiveDataType::Bool:
-			GetActiveChunk().append("bool " + ID + " = " + (bHasInstance ? Data + ".AsBool" : FString("false")) + ";\n");
+			GetActiveChunk().Append("bool " + ID + " = " + (bHasInstance ? Data + ".AsBool" : FString("false")) + ";\n");
 			break;
 		}
 		RegisterDeriv(ID, EDerivState::Zero);
@@ -3468,7 +3469,7 @@ namespace Lumina
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = 1.0 - " + AValue.Value + GetSwizzleForMask(AValue.Mask) + ";\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = 1.0 - " + AValue.Value + GetSwizzleForMask(AValue.Mask) + ";\n");
 
 		// d(1 - A) = -dA. The constant contributes nothing.
 		if (AValue.Deriv == EDerivState::Valid && AValue.ComponentCount <= 2)
@@ -3493,7 +3494,7 @@ namespace Lumina
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = 1.0 / max(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + TypeStr + "(1e-6));\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = 1.0 / max(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + TypeStr + "(1e-6));\n");
 		RegisterChainDeriv(OwningNode, AValue, "-1.0 / max(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + " * " + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + TypeStr + "(1e-12))");
 		SetOwningOutputType(A, AValue.Type);
 	}
@@ -3504,7 +3505,7 @@ namespace Lumina
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = -(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = -(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
 		RegisterChainDeriv(OwningNode, AValue, "-1.0");
 		SetOwningOutputType(A, AValue.Type);
 	}
@@ -3516,7 +3517,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		FString V = AValue.Value + GetSwizzleForMask(AValue.Mask);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + V + ") * (" + V + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = (" + V + ") * (" + V + ");\n");
 		RegisterChainDeriv(OwningNode, AValue, "2.0 * (" + V + ")");
 		SetOwningOutputType(A, AValue.Type);
 	}
@@ -3527,7 +3528,7 @@ namespace Lumina
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 0.01745329252;\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 0.01745329252;\n");
 		RegisterChainDeriv(OwningNode, AValue, "0.01745329252");
 		SetOwningOutputType(A, AValue.Type);
 	}
@@ -3538,7 +3539,7 @@ namespace Lumina
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 57.29577951;\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 57.29577951;\n");
 		RegisterChainDeriv(OwningNode, AValue, "57.29577951");
 		SetOwningOutputType(A, AValue.Type);
 	}
@@ -3575,7 +3576,7 @@ namespace Lumina
 		EMaterialInputType ResultType = DetermineResultType(XV.Type, OutMaxV.Type, true);
 		FString TypeStr = GetVectorType(ResultType);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + OutMinV.Value + " + (" + XV.Value + " - " + InMinV.Value + ") * (" + OutMaxV.Value + " - " + OutMinV.Value + ") / max(" + InMaxV.Value + " - " + InMinV.Value + ", 1e-6);\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = " + OutMinV.Value + " + (" + XV.Value + " - " + InMinV.Value + ") * (" + OutMaxV.Value + " - " + OutMinV.Value + ") / max(" + InMaxV.Value + " - " + InMinV.Value + ", 1e-6);\n");
 		const bool bConstantBounds = InMinV.Deriv == EDerivState::Zero && InMaxV.Deriv == EDerivState::Zero
 		                          && OutMinV.Deriv == EDerivState::Zero && OutMaxV.Deriv == EDerivState::Zero;
 		if (bConstantBounds && XV.ComponentCount == GetComponentCount(ResultType))
@@ -3611,7 +3612,7 @@ namespace Lumina
 		}
 
 		FString TypeStr = GetVectorType(AValue.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = normalize(" + AValue.Value + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = normalize(" + AValue.Value + ");\n");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3631,7 +3632,7 @@ namespace Lumina
 			AddError(Error);
 		}
 
-		GetActiveChunk().append("float " + OwningNode + " = distance(" + AValue.Value + ", " + BValue.Value + ");\n");
+		GetActiveChunk().Append("float " + OwningNode + " = distance(" + AValue.Value + ", " + BValue.Value + ");\n");
 		SetOwningOutputType(A, EMaterialInputType::Float);
 	}
 
@@ -3639,7 +3640,7 @@ namespace Lumina
 	{
 		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AValue = GetTypedInputValue(A, "0.0");
-		GetActiveChunk().append("float " + OwningNode + " = length(" + AValue.Value + ");\n");
+		GetActiveChunk().Append("float " + OwningNode + " = length(" + AValue.Value + ");\n");
 		SetOwningOutputType(A, EMaterialInputType::Float);
 	}
 
@@ -3658,7 +3659,7 @@ namespace Lumina
 			AddError(Error);
 		}
 
-		GetActiveChunk().append("float " + OwningNode + " = dot(" + AValue.Value + ", " + BValue.Value + ");\n");
+		GetActiveChunk().Append("float " + OwningNode + " = dot(" + AValue.Value + ", " + BValue.Value + ");\n");
 		SetOwningOutputType(A, EMaterialInputType::Float);
 	}
 
@@ -3668,7 +3669,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, "float3(1.0, 0.0, 0.0)");
 		FInputValue BValue = GetTypedInputValue(B, "float3(0.0, 1.0, 0.0)");
 
-		GetActiveChunk().append("float3 " + OwningNode + " = cross(" + AValue.Value + ".xyz, " + BValue.Value + ".xyz);\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = cross(" + AValue.Value + ".xyz, " + BValue.Value + ".xyz);\n");
 		SetOwningOutputType(A, EMaterialInputType::Float3);
 	}
 
@@ -3677,7 +3678,7 @@ namespace Lumina
 		FString OwningNode = I->GetOwningNode()->GetNodeFullName();
 		FInputValue IV = GetTypedInputValue(I, "float3(0.0, 0.0, -1.0)");
 		FInputValue NV = GetTypedInputValue(N, "float3(0.0, 0.0, 1.0)");
-		GetActiveChunk().append("float3 " + OwningNode + " = reflect(" + IV.Value + ".xyz, normalize(" + NV.Value + ".xyz));\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = reflect(" + IV.Value + ".xyz, normalize(" + NV.Value + ".xyz));\n");
 		SetOwningOutputType(I, EMaterialInputType::Float3);
 	}
 
@@ -3687,7 +3688,7 @@ namespace Lumina
 		FInputValue IV = GetTypedInputValue(I, "float3(0.0, 0.0, -1.0)");
 		FInputValue NV = GetTypedInputValue(N, "float3(0.0, 0.0, 1.0)");
 		FInputValue EtaV = GetTypedInputValue(Eta, 1.0f);
-		GetActiveChunk().append("float3 " + OwningNode + " = refract(" + IV.Value + ".xyz, normalize(" + NV.Value + ".xyz), " + EtaV.Value + ");\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = refract(" + IV.Value + ".xyz, normalize(" + NV.Value + ".xyz), " + EtaV.Value + ");\n");
 		SetOwningOutputType(I, EMaterialInputType::Float3);
 	}
 
@@ -3702,7 +3703,7 @@ namespace Lumina
 
 		auto Width = [](const FInputValue& V)
 		{
-			return GetSwizzleForMask(V.Mask).empty() ? V.ComponentCount : GetComponentCount(V.Mask);
+			return GetSwizzleForMask(V.Mask).IsEmpty() ? V.ComponentCount : GetComponentCount(V.Mask);
 		};
 		auto AsFloat3 = [&](const FInputValue& V)
 		{
@@ -3712,22 +3713,22 @@ namespace Lumina
 		};
 		const FString AngleStr = Width(AngleV) > 1 ? "(" + AngleV.Value + GetSwizzleForMask(AngleV.Mask) + ").x" : AngleV.Value + GetSwizzleForMask(AngleV.Mask);
 
-		GetActiveChunk().append("float3 " + OwningNode + "_K = normalize(" + AsFloat3(AV) + ");\n");
-		GetActiveChunk().append("float  " + OwningNode + "_S = sin(" + AngleStr + ");\n");
-		GetActiveChunk().append("float  " + OwningNode + "_C = cos(" + AngleStr + ");\n");
+		GetActiveChunk().Append("float3 " + OwningNode + "_K = normalize(" + AsFloat3(AV) + ");\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_S = sin(" + AngleStr + ");\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_C = cos(" + AngleStr + ");\n");
 
 		// translate to pivot space
-		GetActiveChunk().append("float3 " + OwningNode + "_V = " + AsFloat3(PV) + " - " + AsFloat3(PivotV) + ";\n");
+		GetActiveChunk().Append("float3 " + OwningNode + "_V = " + AsFloat3(PV) + " - " + AsFloat3(PivotV) + ";\n");
 
 		// rotate
-		GetActiveChunk().append(
+		GetActiveChunk().Append(
 			"float3 " + OwningNode + "_R = " + OwningNode + "_V * " + OwningNode + "_C + "
 			"cross(" + OwningNode + "_K, " + OwningNode + "_V) * " + OwningNode + "_S + "
 			+ OwningNode + "_K * dot(" + OwningNode + "_K, " + OwningNode + "_V) * (1.0 - " + OwningNode + "_C);\n"
 		);
 
 		// translate back
-		GetActiveChunk().append("float3 " + OwningNode + " = " + OwningNode + "_R + " + AsFloat3(PivotV) + ";\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = " + OwningNode + "_R + " + AsFloat3(PivotV) + ";\n");
 
 		SetOwningOutputType(Position, EMaterialInputType::Float3);
 	}
@@ -3738,7 +3739,7 @@ namespace Lumina
 	{
 		FString OwningNode = Color->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(Color, "float3(1.0, 1.0, 1.0)");
-		GetActiveChunk().append("float " + OwningNode + " = dot(" + C.Value + ".rgb, float3(0.2126, 0.7152, 0.0722));\n");
+		GetActiveChunk().Append("float " + OwningNode + " = dot(" + C.Value + ".rgb, float3(0.2126, 0.7152, 0.0722));\n");
 		SetOwningOutputType(Color, EMaterialInputType::Float);
 	}
 
@@ -3747,8 +3748,8 @@ namespace Lumina
 		FString OwningNode = Color->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(Color, "float3(1.0, 1.0, 1.0)");
 		FInputValue A = GetTypedInputValue(Amount, 1.0f);
-		GetActiveChunk().append("float  " + OwningNode + "_L = dot(" + C.Value + ".rgb, float3(0.2126, 0.7152, 0.0722));\n");
-		GetActiveChunk().append("float3 " + OwningNode + " = lerp(" + C.Value + ".rgb, float3(" + OwningNode + "_L, " + OwningNode + "_L, " + OwningNode + "_L), saturate(" + A.Value + "));\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_L = dot(" + C.Value + ".rgb, float3(0.2126, 0.7152, 0.0722));\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = lerp(" + C.Value + ".rgb, float3(" + OwningNode + "_L, " + OwningNode + "_L, " + OwningNode + "_L), saturate(" + A.Value + "));\n");
 		SetOwningOutputType(Color, EMaterialInputType::Float3);
 	}
 
@@ -3757,11 +3758,11 @@ namespace Lumina
 		FString OwningNode = RGB->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(RGB, "float3(1.0, 1.0, 1.0)");
 		FString In = C.Value + ".rgb";
-		GetActiveChunk().append("float4 " + OwningNode + "_K = float4(0.0, -1.0/3.0, 2.0/3.0, -1.0);\n");
-		GetActiveChunk().append("float4 " + OwningNode + "_P = lerp(float4((" + In + ").bg, " + OwningNode + "_K.wz), float4((" + In + ").gb, " + OwningNode + "_K.xy), step((" + In + ").b, (" + In + ").g));\n");
-		GetActiveChunk().append("float4 " + OwningNode + "_Q = lerp(float4(" + OwningNode + "_P.xyw, (" + In + ").r), float4((" + In + ").r, " + OwningNode + "_P.yzx), step(" + OwningNode + "_P.x, (" + In + ").r));\n");
-		GetActiveChunk().append("float  " + OwningNode + "_D = " + OwningNode + "_Q.x - min(" + OwningNode + "_Q.w, " + OwningNode + "_Q.y);\n");
-		GetActiveChunk().append("float3 " + OwningNode + " = float3(abs(" + OwningNode + "_Q.z + (" + OwningNode + "_Q.w - " + OwningNode + "_Q.y) / (6.0 * " + OwningNode + "_D + 1e-10)), " + OwningNode + "_D / max(" + OwningNode + "_Q.x, 1e-10), " + OwningNode + "_Q.x);\n");
+		GetActiveChunk().Append("float4 " + OwningNode + "_K = float4(0.0, -1.0/3.0, 2.0/3.0, -1.0);\n");
+		GetActiveChunk().Append("float4 " + OwningNode + "_P = lerp(float4((" + In + ").bg, " + OwningNode + "_K.wz), float4((" + In + ").gb, " + OwningNode + "_K.xy), step((" + In + ").b, (" + In + ").g));\n");
+		GetActiveChunk().Append("float4 " + OwningNode + "_Q = lerp(float4(" + OwningNode + "_P.xyw, (" + In + ").r), float4((" + In + ").r, " + OwningNode + "_P.yzx), step(" + OwningNode + "_P.x, (" + In + ").r));\n");
+		GetActiveChunk().Append("float  " + OwningNode + "_D = " + OwningNode + "_Q.x - min(" + OwningNode + "_Q.w, " + OwningNode + "_Q.y);\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = float3(abs(" + OwningNode + "_Q.z + (" + OwningNode + "_Q.w - " + OwningNode + "_Q.y) / (6.0 * " + OwningNode + "_D + 1e-10)), " + OwningNode + "_D / max(" + OwningNode + "_Q.x, 1e-10), " + OwningNode + "_Q.x);\n");
 		SetOwningOutputType(RGB, EMaterialInputType::Float3);
 	}
 
@@ -3770,8 +3771,8 @@ namespace Lumina
 		FString OwningNode = HSV->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(HSV, "float3(0.0, 0.0, 1.0)");
 		FString In = C.Value + ".xyz";
-		GetActiveChunk().append("float3 " + OwningNode + "_P = abs(frac(" + In + ".xxx + float3(1.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);\n");
-		GetActiveChunk().append("float3 " + OwningNode + " = " + In + ".z * lerp(float3(1.0, 1.0, 1.0), saturate(" + OwningNode + "_P - 1.0), " + In + ".y);\n");
+		GetActiveChunk().Append("float3 " + OwningNode + "_P = abs(frac(" + In + ".xxx + float3(1.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = " + In + ".z * lerp(float3(1.0, 1.0, 1.0), saturate(" + OwningNode + "_P - 1.0), " + In + ".y);\n");
 		SetOwningOutputType(HSV, EMaterialInputType::Float3);
 	}
 
@@ -3781,7 +3782,7 @@ namespace Lumina
 		FInputValue C = GetTypedInputValue(Color, 0.5f);
 		FInputValue S = GetTypedInputValue(Steps, 4.0f);
 		FString TypeStr = GetVectorType(C.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = floor((" + C.Value + ") * max(" + S.Value + ", 1.0)) / max(" + S.Value + ", 1.0);\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = floor((" + C.Value + ") * max(" + S.Value + ", 1.0)) / max(" + S.Value + ", 1.0);\n");
 		SetOwningOutputType(Color, C.Type);
 	}
 
@@ -3791,7 +3792,7 @@ namespace Lumina
 		FInputValue C = GetTypedInputValue(Color, 1.0f);
 		FInputValue G = GetTypedInputValue(Gamma, 2.2f);
 		FString TypeStr = GetVectorType(C.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = pow(max(" + C.Value + ", " + TypeStr + "(0.0)), " + TypeStr + "(" + G.Value + "));\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = pow(max(" + C.Value + ", " + TypeStr + "(0.0)), " + TypeStr + "(" + G.Value + "));\n");
 		SetOwningOutputType(Color, C.Type);
 	}
 
@@ -3801,7 +3802,7 @@ namespace Lumina
 		FInputValue C = GetTypedInputValue(Color, 0.5f);
 		FInputValue A = GetTypedInputValue(Amount, 1.0f);
 		FString TypeStr = GetVectorType(C.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + C.Value + " - " + TypeStr + "(0.5)) * " + A.Value + " + " + TypeStr + "(0.5);\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = (" + C.Value + " - " + TypeStr + "(0.5)) * " + A.Value + " + " + TypeStr + "(0.5);\n");
 		SetOwningOutputType(Color, C.Type);
 	}
 
@@ -3811,7 +3812,7 @@ namespace Lumina
 		FInputValue C = GetTypedInputValue(Color, 0.5f);
 		FInputValue A = GetTypedInputValue(Amount, 1.0f);
 		FString TypeStr = GetVectorType(C.Type);
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + C.Value + ") * (" + A.Value + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + OwningNode + " = (" + C.Value + ") * (" + A.Value + ");\n");
 		SetOwningOutputType(Color, C.Type);
 	}
 
@@ -3821,7 +3822,7 @@ namespace Lumina
 		FInputValue C = GetTypedInputValue(Color, "float3(1.0, 1.0, 1.0)");
 		FInputValue T = GetTypedInputValue(TintColor, "float3(1.0, 1.0, 1.0)");
 		FInputValue A = GetTypedInputValue(Amount, 1.0f);
-		GetActiveChunk().append("float3 " + OwningNode + " = lerp(" + C.Value + ".rgb, (" + C.Value + ".rgb) * (" + T.Value + ".rgb), saturate(" + A.Value + "));\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = lerp(" + C.Value + ".rgb, (" + C.Value + ".rgb) * (" + T.Value + ".rgb), saturate(" + A.Value + "));\n");
 		SetOwningOutputType(Color, EMaterialInputType::Float3);
 	}
 
@@ -3829,7 +3830,7 @@ namespace Lumina
 	{
 		FString OwningNode = Color->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(Color, "float3(1.0, 1.0, 1.0)");
-		GetActiveChunk().append("float3 " + OwningNode + " = pow(max(" + C.Value + ".rgb, float3(0.0, 0.0, 0.0)), float3(1.0/2.2, 1.0/2.2, 1.0/2.2));\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = pow(max(" + C.Value + ".rgb, float3(0.0, 0.0, 0.0)), float3(1.0/2.2, 1.0/2.2, 1.0/2.2));\n");
 		SetOwningOutputType(Color, EMaterialInputType::Float3);
 	}
 
@@ -3837,7 +3838,7 @@ namespace Lumina
 	{
 		FString OwningNode = Color->GetOwningNode()->GetNodeFullName();
 		FInputValue C = GetTypedInputValue(Color, "float3(1.0, 1.0, 1.0)");
-		GetActiveChunk().append("float3 " + OwningNode + " = pow(max(" + C.Value + ".rgb, float3(0.0, 0.0, 0.0)), float3(2.2, 2.2, 2.2));\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = pow(max(" + C.Value + ".rgb, float3(0.0, 0.0, 0.0)), float3(2.2, 2.2, 2.2));\n");
 		SetOwningOutputType(Color, EMaterialInputType::Float3);
 	}
 
@@ -3847,7 +3848,7 @@ namespace Lumina
 	{
 		FString OwningNode = X->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(X, 0.0f);
-		GetActiveChunk().append("float " + OwningNode + " = frac(sin((" + V.Value + ")) * 43758.5453);\n");
+		GetActiveChunk().Append("float " + OwningNode + " = frac(sin((" + V.Value + ")) * 43758.5453);\n");
 		SetOwningOutputType(X, EMaterialInputType::Float);
 	}
 
@@ -3855,7 +3856,7 @@ namespace Lumina
 	{
 		FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(0.0, 0.0)");
-		GetActiveChunk().append("float " + OwningNode + " = frac(sin(dot((" + V.Value + ").xy, float2(127.1, 311.7))) * 43758.5453);\n");
+		GetActiveChunk().Append("float " + OwningNode + " = frac(sin(dot((" + V.Value + ").xy, float2(127.1, 311.7))) * 43758.5453);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3863,7 +3864,7 @@ namespace Lumina
 	{
 		FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(0.0, 0.0)");
-		GetActiveChunk().append("float2 " + OwningNode + " = frac(sin(float2(dot((" + V.Value + ").xy, float2(127.1, 311.7)), dot((" + V.Value + ").xy, float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float2 " + OwningNode + " = frac(sin(float2(dot((" + V.Value + ").xy, float2(127.1, 311.7)), dot((" + V.Value + ").xy, float2(269.5, 183.3)))) * 43758.5453);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -3871,7 +3872,7 @@ namespace Lumina
 	{
 		FString OwningNode = P->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(P, "float3(0.0, 0.0, 0.0)");
-		GetActiveChunk().append("float3 " + OwningNode + " = frac(sin(float3(dot((" + V.Value + ").xyz, float3(127.1, 311.7, 74.7)), dot((" + V.Value + ").xyz, float3(269.5, 183.3, 246.1)), dot((" + V.Value + ").xyz, float3(113.5, 271.9, 124.6)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float3 " + OwningNode + " = frac(sin(float3(dot((" + V.Value + ").xyz, float3(127.1, 311.7, 74.7)), dot((" + V.Value + ").xyz, float3(269.5, 183.3, 246.1)), dot((" + V.Value + ").xyz, float3(113.5, 271.9, 124.6)))) * 43758.5453);\n");
 		SetOwningOutputType(P, EMaterialInputType::Float3);
 	}
 
@@ -3880,14 +3881,14 @@ namespace Lumina
 		FString N = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(UV0)");
 		FString In = "(" + V.Value + ").xy";
-		GetActiveChunk().append("float2 " + N + "_I = floor(" + In + ");\n");
-		GetActiveChunk().append("float2 " + N + "_F = frac(" + In + ");\n");
-		GetActiveChunk().append("float2 " + N + "_U = " + N + "_F * " + N + "_F * (3.0 - 2.0 * " + N + "_F);\n");
-		GetActiveChunk().append("float  " + N + "_A = frac(sin(dot(" + N + "_I + float2(0.0, 0.0), float2(127.1, 311.7))) * 43758.5453);\n");
-		GetActiveChunk().append("float  " + N + "_B = frac(sin(dot(" + N + "_I + float2(1.0, 0.0), float2(127.1, 311.7))) * 43758.5453);\n");
-		GetActiveChunk().append("float  " + N + "_C = frac(sin(dot(" + N + "_I + float2(0.0, 1.0), float2(127.1, 311.7))) * 43758.5453);\n");
-		GetActiveChunk().append("float  " + N + "_D = frac(sin(dot(" + N + "_I + float2(1.0, 1.0), float2(127.1, 311.7))) * 43758.5453);\n");
-		GetActiveChunk().append("float " + N + " = lerp(lerp(" + N + "_A, " + N + "_B, " + N + "_U.x), lerp(" + N + "_C, " + N + "_D, " + N + "_U.x), " + N + "_U.y);\n");
+		GetActiveChunk().Append("float2 " + N + "_I = floor(" + In + ");\n");
+		GetActiveChunk().Append("float2 " + N + "_F = frac(" + In + ");\n");
+		GetActiveChunk().Append("float2 " + N + "_U = " + N + "_F * " + N + "_F * (3.0 - 2.0 * " + N + "_F);\n");
+		GetActiveChunk().Append("float  " + N + "_A = frac(sin(dot(" + N + "_I + float2(0.0, 0.0), float2(127.1, 311.7))) * 43758.5453);\n");
+		GetActiveChunk().Append("float  " + N + "_B = frac(sin(dot(" + N + "_I + float2(1.0, 0.0), float2(127.1, 311.7))) * 43758.5453);\n");
+		GetActiveChunk().Append("float  " + N + "_C = frac(sin(dot(" + N + "_I + float2(0.0, 1.0), float2(127.1, 311.7))) * 43758.5453);\n");
+		GetActiveChunk().Append("float  " + N + "_D = frac(sin(dot(" + N + "_I + float2(1.0, 1.0), float2(127.1, 311.7))) * 43758.5453);\n");
+		GetActiveChunk().Append("float " + N + " = lerp(lerp(" + N + "_A, " + N + "_B, " + N + "_U.x), lerp(" + N + "_C, " + N + "_D, " + N + "_U.x), " + N + "_U.y);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3896,14 +3897,14 @@ namespace Lumina
 		FString N = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(UV0)");
 		FString In = "(" + V.Value + ").xy";
-		GetActiveChunk().append("float2 " + N + "_I = floor(" + In + ");\n");
-		GetActiveChunk().append("float2 " + N + "_F = frac(" + In + ");\n");
-		GetActiveChunk().append("float2 " + N + "_U = " + N + "_F * " + N + "_F * (3.0 - 2.0 * " + N + "_F);\n");
-		GetActiveChunk().append("float2 " + N + "_GA = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(0.0, 0.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(0.0, 0.0), float2(269.5, 183.3)))) * 43758.5453);\n");
-		GetActiveChunk().append("float2 " + N + "_GB = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(1.0, 0.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(1.0, 0.0), float2(269.5, 183.3)))) * 43758.5453);\n");
-		GetActiveChunk().append("float2 " + N + "_GC = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(0.0, 1.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(0.0, 1.0), float2(269.5, 183.3)))) * 43758.5453);\n");
-		GetActiveChunk().append("float2 " + N + "_GD = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(1.0, 1.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(1.0, 1.0), float2(269.5, 183.3)))) * 43758.5453);\n");
-		GetActiveChunk().append("float " + N + " = lerp(lerp(dot(" + N + "_GA, " + N + "_F - float2(0.0, 0.0)), dot(" + N + "_GB, " + N + "_F - float2(1.0, 0.0)), " + N + "_U.x), lerp(dot(" + N + "_GC, " + N + "_F - float2(0.0, 1.0)), dot(" + N + "_GD, " + N + "_F - float2(1.0, 1.0)), " + N + "_U.x), " + N + "_U.y) * 0.5 + 0.5;\n");
+		GetActiveChunk().Append("float2 " + N + "_I = floor(" + In + ");\n");
+		GetActiveChunk().Append("float2 " + N + "_F = frac(" + In + ");\n");
+		GetActiveChunk().Append("float2 " + N + "_U = " + N + "_F * " + N + "_F * (3.0 - 2.0 * " + N + "_F);\n");
+		GetActiveChunk().Append("float2 " + N + "_GA = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(0.0, 0.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(0.0, 0.0), float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float2 " + N + "_GB = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(1.0, 0.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(1.0, 0.0), float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float2 " + N + "_GC = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(0.0, 1.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(0.0, 1.0), float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float2 " + N + "_GD = -1.0 + 2.0 * frac(sin(float2(dot(" + N + "_I + float2(1.0, 1.0), float2(127.1, 311.7)), dot(" + N + "_I + float2(1.0, 1.0), float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("float " + N + " = lerp(lerp(dot(" + N + "_GA, " + N + "_F - float2(0.0, 0.0)), dot(" + N + "_GB, " + N + "_F - float2(1.0, 0.0)), " + N + "_U.x), lerp(dot(" + N + "_GC, " + N + "_F - float2(0.0, 1.0)), dot(" + N + "_GD, " + N + "_F - float2(1.0, 1.0)), " + N + "_U.x), " + N + "_U.y) * 0.5 + 0.5;\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3918,19 +3919,19 @@ namespace Lumina
 		FString N = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(UV0)");
 		FString In = "(" + V.Value + ").xy";
-		GetActiveChunk().append("float2 " + N + "_I = floor(" + In + ");\n");
-		GetActiveChunk().append("float2 " + N + "_F = frac(" + In + ");\n");
-		GetActiveChunk().append("float  " + N + "_M = 8.0;\n");
-		GetActiveChunk().append("for (int " + N + "_y = -1; " + N + "_y <= 1; ++" + N + "_y)\n");
-		GetActiveChunk().append("for (int " + N + "_x = -1; " + N + "_x <= 1; ++" + N + "_x)\n");
-		GetActiveChunk().append("{\n");
-		GetActiveChunk().append("    float2 " + N + "_G = float2(float(" + N + "_x), float(" + N + "_y));\n");
-		GetActiveChunk().append("    float2 " + N + "_O = frac(sin(float2(dot(" + N + "_I + " + N + "_G, float2(127.1, 311.7)), dot(" + N + "_I + " + N + "_G, float2(269.5, 183.3)))) * 43758.5453);\n");
-		GetActiveChunk().append("    float2 " + N + "_R = " + N + "_G + " + N + "_O - " + N + "_F;\n");
-		GetActiveChunk().append("    float  " + N + "_DD = dot(" + N + "_R, " + N + "_R);\n");
-		GetActiveChunk().append("    " + N + "_M = min(" + N + "_M, " + N + "_DD);\n");
-		GetActiveChunk().append("}\n");
-		GetActiveChunk().append("float " + N + " = sqrt(" + N + "_M);\n");
+		GetActiveChunk().Append("float2 " + N + "_I = floor(" + In + ");\n");
+		GetActiveChunk().Append("float2 " + N + "_F = frac(" + In + ");\n");
+		GetActiveChunk().Append("float  " + N + "_M = 8.0;\n");
+		GetActiveChunk().Append("for (int " + N + "_y = -1; " + N + "_y <= 1; ++" + N + "_y)\n");
+		GetActiveChunk().Append("for (int " + N + "_x = -1; " + N + "_x <= 1; ++" + N + "_x)\n");
+		GetActiveChunk().Append("{\n");
+		GetActiveChunk().Append("    float2 " + N + "_G = float2(float(" + N + "_x), float(" + N + "_y));\n");
+		GetActiveChunk().Append("    float2 " + N + "_O = frac(sin(float2(dot(" + N + "_I + " + N + "_G, float2(127.1, 311.7)), dot(" + N + "_I + " + N + "_G, float2(269.5, 183.3)))) * 43758.5453);\n");
+		GetActiveChunk().Append("    float2 " + N + "_R = " + N + "_G + " + N + "_O - " + N + "_F;\n");
+		GetActiveChunk().Append("    float  " + N + "_DD = dot(" + N + "_R, " + N + "_R);\n");
+		GetActiveChunk().Append("    " + N + "_M = min(" + N + "_M, " + N + "_DD);\n");
+		GetActiveChunk().Append("}\n");
+		GetActiveChunk().Append("float " + N + " = sqrt(" + N + "_M);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3938,7 +3939,7 @@ namespace Lumina
 	{
 		FString N = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(UV0)");
-		GetActiveChunk().append("float " + N + " = frac(sin(dot((" + V.Value + ").xy, float2(12.9898, 78.233))) * 43758.5453);\n");
+		GetActiveChunk().Append("float " + N + " = frac(sin(dot((" + V.Value + ").xy, float2(12.9898, 78.233))) * 43758.5453);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3946,8 +3947,8 @@ namespace Lumina
 	{
 		FString N = UV->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(UV, "float2(UV0)");
-		GetActiveChunk().append("float2 " + N + "_C = floor((" + V.Value + ").xy);\n");
-		GetActiveChunk().append("float " + N + " = fmod(" + N + "_C.x + " + N + "_C.y, 2.0);\n");
+		GetActiveChunk().Append("float2 " + N + "_C = floor((" + V.Value + ").xy);\n");
+		GetActiveChunk().Append("float " + N + " = fmod(" + N + "_C.x + " + N + "_C.y, 2.0);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float);
 	}
 
@@ -3966,8 +3967,8 @@ namespace Lumina
 		ResultType = DetermineResultType(ResultType, EV.Type, true);
 		FString TypeStr = GetVectorType(ResultType);
 
-		GetActiveChunk().append("float " + N + "_Diff = (" + XV.Value + ") - (" + YV.Value + ");\n");
-		GetActiveChunk().append(TypeStr + " " + N + " = (abs(" + N + "_Diff) < " + Format("{}", Threshold) + ") ? (" + EV.Value + ") : ((" + N + "_Diff > 0.0) ? (" + GV.Value + ") : (" + LV.Value + "));\n");
+		GetActiveChunk().Append("float " + N + "_Diff = (" + XV.Value + ") - (" + YV.Value + ");\n");
+		GetActiveChunk().Append(TypeStr + " " + N + " = (abs(" + N + "_Diff) < " + Format("{}", Threshold) + ") ? (" + EV.Value + ") : ((" + N + "_Diff > 0.0) ? (" + GV.Value + ") : (" + LV.Value + "));\n");
 		SetOwningOutputType(X, ResultType);
 	}
 
@@ -3976,7 +3977,7 @@ namespace Lumina
 		FString N = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AV = GetTypedInputValue(A, 0.0f);
 		FInputValue BV = GetTypedInputValue(B, 0.0f);
-		GetActiveChunk().append("float " + N + " = ((" + AV.Value + ") " + Op + " (" + BV.Value + ")) ? 1.0 : 0.0;\n");
+		GetActiveChunk().Append("float " + N + " = ((" + AV.Value + ") " + Op + " (" + BV.Value + ")) ? 1.0 : 0.0;\n");
 		SetOwningOutputType(A, EMaterialInputType::Float);
 	}
 
@@ -3984,7 +3985,7 @@ namespace Lumina
 	static FString FloatLiteral(float Value)
 	{
 		FString Text = Format("{}", Value);
-		return Text.find_first_of(".en") == FString::npos ? Text + ".0" : Text;
+		return Text.FindFirstOf(".en") == Constants::kIndexNone ? Text + ".0" : Text;
 	}
 
 	void FMaterialCompiler::EmitFormula(CMaterialGraphNode* Node, const FMaterialFormula& Formula, const TVector<float>& Values)
@@ -3994,10 +3995,10 @@ namespace Lumina
 
 		TVector<TPair<FString, int32>> Reads;
 		int32 SharedWidth = 1;
-		for (size_t Index = 0; Index < Formula.Inputs.size() && Index < Pins.size(); ++Index)
+		for (int32 Index = 0; Index < Formula.Inputs.Num() && Index < Pins.Num(); ++Index)
 		{
 			const FMaterialFormulaPin& Pin = Formula.Inputs[Index];
-			const FString Unwired = Pin.Fallback != nullptr ? FString(Pin.Fallback) : FloatLiteral(Index < Values.size() ? Values[Index] : Pin.Default);
+			const FString Unwired = Pin.Fallback != nullptr ? FString(Pin.Fallback) : FloatLiteral(Index < Values.Num() ? Values[Index] : Pin.Default);
 			const FInputValue Value = GetTypedInputValue(static_cast<CMaterialInput*>(Pins[Index].Get()), Unwired);
 
 			int32 Width = Pin.Fallback != nullptr ? Math::Max(Pin.Width, 1) : 1;
@@ -4006,19 +4007,19 @@ namespace Lumina
 			{
 				const FString Swizzle = GetSwizzleForMask(Value.Mask);
 				Expr  = Value.Value + Swizzle;
-				Width = Math::Clamp(Swizzle.empty() ? Value.ComponentCount : GetComponentCount(Value.Mask), 1, 4);
+				Width = Math::Clamp(Swizzle.IsEmpty() ? Value.ComponentCount : GetComponentCount(Value.Mask), 1, 4);
 			}
 			if (Pin.Width == 0)
 			{
 				SharedWidth = Math::Max(SharedWidth, Width);
 			}
-			Reads.emplace_back(Expr, Width);
+			Reads.Emplace(Expr, Width);
 		}
 
-		const FString Expanded = ExpandFormula(Formula, Prefix, TSpan<const TPair<FString, int32>>(Reads.data(), Reads.size()), SharedWidth);
+		const FString Expanded = ExpandFormula(Formula, Prefix, TSpan<const TPair<FString, int32>>(Reads.GetData(), Reads.Num()), SharedWidth);
 
-		const bool bRejected = (Formula.Limit == EMaterialFormulaLimit::PixelOnly && !RequirePixelStage(Node, FString(Formula.Name.data())))
-		                    || (Formula.Limit == EMaterialFormulaLimit::NoUI && RejectInUI(Node, Formula.Name.data()));
+		const bool bRejected = (Formula.Limit == EMaterialFormulaLimit::PixelOnly && !RequirePixelStage(Node, FString(Formula.Name.GetData())))
+		                    || (Formula.Limit == EMaterialFormulaLimit::NoUI && RejectInUI(Node, Formula.Name.GetData()));
 
 		auto Bind = [&](CEdNodeGraphPin* Pin, const FString& Var, int32 Width)
 		{
@@ -4028,16 +4029,16 @@ namespace Lumina
 			Output->SetComponentMask(GetMaskFromComponentCount(Width));
 			if (bRejected)
 			{
-				GetActiveChunk().append(GetVectorType(Width) + " " + Var + " = " + GetVectorType(Width) + "(0.0);\n");
+				GetActiveChunk().Append(GetVectorType(Width) + " " + Var + " = " + GetVectorType(Width) + "(0.0);\n");
 			}
 		};
 
 		const auto& Outputs = Node->GetOutputPins();
-		if (Formula.Outputs.empty() && !Outputs.empty())
+		if (Formula.Outputs.IsEmpty() && !Outputs.IsEmpty())
 		{
 			Bind(Outputs[0].Get(), Prefix, Formula.Width == 0 ? SharedWidth : Formula.Width);
 		}
-		for (size_t Index = 0; Index < Formula.Outputs.size() && Index < Outputs.size(); ++Index)
+		for (int32 Index = 0; Index < Formula.Outputs.Num() && Index < Outputs.Num(); ++Index)
 		{
 			const FMaterialFormulaPin& Pin = Formula.Outputs[Index];
 			Bind(Outputs[Index].Get(), Prefix + "_" + Pin.Name, Pin.Width == 0 ? SharedWidth : Pin.Width);
@@ -4045,7 +4046,7 @@ namespace Lumina
 
 		if (!bRejected)
 		{
-			GetActiveChunk().append(Expanded + "\n");
+			GetActiveChunk().Append(Expanded + "\n");
 		}
 	}
 
@@ -4058,9 +4059,9 @@ namespace Lumina
 		FInputValue BaseV = GetTypedInputValue(BaseReflect, 0.04f);
 		FInputValue NV = GetTypedInputValue(Normal, "WorldNormal.xyz");
 
-		GetActiveChunk().append("float3 " + N + "_V = normalize(GetCameraPosition() - WorldPosition);\n");
-		GetActiveChunk().append("float  " + N + "_NoV = saturate(dot(normalize(" + NV.Value + ".xyz), " + N + "_V));\n");
-		GetActiveChunk().append("float " + N + " = saturate((" + BaseV.Value + ") + (1.0 - (" + BaseV.Value + ")) * pow(1.0 - " + N + "_NoV, " + ExpV.Value + "));\n");
+		GetActiveChunk().Append("float3 " + N + "_V = normalize(GetCameraPosition() - WorldPosition);\n");
+		GetActiveChunk().Append("float  " + N + "_NoV = saturate(dot(normalize(" + NV.Value + ".xyz), " + N + "_V));\n");
+		GetActiveChunk().Append("float " + N + " = saturate((" + BaseV.Value + ") + (1.0 - (" + BaseV.Value + ")) * pow(1.0 - " + N + "_NoV, " + ExpV.Value + "));\n");
 		SetOwningOutputType(Exponent, EMaterialInputType::Float);
 	}
 
@@ -4068,7 +4069,7 @@ namespace Lumina
 	{
 		FString N = FadeDistance->GetOwningNode()->GetNodeFullName();
 		FInputValue F = GetTypedInputValue(FadeDistance, 100.0f);
-		GetActiveChunk().append("float " + N + " = saturate(abs(ViewPosition.z) / max((" + F.Value + "), 1e-4));\n");
+		GetActiveChunk().Append("float " + N + " = saturate(abs(ViewPosition.z) / max((" + F.Value + "), 1e-4));\n");
 		SetOwningOutputType(FadeDistance, EMaterialInputType::Float);
 	}
 
@@ -4077,9 +4078,9 @@ namespace Lumina
 		FString N = Height->GetOwningNode()->GetNodeFullName();
 		FInputValue H = GetTypedInputValue(Height, 0.0f);
 		FInputValue S = GetTypedInputValue(Strength, 1.0f);
-		GetActiveChunk().append("float " + N + "_Hx = ddx(" + H.Value + ");\n");
-		GetActiveChunk().append("float " + N + "_Hy = ddy(" + H.Value + ");\n");
-		GetActiveChunk().append("float3 " + N + " = normalize(float3(-" + N + "_Hx * (" + S.Value + "), -" + N + "_Hy * (" + S.Value + "), 1.0));\n");
+		GetActiveChunk().Append("float " + N + "_Hx = ddx(" + H.Value + ");\n");
+		GetActiveChunk().Append("float " + N + "_Hy = ddy(" + H.Value + ");\n");
+		GetActiveChunk().Append("float3 " + N + " = normalize(float3(-" + N + "_Hx * (" + S.Value + "), -" + N + "_Hy * (" + S.Value + "), 1.0));\n");
 		SetOwningOutputType(Height, EMaterialInputType::Float3);
 	}
 
@@ -4087,8 +4088,8 @@ namespace Lumina
 	{
 		FString N = InputXY->GetOwningNode()->GetNodeFullName();
 		FInputValue V = GetTypedInputValue(InputXY, "float2(0.0, 0.0)");
-		GetActiveChunk().append("float2 " + N + "_XY = (" + V.Value + ").xy * 2.0 - 1.0;\n");
-		GetActiveChunk().append("float3 " + N + " = float3(" + N + "_XY, sqrt(saturate(1.0 - dot(" + N + "_XY, " + N + "_XY))));\n");
+		GetActiveChunk().Append("float2 " + N + "_XY = (" + V.Value + ").xy * 2.0 - 1.0;\n");
+		GetActiveChunk().Append("float3 " + N + " = float3(" + N + "_XY, sqrt(saturate(1.0 - dot(" + N + "_XY, " + N + "_XY))));\n");
 		SetOwningOutputType(InputXY, EMaterialInputType::Float3);
 	}
 
@@ -4097,9 +4098,9 @@ namespace Lumina
 		FString N = A->GetOwningNode()->GetNodeFullName();
 		FInputValue AV = GetTypedInputValue(A, "float3(0.0, 0.0, 1.0)");
 		FInputValue BV = GetTypedInputValue(B, "float3(0.0, 0.0, 1.0)");
-		GetActiveChunk().append("float3 " + N + "_A = (" + AV.Value + ").xyz * float3(2.0, 2.0, 2.0) + float3(-1.0, -1.0, 0.0);\n");
-		GetActiveChunk().append("float3 " + N + "_B = (" + BV.Value + ").xyz * float3(-2.0, -2.0, 2.0) + float3(1.0, 1.0, -1.0);\n");
-		GetActiveChunk().append("float3 " + N + " = normalize(" + N + "_A * dot(" + N + "_A, " + N + "_B) - " + N + "_B * " + N + "_A.z) * 0.5 + 0.5;\n");
+		GetActiveChunk().Append("float3 " + N + "_A = (" + AV.Value + ").xyz * float3(2.0, 2.0, 2.0) + float3(-1.0, -1.0, 0.0);\n");
+		GetActiveChunk().Append("float3 " + N + "_B = (" + BV.Value + ").xyz * float3(-2.0, -2.0, 2.0) + float3(1.0, 1.0, -1.0);\n");
+		GetActiveChunk().Append("float3 " + N + " = normalize(" + N + "_A * dot(" + N + "_A, " + N + "_B) - " + N + "_B * " + N + "_A.z) * 0.5 + 0.5;\n");
 		SetOwningOutputType(A, EMaterialInputType::Float3);
 	}
 
@@ -4109,10 +4110,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Color"))
 		{
-			GetActiveChunk().append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float4 " + ID + " = ParticleColor;\n");
+		GetActiveChunk().Append("float4 " + ID + " = ParticleColor;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4120,10 +4121,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Position"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = ParticlePosition;\n");
+		GetActiveChunk().Append("float3 " + ID + " = ParticlePosition;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4131,10 +4132,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Velocity"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = ParticleVelocity;\n");
+		GetActiveChunk().Append("float3 " + ID + " = ParticleVelocity;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4142,10 +4143,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Size"))
 		{
-			GetActiveChunk().append("float2 " + ID + " = float2(1.0, 1.0);\n");
+			GetActiveChunk().Append("float2 " + ID + " = float2(1.0, 1.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float2 " + ID + " = ParticleSize;\n");
+		GetActiveChunk().Append("float2 " + ID + " = ParticleSize;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4153,10 +4154,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Relative Time"))
 		{
-			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ID + " = 0.0;\n");
 			return;
 		}
-		GetActiveChunk().append("float " + ID + " = ParticleLife;\n");
+		GetActiveChunk().Append("float " + ID + " = ParticleLife;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4164,10 +4165,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Random"))
 		{
-			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ID + " = 0.0;\n");
 			return;
 		}
-		GetActiveChunk().append("float " + ID + " = ParticleSeedRandom;\n");
+		GetActiveChunk().Append("float " + ID + " = ParticleSeedRandom;\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4175,10 +4176,10 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Speed"))
 		{
-			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ID + " = 0.0;\n");
 			return;
 		}
-		GetActiveChunk().append("float " + ID + " = length(ParticleVelocity);\n");
+		GetActiveChunk().Append("float " + ID + " = length(ParticleVelocity);\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
 
@@ -4186,11 +4187,11 @@ namespace Lumina
 	{
 		if (RejectOutsideParticle(Node, "Particle Direction"))
 		{
-			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
+			GetActiveChunk().Append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
 			return;
 		}
 		// A particle that has not moved has no direction, and normalizing it would be a NaN.
-		GetActiveChunk().append("float3 " + ID + " = (dot(ParticleVelocity, ParticleVelocity) > 1e-8) ? "
+		GetActiveChunk().Append("float3 " + ID + " = (dot(ParticleVelocity, ParticleVelocity) > 1e-8) ? "
 		                        "normalize(ParticleVelocity) : float3(0.0, 1.0, 0.0);\n");
 		RegisterDeriv(ID, EDerivState::Zero);
 		}
@@ -4206,7 +4207,7 @@ namespace Lumina
 			Error.Name = "Invalid Material Type";
 			Error.Description = "TerrainLayerWeight is only usable in Terrain materials.";
 			AddError(Error);
-			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			GetActiveChunk().Append("float " + ID + " = 0.0;\n");
 			return;
 		}
 
@@ -4223,7 +4224,7 @@ namespace Lumina
 			case 2: Swizzle = "z"; break;
 			case 3: Swizzle = "w"; break;
 		}
-		GetActiveChunk().append("float " + ID + " = GetTerrainLayerWeights4(HeightUV)." + FString(Swizzle) + ";\n");
+		GetActiveChunk().Append("float " + ID + " = GetTerrainLayerWeights4(HeightUV)." + FString(Swizzle) + ";\n");
 	}
 
 	void FMaterialCompiler::TerrainLayerWeights(const FString& ID, CMaterialGraphNode* Node)
@@ -4235,11 +4236,11 @@ namespace Lumina
 			Error.Name = "Invalid Material Type";
 			Error.Description = "TerrainLayerWeights is only usable in Terrain materials.";
 			AddError(Error);
-			GetActiveChunk().append("float4 " + ID + " = float4(1.0, 0.0, 0.0, 0.0);\n");
+			GetActiveChunk().Append("float4 " + ID + " = float4(1.0, 0.0, 0.0, 0.0);\n");
 			return;
 		}
 
-		GetActiveChunk().append("float4 " + ID + " = GetTerrainLayerWeights4(HeightUV);\n");
+		GetActiveChunk().Append("float4 " + ID + " = GetTerrainLayerWeights4(HeightUV);\n");
 	}
 
 	void FMaterialCompiler::TerrainLayerBlend(CMaterialInput* Layer0, CMaterialInput* Layer1, CMaterialInput* Layer2, CMaterialInput* Layer3)
@@ -4253,7 +4254,7 @@ namespace Lumina
 			Error.Name = "Invalid Material Type";
 			Error.Description = "TerrainLayerBlend is only usable in Terrain materials.";
 			AddError(Error);
-			GetActiveChunk().append("float3 " + OwningNode + " = float3(0.0);\n");
+			GetActiveChunk().Append("float3 " + OwningNode + " = float3(0.0);\n");
 			return;
 		}
 
@@ -4285,7 +4286,7 @@ namespace Lumina
 		FString L3Str = Coerce(L3);
 
 		// Blend formula lives once, in TerrainData.slang::BlendTerrainLayers4 (shared with the default terrain material).
-		GetActiveChunk().append("float3 " + OwningNode + " = BlendTerrainLayers4("
+		GetActiveChunk().Append("float3 " + OwningNode + " = BlendTerrainLayers4("
 			+ L0Str + ", " + L1Str + ", " + L2Str + ", " + L3Str + ", HeightUV);\n");
 	}
 
@@ -4296,6 +4297,6 @@ namespace Lumina
 
 	void FMaterialCompiler::AddRaw(const FString& Raw)
 	{
-		GetActiveChunk().append(Raw);
+		GetActiveChunk().Append(Raw);
 	}
 }

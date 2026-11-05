@@ -37,7 +37,7 @@ namespace Lumina::Containers
         }
 
         template <typename TCallable>
-        static TRet InvokeThunk(void* Target, TArgs&&... Args)
+        static TRet InvokeThunk(void* Target, Private::TThunkArg<TArgs>... Args)
         {
             if constexpr (std::is_function_v<TCallable>)
             {
@@ -59,9 +59,23 @@ namespace Lumina::Containers
         template <typename TCallable>
         requires (bIsValidCallable<TCallable>)
         TFunctionRef(TCallable&& Callable) noexcept
-            : Thunk(&InvokeThunk<std::remove_reference_t<TCallable>>)
-            , Target(ToTarget(std::addressof(Callable)))
         {
+            using FDecayed = std::remove_cvref_t<TCallable>;
+
+            // A function pointer is held by value, since a temporary &Function is gone once the statement ends.
+            if constexpr (std::is_pointer_v<FDecayed> && std::is_function_v<std::remove_pointer_t<FDecayed>>)
+            {
+                if (Callable != nullptr)
+                {
+                    Thunk = &InvokeThunk<std::remove_pointer_t<FDecayed>>;
+                    Target = reinterpret_cast<void*>(Callable);
+                }
+            }
+            else
+            {
+                Thunk = &InvokeThunk<std::remove_reference_t<TCallable>>;
+                Target = ToTarget(std::addressof(Callable));
+            }
         }
 
         TFunctionRef(const TFunctionRef&) noexcept = default;
@@ -86,7 +100,7 @@ namespace Lumina::Containers
 
     private:
 
-        TRet (*Thunk)(void* Target, TArgs&&... Args) = nullptr;
+        TRet (*Thunk)(void* Target, Private::TThunkArg<TArgs>... Args) = nullptr;
         void* Target = nullptr;
     };
 

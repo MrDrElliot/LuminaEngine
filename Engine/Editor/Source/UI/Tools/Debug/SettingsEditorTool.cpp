@@ -122,10 +122,10 @@ namespace Lumina
 
     FPropertyTable* FSettingsEditorTool::GetOrCreateTable(CClass* SettingsClass)
     {
-        auto It = Tables.find(SettingsClass);
-        if (It != Tables.end())
+        auto It = Tables.Find(SettingsClass);
+        if (It != nullptr)
         {
-            return It->second.get();
+            return It->get();
         }
 
         CObject* CDO = SettingsClass->GetDefaultObject();
@@ -146,7 +146,7 @@ namespace Lumina
         });
 
         FPropertyTable* Raw = Table.get();
-        Tables.emplace(SettingsClass, Move(Table));
+        Tables.TryAdd(SettingsClass, Move(Table));
         return Raw;
     }
 
@@ -162,10 +162,10 @@ namespace Lumina
         TVector<CClass*> Classes;
         GConfig->ForEachSettingsClass([&](CClass* Class)
         {
-            Classes.push_back(Class);
+            Classes.Add(Class);
         });
 
-        if (Classes.empty())
+        if (Classes.IsEmpty())
         {
             ImGui::TextDisabled("No settings registered.");
             return;
@@ -180,24 +180,20 @@ namespace Lumina
         THashMap<FString, TVector<CClass*>> ByCategory;
         for (CClass* Class : Classes)
         {
-            ByCategory[CategoryOf(Class)].push_back(Class);
+            ByCategory[CategoryOf(Class)].Add(Class);
         }
 
         TVector<FString> Categories;
-        Categories.reserve(ByCategory.size());
-        for (auto& Pair : ByCategory)
-        {
-            Categories.push_back(Pair.first);
-        }
+        ByCategory.GenerateKeyArray(Categories);
         Algo::Sort(Categories, [](const FString& A, const FString& B)
         {
-            return strcmp(A.c_str(), B.c_str()) < 0;
+            return strcmp(*A, *B) < 0;
         });
-        for (auto& Pair : ByCategory)
+        for (auto& [Category, CategoryClasses] : ByCategory)
         {
-            Algo::Sort(Pair.second, [](CClass* A, CClass* B)
+            Algo::Sort(CategoryClasses, [](CClass* A, CClass* B)
             {
-                return strcmp(DisplayNameOf(A).c_str(), DisplayNameOf(B).c_str()) < 0;
+                return strcmp(*DisplayNameOf(A), *DisplayNameOf(B)) < 0;
             });
         }
 
@@ -214,18 +210,18 @@ namespace Lumina
                 for (CClass* Class : ByCategory[Category])
                 {
                     const FString Label = DisplayNameOf(Class);
-                    if (!ImGuiX::PassSearchFilter(SettingsFilter, Label.c_str()))
+                    if (!ImGuiX::PassSearchFilter(SettingsFilter, *Label))
                     {
                         continue;
                     }
                     if (!bHeaderDrawn)
                     {
-                        DrawCategoryHeader(ToUpper(Category).c_str());
+                        DrawCategoryHeader(*ToUpper(Category));
                         bHeaderDrawn = true;
                     }
 
                     ImGui::PushID(Class);
-                    if (DrawSettingsEntry(Label.c_str(), SelectedClass == Class))
+                    if (DrawSettingsEntry(*Label, SelectedClass == Class))
                     {
                         SelectedClass = Class;
                     }
@@ -243,13 +239,13 @@ namespace Lumina
             {
                 ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
-                ImGui::TextUnformatted(DisplayNameOf(SelectedClass).c_str());
+                ImGui::TextUnformatted(*DisplayNameOf(SelectedClass));
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
 
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
-                ImGui::Text("  %s", CategoryOf(SelectedClass).c_str());
+                ImGui::Text("  %s", *CategoryOf(SelectedClass));
                 ImGui::PopStyleColor();
 
                 ImGui::Separator();

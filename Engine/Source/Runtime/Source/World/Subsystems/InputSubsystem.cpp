@@ -246,24 +246,24 @@ namespace Lumina
 
     uint64 CInputSubsystem::AcquireInputMode(EInputMode InputMode, EMouseMode MouseMode)
     {
-        if (Leases.empty())
+        if (Leases.IsEmpty())
         {
             BaseInputMode = Input::GetInputMode(GetWorld());
             BaseMouseMode = Input::GetMouseMode(GetWorld());
         }
         const uint64 Id = NextId++;
-        Leases.push_back({ Id, InputMode, MouseMode });
+        Leases.Emplace(Id, InputMode, MouseMode);
         ApplyInputModes();
         return Id;
     }
 
     bool CInputSubsystem::ReleaseInputMode(uint64 Lease)
     {
-        for (size_t Index = 0; Index < Leases.size(); ++Index)
+        for (int32 Index = 0; Index < Leases.Num(); ++Index)
         {
             if (Leases[Index].Id == Lease)
             {
-                Leases.erase(Leases.begin() + Index);
+                Leases.RemoveAt(Index);
                 ApplyInputModes();
                 return true;
             }
@@ -273,16 +273,16 @@ namespace Lumina
 
     void CInputSubsystem::ClearInputModes()
     {
-        if (!Leases.empty())
+        if (!Leases.IsEmpty())
         {
-            Leases.clear();
+            Leases.Reset();
             ApplyInputModes();
         }
     }
 
     void CInputSubsystem::ApplyInputModes()
     {
-        if (Leases.empty())
+        if (Leases.IsEmpty())
         {
             Input::SetInputMode(GetWorld(), BaseInputMode);
             Input::SetMouseMode(GetWorld(), BaseMouseMode);

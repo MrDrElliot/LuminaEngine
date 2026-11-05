@@ -96,7 +96,8 @@ namespace
             Lumina::TVector<FManagedPin*> Snapshot;
             {
                 Lumina::FScopeLock Lock(Mutex);
-                Snapshot.assign(Pins.begin(), Pins.end());
+                Snapshot.Reset();
+                Snapshot.Append(Pins.begin(), Pins.end());
             }
             for (FManagedPin* Pin : Snapshot)
             {
@@ -112,7 +113,7 @@ namespace
         {
             FManagedPin* Pin = Lumina::Memory::New<FManagedPin>(Object);
             Lumina::FScopeLock Lock(Mutex);
-            Pins.insert(Pin);
+            Pins.Add(Pin);
             return Pin;
         }
 
@@ -120,7 +121,7 @@ namespace
         {
             {
                 Lumina::FScopeLock Lock(Mutex);
-                Pins.erase(Pin);
+                Pins.Remove(Pin);
             }
             Lumina::Memory::Delete(Pin);
         }

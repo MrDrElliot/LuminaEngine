@@ -22,7 +22,7 @@ namespace Lumina
 
         bool IsPlayable() const override { return IsValid(); }
 
-        bool IsValid() const { return AudioData && !AudioData->Bytes.empty(); }
+        bool IsValid() const { return AudioData && !AudioData->Bytes.IsEmpty(); }
         const TSharedPtr<FAudioData>& GetAudioData() const { return AudioData; }
 
         float GetDuration() const override { return SampleRate != 0 ? (float)((double)NumFrames / (double)SampleRate) : 0.0f; }

@@ -59,11 +59,11 @@ namespace Lumina
             // Padded like a pose so the decay runs whole vectors; a zeroed pad lane decays to nothing.
             Stride = FPose::StrideFor(NumBones);
             Count  = NumBones;
-            Data.assign((SIZE_T)NumStreams * Stride, 0.0f);
+            Data.Init(0.0f, (SIZE_T)NumStreams * Stride);
         }
 
-        FORCEINLINE float* Stream(int32 Index) { return Data.data() + (SIZE_T)Index * Stride; }
-        FORCEINLINE const float* Stream(int32 Index) const { return Data.data() + (SIZE_T)Index * Stride; }
+        FORCEINLINE float* Stream(int32 Index) { return Data.GetData() + (SIZE_T)Index * Stride; }
+        FORCEINLINE const float* Stream(int32 Index) const { return Data.GetData() + (SIZE_T)Index * Stride; }
 
         // Constness rides through Stream's own overload pair, so a const task still hands out const float*.
         template <typename Self> FORCEINLINE auto DirX(this Self&& S) { return S.Stream(StreamDirX); }
@@ -223,13 +223,13 @@ namespace Lumina
 
         int16 Add(const FAnimTask& Task)
         {
-            Tasks.push_back(Task);
-            return (int16)(Tasks.size() - 1);
+            Tasks.Add(Task);
+            return (int16)(Tasks.Num() - 1);
         }
 
         void Reset()
         {
-            Tasks.clear();
+            Tasks.Reset();
             OutputTask      = FAnimTask::NoTask;
             Skeleton        = nullptr;
             bLockRoot       = false;
@@ -291,7 +291,7 @@ namespace Lumina
 
         void Reset()
         {
-            Entries.clear();
+            Entries.Reset();
             OutputTask      = FAnimTask::NoTask;
             NumBones        = 0;
             ActiveBoneCount = 0;

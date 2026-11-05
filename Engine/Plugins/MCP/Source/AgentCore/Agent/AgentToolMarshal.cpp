@@ -27,19 +27,19 @@
 
 namespace Lumina::Agent
 {
-    namespace
+    namespace AgentToolMarshalInternal
     {
         FString JoinPath(FStringView Path, FStringView Leaf)
         {
-            return Path.empty() ? FString(Leaf.data(), Leaf.size()) : Lumina::Format("{}.{}", Path, Leaf);
+            return Path.IsEmpty() ? FString(Leaf.GetData(), Leaf.Len()) : Lumina::Format("{}.{}", Path, Leaf);
         }
 
-        bool CanonicalizeProperty(FProperty* Property, nlohmann::json& Value, FStringView Path, FString& OutError);
+        bool CanonicalizeProperty(FProperty* Property, FJsonValue& Value, FStringView Path, FString& OutError);
 
         // Rewrites the shorthand forms into the archive's own shape, so validation and apply see one format.
-        bool CanonicalizeStruct(CStruct* Struct, nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool CanonicalizeStruct(CStruct* Struct, FJsonValue& Value, FStringView Path, FString& OutError)
         {
-            if (Struct == nullptr || !Value.is_object())
+            if (Struct == nullptr || !Value.IsObject())
             {
                 return true;
             }
@@ -55,10 +55,10 @@ namespace Lumina::Agent
                         return;
                     }
 
-                    const FString Name(Property->GetPropertyName().ToString().c_str());
+                    const FString Name(*Property->GetPropertyName().ToString());
 
-                    const auto Found = Value.find(Detail::ToStandard(FStringView(Name)));
-                    if (Found == Value.end())
+                    FJsonValue* Found = Value.Find(FStringView(Name));
+                    if (Found == nullptr)
                     {
                         return;
                     }
@@ -76,7 +76,7 @@ namespace Lumina::Agent
         }
 
         // A map given as an object needs each key turned back into the key property's JSON form.
-        bool CanonicalizeMapKey(FProperty* KeyProperty, const std::string& Key, nlohmann::json& OutKey,
+        bool CanonicalizeMapKey(FProperty* KeyProperty, const FJsonString& Key, FJsonValue& OutKey,
             FStringView Path, FString& OutError)
         {
             switch (KeyProperty->GetType())
@@ -84,7 +84,7 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::String:
             case EPropertyTypeFlags::Name:
             case EPropertyTypeFlags::Enum:
-                OutKey = Key;
+                OutKey = FJsonValue(Key);
                 return true;
 
             case EPropertyTypeFlags::Int8:
@@ -98,10 +98,10 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::Entity:
                 {
                     char* End = nullptr;
-                    const long long Parsed = std::strtoll(Key.c_str(), &End, 10);
-                    if (End == Key.c_str() || *End != '\0')
+                    const long long Parsed = std::strtoll(Key.CStr(), &End, 10);
+                    if (End == Key.CStr() || *End != '\0')
                     {
-                        OutError = Lumina::Format("'{}' has key '{}', which is not a whole number.", Path, Key);
+                        OutError = Lumina::Format("'{}' has key '{}', which is not a whole number.", Path, Key.View());
                         return false;
                     }
 
@@ -115,20 +115,20 @@ namespace Lumina::Agent
             }
         }
 
-        bool CanonicalizeProperty(FProperty* Property, nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool CanonicalizeProperty(FProperty* Property, FJsonValue& Value, FStringView Path, FString& OutError)
         {
             switch (Property->GetType())
             {
             case EPropertyTypeFlags::SoftObject:
                 {
                     // A GUID is what every other tool hands back, so accept it and store the path it names.
-                    if (!Value.is_string())
+                    if (!Value.IsString())
                     {
                         return true;
                     }
 
-                    const std::string Given = Value.get<std::string>();
-                    const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(Given.c_str()));
+                    const FString Given(Value.AsString());
+                    const TOptional<FGuid> Guid = FGuid::TryParse(Given.View());
                     if (!Guid.IsSet())
                     {
                         return true;
@@ -141,7 +141,7 @@ namespace Lumina::Agent
                         return false;
                     }
 
-                    Value = Detail::ToStandard(FStringView(Data->Path.c_str()));
+                    Value = FJsonValue(Data->Path.View());
                     return true;
                 }
 
@@ -149,23 +149,24 @@ namespace Lumina::Agent
                 {
                     FProperty* Inner = static_cast<FOptionalProperty*>(Property)->GetInternalProperty();
 
-                    if (Value.is_null())
+                    if (Value.IsNull())
                     {
-                        Value = nlohmann::json::object({ { "Engaged", false } });
+                        Value = FJsonValue::MakeObject({ { "Engaged", false } });
                         return true;
                     }
 
-                    const bool bCanonical = Value.is_object() && Value.contains("Engaged") && Value["Engaged"].is_boolean()
-                        && Value.size() == (Value.contains("Value") ? 2u : 1u);
+                    const bool bCanonical = Value.IsObject() && Value["Engaged"].IsBool()
+                        && Value.Num() == (Value.Contains("Value") ? 2 : 1);
 
                     if (!bCanonical)
                     {
-                        Value = nlohmann::json::object({ { "Engaged", true }, { "Value", Value } });
+                        Value = FJsonValue::MakeObject({ { "Engaged", true }, { "Value", Value } });
                     }
 
-                    if (Inner != nullptr && Value.contains("Value"))
+                    FJsonValue* Nested = Value.Find("Value");
+                    if (Inner != nullptr && Nested != nullptr)
                     {
-                        return CanonicalizeProperty(Inner, Value["Value"], FStringView(JoinPath(Path, "Value")), OutError);
+                        return CanonicalizeProperty(Inner, *Nested, FStringView(JoinPath(Path, "Value")), OutError);
                     }
 
                     return true;
@@ -182,34 +183,35 @@ namespace Lumina::Agent
                         return true;
                     }
 
-                    if (Value.is_object())
+                    if (Value.IsObject())
                     {
-                        nlohmann::json Flat = nlohmann::json::array();
-                        for (auto& Entry : Value.items())
+                        FJsonValue Flat = FJsonValue::MakeArray(Value.Num() * 2);
+                        for (const FJsonMember& Entry : Value.Members())
                         {
-                            nlohmann::json Key;
-                            if (!CanonicalizeMapKey(KeyProperty, Entry.key(), Key, Path, OutError))
+                            FJsonValue Key;
+                            if (!CanonicalizeMapKey(KeyProperty, Entry.Key, Key, Path, OutError))
                             {
                                 return false;
                             }
 
-                            Flat.push_back(Move(Key));
-                            Flat.push_back(Entry.value());
+                            Flat.Add(Move(Key));
+                            Flat.Add(Entry.Value);
                         }
 
                         Value = Move(Flat);
                     }
 
-                    if (!Value.is_array())
+                    if (!Value.IsArray())
                     {
                         return true;
                     }
 
-                    for (size_t Index = 0; Index < Value.size(); ++Index)
+                    TSpan<FJsonValue> Elements = Value.AsArray();
+                    for (int32 Index = 0; Index < Elements.Num(); ++Index)
                     {
                         FProperty* Element = Index % 2 == 0 ? KeyProperty : ValueProperty;
                         const FString ElementPath = Lumina::Format("{}[{}]", Path, Index);
-                        if (!CanonicalizeProperty(Element, Value[Index], FStringView(ElementPath), OutError))
+                        if (!CanonicalizeProperty(Element, Elements[Index], FStringView(ElementPath), OutError))
                         {
                             return false;
                         }
@@ -220,18 +222,17 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::InstancedStruct:
                 {
-                    if (!Value.is_object() || !Value.contains("StructType") || !Value["StructType"].is_string()
-                        || !Value.contains("Data"))
+                    FJsonValue* StructData = Value.Find("Data");
+                    if (!Value["StructType"].IsString() || StructData == nullptr)
                     {
                         return true;
                     }
 
-                    const std::string Key = Value["StructType"].get<std::string>();
                     CStruct* Type = ResolveInstancedStructType(
-                        static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct(), FName(Key.c_str()));
+                        static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct(), FName(Value["StructType"].AsString()));
 
                     return Type == nullptr
-                        || CanonicalizeStruct(Type, Value["Data"], FStringView(JoinPath(Path, "Data")), OutError);
+                        || CanonicalizeStruct(Type, *StructData, FStringView(JoinPath(Path, "Data")), OutError);
                 }
 
             case EPropertyTypeFlags::Struct:
@@ -240,15 +241,16 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::Vector:
                 {
                     FProperty* Inner = static_cast<FArrayProperty*>(Property)->GetInternalProperty();
-                    if (Inner == nullptr || !Value.is_array())
+                    if (Inner == nullptr || !Value.IsArray())
                     {
                         return true;
                     }
 
-                    for (size_t Index = 0; Index < Value.size(); ++Index)
+                    TSpan<FJsonValue> Elements = Value.AsArray();
+                    for (int32 Index = 0; Index < Elements.Num(); ++Index)
                     {
                         const FString ElementPath = Lumina::Format("{}[{}]", Path, Index);
-                        if (!CanonicalizeProperty(Inner, Value[Index], FStringView(ElementPath), OutError))
+                        if (!CanonicalizeProperty(Inner, Elements[Index], FStringView(ElementPath), OutError))
                         {
                             return false;
                         }
@@ -262,9 +264,9 @@ namespace Lumina::Agent
             }
         }
 
-        bool ValidateProperty(FProperty* Property, const nlohmann::json& Value, FStringView Path, FString& OutError);
+        bool ValidateProperty(FProperty* Property, const FJsonValue& Value, FStringView Path, FString& OutError);
 
-        bool ValidateStruct(CStruct* Struct, const nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool ValidateStruct(CStruct* Struct, const FJsonValue& Value, FStringView Path, FString& OutError)
         {
             if (Struct == nullptr)
             {
@@ -272,9 +274,9 @@ namespace Lumina::Agent
                 return false;
             }
 
-            if (!Value.is_object())
+            if (!Value.IsObject())
             {
-                OutError = Path.empty()
+                OutError = Path.IsEmpty()
                     ? FString("The arguments have to be a JSON object.")
                     : Lumina::Format("'{}' has to be an object.", Path);
                 return false;
@@ -287,34 +289,34 @@ namespace Lumina::Agent
                 {
                     if (Property != nullptr)
                     {
-                        Properties.push_back(Property);
+                        Properties.Add(Property);
                     }
                 });
             }
 
             // A misspelled name would otherwise be dropped, leaving the caller sure it had been applied.
-            for (const auto& Entry : Value.items())
+            for (const FJsonMember& Entry : Value.Members())
             {
                 bool bKnown = false;
                 for (FProperty* Property : Properties)
                 {
-                    bKnown = bKnown || Property->GetPropertyName().ToString().c_str() == Entry.key();
+                    bKnown = bKnown || Entry.Key == *Property->GetPropertyName().ToString();
                 }
 
                 if (!bKnown)
                 {
                     OutError = Lumina::Format("'{}' is not a field of {}.",
-                        JoinPath(Path, FStringView(Entry.key().c_str())), Struct->GetName());
+                        JoinPath(Path, Entry.Key.View()), Struct->GetName());
                     return false;
                 }
             }
 
             for (FProperty* Property : Properties)
             {
-                const FString Name(Property->GetPropertyName().ToString().c_str());
+                const FString Name(*Property->GetPropertyName().ToString());
 
-                const auto Found = Value.find(Detail::ToStandard(FStringView(Name)));
-                if (Found == Value.end())
+                const FJsonValue* Found = Value.Find(FStringView(Name));
+                if (Found == nullptr)
                 {
                     // An absent field keeps whatever the freshly constructed struct already holds.
                     continue;
@@ -331,14 +333,14 @@ namespace Lumina::Agent
 
         // A value past the field's width would otherwise be stored truncated, so 300 in an int8 lands as 44.
         template<typename T>
-        bool ValidateInteger(const nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool ValidateInteger(const FJsonValue& Value, FStringView Path, FString& OutError)
         {
-            const bool bFits = Value.is_number_unsigned()
-                ? Value.get<uint64>() <= static_cast<uint64>(TNumericLimits<T>::Max())
-                : Value.is_number_integer()
-                    && Value.get<int64>() >= static_cast<int64>(TNumericLimits<T>::Min())
-                    && (std::is_signed_v<T> || Value.get<int64>() >= 0)
-                    && (sizeof(T) == sizeof(int64) || Value.get<int64>() <= static_cast<int64>(TNumericLimits<T>::Max()));
+            const bool bFits = Value.IsUnsigned()
+                ? Value.AsUInt64() <= static_cast<uint64>(TNumericLimits<T>::Max())
+                : Value.IsInteger()
+                    && Value.AsInt64() >= static_cast<int64>(TNumericLimits<T>::Min())
+                    && (std::is_signed_v<T> || Value.AsInt64() >= 0)
+                    && (sizeof(T) == sizeof(int64) || Value.AsInt64() <= static_cast<int64>(TNumericLimits<T>::Max()));
 
             if (!bFits)
             {
@@ -348,7 +350,7 @@ namespace Lumina::Agent
             return bFits;
         }
 
-        bool ValidateEnum(FEnumProperty* Property, const nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool ValidateEnum(FEnumProperty* Property, const FJsonValue& Value, FStringView Path, FString& OutError)
         {
             CEnum* Enum = Property->GetEnum();
             if (Enum == nullptr || Enum->IsBitmaskEnum())
@@ -357,32 +359,32 @@ namespace Lumina::Agent
                 return false;
             }
 
-            if (!Value.is_string())
+            if (!Value.IsString())
             {
                 OutError = Lumina::Format("'{}' has to be one of the enum names, as a string.", Path);
                 return false;
             }
 
-            const std::string Given = Value.get<std::string>();
+            const FStringView Given = Value.AsString();
 
             FString Allowed;
             for (const TPair<FName, uint64>& Entry : Enum->Names)
             {
-                const FString EntryName(Entry.first.ToString().c_str());
-                if (Detail::ToStandard(FStringView(EntryName)) == Given)
+                const FString EntryName(*Entry.Key.ToString());
+                if (EntryName.View() == Given)
                 {
                     return true;
                 }
 
-                Allowed.append(Allowed.empty() ? "" : ", ");
-                Allowed.append(EntryName);
+                Allowed.Append(Allowed.IsEmpty() ? "" : ", ");
+                Allowed.Append(EntryName);
             }
 
             OutError = Lumina::Format("'{}' is not one of {}.", Path, Allowed);
             return false;
         }
 
-        bool ValidateProperty(FProperty* Property, const nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool ValidateProperty(FProperty* Property, const FJsonValue& Value, FStringView Path, FString& OutError)
         {
             const auto Expect = [&](bool bMatches, FStringView Wanted)
             {
@@ -407,29 +409,29 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::Float:
             case EPropertyTypeFlags::Double:
-                return Expect(Value.is_number(), "a number");
+                return Expect(Value.IsNumber(), "a number");
 
             case EPropertyTypeFlags::Bool:
-                return Expect(Value.is_boolean(), "true or false");
+                return Expect(Value.IsBool(), "true or false");
 
             case EPropertyTypeFlags::String:
             case EPropertyTypeFlags::Name:
-                return Expect(Value.is_string(), "a string");
+                return Expect(Value.IsString(), "a string");
 
             case EPropertyTypeFlags::Object:
                 {
-                    if (!Expect(Value.is_string(), "an asset GUID or content path, as a string"))
+                    if (!Expect(Value.IsString(), "an asset GUID or content path, as a string"))
                     {
                         return false;
                     }
 
-                    const std::string Given = Value.get<std::string>();
-                    if (Given.empty())
+                    const FStringView Given = Value.AsString();
+                    if (Given.IsEmpty())
                     {
                         return true;
                     }
 
-                    if (!ParseAssetGuid(FStringView(Given.c_str())).IsSet())
+                    if (!ParseAssetGuid(Given).IsSet())
                     {
                         OutError = Lumina::Format("'{}' is neither a GUID nor an asset path.", Path);
                         return false;
@@ -446,7 +448,7 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::Vector:
                 {
-                    if (!Expect(Value.is_array(), "an array"))
+                    if (!Expect(Value.IsArray(), "an array"))
                     {
                         return false;
                     }
@@ -458,7 +460,7 @@ namespace Lumina::Agent
                         return false;
                     }
 
-                    for (size_t Index = 0; Index < Value.size(); ++Index)
+                    for (int32 Index = 0; Index < Value.Num(); ++Index)
                     {
                         const FString ElementPath = Lumina::Format("{}[{}]", Path, Index);
                         if (!ValidateProperty(Inner, Value[Index], FStringView(ElementPath), OutError))
@@ -471,22 +473,22 @@ namespace Lumina::Agent
                 }
 
             case EPropertyTypeFlags::SoftObject:
-                return Expect(Value.is_string(), "an asset path or GUID, as a string");
+                return Expect(Value.IsString(), "an asset path or GUID, as a string");
 
             case EPropertyTypeFlags::Class:
                 {
-                    if (!Expect(Value.is_string(), "a class name, as a string"))
+                    if (!Expect(Value.IsString(), "a class name, as a string"))
                     {
                         return false;
                     }
 
-                    const std::string Given = Value.get<std::string>();
-                    if (Given.empty() || Given == "NAME_None")
+                    const FStringView Given = Value.AsString();
+                    if (Given.IsEmpty() || Given == "NAME_None")
                     {
                         return true;
                     }
 
-                    CClass* Class = FindObject<CClass>(FName(Given.c_str()));
+                    CClass* Class = FindObject<CClass>(FName(Given));
                     if (Class == nullptr)
                     {
                         OutError = Lumina::Format("'{}' names no class called {}.", Path, Given);
@@ -505,18 +507,18 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::SubStruct:
                 {
-                    if (!Expect(Value.is_string(), "a struct name, as a string"))
+                    if (!Expect(Value.IsString(), "a struct name, as a string"))
                     {
                         return false;
                     }
 
-                    const std::string Given = Value.get<std::string>();
-                    if (Given.empty() || Given == "NAME_None")
+                    const FStringView Given = Value.AsString();
+                    if (Given.IsEmpty() || Given == "NAME_None")
                     {
                         return true;
                     }
 
-                    CStruct* Struct = FindObject<CStruct>(FName(Given.c_str()));
+                    CStruct* Struct = FindObject<CStruct>(FName(Given));
                     if (Struct == nullptr)
                     {
                         OutError = Lumina::Format("'{}' names no struct called {}.", Path, Given);
@@ -535,19 +537,19 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::Optional:
                 {
-                    if (!Expect(Value.is_object() && Value.contains("Engaged") && Value["Engaged"].is_boolean(),
+                    if (!Expect(Value.IsObject() && Value["Engaged"].IsBool(),
                             "null, a value, or {\"Engaged\": bool, \"Value\": ...}"))
                     {
                         return false;
                     }
 
-                    if (!Value["Engaged"].get<bool>())
+                    if (!Value["Engaged"].AsBool())
                     {
                         return true;
                     }
 
                     FProperty* Inner = static_cast<FOptionalProperty*>(Property)->GetInternalProperty();
-                    if (Inner == nullptr || !Value.contains("Value"))
+                    if (Inner == nullptr || !Value.Contains("Value"))
                     {
                         OutError = Lumina::Format("'{}' is engaged but carries no Value.", Path);
                         return false;
@@ -558,27 +560,27 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::InstancedStruct:
                 {
-                    if (!Expect(Value.is_object() && Value.contains("StructType") && Value["StructType"].is_string(),
+                    if (!Expect(Value.IsObject() && Value["StructType"].IsString(),
                             "{\"StructType\": name, \"Data\": {...}}"))
                     {
                         return false;
                     }
 
-                    const std::string Key = Value["StructType"].get<std::string>();
-                    if (Key.empty() || Key == "NAME_None")
+                    const FStringView Key = Value["StructType"].AsString();
+                    if (Key.IsEmpty() || Key == "NAME_None")
                     {
                         return true;
                     }
 
                     CStruct* Type = ResolveInstancedStructType(
-                        static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct(), FName(Key.c_str()));
+                        static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct(), FName(Key));
                     if (Type == nullptr)
                     {
                         OutError = Lumina::Format("'{}' names no struct called {} that fits here.", Path, Key);
                         return false;
                     }
 
-                    if (!Value.contains("Data"))
+                    if (!Value.Contains("Data"))
                     {
                         return true;
                     }
@@ -588,7 +590,7 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::Map:
                 {
-                    if (!Expect(Value.is_array() && Value.size() % 2 == 0,
+                    if (!Expect(Value.IsArray() && Value.Num() % 2 == 0,
                             "an object, or a [key, value, key, value, ...] array"))
                     {
                         return false;
@@ -603,7 +605,7 @@ namespace Lumina::Agent
                         return false;
                     }
 
-                    for (size_t Index = 0; Index < Value.size(); ++Index)
+                    for (int32 Index = 0; Index < Value.Num(); ++Index)
                     {
                         FProperty* Element = Index % 2 == 0 ? KeyProperty : ValueProperty;
                         const FString ElementPath = Lumina::Format("{}[{}]", Path, Index);
@@ -687,33 +689,25 @@ namespace Lumina::Agent
             }
         }
 
-        bool ApplyStructObjects(CStruct* Struct, void* Data, const nlohmann::json& Value, FStringView Path, FString& OutError);
+        bool ApplyStructObjects(CStruct* Struct, void* Data, const FJsonValue& Value, FStringView Path, FString& OutError);
 
         // Builds the key the archive just inserted, so the matching value slot can be found by lookup.
-        void* FindMapValueForKey(FMapProperty* Map, void* Container, const nlohmann::json& Key)
+        void* FindMapValueForKey(FMapProperty* Map, void* Container, const FJsonValue& Key)
         {
             void* Scratch = Memory::Malloc(Map->GetKeySize(), 16);
             Map->ConstructKey(Container, Scratch);
 
-            void* Found = nullptr;
-            try
-            {
-                nlohmann::json Mutable = Key;
-                FJsonStructuredArchive Archive(Mutable, true);
-                Map->GetKeyProperty()->SerializeItem(Archive.Open(), Scratch, nullptr);
-                Found = Map->Find(Container, Scratch);
-            }
-            catch (const std::exception&)
-            {
-                Found = nullptr;
-            }
+            FJsonValue Mutable = Key;
+            FJsonStructuredArchive Archive(Mutable, true);
+            Map->GetKeyProperty()->SerializeItem(Archive.Open(), Scratch, nullptr);
+            void* Found = Map->Find(Container, Scratch);
 
             Map->DestructKey(Container, Scratch);
             Memory::Free(Scratch);
             return Found;
         }
 
-        bool ApplyPropertyObjects(FProperty* Property, void* ValuePtr, const nlohmann::json& Value,
+        bool ApplyPropertyObjects(FProperty* Property, void* ValuePtr, const FJsonValue& Value,
             FStringView Path, FString& OutError)
         {
             switch (Property->GetType())
@@ -722,8 +716,8 @@ namespace Lumina::Agent
                 {
                     TStrongObjectPtr<CObject>* Slot = static_cast<TStrongObjectPtr<CObject>*>(ValuePtr);
 
-                    const std::string Given = Value.get<std::string>();
-                    if (Given.empty())
+                    const FStringView Given = Value.AsString();
+                    if (Given.IsEmpty())
                     {
                         *Slot = nullptr;
                         return true;
@@ -731,7 +725,7 @@ namespace Lumina::Agent
 
                     CObject* Resolved = nullptr;
                     FString ResolveError;
-                    if (!ResolveAssetObject(FStringView(Given.c_str()), Resolved, ResolveError))
+                    if (!ResolveAssetObject(Given, Resolved, ResolveError))
                     {
                         OutError = Lumina::Format("'{}' names no asset that could be loaded. {}", Path, ResolveError);
                         return false;
@@ -764,16 +758,17 @@ namespace Lumina::Agent
                     }
 
                     // The archive already sized this, but it filled every object element with null.
-                    Array->Resize(ValuePtr, Value.size());
+                    Array->SetNum(ValuePtr, Value.Num());
 
-                    for (size_t Index = 0; Index < Value.size(); ++Index)
+                    int32 Index = 0;
+                    for (const FJsonValue& Element : Value.AsArray())
                     {
                         const FString ElementPath = Lumina::Format("{}[{}]", Path, Index);
-                        if (!ApplyPropertyObjects(Inner, Array->GetAt(ValuePtr, Index), Value[Index],
-                                FStringView(ElementPath), OutError))
+                        if (!ApplyPropertyObjects(Inner, Array->GetAt(ValuePtr, Index), Element, FStringView(ElementPath), OutError))
                         {
                             return false;
                         }
+                        ++Index;
                     }
 
                     return true;
@@ -784,7 +779,7 @@ namespace Lumina::Agent
                     FOptionalProperty* Optional = static_cast<FOptionalProperty*>(Property);
                     FProperty* Inner = Optional->GetInternalProperty();
 
-                    if (Inner == nullptr || !Optional->HasValue(ValuePtr) || !Value.is_object() || !Value.contains("Value"))
+                    if (Inner == nullptr || !Optional->IsSet(ValuePtr) || !Value.IsObject() || !Value.Contains("Value"))
                     {
                         return true;
                     }
@@ -798,7 +793,7 @@ namespace Lumina::Agent
                     FInstancedStruct* Instance = static_cast<FInstancedStruct*>(ValuePtr);
                     CStruct* Type = Instance->GetScriptStruct();
 
-                    if (Type == nullptr || !Value.is_object() || !Value.contains("Data"))
+                    if (Type == nullptr || !Value.IsObject() || !Value.Contains("Data"))
                     {
                         return true;
                     }
@@ -812,12 +807,12 @@ namespace Lumina::Agent
                     FMapProperty* Map = static_cast<FMapProperty*>(Property);
                     FProperty* ValueProperty = Map->GetValueProperty();
 
-                    if (ValueProperty == nullptr || !HoldsObjects(ValueProperty) || !Value.is_array())
+                    if (ValueProperty == nullptr || !HoldsObjects(ValueProperty) || !Value.IsArray())
                     {
                         return true;
                     }
 
-                    for (size_t Index = 0; Index + 1 < Value.size(); Index += 2)
+                    for (int32 Index = 0; Index + 1 < Value.Num(); Index += 2)
                     {
                         void* Slot = FindMapValueForKey(Map, ValuePtr, Value[Index]);
                         if (Slot == nullptr)
@@ -840,7 +835,7 @@ namespace Lumina::Agent
             }
         }
 
-        bool ApplyStructObjects(CStruct* Struct, void* Data, const nlohmann::json& Value, FStringView Path, FString& OutError)
+        bool ApplyStructObjects(CStruct* Struct, void* Data, const FJsonValue& Value, FStringView Path, FString& OutError)
         {
             for (CStruct* Current : Detail::CollectStructChain(Struct))
             {
@@ -853,10 +848,10 @@ namespace Lumina::Agent
                         return;
                     }
 
-                    const FString Name(Property->GetPropertyName().ToString().c_str());
+                    const FString Name(*Property->GetPropertyName().ToString());
 
-                    const auto Found = Value.find(Detail::ToStandard(FStringView(Name)));
-                    if (Found == Value.end())
+                    const FJsonValue* Found = Value.Find(FStringView(Name));
+                    if (Found == nullptr)
                     {
                         return;
                     }
@@ -873,9 +868,9 @@ namespace Lumina::Agent
 
             return true;
         }
-        void CaptureStructObjects(CStruct* Struct, void* Data, nlohmann::json& Out);
+        void CaptureStructObjects(CStruct* Struct, void* Data, FJsonValue& Out);
 
-        void CapturePropertyObjects(FProperty* Property, void* ValuePtr, nlohmann::json& Out)
+        void CapturePropertyObjects(FProperty* Property, void* ValuePtr, FJsonValue& Out)
         {
             switch (Property->GetType())
             {
@@ -885,9 +880,7 @@ namespace Lumina::Agent
                     const TStrongObjectPtr<CObject>* Slot = static_cast<const TStrongObjectPtr<CObject>*>(ValuePtr);
                     CObject* Referenced = Slot->Get();
 
-                    Out = Referenced != nullptr
-                        ? Detail::ToStandard(FStringView(Referenced->GetGUID().ToString()))
-                        : std::string();
+                    Out = Referenced != nullptr ? FJsonValue(Referenced->GetGUID().ToString()) : FJsonValue("");
                     return;
                 }
 
@@ -900,15 +893,16 @@ namespace Lumina::Agent
                     FArrayProperty* Array = static_cast<FArrayProperty*>(Property);
                     FProperty* Inner = Array->GetInternalProperty();
 
-                    if (Inner == nullptr || !HoldsObjects(Inner) || !Out.is_array())
+                    if (Inner == nullptr || !HoldsObjects(Inner) || !Out.IsArray())
                     {
                         return;
                     }
 
-                    const size_t Count = Array->GetNum(ValuePtr);
-                    for (size_t Index = 0; Index < Count && Index < Out.size(); ++Index)
+                    TSpan<FJsonValue> Elements = Out.AsArray();
+                    const int32 Count = Array->Num(ValuePtr);
+                    for (int32 Index = 0; Index < Count && Index < Elements.Num(); ++Index)
                     {
-                        CapturePropertyObjects(Inner, Array->GetAt(ValuePtr, Index), Out[Index]);
+                        CapturePropertyObjects(Inner, Array->GetAt(ValuePtr, Index), Elements[Index]);
                     }
 
                     return;
@@ -919,9 +913,10 @@ namespace Lumina::Agent
                     FOptionalProperty* Optional = static_cast<FOptionalProperty*>(Property);
                     FProperty* Inner = Optional->GetInternalProperty();
 
-                    if (Inner != nullptr && Optional->HasValue(ValuePtr) && Out.is_object() && Out.contains("Value"))
+                    FJsonValue* Nested = Out.Find("Value");
+                    if (Inner != nullptr && Optional->IsSet(ValuePtr) && Nested != nullptr)
                     {
-                        CapturePropertyObjects(Inner, Optional->GetValue(ValuePtr), Out["Value"]);
+                        CapturePropertyObjects(Inner, Optional->GetValue(ValuePtr), *Nested);
                     }
 
                     return;
@@ -932,9 +927,10 @@ namespace Lumina::Agent
                     FInstancedStruct* Instance = static_cast<FInstancedStruct*>(ValuePtr);
                     CStruct* Type = Instance->GetScriptStruct();
 
-                    if (Type != nullptr && Out.is_object() && Out.contains("Data"))
+                    FJsonValue* StructData = Out.Find("Data");
+                    if (Type != nullptr && StructData != nullptr)
                     {
-                        CaptureStructObjects(Type, Instance->GetMutableMemory(), Out["Data"]);
+                        CaptureStructObjects(Type, Instance->GetMutableMemory(), *StructData);
                     }
 
                     return;
@@ -945,18 +941,19 @@ namespace Lumina::Agent
                     FMapProperty* Map = static_cast<FMapProperty*>(Property);
                     FProperty* ValueProperty = Map->GetValueProperty();
 
-                    if (ValueProperty == nullptr || !HoldsObjects(ValueProperty) || !Out.is_array())
+                    if (ValueProperty == nullptr || !HoldsObjects(ValueProperty) || !Out.IsArray())
                     {
                         return;
                     }
 
                     // The archive wrote pairs in ForEach order, so walking it again lines up with the output.
-                    size_t Index = 1;
+                    TSpan<FJsonValue> Elements = Out.AsArray();
+                    int32 Index = 1;
                     Map->ForEach(ValuePtr, [&](const void*, void* Slot)
                     {
-                        if (Index < Out.size())
+                        if (Index < Elements.Num())
                         {
-                            CapturePropertyObjects(ValueProperty, Slot, Out[Index]);
+                            CapturePropertyObjects(ValueProperty, Slot, Elements[Index]);
                         }
                         Index += 2;
                     });
@@ -969,9 +966,9 @@ namespace Lumina::Agent
             }
         }
 
-        void CaptureStructObjects(CStruct* Struct, void* Data, nlohmann::json& Out)
+        void CaptureStructObjects(CStruct* Struct, void* Data, FJsonValue& Out)
         {
-            if (Struct == nullptr || !Out.is_object())
+            if (Struct == nullptr || !Out.IsObject())
             {
                 return;
             }
@@ -985,19 +982,20 @@ namespace Lumina::Agent
                         return;
                     }
 
-                    const FString Name(Property->GetPropertyName().ToString().c_str());
-                    const std::string Key = Detail::ToStandard(FStringView(Name));
+                    const FString Name(*Property->GetPropertyName().ToString());
 
-                    if (Out.contains(Key))
+                    if (FJsonValue* Field = Out.Find(FStringView(Name)))
                     {
-                        CapturePropertyObjects(Property, Property->GetValuePtr<uint8>(Data), Out[Key]);
+                        CapturePropertyObjects(Property, Property->GetValuePtr<uint8>(Data), *Field);
                     }
                 });
             }
         }
     }
 
-    FMarshalResult ValidatePropertyValue(const nlohmann::json& In, FProperty* Property, FStringView Path)
+    using namespace AgentToolMarshalInternal;
+
+    FMarshalResult ValidatePropertyValue(const FJsonValue& In, FProperty* Property, FStringView Path)
     {
         FMarshalResult Result;
 
@@ -1007,7 +1005,7 @@ namespace Lumina::Agent
             return Result;
         }
 
-        nlohmann::json Canonical = In;
+        FJsonValue Canonical = In;
         if (CanonicalizeProperty(Property, Canonical, Path, Result.Error))
         {
             ValidateProperty(Property, Canonical, Path, Result.Error);
@@ -1016,7 +1014,7 @@ namespace Lumina::Agent
         return Result;
     }
 
-    FMarshalResult ReadProperty(const nlohmann::json& In, FProperty* Property, void* ValuePtr, FStringView Path)
+    FMarshalResult ReadProperty(const FJsonValue& In, FProperty* Property, void* ValuePtr, FStringView Path)
     {
         FMarshalResult Result;
 
@@ -1026,7 +1024,7 @@ namespace Lumina::Agent
             return Result;
         }
 
-        nlohmann::json Canonical = In;
+        FJsonValue Canonical = In;
         if (!CanonicalizeProperty(Property, Canonical, Path, Result.Error)
             || !ValidateProperty(Property, Canonical, Path, Result.Error))
         {
@@ -1034,19 +1032,11 @@ namespace Lumina::Agent
         }
 
         // The archive walks a mutable tree, and the canonical copy is still needed intact for the fixup below.
-        nlohmann::json Mutable = Canonical;
+        FJsonValue Mutable = Canonical;
 
-        try
-        {
-            FJsonStructuredArchive Archive(Mutable, true);
-            IStructuredArchive::FSlot Slot = Archive.Open();
-            Property->SerializeItem(Slot, ValuePtr, nullptr);
-        }
-        catch (const std::exception& Exception)
-        {
-            Result.Error = Lumina::Format("'{}' could not be applied. {}", Path, Exception.what());
-            return Result;
-        }
+        FJsonStructuredArchive Archive(Mutable, true);
+        IStructuredArchive::FSlot Slot = Archive.Open();
+        Property->SerializeItem(Slot, ValuePtr, nullptr);
 
         // The archive deliberately leaves object references null, so they are resolved here instead.
         if (HoldsObjects(Property))
@@ -1057,7 +1047,7 @@ namespace Lumina::Agent
         return Result;
     }
 
-    FMarshalResult WriteProperty(FProperty* Property, void* ValuePtr, nlohmann::json& Out)
+    FMarshalResult WriteProperty(FProperty* Property, void* ValuePtr, FJsonValue& Out)
     {
         FMarshalResult Result;
 
@@ -1067,29 +1057,21 @@ namespace Lumina::Agent
             return Result;
         }
 
-        Out = nlohmann::json();
+        Out = FJsonValue();
 
-        try
-        {
-            FJsonStructuredArchive Archive(Out, false);
-            IStructuredArchive::FSlot Slot = Archive.Open();
-            Property->SerializeItem(Slot, ValuePtr, nullptr);
+        FJsonStructuredArchive Archive(Out, false);
+        IStructuredArchive::FSlot Slot = Archive.Open();
+        Property->SerializeItem(Slot, ValuePtr, nullptr);
 
-            if (HoldsObjects(Property))
-            {
-                CapturePropertyObjects(Property, ValuePtr, Out);
-            }
-        }
-        catch (const std::exception& Exception)
+        if (HoldsObjects(Property))
         {
-            Out = nlohmann::json();
-            Result.Error = Lumina::Format("The value could not be written. {}", Exception.what());
+            CapturePropertyObjects(Property, ValuePtr, Out);
         }
 
         return Result;
     }
 
-    FMarshalResult ReadStruct(const nlohmann::json& In, CStruct* Type, void* Data)
+    FMarshalResult ReadStruct(const FJsonValue& In, CStruct* Type, void* Data)
     {
         FMarshalResult Result;
 
@@ -1099,7 +1081,7 @@ namespace Lumina::Agent
             return Result;
         }
 
-        nlohmann::json Canonical = In;
+        FJsonValue Canonical = In;
         if (!CanonicalizeStruct(Type, Canonical, FStringView(), Result.Error)
             || !ValidateStruct(Type, Canonical, FStringView(), Result.Error))
         {
@@ -1107,17 +1089,8 @@ namespace Lumina::Agent
         }
 
         // LoadStruct walks a mutable tree, and the canonical copy is still needed intact for the fixup below.
-        nlohmann::json Mutable = Canonical;
-
-        try
-        {
-            FJsonStructuredArchive::LoadStruct(Mutable, Type, Data);
-        }
-        catch (const std::exception& Exception)
-        {
-            Result.Error = Lumina::Format("The arguments could not be applied. {}", Exception.what());
-            return Result;
-        }
+        FJsonValue Mutable = Canonical;
+        FJsonStructuredArchive::LoadStruct(Mutable, Type, Data);
 
         // The archive deliberately leaves object references null, so they are resolved here instead.
         ApplyStructObjects(Type, Data, Canonical, FStringView(), Result.Error);
@@ -1125,7 +1098,7 @@ namespace Lumina::Agent
         return Result;
     }
 
-    FMarshalResult WriteStruct(CStruct* Type, void* Data, nlohmann::json& Out)
+    FMarshalResult WriteStruct(CStruct* Type, void* Data, FJsonValue& Out)
     {
         FMarshalResult Result;
 
@@ -1135,18 +1108,9 @@ namespace Lumina::Agent
             return Result;
         }
 
-        Out = nlohmann::json::object();
-
-        try
-        {
-            FJsonStructuredArchive::SaveStruct(Out, Type, Data);
-            CaptureStructObjects(Type, Data, Out);
-        }
-        catch (const std::exception& Exception)
-        {
-            Out = nlohmann::json();
-            Result.Error = Lumina::Format("The result could not be written. {}", Exception.what());
-        }
+        Out = FJsonValue::MakeObject();
+        FJsonStructuredArchive::SaveStruct(Out, Type, Data);
+        CaptureStructObjects(Type, Data, Out);
 
         return Result;
     }

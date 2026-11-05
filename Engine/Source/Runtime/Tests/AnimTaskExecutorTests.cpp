@@ -23,7 +23,7 @@ namespace
             Bone.InvBindMatrix  = FMatrix4::Identity();
             Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.0f, 0.3f, 0.0f), FQuat::Identity(), FVector3(1.0f));
             Skeleton.BoneNameToIndex[Bone.Name] = i;
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.Bones.Add(Bone);
         }
         Skeleton.BuildBindPoseCache();
     }
@@ -42,10 +42,10 @@ namespace
             for (int32 k = 0; k <= 30; ++k)
             {
                 const float T = (float)k / 30.0f;
-                Channel.Timestamps.push_back(T);
-                Channel.Rotations.push_back(FQuat(FVector3(SweepRadians * T, 0.5f * SweepRadians * T, 0.0f)));
+                Channel.Timestamps.Add(T);
+                Channel.Rotations.Emplace(FVector3(SweepRadians * T, 0.5f * SweepRadians * T, 0.0f));
             }
-            Resource.Channels.push_back(Channel);
+            Resource.Channels.Add(Channel);
         }
 
         AnimCompression::Build(Resource);
@@ -111,8 +111,8 @@ namespace
 
     void ExpectMatricesNear(const TVector<FMatrix4>& Actual, const TVector<FMatrix4>& Expected)
     {
-        ASSERT_EQ(Actual.size(), Expected.size());
-        for (SIZE_T b = 0; b < Actual.size(); ++b)
+        ASSERT_EQ(Actual.Num(), Expected.Num());
+        for (int32 b = 0; b < Actual.Num(); ++b)
         {
             for (int32 c = 0; c < 4; ++c)
             {

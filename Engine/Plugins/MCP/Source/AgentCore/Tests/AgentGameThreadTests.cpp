@@ -10,7 +10,7 @@
 using namespace Lumina;
 using namespace Lumina::Agent;
 
-namespace
+namespace AgentGameThreadTestsInternal
 {
     // The test thread is the main thread, so it stands in for the frame loop that normally drains this.
     void PumpFor(double Seconds)
@@ -44,6 +44,8 @@ namespace
         Worker.Join();
     }
 }
+
+using namespace AgentGameThreadTestsInternal;
 
 // Called from the thread that owns the world, a hop would wait on a queue only this thread drains.
 TEST(AgentGameThread, WorkOnTheMainThreadRunsInline)
@@ -175,7 +177,7 @@ TEST(AgentGameThread, SeveralCallsAllRunInOrder)
     {
         for (int32 Index = 0; Index < 3; ++Index)
         {
-            Results[Index] = FGameThreadGate::Run([&Order, Index]() { Order.push_back(Index); }, 4000);
+            Results[Index] = FGameThreadGate::Run([&Order, Index]() { Order.Add(Index); }, 4000);
         }
     }, 6.0);
 
@@ -184,7 +186,7 @@ TEST(AgentGameThread, SeveralCallsAllRunInOrder)
         EXPECT_EQ(Result, EGameThreadResult::Ran);
     }
 
-    ASSERT_EQ(Order.size(), 3u);
+    ASSERT_EQ(Order.Num(), 3u);
     EXPECT_EQ(Order[0], 0);
     EXPECT_EQ(Order[1], 1);
     EXPECT_EQ(Order[2], 2);

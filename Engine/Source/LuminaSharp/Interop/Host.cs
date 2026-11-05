@@ -160,6 +160,7 @@ public static unsafe partial class Host
         {
             UIDataModel.RemoveForWorld(World);
             GameTaskRegistry.CancelWorld(World);
+            WorldResources.RemoveForWorld(World);
             DropWorldReference((IntPtr)World);
         }
         catch (Exception Exception)

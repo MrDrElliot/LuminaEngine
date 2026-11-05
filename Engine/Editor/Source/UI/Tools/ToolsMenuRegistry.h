@@ -42,7 +42,7 @@ namespace Lumina
 
         const TVector<FToolsMenuEntry>& GetEntries() const { return Entries; }
 
-        bool IsEmpty() const { return Entries.empty(); }
+        bool IsEmpty() const { return Entries.IsEmpty(); }
 
     private:
 

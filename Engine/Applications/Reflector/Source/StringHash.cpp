@@ -2,7 +2,7 @@
 
 #include <mutex>
 #include <unordered_map>
-#include "xxhash.h"
+#include "XXHashCore.h"
 
 namespace Lumina
 {
@@ -42,7 +42,7 @@ namespace Lumina
             return;
         }
 
-        ID = XXH64(Str.data(), Str.size(), 0);
+        ID = XXHashCore::Hash64(Str.data(), Str.size(), 0);
 
         const std::lock_guard<std::mutex> Lock(InternMutex());
         InternTable().try_emplace(ID, Str);

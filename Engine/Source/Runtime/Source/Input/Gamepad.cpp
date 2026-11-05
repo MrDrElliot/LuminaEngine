@@ -22,7 +22,7 @@ namespace Lumina
             {
                 C = (char)std::tolower((unsigned char)C);
             }
-            auto Has = [&Lower](const char* Token) { return Lower.find(Token) != FString::npos; };
+            auto Has = [&Lower](const char* Token) { return Lower.Find(Token) != Constants::kIndexNone; };
 
             if (Has("xbox") || Has("xinput"))
             {

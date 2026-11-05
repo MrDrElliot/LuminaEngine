@@ -177,7 +177,7 @@ namespace Lumina
         friend class FRenderCallbackList;
 
         IRenderScene*            Scene = nullptr;
-        TFixedVector<EFormat, 4> PassColorFormats;
+        TInlineVector<EFormat, 4> PassColorFormats;
         EFormat                  PassDepthFormat        = EFormat::UNKNOWN;
         FShaderH                 PassDefaultPixelShader;
         bool                     bPassOpen              = false;

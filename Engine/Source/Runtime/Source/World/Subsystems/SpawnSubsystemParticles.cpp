@@ -49,7 +49,7 @@ namespace Lumina
         Effect.Activate(true);
 
         // A managed caller spells "no socket" as an empty string, which does not intern to NAME_None.
-        if (Socket.IsNone() || FStringView(Socket.c_str()).empty())
+        if (Socket.IsNone() || FStringView(*Socket).IsEmpty())
         {
             World->SetParent(Spawned, Parent);
         }
@@ -70,7 +70,7 @@ namespace Lumina
             return;
         }
 
-        const SParticleSystemComponent* Effect = World->TryGetComponent<SParticleSystemComponent>(Entity);
+        const SParticleSystemComponent* Effect = World->TryGetComponent<ECS::Read<SParticleSystemComponent>>(Entity);
         if (Effect == nullptr)
         {
             return;
@@ -80,7 +80,7 @@ namespace Lumina
         {
             if (EmitterIndex < 0 || Hit.EmitterIndex == EmitterIndex)
             {
-                OutCollisions.push_back(Hit);
+                OutCollisions.Add(Hit);
             }
         }
     }

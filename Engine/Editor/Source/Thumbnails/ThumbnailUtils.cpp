@@ -19,9 +19,9 @@ namespace Lumina::ThumbnailUtils
         Thumbnail.LoadState.store(FPackageThumbnail::EState::None, std::memory_order_relaxed);
         Thumbnail.ImageWidth  = Size;
         Thumbnail.ImageHeight = Size;
-        Thumbnail.ImageData.resize(Size * Size * BytesPerPixel);
+        Thumbnail.ImageData.SetNum(Size * Size * BytesPerPixel);
 
-        uint8* DestData = Thumbnail.ImageData.data();
+        uint8* DestData = Thumbnail.ImageData.GetData();
 
         const float ScaleX = static_cast<float>(SourceWidth) / Size;
         const float ScaleY = static_cast<float>(SourceHeight) / Size;

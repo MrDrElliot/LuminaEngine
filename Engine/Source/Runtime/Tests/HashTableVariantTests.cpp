@@ -59,13 +59,13 @@ namespace LuminaHashVariantTests
         for (int Index = 0; Index < 2000; ++Index)
         {
             Map[Index] = Lumina::Format("value-{}", Index);
-            Addresses.push_back(&Map.at(Index));
+            Addresses.push_back(&Map.FindChecked(Index));
         }
 
-        EXPECT_GT(Map.capacity(), 2000u);
+        EXPECT_GT(Map.Max(), 2000);
         for (int Index = 0; Index < 2000; ++Index)
         {
-            EXPECT_EQ(Addresses[static_cast<size_t>(Index)], &Map.at(Index)) << "moved " << Index;
+            EXPECT_EQ(Addresses[static_cast<size_t>(Index)], &Map.FindChecked(Index)) << "moved " << Index;
             EXPECT_EQ(*Addresses[static_cast<size_t>(Index)], Lumina::Format("value-{}", Index));
         }
     }
@@ -78,17 +78,17 @@ namespace LuminaHashVariantTests
             Map[Index] = Index;
         }
 
-        int* const Kept = &Map.at(250);
+        int* const Kept = &Map.FindChecked(250);
         for (int Index = 0; Index < 500; ++Index)
         {
             if (Index != 250)
             {
-                Map.erase(Index);
+                Map.Remove(Index);
             }
         }
 
-        EXPECT_EQ(Map.size(), 1u);
-        EXPECT_EQ(Kept, &Map.at(250));
+        EXPECT_EQ(Map.Num(), 1);
+        EXPECT_EQ(Kept, &Map.FindChecked(250));
         EXPECT_EQ(*Kept, 250);
     }
 
@@ -96,17 +96,17 @@ namespace LuminaHashVariantTests
     TEST(NodeHashMap, FlatTableIsExpectedToMoveItsValues)
     {
         TFlatMap<int, int> Map;
-        Map.reserve(8);
+        Map.Reserve(8);
         Map[0] = 0;
 
-        const int* const Before = &Map.at(0);
+        const int* const Before = &Map.FindChecked(0);
         for (int Index = 1; Index < 4000; ++Index)
         {
             Map[Index] = Index;
         }
 
-        EXPECT_NE(Before, &Map.at(0));
-        EXPECT_EQ(Map.at(0), 0);
+        EXPECT_NE(Before, &Map.FindChecked(0));
+        EXPECT_EQ(Map.FindChecked(0), 0);
     }
 
     TEST(NodeHashSet, ElementAddressesSurviveGrowth)
@@ -116,13 +116,13 @@ namespace LuminaHashVariantTests
         std::vector<const int*> Addresses;
         for (int Index = 0; Index < 1000; ++Index)
         {
-            Set.insert(Index);
-            Addresses.push_back(&*Set.find(Index));
+            Set.Add(Index);
+            Addresses.push_back(&*Set.Find(Index));
         }
 
         for (int Index = 0; Index < 1000; ++Index)
         {
-            EXPECT_EQ(Addresses[static_cast<size_t>(Index)], &*Set.find(Index)) << "moved " << Index;
+            EXPECT_EQ(Addresses[static_cast<size_t>(Index)], &*Set.Find(Index)) << "moved " << Index;
         }
     }
 
@@ -133,22 +133,22 @@ namespace LuminaHashVariantTests
             TNodeMap<int, FCounted> Map;
             for (int Index = 0; Index < 800; ++Index)
             {
-                Map.try_emplace(Index, Index);
+                Map.FindOrAdd(Index, Index);
             }
             EXPECT_EQ(FCounted::Live, 800);
 
             for (int Index = 0; Index < 400; ++Index)
             {
-                Map.erase(Index);
+                Map.Remove(Index);
             }
             EXPECT_EQ(FCounted::Live, 400);
 
-            Map.clear();
+            Map.Reset();
             EXPECT_EQ(FCounted::Live, 0);
 
             for (int Index = 0; Index < 100; ++Index)
             {
-                Map.try_emplace(Index, Index);
+                Map.FindOrAdd(Index, Index);
             }
             EXPECT_EQ(FCounted::Live, 100);
         }
@@ -162,7 +162,7 @@ namespace LuminaHashVariantTests
             TNodeSet<FCounted> Set;
             for (int Index = 0; Index < 600; ++Index)
             {
-                Set.emplace(Index);
+                Set.TryAdd(Index);
             }
             EXPECT_EQ(FCounted::Live, 600);
         }
@@ -175,18 +175,18 @@ namespace LuminaHashVariantTests
         Map[Lumina::FString("alpha")] = 1;
         Map[Lumina::FString("beta")] = 2;
 
-        EXPECT_EQ(Map.size(), 2u);
-        EXPECT_TRUE(Map.contains(Lumina::FStringView("alpha")));
-        EXPECT_EQ(Map.find(Lumina::FStringView("beta"))->second, 2);
+        EXPECT_EQ(Map.Num(), 2);
+        EXPECT_TRUE(Map.Contains(Lumina::FStringView("alpha")));
+        EXPECT_EQ((*Map.Find(Lumina::FStringView("beta"))), 2);
 
-        Map.insert_or_assign(Lumina::FString("beta"), 20);
-        EXPECT_EQ(Map.at(Lumina::FString("beta")), 20);
-        EXPECT_EQ(Map.size(), 2u);
+        Map.Add(Lumina::FString("beta"), 20);
+        EXPECT_EQ(Map.FindChecked(Lumina::FString("beta")), 20);
+        EXPECT_EQ(Map.Num(), 2);
 
         std::set<int> Seen;
         for (const auto& Pair : Map)
         {
-            Seen.insert(Pair.second);
+            Seen.insert(Pair.Value);
         }
         EXPECT_EQ(Seen, (std::set<int>{ 1, 20 }));
     }
@@ -197,46 +197,46 @@ namespace LuminaHashVariantTests
         TNodeMap<int, FCounted> Source;
         for (int Index = 0; Index < 50; ++Index)
         {
-            Source.try_emplace(Index, Index);
+            Source.FindOrAdd(Index, Index);
         }
 
         TNodeMap<int, FCounted> Copy = Source;
         EXPECT_EQ(FCounted::Live, 100);
-        EXPECT_NE(&Copy.at(7), &Source.at(7));
-        EXPECT_EQ(Copy.at(7).Value, Source.at(7).Value);
+        EXPECT_NE(&Copy.FindChecked(7), &Source.FindChecked(7));
+        EXPECT_EQ(Copy.FindChecked(7).Value, Source.FindChecked(7).Value);
 
-        const FCounted* const Address = &Source.at(7);
+        const FCounted* const Address = &Source.FindChecked(7);
         TNodeMap<int, FCounted> Moved = std::move(Source);
         EXPECT_EQ(FCounted::Live, 100);
-        EXPECT_EQ(&Moved.at(7), Address);
-        EXPECT_TRUE(Source.empty());
+        EXPECT_EQ(&Moved.FindChecked(7), Address);
+        EXPECT_TRUE(Source.IsEmpty());
     }
 
     TEST(InlineHashSet, StaysOffTheHeapUntilItOutgrowsTheBuffer)
     {
         TInlineSet<int, 32> Set;
         EXPECT_TRUE(Set.IsInline());
-        EXPECT_EQ(Set.GetAllocatedBytes(), 0u);
-        EXPECT_GE(Set.capacity(), 31u);
+        EXPECT_EQ(Set.GetAllocatedSize(), 0u);
+        EXPECT_GE(Set.Max(), 31);
 
         for (int Index = 0; Index < 20; ++Index)
         {
-            Set.insert(Index);
+            Set.Add(Index);
         }
         EXPECT_TRUE(Set.IsInline());
-        EXPECT_EQ(Set.GetAllocatedBytes(), 0u);
+        EXPECT_EQ(Set.GetAllocatedSize(), 0u);
 
         for (int Index = 20; Index < 500; ++Index)
         {
-            Set.insert(Index);
+            Set.Add(Index);
         }
         EXPECT_FALSE(Set.IsInline());
-        EXPECT_GT(Set.GetAllocatedBytes(), 0u);
+        EXPECT_GT(Set.GetAllocatedSize(), 0u);
 
-        EXPECT_EQ(Set.size(), 500u);
+        EXPECT_EQ(Set.Num(), 500);
         for (int Index = 0; Index < 500; ++Index)
         {
-            EXPECT_TRUE(Set.contains(Index)) << "lost " << Index;
+            EXPECT_TRUE(Set.Contains(Index)) << "lost " << Index;
         }
     }
 
@@ -250,7 +250,7 @@ namespace LuminaHashVariantTests
             Map[Index] = Index * 2;
         }
         EXPECT_TRUE(Map.IsInline());
-        EXPECT_EQ(Map.GetAllocatedBytes(), 0u);
+        EXPECT_EQ(Map.GetAllocatedSize(), 0u);
 
         for (int Index = 10; Index < 300; ++Index)
         {
@@ -260,7 +260,7 @@ namespace LuminaHashVariantTests
 
         for (int Index = 0; Index < 300; ++Index)
         {
-            EXPECT_EQ(Map.at(Index), Index * 2) << "lost " << Index;
+            EXPECT_EQ(Map.FindChecked(Index), Index * 2) << "lost " << Index;
         }
     }
 
@@ -285,7 +285,7 @@ namespace LuminaHashVariantTests
             TInlineSet<FCounted, 32> Set;
             for (int Index = 0; Index < 10; ++Index)
             {
-                Set.emplace(Index);
+                Set.TryAdd(Index);
             }
             EXPECT_TRUE(Set.IsInline());
             EXPECT_EQ(FCounted::Live, 10);
@@ -300,7 +300,7 @@ namespace LuminaHashVariantTests
             TInlineSet<FCounted, 8> Set;
             for (int Index = 0; Index < 400; ++Index)
             {
-                Set.emplace(Index);
+                Set.TryAdd(Index);
             }
             EXPECT_FALSE(Set.IsInline());
             EXPECT_EQ(FCounted::Live, 400);
@@ -314,23 +314,23 @@ namespace LuminaHashVariantTests
         TInlineSet<int, 32> Source;
         for (int Index = 0; Index < 20; ++Index)
         {
-            Source.insert(Index);
+            Source.Add(Index);
         }
 
         TInlineSet<int, 32> Moved = std::move(Source);
-        EXPECT_EQ(Moved.size(), 20u);
+        EXPECT_EQ(Moved.Num(), 20);
         EXPECT_TRUE(Moved.IsInline());
         for (int Index = 0; Index < 20; ++Index)
         {
-            EXPECT_TRUE(Moved.contains(Index));
+            EXPECT_TRUE(Moved.Contains(Index));
         }
 
-        EXPECT_TRUE(Source.empty());
-        EXPECT_FALSE(Source.contains(1));
+        EXPECT_TRUE(Source.IsEmpty());
+        EXPECT_FALSE(Source.Contains(1));
 
-        Source.insert(99);
-        EXPECT_EQ(Source.size(), 1u);
-        EXPECT_TRUE(Source.contains(99));
+        Source.Add(99);
+        EXPECT_EQ(Source.Num(), 1);
+        EXPECT_TRUE(Source.Contains(99));
     }
 
     TEST(InlineHashSet, MoveFromASpilledTableStealsTheBlock)
@@ -338,14 +338,14 @@ namespace LuminaHashVariantTests
         TInlineSet<int, 8> Source;
         for (int Index = 0; Index < 400; ++Index)
         {
-            Source.insert(Index);
+            Source.Add(Index);
         }
         EXPECT_FALSE(Source.IsInline());
 
         TInlineSet<int, 8> Moved = std::move(Source);
-        EXPECT_EQ(Moved.size(), 400u);
+        EXPECT_EQ(Moved.Num(), 400);
         EXPECT_FALSE(Moved.IsInline());
-        EXPECT_TRUE(Source.empty());
+        EXPECT_TRUE(Source.IsEmpty());
         EXPECT_TRUE(Source.IsInline());
     }
 
@@ -355,7 +355,7 @@ namespace LuminaHashVariantTests
         {
             for (int Index = First; Index < First + Count; ++Index)
             {
-                Set.insert(Index);
+                Set.Add(Index);
             }
         };
 
@@ -363,21 +363,21 @@ namespace LuminaHashVariantTests
         TInlineSet<int, 16> SmallRight;
         Fill(SmallLeft, 0, 5);
         Fill(SmallRight, 100, 8);
-        SmallLeft.swap(SmallRight);
-        EXPECT_EQ(SmallLeft.size(), 8u);
-        EXPECT_EQ(SmallRight.size(), 5u);
-        EXPECT_TRUE(SmallLeft.contains(100));
-        EXPECT_TRUE(SmallRight.contains(0));
+        swap(SmallLeft, SmallRight);
+        EXPECT_EQ(SmallLeft.Num(), 8);
+        EXPECT_EQ(SmallRight.Num(), 5);
+        EXPECT_TRUE(SmallLeft.Contains(100));
+        EXPECT_TRUE(SmallRight.Contains(0));
 
         TInlineSet<int, 16> Inline;
         TInlineSet<int, 16> Spilled;
         Fill(Inline, 0, 5);
         Fill(Spilled, 1000, 300);
-        Inline.swap(Spilled);
-        EXPECT_EQ(Inline.size(), 300u);
-        EXPECT_EQ(Spilled.size(), 5u);
-        EXPECT_TRUE(Inline.contains(1200));
-        EXPECT_TRUE(Spilled.contains(4));
+        swap(Inline, Spilled);
+        EXPECT_EQ(Inline.Num(), 300);
+        EXPECT_EQ(Spilled.Num(), 5);
+        EXPECT_TRUE(Inline.Contains(1200));
+        EXPECT_TRUE(Spilled.Contains(4));
         EXPECT_TRUE(Spilled.IsInline());
     }
 
@@ -386,18 +386,18 @@ namespace LuminaHashVariantTests
         TInlineSet<int, 32> Set;
         for (int Index = 0; Index < 500; ++Index)
         {
-            Set.insert(Index);
+            Set.Add(Index);
         }
         EXPECT_FALSE(Set.IsInline());
 
-        Set.clear();
-        Set.shrink_to_fit();
+        Set.Reset();
+        Set.Shrink();
         EXPECT_TRUE(Set.IsInline());
-        EXPECT_EQ(Set.GetAllocatedBytes(), 0u);
+        EXPECT_EQ(Set.GetAllocatedSize(), 0u);
 
-        Set.insert(1);
+        Set.Add(1);
         EXPECT_TRUE(Set.IsInline());
-        EXPECT_TRUE(Set.contains(1));
+        EXPECT_TRUE(Set.Contains(1));
     }
 
     TEST(InlineHashMap, CopyIsIndependentAndStartsInline)
@@ -410,11 +410,11 @@ namespace LuminaHashVariantTests
 
         TInlineMap<int, int, 16> Copy = Source;
         EXPECT_TRUE(Copy.IsInline());
-        EXPECT_EQ(Copy.size(), 6u);
+        EXPECT_EQ(Copy.Num(), 6);
 
         Copy[99] = 99;
-        EXPECT_TRUE(Copy.contains(99));
-        EXPECT_FALSE(Source.contains(99));
+        EXPECT_TRUE(Copy.Contains(99));
+        EXPECT_FALSE(Source.Contains(99));
     }
 
     TEST(InlineHashSet, ErasesAndReinsertsWhileInline)
@@ -424,15 +424,15 @@ namespace LuminaHashVariantTests
         {
             for (int Index = 0; Index < 12; ++Index)
             {
-                Set.insert(Round * 12 + Index);
+                Set.Add(Round * 12 + Index);
             }
             for (int Index = 0; Index < 12; ++Index)
             {
-                EXPECT_EQ(Set.erase(Round * 12 + Index), 1u);
+                EXPECT_EQ(Set.Remove(Round * 12 + Index), 1);
             }
         }
 
-        EXPECT_TRUE(Set.empty());
+        EXPECT_TRUE(Set.IsEmpty());
         EXPECT_TRUE(Set.IsInline());
     }
 }

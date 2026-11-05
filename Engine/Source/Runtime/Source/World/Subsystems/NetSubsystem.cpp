@@ -16,7 +16,7 @@ namespace Lumina
     void CNetSubsystem::GetConnections(TVector<uint32>& OutConnections)
     {
         CWorld* World = GetWorld();
-        OutConnections.clear();
+        OutConnections.Reset();
         if (INetworkRuntime* Net = GetNetworkRuntime(); Net != nullptr && World != nullptr)
         {
             Net->GetConnectionIds(World, OutConnections);

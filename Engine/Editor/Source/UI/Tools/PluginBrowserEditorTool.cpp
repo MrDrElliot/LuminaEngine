@@ -1,9 +1,9 @@
 #include "Containers/StringFormat.h"
-#include <string>
 #include "PluginBrowserEditorTool.h"
 
 #include "Core/Application/Application.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Json/Json.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginDescriptor.h"
 #include "Core/Plugin/PluginManager.h"
@@ -19,7 +19,6 @@
 #include "UI/Tools/EditorToolContext.h"
 
 #include "imgui.h"
-#include "nlohmann/json.hpp"
 
 namespace Lumina
 {
@@ -63,8 +62,8 @@ namespace Lumina
 
     bool FPluginBrowserEditorTool::IsEffectivelyEnabled(const FPlugin* Plugin) const
     {
-        auto It = PendingChanges.find(FName(Plugin->GetName()));
-        return It != PendingChanges.end() ? It->second : Plugin->IsEnabled();
+        auto It = PendingChanges.Find(FName(Plugin->GetName()));
+        return It != nullptr ? (*It) : Plugin->IsEnabled();
     }
 
     void FPluginBrowserEditorTool::SetPendingEnabled(FName PluginName, bool bEnabled)
@@ -77,7 +76,7 @@ namespace Lumina
         // Re-toggling back drops the pending entry, so Apply reflects no pending changes.
         if (Plugin->IsEnabled() == bEnabled)
         {
-            PendingChanges.erase(PluginName);
+            PendingChanges.Remove(PluginName);
         }
         else
         {
@@ -95,22 +94,22 @@ namespace Lumina
         // Engine plugins first, then project plugins, alphabetical within each group.
         TVector<const FPlugin*> All = FPluginManager::Get().GetAllPlugins();
         TVector<FPlugin*> Visible;
-        Visible.reserve(All.size());
+        Visible.Reserve(All.Num());
         for (const FPlugin* P : All)
         {
             const bool bEngine = P->IsEnginePlugin();
             if (bEngine && !bShowEngine) continue;
             if (!bEngine && !bShowProject) continue;
 
-            if (!SearchFilter.empty())
+            if (!SearchFilter.IsEmpty())
             {
                 FStringView Name = P->GetName();
-                if (Name.find(SearchFilter.c_str()) == FStringView::npos)
+                if (Name.Find(*SearchFilter) == Constants::kIndexNone)
                 {
                     continue;
                 }
             }
-            Visible.push_back(const_cast<FPlugin*>(P));
+            Visible.Add(const_cast<FPlugin*>(P));
         }
         Algo::Sort(Visible,
             [](const FPlugin* A, const FPlugin* B)
@@ -154,12 +153,12 @@ namespace Lumina
     {
         ImGui::SetNextItemWidth(260.0f);
         char Buf[128];
-        const size_t Len = Math::Min(SearchFilter.size(), sizeof(Buf) - 1);
-        memcpy(Buf, SearchFilter.c_str(), Len);
+        const int32 Len = Math::Min(SearchFilter.Len(), static_cast<int32>(sizeof(Buf) - 1));
+        memcpy(Buf, *SearchFilter, Len);
         Buf[Len] = '\0';
         if (ImGui::InputTextWithHint("##search", LE_ICON_MAGNIFY "  Search plugins", Buf, sizeof(Buf)))
         {
-            SearchFilter.assign(Buf);
+            SearchFilter = Buf;
         }
         ImGui::SameLine();
         ImGui::Checkbox("Engine", &bShowEngine);
@@ -167,7 +166,7 @@ namespace Lumina
         ImGui::Checkbox("Project", &bShowProject);
 
         ImGui::SameLine();
-        const bool bHasProject = GEngine && !GEngine->GetProjectName().empty();
+        const bool bHasProject = GEngine && !GEngine->GetProjectName().IsEmpty();
         const bool bCanCreate = bHasProject && !Paths::IsInstalledBuild();
         if (!bCanCreate) ImGui::BeginDisabled();
         if (ImGui::Button(LE_ICON_PUZZLE_PLUS " New Plugin"))
@@ -184,7 +183,7 @@ namespace Lumina
         }
 
         // Right-aligned scope hint.
-        const char* ScopeHint = GEngine && !GEngine->GetProjectName().empty()
+        const char* ScopeHint = GEngine && !GEngine->GetProjectName().IsEmpty()
             ? "Scope: project (per-.lproject)"
             : "Scope: read-only (no project loaded)";
         const float ScopeWidth = ImGui::CalcTextSize(ScopeHint).x;
@@ -195,13 +194,13 @@ namespace Lumina
 
     void FPluginBrowserEditorTool::DrawTable(const TVector<FPlugin*>& Plugins)
     {
-        if (Plugins.empty())
+        if (Plugins.IsEmpty())
         {
             ImGui::TextDisabled("No plugins match the current filter.");
             return;
         }
 
-        const bool bCanToggle = GEngine && !GEngine->GetProjectName().empty();
+        const bool bCanToggle = GEngine && !GEngine->GetProjectName().IsEmpty();
 
         if (!ImGui::BeginTable("##Plugins", 5,
                 ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
@@ -235,14 +234,14 @@ namespace Lumina
 
             // Name. Pending changes get a star prefix + amber text.
             ImGui::TableSetColumnIndex(1);
-            const bool bPending = PendingChanges.find(FName(Plugin->GetName())) != PendingChanges.end();
+            const bool bPending = PendingChanges.Contains(FName(Plugin->GetName()));
             const FName SelectedName = SelectedPlugin;
             const bool bSelected = SelectedName == FName(Plugin->GetName());
 
             char Label[128];
             snprintf(Label, sizeof(Label), "%s%.*s",
                 bPending ? LE_ICON_CIRCLE_MEDIUM " " : "",
-                int(Plugin->GetName().size()), Plugin->GetName().data());
+                Plugin->GetName().Len(), Plugin->GetName().GetData());
             if (bPending) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.30f, 1.0f));
             if (ImGui::Selectable(Label, bSelected, ImGuiSelectableFlags_SpanAllColumns))
             {
@@ -257,14 +256,14 @@ namespace Lumina
             // Category.
             ImGui::TableSetColumnIndex(3);
             const FString& Cat = Plugin->GetDescriptor().Category;
-            ImGui::TextUnformatted(Cat.empty() ? "-" : Cat.c_str());
+            ImGui::TextUnformatted(Cat.IsEmpty() ? "-" : *Cat);
 
             // Version.
             ImGui::TableSetColumnIndex(4);
             const FString& VerName = Plugin->GetDescriptor().VersionName;
-            if (!VerName.empty())
+            if (!VerName.IsEmpty())
             {
-                ImGui::TextUnformatted(VerName.c_str());
+                ImGui::TextUnformatted(*VerName);
             }
             else
             {
@@ -289,20 +288,20 @@ namespace Lumina
         const FPluginDescriptor& Desc = Plugin->GetDescriptor();
 
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-        ImGui::TextUnformatted(Desc.Name.c_str());
+        ImGui::TextUnformatted(*Desc.Name);
         ImGuiX::Font::PopFont();
 
-        if (!Desc.Author.empty())
+        if (!Desc.Author.IsEmpty())
         {
             ImGui::SameLine();
-            ImGui::TextDisabled("by %s", Desc.Author.c_str());
+            ImGui::TextDisabled("by %s", *Desc.Author);
         }
 
         ImGui::Spacing();
 
-        if (!Desc.Description.empty())
+        if (!Desc.Description.IsEmpty())
         {
-            ImGui::TextWrapped("%s", Desc.Description.c_str());
+            ImGui::TextWrapped("%s", *Desc.Description);
             ImGui::Spacing();
         }
 
@@ -317,11 +316,11 @@ namespace Lumina
                 ImGui::TextUnformatted(Value && *Value ? Value : "-");
             };
 
-            Row("Path",     Plugin->GetDescriptorPath().data());
-            Row("Category", Desc.Category.c_str());
-            Row("Version",  Desc.VersionName.empty()
-                                ? Format("{}", Desc.Version).c_str()
-                                : Desc.VersionName.c_str());
+            Row("Path",     Plugin->GetDescriptorPath().GetData());
+            Row("Category", *Desc.Category);
+            Row("Version",  Desc.VersionName.IsEmpty()
+                                ? *Format("{}", Desc.Version)
+                                : *Desc.VersionName);
             Row("Type",     Plugin->IsEnginePlugin() ? "Engine plugin" : "Project plugin");
             Row("Editor-only", Desc.bEditorOnly ? "Yes" : "No");
             Row("Has content", Desc.bContainsContent ? "Yes" : "No");
@@ -332,7 +331,7 @@ namespace Lumina
         ImGui::Spacing();
         if (ImGui::CollapsingHeader("Modules", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (Desc.Modules.empty())
+            if (Desc.Modules.IsEmpty())
             {
                 ImGui::TextDisabled("No native modules, content-only plugin.");
             }
@@ -349,17 +348,17 @@ namespace Lumina
                 {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(Mod.Name.c_str());
+                    ImGui::TextUnformatted(*Mod.Name);
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(LexToString(Mod.Type).data());
+                    ImGui::TextUnformatted(LexToString(Mod.Type).GetData());
                     ImGui::TableSetColumnIndex(2);
-                    ImGui::TextUnformatted(LexToString(Mod.LoadingPhase).data());
+                    ImGui::TextUnformatted(LexToString(Mod.LoadingPhase).GetData());
                 }
                 ImGui::EndTable();
             }
         }
 
-        if (!Desc.Dependencies.empty())
+        if (!Desc.Dependencies.IsEmpty())
         {
             if (ImGui::CollapsingHeader("Dependencies", ImGuiTreeNodeFlags_DefaultOpen))
             {
@@ -370,9 +369,9 @@ namespace Lumina
                                       : !DepPlugin->IsEnabled() ? "disabled"
                                       :                            "ok";
                     ImGui::BulletText("%s (v>=%d)%s%s",
-                        Dep.Name.c_str(), Dep.Version,
+                        *Dep.Name, Dep.Version,
                         Dep.bOptional ? "  [optional]" : "",
-                        Status[0] == 'o' ? "" : (FString("  -- ") + Status).c_str());
+                        Status[0] == 'o' ? "" : *(FString("  -- ") + Status));
                 }
             }
         }
@@ -381,8 +380,8 @@ namespace Lumina
 
     void FPluginBrowserEditorTool::DrawFooter()
     {
-        const int32 NumPending = (int32)PendingChanges.size();
-        const bool bCanApply   = NumPending > 0 && GEngine && !GEngine->GetProjectName().empty();
+        const int32 NumPending = PendingChanges.Num();
+        const bool bCanApply   = NumPending > 0 && GEngine && !GEngine->GetProjectName().IsEmpty();
 
         if (bChangesSavedBanner)
         {
@@ -426,7 +425,7 @@ namespace Lumina
 
     bool FPluginBrowserEditorTool::ApplyAndPersist(FString& OutError)
     {
-        if (!GEngine || GEngine->GetProjectName().empty())
+        if (!GEngine || GEngine->GetProjectName().IsEmpty())
         {
             OutError = "No project loaded; nowhere to write plugin overrides.";
             return false;
@@ -437,10 +436,10 @@ namespace Lumina
         const FStringView NameView = GEngine->GetProjectName();
 
         FFixedString Composed = Paths::Combine(PathView, NameView);
-        Composed.append(".lproject");
+        Composed.Append(".lproject");
         Paths::Normalize(Composed);
 
-        const FString LprojPath(Composed.data(), Composed.size());
+        const FString LprojPath(Composed.GetData(), Composed.Len());
 
         FString Json;
         if (!FileHelper::LoadFileIntoString(Json, LprojPath))
@@ -450,67 +449,59 @@ namespace Lumina
             return false;
         }
 
-        nlohmann::json Root;
-        try
-        {
-            Root = nlohmann::json::parse(Json.c_str(), Json.c_str() + Json.size());
-        }
-        catch (const std::exception& E)
+        FJsonValue Root;
+        FJsonParseError ParseError;
+        if (!FJsonValue::Parse(Json.View(), Root, &ParseError))
         {
             OutError = "Malformed .lproject JSON: ";
-            OutError += E.what();
+            OutError += ParseError.Message;
             return false;
         }
-        if (!Root.is_object())
+        if (!Root.IsObject())
         {
             OutError = ".lproject root must be a JSON object.";
             return false;
         }
 
         // Preserves existing entries and any forward-compatible fields, and appends new ones.
-        nlohmann::json& PluginsArr = Root["Plugins"];
-        if (!PluginsArr.is_array())
+        FJsonValue& PluginsArr = Root.FindOrAdd("Plugins");
+        if (!PluginsArr.IsArray())
         {
-            PluginsArr = nlohmann::json::array();
+            PluginsArr = FJsonValue::MakeArray();
         }
 
-        for (const auto& Pair : PendingChanges)
+        for (const auto& [PluginName, bEnabled] : PendingChanges)
         {
-            const FString Name(Pair.first.ToString().data(), Pair.first.ToString().size());
-            const bool   bEnabled = Pair.second;
+            const FString Name(PluginName.ToString().GetData(), PluginName.ToString().Len());
 
             bool bUpdatedExisting = false;
-            for (auto& Entry : PluginsArr)
+            for (FJsonValue& Entry : PluginsArr.AsArray())
             {
-                if (!Entry.is_object()) continue;
-                auto NameIt = Entry.find("Name");
-                if (NameIt == Entry.end() || !NameIt->is_string()) continue;
-                if (NameIt->get_ref<const std::string&>() == Name.c_str())
+                if (!Entry.IsObject()) continue;
+                const FJsonValue* NameValue = Entry.Find("Name");
+                if (NameValue == nullptr || !NameValue->IsString()) continue;
+                if (NameValue->AsString() == Name.View())
                 {
-                    Entry["Enabled"] = bEnabled;
+                    Entry.Set("Enabled", bEnabled);
                     bUpdatedExisting = true;
                     break;
                 }
             }
             if (!bUpdatedExisting)
             {
-                nlohmann::json New;
-                New["Name"]    = std::string(Name.c_str(), Name.size());
-                New["Enabled"] = bEnabled;
-                PluginsArr.push_back(Move(New));
+                PluginsArr.Add(FJsonValue::MakeObject({ { "Name", Name }, { "Enabled", bEnabled } }));
             }
         }
 
-        const std::string Serialized = Root.dump(4);
-        const FStringView SerializedView(Serialized.c_str(), Serialized.size());
-        if (!FileHelper::SaveStringToFile(SerializedView, LprojPath))
+        const FString Serialized = Root.ToString(4);
+        if (!FileHelper::SaveStringToFile(Serialized.View(), LprojPath))
         {
             OutError = "Failed to write ";
             OutError += LprojPath;
             return false;
         }
         
-        PendingChanges.clear();
+        PendingChanges.Reset();
         bChangesSavedBanner = true;
         LOG_INFO("[PluginBrowser] Wrote plugin overrides to {}", LprojPath);
         return true;
@@ -558,21 +549,21 @@ namespace Lumina
     {
         NewPluginNameBuf[0] = '\0';
         NewPluginDescBuf[0] = '\0';
-        NewPluginError.clear();
-        CreatePluginResult.clear();
+        NewPluginError.Reset();
+        CreatePluginResult.Reset();
 
         ToolContext->PushModal("Create Plugin", ImVec2(480, 290),
             [this]() -> bool
             {
                 // Confirmation view, shown after a successful create.
-                if (!CreatePluginResult.empty())
+                if (!CreatePluginResult.IsEmpty())
                 {
-                    ImGui::TextWrapped("%s", CreatePluginResult.c_str());
+                    ImGui::TextWrapped("%s", *CreatePluginResult);
                     ImGui::Spacing();
                     ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120.0f) * 0.5f);
                     if (ImGui::Button("OK", ImVec2(120, 0)))
                     {
-                        CreatePluginResult.clear();
+                        CreatePluginResult.Reset();
                         return true;
                     }
                     return false;
@@ -589,10 +580,10 @@ namespace Lumina
                 ImGui::SetNextItemWidth(-1.0f);
                 ImGui::InputTextWithHint("##plugindesc", "Optional", NewPluginDescBuf, sizeof(NewPluginDescBuf));
 
-                if (!NewPluginError.empty())
+                if (!NewPluginError.IsEmpty())
                 {
                     ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(0.96f, 0.36f, 0.38f, 1.0f), "%s", NewPluginError.c_str());
+                    ImGui::TextColored(ImVec4(0.96f, 0.36f, 0.38f, 1.0f), "%s", *NewPluginError);
                 }
 
                 ImGui::Spacing();
@@ -608,7 +599,7 @@ namespace Lumina
                     FString Error;
                     if (GEditorEngine->CreatePlugin(NewPluginNameBuf, NewPluginDescBuf, OutDir, Error))
                     {
-                        LOG_INFO("[PluginBrowser] Created plugin at {}", OutDir.c_str());
+                        LOG_INFO("[PluginBrowser] Created plugin at {}", *OutDir);
 
                         // Regenerates so the new modules join the project, then prompts a rebuild and restart.
                         GEditorEngine->GenerateProjectFiles(GEngine->GetProjectPath());
@@ -617,7 +608,7 @@ namespace Lumina
                         CreatePluginResult += NewPluginNameBuf;
                         CreatePluginResult += "'.\n\nProject files are regenerating. Rebuild the solution "
                                               "and restart the editor to load the new modules.";
-                        NewPluginError.clear();
+                        NewPluginError.Reset();
                     }
                     else
                     {
@@ -629,7 +620,7 @@ namespace Lumina
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(ButtonWidth, 0)))
                 {
-                    NewPluginError.clear();
+                    NewPluginError.Reset();
                     return true;
                 }
                 return false;

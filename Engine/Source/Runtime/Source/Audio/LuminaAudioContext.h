@@ -9,8 +9,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Containers/BoundedQueue.h"
 #include "Memory/SmartPtr.h"
-
-namespace Lumina::Jobs { struct FCounter; }
+#include "TaskSystem/TaskSystem.h"
 
 namespace Lumina
 {
@@ -18,7 +17,6 @@ namespace Lumina
 	class FProceduralAudioStream;
 	class IAudioSource;
 
-	/** IAudioContext on the in-house mixer and platform device, with no third party audio library. */
 	class RUNTIME_API FLuminaAudioContext final : public IAudioContext
 	{
 	public:
@@ -106,7 +104,7 @@ namespace Lumina
 
 		static constexpr uint32 MaxVoiceSlots = FAudioMixer::MaxVoices;
 
-		/** A play request carrying shared pointers, so it rides a side queue rather than the flat commands. */
+		// A play request carrying shared pointers, so it rides a side queue rather than the flat commands.
 		struct FPendingPlay
 		{
 			SAudioHandle     Handle;
@@ -134,7 +132,7 @@ namespace Lumina
 		void ResetVoiceSlots();
 
 		void PumpOnce();
-		static void PumpEntry(void* Arg, uint32 WorkerIndex);
+		static Jobs::TTask<void> PumpTask(FLuminaAudioContext* Self);
 
 		void ProcessPendingPlay(FPendingPlay& Play);
 		void ProcessCommand(const FAudioCommand& Cmd);
@@ -191,8 +189,7 @@ namespace Lumina
 		THashMap<uint64, TSharedPtr<FAudioGraphInstance>> GraphInstances;
 
 		TAtomic<bool>   bRunning{false};
-		TAtomic<bool>   bPumpActive{false};
-		Jobs::FCounter* PumpCounter = nullptr;
+		Jobs::FTaskEvent PumpDone;
 
 		TAtomic<uint32> NextGeneration{1};
 		TAtomic<uint32> ActiveVoices{0};

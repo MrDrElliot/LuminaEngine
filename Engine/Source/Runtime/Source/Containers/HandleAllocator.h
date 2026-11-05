@@ -45,15 +45,15 @@ namespace Lumina
             HintWord     = 0;
             HighWater    = 0;
 
-            Words.assign((InCapacity + 63u) / 64u, 0ull);
+            Words.Init(0ull, static_cast<int32>((InCapacity + 63u) / 64u));
 
             // The tail of the last word addresses slots past Capacity. Marking them allocated up front is
             // what lets the scan below trust a whole word without a per-bit capacity compare -- they can
             // never come back free, so they can never be handed out.
             const uint32 Tail = InCapacity & 63u;
-            if (Tail != 0u && !Words.empty())
+            if (Tail != 0u && !Words.IsEmpty())
             {
-                Words.back() = ~((1ull << Tail) - 1ull);
+                Words.Last() = ~((1ull << Tail) - 1ull);
             }
         }
 
@@ -63,7 +63,7 @@ namespace Lumina
             // Everything below HintWord is full: Alloc only moves the hint forward past words it found
             // full, and Free pulls it back to whatever it just released. So this never skips a free slot
             // and never needs a wrap-around second pass.
-            for (uint32 w = HintWord; w < (uint32)Words.size(); ++w)
+            for (uint32 w = HintWord; w < static_cast<uint32>(Words.Num()); ++w)
             {
                 const uint64 Free = ~Words[w];
                 if (Free == 0ull)
@@ -81,7 +81,7 @@ namespace Lumina
                 return Slot;
             }
 
-            HintWord = (uint32)Words.size();
+            HintWord = static_cast<uint32>(Words.Num());
             return kInvalidHandle;
         }
 
@@ -148,12 +148,12 @@ namespace Lumina
         template<typename TFunc>
         void ForEachAllocated(TFunc&& Func) const
         {
-            for (uint32 w = 0; w < (uint32)Words.size(); ++w)
+            for (int32 w = 0; w < Words.Num(); ++w)
             {
                 uint64 Bits = Words[w];
 
                 // The last word's padding is marked allocated; mask it back off so it is never visited.
-                if (w == (uint32)Words.size() - 1u)
+                if (w == Words.Num() - 1)
                 {
                     const uint32 Tail = Capacity & 63u;
                     if (Tail != 0u)

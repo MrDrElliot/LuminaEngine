@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Containers/Algorithm.h"
 #include "Containers/Queue.h"
 #include "EdGraphNode.h"
 #include "EdNodeGraphPin.h"
@@ -16,7 +17,7 @@ namespace Lumina::GraphAlgorithms
         for (const auto& NodeRef : Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            if (ReachableNodes.find(Node) != ReachableNodes.end())
+            if (ReachableNodes.Contains(Node))
             {
                 InDegree[Node] = 0;
             }
@@ -30,15 +31,15 @@ namespace Lumina::GraphAlgorithms
         for (const auto& NodeRef : Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            if (ReachableNodes.find(Node) == ReachableNodes.end())
+            if (!ReachableNodes.Contains(Node))
             {
                 continue;
             }
 
             CEdGraphNode* Implicit = Node->GetImplicitInputNode();
-            if (Implicit != nullptr && Implicit != Node && ReachableNodes.find(Implicit) != ReachableNodes.end())
+            if (Implicit != nullptr && Implicit != Node && ReachableNodes.Contains(Implicit))
             {
-                ImplicitDependents[Implicit].push_back(Node);
+                ImplicitDependents[Implicit].Add(Node);
                 InDegree[Node]++;
             }
         }
@@ -46,7 +47,7 @@ namespace Lumina::GraphAlgorithms
         for (const auto& NodeRef : Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            if (ReachableNodes.find(Node) == ReachableNodes.end())
+            if (!ReachableNodes.Contains(Node))
             {
                 continue;
             }
@@ -57,7 +58,7 @@ namespace Lumina::GraphAlgorithms
                 for (CEdNodeGraphPin* ConnectedPin : OutputPin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
-                    if (ReachableNodes.find(ConnectedNode) != ReachableNodes.end())
+                    if (ReachableNodes.Contains(ConnectedNode))
                     {
                         InDegree[ConnectedNode]++;
                     }
@@ -66,20 +67,20 @@ namespace Lumina::GraphAlgorithms
         }
 
         TQueue<CEdGraphNode*> ReadyQueue;
-        for (auto& Pair : InDegree)
+        for (auto& [Node, Degree] : InDegree)
         {
-            if (Pair.second == 0)
+            if (Degree == 0)
             {
-                ReadyQueue.push(Pair.first);
+                ReadyQueue.Enqueue(Node);
             }
         }
 
         uint32 ProcessedNodeCount = 0;
-        while (!ReadyQueue.empty())
+        while (!ReadyQueue.IsEmpty())
         {
-            CEdGraphNode* Node = ReadyQueue.front();
-            ReadyQueue.pop();
-            SortedNodes.push_back(Node);
+            CEdGraphNode* Node = ReadyQueue.Peek();
+            ReadyQueue.Pop();
+            SortedNodes.Add(Node);
             ProcessedNodeCount++;
 
             for (const auto& OutputPinRef : Node->GetOutputPins())
@@ -88,37 +89,37 @@ namespace Lumina::GraphAlgorithms
                 for (CEdNodeGraphPin* ConnectedPin : OutputPin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
-                    if (ReachableNodes.find(ConnectedNode) == ReachableNodes.end())
+                    if (!ReachableNodes.Contains(ConnectedNode))
                     {
                         continue;
                     }
 
                     if (--InDegree[ConnectedNode] == 0)
                     {
-                        ReadyQueue.push(ConnectedNode);
+                        ReadyQueue.Enqueue(ConnectedNode);
                     }
                 }
             }
 
-            if (auto It = ImplicitDependents.find(Node); It != ImplicitDependents.end())
+            if (auto It = ImplicitDependents.Find(Node); It != nullptr)
             {
-                for (CEdGraphNode* Dependent : It->second)
+                for (CEdGraphNode* Dependent : (*It))
                 {
                     if (--InDegree[Dependent] == 0)
                     {
-                        ReadyQueue.push(Dependent);
+                        ReadyQueue.Enqueue(Dependent);
                     }
                 }
             }
         }
 
-        if (ProcessedNodeCount != ReachableNodes.size())
+        if (ProcessedNodeCount != static_cast<uint32>(ReachableNodes.Num()))
         {
-            const auto Cyclic = Algo::FindIf(InDegree, [](const auto& Pair) { return Pair.second > 0; });
+            const auto Cyclic = Algo::FindIf(InDegree, [](const auto& Pair) { return Pair.Value > 0; });
             if (Cyclic != InDegree.end())
             {
-                SortedNodes.clear();
-                return Cyclic->first;
+                SortedNodes.Reset();
+                return Cyclic->Key;
             }
         }
 
@@ -129,24 +130,24 @@ namespace Lumina::GraphAlgorithms
     inline void CollectReachableFromRoot(CEdGraphNode* RootNode, THashSet<CEdGraphNode*>& ReachableNodes)
     {
         TQueue<CEdGraphNode*> ReverseQueue;
-        if (ReachableNodes.insert(RootNode).second)
+        if (ReachableNodes.TryAdd(RootNode))
         {
-            ReverseQueue.push(RootNode);
+            ReverseQueue.Enqueue(RootNode);
         }
 
-        while (!ReverseQueue.empty())
+        while (!ReverseQueue.IsEmpty())
         {
-            CEdGraphNode* Node = ReverseQueue.front();
-            ReverseQueue.pop();
+            CEdGraphNode* Node = ReverseQueue.Peek();
+            ReverseQueue.Pop();
 
             const auto Descend = [&ReachableNodes, &ReverseQueue](CEdNodeGraphPin* Pin)
             {
                 for (CEdNodeGraphPin* ConnectedPin : Pin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
-                    if (ReachableNodes.insert(ConnectedNode).second)
+                    if (ReachableNodes.TryAdd(ConnectedNode))
                     {
-                        ReverseQueue.push(ConnectedNode);
+                        ReverseQueue.Enqueue(ConnectedNode);
                     }
                 }
             };
@@ -172,9 +173,9 @@ namespace Lumina::GraphAlgorithms
             // feeding it would be judged unreachable and never compiled.
             if (CEdGraphNode* Implicit = Node->GetImplicitInputNode())
             {
-                if (ReachableNodes.insert(Implicit).second)
+                if (ReachableNodes.TryAdd(Implicit))
                 {
-                    ReverseQueue.push(Implicit);
+                    ReverseQueue.Enqueue(Implicit);
                 }
             }
         }
@@ -192,7 +193,7 @@ namespace Lumina::GraphAlgorithms
 
         if (RootNode == nullptr)
         {
-            SortedNodes.clear();
+            SortedNodes.Reset();
             return nullptr;
         }
 
@@ -216,9 +217,9 @@ namespace Lumina::GraphAlgorithms
             }
         }
 
-        if (ReachableNodes.empty())
+        if (ReachableNodes.IsEmpty())
         {
-            SortedNodes.clear();
+            SortedNodes.Reset();
             return nullptr;
         }
 

@@ -22,6 +22,7 @@ namespace Lumina
         using LessThanFn    = bool(*)(const void*, const void*);
         using ConstructFn   = void(*)(void*);
         using DestructFn    = void(*)(void*);
+        using RelocateFn    = void(*)(void*, void*);
         
         #if USING(WITH_EDITOR)
         using PreEditFn     = void(*)(void*, const FPropertyChangedEvent&);
@@ -36,6 +37,7 @@ namespace Lumina
         LessThanFn      LessThan    = nullptr;
         ConstructFn     Construct   = nullptr;
         DestructFn      Destruct    = nullptr;
+        RelocateFn      Relocate    = nullptr;
         #if USING(WITH_EDITOR)
         PreEditFn       PreEdit     = nullptr;
         PostEditFn      PostEdit    = nullptr;
@@ -49,6 +51,7 @@ namespace Lumina
         bool HasLessThan()      const { return LessThan     != nullptr; }
         bool HasConstruct()     const { return Construct    != nullptr; }
         bool HasDestruct()      const { return Destruct     != nullptr; }
+        bool HasRelocate()      const { return Relocate     != nullptr; }
         #if USING(WITH_EDITOR)
         bool HasPreEdit()       const { return PreEdit      != nullptr; }
         bool HasPostEdit()      const { return PostEdit     != nullptr; }
@@ -73,6 +76,15 @@ namespace Lumina
             Ops->Destruct = +[](void* Mem)
             {
                 static_cast<T*>(Mem)->~T();
+            };
+        }
+
+        if constexpr (std::is_move_constructible_v<T> && std::is_destructible_v<T>)
+        {
+            Ops->Relocate = +[](void* Dest, void* Source)
+            {
+                Memory::ConstructAt(static_cast<T*>(Dest), std::move(*static_cast<T*>(Source)));
+                static_cast<T*>(Source)->~T();
             };
         }
 

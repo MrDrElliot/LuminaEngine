@@ -49,13 +49,13 @@ namespace Lumina
 
             void Error(const FString& Message)
             {
-                Result->Errors.push_back(Message);
+                Result->Errors.Add(Message);
             }
 
             // Deduplicated, because each entry costs a full PCM decode held for the life of the voice.
             int32 FindOrAddWave(CAudioStream* Wave)
             {
-                for (int32 Index = 0; Index < (int32)Result->Waves.size(); ++Index)
+                for (int32 Index = 0; Index < Result->Waves.Num(); ++Index)
                 {
                     if (Result->Waves[Index] == Wave)
                     {
@@ -63,8 +63,8 @@ namespace Lumina
                     }
                 }
 
-                Result->Waves.push_back(Wave);
-                return (int32)Result->Waves.size() - 1;
+                Result->Waves.Add(Wave);
+                return Result->Waves.Num() - 1;
             }
         };
 
@@ -72,18 +72,18 @@ namespace Lumina
         bool VisitNode(CEdGraphNode* Node, THashSet<CEdGraphNode*>& Visited, THashSet<CEdGraphNode*>& OnStack,
             TVector<CEdGraphNode*>& OutOrder, FCompileContext& Context)
         {
-            if (Visited.find(Node) != Visited.end())
+            if (Visited.Contains(Node))
             {
                 return true;
             }
 
-            if (OnStack.find(Node) != OnStack.end())
+            if (OnStack.Contains(Node))
             {
                 Context.Error("Cycle in the graph at node '" + Node->GetNodeTitleText() + "'.");
                 return false;
             }
 
-            OnStack.insert(Node);
+            OnStack.Add(Node);
 
             for (const auto& InputPinRef : Node->GetInputPins())
             {
@@ -100,9 +100,9 @@ namespace Lumina
                 }
             }
 
-            OnStack.erase(Node);
-            Visited.insert(Node);
-            OutOrder.push_back(Node);
+            OnStack.Remove(Node);
+            Visited.Add(Node);
+            OutOrder.Add(Node);
             return true;
         }
 
@@ -111,10 +111,10 @@ namespace Lumina
         {
             if (CEdNodeGraphPin* Source = ResolveSourcePin(InputPin))
             {
-                auto Found = Context.PinSlots.find(Source);
-                if (Found != Context.PinSlots.end())
+                auto Found = Context.PinSlots.Find(Source);
+                if (Found != nullptr)
                 {
-                    return Found->second;
+                    return (*Found);
                 }
             }
 
@@ -155,7 +155,7 @@ namespace Lumina
                 break;
             }
 
-            Context.Result->Program.SlotInits.push_back(Init);
+            Context.Result->Program.SlotInits.Add(Init);
             return Init.Slot;
         }
 
@@ -167,33 +167,33 @@ namespace Lumina
 
             const FString Label = Node->GetNodeTitleText();
 
-            if (Inputs.size() != Operator.Signature.Inputs.size() || Outputs.size() != Operator.Signature.Outputs.size())
+            if (Inputs.Num() != Operator.Signature.Inputs.Num() || Outputs.Num() != Operator.Signature.Outputs.Num())
             {
-                Context.Error("Node '" + Label + "' declares " + Format("{}", (uint32)Inputs.size()) + " inputs and "
-                    + Format("{}", (uint32)Outputs.size()) + " outputs, but operator '" + Operator.Name.c_str()
-                    + "' takes " + Format("{}", (uint32)Operator.Signature.Inputs.size()) + " and "
-                    + Format("{}", (uint32)Operator.Signature.Outputs.size()) + ".");
+                Context.Error("Node '" + Label + "' declares " + Format("{}", (uint32)Inputs.Num()) + " inputs and "
+                    + Format("{}", (uint32)Outputs.Num()) + " outputs, but operator '" + *Operator.Name
+                    + "' takes " + Format("{}", (uint32)Operator.Signature.Inputs.Num()) + " and "
+                    + Format("{}", (uint32)Operator.Signature.Outputs.Num()) + ".");
                 return false;
             }
 
-            for (size_t Index = 0; Index < Inputs.size(); ++Index)
+            for (int32 Index = 0; Index < Inputs.Num(); ++Index)
             {
                 const CAudioGraphPin* Pin = Cast<CAudioGraphPin>(Inputs[Index].Get());
                 if (Pin == nullptr || Pin->GetPinType() != Operator.Signature.Inputs[Index])
                 {
                     Context.Error("Node '" + Label + "' input " + Format("{}", (uint32)Index)
-                        + " does not match the type operator '" + Operator.Name.c_str() + "' expects.");
+                        + " does not match the type operator '" + *Operator.Name + "' expects.");
                     return false;
                 }
             }
 
-            for (size_t Index = 0; Index < Outputs.size(); ++Index)
+            for (int32 Index = 0; Index < Outputs.Num(); ++Index)
             {
                 const CAudioGraphPin* Pin = Cast<CAudioGraphPin>(Outputs[Index].Get());
                 if (Pin == nullptr || Pin->GetPinType() != Operator.Signature.Outputs[Index])
                 {
                     Context.Error("Node '" + Label + "' output " + Format("{}", (uint32)Index)
-                        + " does not match the type operator '" + Operator.Name.c_str() + "' expects.");
+                        + " does not match the type operator '" + *Operator.Name + "' expects.");
                     return false;
                 }
             }
@@ -208,14 +208,14 @@ namespace Lumina
 
         if (Graph == nullptr)
         {
-            Result.Errors.push_back("No graph to compile.");
+            Result.Errors.Add("No graph to compile.");
             return Result;
         }
 
         CAudioGraphOutputNode* OutputNode = Graph->FindOutputNode();
         if (OutputNode == nullptr)
         {
-            Result.Errors.push_back("The graph has no Output node.");
+            Result.Errors.Add("The graph has no Output node.");
             return Result;
         }
 
@@ -243,14 +243,14 @@ namespace Lumina
             if (CAudioGraphInputNode* InputNode = Cast<CAudioGraphInputNode>(Node))
             {
                 const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& OutputPins = InputNode->GetOutputPins();
-                if (OutputPins.empty())
+                if (OutputPins.IsEmpty())
                 {
                     continue;
                 }
 
                 if (InputNode->Type == EAudioGraphType::Wave)
                 {
-                    Context.Error("Graph input '" + FString(InputNode->ParameterName.c_str())
+                    Context.Error("Graph input '" + FString(*InputNode->ParameterName)
                         + "' is a Wave. Assign the wave on the Wave Player instead; gameplay cannot swap one on"
                           " a playing voice, because decoding is not safe on the audio thread.");
                     continue;
@@ -261,7 +261,7 @@ namespace Lumina
 
                 if (Result.Program.FindInput(InputNode->ParameterName) != nullptr)
                 {
-                    Context.Error("Two graph inputs are named '" + FString(InputNode->ParameterName.c_str()) + "'.");
+                    Context.Error("Two graph inputs are named '" + FString(*InputNode->ParameterName) + "'.");
                     continue;
                 }
 
@@ -272,7 +272,7 @@ namespace Lumina
                 Decl.DefaultFloat = InputNode->DefaultFloat;
                 Decl.DefaultInt   = InputNode->DefaultInt;
                 Decl.DefaultBool  = InputNode->DefaultBool;
-                Result.Program.Inputs.push_back(Decl);
+                Result.Program.Inputs.Add(Decl);
 
                 FAudioGraphSlotInit Init;
                 Init.Type       = InputNode->Type;
@@ -280,14 +280,14 @@ namespace Lumina
                 Init.FloatValue = InputNode->DefaultFloat;
                 Init.IntValue   = InputNode->DefaultInt;
                 Init.BoolValue  = InputNode->DefaultBool;
-                Result.Program.SlotInits.push_back(Init);
+                Result.Program.SlotInits.Add(Init);
                 continue;
             }
 
             if (CAudioGraphNamedOutputNode* NamedOutput = Cast<CAudioGraphNamedOutputNode>(Node))
             {
                 const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = NamedOutput->GetInputPins();
-                if (InputPins.empty())
+                if (InputPins.IsEmpty())
                 {
                     continue;
                 }
@@ -296,14 +296,14 @@ namespace Lumina
                 Decl.Name = NamedOutput->ParameterName;
                 Decl.Type = EAudioGraphType::Float;
                 Decl.Slot = ResolveInputSlot(InputPins[0].Get(), Context);
-                Result.Program.Outputs.push_back(Decl);
+                Result.Program.Outputs.Add(Decl);
                 continue;
             }
 
             if (CAudioGraphTriggerOutputNode* TriggerOutput = Cast<CAudioGraphTriggerOutputNode>(Node))
             {
                 const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = TriggerOutput->GetInputPins();
-                if (InputPins.empty())
+                if (InputPins.IsEmpty())
                 {
                     continue;
                 }
@@ -312,7 +312,7 @@ namespace Lumina
                 Decl.Name = TriggerOutput->ParameterName;
                 Decl.Type = EAudioGraphType::Trigger;
                 Decl.Slot = ResolveInputSlot(InputPins[0].Get(), Context);
-                Result.Program.Outputs.push_back(Decl);
+                Result.Program.Outputs.Add(Decl);
                 continue;
             }
 
@@ -320,7 +320,7 @@ namespace Lumina
             {
                 const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
 
-                if (InputPins.size() >= 3)
+                if (InputPins.Num() >= 3)
                 {
                     Result.Program.OutputLeftSlot  = ResolveInputSlot(InputPins[0].Get(), Context);
                     Result.Program.OutputRightSlot = ResolveInputSlot(InputPins[1].Get(), Context);
@@ -346,7 +346,7 @@ namespace Lumina
             if (Operator == nullptr)
             {
                 Context.Error("Node '" + OperatorNode->GetNodeTitleText() + "' names operator '"
-                    + OperatorName.c_str() + "', which this build does not register.");
+                    + *OperatorName + "', which this build does not register.");
                 continue;
             }
 
@@ -360,10 +360,10 @@ namespace Lumina
             Instance.SourceNodeID = Node->GetNodeID();
 
             const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
-            Instance.InputSlots.reserve(InputPins.size());
+            Instance.InputSlots.Reserve(InputPins.Num());
             for (const TStrongObjectPtr<CEdNodeGraphPin>& InputPin : InputPins)
             {
-                Instance.InputSlots.push_back(ResolveInputSlot(InputPin.Get(), Context));
+                Instance.InputSlots.Add(ResolveInputSlot(InputPin.Get(), Context));
             }
 
             if (Operator->Signature.Variadic == EAudioGraphType::Wave)
@@ -382,28 +382,28 @@ namespace Lumina
                     Init.Type      = EAudioGraphType::Wave;
                     Init.Slot      = Context.Allocate(EAudioGraphType::Wave);
                     Init.WaveIndex = Context.FindOrAddWave(Wave);
-                    Result.Program.SlotInits.push_back(Init);
-                    Instance.InputSlots.push_back(Init.Slot);
+                    Result.Program.SlotInits.Add(Init);
+                    Instance.InputSlots.Add(Init.Slot);
                 }
 
-                if (Instance.InputSlots.size() == InputPins.size())
+                if (Instance.InputSlots.Num() == InputPins.Num())
                 {
-                    Result.Warnings.push_back("Node '" + OperatorNode->GetNodeTitleText() + "' has no waves, so it plays nothing.");
+                    Result.Warnings.Add("Node '" + OperatorNode->GetNodeTitleText() + "' has no waves, so it plays nothing.");
                 }
             }
 
             const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& OutputPins = Node->GetOutputPins();
-            Instance.OutputSlots.reserve(OutputPins.size());
+            Instance.OutputSlots.Reserve(OutputPins.Num());
             for (const TStrongObjectPtr<CEdNodeGraphPin>& OutputPin : OutputPins)
             {
                 const CAudioGraphPin* Pin = Cast<CAudioGraphPin>(OutputPin.Get());
                 const uint16 Slot = Pin != nullptr ? Context.Allocate(Pin->GetPinType()) : kAudioGraphInvalidSlot;
 
                 Context.PinSlots[OutputPin.Get()] = Slot;
-                Instance.OutputSlots.push_back(Slot);
+                Instance.OutputSlots.Add(Slot);
             }
 
-            Result.Program.Nodes.push_back(Move(Instance));
+            Result.Program.Nodes.Add(Move(Instance));
         }
 
         // Every graph answers to OnPlay, whether or not the author placed a node for it.
@@ -413,21 +413,21 @@ namespace Lumina
             Decl.Name = FName(kAudioGraphOnPlayInput);
             Decl.Type = EAudioGraphType::Trigger;
             Decl.Slot = Context.Allocate(EAudioGraphType::Trigger);
-            Result.Program.Inputs.push_back(Decl);
+            Result.Program.Inputs.Add(Decl);
         }
 
-        if (Result.Program.Nodes.empty())
+        if (Result.Program.Nodes.IsEmpty())
         {
-            Result.Errors.push_back("Nothing is wired to the Output node.");
+            Result.Errors.Add("Nothing is wired to the Output node.");
         }
 
         if (Result.Program.OutputLeftSlot == kAudioGraphInvalidSlot
             && Result.Program.OutputRightSlot == kAudioGraphInvalidSlot)
         {
-            Result.Warnings.push_back("Neither output channel is wired; the graph renders silence.");
+            Result.Warnings.Add("Neither output channel is wired; the graph renders silence.");
         }
 
-        Result.bSuccess = Result.Errors.empty();
+        Result.bSuccess = Result.Errors.IsEmpty();
         return Result;
     }
 }

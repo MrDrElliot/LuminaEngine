@@ -65,6 +65,7 @@ internal unsafe struct ViewHeader
 
     public ulong World;
     public int Includes;
+    public uint WriteMask;
     public fixed long Tokens[MaxIncludes];
     public fixed long EpochSlots[MaxIncludes];
     public fixed uint ChunkEpochs[MaxIncludes];
@@ -86,18 +87,10 @@ internal unsafe struct ViewCursor : IDisposable
     private int Index;
 
     public ViewCursor(ulong World, ReadOnlySpan<IntPtr> IncludeTokens, Exclude Filter)
+        : this(World, IncludeTokens.Length, IncludeTokens.Length >= 32 ? ~0u : (1u << IncludeTokens.Length) - 1u)
     {
-        int Includes = IncludeTokens.Length;
-        Header = (ViewHeader*)NativeMemory.AllocZeroed((nuint)sizeof(ViewHeader));
-        Entities = (uint*)NativeMemory.Alloc(ChunkSize * sizeof(uint));
-        Pointers = (nint*)NativeMemory.Alloc((nuint)(ChunkSize * Includes) * (nuint)sizeof(nint));
-        Count = 0;
-        Index = -1;
-        Header->World = World;
-        Header->Includes = Includes;
-
         IntPtr* Include = stackalloc IntPtr[ViewHeader.MaxIncludes];
-        for (int i = 0; i < Includes; ++i)
+        for (int i = 0; i < IncludeTokens.Length; ++i)
         {
             Header->Tokens[i] = IncludeTokens[i];
             Include[i] = IncludeTokens[i];
@@ -106,9 +99,40 @@ internal unsafe struct ViewCursor : IDisposable
         IntPtr[]? Excluded = Filter.Tokens;
         fixed (IntPtr* Exclude = Excluded)
         {
-            State = Native.ViewBegin(World, Include, Includes, Exclude, Excluded?.Length ?? 0);
+            State = Native.ViewBegin(World, Include, IncludeTokens.Length, Exclude, Excluded?.Length ?? 0);
         }
+        ReadEpochs();
+    }
 
+    // A query field's view, whose Read includes are never stamped and whose filters, when applied, keep only rows changed since its last run.
+    public ViewCursor(SystemParamBlock* Query, bool bApplyFilters)
+        : this((ulong)Query->World, Query->NumIncludes, Query->WriteMask)
+    {
+        for (int i = 0; i < Query->NumIncludes; ++i)
+        {
+            Header->Tokens[i] = Query->Includes[i];
+        }
+        State = Native.QueryViewBegin((ulong)Query->World, (IntPtr*)Query->Includes, Query->NumIncludes, Query->WriteMask, (IntPtr*)Query->Excludes, Query->NumExcludes,
+                                      (IntPtr*)Query->Requires, Query->NumRequires, (IntPtr*)Query->Filters, bApplyFilters ? Query->NumFilters : 0, Query->AddedMask, Query->LastRunTick);
+        ReadEpochs();
+    }
+
+    private ViewCursor(ulong World, int Includes, uint WriteMask)
+    {
+        Header = (ViewHeader*)NativeMemory.AllocZeroed((nuint)sizeof(ViewHeader));
+        Entities = (uint*)NativeMemory.Alloc(ChunkSize * sizeof(uint));
+        Pointers = (nint*)NativeMemory.Alloc((nuint)(ChunkSize * Includes) * (nuint)sizeof(nint));
+        State = IntPtr.Zero;
+        Count = 0;
+        Index = -1;
+        Header->World = World;
+        Header->Includes = Includes;
+        Header->WriteMask = WriteMask;
+    }
+
+    private void ReadEpochs()
+    {
+        int Includes = Header->Includes;
         uint** Slots = stackalloc uint*[ViewHeader.MaxIncludes];
         if (State != IntPtr.Zero)
         {
@@ -204,7 +228,8 @@ internal unsafe struct ViewCursor : IDisposable
                 }
                 continue;
             }
-            nint Found = Native.GetComponent(Header->World, EntityId, Token);
+            bool bWrite = (Header->WriteMask & (1u << i)) != 0;
+            nint Found = bWrite ? Native.GetComponent(Header->World, EntityId, Token) : Native.GetComponentRead(Header->World, EntityId, Token);
             if (Found == 0)
             {
                 return false;

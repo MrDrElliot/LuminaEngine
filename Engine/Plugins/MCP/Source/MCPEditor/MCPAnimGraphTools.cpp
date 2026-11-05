@@ -8,6 +8,7 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "MCPGraphTools.h"
 #include "MCPTextMatch.h"
 #include "Session/SessionOps.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
@@ -18,8 +19,7 @@
 
 namespace Lumina::MCP
 {
-    // Named because MCPMaterialTools.cpp shares its Register* names and the two can land in one unity blob.
-    namespace AnimGraphTools
+    namespace MCPAnimGraphToolsInternal
     {
         struct FAnimGraphTarget
         {
@@ -34,7 +34,7 @@ namespace Lumina::MCP
             Write,
         };
 
-        bool ResolveCanvas(const FString& Guid, const TVector<int64>& GraphPath, EAnimGraphAccess Access,
+        bool ResolveAnimGraphCanvas(const FString& Guid, const TVector<int64>& GraphPath, EAnimGraphAccess Access,
             FAnimGraphTarget& Out, FString& OutError)
         {
             if (!Agent::ResolveAsset<CAnimationGraph>(FStringView(Guid), Out.Asset, OutError))
@@ -58,7 +58,6 @@ namespace Lumina::MCP
                     return false;
                 }
 
-                // A read must not allocate a canvas, so it only follows ones that already exist.
                 CEdNodeGraph* SubGraph = Access == EAnimGraphAccess::Write
                     ? Node->GetEnterableSubGraph()
                     : Node->GetOwnedSubGraph();
@@ -91,7 +90,7 @@ namespace Lumina::MCP
             }
         }
 
-        bool SetPropertyFromJson(CObject* Object, const FString& Path, const FString& ValueJson,
+        bool SetAnimGraphPropertyFromJson(CObject* Object, const FString& Path, const FString& ValueJson,
             SAnimGraphPropertyResult& Out, FString& OutError)
         {
             Agent::FResolvedProperty Property;
@@ -100,10 +99,8 @@ namespace Lumina::MCP
                 return false;
             }
 
-            const nlohmann::json Value = nlohmann::json::parse(
-                ValueJson.c_str(), ValueJson.c_str() + ValueJson.size(), nullptr, false);
-
-            if (Value.is_discarded())
+            FJsonValue Value;
+            if (!FJsonValue::Parse(ValueJson, Value))
             {
                 OutError = "Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.";
                 return false;
@@ -117,9 +114,9 @@ namespace Lumina::MCP
                 return false;
             }
 
-            nlohmann::json Before;
+            FJsonValue Before;
             Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-            Out.Previous = FString(Before.dump().c_str());
+            Out.Previous = Before.ToString();
 
             const Agent::FMarshalResult Applied =
                 Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(Path));
@@ -130,14 +127,14 @@ namespace Lumina::MCP
                 return false;
             }
 
-            nlohmann::json After;
+            FJsonValue After;
             Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-            Out.Current = FString(After.dump().c_str());
+            Out.Current = After.ToString();
 
             return true;
         }
 
-        FString DescribeCompileError(const EdNodeGraph::FError& Error)
+        FString DescribeAnimGraphCompileError(const EdNodeGraph::FError& Error)
         {
             if (Error.Node == nullptr)
             {
@@ -147,18 +144,17 @@ namespace Lumina::MCP
             return Lumina::Format("[{}] {} (node {})", Error.Name, Error.Description, Error.Node->GetNodeID());
         }
 
-        void RegisterListNodeTypes(FStringView Owner)
+        void RegisterAnimGraphListNodeTypes(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SListAnimGraphNodeTypesParams, SListAnimGraphNodeTypesResult>(
                 Owner, "animgraph.list_node_types",
-                "List the node types one animation graph canvas accepts. A blend tree and a state machine "
-                "canvas take different ones.",
+                "List the node types one animation graph canvas accepts; blend trees and state canvases differ.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListAnimGraphNodeTypesParams& In, SListAnimGraphNodeTypesResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Read, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Read, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -172,9 +168,9 @@ namespace Lumina::MCP
                         }
 
                         SAnimGraphNodeTypeInfo Info;
-                        Info.Name        = FString(Class->GetName().ToString().c_str());
+                        Info.Name        = FString(*Class->GetName().ToString());
                         Info.DisplayName = FString(CDO->GetNodeDisplayName());
-                        Info.Category    = FString(CDO->GetNodeCategory().c_str());
+                        Info.Category    = FString(*CDO->GetNodeCategory());
                         Info.Description = FString(CDO->GetNodeTooltip());
 
                         if (!ContainsText(FStringView(Info.Name), In.Contains)
@@ -183,31 +179,31 @@ namespace Lumina::MCP
                             continue;
                         }
 
-                        Out.Types.push_back(Move(Info));
+                        Out.Types.Add(Move(Info));
                     }
 
-                    return Agent::FToolResult::Ok(Lumina::Format("{} node type(s).", Out.Types.size()));
+                    return Agent::FToolResult::Ok(Lumina::Format("{} node type(s).", Out.Types.Num()));
                 });
         }
 
-        void RegisterDescribe(FStringView Owner)
+        void RegisterAnimGraphDescribe(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SAnimGraphCanvasParams, SDescribeAnimGraphResult>(
                 Owner, "animgraph.describe",
-                "Report one canvas of an animation graph: every node, its pins and links, its field values, "
-                "and on a state machine canvas every transition.",
+                "Report one animation graph canvas: every node with its pins, links and field values, and on a "
+                "state machine canvas every transition.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SAnimGraphCanvasParams& In, SDescribeAnimGraphResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Read, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Read, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name        = FString(Target.Asset->GetName().ToString().c_str());
-                    Out.CanvasClass = FString(Target.Canvas->GetClass()->GetName().ToString().c_str());
+                    Out.Name        = FString(*Target.Asset->GetName().ToString());
+                    Out.CanvasClass = FString(*Target.Canvas->GetClass()->GetName().ToString());
 
                     for (const TStrongObjectPtr<CEdGraphNode>& Node : Target.Canvas->Nodes)
                     {
@@ -218,7 +214,7 @@ namespace Lumina::MCP
 
                         SAnimGraphNodeInfo Info;
                         Info.Id         = Node->GetNodeID();
-                        Info.Type       = FString(Node->GetClass()->GetName().ToString().c_str());
+                        Info.Type       = FString(*Node->GetClass()->GetName().ToString());
                         Info.Title      = Node->GetNodeTitleText();
                         Info.bHasCanvas = Node->GetOwnedSubGraph() != nullptr;
                         Info.X          = Node->GetNodeX();
@@ -226,13 +222,13 @@ namespace Lumina::MCP
 
                         CollectPins(Node.Get(), Info.Pins);
 
-                        nlohmann::json Values;
+                        FJsonValue Values;
                         if (Agent::WriteStruct(Node->GetClass(), Node.Get(), Values).IsValid())
                         {
-                            Info.Values = FString(Values.dump().c_str());
+                            Info.Values = Values.ToString();
                         }
 
-                        Out.Nodes.push_back(Move(Info));
+                        Out.Nodes.Add(Move(Info));
                     }
 
                     for (CAnimStateTransition* Transition : AnimGraphOps::GetTransitions(Target.Canvas))
@@ -241,205 +237,127 @@ namespace Lumina::MCP
                         Info.FromNode = Transition->FromStateNodeID;
                         Info.ToNode   = Transition->ToStateNodeID;
 
-                        nlohmann::json Values;
+                        FJsonValue Values;
                         if (Agent::WriteStruct(Transition->GetClass(), Transition, Values).IsValid())
                         {
-                            Info.Values = FString(Values.dump().c_str());
+                            Info.Values = Values.ToString();
                         }
 
-                        Out.Transitions.push_back(Move(Info));
+                        Out.Transitions.Add(Move(Info));
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("'{}' canvas has {} node(s), {} transition(s).",
-                        Out.Name, Out.Nodes.size(), Out.Transitions.size()));
+                        Out.Name, Out.Nodes.Num(), Out.Transitions.Num()));
                 });
         }
 
-        void RegisterAddNode(FStringView Owner)
+        Agent::FToolResult AddAnimGraphNode(const SAnimGraphNodeParams& In, const FAnimGraphTarget& Target, SAnimGraphNodeResult& Out)
         {
-            Agent::FToolRegistry::Get().Register<SAddAnimGraphNodeParams, SAddAnimGraphNodeResult>(
-                Owner, "animgraph.add_node",
-                "Add a node to one animation graph canvas and report the pins it came with. X grows to the right and Y downward, and a graph reads left to right, so place a node left of (smaller X than) the node it feeds; describe reports every node's X and Y. When the graph is open, the edit is one undo step in its tab, graph.arrange lays the canvas out and graph.frame brings nodes into view.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SAddAnimGraphNodeParams& In, SAddAnimGraphNodeResult& Out)
-                {
-                    FAnimGraphTarget Target;
-                    FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
+            CClass* NodeClass = NodeGraphOps::ResolveNodeType(Target.Canvas->GetClass(), FStringView(In.NodeType));
+            if (NodeClass == nullptr)
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "This canvas takes no node type named '{}'. Use animgraph.list_node_types.", In.NodeType));
+            }
 
-                    CClass* NodeClass = NodeGraphOps::ResolveNodeType(Target.Canvas->GetClass(), FStringView(In.NodeType));
-                    if (NodeClass == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "This canvas takes no node type named '{}'. Use animgraph.list_node_types.",
-                            In.NodeType));
-                    }
+            CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Canvas, NodeClass, In.X, In.Y);
+            if (Node == nullptr)
+            {
+                return Agent::FToolResult::Error("The graph refused to create that node.");
+            }
 
-                    CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Canvas, NodeClass, In.X, In.Y);
-                    if (Node == nullptr)
-                    {
-                        return Agent::FToolResult::Error("The graph refused to create that node.");
-                    }
+            Out.Id = Node->GetNodeID();
+            CollectPins(Node, Out.Pins);
 
-                    Out.Id = Node->GetNodeID();
-                    CollectPins(Node, Out.Pins);
+            MarkAnimGraphDirty(Target);
 
-                    MarkAnimGraphDirty(Target);
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
-                });
+            return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
         }
 
-        void RegisterRemoveNode(FStringView Owner)
+        void RegisterAnimGraphNode(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SAnimGraphNodeParams, SAnimGraphEditResult>(
-                Owner, "animgraph.remove_node",
-                "Remove a node from an animation graph canvas, with its links, transitions and any canvas it owns.",
+            Agent::FToolRegistry::Get().Register<SAnimGraphNodeParams, SAnimGraphNodeResult>(
+                Owner, "animgraph.node",
+                "Add or remove a node on one animation graph canvas. Add returns the node's id and pins; X grows right "
+                "and Y down. Remove takes its links, transitions and any canvas it owns.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SAnimGraphNodeParams& In, SAnimGraphEditResult& Out)
+                [](const SAnimGraphNodeParams& In, SAnimGraphNodeResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Canvas, In.Node);
-                    if (Node == nullptr)
+                    if (In.Action == EAnimGraphNodeAction::Add)
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
+                        return AddAnimGraphNode(In, Target, Out);
                     }
 
-                    if (!NodeGraphOps::RemoveNode(Target.Canvas, Node, Error))
+                    if (!RemoveGraphNode(Target.Canvas, In.Node, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.bSucceeded = true;
                     MarkAnimGraphDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Removed node {}.", In.Node));
                 });
         }
 
-        void RegisterConnect(FStringView Owner)
+        void RegisterAnimGraphLink(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SConnectAnimGraphParams, SAnimGraphEditResult>(
-                Owner, "animgraph.connect",
-                "Wire an output pin into an input pin. On a state machine canvas, wiring one state's output "
-                "into another's input creates a transition; set its rule with animgraph.set_transition_property.",
+            Agent::FToolRegistry::Get().Register<SAnimGraphLinkParams>(
+                Owner, "animgraph.link",
+                "Connect wires an output pin into an input pin; between two states it creates a transition. "
+                "Disconnect clears every link on Node.Pin, deleting any transitions it carried.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SConnectAnimGraphParams& In, SAnimGraphEditResult& Out)
+                [](const SAnimGraphLinkParams& In)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* From = NodeGraphOps::FindNode(Target.Canvas, In.FromNode);
-                    CEdGraphNode* To   = NodeGraphOps::FindNode(Target.Canvas, In.ToNode);
-
-                    if (From == nullptr || To == nullptr)
+                    if (In.Action == EAnimGraphLinkAction::Connect)
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.",
-                            From == nullptr ? In.FromNode : In.ToNode));
+                        if (!ConnectGraphPins(Target.Canvas, In.FromNode, In.FromPin, In.ToNode, In.ToPin, Error))
+                        {
+                            return Agent::FToolResult::Error(Error);
+                        }
+
+                        MarkAnimGraphDirty(Target);
+
+                        return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
+                            In.FromNode, In.FromPin, In.ToNode, In.ToPin));
                     }
 
-                    CEdNodeGraphPin* OutputPin =
-                        NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
-
-                    if (OutputPin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no output pin '{}'. It has {}.",
-                            In.FromNode, In.FromPin,
-                            NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
-                    }
-
-                    CEdNodeGraphPin* InputPin =
-                        NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
-
-                    if (InputPin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no input pin '{}'. It has {}.",
-                            In.ToNode, In.ToPin,
-                            NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
-                    }
-
-                    if (!NodeGraphOps::ConnectPins(Target.Canvas, OutputPin, InputPin, Error))
+                    if (!DisconnectGraphPin(Target.Canvas, In.Node, In.Pin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.bSucceeded = true;
-                    MarkAnimGraphDirty(Target);
-
-                    return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
-                        In.FromNode, In.FromPin, In.ToNode, In.ToPin));
-                });
-        }
-
-        void RegisterDisconnect(FStringView Owner)
-        {
-            Agent::FToolRegistry::Get().Register<SDisconnectAnimGraphParams, SAnimGraphEditResult>(
-                Owner, "animgraph.disconnect",
-                "Clear every link on one pin. On a state machine canvas this deletes the transitions it carried.",
-                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SDisconnectAnimGraphParams& In, SAnimGraphEditResult& Out)
-                {
-                    FAnimGraphTarget Target;
-                    FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Canvas, In.Node);
-                    if (Node == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
-                    }
-
-                    CEdNodeGraphPin* Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
-                    if (Pin == nullptr)
-                    {
-                        Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
-                    }
-
-                    if (Pin == nullptr)
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Node {} has no pin '{}'.", In.Node, In.Pin));
-                    }
-
-                    if (!NodeGraphOps::DisconnectPin(Target.Canvas, Pin, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    Out.bSucceeded = true;
                     MarkAnimGraphDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Disconnected {}.{}.", In.Node, In.Pin));
                 });
         }
 
-        void RegisterSetNodeProperty(FStringView Owner)
+        void RegisterAnimGraphSetNodeProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetAnimGraphNodePropertyParams, SAnimGraphPropertyResult>(
                 Owner, "animgraph.set_node_property",
-                "Set one field on one node, such as a clip, a state's name or a parameter name. An unwired "
-                "value pin's default lives in PinDefaults, as [{\"PinName\": \"Alpha\", \"Value\": 0.5}].",
+                "Set one field on one node, such as a clip or a state's name. An unwired value pin's default lives "
+                "in PinDefaults, as [{\"PinName\": \"Alpha\", \"Value\": 0.5}].",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SSetAnimGraphNodePropertyParams& In, SAnimGraphPropertyResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -450,7 +368,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
                     }
 
-                    if (!SetPropertyFromJson(Node, In.Path, In.Value, Out, Error))
+                    if (!SetAnimGraphPropertyFromJson(Node, In.Path, In.Value, Out, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -463,18 +381,18 @@ namespace Lumina::MCP
                 });
         }
 
-        void RegisterSetTransitionProperty(FStringView Owner)
+        void RegisterAnimGraphSetTransitionProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetAnimGraphTransitionPropertyParams, SAnimGraphPropertyResult>(
                 Owner, "animgraph.set_transition_property",
-                "Set one field on the transition between two nodes of a state machine canvas. Conditions takes "
-                "a list of {ConditionSource, ParameterName, CurveName, Compare, CompareValue}.",
+                "Set one field on the transition between two states. Conditions takes a list of "
+                "{ConditionSource, ParameterName, CurveName, Compare, CompareValue}.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SSetAnimGraphTransitionPropertyParams& In, SAnimGraphPropertyResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, In.GraphPath, EAnimGraphAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -493,10 +411,10 @@ namespace Lumina::MCP
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
                             "No transition runs from node {} to node {} on this canvas. "
-                            "animgraph.connect the two states first.", In.FromNode, In.ToNode));
+                            "animgraph.link the two states first.", In.FromNode, In.ToNode));
                     }
 
-                    if (!SetPropertyFromJson(Found, In.Path, In.Value, Out, Error))
+                    if (!SetAnimGraphPropertyFromJson(Found, In.Path, In.Value, Out, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -508,18 +426,18 @@ namespace Lumina::MCP
                 });
         }
 
-        void RegisterCompile(FStringView Owner)
+        void RegisterAnimGraphCompile(FStringView Owner)
         {
-            Agent::FToolRegistry::Get().Register<SCompileAnimGraphParams, SAnimGraphEditResult>(
+            Agent::FToolRegistry::Get().Register<SCompileAnimGraphParams, SAnimGraphCompileResult>(
                 Owner, "animgraph.compile",
-                "Compile an animation graph into the bytecode its entities run, and report what the graph got "
-                "wrong. Save with assets.save afterwards.",
+                "Compile an animation graph into the bytecode its entities run and report its errors. "
+                "Save with assets.save afterwards.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SCompileAnimGraphParams& In, SAnimGraphEditResult& Out)
+                [](const SCompileAnimGraphParams& In, SAnimGraphCompileResult& Out)
                 {
                     FAnimGraphTarget Target;
                     FString Error;
-                    if (!ResolveCanvas(In.AnimGraph, {}, EAnimGraphAccess::Write, Target, Error))
+                    if (!ResolveAnimGraphCanvas(In.AnimGraph, {}, EAnimGraphAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -530,38 +448,38 @@ namespace Lumina::MCP
 
                     for (const EdNodeGraph::FError& Item : Compiler.GetErrors())
                     {
-                        Out.Errors.push_back(DescribeCompileError(Item));
+                        Out.Errors.Add(DescribeAnimGraphCompileError(Item));
                     }
 
                     for (const EdNodeGraph::FError& Item : Compiler.GetWarnings())
                     {
-                        Out.Warnings.push_back(DescribeCompileError(Item));
+                        Out.Warnings.Add(DescribeAnimGraphCompileError(Item));
                     }
 
                     if (!Out.bSucceeded)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Compile failed with {} error(s). {}",
-                            Out.Errors.size(), Out.Errors.empty() ? FString() : Out.Errors[0]));
+                            Out.Errors.Num(), Out.Errors.IsEmpty() ? FString() : Out.Errors[0]));
                     }
 
                     MarkAnimGraphDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s).",
-                        Out.Warnings.size()));
+                        Out.Warnings.Num()));
                 });
         }
     }
 
+    using namespace MCPAnimGraphToolsInternal;
+
     void RegisterAnimGraphTools(FStringView Owner)
     {
-        AnimGraphTools::RegisterListNodeTypes(Owner);
-        AnimGraphTools::RegisterDescribe(Owner);
-        AnimGraphTools::RegisterAddNode(Owner);
-        AnimGraphTools::RegisterRemoveNode(Owner);
-        AnimGraphTools::RegisterConnect(Owner);
-        AnimGraphTools::RegisterDisconnect(Owner);
-        AnimGraphTools::RegisterSetNodeProperty(Owner);
-        AnimGraphTools::RegisterSetTransitionProperty(Owner);
-        AnimGraphTools::RegisterCompile(Owner);
+        RegisterAnimGraphListNodeTypes(Owner);
+        RegisterAnimGraphDescribe(Owner);
+        RegisterAnimGraphNode(Owner);
+        RegisterAnimGraphLink(Owner);
+        RegisterAnimGraphSetNodeProperty(Owner);
+        RegisterAnimGraphSetTransitionProperty(Owner);
+        RegisterAnimGraphCompile(Owner);
     }
 }

@@ -22,7 +22,7 @@ namespace Lumina
 
         FStringView ViewOf(const FString& Text)
         {
-            return FStringView(Text.c_str(), Text.size());
+            return FStringView(*Text, Text.Len());
         }
     }
 
@@ -95,7 +95,7 @@ namespace Lumina
         FString Names;
         for (const SAssetId& Member : Members)
         {
-            Names.append(Member.Name.c_str()).append("\n");
+            Names.Append(*Member.Name).Append("\n");
         }
         return Names;
     }

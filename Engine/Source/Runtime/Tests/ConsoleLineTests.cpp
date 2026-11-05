@@ -16,7 +16,7 @@ TEST(ConsoleLine, ReadsAVariableIgnoringSurroundingSpace)
 {
     FConsoleRegistry& Registry = FConsoleRegistry::Get();
     const TOptional<FString> Expected = Registry.GetValueAsString("DebugDraw.MaxDistance");
-    ASSERT_TRUE(Expected.has_value());
+    ASSERT_TRUE(Expected.IsSet());
 
     const FConsoleLineResult Result = Registry.ExecuteLine("  DebugDraw.MaxDistance  ", false);
     EXPECT_EQ(Result.Kind, EConsoleLineResult::ReadVariable);

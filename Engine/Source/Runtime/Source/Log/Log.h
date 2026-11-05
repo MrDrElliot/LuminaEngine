@@ -62,7 +62,7 @@ namespace Lumina::Logging
 	{
 		if (ShouldLog(Level))
 		{
-			Dispatch(Level, Text.data(), static_cast<uint32>(Text.size()));
+			Dispatch(Level, Text.GetData(), static_cast<uint32>(Text.Len()));
 		}
 	}
 

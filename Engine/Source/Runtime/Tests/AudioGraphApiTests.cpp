@@ -56,7 +56,7 @@ TEST(AudioGraphApi, PersistenceComesFromTheSoundNotTheLoopFlag)
     EXPECT_TRUE(Source.IsPersistent());
 
     FAudioGraphProgram Program;
-    Program.Nodes.push_back(FAudioGraphNodeInstance());
+    Program.Nodes.AddDefaulted();
     Program.FinishedSlot = 0;
     Graph->SetProgram(Move(Program), TVector<TStrongObjectPtr<CAudioStream>>());
 

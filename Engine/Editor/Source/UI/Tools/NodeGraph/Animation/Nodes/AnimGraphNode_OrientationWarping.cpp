@@ -92,8 +92,8 @@ namespace Lumina
             }
 
             const float Weight = Math::Max(Spine.Weight, 0.0f);
-            SpineIndices.push_back((uint16)SpineIndex);
-            SpineWeights.push_back(Weight);
+            SpineIndices.Add((uint16)SpineIndex);
+            SpineWeights.Add(Weight);
             TotalWeight += Weight;
         }
 
@@ -121,7 +121,7 @@ namespace Lumina
         const float Counter = Math::Clamp(CounterRotation, 0.0f, 1.0f);
         if (Counter > 0.0f && TotalWeight > 0.0f)
         {
-            for (SIZE_T i = 0; i < SpineIndices.size(); ++i)
+            for (int32 i = 0; i < SpineIndices.Num(); ++i)
             {
                 const float Share = -Counter * (SpineWeights[i] / TotalWeight);
                 if (Share == 0.0f)

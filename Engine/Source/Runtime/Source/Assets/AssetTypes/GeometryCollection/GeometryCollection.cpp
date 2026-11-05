@@ -34,16 +34,16 @@ namespace Lumina
         {
             auto Quad = [](const FVector3& A, const FVector3& B, const FVector3& C, const FVector3& D)
             {
-                FFace F; F.push_back(A); F.push_back(B); F.push_back(C); F.push_back(D); return F;
+                FFace F; F.Add(A); F.Add(B); F.Add(C); F.Add(D); return F;
             };
 
             FConvexPoly P;
-            P.Faces.push_back(Quad({ Mn.x, Mn.y, Mn.z }, { Mn.x, Mx.y, Mn.z }, { Mn.x, Mx.y, Mx.z }, { Mn.x, Mn.y, Mx.z }));
-            P.Faces.push_back(Quad({ Mx.x, Mn.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mx.z }, { Mx.x, Mn.y, Mx.z }));
-            P.Faces.push_back(Quad({ Mn.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mx.z }, { Mn.x, Mn.y, Mx.z }));
-            P.Faces.push_back(Quad({ Mn.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mx.z }, { Mn.x, Mx.y, Mx.z }));
-            P.Faces.push_back(Quad({ Mn.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mn.x, Mx.y, Mn.z }));
-            P.Faces.push_back(Quad({ Mn.x, Mn.y, Mx.z }, { Mx.x, Mn.y, Mx.z }, { Mx.x, Mx.y, Mx.z }, { Mn.x, Mx.y, Mx.z }));
+            P.Faces.Add(Quad({ Mn.x, Mn.y, Mn.z }, { Mn.x, Mx.y, Mn.z }, { Mn.x, Mx.y, Mx.z }, { Mn.x, Mn.y, Mx.z }));
+            P.Faces.Add(Quad({ Mx.x, Mn.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mx.z }, { Mx.x, Mn.y, Mx.z }));
+            P.Faces.Add(Quad({ Mn.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mx.z }, { Mn.x, Mn.y, Mx.z }));
+            P.Faces.Add(Quad({ Mn.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mx.x, Mx.y, Mx.z }, { Mn.x, Mx.y, Mx.z }));
+            P.Faces.Add(Quad({ Mn.x, Mn.y, Mn.z }, { Mx.x, Mn.y, Mn.z }, { Mx.x, Mx.y, Mn.z }, { Mn.x, Mx.y, Mn.z }));
+            P.Faces.Add(Quad({ Mn.x, Mn.y, Mx.z }, { Mx.x, Mn.y, Mx.z }, { Mx.x, Mx.y, Mx.z }, { Mn.x, Mx.y, Mx.z }));
             return P;
         }
 
@@ -58,13 +58,13 @@ namespace Lumina
                 {
                     if (Math::Distance(P, Q) <= Eps) { bDup = true; break; }
                 }
-                if (!bDup) Unique.push_back(P);
+                if (!bDup) Unique.Add(P);
             }
-            if (Unique.size() < 3) return {};
+            if (Unique.Num() < 3) return {};
 
             FVector3 Center(0.0f);
             for (const FVector3& P : Unique) Center += P;
-            Center /= static_cast<float>(Unique.size());
+            Center /= static_cast<float>(Unique.Num());
 
             const FVector3 Ref = Math::Abs(N.x) < 0.9f ? FVector3(1, 0, 0) : FVector3(0, 1, 0);
             const FVector3 U = Math::Normalize(Math::Cross(N, Ref));
@@ -88,8 +88,8 @@ namespace Lumina
             for (const FFace& Face : Poly.Faces)
             {
                 FFace Out;
-                const size_t L = Face.size();
-                for (size_t k = 0; k < L; ++k)
+                const int32 L = Face.Num();
+                for (int32 k = 0; k < L; ++k)
                 {
                     const FVector3& A = Face[k];
                     const FVector3& B = Face[(k + 1) % L];
@@ -98,28 +98,28 @@ namespace Lumina
 
                     if (da <= Eps)
                     {
-                        Out.push_back(A);
+                        Out.Add(A);
                     }
                     if ((da < -Eps && db > Eps) || (da > Eps && db < -Eps))
                     {
                         const float t = da / (da - db);
                         const FVector3 P = A + t * (B - A);
-                        Out.push_back(P);
-                        CapPoints.push_back(P);
+                        Out.Add(P);
+                        CapPoints.Add(P);
                     }
                 }
-                if (Out.size() >= 3)
+                if (Out.Num() >= 3)
                 {
-                    NewFaces.push_back(Move(Out));
+                    NewFaces.Add(Move(Out));
                 }
             }
 
-            if (CapPoints.size() >= 3)
+            if (CapPoints.Num() >= 3)
             {
                 FFace Cap = OrderCoplanarLoop(CapPoints, N, Eps);
-                if (Cap.size() >= 3)
+                if (Cap.Num() >= 3)
                 {
-                    NewFaces.push_back(Move(Cap));
+                    NewFaces.Add(Move(Cap));
                 }
             }
 
@@ -129,8 +129,8 @@ namespace Lumina
         FVector3 NewellNormal(const FFace& Face)
         {
             FVector3 N(0.0f);
-            const size_t L = Face.size();
-            for (size_t k = 0; k < L; ++k)
+            const int32 L = Face.Num();
+            for (int32 k = 0; k < L; ++k)
             {
                 const FVector3& A = Face[k];
                 const FVector3& B = Face[(k + 1) % L];
@@ -201,7 +201,7 @@ namespace Lumina
         // Triangulate the convex polyhedron into a flat-shaded piece (hard edges, outward winding).
         bool BuildPieceFromPoly(const FConvexPoly& Poly, FFracturePiece& Out, const FSurfaceColors* Source = nullptr)
         {
-            if (Poly.Faces.size() < 4)
+            if (Poly.Faces.Num() < 4)
             {
                 return false;
             }
@@ -220,12 +220,12 @@ namespace Lumina
 
             FVector3 Mn(FLT_MAX);
             FVector3 Mx(-FLT_MAX);
-            Out.Vertices.clear();
-            Out.Indices.clear();
+            Out.Vertices.Reset();
+            Out.Indices.Reset();
 
             for (const FFace& SrcFace : Poly.Faces)
             {
-                if (SrcFace.size() < 3)
+                if (SrcFace.Num() < 3)
                 {
                     continue;
                 }
@@ -239,7 +239,7 @@ namespace Lumina
 
                 FVector3 FaceCenter(0.0f);
                 for (const FVector3& V : SrcFace) FaceCenter += V;
-                FaceCenter /= static_cast<float>(SrcFace.size());
+                FaceCenter /= static_cast<float>(SrcFace.Num());
 
                 // Reverse the loop if its winding faces inward, so emitted triangles face outward.
                 FFace Face = SrcFace;
@@ -258,7 +258,7 @@ namespace Lumina
                 const uint32 PackedTangent = PackTangent(Tangent, 1.0f);
                 const uint32 PackedColor   = Source != nullptr ? ColorForFace(*Source, FaceCenter, Normal) : PackColor(FVector4(1.0f));
 
-                const uint32 Base = static_cast<uint32>(Out.Vertices.size());
+                const uint32 Base = static_cast<uint32>(Out.Vertices.Num());
                 for (const FVector3& P : Face)
                 {
                     FSourceVertex Vert;
@@ -267,23 +267,23 @@ namespace Lumina
                     Vert.Tangent  = PackedTangent;
                     Vert.UV       = Math::PackHalf2x16(FVector2(Math::Dot(P, Tangent), Math::Dot(P, Bitangent)));
                     Vert.Color    = PackedColor;
-                    Out.Vertices.push_back(Vert);
+                    Out.Vertices.Add(Vert);
 
                     Mn = Math::Min(Mn, P);
                     Mx = Math::Max(Mx, P);
                 }
 
                 // Fan triangulation of the convex loop.
-                const uint32 L = static_cast<uint32>(Face.size());
+                const uint32 L = static_cast<uint32>(Face.Num());
                 for (uint32 k = 1; k + 1 < L; ++k)
                 {
-                    Out.Indices.push_back(Base);
-                    Out.Indices.push_back(Base + k);
-                    Out.Indices.push_back(Base + k + 1);
+                    Out.Indices.Add(Base);
+                    Out.Indices.Add(Base + k);
+                    Out.Indices.Add(Base + k + 1);
                 }
             }
 
-            if (Out.Vertices.size() < 4 || Out.Indices.size() < 12)
+            if (Out.Vertices.Num() < 4 || Out.Indices.Num() < 12)
             {
                 return false;
             }
@@ -310,24 +310,24 @@ namespace Lumina
                 for (uint32 i = 0; i < Count; ++i)
                 {
                     const FMeshlet& M       = MD.Meshlets[Offset + i];
-                    const uint32 BaseVertex = static_cast<uint32>(OutPositions.size());
+                    const uint32 BaseVertex = static_cast<uint32>(OutPositions.Num());
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        OutPositions.push_back(GetMeshletVertexPosition(MD, M, v, false));
+                        OutPositions.Add(GetMeshletVertexPosition(MD, M, v, false));
                         if (OutColors != nullptr)
                         {
-                            OutColors->push_back(MD.VertexColors.empty() ? 0xFFFFFFFFu : MD.VertexColors[GetStaticVertexIndex(MD, M, v)]);
+                            OutColors->Add(MD.VertexColors.IsEmpty() ? 0xFFFFFFFFu : MD.VertexColors[GetStaticVertexIndex(MD, M, v)]);
                         }
                     }
 
                     for (uint32 t = 0; t < M.TriangleCount; ++t)
                     {
                         const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                        OutTriangles.push_back(FUIntVector3(
+                        OutTriangles.Emplace(
                             BaseVertex + ( Packed        & 0xFFu),
                             BaseVertex + ((Packed >>  8) & 0xFFu),
-                            BaseVertex + ((Packed >> 16) & 0xFFu)));
+                            BaseVertex + ((Packed >> 16) & 0xFFu));
                     }
                 }
             });
@@ -345,7 +345,7 @@ namespace Lumina
                         return;
                     }
                 }
-                OutPlanes.push_back(FVector4(N, D));
+                OutPlanes.Emplace(N, D);
             };
 
             for (const FUIntVector3& Tri : Triangles)
@@ -380,7 +380,7 @@ namespace Lumina
 
     void Fracture::GenerateConvexFracture(const CMesh* SourceMesh, const FFractureSettings& Settings, TVector<FFracturePiece>& OutPieces)
     {
-        OutPieces.clear();
+        OutPieces.Reset();
         if (SourceMesh == nullptr)
         {
             return;
@@ -400,14 +400,14 @@ namespace Lumina
         TVector<FUIntVector3> Triangles;
         TVector<uint32> Colors;
         GatherMeshGeometry(SourceMesh, Positions, Triangles, &Colors);
-        const size_t NumPos = Positions.size();
-        const size_t NumTri = Triangles.size();
-        if (Positions.size() >= 4 && !Triangles.empty())
+        const int32 NumPos = Positions.Num();
+        const int32 NumTri = Triangles.Num();
+        if (Positions.Num() >= 4 && !Triangles.IsEmpty())
         {
             ComputeHullPlanes(Positions, Triangles, HullTol, HullPlanes);
         }
         const FSurfaceColors SurfaceColors{ Positions, Triangles, Colors, HullTol * 4.0f };
-        const FSurfaceColors* ColorSource = Colors.size() == Positions.size() && !Triangles.empty() ? &SurfaceColors : nullptr;
+        const FSurfaceColors* ColorSource = Colors.Num() == Positions.Num() && !Triangles.IsEmpty() ? &SurfaceColors : nullptr;
 
         // Clip the bounds box down to the hull once; every cell starts from this shape.
         FConvexPoly Hull = MakeBox(Mn, Mx);
@@ -415,13 +415,13 @@ namespace Lumina
         {
             ClipPolyByPlane(Hull, FVector3(Plane), Plane.w, Eps);
         }
-        const size_t FacesAfterClip = Hull.Faces.size();
-        if (Hull.Faces.size() < 4)
+        const int32 FacesAfterClip = Hull.Faces.Num();
+        if (Hull.Faces.Num() < 4)
         {
             Hull = MakeBox(Mn, Mx);   // hull clip collapsed (bad data) -> fall back to box
         }
 
-        LOG_DEBUG("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={}", NumPos, NumTri, HullPlanes.size(), FacesAfterClip, Diag);
+        LOG_DEBUG("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={}", NumPos, NumTri, HullPlanes.Num(), FacesAfterClip, Diag);
 
         auto InsideHull = [&](const FVector3& S) -> bool
         {
@@ -440,7 +440,7 @@ namespace Lumina
 
         // Rejection-sample seeds inside the hull so cells fill the shape evenly.
         TVector<FVector3> Seeds;
-        Seeds.reserve(N);
+        Seeds.Reserve(N);
         for (int32 i = 0; i < N; ++i)
         {
             FVector3 S = Mn + Size * FVector3(Rng.Unit(), Rng.Unit(), Rng.Unit());
@@ -448,17 +448,17 @@ namespace Lumina
             {
                 S = Mn + Size * FVector3(Rng.Unit(), Rng.Unit(), Rng.Unit());
             }
-            Seeds.push_back(S);
+            Seeds.Add(S);
         }
 
         // Every cell clips against every other seed, so the cells run in parallel into their own slots and keep seed order.
         TVector<FFracturePiece> Cells((size_t)N);
         TVector<uint8> bCellBuilt((size_t)N, 0);
-        Task::ParallelFor((uint32)N, [&](uint32 CellIndex)
+        Jobs::ParallelFor((uint32)N, [&](uint32 CellIndex)
         {
             const int32 i = (int32)CellIndex;
             FConvexPoly Poly = Hull;   // start from the hull, not the box
-            for (int32 j = 0; j < N && !Poly.Faces.empty(); ++j)
+            for (int32 j = 0; j < N && !Poly.Faces.IsEmpty(); ++j)
             {
                 if (j == i)
                 {
@@ -475,28 +475,28 @@ namespace Lumina
                 ClipPolyByPlane(Poly, Normal, Math::Dot(Normal, Mid), Eps);
             }
 
-            bCellBuilt[(size_t)i] = BuildPieceFromPoly(Poly, Cells[(size_t)i], ColorSource) ? 1 : 0;
+            bCellBuilt[i] = BuildPieceFromPoly(Poly, Cells[i], ColorSource) ? 1 : 0;
         });
 
-        OutPieces.reserve(N);
-        for (size_t i = 0; i < Cells.size(); ++i)
+        OutPieces.Reserve(N);
+        for (int32 i = 0; i < Cells.Num(); ++i)
         {
             if (bCellBuilt[i] != 0)
             {
-                OutPieces.push_back(Move(Cells[i]));
+                OutPieces.Add(Move(Cells[i]));
             }
         }
     }
 
     CStaticMesh* Fracture::BuildPieceMesh(const FFracturePiece& Piece, const TVector<TStrongObjectPtr<CMaterialInterface>>& Materials, const char* DebugName)
     {
-        if (Piece.Vertices.empty() || Piece.Indices.empty())
+        if (Piece.Vertices.IsEmpty() || Piece.Indices.IsEmpty())
         {
             return nullptr;
         }
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
-        Resource->ReserveVertices(Piece.Vertices.size());
+        Resource->ReserveVertices(Piece.Vertices.Num());
         for (const FSourceVertex& V : Piece.Vertices)
         {
             // Callers place the entity at the piece center to reconstruct the original position.
@@ -508,16 +508,16 @@ namespace Lumina
 
         FGeometrySurface Surface;
         Surface.ID            = "Piece";
-        Surface.IndexCount    = static_cast<uint32>(Piece.Indices.size());
+        Surface.IndexCount    = static_cast<uint32>(Piece.Indices.Num());
         Surface.StartIndex    = 0;
         Surface.MaterialIndex = 0;
-        Resource->GeometrySurfaces.push_back(Surface);
+        Resource->GeometrySurfaces.Add(Surface);
 
         CStaticMesh* Mesh = NewObject<CStaticMesh>(CPackage::GetTransientPackage(), DebugName);
         Mesh->Materials = Materials;
-        if (Mesh->Materials.empty())
+        if (Mesh->Materials.IsEmpty())
         {
-            Mesh->Materials.resize(1);
+            Mesh->Materials.SetNum(1);
         }
         Mesh->SetMeshResource(Move(Resource));
         return Mesh;
@@ -539,19 +539,19 @@ namespace Lumina
 
     void CGeometryCollection::BuildPieceMeshes()
     {
-        if (!PieceMeshes.empty() || Data.Pieces.empty())
+        if (!PieceMeshes.IsEmpty() || Data.Pieces.IsEmpty())
         {
             return;
         }
 
         // Matches the runtime fracture's choice, the baked collection materials else the source mesh's.
         const TVector<TStrongObjectPtr<CMaterialInterface>>& Mats =
-            (!Materials.empty() || SourceMesh.Get() == nullptr) ? Materials : SourceMesh->Materials;
+            (!Materials.IsEmpty() || SourceMesh.Get() == nullptr) ? Materials : SourceMesh->Materials;
 
-        PieceMeshes.reserve(Data.Pieces.size());
+        PieceMeshes.Reserve(Data.Pieces.Num());
         for (const FFracturePiece& Piece : Data.Pieces)
         {
-            PieceMeshes.push_back(Fracture::BuildPieceMesh(Piece, Mats, "GCPiece"));
+            PieceMeshes.Add(Fracture::BuildPieceMesh(Piece, Mats, "GCPiece"));
         }
     }
 
@@ -563,12 +563,12 @@ namespace Lumina
 
     int32 CGeometryCollection::Rebuild()
     {
-        PieceMeshes.clear();   // invalidate the shared mesh cache; GetPieceMeshes() rebuilds on demand
+        PieceMeshes.Reset();   // invalidate the shared mesh cache; GetPieceMeshes() rebuilds on demand
 
         CStaticMesh* Source = SourceMesh.Get();
         if (Source == nullptr)
         {
-            Data.Pieces.clear();
+            Data.Pieces.Reset();
             return 0;
         }
 

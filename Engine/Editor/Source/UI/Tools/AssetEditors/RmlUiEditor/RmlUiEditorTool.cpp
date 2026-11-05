@@ -52,7 +52,7 @@ namespace Lumina
         FString DisplayNameFromPath(FStringView Path)
         {
             const FStringView Name = VFS::FileName(Path);
-            return FString(Name.data(), Name.size());
+            return FString(Name.GetData(), Name.Len());
         }
 
         // Standard 16 by 9 game-UI resolutions plus 4K, with index 0 meaning fit to pane.
@@ -279,7 +279,7 @@ namespace Lumina
             {
                 return true;
             }
-            std::string H(Haystack.c_str(), Haystack.size());
+            std::string H(*Haystack, Haystack.Len());
             std::string N(Needle);
             Algo::Transform(H, H.begin(), [](unsigned char C){ return (char)std::tolower(C); });
             Algo::Transform(N, N.begin(), [](unsigned char C){ return (char)std::tolower(C); });
@@ -599,14 +599,14 @@ namespace Lumina
 
     FRmlUiEditorTool::FRmlUiEditorTool(IEditorToolContext* Context, FStringView InVirtualPath)
         : FAssetEditorTool(Context, RmlUiEditorToolInternal::DisplayNameFromPath(InVirtualPath))
-        , VirtualPath(InVirtualPath.data(), InVirtualPath.size())
-        , Language(InVirtualPath.ends_with(".rcss"))
+        , VirtualPath(InVirtualPath.GetData(), InVirtualPath.Len())
+        , Language(InVirtualPath.EndsWith(".rcss"))
     {
         const FStringView ParentView = VFS::Parent(InVirtualPath, true);
-        ParentDir = FString(ParentView.data(), ParentView.size());
+        ParentDir = FString(ParentView.GetData(), ParentView.Len());
 
-        bIsStylesheet = (VirtualPath.size() >= 5) &&
-            (FStringView(VirtualPath.c_str(), VirtualPath.size()).substr(VirtualPath.size() - 5) == FStringView(".rcss"));
+        bIsStylesheet = (VirtualPath.Len() >= 5) &&
+            (FStringView(*VirtualPath, VirtualPath.Len()).Mid(VirtualPath.Len() - 5) == FStringView(".rcss"));
 
         PullSettings();
     }
@@ -627,13 +627,13 @@ namespace Lumina
         // Retarget our path when the file is renamed/moved so a later save hits the new file.
         FileRenamedHandle = FCoreDelegates::OnContentFileRenamed.AddLambda([this](FStringView Old, FStringView New)
         {
-            if (Old != FStringView(VirtualPath.c_str(), VirtualPath.size()))
+            if (Old != FStringView(*VirtualPath, VirtualPath.Len()))
             {
                 return;
             }
-            VirtualPath.assign(New.data(), New.size());
+            VirtualPath = FStringView(New.GetData(), New.Len());
             const FStringView ParentView = VFS::Parent(New, true);
-            ParentDir.assign(ParentView.data(), ParentView.size());
+            ParentDir = FStringView(ParentView.GetData(), ParentView.Len());
             FileWatcher.Stop();
             StartWatching();
         });
@@ -659,7 +659,7 @@ namespace Lumina
         PreviewContext = RmlUi::CreateEditorContext(NameBuf, InitialSize);
         if (PreviewContext == nullptr)
         {
-            LOG_ERROR("[RmlUiEditor] Failed to create preview context for '{}'.", VirtualPath.c_str());
+            LOG_ERROR("[RmlUiEditor] Failed to create preview context for '{}'.", *VirtualPath);
         }
         else
         {
@@ -675,7 +675,7 @@ namespace Lumina
         CodeEditor.SetChangeCallback([this]
         {
             const FString Current = CodeEditor.GetText();
-            if (Current.View() == FStringView(LastSyncedText.data(), LastSyncedText.size()))
+            if (Current.View() == FStringView(LastSyncedText.data(), IntCastChecked<int32>(LastSyncedText.size())))
             {
                 return;
             }
@@ -728,8 +728,8 @@ namespace Lumina
             }
 
             const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
-            return RmlUiEditorToolInternal::ContainsCI(FString(Data.Tag.c_str(), Data.Tag.size()), HierarchySearch)
-                || (!Data.Id.empty() && RmlUiEditorToolInternal::ContainsCI(FString(Data.Id.c_str(), Data.Id.size()), HierarchySearch));
+            return RmlUiEditorToolInternal::ContainsCI(FString(Data.Tag.c_str(), IntCastChecked<int32>(Data.Tag.size())), HierarchySearch)
+                || (!Data.Id.empty() && RmlUiEditorToolInternal::ContainsCI(FString(Data.Id.c_str(), IntCastChecked<int32>(Data.Id.size())), HierarchySearch));
         };
 
         HierarchyContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool)
@@ -742,8 +742,8 @@ namespace Lumina
             const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
 
             // The open-tag offset addresses an element the live DOM cannot, since only ids reach a slot.
-            SelectedSlotId = Data.bIsBody ? FString() : FString(Data.Id.c_str(), Data.Id.size());
-            SelectedTag    = Data.bIsBody ? FString("body") : FString(Data.Tag.c_str(), Data.Tag.size());
+            SelectedSlotId = Data.bIsBody ? FString() : FString(Data.Id.c_str(), IntCastChecked<int32>(Data.Id.size()));
+            SelectedTag    = Data.bIsBody ? FString("body") : FString(Data.Tag.c_str(), IntCastChecked<int32>(Data.Tag.size()));
             SelectedOpenLt = Data.bIsBody ? ~size_t(0) : Data.OpenLt;
         };
 
@@ -752,7 +752,7 @@ namespace Lumina
             const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
             if (!Data.bIsBody && !Data.Id.empty())
             {
-                PendingHoveredSlotId = FString(Data.Id.c_str(), Data.Id.size());
+                PendingHoveredSlotId = FString(Data.Id.c_str(), IntCastChecked<int32>(Data.Id.size()));
             }
         };
 
@@ -795,7 +795,7 @@ namespace Lumina
 
         // Promoted here because the hierarchy publishes its hover a frame before the overlay reads it.
         HoveredSlotId = PendingHoveredSlotId;
-        PendingHoveredSlotId.clear();
+        PendingHoveredSlotId.Reset();
 
         if (bExternalChangePending.exchange(false, Atomic::MemoryOrderAcquire))
         {
@@ -809,7 +809,7 @@ namespace Lumina
             else if (!bDiskChangedWhileDirty)
             {
                 bDiskChangedWhileDirty = true;
-                ImGuiX::Notifications::NotifyWarning("'{0}' changed on disk while it has unsaved edits here. Saving will ask before overwriting.", VirtualPath.c_str());
+                ImGuiX::Notifications::NotifyWarning("'{0}' changed on disk while it has unsaved edits here. Saving will ask before overwriting.", *VirtualPath);
             }
         }
 
@@ -835,7 +835,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::OnSave()
     {
-        if (!ToolContext->ConfirmWritable({ FString(VirtualPath.c_str()) }, [this] { OnSave(); }))
+        if (!ToolContext->ConfirmWritable({ FString(*VirtualPath) }, [this] { OnSave(); }))
         {
             return;
         }
@@ -848,7 +848,7 @@ namespace Lumina
 
         ToolContext->PushModal("File Changed On Disk", ImVec2(520.0f, 0.0f), [this]() -> bool
         {
-            ImGui::TextWrapped("'%s' was changed by another program after you started editing it here.", VirtualPath.c_str());
+            ImGui::TextWrapped("'%s' was changed by another program after you started editing it here.", *VirtualPath);
             ImGui::Spacing();
             if (ImGui::Button("Overwrite"))
             {
@@ -879,15 +879,15 @@ namespace Lumina
         const FString Body = CodeEditor.GetText();
         const FStringView View = Body.View();
 
-        if (!VFS::WriteFile(FStringView(VirtualPath.c_str(), VirtualPath.size()), View))
+        if (!VFS::WriteFile(FStringView(*VirtualPath, VirtualPath.Len()), View))
         {
-            ImGuiX::Notifications::NotifyError("Failed to save '{0}'.", VirtualPath.c_str());
+            ImGuiX::Notifications::NotifyError("Failed to save '{0}'.", *VirtualPath);
             return;
         }
 
-        LastSyncedText.assign(Body.c_str(), Body.size());
+        LastSyncedText.assign(*Body, Body.Len());
         bBufferDirty = false;
-        ImGuiX::Notifications::NotifySuccess("Saved '{0}'.", VirtualPath.c_str());
+        ImGuiX::Notifications::NotifySuccess("Saved '{0}'.", *VirtualPath);
 
         ReloadDocument(/*bAlwaysReport*/ true);
     }
@@ -909,18 +909,18 @@ namespace Lumina
         ImGuiID DataDockID = 0, InspectorDockID = 0;
         ImGui::DockBuilderSplitNode(LowerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &DataDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlEditorWindowName).c_str(), LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlPreviewWindowName).c_str(), PreviewDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlHierarchyWindowName).c_str(), HierarchyDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlInspectorWindowName).c_str(), InspectorDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlDataWindowName).c_str(), DataDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RmlUiEditorToolInternal::RmlEditorWindowName), LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RmlUiEditorToolInternal::RmlPreviewWindowName), PreviewDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RmlUiEditorToolInternal::RmlHierarchyWindowName), HierarchyDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RmlUiEditorToolInternal::RmlInspectorWindowName), InspectorDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RmlUiEditorToolInternal::RmlDataWindowName), DataDockID);
     }
 
     void FRmlUiEditorTool::DrawEditorToolbar()
     {
         const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "%s", VirtualPath.c_str());
+        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "%s", *VirtualPath);
         ImGuiX::Font::PopFont();
 
         if (bBufferDirty)
@@ -979,14 +979,14 @@ namespace Lumina
         {
             CodeEditor.OpenFind(false);
         }
-        ImGui::SetItemTooltip("Open the find bar (%s), or find and replace (%s).", Keys.Find.GetLabel().c_str(), Keys.Replace.GetLabel().c_str());
+        ImGui::SetItemTooltip("Open the find bar (%s), or find and replace (%s).", *Keys.Find.GetLabel(), *Keys.Replace.GetLabel());
 
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_FORMAT_LINE_SPACING " Goto"))
         {
             bRequestOpenGoto = true;
         }
-        ImGui::SetItemTooltip("Jump to a specific line number (%s).", Keys.GoToLine.GetLabel().c_str());
+        ImGui::SetItemTooltip("Jump to a specific line number (%s).", *Keys.GoToLine.GetLabel());
 
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_CODE_BRACES " Snippets"))
@@ -1091,12 +1091,12 @@ namespace Lumina
         ImGui::TextDisabled("Lines");
         ImGui::Separator();
         const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
-        if (ImGui::MenuItem("Indent",          Keys.Indent.GetLabel().c_str()))             CodeEditor.Indent();
-        if (ImGui::MenuItem("Outdent",         Keys.Outdent.GetLabel().c_str()))            CodeEditor.Outdent();
-        if (ImGui::MenuItem("Move up",         Keys.MoveLinesUp.GetLabel().c_str()))        CodeEditor.MoveLines(-1);
-        if (ImGui::MenuItem("Move down",       Keys.MoveLinesDown.GetLabel().c_str()))      CodeEditor.MoveLines(1);
-        if (ImGui::MenuItem("Duplicate",       Keys.DuplicateLinesDown.GetLabel().c_str())) CodeEditor.DuplicateLines(1);
-        if (ImGui::MenuItem("Toggle comment",  Keys.ToggleLineComment.GetLabel().c_str()))  CodeEditor.ToggleLineComment();
+        if (ImGui::MenuItem("Indent",          *Keys.Indent.GetLabel()))             CodeEditor.Indent();
+        if (ImGui::MenuItem("Outdent",         *Keys.Outdent.GetLabel()))            CodeEditor.Outdent();
+        if (ImGui::MenuItem("Move up",         *Keys.MoveLinesUp.GetLabel()))        CodeEditor.MoveLines(-1);
+        if (ImGui::MenuItem("Move down",       *Keys.MoveLinesDown.GetLabel()))      CodeEditor.MoveLines(1);
+        if (ImGui::MenuItem("Duplicate",       *Keys.DuplicateLinesDown.GetLabel())) CodeEditor.DuplicateLines(1);
+        if (ImGui::MenuItem("Toggle comment",  *Keys.ToggleLineComment.GetLabel()))  CodeEditor.ToggleLineComment();
 
         ImGui::Spacing();
         ImGui::TextDisabled("Selection");
@@ -1265,7 +1265,7 @@ namespace Lumina
                 const FCodeRange Selection = CodeEditor.GetSelection();
                 const int32 SelectionLines = Selection.End.Line - Selection.Start.Line + 1;
                 ImGui::SameLine(0, 12);
-                ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.45f, 1.0f), "(sel %zu chars / %d lines)", CodeEditor.GetSelectedText().size(), SelectionLines);
+                ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.45f, 1.0f), "(sel %d chars / %d lines)", CodeEditor.GetSelectedText().Len(), SelectionLines);
             }
             if (CodeEditor.GetCursorCount() > 1)
             {
@@ -1286,7 +1286,7 @@ namespace Lumina
             }
 
             ImGui::SameLine(0, 20);
-            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%s", FString(Language.GetName()).c_str());
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%s", *FString(Language.GetName()));
 
             ImGui::SameLine(0, 20);
             ImGui::TextColored(ImVec4(0.55f, 0.65f, 0.85f, 1.0f), "%s : %d",
@@ -1701,9 +1701,9 @@ namespace Lumina
     void FRmlUiEditorTool::LoadFromDisk()
     {
         FString Body;
-        if (!VFS::ReadFile(Body, FStringView(VirtualPath.c_str(), VirtualPath.size())))
+        if (!VFS::ReadFile(Body, FStringView(*VirtualPath, VirtualPath.Len())))
         {
-            LOG_WARN("[RmlUiEditor] Could not read '{}'.", VirtualPath.c_str());
+            LOG_WARN("[RmlUiEditor] Could not read '{}'.", *VirtualPath);
             CodeEditor.SetText("");
             LastSyncedText.clear();
             bBufferDirty = false;
@@ -1711,15 +1711,15 @@ namespace Lumina
         }
 
         // Skipping SetText when disk matches preserves cursor, selection, scroll and undo.
-        if (Body.size() == LastSyncedText.size()
-            && std::memcmp(Body.data(), LastSyncedText.data(), Body.size()) == 0)
+        if (static_cast<size_t>(Body.Len()) == LastSyncedText.size()
+            && std::memcmp(Body.GetData(), LastSyncedText.data(), Body.Len()) == 0)
         {
             bBufferDirty = false;
             return;
         }
 
         CodeEditor.SetText(Body.View());
-        LastSyncedText.assign(Body.c_str(), Body.size());
+        LastSyncedText.assign(*Body, Body.Len());
         bBufferDirty = false;
     }
 
@@ -1731,7 +1731,7 @@ namespace Lumina
         }
 
         const FString Text = CodeEditor.GetText();
-        const std::string Body(Text.c_str(), Text.size());
+        const std::string Body(*Text, Text.Len());
         LastSyncedText = Body;
 
         if (Body.empty())
@@ -1761,15 +1761,15 @@ namespace Lumina
             RefreshDesignModels(Body);
         }
 
-        const FStringView View(Doc.data(), Doc.size());
-        const FStringView SourceUrl(VirtualPath.c_str(), VirtualPath.size());
+        const FStringView View(Doc.data(), IntCastChecked<int32>(Doc.size()));
+        const FStringView SourceUrl(*VirtualPath, VirtualPath.Len());
 
         TVector<RmlUi::FRmlDiagnostic> Diagnostics;
         const bool bLoaded = RmlUi::ReplaceEditorContextDocument(PreviewContext, View, SourceUrl, &Diagnostics);
 
         if (!bLoaded)
         {
-            LOG_WARN("[RmlUiEditor] Failed to parse buffer for '{}'.", VirtualPath.c_str());
+            LOG_WARN("[RmlUiEditor] Failed to parse buffer for '{}'.", *VirtualPath);
         }
 
         ReportReloadDiagnostics(bLoaded, Diagnostics, bAlwaysReport);
@@ -1794,25 +1794,25 @@ namespace Lumina
             }
         }
 
-        const int32 WarningCount = (int32)Diagnostics.size() - ErrorCount;
+        const int32 WarningCount = Diagnostics.Num() - ErrorCount;
 
         FString Headline;
         if (FirstError != nullptr)
         {
             Headline = *FirstError;
         }
-        else if (!Diagnostics.empty())
+        else if (!Diagnostics.IsEmpty())
         {
             Headline = Diagnostics[0].Message;
         }
 
         // The toast has no room for a full virtual path, and the tool's tab already says which file.
-        const size_t Slash = VirtualPath.find_last_of('/');
-        const FString Name = Slash == FString::npos ? VirtualPath : VirtualPath.substr(Slash + 1);
+        const int32 Slash = VirtualPath.FindLastOf('/');
+        const FString Name = Slash == Constants::kIndexNone ? VirtualPath : VirtualPath.Mid(Slash + 1);
 
         // Keyed on the outcome, so a problem is reported once and again only when it changes or clears.
         FString Signature;
-        Signature = Format("{}|{}|{}|{}", bLoaded ? 1 : 0, ErrorCount, WarningCount, Headline.c_str());
+        Signature = Format("{}|{}|{}|{}", bLoaded ? 1 : 0, ErrorCount, WarningCount, *Headline);
 
         const bool bUnchanged = (Signature == LastReloadDiagnosticSignature);
         if (bUnchanged && !bAlwaysReport)
@@ -1820,46 +1820,46 @@ namespace Lumina
             return;
         }
 
-        const bool bWasClean = LastReloadDiagnosticSignature.empty() || bLastReloadWasClean;
+        const bool bWasClean = LastReloadDiagnosticSignature.IsEmpty() || bLastReloadWasClean;
         LastReloadDiagnosticSignature = Signature;
-        bLastReloadWasClean = bLoaded && Diagnostics.empty();
+        bLastReloadWasClean = bLoaded && Diagnostics.IsEmpty();
 
         if (!bLoaded)
         {
-            if (Headline.empty())
+            if (Headline.IsEmpty())
             {
-                ImGuiX::Notifications::NotifyError("{} failed to parse.", Name.c_str());
+                ImGuiX::Notifications::NotifyError("{} failed to parse.", *Name);
             }
             else
             {
-                ImGuiX::Notifications::NotifyError("{} failed to parse: {}", Name.c_str(), Headline.c_str());
+                ImGuiX::Notifications::NotifyError("{} failed to parse: {}", *Name, *Headline);
             }
             return;
         }
 
-        if (Diagnostics.empty())
+        if (Diagnostics.IsEmpty())
         {
             // Only worth saying when it is news, since a clean reload is the normal case.
             if (!bWasClean)
             {
-                ImGuiX::Notifications::NotifySuccess("{} reloaded cleanly.", Name.c_str());
+                ImGuiX::Notifications::NotifySuccess("{} reloaded cleanly.", *Name);
             }
             return;
         }
 
         FString Suffix;
-        if (Diagnostics.size() > 1)
+        if (Diagnostics.Num() > 1)
         {
-            Suffix = Format(" (+{} more)", (int32)Diagnostics.size() - 1);
+            Suffix = Format(" (+{} more)", Diagnostics.Num() - 1);
         }
 
         if (ErrorCount > 0)
         {
-            ImGuiX::Notifications::NotifyError("{}: {}{}", Name.c_str(), Headline.c_str(), Suffix.c_str());
+            ImGuiX::Notifications::NotifyError("{}: {}{}", *Name, *Headline, *Suffix);
         }
         else
         {
-            ImGuiX::Notifications::NotifyWarning("{}: {}{}", Name.c_str(), Headline.c_str(), Suffix.c_str());
+            ImGuiX::Notifications::NotifyWarning("{}: {}{}", *Name, *Headline, *Suffix);
         }
     }
 
@@ -1914,8 +1914,8 @@ namespace Lumina
         }
 
         // The context reaped the object models with it, so only the preview instances are left to drop.
-        DesignObjectModels.clear();
-        DesignObjects.clear();
+        DesignObjectModels.Reset();
+        DesignObjects.Reset();
 
         if (PreviewTarget.IsValid())
         {
@@ -1933,50 +1933,50 @@ namespace Lumina
 
     void FRmlUiEditorTool::StartWatching()
     {
-        if (ParentDir.empty())
+        if (ParentDir.IsEmpty())
         {
             return;
         }
 
         FFixedString DiskParentDir;
-        const FStringView TargetVirtual(VirtualPath.c_str(), VirtualPath.size());
-        VFS::DirectoryIterator(FStringView(ParentDir.c_str(), ParentDir.size()),
+        const FStringView TargetVirtual(*VirtualPath, VirtualPath.Len());
+        VFS::DirectoryIterator(FStringView(*ParentDir, ParentDir.Len()),
             [&](const VFS::FFileInfo& Info)
             {
-                if (!DiskParentDir.empty())
+                if (!DiskParentDir.IsEmpty())
                 {
                     return;
                 }
-                if (FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()) != TargetVirtual)
+                if (FStringView(*Info.VirtualPath, Info.VirtualPath.Len()) != TargetVirtual)
                 {
                     return;
                 }
-                FStringView Source(Info.PathSource.c_str(), Info.PathSource.size());
-                const size_t Slash = Source.find_last_of('/');
-                const size_t BackSlash = Source.find_last_of('\\');
-                size_t Cut = FString::npos;
-                if (Slash != FStringView::npos)
+                FStringView Source(*Info.PathSource, Info.PathSource.Len());
+                const int32 Slash = Source.FindLastOf('/');
+                const int32 BackSlash = Source.FindLastOf('\\');
+                int32 Cut = Constants::kIndexNone;
+                if (Slash != Constants::kIndexNone)
                 {
                     Cut = Slash;
                 }
-                if (BackSlash != FStringView::npos && (Cut == FStringView::npos || BackSlash > Cut))
+                if (BackSlash != Constants::kIndexNone && (Cut == Constants::kIndexNone || BackSlash > Cut))
                 {
                     Cut = BackSlash;
                 }
-                if (Cut == FStringView::npos)
+                if (Cut == Constants::kIndexNone)
                 {
                     return;
                 }
-                DiskParentDir.assign(Source.data(), Cut);
+                DiskParentDir = FStringView(Source.GetData(), Cut);
             });
 
-        if (DiskParentDir.empty())
+        if (DiskParentDir.IsEmpty())
         {
             return;
         }
 
         const FStringView FileNameView = VFS::FileName(TargetVirtual);
-        const FString FileName(FileNameView.data(), FileNameView.size());
+        const FString FileName(FileNameView.GetData(), FileNameView.Len());
 
         FileWatcher.Watch(DiskParentDir, [this, FileName](const FFileEvent& Event)
         {
@@ -1985,13 +1985,13 @@ namespace Lumina
                 return;
             }
 
-            FStringView EventPath(Event.Path.c_str(), Event.Path.size());
-            if (EventPath.size() < FileName.size())
+            FStringView EventPath(*Event.Path, Event.Path.Len());
+            if (EventPath.Len() < FileName.Len())
             {
                 return;
             }
-            const FStringView Tail = EventPath.substr(EventPath.size() - FileName.size());
-            if (Tail != FStringView(FileName.c_str(), FileName.size()))
+            const FStringView Tail = EventPath.Mid(EventPath.Len() - FileName.Len());
+            if (Tail != FStringView(*FileName, FileName.Len()))
             {
                 return;
             }
@@ -2004,7 +2004,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::RefreshCompositionSlots()
     {
-        CompSlots.clear();
+        CompSlots.Reset();
         if (PreviewContext == nullptr)
         {
             return;
@@ -2017,7 +2017,7 @@ namespace Lumina
         if (Version != CompAssignVersion || bCompAssignDirty)
         {
             const FString Text = CodeEditor.GetText();
-            CompAssignText.assign(Text.c_str(), Text.size());
+            CompAssignText.assign(*Text, Text.Len());
             CompAssignVersion = Version;
             bCompAssignDirty = false;
 
@@ -2025,7 +2025,7 @@ namespace Lumina
             bHierarchyDirty = true;
         }
 
-        CompSlots.reserve(Slots.size());
+        CompSlots.Reserve(Slots.Num());
         for (const RmlUi::FRmlEditorSlot& Src : Slots)
         {
             FCompSlot Slot;
@@ -2036,9 +2036,9 @@ namespace Lumina
             Slot.Depth      = Src.Depth;
             Slot.ChildCount = Src.ChildCount;
 
-            const std::string Id(Src.Id.c_str(), Src.Id.size());
+            const std::string Id(*Src.Id, Src.Id.Len());
             const std::string Assigned = RmlUiEditorToolInternal::ParseSlotAssignment(CompAssignText, Id);
-            Slot.AssignedSrc = FString(Assigned.c_str(), Assigned.size());
+            Slot.AssignedSrc = FString(Assigned.c_str(), IntCastChecked<int32>(Assigned.size()));
 
             // GetAbsoluteOffset excludes the CSS transform, so add it back for the overlay to sit right.
             const std::string Tf = RmlUiEditorToolInternal::GetInlineStyleProp(CompAssignText, Id, "transform");
@@ -2049,7 +2049,7 @@ namespace Lumina
                 Slot.OffsetPx.x += TDp.x * Dpi;
                 Slot.OffsetPx.y += TDp.y * Dpi;
             }
-            CompSlots.push_back(std::move(Slot));
+            CompSlots.Add(std::move(Slot));
         }
     }
 
@@ -2086,7 +2086,7 @@ namespace Lumina
 
         // One stack indexed by depth turns the parser's flat list back into a tree.
         TVector<FTreeNodeID> ParentAtDepth;
-        ParentAtDepth.push_back(Body);
+        ParentAtDepth.Add(Body);
 
         for (const RmlUiEditorToolInternal::FSourceNode& Node : Nodes)
         {
@@ -2096,9 +2096,9 @@ namespace Lumina
             }
 
             const int32 Depth = Math::Max(0, Node.Depth);
-            if ((int32)ParentAtDepth.size() <= Depth)
+            if (ParentAtDepth.Num() <= Depth)
             {
-                ParentAtDepth.resize(Depth + 1, Body);
+                ParentAtDepth.SetNum(Depth + 1, Body);
             }
 
             const FTreeNodeID Parent = ParentAtDepth[Depth];
@@ -2129,7 +2129,7 @@ namespace Lumina
             {
                 // A chip keeps it out of the label, so filtering still matches on tag and id alone.
                 Display.TooltipChipHeader = "Widget";
-                Display.TooltipChips.push_back(FString(Assigned.c_str(), Assigned.size()));
+                Display.TooltipChips.Emplace(Assigned.c_str(), IntCastChecked<int32>(Assigned.size()));
             }
 
             RmlUiEditorToolInternal::FRmlHierarchyItem& Item = Tree.EmplaceUserData<RmlUiEditorToolInternal::FRmlHierarchyItem>(Handle);
@@ -2140,9 +2140,9 @@ namespace Lumina
             Tree.Get<FTreeNodeState>(Handle).bExpanded = true;
 
             // Anything deeper than this node parents to it, until a sibling at this depth replaces it.
-            if ((int32)ParentAtDepth.size() <= Depth + 1)
+            if (ParentAtDepth.Num() <= Depth + 1)
             {
-                ParentAtDepth.resize(Depth + 2, Body);
+                ParentAtDepth.SetNum(Depth + 2, Body);
             }
             ParentAtDepth[Depth + 1] = Handle;
         }
@@ -2213,13 +2213,13 @@ namespace Lumina
 
         RmlUiEditorToolInternal::SectionHeader(LE_ICON_COG, "Inspector");
 
-        if (SelectedSlotId.empty())
+        if (SelectedSlotId.IsEmpty())
         {
-            ImGui::Text("<%s>", SelectedTag.c_str());
+            ImGui::Text("<%s>", *SelectedTag);
         }
         else
         {
-            ImGui::Text("#%s  <%s>", SelectedSlotId.c_str(), SelectedTag.c_str());
+            ImGui::Text("#%s  <%s>", *SelectedSlotId, *SelectedTag);
         }
 
         const int32 Line = SelectedOpenLt < CompAssignText.size() ? CodeEditor.GetDocument().OffsetToPosition(SelectedOpenLt).Line + 1 : 1;
@@ -2233,7 +2233,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        const std::string Sel(SelectedSlotId.c_str(), SelectedSlotId.size());
+        const std::string Sel(*SelectedSlotId, SelectedSlotId.Len());
 
         std::string Inner;
         if (!Sel.empty() && RmlUiEditorToolInternal::GetEditableInnerText(CompAssignText, Sel, Inner) && !Inner.empty())
@@ -2254,11 +2254,11 @@ namespace Lumina
             ImGui::Text("Depth      %d", Slot->Depth);
             ImGui::Text("Children   %d", Slot->ChildCount);
 
-            if (!Slot->AssignedSrc.empty())
+            if (!Slot->AssignedSrc.IsEmpty())
             {
                 ImGui::Spacing();
                 ImGui::TextDisabled(LE_ICON_PUZZLE " Widget");
-                ImGui::TextWrapped("%s", Slot->AssignedSrc.c_str());
+                ImGui::TextWrapped("%s", *Slot->AssignedSrc);
             }
         }
         else if (Sel.empty())
@@ -2278,7 +2278,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx)
     {
-        if (!bShowSlotOverlays || CompSlots.empty() || ScalePx <= 0.0f)
+        if (!bShowSlotOverlays || CompSlots.IsEmpty() || ScalePx <= 0.0f)
         {
             return;
         }
@@ -2326,7 +2326,7 @@ namespace Lumina
             ImVec2 TMin, TMax, HMin, HMax;
             Rects(Slot, TMin, TMax, HMin, HMax);
 
-            const bool bAssigned = !Slot.AssignedSrc.empty();
+            const bool bAssigned = !Slot.AssignedSrc.IsEmpty();
             const bool bSel = (Slot.Id == SelectedSlotId);
             const bool bHov = (Slot.Id == HoveredSlotId);
             const bool bTiny = (TMax.x - TMin.x) < 6.0f || (TMax.y - TMin.y) < 6.0f;
@@ -2352,8 +2352,8 @@ namespace Lumina
             const float Thick = bSel ? 2.5f : (bHov ? 2.0f : 1.0f);
 
             char Label[160];
-            if (bAssigned) std::snprintf(Label, sizeof(Label), "#%s : %s", Slot.Id.c_str(), Slot.AssignedSrc.c_str());
-            else           std::snprintf(Label, sizeof(Label), "#%s", Slot.Id.c_str());
+            if (bAssigned) std::snprintf(Label, sizeof(Label), "#%s : %s", *Slot.Id, *Slot.AssignedSrc);
+            else           std::snprintf(Label, sizeof(Label), "#%s", *Slot.Id);
             const ImVec2 Ts = ImGui::CalcTextSize(Label);
 
             if (bTiny)
@@ -2385,7 +2385,7 @@ namespace Lumina
         ImGui::SetCursorScreenPos(CursorRestore);
 
         // Submitted innermost-first so an overlapping parent cannot steal the hit.
-        for (int i = (int)CompSlots.size() - 1; i >= 0; --i)
+        for (int i = CompSlots.Num() - 1; i >= 0; --i)
         {
             const FCompSlot& Slot = CompSlots[i];
             ImVec2 TMin, TMax, HMin, HMax;
@@ -2399,7 +2399,7 @@ namespace Lumina
             {
                 SelectedSlotId = Slot.Id;
                 SelectedTag    = Slot.Tag;
-                SelectedOpenLt = RmlUiEditorToolInternal::LocateSlotTag(CompAssignText, std::string(Slot.Id.c_str(), Slot.Id.size())).TagStart;
+                SelectedOpenLt = RmlUiEditorToolInternal::LocateSlotTag(CompAssignText, std::string(*Slot.Id, Slot.Id.Len())).TagStart;
             }
             ImGui::PopID();
         }
@@ -2410,8 +2410,8 @@ namespace Lumina
         if (bBackdropClicked
             || (bWindowHovered && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         {
-            SelectedSlotId.clear();
-            SelectedTag.clear();
+            SelectedSlotId.Reset();
+            SelectedTag.Reset();
             SelectedOpenLt = ~size_t(0);
         }
     }

@@ -49,7 +49,7 @@ TEST(HttpMessage, HeaderLookupIgnoresCase)
 
     EXPECT_EQ(Request.FindHeader("content-type"), "application/json");
     EXPECT_EQ(Request.FindHeader("CONTENT-TYPE"), "application/json");
-    EXPECT_TRUE(Request.FindHeader("Missing").empty());
+    EXPECT_TRUE(Request.FindHeader("Missing").IsEmpty());
 }
 
 TEST(HttpMessage, SurroundingSpaceIsStrippedFromHeaderValues)
@@ -69,7 +69,7 @@ TEST(HttpMessage, AGetWithNoBodyIsComplete)
     ASSERT_EQ(Parse("GET /status HTTP/1.1\r\nHost: x\r\n\r\n", Request), EParseResult::Complete);
 
     EXPECT_EQ(Request.Method, "GET");
-    EXPECT_TRUE(Request.Body.empty());
+    EXPECT_TRUE(Request.Body.IsEmpty());
 }
 
 TEST(HttpMessage, TruncatedHeadersAreIncomplete)
@@ -152,7 +152,7 @@ TEST(HttpMessage, PipelinedRequestsAreConsumedOneAtATime)
     ASSERT_EQ(ParseRequest(Buffer, Second, DefaultLimits()), EParseResult::Complete);
     EXPECT_EQ(Second.Target, "/second");
 
-    EXPECT_TRUE(Buffer.empty());
+    EXPECT_TRUE(Buffer.IsEmpty());
 }
 
 TEST(HttpMessage, ABodyIsNotStolenFromTheFollowingRequest)
@@ -188,18 +188,18 @@ TEST(HttpMessage, AJsonResponseCarriesTypeAndLength)
 {
     const FString Text = FResponse::Json("{\"ok\":true}").Serialize();
 
-    EXPECT_NE(Text.find("HTTP/1.1 200 OK\r\n"), FString::npos);
-    EXPECT_NE(Text.find("Content-Type: application/json\r\n"), FString::npos);
-    EXPECT_NE(Text.find("Content-Length: 11\r\n"), FString::npos);
-    EXPECT_NE(Text.find("\r\n\r\n{\"ok\":true}"), FString::npos);
+    EXPECT_NE(Text.Find("HTTP/1.1 200 OK\r\n"), Constants::kIndexNone);
+    EXPECT_NE(Text.Find("Content-Type: application/json\r\n"), Constants::kIndexNone);
+    EXPECT_NE(Text.Find("Content-Length: 11\r\n"), Constants::kIndexNone);
+    EXPECT_NE(Text.Find("\r\n\r\n{\"ok\":true}"), Constants::kIndexNone);
 }
 
 TEST(HttpMessage, AStatusOnlyResponseStillDeclaresZeroLength)
 {
     const FString Text = FResponse::Empty(405, "Method Not Allowed").Serialize();
 
-    EXPECT_NE(Text.find("HTTP/1.1 405 Method Not Allowed\r\n"), FString::npos);
-    EXPECT_NE(Text.find("Content-Length: 0\r\n"), FString::npos);
+    EXPECT_NE(Text.Find("HTTP/1.1 405 Method Not Allowed\r\n"), Constants::kIndexNone);
+    EXPECT_NE(Text.Find("Content-Length: 0\r\n"), Constants::kIndexNone);
 }
 
 TEST(HttpMessage, AResponseRoundTripsThroughTheParser)
@@ -208,7 +208,7 @@ TEST(HttpMessage, AResponseRoundTripsThroughTheParser)
     Response.bKeepAlive = false;
 
     const FString Text = Response.Serialize();
-    EXPECT_NE(Text.find("Connection: close\r\n"), FString::npos);
+    EXPECT_NE(Text.Find("Connection: close\r\n"), Constants::kIndexNone);
 }
 
 namespace
@@ -244,10 +244,10 @@ namespace
 
             if (Read > 0)
             {
-                Reply.append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
+                Reply.Append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
 
-                const size_t HeaderEnd = Reply.find("\r\n\r\n");
-                if (HeaderEnd != FString::npos)
+                const int32 HeaderEnd = Reply.Find("\r\n\r\n");
+                if (HeaderEnd != Constants::kIndexNone)
                 {
                     return Reply;
                 }
@@ -329,8 +329,8 @@ TEST(HttpServer, APostReachesTheHandlerAndTheBodyComesBack)
         "\r\n"
         "{\"method\":\"go\"}");
 
-    EXPECT_NE(Reply.find("HTTP/1.1 200 OK"), FString::npos);
-    EXPECT_NE(Reply.find("{\"method\":\"go\"}"), FString::npos);
+    EXPECT_NE(Reply.Find("HTTP/1.1 200 OK"), Constants::kIndexNone);
+    EXPECT_NE(Reply.Find("{\"method\":\"go\"}"), Constants::kIndexNone);
 
     Server.Stop();
 }
@@ -341,11 +341,11 @@ TEST(HttpServer, TheHandlerCanRejectAMethodOrTarget)
     ASSERT_TRUE(StartEchoServer(Server));
 
     const FString Wrong = RoundTrip(Server.GetBoundPort(), "GET /mcp HTTP/1.1\r\nHost: x\r\n\r\n");
-    EXPECT_NE(Wrong.find("405"), FString::npos);
+    EXPECT_NE(Wrong.Find("405"), Constants::kIndexNone);
 
     const FString Missing = RoundTrip(Server.GetBoundPort(),
         "POST /nowhere HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n");
-    EXPECT_NE(Missing.find("404"), FString::npos);
+    EXPECT_NE(Missing.Find("404"), Constants::kIndexNone);
 
     Server.Stop();
 }
@@ -365,11 +365,11 @@ TEST(HttpServer, TwoRequestsShareOneConnection)
             "POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{}", strlen(Body), Body);
 
         int32 Sent = 0;
-        while (Sent < static_cast<int32>(Text.size()))
+        while (Sent < Text.Len())
         {
             Platform::ESocketResult Result = Platform::ESocketResult::Ok;
-            Sent += Client->Send(reinterpret_cast<const uint8*>(Text.c_str()) + Sent,
-                static_cast<int32>(Text.size()) - Sent, Result);
+            Sent += Client->Send(reinterpret_cast<const uint8*>(*Text) + Sent,
+                Text.Len() - Sent, Result);
         }
     };
 
@@ -383,9 +383,9 @@ TEST(HttpServer, TwoRequestsShareOneConnection)
 
             if (Read > 0)
             {
-                Into.append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
+                Into.Append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
 
-                if (Into.find("{\"n\":1}") != FString::npos && Into.find("{\"n\":2}") != FString::npos)
+                if (Into.Find("{\"n\":1}") != Constants::kIndexNone && Into.Find("{\"n\":2}") != Constants::kIndexNone)
                 {
                     return;
                 }
@@ -403,8 +403,8 @@ TEST(HttpServer, TwoRequestsShareOneConnection)
     FString Replies;
     ReadUntilBothReplies(Replies, 4000);
 
-    EXPECT_NE(Replies.find("{\"n\":1}"), FString::npos);
-    EXPECT_NE(Replies.find("{\"n\":2}"), FString::npos);
+    EXPECT_NE(Replies.Find("{\"n\":1}"), Constants::kIndexNone);
+    EXPECT_NE(Replies.Find("{\"n\":2}"), Constants::kIndexNone);
 
     Server.Stop();
 }
@@ -415,7 +415,7 @@ TEST(HttpServer, GarbageGetsAFourHundredRatherThanAHang)
     ASSERT_TRUE(StartEchoServer(Server));
 
     const FString Reply = RoundTrip(Server.GetBoundPort(), "absolute nonsense\r\n\r\n");
-    EXPECT_NE(Reply.find("400"), FString::npos);
+    EXPECT_NE(Reply.Find("400"), Constants::kIndexNone);
 
     Server.Stop();
 }
@@ -434,7 +434,7 @@ TEST(HttpServer, AThrowingHandlerBecomesAServerError)
     const FString Reply = RoundTrip(Server.GetBoundPort(),
         "POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n");
 
-    EXPECT_NE(Reply.find("500"), FString::npos);
+    EXPECT_NE(Reply.Find("500"), Constants::kIndexNone);
     EXPECT_TRUE(Server.IsRunning());
 
     Server.Stop();
@@ -472,8 +472,8 @@ TEST(HttpServer, ARequestSplitAcrossPacketsIsReassembled)
 
         if (Read > 0)
         {
-            Reply.append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
-            if (Reply.find("\r\n\r\n") != FString::npos)
+            Reply.Append(reinterpret_cast<const char*>(Chunk), static_cast<size_t>(Read));
+            if (Reply.Find("\r\n\r\n") != Constants::kIndexNone)
             {
                 break;
             }
@@ -484,7 +484,7 @@ TEST(HttpServer, ARequestSplitAcrossPacketsIsReassembled)
         }
     }
 
-    EXPECT_NE(Reply.find("{\"a\":1}"), FString::npos);
+    EXPECT_NE(Reply.Find("{\"a\":1}"), Constants::kIndexNone);
 
     Server.Stop();
 }

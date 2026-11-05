@@ -26,25 +26,25 @@ namespace Lumina
                 TType* Candidate = *It;
                 if (Base == nullptr || Candidate->IsChildOf(Base))
                 {
-                    Candidates.push_back(Candidate);
+                    Candidates.Add(Candidate);
                 }
             }
 
             Algo::Sort(Candidates, [](TType* A, TType* B)
             {
-                return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
+                return strcmp(*A->GetName(), *B->GetName()) < 0;
             });
 
             const int32 Found = Algo::IndexOf(Candidates, Current);
             const int32 CurrentIndex = Found != Constants::kIndexNone ? Found + 1 : 0;
 
-            const char* Preview = Current ? Current->GetName().c_str() : "None";
+            const char* Preview = Current ? *Current->GetName() : "None";
 
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-            const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.size()) + 1, CurrentIndex,
+            const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.Num()) + 1, CurrentIndex,
                 [&Candidates](int32 Index) -> FFixedString
                 {
-                    return (Index == 0) ? FFixedString("None") : FFixedString(Candidates[Index - 1]->GetName().c_str());
+                    return (Index == 0) ? FFixedString("None") : FFixedString(*Candidates[Index - 1]->GetName());
                 });
             ImGui::PopItemWidth();
 

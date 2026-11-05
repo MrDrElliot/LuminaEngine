@@ -10,7 +10,6 @@
 #include "Core/Profiler/AssetLoadTracker.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/Time/PlatformTime.h"
-#include "TaskSystem/Future.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
 
@@ -23,8 +22,7 @@ namespace Lumina
         // One more than the loads still running until the request finishes issuing them, so none completes it early.
         std::atomic<uint32>                                 Pending = 1;
 
-        TPromise<void>                                      Done;
-        TFuture<void>                                       DoneFuture = Done.GetFuture();
+        Jobs::FTaskEvent                                    Done;
 
         FMutex                                              CallbackMutex;
         TVector<TFunction<void(const FAssetHandle&)>>       Callbacks;
@@ -42,7 +40,7 @@ namespace Lumina
         {
 #if USING(WITH_EDITOR)
             FAssetLoadRecord Entry;
-            Entry.Name        = Data != nullptr ? FName(Data->Path.c_str()) : FName("<unregistered>");
+            Entry.Name        = Data != nullptr ? FName(*Data->Path) : FName("<unregistered>");
             Entry.Source      = EAssetLoadSource::Request;
             Entry.Outcome     = Outcome;
             Entry.DurationMs  = DurationMs;
@@ -77,12 +75,12 @@ namespace Lumina
 
     float FAssetHandle::GetProgress() const
     {
-        if (State == nullptr || State->Objects.empty())
+        if (State == nullptr || State->Objects.IsEmpty())
         {
             return IsReady() ? 1.0f : 0.0f;
         }
         const uint32 Remaining = State->Pending.load(std::memory_order_acquire);
-        const uint32 Total = (uint32)State->Objects.size();
+        const uint32 Total = static_cast<uint32>(State->Objects.Num());
         return 1.0f - (float)Math::Min(Remaining, Total) / (float)Total;
     }
 
@@ -90,7 +88,7 @@ namespace Lumina
     {
         if (State != nullptr)
         {
-            State->DoneFuture.Wait();
+            State->Done.Wait();
         }
     }
 
@@ -105,7 +103,7 @@ namespace Lumina
             FScopeLock Lock(State->CallbackMutex);
             if (!State->bDispatched)
             {
-                State->Callbacks.push_back(Move(Callback));
+                State->Callbacks.Add(Move(Callback));
                 return;
             }
         }
@@ -119,12 +117,12 @@ namespace Lumina
 
     uint32 FAssetHandle::Num() const
     {
-        return State != nullptr ? (uint32)State->Objects.size() : 0;
+        return State != nullptr ? (uint32)State->Objects.Num() : 0;
     }
 
     CObject* FAssetHandle::Get(uint32 Index) const
     {
-        return IsReady() && Index < State->Objects.size() ? State->Objects[Index].Get() : nullptr;
+        return IsReady() && Index < static_cast<uint32>(State->Objects.Num()) ? State->Objects[Index].Get() : nullptr;
     }
 
     FAssetManager::FAssetManager()
@@ -151,7 +149,7 @@ namespace Lumina
             THashSet<FGuid> Seen;
             for (const FGuid& Asset : Assets)
             {
-                Seen.insert(Asset);
+                Seen.Add(Asset);
             }
             for (const FGuid& Asset : Assets)
             {
@@ -162,9 +160,9 @@ namespace Lumina
                 }
                 for (const FAssetBundleEntry& Entry : Data->Bundles)
                 {
-                    if (Entry.Bundle == Bundle && Seen.insert(Entry.Target).second)
+                    if (Entry.Bundle == Bundle && Seen.TryAdd(Entry.Target))
                     {
-                        Requested.push_back(Entry.Target);
+                        Requested.Add(Entry.Target);
                     }
                 }
             }
@@ -173,11 +171,11 @@ namespace Lumina
         FAssetHandle Handle;
         Handle.State = MakeShared<FAssetLoad>();
         FAssetLoad& State = *Handle.State;
-        State.Objects.resize(Requested.size());
-        State.Pending.fetch_add((uint32)Requested.size(), std::memory_order_relaxed);
+        State.Objects.SetNum(Requested.Num());
+        State.Pending.fetch_add((uint32)Requested.Num(), std::memory_order_relaxed);
 
         uint32 Resident = 0;
-        for (uint32 Index = 0; Index < Requested.size(); ++Index)
+        for (int32 Index = 0; Index < Requested.Num(); ++Index)
         {
             // An id the registry could not resolve stays null rather than queuing a load that would fail.
             if (!Requested[Index].IsValid())
@@ -196,7 +194,7 @@ namespace Lumina
 
         if (State.Pending.fetch_sub(Resident + 1, std::memory_order_acq_rel) == Resident + 1)
         {
-            State.Done.SetValue();
+            State.Done.Signal();
             Dispatch(Handle.State, Handle);
         }
         return Handle;
@@ -223,33 +221,37 @@ namespace Lumina
     {
         TVector<FGuid> Members;
         {
-            FFiberScopeLock Lock(GroupMutex);
+            FScopeLock Lock(GroupMutex);
             RebuildGroupsIfDirty();
-            if (auto It = GroupMembers.find(Group); It != GroupMembers.end())
+            if (auto It = GroupMembers.Find(Group); It != nullptr)
             {
-                Members = It->second;
+                Members = (*It);
             }
         }
-        return Load(TSpan<const FGuid>(Members.data(), Members.size()), Bundle);
+        return Load(TSpan<const FGuid>(Members.GetData(), Members.Num()), Bundle);
     }
 
     void FAssetManager::Request(const FGuid& Asset, FWaiter Waiter)
     {
         bool bSchedule = false;
         {
-            FFiberScopeLock Lock(RequestMutex);
-            auto [It, bInserted] = InFlight.try_emplace(Asset);
-            It->second.push_back(Move(Waiter));
+            FScopeLock Lock(RequestMutex);
+            const bool bInserted = InFlight.TryAdd(Asset);
+            InFlight.FindChecked(Asset).Add(Move(Waiter));
             if (bInserted)
             {
-                QueuedLoads.push_back(Asset);
+                QueuedLoads.Add(Asset);
                 bSchedule = !bDrainScheduled;
                 bDrainScheduled = true;
             }
         }
         if (bSchedule)
         {
-            Task::Async([this]() { DrainQueuedLoads(); });
+            Jobs::Spawn(Jobs::EJobPriority::Normal, [](FAssetManager* Self) -> Jobs::TTask<void>
+            {
+                Self->DrainQueuedLoads();
+                co_return;
+            }, this);
         }
     }
 
@@ -260,21 +262,21 @@ namespace Lumina
         for (;;)
         {
             {
-                FFiberScopeLock Lock(RequestMutex);
-                if (QueuedLoads.empty())
+                FScopeLock Lock(RequestMutex);
+                if (QueuedLoads.IsEmpty())
                 {
                     bDrainScheduled = false;
                     return;
                 }
                 Batch = Move(QueuedLoads);
-                QueuedLoads.clear();
+                QueuedLoads.Reset();
             }
 
-            Task::ParallelFor((uint32)Batch.size(), [this, &Batch](uint32 Index)
+            Jobs::ParallelFor((uint32)Batch.Num(), [this, &Batch](uint32 Index)
             {
                 PerformLoad(Batch[Index]);
             }, 1);
-            Batch.clear();
+            Batch.Reset();
         }
     }
 
@@ -296,11 +298,11 @@ namespace Lumina
 
         TVector<FWaiter> Waiters;
         {
-            FFiberScopeLock Lock(RequestMutex);
-            if (auto It = InFlight.find(Asset); It != InFlight.end())
+            FScopeLock Lock(RequestMutex);
+            if (auto It = InFlight.Find(Asset); It != nullptr)
             {
-                Waiters = Move(It->second);
-                InFlight.erase(It);
+                Waiters = Move(*It);
+                InFlight.Remove(Asset);
             }
         }
 
@@ -310,7 +312,7 @@ namespace Lumina
             State.Objects[Waiter.Index] = Object;
             if (State.Pending.fetch_sub(1, std::memory_order_acq_rel) == 1)
             {
-                State.Done.SetValue();
+                State.Done.Signal();
 
                 // The game thread takes the last reference, since dropping one can destroy what it holds.
                 MainThread::Enqueue([Load = Move(Waiter.Load)]() mutable
@@ -331,13 +333,13 @@ namespace Lumina
         }
 
         {
-            FFiberScopeLock Lock(RequestMutex);
-            if (InFlight.contains(Asset))
+            FScopeLock Lock(RequestMutex);
+            if (InFlight.Contains(Asset))
             {
                 // Joining would deadlock a PostLoad that loads what is mid-load, and the import resolves it anyway.
                 return FindObject<CObject>(Asset);
             }
-            InFlight.try_emplace(Asset);
+            InFlight.FindOrAdd(Asset);
         }
         PerformLoad(Asset);
         return FindObject<CObject>(Asset);
@@ -351,11 +353,11 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SCOPE();
-        GroupMembers.clear();
-        GroupIds.clear();
+        GroupMembers.Reset();
+        GroupIds.Reset();
         {
-            FFiberScopeLock Lock(ClassMutex);
-            GroupOfClass.clear();
+            FScopeLock Lock(ClassMutex);
+            GroupOfClass.Reset();
         }
 
         (void)FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
@@ -365,10 +367,10 @@ namespace Lumina
             {
                 return false;
             }
-            GroupMembers[Group].push_back(Data.AssetGUID);
-            if (!GroupIds.try_emplace(SAssetId{ Group, Data.AssetName }, Data.AssetGUID).second)
+            GroupMembers[Group].Add(Data.AssetGUID);
+            if (!GroupIds.TryAdd(SAssetId{ Group, Data.AssetName }, Data.AssetGUID))
             {
-                LOG_WARN("FAssetManager: two assets named '{}' in group '{}'; lookups by name find the first.", Data.AssetName.c_str(), Group.c_str());
+                LOG_WARN("FAssetManager: two assets named '{}' in group '{}'; lookups by name find the first.", *Data.AssetName, *Group);
             }
             return false;
         });
@@ -377,57 +379,58 @@ namespace Lumina
     FName FAssetManager::GetGroupOfClass(FName ClassName)
     {
         // Classes repeat across thousands of assets, so each is walked for its group once.
-        FFiberScopeLock Lock(ClassMutex);
-        auto [It, bInserted] = GroupOfClass.try_emplace(ClassName);
-        if (bInserted)
+        FScopeLock Lock(ClassMutex);
+        if (const FName* Cached = GroupOfClass.Find(ClassName))
         {
-            for (CClass* Class = FindObject<CClass>(ClassName); Class != nullptr; Class = Class->GetSuperClass())
+            return *Cached;
+        }
+        FName& Group = GroupOfClass.Add(ClassName);
+        for (CClass* Class = FindObject<CClass>(ClassName); Class != nullptr; Class = Class->GetSuperClass())
+        {
+            if (Class->HasMeta("Group"))
             {
-                if (Class->HasMeta("Group"))
-                {
-                    It->second = FName(Class->GetMeta("Group"));
-                    break;
-                }
+                Group = FName(Class->GetMeta("Group"));
+                break;
             }
         }
-        return It->second;
+        return Group;
     }
 
     void FAssetManager::GetGroups(TVector<FName>& Out)
     {
-        FFiberScopeLock Lock(GroupMutex);
+        FScopeLock Lock(GroupMutex);
         RebuildGroupsIfDirty();
-        Out.reserve(Out.size() + GroupMembers.size());
+        Out.Reserve(Out.Num() + GroupMembers.Num());
         for (const auto& [Group, Members] : GroupMembers)
         {
-            Out.push_back(Group);
+            Out.Add(Group);
         }
     }
 
     void FAssetManager::GetGroup(FName Group, TVector<SAssetId>& Out)
     {
-        FFiberScopeLock Lock(GroupMutex);
+        FScopeLock Lock(GroupMutex);
         RebuildGroupsIfDirty();
-        auto It = GroupMembers.find(Group);
-        if (It == GroupMembers.end())
+        auto It = GroupMembers.Find(Group);
+        if (It == nullptr)
         {
             return;
         }
-        Out.reserve(Out.size() + It->second.size());
-        for (const FGuid& Member : It->second)
+        Out.Reserve(Out.Num() + It->Num());
+        for (const FGuid& Member : (*It))
         {
             if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Member))
             {
-                Out.push_back(SAssetId{ Group, Data->AssetName });
+                Out.Emplace(Group, Data->AssetName);
             }
         }
     }
 
     FGuid FAssetManager::Resolve(const SAssetId& Id)
     {
-        FFiberScopeLock Lock(GroupMutex);
+        FScopeLock Lock(GroupMutex);
         RebuildGroupsIfDirty();
-        auto It = GroupIds.find(Id);
-        return It != GroupIds.end() ? It->second : FGuid();
+        auto It = GroupIds.Find(Id);
+        return It != nullptr ? (*It) : FGuid();
     }
 }

@@ -89,7 +89,7 @@ namespace
 
         // One property, so the class gets the anchored layout record whose arena the parameters live in.
         Scripting::FScriptExportSchema Properties;
-        Properties.Fields.push_back(ScriptTest::ScalarField("Anchor", EPropertyTypeFlags::Int32));
+        Properties.Fields.Add(ScriptTest::ScalarField("Anchor", EPropertyTypeFlags::Int32));
         Scripting::AppendScriptPropertiesToClass(Result.Class, Properties);
 
         CScriptStruct* Record = Cast<CScriptStruct>(Result.Class->LayoutRecord.Get());
@@ -109,9 +109,9 @@ namespace
 TEST(ScriptFunctionMint, AScriptDeclaredFunctionBecomesAReflectedOne)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("B", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("B", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_Basic", Params, 2);
     ASSERT_NE(Minted.Class, nullptr);
@@ -119,8 +119,8 @@ TEST(ScriptFunctionMint, AScriptDeclaredFunctionBecomesAReflectedOne)
 
     EXPECT_EQ(Minted.Class->FindFunction("Add"), Minted.Function) << "and is findable by name like any other";
     EXPECT_TRUE(Minted.Function->IsScriptCallable());
-    ASSERT_EQ(Minted.Function->GetParams().size(), 3u);
-    EXPECT_EQ(Minted.Function->GetArguments().size(), 2u);
+    ASSERT_EQ(Minted.Function->GetParams().Num(), 3);
+    EXPECT_EQ(Minted.Function->GetArguments().Num(), 2);
     EXPECT_TRUE(Minted.Function->HasReturn());
 }
 
@@ -137,10 +137,10 @@ TEST(ScriptFunctionMint, MetadataOutlivesTheSchemaItCameFrom)
     ASSERT_NE(Minted.Function, nullptr);
 
     EXPECT_TRUE(Minted.Function->HasMetadata("button")) << "keys match without regard to case, like a property's";
-    EXPECT_EQ(FString(Minted.Function->GetMetadata("Button").c_str()), FString("Do It"));
-    EXPECT_EQ(FString(Minted.Function->GetMetadata("ToolTip").c_str()), FString("Runs the thing"));
+    EXPECT_EQ(FString(*Minted.Function->GetMetadata("Button")), FString("Do It"));
+    EXPECT_EQ(FString(*Minted.Function->GetMetadata("ToolTip")), FString("Runs the thing"));
     EXPECT_FALSE(Minted.Function->HasMetadata("Missing"));
-    EXPECT_TRUE(Minted.Function->GetArguments().empty()) << "a button takes nothing, which is what lets the inspector call it";
+    EXPECT_TRUE(Minted.Function->GetArguments().IsEmpty()) << "a button takes nothing, which is what lets the inspector call it";
 
     const int32 Before = GThunkCalls;
     FFunctionFrame Frame(*Minted.Function);
@@ -154,8 +154,8 @@ TEST(ScriptFunctionMint, AGeneratedFunctionCarriesItsMetadata)
     RegisterPendingTypes();
     const FFunction* Button = CScriptableTest::StaticClass()->FindFunction("ResetNativeValue");
     ASSERT_NE(Button, nullptr);
-    EXPECT_EQ(FString(Button->GetMetadata("Button").c_str()), FString("Reset Value"));
-    EXPECT_EQ(FString(Button->GetMetadata("ToolTip").c_str()), FString("Puts NativeValue back to its default"));
+    EXPECT_EQ(FString(*Button->GetMetadata("Button")), FString("Reset Value"));
+    EXPECT_EQ(FString(*Button->GetMetadata("ToolTip")), FString("Puts NativeValue back to its default"));
 
     const FFunction* Plain = CScriptableTest::StaticClass()->FindFunction("OnTest");
     ASSERT_NE(Plain, nullptr);
@@ -166,8 +166,8 @@ TEST(ScriptFunctionMint, AGeneratedFunctionCarriesItsMetadata)
 TEST(ScriptFunctionMint, ParametersDoNotBecomeMembersOfTheClass)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_NotMembers", Params, 1);
     ASSERT_NE(Minted.Class, nullptr);
@@ -181,23 +181,23 @@ TEST(ScriptFunctionMint, ParametersDoNotBecomeMembersOfTheClass)
 TEST(ScriptFunctionMint, TheFrameIsLaidOutWithoutOverlap)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ScriptTest::ScalarField("Small", EPropertyTypeFlags::UInt8));
-    Params.Fields.push_back(ScriptTest::ScalarField("Wide", EPropertyTypeFlags::Double));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("Small", EPropertyTypeFlags::UInt8));
+    Params.Fields.Add(ScriptTest::ScalarField("Wide", EPropertyTypeFlags::Double));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_Layout", Params, 2);
     ASSERT_NE(Minted.Function, nullptr);
 
     const TSpan<FProperty* const> All = Minted.Function->GetParams();
-    ASSERT_EQ(All.size(), 3u);
+    ASSERT_EQ(All.Num(), 3);
 
-    for (size_t i = 1; i < All.size(); ++i)
+    for (int32 i = 1; i < All.Num(); ++i)
     {
         EXPECT_GE(All[i]->Offset, All[i - 1]->Offset + All[i - 1]->GetElementSize())
             << "parameter " << i << " overlaps the one before it";
     }
 
-    const FProperty* Last = All[All.size() - 1];
+    const FProperty* Last = All[All.Num() - 1];
     EXPECT_LE(Last->Offset + Last->GetElementSize(), Minted.Function->GetParmsSize());
 
     // The wide parameter has to be aligned for its type or a load of it is misaligned.
@@ -207,9 +207,9 @@ TEST(ScriptFunctionMint, TheFrameIsLaidOutWithoutOverlap)
 TEST(ScriptFunctionMint, CallingItReachesTheThunkThroughAFrame)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("B", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("A", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("B", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_Invoke", Params, 2);
     ASSERT_NE(Minted.Function, nullptr);
@@ -238,7 +238,7 @@ TEST(ScriptFunctionMint, ATypeWithFunctionsAndNoPropertiesStillGetsThem)
     ASSERT_NE(Class, nullptr);
 
     Scripting::FScriptExportSchema Schema;
-    Schema.Functions.push_back({});
+    Schema.Functions.AddDefaulted();
     Schema.Functions[0].Name = FName("Tick");
     Schema.Functions[0].ReturnIndex = -1;
 
@@ -260,7 +260,7 @@ TEST(ScriptFunctionMint, AFunctionWithNoParametersIsStillCallable)
     ASSERT_NE(Minted.Class, nullptr);
     ASSERT_NE(Minted.Function, nullptr);
 
-    EXPECT_EQ(Minted.Function->GetParams().size(), 0u);
+    EXPECT_EQ(Minted.Function->GetParams().Num(), 0);
     EXPECT_FALSE(Minted.Function->HasReturn());
 
     const int32 CallsBefore = GThunkCalls;
@@ -273,15 +273,15 @@ TEST(ScriptFunctionMint, AFunctionWithNoParametersIsStillCallable)
 TEST(ScriptFunctionMint, ANarrowEnumParameterOccupiesItsUnderlyingWidth)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(EnumField("Channel", "ScriptFn_ChannelEnum", EPropertyTypeFlags::UInt8));
-    Params.Fields.push_back(ScriptTest::ScalarField("After", EPropertyTypeFlags::Int32));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(EnumField("Channel", "ScriptFn_ChannelEnum", EPropertyTypeFlags::UInt8));
+    Params.Fields.Add(ScriptTest::ScalarField("After", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_NarrowEnum", Params, 2);
     ASSERT_NE(Minted.Function, nullptr);
 
     const TSpan<FProperty* const> All = Minted.Function->GetParams();
-    ASSERT_EQ(All.size(), 3u);
+    ASSERT_EQ(All.Num(), 3);
 
     EXPECT_EQ(All[0]->GetType(), EPropertyTypeFlags::Enum);
     EXPECT_EQ(All[0]->GetElementSize(), sizeof(uint8));
@@ -291,13 +291,13 @@ TEST(ScriptFunctionMint, ANarrowEnumParameterOccupiesItsUnderlyingWidth)
 TEST(ScriptFunctionMint, AWideEnumParameterOccupiesItsUnderlyingWidth)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(EnumField("Wide", "ScriptFn_WideEnum", EPropertyTypeFlags::Int64));
+    Params.Fields.Add(EnumField("Wide", "ScriptFn_WideEnum", EPropertyTypeFlags::Int64));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_WideEnum", Params, -1);
     ASSERT_NE(Minted.Function, nullptr);
 
     const TSpan<FProperty* const> All = Minted.Function->GetParams();
-    ASSERT_EQ(All.size(), 1u);
+    ASSERT_EQ(All.Num(), 1);
     EXPECT_EQ(All[0]->GetElementSize(), sizeof(int64));
 }
 
@@ -305,8 +305,8 @@ TEST(ScriptFunctionMint, AWideEnumParameterOccupiesItsUnderlyingWidth)
 TEST(ScriptFunctionMint, ANativeStructParameterReportsTheStructsOwnSize)
 {
     Scripting::FScriptExportSchema Params;
-    Params.Fields.push_back(NativeStructField("Where", "FVector3"));
-    Params.Fields.push_back(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
+    Params.Fields.Add(NativeStructField("Where", "FVector3"));
+    Params.Fields.Add(ScriptTest::ScalarField("ReturnValue", EPropertyTypeFlags::Int32));
 
     const FMinted Minted = MintClassWithFunction("ScriptFn_NativeStruct", Params, 1);
     ASSERT_NE(Minted.Function, nullptr);
@@ -315,7 +315,7 @@ TEST(ScriptFunctionMint, ANativeStructParameterReportsTheStructsOwnSize)
     ASSERT_NE(Vector, nullptr);
 
     const TSpan<FProperty* const> All = Minted.Function->GetParams();
-    ASSERT_EQ(All.size(), 2u);
+    ASSERT_EQ(All.Num(), 2);
 
     EXPECT_EQ(All[0]->GetType(), EPropertyTypeFlags::Struct);
     EXPECT_EQ(All[0]->GetElementSize(), Vector->GetAlignedSize());

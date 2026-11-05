@@ -4,27 +4,27 @@
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/ECS/EventQueue.h"
-#include "World/Entity/Systems/EntitySystem.h"
+#include "World/Entity/Systems/ExclusiveSystem.h"
 #include "SaveGameSystem.generated.h"
 
 namespace Lumina
 {
     // Runs the queued SSaveGameRequestEvents alone at the end of a frame, where restoring can destroy and spawn safely.
     REFLECT()
-    class RUNTIME_API SSaveGameSystem : public CEntitySystem
+    class RUNTIME_API SSaveGameSystem : public CExclusiveSystem
     {
         GENERATED_BODY()
 
     public:
 
         void Configure() override;
-        bool HasWork(const SSystemContext& Context) override;
-        void OnUpdate(const SSystemContext& Context) override;
+        void OnExclusiveUpdate(const SExclusiveContext& Context) override;
 
     private:
 
-        void Run(const SSystemContext& Context, const SSaveGameRequestEvent& Request);
+        void Run(CWorld* World, const SSaveGameRequestEvent& Request) const;
 
-        ECS::TEventReader<SSaveGameRequestEvent> Requests;
+        ECS::TEventReader<SSaveGameRequestEvent>  Requests;
+        ECS::TEventWriter<SSaveGameCompletedEvent> Completions;
     };
 }

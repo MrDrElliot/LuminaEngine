@@ -176,6 +176,37 @@ public sealed class TargetAssembler
 
             Target.EnabledPlugins.Add(Plugin);
         }
+
+        PruneUnsatisfiedPlugins(Target);
+    }
+
+    // Leaves out exactly what the engine's loader refuses: a missing or too-old required dependency, cascading to dependents.
+    private static void PruneUnsatisfiedPlugins(BuildTarget Target)
+    {
+        for (bool bChanged = true; bChanged;)
+        {
+            bChanged = false;
+            foreach (PluginDescriptor Plugin in Target.EnabledPlugins.ToList())
+            {
+                foreach (PluginDependency Dependency in Plugin.Dependencies.Where(Dependency => !Dependency.Optional))
+                {
+                    PluginDescriptor? Found = Target.EnabledPlugins.FirstOrDefault(
+                        Candidate => string.Equals(Candidate.Name, Dependency.Name, StringComparison.OrdinalIgnoreCase));
+
+                    string? Reason = Found is null ? "is missing, disabled or not built for this target"
+                        : Found.Version < Dependency.Version ? $"is version {Found.Version}, below the {Dependency.Version} it needs"
+                        : null;
+
+                    if (Reason is not null)
+                    {
+                        Log.Warning("Plugin '{0}' requires '{1}', which {2}; skipping it", Plugin.Name, Dependency.Name, Reason);
+                        Target.EnabledPlugins.Remove(Plugin);
+                        bChanged = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     private IEnumerable<string> EnumerateSeedModules(BuildTarget Target)
@@ -201,7 +232,7 @@ public sealed class TargetAssembler
                         + $"but no {Entry.Name}.Build.cs was found under '{Plugin.RootDirectory}'.");
                 }
 
-                if (Entry.GetHostType().IsAvailableIn(Info.Type))
+                if (Entry.GetHostType().IsAvailableIn(Info.Type) && Entry.SupportsPlatform(Info.Platform))
                 {
                     yield return Entry.Name;
                 }

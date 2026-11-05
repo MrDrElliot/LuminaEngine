@@ -33,13 +33,13 @@ namespace Lumina
     {
         Origin = InOrigin;
         TileWorldSize = InTileWorldSize;
-        Resident.clear();
+        Resident.Reset();
         StarvedLogCooldown = 0;
     }
 
     void FNavTileStreamer::Clear()
     {
-        Resident.clear();
+        Resident.Reset();
         TileWorldSize = 0.0f;
         StarvedLogCooldown = 0;
     }
@@ -56,16 +56,16 @@ namespace Lumina
         }
 
         // No focus and a finite radius would evict the world, so treat that as keep everything.
-        const bool bStreamAll = Settings.LoadRadius <= 0.0f || FocusPoints.empty();
+        const bool bStreamAll = Settings.LoadRadius <= 0.0f || FocusPoints.IsEmpty();
         const float KeepRadius = Settings.LoadRadius * Math::Max(1.0f, Settings.KeepRadiusScale);
 
         TVector<FCandidate> Wanted;
-        Wanted.reserve(Tiles.size());
+        Wanted.Reserve(Tiles.Num());
 
-        for (int32 i = 0; i < (int32)Tiles.size(); ++i)
+        for (int32 i = 0; i < Tiles.Num(); ++i)
         {
             const SNavTileData& Tile = Tiles[i];
-            if (Tile.Blob.empty())
+            if (Tile.Blob.IsEmpty())
             {
                 continue;
             }
@@ -77,34 +77,34 @@ namespace Lumina
             const float Threshold = bResident ? KeepRadius : Settings.LoadRadius;
             if (bStreamAll || Distance <= Threshold)
             {
-                Wanted.push_back(FCandidate{ i, Tile.X, Tile.Y, Distance });
+                Wanted.Emplace(i, Tile.X, Tile.Y, Distance);
             }
         }
 
-        Stats.Wanted = (int32)Wanted.size();
+        Stats.Wanted = Wanted.Num();
 
         const int32 Budget = Math::Max(0, Settings.MaxResidentTiles);
-        if ((int32)Wanted.size() > Budget)
+        if (Wanted.Num() > Budget)
         {
             // Nearest wins, so the clamp is predictable rather than dependent on query history.
             std::nth_element(Wanted.begin(), Wanted.begin() + Budget, Wanted.end(),
                 [](const FCandidate& A, const FCandidate& B) { return A.Distance < B.Distance; });
-            Stats.Starved = (int32)Wanted.size() - Budget;
-            Wanted.resize(Budget);
+            Stats.Starved = Wanted.Num() - Budget;
+            Wanted.SetNum(Budget);
         }
 
         THashSet<uint64> WantedKeys;
-        WantedKeys.reserve(Wanted.size());
+        WantedKeys.Reserve(Wanted.Num());
         for (const FCandidate& C : Wanted)
         {
-            WantedKeys.insert(NavTile::PackKey(C.X, C.Y));
+            WantedKeys.Add(NavTile::PackKey(C.X, C.Y));
         }
 
         // Evictions first: a full pool would otherwise reject an admission that does fit on net.
         int32 Ops = 0;
         for (auto It = Resident.begin(); It != Resident.end() && Ops < Settings.MaxOpsPerTick; )
         {
-            if (WantedKeys.find(*It) != WantedKeys.end())
+            if (WantedKeys.Contains(*It))
             {
                 ++It;
                 continue;
@@ -113,7 +113,7 @@ namespace Lumina
             int32 TX, TY;
             NavTile::UnpackKey(*It, TX, TY);
             Mesh.RemoveTile(TX, TY);
-            It = Resident.erase(It);
+            It = Resident.Remove(It);
             ++Stats.Removed;
             ++Ops;
         }
@@ -132,7 +132,7 @@ namespace Lumina
             {
                 continue;
             }
-            if ((int32)Resident.size() >= Budget)
+            if (Resident.Num() >= Budget)
             {
                 break;
             }
@@ -140,20 +140,20 @@ namespace Lumina
             // Re-adding a tile the mesh already holds fails, and copies the whole blob to do so.
             if (Mesh.HasTile(C.X, C.Y))
             {
-                Resident.insert(NavTile::PackKey(C.X, C.Y));
+                Resident.Add(NavTile::PackKey(C.X, C.Y));
                 ++Stats.Adopted;
                 continue;
             }
 
             if (Mesh.AddTile(C.X, C.Y, Tiles[C.Index].Blob))
             {
-                Resident.insert(NavTile::PackKey(C.X, C.Y));
+                Resident.Add(NavTile::PackKey(C.X, C.Y));
                 ++Stats.Added;
                 ++Ops;
             }
         }
 
-        Stats.Resident = (int32)Resident.size();
+        Stats.Resident = Resident.Num();
 
         if (Stats.Starved > 0)
         {

@@ -28,7 +28,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInInstance, _In_opt_ HINSTANCE hPrevInstance,
     }
 
     Lumina::TVector<Lumina::FString> Utf8Args;
-    Utf8Args.reserve(ArgC);
+    Utf8Args.Reserve(ArgC);
     for (int Index = 0; Index < ArgC; ++Index)
     {
         const int Length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, WideArgs[Index], -1, nullptr, 0, nullptr, nullptr);
@@ -38,23 +38,23 @@ int WINAPI WinMain(_In_ HINSTANCE hInInstance, _In_opt_ HINSTANCE hPrevInstance,
             return 1;
         }
 
-        Lumina::FString& Arg = Utf8Args.emplace_back(static_cast<size_t>(Length), '\0');
-        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, WideArgs[Index], -1, Arg.data(), Length, nullptr, nullptr) == 0)
+        Lumina::FString& Arg = Utf8Args.EmplaceGetRef(Length, '\0');
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, WideArgs[Index], -1, Arg.GetData(), Length, nullptr, nullptr) == 0)
         {
             LocalFree(WideArgs);
             return 1;
         }
-        Arg.pop_back();
+        Arg.LeftChopInline(1);
     }
     LocalFree(WideArgs);
 
     Lumina::TVector<char*> ArgV;
-    ArgV.reserve(Utf8Args.size());
+    ArgV.Reserve(Utf8Args.Num());
     for (Lumina::FString& Arg : Utf8Args)
     {
-        ArgV.push_back(Arg.data());
+        ArgV.Add(Arg.GetData());
     }
-    return LuminaMain(ArgC, ArgV.data());
+    return LuminaMain(ArgC, ArgV.GetData());
 }
 
 #endif

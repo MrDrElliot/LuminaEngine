@@ -542,12 +542,12 @@ namespace Lumina::RmlKnowledge
     bool ContainsWord(const char* SpaceSeparated, FStringView Word)
     {
         const FStringView List(SpaceSeparated);
-        size_t Start = 0;
-        while (Start < List.size())
+        int32 Start = 0;
+        while (Start < List.Len())
         {
-            size_t End = List.find(' ', Start);
-            End = End == FStringView::npos ? List.size() : End;
-            if (List.substr(Start, End - Start) == Word)
+            int32 End = List.Find(' ', Start);
+            End = End == Constants::kIndexNone ? List.Len() : End;
+            if (List.Mid(Start, End - Start) == Word)
             {
                 return true;
             }

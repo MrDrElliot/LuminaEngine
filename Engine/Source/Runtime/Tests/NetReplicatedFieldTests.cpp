@@ -24,14 +24,14 @@ namespace LuminaNetReplicatedFieldTests
     TVector<uint8> BuildBlock(const TVector<uint8>& Bytes, const TVector<uint32>& Offsets, const TVector<uint8>& Mask)
     {
         TVector<uint8> Block;
-        Block.insert(Block.end(), Mask.begin(), Mask.end());
+        Block.Append(Mask);
 
-        const uint32 Count = static_cast<uint32>(Offsets.size()) - 1u;
+        const uint32 Count = static_cast<uint32>(Offsets.Num()) - 1u;
         for (uint32 i = 0; i < Count; ++i)
         {
             if (Mask[i >> 3] & (1u << (i & 7)))
             {
-                Block.insert(Block.end(), Bytes.begin() + Offsets[i], Bytes.begin() + Offsets[i + 1]);
+                Block.Append(Bytes.begin() + Offsets[i], Bytes.begin() + Offsets[i + 1]);
             }
         }
         return Block;
@@ -69,17 +69,17 @@ namespace LuminaNetReplicatedFieldTests
         FNetArchive     Hooks(Bytes);
         Struct->NetSerializeReplicatedFlat(Hooks, &Source, Bytes, Offsets);
 
-        ASSERT_FALSE(Offsets.empty());
-        EXPECT_EQ(Offsets.front(), 0u);
-        EXPECT_EQ(Offsets.size() - 1u, Struct->GetNetReplicatedPropertyCount());
+        ASSERT_FALSE(Offsets.IsEmpty());
+        EXPECT_EQ(Offsets[0], 0u);
+        EXPECT_EQ(Offsets.Num() - 1, Struct->GetNetReplicatedPropertyCount());
 
-        for (size_t i = 1; i < Offsets.size(); ++i)
+        for (int32 i = 1; i < Offsets.Num(); ++i)
         {
             EXPECT_GE(Offsets[i], Offsets[i - 1]);
         }
 
         // The reader byte-aligns after every field, so the writer's boundaries must be the buffer end.
-        EXPECT_EQ(Offsets.back(), static_cast<uint32>(Bytes.size()));
+        EXPECT_EQ(Offsets.Last(), static_cast<uint32>(Bytes.Num()));
     }
 
     TEST(NetReplicatedField, RoundTripsEveryReplicatedField)
@@ -94,17 +94,17 @@ namespace LuminaNetReplicatedFieldTests
         FNetArchive     Hooks(Bytes);
         Struct->NetSerializeReplicatedFlat(Hooks, &Source, Bytes, Offsets);
 
-        const uint32 FieldCount = static_cast<uint32>(Offsets.size()) - 1u;
+        const uint32 FieldCount = static_cast<uint32>(Offsets.Num()) - 1u;
         const TVector<uint8> Mask  = AllSet(FieldCount);
         const TVector<uint8> Block = BuildBlock(Bytes, Offsets, Mask);
 
         // The block is mask ++ fields, so the payload starts past the mask.
         const uint32 MaskBytes = (FieldCount + 7u) / 8u;
-        ASSERT_GE(Block.size(), MaskBytes);
+        ASSERT_GE(Block.Num(), MaskBytes);
 
         SSimpleAnimationComponent Target;
-        FNetArchive Reader(Block.data() + MaskBytes, Block.size() - MaskBytes);
-        Struct->NetReadReplicatedMasked(Reader, &Target, Mask.data());
+        FNetArchive Reader(Block.GetData() + MaskBytes, Block.Num() - MaskBytes);
+        Struct->NetReadReplicatedMasked(Reader, &Target, Mask.GetData());
 
         EXPECT_FALSE(Reader.HasError());
         EXPECT_FLOAT_EQ(Target.PlaybackSpeed, Source.PlaybackSpeed);
@@ -158,10 +158,10 @@ namespace LuminaNetReplicatedFieldTests
         ASSERT_EQ(BaseOffsets, NextOffsets);
 
         uint32 Differing = 0;
-        for (uint32 i = 0; i + 1 < static_cast<uint32>(BaseOffsets.size()); ++i)
+        for (uint32 i = 0; i + 1 < static_cast<uint32>(BaseOffsets.Num()); ++i)
         {
             const uint32 Size = BaseOffsets[i + 1] - BaseOffsets[i];
-            if (Size != 0 && std::memcmp(BaseBytes.data() + BaseOffsets[i], NextBytes.data() + NextOffsets[i], Size) != 0)
+            if (Size != 0 && std::memcmp(BaseBytes.GetData() + BaseOffsets[i], NextBytes.GetData() + NextOffsets[i], Size) != 0)
             {
                 ++Differing;
             }

@@ -34,8 +34,8 @@ namespace Lumina::Reflection
         AliasNotInstantiated   = 2006,  // REFLECT'd alias names a template that is never instantiated.
         ReflectedNoMembers     = 2007,  // REFLECT'd alias resolved a record with no PROPERTY() members.
 
-        DriverMissingInput          = 9000,  // no JSON path on the command line.
-        DriverInputUnreadable       = 9001,  // failed to open the JSON input file.
+        DriverMissingInput          = 9000,  // nothing piped to stdin and no input file named.
+        DriverInputUnreadable       = 9001,  // the input file could not be opened, or the input stream is malformed.
         DriverAmalgamationCreate    = 9002,  // couldn't create the amalgamation .gen.h.
         DriverClangParseFailure     = 9003,  // libclang returned a non-success CXErrorCode.
         DriverTranslationUnitWalk   = 9004,  // clang_visitChildren reported a problem.

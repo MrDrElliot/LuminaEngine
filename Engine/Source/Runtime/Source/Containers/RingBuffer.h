@@ -12,46 +12,47 @@ namespace Lumina::Containers
     public:
 
         using value_type = T;
-        using size_type  = size_t;
+        using size_type  = int32;
 
         TRingBuffer() = default;
 
-        explicit TRingBuffer(size_t InCapacity)
+        explicit TRingBuffer(size_type InCapacity)
         {
-            set_capacity(InCapacity);
+            SetCapacity(InCapacity);
         }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Count; }
-        NODISCARD FORCEINLINE size_t capacity() const noexcept { return Storage.size(); }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Count == 0; }
-        NODISCARD FORCEINLINE bool full() const noexcept { return Count != 0 && Count == Storage.size(); }
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return Count; }
+        NODISCARD FORCEINLINE int32 Max() const noexcept { return Storage.Num(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Count == 0; }
+        NODISCARD FORCEINLINE bool IsFull() const noexcept { return Count != 0 && Count == Storage.Num(); }
 
-        void set_capacity(size_t NewCapacity)
+        void SetCapacity(size_type NewCapacity)
         {
-            if (NewCapacity == Storage.size())
+            LUMINA_CONTAINER_CHECK(NewCapacity >= 0);
+            if (NewCapacity == Storage.Num())
             {
                 return;
             }
 
             TVector<T, 0, TAllocator> Rebuilt;
-            const size_t Kept = Count < NewCapacity ? Count : NewCapacity;
-            Rebuilt.reserve(NewCapacity);
+            const int32 Kept = Count < NewCapacity ? Count : NewCapacity;
+            Rebuilt.Reserve(NewCapacity);
 
-            // Keep the newest entries, since a shrink is meant to drop history rather than recent lines.
-            for (size_t Index = Count - Kept; Index < Count; ++Index)
+            // Keep the newest entries, since a shrink is meant to drop history rather than recent lines; the old storage goes, so they move.
+            for (int32 Index = Count - Kept; Index < Count; ++Index)
             {
-                Rebuilt.push_back((*this)[Index]);
+                Rebuilt.Add(std::move((*this)[Index]));
             }
-            Rebuilt.resize(NewCapacity);
+            Rebuilt.SetNum(NewCapacity);
 
             Storage = std::move(Rebuilt);
             Count = Kept;
-            First = 0;
+            Head = 0;
         }
 
-        void push_back(const T& Value)
+        void Add(const T& Value)
         {
-            if (Storage.empty())
+            if (Storage.IsEmpty())
             {
                 return;
             }
@@ -59,9 +60,9 @@ namespace Lumina::Containers
             Advance();
         }
 
-        void push_back(T&& Value)
+        void Add(T&& Value)
         {
-            if (Storage.empty())
+            if (Storage.IsEmpty())
             {
                 return;
             }
@@ -70,55 +71,56 @@ namespace Lumina::Containers
         }
 
         template <typename... TArgs>
-        void emplace_back(TArgs&&... Args)
+        void Emplace(TArgs&&... Args)
         {
-            push_back(T(std::forward<TArgs>(Args)...));
+            Add(T(std::forward<TArgs>(Args)...));
         }
 
-        void clear() noexcept
+        // Every slot stays constructed, so a cleared one is reset to release what it held rather than keep it until overwritten.
+        void Reset() noexcept
         {
+            for (int32 Index = 0; Index < Count; ++Index)
+            {
+                Storage[SlotFor(Index)] = T();
+            }
             Count = 0;
-            First = 0;
+            Head = 0;
         }
 
-        NODISCARD FORCEINLINE T& operator[](size_t Index) noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto operator[](this TSelf&& Self, int32 Index) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Storage[SlotFor(Index)];
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Self.Count);
+            return Self.Storage[Self.SlotFor(Index)];
         }
 
-        NODISCARD FORCEINLINE const T& operator[](size_t Index) const noexcept
-        {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Storage[SlotFor(Index)];
-        }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto First(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self[0]; }
 
-        NODISCARD FORCEINLINE T& front() noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE const T& front() const noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE T& back() noexcept { return (*this)[Count - 1]; }
-        NODISCARD FORCEINLINE const T& back() const noexcept { return (*this)[Count - 1]; }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Last(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>& { return Self[Self.Count - 1]; }
 
     private:
 
-        NODISCARD FORCEINLINE size_t SlotFor(size_t Index) const noexcept
+        NODISCARD FORCEINLINE int32 SlotFor(int32 Index) const noexcept
         {
-            const size_t Slot = First + Index;
-            return Slot < Storage.size() ? Slot : Slot - Storage.size();
+            const int32 Slot = Head + Index;
+            return Slot < Storage.Num() ? Slot : Slot - Storage.Num();
         }
 
         void Advance() noexcept
         {
-            if (Count < Storage.size())
+            if (Count < Storage.Num())
             {
                 ++Count;
                 return;
             }
-            First = First + 1 < Storage.size() ? First + 1 : 0;
+            Head = Head + 1 < Storage.Num() ? Head + 1 : 0;
         }
 
         TVector<T, 0, TAllocator> Storage;
-        size_t Count = 0;
-        size_t First = 0;
+        int32 Count = 0;
+        int32 Head = 0;
     };
 }
 

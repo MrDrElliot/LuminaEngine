@@ -16,7 +16,7 @@ namespace
     {
         X = Math::Clamp(X, 0, Resolution - 1);
         Y = Math::Clamp(Y, 0, Resolution - 1);
-        return Heightmap[(size_t)Y * (size_t)Resolution + (size_t)X] * MaxHeight;
+        return Heightmap[Y * Resolution + X] * MaxHeight;
     }
 
     STerrainComponent MakeTerrain(int32 Resolution, int32 ChunkResolution, float MaxHeight)
@@ -26,7 +26,7 @@ namespace
         Terrain.ChunkResolution  = ChunkResolution;
         Terrain.TileWorldSize    = 128.0f;
         Terrain.MaxHeight        = MaxHeight;
-        Terrain.Heightmap.resize((size_t)Resolution * (size_t)Resolution);
+        Terrain.Heightmap.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Resolution) * Resolution));
 
         for (int32 y = 0; y < Resolution; ++y)
         {
@@ -34,7 +34,7 @@ namespace
             {
                 // Uncorrelated in x and y so a transposed or off-by-one read cannot pass.
                 const float V = std::sin((float)x * 0.31f) * std::cos((float)y * 0.17f) + (float)((x * 7 + y * 13) % 11) * 0.05f;
-                Terrain.Heightmap[(size_t)y * (size_t)Resolution + (size_t)x] = V;
+                Terrain.Heightmap[y * Resolution + x] = V;
             }
         }
         return Terrain;
@@ -48,13 +48,13 @@ namespace
         TerrainMeshletBuilder::Build(Terrain, WorldOrigin);
 
         const FTerrainCPUState& State = Terrain.CPUState;
-        ASSERT_FALSE(State.Meshlets.empty()) << "builder produced no meshlets";
+        ASSERT_FALSE(State.Meshlets.IsEmpty()) << "builder produced no meshlets";
 
         const int32 QuadsPerChunk = ChunkResolution - 1;
         const int32 MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
         const float DilateY = Math::Max(0.05f, MaxHeight * 0.01f);
 
-        for (size_t m = 0; m < State.Meshlets.size(); ++m)
+        for (int32 m = 0; m < State.Meshlets.Num(); ++m)
         {
             const FTerrainMeshletInfo& Meshlet = State.Meshlets[m];
             const FTerrainChunkInfo& Chunk = State.Chunks[Meshlet.ChunkIndex];
@@ -126,4 +126,37 @@ TEST(TerrainMeshletBounds, ChunksCoverEveryQuad)
     }
     EXPECT_GE(FarX, 1024);
     EXPECT_GE(FarY, 1024);
+}
+
+TEST(TerrainMeshletBounds, TranslateMatchesRebuildAtNewOrigin)
+{
+    const FVector3 From(10.0f, -3.0f, 7.0f);
+    const FVector3 To(-250.0f, 40.0f, 512.0f);
+
+    STerrainComponent Moved = MakeTerrain(65, 9, 50.0f);
+    TerrainMeshletBuilder::Build(Moved, From);
+    TerrainMeshletBuilder::Translate(Moved, To - From);
+
+    STerrainComponent Rebuilt = MakeTerrain(65, 9, 50.0f);
+    TerrainMeshletBuilder::Build(Rebuilt, To);
+
+    EXPECT_EQ(Moved.CPUState.PreparedOrigin, To);
+    ASSERT_EQ(Moved.CPUState.Chunks.Num(), Rebuilt.CPUState.Chunks.Num());
+    ASSERT_EQ(Moved.CPUState.Meshlets.Num(), Rebuilt.CPUState.Meshlets.Num());
+    for (int32 i = 0; i < Moved.CPUState.Meshlets.Num(); ++i)
+    {
+        for (int32 Axis = 0; Axis < 3; ++Axis)
+        {
+            EXPECT_NEAR(Moved.CPUState.Meshlets[i].BoundsMin[Axis], Rebuilt.CPUState.Meshlets[i].BoundsMin[Axis], 1e-3f);
+            EXPECT_NEAR(Moved.CPUState.Meshlets[i].BoundsMax[Axis], Rebuilt.CPUState.Meshlets[i].BoundsMax[Axis], 1e-3f);
+        }
+    }
+    for (int32 i = 0; i < Moved.CPUState.Chunks.Num(); ++i)
+    {
+        for (int32 Axis = 0; Axis < 3; ++Axis)
+        {
+            EXPECT_NEAR(Moved.CPUState.Chunks[i].BoundsMin[Axis], Rebuilt.CPUState.Chunks[i].BoundsMin[Axis], 1e-3f);
+            EXPECT_NEAR(Moved.CPUState.Chunks[i].BoundsMax[Axis], Rebuilt.CPUState.Chunks[i].BoundsMax[Axis], 1e-3f);
+        }
+    }
 }

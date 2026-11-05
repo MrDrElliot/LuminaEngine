@@ -6,6 +6,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
+#include "Scripting/EntityScript.h"
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
@@ -21,7 +22,7 @@ namespace Lumina
 
     bool FEntityComponentSnapshotCommand::CanSnapshotComponent(const CStruct* ComponentType)
     {
-        return ComponentType != nullptr && FindComponentOps(ComponentType->GetName().c_str()) != nullptr;
+        return ComponentType != nullptr && FindComponentOps(*ComponentType->GetName()) != nullptr;
     }
 
     FEntityComponentSnapshotCommand::FEntityComponentSnapshotCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities, CStruct* InComponentType)
@@ -31,16 +32,16 @@ namespace Lumina
     {
         if (ComponentType != nullptr)
         {
-            Ops = FindComponentOps(ComponentType->GetName().c_str());
+            Ops = FindComponentOps(*ComponentType->GetName());
         }
 
         Capture(Before, OverridesBefore);
 
-        PresentBefore.assign(Entities.size(), 0u);
+        PresentBefore.Init(0u, Entities.Num());
         if (CWorld* W = World.Get(); W != nullptr && Ops != nullptr)
         {
             ECS::FRegistry& Registry = W->GetEntityRegistry();
-            for (SIZE_T i = 0; i < Entities.size(); ++i)
+            for (int32 i = 0; i < Entities.Num(); ++i)
             {
                 PresentBefore[i] = Registry.IsValid(Entities[i]) && Ops->Has(Registry, Entities[i]) != 0;
             }
@@ -73,7 +74,7 @@ namespace Lumina
 
         // Every component edit records its prefab override here, so no caller can forget and lose it on the next refresh.
         ECS::FRegistry& Registry = W->GetEntityRegistry();
-        for (SIZE_T i = 0; i < Entities.size(); ++i)
+        for (int32 i = 0; i < Entities.Num(); ++i)
         {
             const ECS::FEntity Entity = Entities[i];
             if (!Registry.IsValid(Entity))
@@ -97,10 +98,10 @@ namespace Lumina
             }
         }
 
-        OverridesAfter.clear();
+        OverridesAfter.Reset();
         for (ECS::FEntity Entity : Entities)
         {
-            OverridesAfter.push_back(CPrefab::GetComponentOverrides(Registry, Entity, Type));
+            OverridesAfter.Add(CPrefab::GetComponentOverrides(Registry, Entity, Type));
         }
     }
 
@@ -108,8 +109,8 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Out.clear();
-        OutOverrides.clear();
+        Out.Reset();
+        OutOverrides.Reset();
 
         CWorld* W = World.Get();
         CStruct* Type = ResolveType();
@@ -125,7 +126,7 @@ namespace Lumina
 
         for (ECS::FEntity Entity : Entities)
         {
-            OutOverrides.push_back(Registry.IsValid(Entity) ? CPrefab::GetComponentOverrides(Registry, Entity, Type) : TVector<FName>());
+            OutOverrides.Add(Registry.IsValid(Entity) ? CPrefab::GetComponentOverrides(Registry, Entity, Type) : TVector<FName>());
             const bool bPresent = Registry.IsValid(Entity) && Ops->Has(Registry, Entity) != 0;
 
             int32 Size = AbsentComponent;
@@ -161,7 +162,7 @@ namespace Lumina
         // Null once the map is closed or swapped, so a stale undo no-ops.
         CWorld* W = World.Get();
         CStruct* Type = ResolveType();
-        if (W == nullptr || Type == nullptr || Ops == nullptr || In.empty())
+        if (W == nullptr || Type == nullptr || Ops == nullptr || In.IsEmpty())
         {
             return;
         }
@@ -174,7 +175,10 @@ namespace Lumina
         // Same reason FEntityTransformCommand re-tags, a restored local transform needs a resolve.
         const bool bTransformRestored = (Type == STransformComponent::StaticStruct());
 
-        for (SIZE_T Index = 0; Index < Entities.size(); ++Index)
+        // Loading over the live list drops its scripts, so they detach first like a prefab refresh does.
+        const bool bScriptsRestored = (Type == SEntityScriptComponent::StaticStruct());
+
+        for (int32 Index = 0; Index < Entities.Num(); ++Index)
         {
             const ECS::FEntity Entity = Entities[Index];
             int32 Size = AbsentComponent;
@@ -195,8 +199,13 @@ namespace Lumina
 
             if (bValid)
             {
+                if (bScriptsRestored)
+                {
+                    EntityScripts::DetachAll(Registry, Entity);
+                }
+
                 // Get-or-emplace, so one removed inside the transaction is back before it gets filled.
-                void* Component = Ops->Emplace(Registry, Entity);
+                void* Component = Registry.IsValid(Entity) ? Ops->Emplace(Registry, Entity) : nullptr;
                 if (Component != nullptr)
                 {
                     Type->SerializeProperties(Ar, Component);
@@ -209,7 +218,7 @@ namespace Lumina
                         Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
                     }
 
-                    if (Index < Overrides.size())
+                    if (Index < Overrides.Num())
                     {
                         CPrefab::RestoreComponentOverrides(Registry, Entity, Type, Overrides[Index]);
                     }

@@ -13,25 +13,25 @@ namespace Lumina
         {
             if (Data != nullptr && Length > 0)
             {
-                static_cast<FString*>(Context)->assign(Data, (size_t)Length);
+                *static_cast<FString*>(Context) = FStringView(Data, (size_t)Length);
             }
         }
 
         void SplitReply(FStringView Reply, TVector<TVector<FString>>& Out)
         {
-            size_t RecordStart = 0;
-            while (RecordStart < Reply.size())
+            int32 RecordStart = 0;
+            while (RecordStart < Reply.Len())
             {
-                size_t RecordEnd = Reply.find(RecordSeparator, RecordStart);
-                RecordEnd = RecordEnd == FStringView::npos ? Reply.size() : RecordEnd;
-                const FStringView Record = Reply.substr(RecordStart, RecordEnd - RecordStart);
-                TVector<FString>& Fields = Out.emplace_back();
-                size_t FieldStart = 0;
-                while (FieldStart <= Record.size())
+                int32 RecordEnd = Reply.Find(RecordSeparator, RecordStart);
+                RecordEnd = RecordEnd == Constants::kIndexNone ? Reply.Len() : RecordEnd;
+                const FStringView Record = Reply.Mid(RecordStart, RecordEnd - RecordStart);
+                TVector<FString>& Fields = Out.EmplaceGetRef();
+                int32 FieldStart = 0;
+                while (FieldStart <= Record.Len())
                 {
-                    size_t FieldEnd = Record.find(FieldSeparator, FieldStart);
-                    FieldEnd = FieldEnd == FStringView::npos ? Record.size() : FieldEnd;
-                    Fields.emplace_back(Record.substr(FieldStart, FieldEnd - FieldStart));
+                    int32 FieldEnd = Record.Find(FieldSeparator, FieldStart);
+                    FieldEnd = FieldEnd == Constants::kIndexNone ? Record.Len() : FieldEnd;
+                    Fields.Emplace(Record.Mid(FieldStart, FieldEnd - FieldStart));
                     FieldStart = FieldEnd + 1;
                 }
                 RecordStart = RecordEnd + 1;
@@ -40,12 +40,12 @@ namespace Lumina
 
         int32 ToInt(const FString& Text)
         {
-            return (int32)std::strtol(Text.c_str(), nullptr, 10);
+            return (int32)std::strtol(*Text, nullptr, 10);
         }
 
-        FString FieldOf(const TVector<FString>& Record, size_t Index)
+        FString FieldOf(const TVector<FString>& Record, int32 Index)
         {
-            return Index < Record.size() ? Record[Index] : FString();
+            return Record.IsValidIndex(Index) ? Record[Index] : FString();
         }
     }
 
@@ -60,12 +60,12 @@ namespace Lumina
     FCSharpScriptLanguage::EReply FCSharpScriptLanguage::QueryText(EQuery Kind, FStringView Text, int32 Offset, TVector<FRecord>& OutRecords) const
     {
         auto* Function = QueryExport.Get();
-        if (Function == nullptr || FilePath.empty())
+        if (Function == nullptr || FilePath.IsEmpty())
         {
             return EReply::Unavailable;
         }
         FString Reply;
-        const int32 Result = Function((int32)Kind, FilePath.c_str(), (int32)FilePath.size(), Text.data(), (int32)Text.size(), Offset,
+        const int32 Result = Function((int32)Kind, *FilePath, FilePath.Len(), Text.GetData(), Text.Len(), Offset,
             reinterpret_cast<void*>(&ReceiveReply), &Reply);
         if (Result == 2)
         {
@@ -87,24 +87,24 @@ namespace Lumina
 
     bool FCSharpScriptLanguage::IsCompletionTrigger(char Typed, FStringView LinePrefix, uint32 CaretState) const
     {
-        if (Typed != '.' || CaretState != 0 || LinePrefix.size() < 2)
+        if (Typed != '.' || CaretState != 0 || LinePrefix.Len() < 2)
         {
             return false;
         }
-        int32 Start = (int32)LinePrefix.size() - 1;
+        int32 Start = LinePrefix.Len() - 1;
         while (Start > 0 && IsWordChar(LinePrefix[Start - 1]))
         {
             --Start;
         }
-        const char Before = LinePrefix[LinePrefix.size() - 2];
-        const bool bNumber = Start < (int32)LinePrefix.size() - 1 && CodeText::IsDigit(LinePrefix[Start]);
+        const char Before = LinePrefix[LinePrefix.Len() - 2];
+        const bool bNumber = Start < LinePrefix.Len() - 1 && CodeText::IsDigit(LinePrefix[Start]);
         return !bNumber && (IsWordChar(Before) || Before == ')' || Before == ']' || Before == '>');
     }
 
     void FCSharpScriptLanguage::GetCompletions(const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out) const
     {
         const bool bMember = Request.WordStart.Column > 0 && Request.LinePrefix[Request.WordStart.Column - 1] == '.';
-        if (!CanCompleteAt(Request) || (!bMember && Request.Word.empty() && !Request.bExplicit))
+        if (!CanCompleteAt(Request) || (!bMember && Request.Word.IsEmpty() && !Request.bExplicit))
         {
             return;
         }
@@ -123,18 +123,18 @@ namespace Lumina
         THashSet<FStringView> Added;
         for (const FRecord& Record : Records)
         {
-            if (Record.empty())
+            if (Record.IsEmpty())
             {
                 continue;
             }
-            FCodeCompletionItem& Item = Out.emplace_back();
+            FCodeCompletionItem& Item = Out.EmplaceGetRef();
             Item.Label = Record[0];
             Item.Kind = (ECodeCompletionKind)ToInt(FieldOf(Record, 1));
             Item.Detail = FieldOf(Record, 2);
             Item.Documentation = FieldOf(Record, 3);
             Item.InsertText = FieldOf(Record, 4);
             Item.SortBoost = ToInt(FieldOf(Record, 5));
-            Added.insert(Record[0].View());
+            Added.Add(Record[0].View());
         }
         if (!bMember)
         {
@@ -150,7 +150,7 @@ namespace Lumina
         {
             return FCSharpLanguage::GetHover(Document, Position, Out);
         }
-        if (Records.empty() || FieldOf(Records[0], 0).empty())
+        if (Records.IsEmpty() || FieldOf(Records[0], 0).IsEmpty())
         {
             return false;
         }
@@ -175,11 +175,11 @@ namespace Lumina
         }
         for (const FRecord& Record : Records)
         {
-            if (Record.size() < 6)
+            if (Record.Num() < 6)
             {
                 continue;
             }
-            FCodeDiagnostic& Diagnostic = Out.emplace_back();
+            FCodeDiagnostic& Diagnostic = Out.EmplaceGetRef();
             Diagnostic.Range = { { ToInt(Record[0]), ToInt(Record[1]) }, { ToInt(Record[2]), ToInt(Record[3]) } };
             Diagnostic.Severity = (ECodeSeverity)Math::Clamp(ToInt(Record[4]), 0, 2);
             Diagnostic.Message = Record[5];
@@ -195,7 +195,7 @@ namespace Lumina
         {
             return FCSharpLanguage::GetSignature(Document, Caret, Out);
         }
-        if (Records.empty() || FieldOf(Records[0], 0).empty())
+        if (Records.IsEmpty() || FieldOf(Records[0], 0).IsEmpty())
         {
             return false;
         }
@@ -203,18 +203,18 @@ namespace Lumina
         Out.Label = FieldOf(Record, 0);
         Out.Documentation = FieldOf(Record, 1);
         Out.ActiveParameter = ToInt(FieldOf(Record, 2));
-        Out.Parameters.clear();
+        Out.Parameters.Reset();
         const FStringView Spans = FieldOf(Record, 3).View();
-        size_t Start = 0;
-        while (Start < Spans.size())
+        int32 Start = 0;
+        while (Start < Spans.Len())
         {
-            size_t End = Spans.find(';', Start);
-            End = End == FStringView::npos ? Spans.size() : End;
-            const FString Span(Spans.substr(Start, End - Start));
-            const size_t Comma = Span.find(',');
-            if (Comma != FString::npos)
+            int32 End = Spans.Find(';', Start);
+            End = End == Constants::kIndexNone ? Spans.Len() : End;
+            const FString Span(Spans.Mid(Start, End - Start));
+            const int32 Comma = Span.Find(',');
+            if (Comma != Constants::kIndexNone)
             {
-                Out.Parameters.push_back({ ToInt(Span), (int32)std::strtol(Span.c_str() + Comma + 1, nullptr, 10) });
+                Out.Parameters.Emplace(ToInt(Span), (int32)std::strtol(*Span + Comma + 1, nullptr, 10));
             }
             Start = End + 1;
         }
@@ -224,7 +224,7 @@ namespace Lumina
     bool FCSharpScriptLanguage::FindDefinition(const FCodeDocument& Document, FCodePosition Position, FCodeLocation& Out) const
     {
         TVector<FRecord> Records;
-        if (Query(EQuery::Definition, Document, Position, Records) != EReply::Answered || Records.empty() || Records[0].size() < 3)
+        if (Query(EQuery::Definition, Document, Position, Records) != EReply::Answered || Records.IsEmpty() || Records[0].Num() < 3)
         {
             return false;
         }
@@ -246,11 +246,11 @@ namespace Lumina
         const EReply Reply = Query(EQuery::References, Document, Position, Records);
         for (const FRecord& Record : Records)
         {
-            if (Record.size() < 7)
+            if (Record.Num() < 7)
             {
                 continue;
             }
-            FReference& Reference = Out.emplace_back();
+            FReference& Reference = Out.EmplaceGetRef();
             Reference.Path = Record[0];
             Reference.Range = { { ToInt(Record[1]), ToInt(Record[2]) }, { ToInt(Record[3]), ToInt(Record[4]) } };
             Reference.Preview = Record[5];
@@ -265,11 +265,11 @@ namespace Lumina
         {
             for (const TVector<FString>& Record : Records)
             {
-                if (Record.size() < 9)
+                if (Record.Num() < 9)
                 {
                     continue;
                 }
-                FCodeSymbolInfo& Symbol = Out.emplace_back();
+                FCodeSymbolInfo& Symbol = Out.EmplaceGetRef();
                 Symbol.Name = Record[0];
                 Symbol.Kind = (ECodeCompletionKind)ToInt(Record[1]);
                 Symbol.Detail = Record[2];
@@ -297,7 +297,7 @@ namespace Lumina
         ReadSymbols(Records, Out);
         for (FCodeSymbolInfo& Symbol : Out)
         {
-            Symbol.Path.clear();
+            Symbol.Path.Reset();
         }
         return true;
     }
@@ -316,11 +316,11 @@ namespace Lumina
         const EReply Reply = QueryText(EQuery::ProjectDiagnostics, {}, 0, Records);
         for (const FRecord& Record : Records)
         {
-            if (Record.size() < 7)
+            if (Record.Num() < 7)
             {
                 continue;
             }
-            FProjectDiagnostic& Problem = Out.emplace_back();
+            FProjectDiagnostic& Problem = Out.EmplaceGetRef();
             Problem.Path = Record[0];
             Problem.Diagnostic.Range = { { ToInt(Record[1]), ToInt(Record[2]) }, { ToInt(Record[3]), ToInt(Record[4]) } };
             Problem.Diagnostic.Severity = (ECodeSeverity)Math::Clamp(ToInt(Record[5]), 0, 2);
@@ -338,13 +338,13 @@ namespace Lumina
         }
         for (const FRecord& Record : Records)
         {
-            if (Record.size() < 7)
+            if (Record.Num() < 7)
             {
                 continue;
             }
-            FCodeAction& Action = Out.emplace_back();
+            FCodeAction& Action = Out.EmplaceGetRef();
             Action.Title = Record[0];
-            FCodeTextEdit& Edit = Action.Edits.emplace_back();
+            FCodeTextEdit& Edit = Action.Edits.EmplaceGetRef();
             // An edit to the script being asked about stays in the editor rather than going to the file on disk.
             Edit.Path = Record[1] == FilePath ? FString() : Record[1];
             Edit.Range = { { ToInt(Record[2]), ToInt(Record[3]) }, { ToInt(Record[4]), ToInt(Record[5]) } };
@@ -357,11 +357,11 @@ namespace Lumina
         FString ClassName;
         for (const char C : FileStem)
         {
-            ClassName.push_back(CodeText::IsAlpha(C) || CodeText::IsDigit(C) || C == '_' ? C : '_');
+            ClassName.AppendChar(CodeText::IsAlpha(C) || CodeText::IsDigit(C) || C == '_' ? C : '_');
         }
-        if (ClassName.empty() || CodeText::IsDigit(ClassName[0]))
+        if (ClassName.IsEmpty() || CodeText::IsDigit(ClassName[0]))
         {
-            ClassName.insert(ClassName.begin(), '_');
+            ClassName.InsertAt(0, '_');
         }
 
         FString Source;

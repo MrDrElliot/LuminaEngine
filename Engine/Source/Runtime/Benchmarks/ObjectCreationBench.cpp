@@ -35,8 +35,8 @@ namespace LuminaObjectCreationBench
     {
         static char Text[128];
         std::snprintf(Text, sizeof(Text), "%s, %d reflected propert%s",
-            Class->GetName().c_str(), (int32)Class->GetProperties().size(),
-            Class->GetProperties().size() == 1 ? "y" : "ies");
+            *Class->GetName(), Class->GetProperties().Num(),
+            Class->GetProperties().Num() == 1 ? "y" : "ies");
         return Text;
     }
 
@@ -52,7 +52,7 @@ namespace LuminaObjectCreationBench
         {
             Lumina::Object::Internal::ConditionalDestroy(Object);
         }
-        Objects.clear();
+        Objects.Reset();
     }
 
     // Teardown stays outside the timed region, or every repeat but the first measures it too.
@@ -60,7 +60,7 @@ namespace LuminaObjectCreationBench
     double MeasureConstruction(TMake&& Make)
     {
         Lumina::TVector<CObject*> Objects;
-        Objects.reserve(kIterations);
+        Objects.Reserve(kIterations);
 
         double Best = 1e30;
 
@@ -73,7 +73,7 @@ namespace LuminaObjectCreationBench
             {
                 CObject* Object = Make();
                 GBenchSink += (uint64)(void*)Object;
-                Objects.push_back(Object);
+                Objects.Add(Object);
             }
             const double Millis = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start);
 

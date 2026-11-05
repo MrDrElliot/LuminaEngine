@@ -12,7 +12,7 @@ internal static class VectorCopy
         var Copy = new List<T>(View.Count);
         for (int Index = 0; Index < View.Count; ++Index)
         {
-            Copy.Add(View.Get(Index));
+            Copy.Add(ElementMarshal.Detach(View.Get(Index)));
         }
         return Copy;
     }
@@ -23,7 +23,7 @@ internal static class VectorCopy
         var Copy = new T[View.Count];
         for (int Index = 0; Index < Copy.Length; ++Index)
         {
-            Copy[Index] = View.Get(Index);
+            Copy[Index] = ElementMarshal.Detach(View.Get(Index));
         }
         return Copy;
     }

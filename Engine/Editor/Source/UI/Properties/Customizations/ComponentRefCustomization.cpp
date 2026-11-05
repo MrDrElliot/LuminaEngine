@@ -8,7 +8,7 @@ namespace Lumina
     {
         const FString Text = Property->Property->ToString(Property->GetValuePtr());
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%s", Text.c_str());
+        ImGui::TextDisabled("%s", *Text);
         return EPropertyChangeOp::None;
     }
 }

@@ -65,13 +65,13 @@ namespace Lumina
             return const_cast<SSceneFolderComponent*>(this)->Find(FolderID);
         }
 
-        NODISCARD bool IsEmpty() const { return Folders.empty(); }
+        NODISCARD bool IsEmpty() const { return Folders.IsEmpty(); }
 
         uint32 CreateFolder(const FName& Name, uint32 ParentID)
         {
             const uint32 ResolvedParent = Find(ParentID) != nullptr ? ParentID : NoFolder;
 
-            SSceneFolder& Folder = Folders.emplace_back();
+            SSceneFolder& Folder = Folders.EmplaceGetRef();
             Folder.ID = NextFolderID++;
             Folder.ParentID = ResolvedParent;
             Folder.Name = Name;
@@ -102,7 +102,7 @@ namespace Lumina
         NODISCARD bool IsDescendantOf(uint32 FolderID, uint32 PossibleAncestor) const
         {
             uint32 Cursor = FolderID;
-            for (uint32 Guard = 0; Cursor != NoFolder && Guard < Folders.size() + 1; ++Guard)
+            for (int32 Guard = 0; Cursor != NoFolder && Guard < Folders.Num() + 1; ++Guard)
             {
                 if (Cursor == PossibleAncestor)
                 {
@@ -137,7 +137,7 @@ namespace Lumina
             {
                 if (Folder.ParentID == FolderID)
                 {
-                    OutFolders.push_back(Folder.ID);
+                    OutFolders.Add(Folder.ID);
                     CollectDescendants(Folder.ID, OutFolders);
                 }
             }
@@ -167,14 +167,14 @@ namespace Lumina
             {
                 if (It->ID == FolderID)
                 {
-                    Folders.erase(It);
+                    Folders.RemoveAt(static_cast<int32>(It - Folders.begin()));
                     break;
                 }
             }
 
             if (SSceneFolder* Parent = Find(NewParent))
             {
-                Parent->Entities.insert(Parent->Entities.end(), Orphans.begin(), Orphans.end());
+                Parent->Entities.Append(Orphans);
             }
         }
 
@@ -211,7 +211,7 @@ namespace Lumina
 
             if (SSceneFolder* Folder = Find(FolderID))
             {
-                Folder->Entities.push_back(Entity);
+                Folder->Entities.Add(Entity);
             }
         }
 
@@ -221,7 +221,7 @@ namespace Lumina
         {
             for (SSceneFolder& Folder : Folders)
             {
-                Folder.Entities.erase(Algo::RemoveIf(Folder.Entities, ShouldRemove), Folder.Entities.end());
+                Folder.Entities.RemoveAll(ShouldRemove);
             }
         }
 
@@ -233,7 +233,7 @@ namespace Lumina
                 {
                     if (*It == Entity)
                     {
-                        Folder.Entities.erase(It);
+                        Folder.Entities.RemoveAt(static_cast<int32>(It - Folder.Entities.begin()));
                         return;
                     }
                 }

@@ -7,10 +7,10 @@ namespace ECSBench
         // A second tag, so the exclude pool is a different type from anything the view includes.
         struct FExcludedTag {};
 
-        double MeasurePlain(size_t EntityCount, size_t Passes)
+        double MeasurePlain(int32 EntityCount, int32 Passes)
         {
             ECS::FRegistry Registry;
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 Registry.Emplace<FPosition>(Registry.Create());
             }
@@ -26,17 +26,17 @@ namespace ECSBench
         }
 
         // TaggedInN entities carry the excluded tag; 0 means the pool exists but is empty.
-        double MeasureExcluded(size_t EntityCount, size_t Passes, uint32 TaggedInN)
+        double MeasureExcluded(int32 EntityCount, int32 Passes, uint32 TaggedInN)
         {
             ECS::FRegistry Registry;
             TVector<ECS::FEntity> Entities;
-            Entities.reserve(EntityCount);
+            Entities.Reserve(EntityCount);
 
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<FPosition>(Entity);
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             // Assured either way, so the empty case still pays for the pool lookup and the probe.
@@ -44,7 +44,7 @@ namespace ECSBench
 
             if (TaggedInN > 0)
             {
-                for (size_t Index = 0; Index < EntityCount; Index += TaggedInN)
+                for (int32 Index = 0; Index < EntityCount; Index += TaggedInN)
                 {
                     Registry.Emplace<FExcludedTag>(Entities[Index]);
                 }
@@ -62,7 +62,7 @@ namespace ECSBench
         }
     }
 
-    void RunExcludeCostCases(size_t EntityCount, size_t Passes)
+    void RunExcludeCostCases(int32 EntityCount, int32 Passes)
     {
         std::printf("\nCost of a tag exclude on a single-component view, nanoseconds per entity.\n\n");
         std::printf("%-42s %12s %10s\n", "case", "ns per op", "vs plain");

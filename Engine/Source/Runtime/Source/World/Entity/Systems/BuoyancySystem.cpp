@@ -11,86 +11,87 @@
 
 namespace Lumina
 {
+    namespace BuoyancySystemInternal
+    {
+        // A buoyant water plane: center, half extent, mean surface height, and the component for the waves.
+        struct FWaterPlane
+        {
+            const SWaterComponent* W;
+            float Cx;
+            float Cz;
+            float HalfX;
+            float HalfZ;
+            float SurfaceY;
+        };
+    }
+
     void SBuoyancySystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Reads<SWaterComponent, STransformComponent, SBuoyancyComponent, SRigidBodyComponent>();
-        Writes<SystemResource::PhysicsQuery>();
-    }
-
-    void SBuoyancySystem::OnStartup(const SSystemContext& Context)
-    {
-
-        (void)Context.CreateView<SWaterComponent, STransformComponent>();
     }
 
     void SBuoyancySystem::OnUpdate(const SSystemContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
+        using BuoyancySystemInternal::FWaterPlane;
 
         const float Time = (float)Context.GetTime();
-        const float Dt   = (float)Context.GetDeltaTime();
-        if (Dt <= 0.0f || Context.GetPhysicsScene() == nullptr)
+        const float Dt   = Context.GetDeltaTime();
+        Physics::IPhysicsQueries* Queries = Context.GetPhysics();
+        if (Dt <= 0.0f || Queries == nullptr)
         {
             return;
         }
 
-        // Snapshot the buoyant water planes (center + half extent + mean surface Y + component for the waves).
-        struct FWaterPlane { const SWaterComponent* W; float Cx; float Cz; float HalfX; float HalfZ; float SurfaceY; };
         FWaterPlane Planes[16];
         int NumPlanes = 0;
-        Context.CreateView<SWaterComponent, STransformComponent>().ForEach(
-            [&](const SWaterComponent& W, const STransformComponent& T)
+        Waters.ForEach([&](const SWaterComponent& W, const STransformComponent& T)
+        {
+            if (!W.bBuoyancy || NumPlanes >= 16)
             {
-                if (!W.bBuoyancy || NumPlanes >= 16)
-                {
-                    return;
-                }
-                FVector3 C = T.GetWorldLocation();
-                Planes[NumPlanes++] = { &W, C.x, C.z, W.Extent.x * 0.5f, W.Extent.y * 0.5f, C.y };
-            });
+                return;
+            }
+            FVector3 C = T.GetWorldLocation();
+            Planes[NumPlanes++] = { &W, C.x, C.z, W.Extent.x * 0.5f, W.Extent.y * 0.5f, C.y };
+        });
 
         if (NumPlanes == 0)
         {
             return;
         }
 
-        Context.CreateView<SBuoyancyComponent, SRigidBodyComponent>().ForEach(
-            [&](ECS::FEntity Entity, const SBuoyancyComponent& B, const SRigidBodyComponent& RB)
+        Floaters.ParallelForEach([&](ECS::FEntity Entity, const SBuoyancyComponent& B, const SRigidBodyComponent&)
+        {
+            if (Queries->GetBodyStatus(Entity) != Physics::EPhysicsBodyStatus::Ready)
             {
-                if (Context.GetPhysicsScene()->GetBodyStatus(Entity) != Physics::EPhysicsBodyStatus::Ready)
-                {
-                    return;
-                }
+                return;
+            }
 
-                const FVector3 BodyPos = Context.GetBodyPosition(Entity);
+            const FVector3 BodyPos = Queries->GetBodyPosition(Entity);
 
-                // Pick the highest water plane this body is over in XZ.
-                const FWaterPlane* Plane = nullptr;
-                for (int p = 0; p < NumPlanes; ++p)
+            // Pick the highest water plane this body is over in XZ.
+            const FWaterPlane* Plane = nullptr;
+            for (int p = 0; p < NumPlanes; ++p)
+            {
+                const FWaterPlane& Pl = Planes[p];
+                if (Math::Abs(BodyPos.x - Pl.Cx) <= Pl.HalfX && Math::Abs(BodyPos.z - Pl.Cz) <= Pl.HalfZ)
                 {
-                    const FWaterPlane& Pl = Planes[p];
-                    if (Math::Abs(BodyPos.x - Pl.Cx) <= Pl.HalfX && Math::Abs(BodyPos.z - Pl.Cz) <= Pl.HalfZ)
+                    if (!Plane || Pl.SurfaceY > Plane->SurfaceY)
                     {
-                        if (!Plane || Pl.SurfaceY > Plane->SurfaceY)
-                        {
-                            Plane = &Pl;
-                        }
+                        Plane = &Pl;
                     }
                 }
-                if (!Plane)
-                {
-                    return;
-                }
+            }
+            if (!Plane)
+            {
+                return;
+            }
 
-                // Submerged volume comes from the body bounds against the fluid plane.
-                const float SurfaceY = Plane->SurfaceY + WaterWaveHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
-                const FVector3 SurfacePos(BodyPos.x, SurfaceY, BodyPos.z);
-                const FVector3 SurfaceNormal = WaterWaveNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);
+            // Submerged volume comes from the body bounds against the fluid plane.
+            const float SurfaceY = Plane->SurfaceY + WaterWaveHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
+            const FVector3 SurfacePos(BodyPos.x, SurfaceY, BodyPos.z);
+            const FVector3 SurfaceNormal = WaterWaveNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);
 
-                Context.ApplyBuoyancyImpulse(Entity, SurfacePos, SurfaceNormal,
-                    B.Buoyancy, B.LinearDrag, B.AngularDrag, FVector3(0.0f), Dt);
-            });
+            Queries->ApplyBuoyancyImpulse(Entity, SurfacePos, SurfaceNormal, B.Buoyancy, B.LinearDrag, B.AngularDrag, FVector3(0.0f), Dt);
+        });
     }
 }

@@ -28,14 +28,14 @@ namespace Lumina::Scripting
             }
         }
 
-        Stages.push_back(Compiler);
+        Stages.Add(Compiler);
     }
 
     void FManagedTypeRegistry::PreUnloadAll()
     {
         LUMINA_PROFILE_SCOPE();
 
-        for (size_t Index = Stages.size(); Index > 0; --Index)
+        for (int32 Index = Stages.Num(); Index > 0; --Index)
         {
             Stages[Index - 1]->PreUnload();
         }
@@ -63,17 +63,20 @@ namespace Lumina::Scripting
 
     void FManagedTypeRegistry::AddListener(IScriptReloadListener* Listener)
     {
-        Listeners.push_back(Listener);
+        Listeners.Add(Listener);
     }
 
     void FManagedTypeRegistry::RemoveListener(IScriptReloadListener* Listener)
     {
-        Listeners.erase(Algo::Remove(Listeners.begin(), Listeners.end(), Listener), Listeners.end());
+        Listeners.Remove(Listener);
     }
 
     void FManagedTypeRegistry::NoteReplaced(const THashMap<CObject*, CObject*>& Replaced)
     {
-        PendingReplaced.insert(Replaced.begin(), Replaced.end());
+        for (const auto& [Old, New] : Replaced)
+        {
+            PendingReplaced.TryAdd(Old, New);
+        }
     }
 
     void FManagedTypeRegistry::BroadcastReload(int32 Generation, TSpan<const FManagedTypeDefinition> Types)

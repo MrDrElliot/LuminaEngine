@@ -35,27 +35,27 @@ namespace LuminaBasicStringTests
     TEST(BasicStringBasics, DefaultIsEmptyAndTerminated)
     {
         const FStr Text;
-        EXPECT_TRUE(Text.empty());
-        EXPECT_EQ(Text.size(), 0u);
-        EXPECT_EQ(Text.capacity(), kSso);
+        EXPECT_TRUE(Text.IsEmpty());
+        EXPECT_EQ(Text.Len(), 0);
+        EXPECT_EQ(Text.GetCapacity(), kSso);
         EXPECT_TRUE(Text.IsInline());
-        EXPECT_STREQ(Text.c_str(), "");
+        EXPECT_STREQ(*Text, "");
     }
 
     TEST(BasicStringBasics, ConstructFromLiteralAndView)
     {
         const FStr FromLiteral("hello");
-        EXPECT_EQ(FromLiteral.size(), 5u);
-        EXPECT_STREQ(FromLiteral.c_str(), "hello");
+        EXPECT_EQ(FromLiteral.Len(), 5);
+        EXPECT_STREQ(*FromLiteral, "hello");
 
         const FStr FromView(std::string_view("world"));
-        EXPECT_STREQ(FromView.c_str(), "world");
+        EXPECT_STREQ(*FromView, "world");
 
         const FStr FromRange("abcdef", 3);
-        EXPECT_STREQ(FromRange.c_str(), "abc");
+        EXPECT_STREQ(*FromRange, "abc");
 
         const FStr Repeated(4, 'x');
-        EXPECT_STREQ(Repeated.c_str(), "xxxx");
+        EXPECT_STREQ(*Repeated, "xxxx");
     }
 
     TEST(BasicStringBasics, StaysInlineUpToTheSsoCapacity)
@@ -63,26 +63,26 @@ namespace LuminaBasicStringTests
         FStr Text;
         for (size_t Index = 0; Index < kSso; ++Index)
         {
-            Text.push_back('a');
+            Text.AppendChar('a');
             ASSERT_TRUE(Text.IsInline()) << "spilled at " << Index;
         }
 
-        EXPECT_EQ(Text.size(), kSso);
-        EXPECT_STREQ(Text.c_str(), "aaaaaaaaaaaaaaa");
+        EXPECT_EQ(Text.Len(), kSso);
+        EXPECT_STREQ(*Text, "aaaaaaaaaaaaaaa");
 
-        Text.push_back('b');
+        Text.AppendChar('b');
         EXPECT_FALSE(Text.IsInline());
-        EXPECT_EQ(Text.size(), kSso + 1);
-        EXPECT_EQ(Text.back(), 'b');
-        EXPECT_STREQ(Text.c_str(), "aaaaaaaaaaaaaaab");
+        EXPECT_EQ(Text.Len(), kSso + 1);
+        EXPECT_EQ(Text.Last(), 'b');
+        EXPECT_STREQ(*Text, "aaaaaaaaaaaaaaab");
     }
 
     TEST(BasicStringBasics, TerminatorSurvivesAFullInlineBuffer)
     {
         FStr Text(kSso, 'z');
         ASSERT_TRUE(Text.IsInline());
-        EXPECT_EQ(Text.size(), kSso);
-        EXPECT_EQ(std::char_traits<char>::length(Text.c_str()), kSso);
+        EXPECT_EQ(Text.Len(), kSso);
+        EXPECT_EQ(std::char_traits<char>::length(*Text), kSso);
     }
 
     TEST(BasicStringBasics, HeapGrowthKeepsContent)
@@ -90,61 +90,61 @@ namespace LuminaBasicStringTests
         FStr Text;
         for (int Index = 0; Index < 5000; ++Index)
         {
-            Text.push_back(static_cast<char>('a' + (Index % 26)));
+            Text.AppendChar(static_cast<char>('a' + (Index % 26)));
         }
 
-        ASSERT_EQ(Text.size(), 5000u);
+        ASSERT_EQ(Text.Len(), 5000);
         EXPECT_FALSE(Text.IsInline());
         for (int Index = 0; Index < 5000; ++Index)
         {
-            ASSERT_EQ(Text[static_cast<size_t>(Index)], static_cast<char>('a' + (Index % 26)));
+            ASSERT_EQ(Text[Index], static_cast<char>('a' + (Index % 26)));
         }
-        EXPECT_EQ(std::char_traits<char>::length(Text.c_str()), 5000u);
+        EXPECT_EQ(std::char_traits<char>::length(*Text), 5000u);
     }
 
     TEST(BasicStringBasics, ResizeAndClear)
     {
         FStr Text("abcdef");
-        Text.resize(3);
-        EXPECT_STREQ(Text.c_str(), "abc");
+        Text.SetLen(3);
+        EXPECT_STREQ(*Text, "abc");
 
-        Text.resize(6, '!');
-        EXPECT_STREQ(Text.c_str(), "abc!!!");
+        Text.SetLen(6, '!');
+        EXPECT_STREQ(*Text, "abc!!!");
 
-        Text.clear();
-        EXPECT_TRUE(Text.empty());
-        EXPECT_STREQ(Text.c_str(), "");
+        Text.Reset();
+        EXPECT_TRUE(Text.IsEmpty());
+        EXPECT_STREQ(*Text, "");
     }
 
     TEST(BasicStringBasics, ReserveAndShrinkToFit)
     {
         FStr Text("short");
-        Text.reserve(500);
-        EXPECT_GE(Text.capacity(), 500u);
+        Text.Reserve(500);
+        EXPECT_GE(Text.GetCapacity(), 500);
         EXPECT_FALSE(Text.IsInline());
-        EXPECT_STREQ(Text.c_str(), "short");
+        EXPECT_STREQ(*Text, "short");
 
-        Text.shrink_to_fit();
+        Text.Shrink();
         EXPECT_TRUE(Text.IsInline());
-        EXPECT_STREQ(Text.c_str(), "short");
-        EXPECT_EQ(Text.capacity(), kSso);
+        EXPECT_STREQ(*Text, "short");
+        EXPECT_EQ(Text.GetCapacity(), kSso);
     }
 
     TEST(BasicStringAppend, AppendAcrossTheSsoBoundary)
     {
         FStr Text;
-        Text.append("0123456789");
+        Text.Append("0123456789");
         EXPECT_TRUE(Text.IsInline());
 
         Text += "abcdefghij";
         EXPECT_FALSE(Text.IsInline());
-        EXPECT_STREQ(Text.c_str(), "0123456789abcdefghij");
+        EXPECT_STREQ(*Text, "0123456789abcdefghij");
 
         Text += '!';
-        EXPECT_EQ(Text.back(), '!');
+        EXPECT_EQ(Text.Last(), '!');
 
-        Text.append(3, '.');
-        EXPECT_STREQ(Text.c_str(), "0123456789abcdefghij!...");
+        Text.AppendChars('.', 3);
+        EXPECT_STREQ(*Text, "0123456789abcdefghij!...");
     }
 
     TEST(BasicStringAppend, OperatorPlusCombinations)
@@ -161,8 +161,8 @@ namespace LuminaBasicStringTests
         FStr Text("0123456789");
         ASSERT_TRUE(Text.IsInline());
 
-        Text.append(Text.c_str(), Text.size());
-        EXPECT_STREQ(Text.c_str(), "01234567890123456789");
+        Text.Append(*Text, Text.Len());
+        EXPECT_STREQ(*Text, "01234567890123456789");
     }
 
     TEST(BasicStringAliasing, AssignFromOwnContentSurvivesGrowth)
@@ -170,77 +170,77 @@ namespace LuminaBasicStringTests
         FStr Text("abcdefghijklmnopqrstuvwxyz");
         ASSERT_FALSE(Text.IsInline());
 
-        Text.assign(Text.c_str() + 1, 5);
-        EXPECT_STREQ(Text.c_str(), "bcdef");
+        Text = Lumina::FStringView(*Text + 1, 5);
+        EXPECT_STREQ(*Text, "bcdef");
     }
 
     TEST(BasicStringAliasing, InsertOfOwnContent)
     {
         FStr Text("0123456789");
-        Text.insert(0, Text.View());
-        EXPECT_STREQ(Text.c_str(), "01234567890123456789");
+        Text.InsertAt(0, Text.View());
+        EXPECT_STREQ(*Text, "01234567890123456789");
     }
 
     TEST(BasicStringEdit, InsertEraseReplaceSubstr)
     {
         FStr Text("hello world");
 
-        Text.insert(5, ",");
-        EXPECT_STREQ(Text.c_str(), "hello, world");
+        Text.InsertAt(5, ",");
+        EXPECT_STREQ(*Text, "hello, world");
 
-        Text.erase(5, 1);
-        EXPECT_STREQ(Text.c_str(), "hello world");
+        Text.RemoveAt(5, 1);
+        EXPECT_STREQ(*Text, "hello world");
 
-        Text.replace(6, 5, "there");
-        EXPECT_STREQ(Text.c_str(), "hello there");
+        Text.RemoveAt(6, 5).InsertAt(6, "there");
+        EXPECT_STREQ(*Text, "hello there");
 
-        EXPECT_EQ(Text.substr(6), FStr("there"));
-        EXPECT_EQ(Text.substr(0, 5), FStr("hello"));
+        EXPECT_EQ(Text.Mid(6), FStr("there"));
+        EXPECT_EQ(Text.Mid(0, 5), FStr("hello"));
     }
 
     TEST(BasicStringEdit, EraseWithIterators)
     {
         FStr Text("abcdef");
-        Text.erase(Text.begin() + 1, Text.begin() + 3);
-        EXPECT_STREQ(Text.c_str(), "adef");
+        Text.RemoveAt(1, 2);
+        EXPECT_STREQ(*Text, "adef");
 
-        Text.erase(Text.begin());
-        EXPECT_STREQ(Text.c_str(), "def");
+        Text.RemoveAt(0);
+        EXPECT_STREQ(*Text, "def");
     }
 
     TEST(BasicStringSearch, FindFamily)
     {
         const FStr Text("/Game/Meshes/Rock.lasset");
 
-        EXPECT_EQ(Text.find("Meshes"), 6u);
-        EXPECT_EQ(Text.find('/'), 0u);
-        EXPECT_EQ(Text.find("missing"), FStr::npos);
-        EXPECT_EQ(Text.rfind('/'), 12u);
-        EXPECT_EQ(Text.find_last_of("."), 17u);
-        EXPECT_EQ(Text.find_first_of("GM"), 1u);
-        EXPECT_EQ(Text.find_first_not_of("/"), 1u);
+        EXPECT_EQ(Text.Find("Meshes"), 6);
+        EXPECT_EQ(Text.Find('/'), 0);
+        EXPECT_EQ(Text.Find("missing"), Lumina::Constants::kIndexNone);
+        EXPECT_EQ(Text.FindLast('/'), 12);
+        EXPECT_EQ(Text.FindLastOf("."), 17);
+        EXPECT_EQ(Text.FindFirstOf("GM"), 1);
+        EXPECT_EQ(Text.FindFirstNotOf("/"), 1);
     }
 
     TEST(BasicStringSearch, PredicatesTheEastlStringNeverHad)
     {
         const FStr Text("/Game/Meshes/Rock.lasset");
 
-        EXPECT_TRUE(Text.starts_with("/Game/"));
-        EXPECT_FALSE(Text.starts_with("/Engine/"));
-        EXPECT_TRUE(Text.ends_with(".lasset"));
-        EXPECT_TRUE(Text.contains("Meshes"));
-        EXPECT_TRUE(Text.contains('.'));
-        EXPECT_FALSE(Text.contains("Textures"));
+        EXPECT_TRUE(Text.StartsWith("/Game/"));
+        EXPECT_FALSE(Text.StartsWith("/Engine/"));
+        EXPECT_TRUE(Text.EndsWith(".lasset"));
+        EXPECT_TRUE(Text.Contains("Meshes"));
+        EXPECT_TRUE(Text.Contains('.'));
+        EXPECT_FALSE(Text.Contains("Textures"));
     }
 
     TEST(BasicStringCase, FoldingAndComparison)
     {
         FStr Text("MiXeD");
         Text.ToLower();
-        EXPECT_STREQ(Text.c_str(), "mixed");
+        EXPECT_STREQ(*Text, "mixed");
 
         Text.ToUpper();
-        EXPECT_STREQ(Text.c_str(), "MIXED");
+        EXPECT_STREQ(*Text, "MIXED");
 
         EXPECT_TRUE(FStr("Hello").EqualsIgnoreCase("hELLO"));
         EXPECT_FALSE(FStr("Hello").EqualsIgnoreCase("hELLO!"));
@@ -250,11 +250,11 @@ namespace LuminaBasicStringTests
     {
         FStr Padded("  \t spaced out \n ");
         Padded.Trim();
-        EXPECT_STREQ(Padded.c_str(), "spaced out");
+        EXPECT_STREQ(*Padded, "spaced out");
 
         FStr OnlySpace("    ");
         OnlySpace.Trim();
-        EXPECT_TRUE(OnlySpace.empty());
+        EXPECT_TRUE(OnlySpace.IsEmpty());
     }
 
     TEST(BasicStringCopyMove, CopyIsIndependent)
@@ -263,7 +263,7 @@ namespace LuminaBasicStringTests
         FStr Copy = Source;
 
         ASSERT_FALSE(Copy.IsInline());
-        EXPECT_NE(Copy.data(), Source.data());
+        EXPECT_NE(Copy.GetData(), Source.GetData());
         EXPECT_EQ(Copy, Source);
 
         Copy[0] = 'A';
@@ -273,13 +273,13 @@ namespace LuminaBasicStringTests
     TEST(BasicStringCopyMove, MoveStealsTheHeapBlock)
     {
         FStr Source("a string long enough to live on the heap");
-        const char* Base = Source.c_str();
+        const char* Base = *Source;
 
         FStr Moved = std::move(Source);
-        EXPECT_EQ(Moved.c_str(), Base);
-        EXPECT_TRUE(Source.empty());
+        EXPECT_EQ(*Moved, Base);
+        EXPECT_TRUE(Source.IsEmpty());
         EXPECT_TRUE(Source.IsInline());
-        EXPECT_STREQ(Source.c_str(), "");
+        EXPECT_STREQ(*Source, "");
     }
 
     TEST(BasicStringCopyMove, MoveFromInlineCopiesCharacters)
@@ -288,8 +288,8 @@ namespace LuminaBasicStringTests
         ASSERT_TRUE(Source.IsInline());
 
         FStr Moved = std::move(Source);
-        EXPECT_STREQ(Moved.c_str(), "short");
-        EXPECT_TRUE(Source.empty());
+        EXPECT_STREQ(*Moved, "short");
+        EXPECT_TRUE(Source.IsEmpty());
     }
 
     TEST(BasicStringCopyMove, MoveAssignReleasesTheOldBlock)
@@ -298,7 +298,7 @@ namespace LuminaBasicStringTests
         FStr Source("a long source string that certainly allocates");
 
         Target = std::move(Source);
-        EXPECT_STREQ(Target.c_str(), "a long source string that certainly allocates");
+        EXPECT_STREQ(*Target, "a long source string that certainly allocates");
     }
 
     TEST(BasicStringCopyMove, SelfAssignmentIsSafe)
@@ -307,10 +307,10 @@ namespace LuminaBasicStringTests
         FStr& Alias = Text;
 
         Text = Alias;
-        EXPECT_STREQ(Text.c_str(), "a long string that certainly allocates on the heap");
+        EXPECT_STREQ(*Text, "a long string that certainly allocates on the heap");
 
         Text = std::move(Alias);
-        EXPECT_STREQ(Text.c_str(), "a long string that certainly allocates on the heap");
+        EXPECT_STREQ(*Text, "a long string that certainly allocates on the heap");
     }
 
     TEST(BasicStringCopyMove, SwapAcrossInlineAndHeap)
@@ -318,9 +318,9 @@ namespace LuminaBasicStringTests
         FStr Small("tiny");
         FStr Large("a string long enough to live on the heap");
 
-        Small.swap(Large);
-        EXPECT_STREQ(Small.c_str(), "a string long enough to live on the heap");
-        EXPECT_STREQ(Large.c_str(), "tiny");
+        swap(Small, Large);
+        EXPECT_STREQ(*Small, "a string long enough to live on the heap");
+        EXPECT_STREQ(*Large, "tiny");
     }
 
     TEST(BasicStringCompare, EqualityAndOrdering)
@@ -334,7 +334,7 @@ namespace LuminaBasicStringTests
         EXPECT_LT(A, B);
         EXPECT_GT(B, A);
         EXPECT_LT(A, "apples");
-        EXPECT_EQ(A.compare("apple"), 0);
+        EXPECT_EQ(A.Compare("apple"), 0);
     }
 
     TEST(BasicStringInterop, FormatterAndHash)
@@ -344,10 +344,10 @@ namespace LuminaBasicStringTests
         EXPECT_EQ(Lumina::Format("{:>12}", Text), "   formatted");
 
         Lumina::THashSet<FStr> Seen;
-        Seen.insert(FStr("one"));
-        Seen.insert(FStr("two"));
-        Seen.insert(FStr("one"));
-        EXPECT_EQ(Seen.size(), 2u);
+        Seen.Emplace("one");
+        Seen.Emplace("two");
+        Seen.Emplace("one");
+        EXPECT_EQ(Seen.Num(), 2);
     }
 
     TEST(BasicStringInterop, RangeForAndStdAlgorithms)
@@ -370,24 +370,27 @@ namespace LuminaBasicStringTests
 
     TEST(BasicStringWide, WideCharacterStringsWork)
     {
-        FWStr Text(L"wide");
-        EXPECT_EQ(Text.size(), 4u);
+        static_assert(sizeof(FWStr) == 16);
+        static_assert(FWStr::InlineCapacityChars == 16 / sizeof(wchar_t) - 1);
+
+        FWStr Text(L"wid");
+        EXPECT_EQ(Text.Len(), 3);
         EXPECT_TRUE(Text.IsInline());
 
         Text += L" characters that push this past the inline buffer";
         EXPECT_FALSE(Text.IsInline());
-        EXPECT_EQ(Text.View().substr(0, 4), std::wstring_view(L"wide"));
-        EXPECT_EQ(std::char_traits<wchar_t>::length(Text.c_str()), Text.size());
+        EXPECT_EQ(Text.View().Mid(0, 3), std::wstring_view(L"wid"));
+        EXPECT_EQ(std::char_traits<wchar_t>::length(*Text), Text.Len());
     }
 
     TEST(BasicStringFixed, LargerInlineBufferAvoidsTheHeap)
     {
         TFixed<255> Path("/Game/Some/Reasonably/Long/Asset/Path/Rock.lasset");
         EXPECT_TRUE(Path.IsInline());
-        EXPECT_EQ(Path.capacity(), 255u);
+        EXPECT_EQ(Path.GetCapacity(), 255);
 
-        Path.append(FStr(220, 'x').View());
+        Path.Append(FStr(220, 'x').View());
         EXPECT_FALSE(Path.IsInline());
-        EXPECT_EQ(Path.size(), 49u + 220u);
+        EXPECT_EQ(Path.Len(), 49 + 220);
     }
 }

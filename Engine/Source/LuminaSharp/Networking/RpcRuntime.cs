@@ -136,7 +136,16 @@ public ref struct RpcCall
     {
         if (Frame != IntPtr.Zero && Next < Binding.Slots.Length)
         {
-            FrameMarshal.Write(Frame, Binding.Slots[Next], Value);
+            try
+            {
+                FrameMarshal.Write(Frame, Binding.Slots[Next], Value);
+            }
+            catch
+            {
+                // Send never runs once this throws, so the arguments already written are torn down here.
+                Lumina.CEntityScript.DiscardRpcFrame(Binding.Function, Frame);
+                throw;
+            }
         }
         ++Next;
     }

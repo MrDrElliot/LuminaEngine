@@ -3,7 +3,6 @@
 
 #include "ThreadedCallback.h"
 #include "Core/Threading/Thread.h"
-#include "Scheduler/JobScheduler.h"
 #include "World/World.h"
 
 namespace Lumina::CoroDetail
@@ -26,7 +25,7 @@ namespace Lumina::CoroDetail
             TScopeLock Guard(Lock);
             for (FCoroutineState* Child : AwaitedChildren)
             {
-                Children.emplace_back(Child);
+                Children.Emplace(Child);
             }
         }
         const bool bForce = bForced.load(std::memory_order_acquire);
@@ -61,7 +60,7 @@ namespace Lumina::CoroDetail
         {
             return false;
         }
-        Continuations.push_back(std::move(Callback));
+        Continuations.Add(std::move(Callback));
         return true;
     }
 
@@ -141,7 +140,7 @@ namespace Lumina::CoroDetail
     void FCoroutineState::ClearAwaitedChildren()
     {
         TScopeLock Guard(Lock);
-        AwaitedChildren.clear();
+        AwaitedChildren.Reset();
     }
 
     void FCoroutineState::FinishSucceeded()
@@ -156,8 +155,8 @@ namespace Lumina::CoroDetail
             TScopeLock Guard(Lock);
             Status.store(Final, std::memory_order_release);
             Run = std::move(Continuations);
-            Continuations.clear();
-            AwaitedChildren.clear();
+            Continuations.Reset();
+            AwaitedChildren.Reset();
         }
 
         if (World != nullptr)
@@ -180,18 +179,16 @@ namespace Lumina::CoroDetail
 
     namespace
     {
-        void ResumeTargetThunk(void* Arg, uint32)
+        Jobs::TTask<void> ResumeOnWorker(FResumeTarget Target)
         {
-            FResumeTarget* Target = static_cast<FResumeTarget*>(Arg);
-            FResumeTarget Local = std::move(*Target);
-            delete Target;
-            Local();
+            Target();
+            co_return;
         }
     }
 
-    void ScheduleOnTask(FResumeTarget Target, ETaskPriority Priority)
+    void ScheduleOnTask(FResumeTarget Target, Jobs::EJobPriority Priority)
     {
-        Jobs::RunJob(&ResumeTargetThunk, new FResumeTarget(std::move(Target)), ToJobPriority(Priority), nullptr, "Coro");
+        Jobs::Spawn(Priority, &ResumeOnWorker, std::move(Target));
     }
 
     void ScheduleOnGameThread(FResumeTarget Target)

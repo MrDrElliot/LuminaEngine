@@ -4,12 +4,12 @@ namespace Lumina
 {
     uint32 FPlainTextLanguage::Tokenize(FStringView Line, uint32 State, ECodeToken* OutTokens) const
     {
-        const int32 Size = (int32)Line.size();
+        const int32 Size = Line.Len();
         int32 Column = 0;
         while (Column < Size)
         {
             const char C = Line[Column];
-            if (!LineComment.empty() && Line.substr(Column).starts_with(LineComment))
+            if (!LineComment.IsEmpty() && Line.Mid(Column).StartsWith(LineComment))
             {
                 for (; Column < Size; ++Column)
                 {

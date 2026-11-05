@@ -39,14 +39,14 @@ namespace Lumina::Spirv
 
         FStringView LiteralAt(const TVector<uint32>& Words, uint32 Offset, uint32 End)
         {
-            const char* Begin = reinterpret_cast<const char*>(Words.data() + Offset);
+            const char* Begin = reinterpret_cast<const char*>(Words.GetData() + Offset);
             const size_t MaxLength = (End - Offset) * sizeof(uint32);
             size_t Length = 0;
             while (Length < MaxLength && Begin[Length] != '\0')
             {
                 ++Length;
             }
-            return FStringView(Begin, Length);
+            return FStringView(Begin, IntCastChecked<int32>(Length));
         }
 
         bool IsDecoration(uint32 Op)
@@ -58,21 +58,21 @@ namespace Lumina::Spirv
 
     void StripDebugInfo(TVector<uint32>& Words)
     {
-        if (Words.size() <= kHeaderWords || Words[0] != 0x07230203u)
+        if (static_cast<uint32>(Words.Num()) <= kHeaderWords || Words[0] != 0x07230203u)
         {
             return;
         }
 
         TVector<FInstruction> Instructions;
-        for (uint32 Offset = kHeaderWords; Offset < (uint32)Words.size();)
+        for (uint32 Offset = kHeaderWords; Offset < (uint32)Words.Num();)
         {
             const uint32 Count = Words[Offset] >> 16;
-            if (Count == 0 || Offset + Count > (uint32)Words.size())
+            if (Count == 0 || Offset + Count > (uint32)Words.Num())
             {
                 // A malformed stream is shipped as it came rather than guessed at.
                 return;
             }
-            Instructions.push_back({ Words[Offset] & 0xFFFFu, Offset, Count });
+            Instructions.Emplace(Words[Offset] & 0xFFFFu, Offset, Count);
             Offset += Count;
         }
 
@@ -80,15 +80,15 @@ namespace Lumina::Spirv
         for (const FInstruction& Inst : Instructions)
         {
             if (Inst.Op == OpExtInstImport && Inst.Count > 2
-                && LiteralAt(Words, Inst.Offset + 2, Inst.Offset + Inst.Count).starts_with("NonSemantic.Shader.DebugInfo"))
+                && LiteralAt(Words, Inst.Offset + 2, Inst.Offset + Inst.Count).StartsWith("NonSemantic.Shader.DebugInfo"))
             {
-                DebugSets.insert(Words[Inst.Offset + 1]);
+                DebugSets.Add(Words[Inst.Offset + 1]);
             }
         }
 
         THashSet<uint32> RemovedIds;
         TVector<FInstruction> Kept;
-        Kept.reserve(Instructions.size());
+        Kept.Reserve(Instructions.Num());
         for (const FInstruction& Inst : Instructions)
         {
             switch (Inst.Op)
@@ -101,23 +101,23 @@ namespace Lumina::Spirv
                 case OpModuleProcessed:
                     continue;
                 case OpExtInstImport:
-                    if (DebugSets.contains(Words[Inst.Offset + 1]))
+                    if (DebugSets.Contains(Words[Inst.Offset + 1]))
                     {
-                        RemovedIds.insert(Words[Inst.Offset + 1]);
+                        RemovedIds.Add(Words[Inst.Offset + 1]);
                         continue;
                     }
                     break;
                 case OpExtInst:
-                    if (Inst.Count > 3 && DebugSets.contains(Words[Inst.Offset + 3]))
+                    if (Inst.Count > 3 && DebugSets.Contains(Words[Inst.Offset + 3]))
                     {
-                        RemovedIds.insert(Words[Inst.Offset + 2]);
+                        RemovedIds.Add(Words[Inst.Offset + 2]);
                         continue;
                     }
                     break;
                 default:
                     break;
             }
-            Kept.push_back(Inst);
+            Kept.Add(Inst);
         }
 
         // A string survives only while something other than a name still points at it, such as a printf format.
@@ -128,7 +128,7 @@ namespace Lumina::Spirv
             {
                 for (uint32 Word = 1; Word < Inst.Count; ++Word)
                 {
-                    Referenced.insert(Words[Inst.Offset + Word]);
+                    Referenced.Add(Words[Inst.Offset + Word]);
                 }
             }
         }
@@ -136,22 +136,22 @@ namespace Lumina::Spirv
         bool bAnyNonSemantic = false;
         for (const FInstruction& Inst : Kept)
         {
-            if (Inst.Op == OpExtInstImport && LiteralAt(Words, Inst.Offset + 2, Inst.Offset + Inst.Count).starts_with("NonSemantic"))
+            if (Inst.Op == OpExtInstImport && LiteralAt(Words, Inst.Offset + 2, Inst.Offset + Inst.Count).StartsWith("NonSemantic"))
             {
                 bAnyNonSemantic = true;
             }
         }
 
         TVector<uint32> Out;
-        Out.reserve(Words.size());
-        Out.insert(Out.end(), Words.begin(), Words.begin() + kHeaderWords);
+        Out.Reserve(Words.Num());
+        Out.Append(Words.begin(), Words.begin() + kHeaderWords);
         for (const FInstruction& Inst : Kept)
         {
-            if (Inst.Op == OpString && !Referenced.contains(Words[Inst.Offset + 1]))
+            if (Inst.Op == OpString && !Referenced.Contains(Words[Inst.Offset + 1]))
             {
                 continue;
             }
-            if (IsDecoration(Inst.Op) && RemovedIds.contains(Words[Inst.Offset + 1]))
+            if (IsDecoration(Inst.Op) && RemovedIds.Contains(Words[Inst.Offset + 1]))
             {
                 continue;
             }
@@ -160,7 +160,7 @@ namespace Lumina::Spirv
             {
                 continue;
             }
-            Out.insert(Out.end(), Words.begin() + Inst.Offset, Words.begin() + Inst.Offset + Inst.Count);
+            Out.Append(Words.begin() + Inst.Offset, Words.begin() + Inst.Offset + Inst.Count);
         }
 
         Words = Move(Out);

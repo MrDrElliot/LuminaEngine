@@ -19,30 +19,30 @@
 
 namespace Lumina::Agent
 {
-    namespace
+    namespace AgentToolSchemaInternal
     {
         // A struct that reaches itself would otherwise recurse until the stack runs out.
         constexpr int32 GMaxDepth = 8;
 
-        bool BuildProperty(FProperty* Property, FStringView Path, int32 Depth, nlohmann::json& Out, FString& OutError);
+        bool BuildProperty(FProperty* Property, FStringView Path, int32 Depth, FJsonValue& Out, FString& OutError);
 
         // Doc comments land in ToolTip, so a normal comment above a PROPERTY becomes the description.
-        void ApplyDescription(const FProperty& Property, nlohmann::json& Out)
+        void ApplyDescription(const FProperty& Property, FJsonValue& Out)
         {
             const FCStringView Text = Property.GetMetadata("ToolTip");
-            if (Text.empty())
+            if (Text.IsEmpty())
             {
                 return;
             }
 
             // An object property already wrote what it wants, so the comment joins it rather than replacing it.
-            const std::string Existing = Out.contains("description") ? Out["description"].get<std::string>() : std::string();
-            const std::string Comment  = Detail::ToStandard(Text);
+            const FStringView Existing = Out["description"].AsString();
+            const FStringView Comment  = Text.View();
 
-            Out["description"] = Existing.empty() ? Comment : Comment + " " + Existing;
+            Out.Set("description", Existing.IsEmpty() ? FString(Comment) : Lumina::Format("{} {}", Comment, Existing));
         }
 
-        bool BuildEnum(FEnumProperty* Property, nlohmann::json& Out, FString& OutError)
+        bool BuildEnum(FEnumProperty* Property, FJsonValue& Out, FString& OutError)
         {
             CEnum* Enum = Property->GetEnum();
             if (Enum == nullptr)
@@ -58,24 +58,24 @@ namespace Lumina::Agent
                 return false;
             }
 
-            nlohmann::json Names = nlohmann::json::array();
+            FJsonValue Names = FJsonValue::MakeArray();
             for (const TPair<FName, uint64>& Entry : Enum->Names)
             {
-                Names.push_back(Detail::ToStandard(FStringView(Entry.first.ToString())));
+                Names.Add(Entry.Key.ToString());
             }
 
-            if (Names.empty())
+            if (Names.IsEmpty())
             {
                 OutError = "its enum has no values";
                 return false;
             }
 
-            Out["type"] = "string";
-            Out["enum"] = Move(Names);
+            Out.Set("type", "string");
+            Out.Set("enum", Move(Names));
             return true;
         }
 
-        bool BuildStruct(CStruct* Struct, FStringView Path, int32 Depth, nlohmann::json& Out, FString& OutError)
+        bool BuildStruct(CStruct* Struct, FStringView Path, int32 Depth, FJsonValue& Out, FString& OutError)
         {
             if (Struct == nullptr)
             {
@@ -89,7 +89,7 @@ namespace Lumina::Agent
                 return false;
             }
 
-            nlohmann::json Properties = nlohmann::json::object();
+            FJsonValue Properties = FJsonValue::MakeObject();
 
             FString FieldError;
             bool bOk = true;
@@ -103,12 +103,12 @@ namespace Lumina::Agent
                         return;
                     }
 
-                    const FString FieldName(Property->GetPropertyName().ToString().c_str());
-                    const FString FieldPath = Path.empty()
+                    const FString FieldName(*Property->GetPropertyName().ToString());
+                    const FString FieldPath = Path.IsEmpty()
                         ? FieldName
                         : Lumina::Format("{}.{}", Path, FieldName);
 
-                    nlohmann::json Field;
+                    FJsonValue Field;
                     if (!BuildProperty(Property, FStringView(FieldPath), Depth + 1, Field, FieldError))
                     {
                         bOk = false;
@@ -116,12 +116,12 @@ namespace Lumina::Agent
                     }
 
                     // A null schema means the field is deliberately invisible, not a failure.
-                    if (Field.is_null())
+                    if (Field.IsNull())
                     {
                         return;
                     }
 
-                    Properties[Detail::ToStandard(FStringView(Property->GetPropertyName().ToString()))] = Move(Field);
+                    Properties.Set(FieldName, Move(Field));
                 });
 
                 if (!bOk)
@@ -131,20 +131,20 @@ namespace Lumina::Agent
                 }
             }
 
-            Out["type"]       = "object";
-            Out["properties"] = Move(Properties);
+            Out.Set("type", "object");
+            Out.Set("properties", Move(Properties));
 
-            if (Struct->HasMeta("ToolTip") && !Struct->GetMeta("ToolTip").empty())
+            if (Struct->HasMeta("ToolTip") && !Struct->GetMeta("ToolTip").IsEmpty())
             {
-                Out["description"] = Detail::ToStandard(FStringView(Struct->GetMeta("ToolTip")));
+                Out.Set("description", FStringView(Struct->GetMeta("ToolTip")));
             }
 
             return true;
         }
 
-        bool BuildProperty(FProperty* Property, FStringView Path, int32 Depth, nlohmann::json& Out, FString& OutError)
+        bool BuildProperty(FProperty* Property, FStringView Path, int32 Depth, FJsonValue& Out, FString& OutError)
         {
-            Out = nlohmann::json::object();
+            Out = FJsonValue::MakeObject();
 
             const auto Reject = [&](FStringView Reason)
             {
@@ -169,45 +169,45 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::UInt16:
             case EPropertyTypeFlags::UInt32:
             case EPropertyTypeFlags::UInt64:
-                Out["type"] = "integer";
+                Out.Set("type", "integer");
                 break;
 
             case EPropertyTypeFlags::Entity:
-                Out["type"] = "integer";
-                Out["description"] = "A packed entity handle. entity.set_property also takes an entity id.";
+                Out.Set("type", "integer");
+                Out.Set("description", "A packed entity handle. entity.set_property also takes an entity id.");
                 break;
 
             case EPropertyTypeFlags::Float:
             case EPropertyTypeFlags::Double:
-                Out["type"] = "number";
+                Out.Set("type", "number");
                 break;
 
             case EPropertyTypeFlags::Bool:
-                Out["type"] = "boolean";
+                Out.Set("type", "boolean");
                 break;
 
             case EPropertyTypeFlags::String:
                 // RawJson strings carry any JSON value, which the server re-encodes before the struct is read.
                 if (Property->HasEditorFlag(EPropertyEditorFlags::RawJson))
                 {
-                    Out["description"] = "Any JSON value.";
+                    Out.Set("description", "Any JSON value.");
                     break;
                 }
-                Out["type"] = "string";
+                Out.Set("type", "string");
                 break;
 
             case EPropertyTypeFlags::Name:
-                Out["type"] = "string";
+                Out.Set("type", "string");
                 break;
 
             case EPropertyTypeFlags::SoftObject:
                 {
                     CClass* Expected = static_cast<FSoftObjectProperty*>(Property)->GetPropertyClass();
 
-                    Out["type"] = "string";
-                    Out["description"] = Detail::ToStandard(FStringView(Lumina::Format(
+                    Out.Set("type", "string");
+                    Out.Set("description", Lumina::Format(
                         "Path or GUID of a {} asset, or an empty string for none.",
-                        Expected != nullptr ? Expected->GetName().ToString() : FString("CObject"))));
+                        Expected != nullptr ? Expected->GetName().ToString() : FString("CObject")));
                     break;
                 }
 
@@ -215,10 +215,10 @@ namespace Lumina::Agent
                 {
                     CClass* Base = static_cast<FClassProperty*>(Property)->GetMetaClass();
 
-                    Out["type"] = "string";
-                    Out["description"] = Detail::ToStandard(FStringView(Lumina::Format(
+                    Out.Set("type", "string");
+                    Out.Set("description", Lumina::Format(
                         "Name of a class deriving from {}, or an empty string for none.",
-                        Base != nullptr ? Base->GetName().ToString() : FString("CObject"))));
+                        Base != nullptr ? Base->GetName().ToString() : FString("CObject")));
                     break;
                 }
 
@@ -226,10 +226,10 @@ namespace Lumina::Agent
                 {
                     CStruct* Base = static_cast<FSubStructProperty*>(Property)->GetMetaStruct();
 
-                    Out["type"] = "string";
-                    Out["description"] = Detail::ToStandard(FStringView(Lumina::Format(
+                    Out.Set("type", "string");
+                    Out.Set("description", Lumina::Format(
                         "Name of a struct deriving from {}, or an empty string for none.",
-                        Base != nullptr ? Base->GetName().ToString() : FString("any struct"))));
+                        Base != nullptr ? Base->GetName().ToString() : FString("any struct")));
                     break;
                 }
 
@@ -241,21 +241,21 @@ namespace Lumina::Agent
                         return Reject("its value type is missing");
                     }
 
-                    nlohmann::json Value;
+                    FJsonValue Value;
                     FString Reason;
                     if (!BuildProperty(Inner, Path, Depth + 1, Value, Reason))
                     {
                         return Propagate(Reason);
                     }
 
-                    nlohmann::json Record = nlohmann::json::object();
-                    Record["type"] = "object";
-                    Record["properties"] = nlohmann::json::object();
-                    Record["properties"]["Engaged"] = nlohmann::json::object({ { "type", "boolean" } });
-                    Record["properties"]["Value"] = Value;
+                    FJsonValue Record = FJsonValue::MakeObject();
+                    Record.Set("type", "object");
+                    FJsonValue& RecordProperties = Record.Set("properties", FJsonValue::MakeObject());
+                    RecordProperties.Set("Engaged", FJsonValue::MakeObject({ { "type", "boolean" } }));
+                    RecordProperties.Set("Value", Value);
 
-                    Out["anyOf"] = nlohmann::json::array({ nlohmann::json::object({ { "type", "null" } }), Value, Move(Record) });
-                    Out["description"] = "Optional: null for none, the value itself, or {\"Engaged\": bool, \"Value\": ...}.";
+                    Out.Set("anyOf", FJsonValue::MakeArray({ FJsonValue::MakeObject({ { "type", "null" } }), Value, Move(Record) }));
+                    Out.Set("description", "Optional: null for none, the value itself, or {\"Engaged\": bool, \"Value\": ...}.");
                     break;
                 }
 
@@ -263,17 +263,17 @@ namespace Lumina::Agent
                 {
                     CStruct* Base = static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct();
 
-                    nlohmann::json StructType = nlohmann::json::object();
-                    StructType["type"] = "string";
-                    StructType["description"] = Detail::ToStandard(FStringView(Lumina::Format(
+                    FJsonValue StructType = FJsonValue::MakeObject();
+                    StructType.Set("type", "string");
+                    StructType.Set("description", Lumina::Format(
                         "Name of a struct deriving from {}, or an empty string for none.",
-                        Base != nullptr ? Base->GetName().ToString() : FString("any struct"))));
+                        Base != nullptr ? Base->GetName().ToString() : FString("any struct")));
 
-                    Out["type"] = "object";
-                    Out["properties"] = nlohmann::json::object();
-                    Out["properties"]["StructType"] = Move(StructType);
-                    Out["properties"]["Data"] = nlohmann::json::object({ { "type", "object" } });
-                    Out["description"] = "Instanced struct: the concrete type by name, and its fields under Data.";
+                    Out.Set("type", "object");
+                    FJsonValue& Fields = Out.Set("properties", FJsonValue::MakeObject());
+                    Fields.Set("StructType", Move(StructType));
+                    Fields.Set("Data", FJsonValue::MakeObject({ { "type", "object" } }));
+                    Out.Set("description", "Instanced struct: the concrete type by name, and its fields under Data.");
                     break;
                 }
 
@@ -287,8 +287,8 @@ namespace Lumina::Agent
                         return Reject("its key or value type is missing");
                     }
 
-                    nlohmann::json Key;
-                    nlohmann::json Value;
+                    FJsonValue Key;
+                    FJsonValue Value;
                     FString Reason;
                     if (!BuildProperty(KeyProperty, Path, Depth + 1, Key, Reason)
                         || !BuildProperty(ValueProperty, Path, Depth + 1, Value, Reason))
@@ -296,43 +296,42 @@ namespace Lumina::Agent
                         return Propagate(Reason);
                     }
 
-                    nlohmann::json Flat = nlohmann::json::object();
-                    Flat["type"] = "array";
-                    Flat["description"] = "Alternating key, value, key, value, ...";
+                    FJsonValue Flat = FJsonValue::MakeObject();
+                    Flat.Set("type", "array");
+                    Flat.Set("description", "Alternating key, value, key, value, ...");
 
-                    nlohmann::json Forms = nlohmann::json::array({ Move(Flat) });
+                    FJsonValue Forms = FJsonValue::MakeArray({ Move(Flat) });
 
                     // Only a key JSON can spell as an object key gets the object form.
-                    const bool bObjectKeyed = Key.contains("type")
-                        && (Key["type"] == "string" || Key["type"] == "integer");
+                    const bool bObjectKeyed = Key["type"].AsString() == "string" || Key["type"].AsString() == "integer";
                     if (bObjectKeyed)
                     {
-                        nlohmann::json Keyed = nlohmann::json::object();
-                        Keyed["type"] = "object";
-                        Keyed["additionalProperties"] = Value;
-                        Forms.push_back(Move(Keyed));
+                        FJsonValue Keyed = FJsonValue::MakeObject();
+                        Keyed.Set("type", "object");
+                        Keyed.Set("additionalProperties", Value);
+                        Forms.Add(Move(Keyed));
                     }
 
-                    Out["anyOf"] = Move(Forms);
-                    Out["description"] = bObjectKeyed
+                    Out.Set("anyOf", Move(Forms));
+                    Out.Set("description", bObjectKeyed
                         ? "Map: an object keyed by the map key, or a flat [key, value, ...] array."
-                        : "Map: a flat [key, value, key, value, ...] array.";
+                        : "Map: a flat [key, value, key, value, ...] array.");
                     break;
                 }
 
             case EPropertyTypeFlags::Delegate:
                 // Not data, so it is left out of the schema rather than making the struct undescribable.
-                Out = nlohmann::json();
+                Out = FJsonValue();
                 return true;
 
             case EPropertyTypeFlags::Object:
                 {
                     CClass* Expected = static_cast<FObjectProperty*>(Property)->GetPropertyClass();
 
-                    Out["type"] = "string";
-                    Out["description"] = Detail::ToStandard(FStringView(Lumina::Format(
+                    Out.Set("type", "string");
+                    Out.Set("description", Lumina::Format(
                         "GUID of a {} asset, or an empty string for none.",
-                        Expected != nullptr ? Expected->GetName().ToString() : FString("CObject"))));
+                        Expected != nullptr ? Expected->GetName().ToString() : FString("CObject")));
                     break;
                 }
 
@@ -364,15 +363,15 @@ namespace Lumina::Agent
                         return Reject("its element type is missing");
                     }
 
-                    nlohmann::json Items;
+                    FJsonValue Items;
                     FString Reason;
                     if (!BuildProperty(Inner, Path, Depth + 1, Items, Reason))
                     {
                         return Propagate(Reason);
                     }
 
-                    Out["type"]  = "array";
-                    Out["items"] = Move(Items);
+                    Out.Set("type", "array");
+                    Out.Set("items", Move(Items));
                     break;
                 }
 
@@ -387,6 +386,8 @@ namespace Lumina::Agent
         }
     }
 
+    using namespace AgentToolSchemaInternal;
+
     FSchemaResult GeneratePropertySchema(FProperty* Property)
     {
         FSchemaResult Result;
@@ -397,12 +398,12 @@ namespace Lumina::Agent
             return Result;
         }
 
-        const FString Path(Property->GetPropertyName().ToString().c_str());
+        const FString Path(*Property->GetPropertyName().ToString());
 
         FString Error;
         if (!BuildProperty(Property, FStringView(Path), 0, Result.Schema, Error))
         {
-            Result.Schema = nlohmann::json();
+            Result.Schema = FJsonValue();
             Result.Error  = Error;
         }
 
@@ -422,7 +423,7 @@ namespace Lumina::Agent
         FString Error;
         if (!BuildStruct(Struct, FStringView(), 0, Result.Schema, Error))
         {
-            Result.Schema = nlohmann::json();
+            Result.Schema = FJsonValue();
             Result.Error  = Error;
             return Result;
         }

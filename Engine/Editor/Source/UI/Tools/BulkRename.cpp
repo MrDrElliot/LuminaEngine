@@ -18,7 +18,7 @@ namespace Lumina
     {
         FString ReplaceAll(FStringView Name, FStringView Find, FStringView Replace, bool bMatchCase)
         {
-            if (Find.empty())
+            if (Find.IsEmpty())
             {
                 return FString(Name);
             }
@@ -33,20 +33,20 @@ namespace Lumina
             }
 
             FString Out;
-            size_t Position = 0;
-            for (size_t Hit = Haystack.find(Needle, Position); Hit != FString::npos; Hit = Haystack.find(Needle, Position))
+            int32 Position = 0;
+            for (int32 Hit = Haystack.Find(Needle, Position); Hit != Constants::kIndexNone; Hit = Haystack.Find(Needle, Position))
             {
-                Out.append(Name.substr(Position, Hit - Position));
-                Out.append(Replace);
-                Position = Hit + Needle.size();
+                Out.Append(Name.Mid(Position, Hit - Position));
+                Out.Append(Replace);
+                Position = Hit + Needle.Len();
             }
-            Out.append(Name.substr(Position));
+            Out.Append(Name.Mid(Position));
             return Out;
         }
 
         FStringView EntryName(const FBulkRenameEntry& Entry)
         {
-            return VFS::FileName(FStringView(Entry.SourcePath.c_str(), Entry.SourcePath.size()), !Entry.bDirectory);
+            return VFS::FileName(FStringView(*Entry.SourcePath, Entry.SourcePath.Len()), !Entry.bDirectory);
         }
 
         const char* DescribeStatus(EBulkRenameStatus Status)
@@ -136,7 +136,7 @@ namespace Lumina
             ImGui::TableHeadersRow();
 
             ImGuiListClipper Clipper;
-            Clipper.Begin((int32)Entries.size());
+            Clipper.Begin(Entries.Num());
             while (Clipper.Step())
             {
                 for (int32 Index = Clipper.DisplayStart; Index < Clipper.DisplayEnd; ++Index)
@@ -145,9 +145,9 @@ namespace Lumina
                     const FStringView Current = EntryName(Entry);
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(Current.data(), Current.data() + Current.size());
+                    ImGui::TextUnformatted(Current.GetData(), Current.GetData() + Current.Len());
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(Entry.NewName.c_str());
+                    ImGui::TextUnformatted(*Entry.NewName);
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextColored(StatusColor(Entry.Status), "%s", DescribeStatus(Entry.Status));
                 }
@@ -186,38 +186,38 @@ namespace Lumina
     FString ApplyBulkRenameRule(const FBulkRenameRule& Rule, FStringView Name, int32 Index)
     {
         FString Out = Rule.Prefix;
-        Out.append(ReplaceAll(Name, Rule.Find, Rule.Replace, Rule.bMatchCase));
-        Out.append(Rule.Suffix);
+        Out.Append(ReplaceAll(Name, Rule.Find, Rule.Replace, Rule.bMatchCase));
+        Out.Append(Rule.Suffix);
         if (Rule.bNumber)
         {
-            Out.append(Format("_{:0{}}", Rule.NumberStart + Index, Math::Clamp(Rule.NumberDigits, 1, kMaxNumberDigits)));
+            Out.Append(Format("_{:0{}}", Rule.NumberStart + Index, Math::Clamp(Rule.NumberDigits, 1, kMaxNumberDigits)));
         }
         return Out;
     }
 
     void PlanBulkRename(const FBulkRenameRule& Rule, TVector<FBulkRenameEntry>& Entries, const TFunction<bool(FStringView)>& Exists)
     {
-        for (int32 Index = 0; Index < (int32)Entries.size(); ++Index)
+        for (int32 Index = 0; Index < Entries.Num(); ++Index)
         {
             FBulkRenameEntry& Entry = Entries[Index];
-            const FStringView Source(Entry.SourcePath.c_str(), Entry.SourcePath.size());
+            const FStringView Source(*Entry.SourcePath, Entry.SourcePath.Len());
             const FStringView Name = EntryName(Entry);
 
             Entry.NewName = ApplyBulkRenameRule(Rule, Name, Index);
             Entry.TargetPath = Paths::Combine(VFS::Parent(Source), Entry.NewName);
             if (!Entry.bDirectory)
             {
-                Entry.TargetPath.append(VFS::Extension(VFS::FileName(Source)));
+                Entry.TargetPath.Append(VFS::Extension(VFS::FileName(Source)));
             }
 
-            const FStringView Target(Entry.TargetPath.c_str(), Entry.TargetPath.size());
+            const FStringView Target(*Entry.TargetPath, Entry.TargetPath.Len());
             const bool bSamePath = EqualsIgnoreCase(Target, Source);
 
-            if (Entry.NewName.empty())
+            if (Entry.NewName.IsEmpty())
             {
                 Entry.Status = EBulkRenameStatus::Empty;
             }
-            else if (FStringView(Entry.NewName).find_first_of(kInvalidNameCharacters) != FStringView::npos)
+            else if (FStringView(Entry.NewName).FindFirstOf(kInvalidNameCharacters) != Constants::kIndexNone)
             {
                 Entry.Status = EBulkRenameStatus::InvalidCharacters;
             }
@@ -225,9 +225,9 @@ namespace Lumina
             {
                 Entry.Status = EBulkRenameStatus::Unchanged;
             }
-            else if (Algo::AnyOf(TSpan<const FBulkRenameEntry>(Entries.data(), Index), [Target](const FBulkRenameEntry& Earlier)
+            else if (Algo::AnyOf(TSpan<const FBulkRenameEntry>(Entries.GetData(), Index), [Target](const FBulkRenameEntry& Earlier)
                 {
-                    return EqualsIgnoreCase(FStringView(Earlier.TargetPath.c_str(), Earlier.TargetPath.size()), Target);
+                    return EqualsIgnoreCase(FStringView(*Earlier.TargetPath, Earlier.TargetPath.Len()), Target);
                 }))
             {
                 Entry.Status = EBulkRenameStatus::Duplicate;
@@ -246,15 +246,15 @@ namespace Lumina
     void OpenBulkRenameModal(IEditorToolContext* Context, TVector<FFixedString> Paths, TFunction<void()> OnRenamed)
     {
         TVector<FBulkRenameEntry> Entries;
-        Entries.reserve(Paths.size());
+        Entries.Reserve(Paths.Num());
         for (FFixedString& Path : Paths)
         {
-            FBulkRenameEntry& Entry = Entries.emplace_back();
+            FBulkRenameEntry& Entry = Entries.EmplaceGetRef();
             Entry.bDirectory = VFS::IsDirectory(Path);
             Entry.SourcePath = Move(Path);
         }
 
-        const FString Title = Format("Rename {0} Items", Entries.size());
+        const FString Title = Format("Rename {0} Items", Entries.Num());
         const float Scale = ImGuiX::GetUIScale();
         Context->PushModal(Title, ImVec2(960.0f * Scale, 620.0f * Scale),
             [Context, Entries = Move(Entries), OnRenamed = Move(OnRenamed), Rule = FBulkRenameRule(), bStale = true]() mutable
@@ -274,13 +274,13 @@ namespace Lumina
             {
                 if (Entry.Status == EBulkRenameStatus::Ready)
                 {
-                    Ready.push_back(Entry);
+                    Ready.Add(Entry);
                 }
             }
 
-            ImGui::TextColored(EditorColors::TextDim(), "%d of %d will be renamed.", (int32)Ready.size(), (int32)Entries.size());
+            ImGui::TextColored(EditorColors::TextDim(), "%d of %d will be renamed.", Ready.Num(), Entries.Num());
 
-            ImGui::BeginDisabled(Ready.empty());
+            ImGui::BeginDisabled(Ready.IsEmpty());
             const bool bRename = ImGui::Button("Rename");
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -299,7 +299,7 @@ namespace Lumina
             {
                 for (FString& File : AssetOps::FindReadOnlyFiles(Entry.SourcePath))
                 {
-                    ReadOnly.push_back(Move(File));
+                    ReadOnly.Add(Move(File));
                 }
             }
 

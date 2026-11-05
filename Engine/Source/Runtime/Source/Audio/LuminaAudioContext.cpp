@@ -7,7 +7,7 @@
 #include "Log/Log.h"
 #include "Memory/MemoryTracking.h"
 #include "ProceduralAudioStream.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/TaskSystem.h"
 
 #include <cstring>
 #include <thread>
@@ -35,6 +35,7 @@ namespace Lumina
 		FreeSlots.Initialize(MaxVoiceSlots);
 
 		ResetVoiceSlots();
+		PumpDone.Signal();
 
 		if (CreateDeviceAndMixer(0, 0, 0))
 		{
@@ -46,12 +47,7 @@ namespace Lumina
 	{
 		bRunning.store(false, Atomic::MemoryOrderRelease);
 
-		if (PumpCounter != nullptr)
-		{
-			Jobs::WaitForCounter(PumpCounter);
-			Jobs::FreeCounter(PumpCounter);
-			PumpCounter = nullptr;
-		}
+		PumpDone.Wait();
 
 		DestroyDeviceAndMixer();
 
@@ -59,7 +55,7 @@ namespace Lumina
 		{
 			SlotSources[Slot].reset();
 		}
-		RetiredSources.clear();
+		RetiredSources.Reset();
 	}
 
 	bool FLuminaAudioContext::CreateDeviceAndMixer(uint32 SampleRate, uint32 Channels, uint32 PeriodFrames)
@@ -229,12 +225,12 @@ namespace Lumina
 		Retired.Generation = SlotSourceGeneration[Slot];
 
 		SlotSources[Slot].reset();
-		RetiredSources.push_back(Move(Retired));
+		RetiredSources.Add(Move(Retired));
 	}
 
 	void FLuminaAudioContext::FlushRetiredSources(bool bForce)
 	{
-		if (RetiredSources.empty())
+		if (RetiredSources.IsEmpty())
 		{
 			return;
 		}
@@ -243,15 +239,15 @@ namespace Lumina
 		const bool bDeviceIdle = !Device || !Mixer.IsInitialized();
 		const uint64 Now = Mixer.GetRenderCount();
 
-		for (size_t i = RetiredSources.size(); i > 0; --i)
+		for (int32 i = RetiredSources.Num(); i > 0; --i)
 		{
-			const size_t Index = i - 1;
+			const int32 Index = i - 1;
 			// A takeover that fails after retiring leaves the old voice playing, so its source also waits for that voice to end.
 			const FRetiredSource& Retired = RetiredSources[Index];
 			const bool bReleased = Now > Retired.RenderCountAtRetire + kRetireRenderDelay && !Mixer.IsVoiceLive(Retired.Slot, Retired.Generation);
 			if (bForce || bDeviceIdle || bReleased)
 			{
-				RetiredSources.erase(RetiredSources.begin() + (ptrdiff_t)Index);
+				RetiredSources.RemoveAt(IntCastChecked<int32>((ptrdiff_t)Index));
 			}
 		}
 	}
@@ -268,28 +264,22 @@ namespace Lumina
 	{
 		SweepGraphInstances();
 
-		if (!bRunning.load(Atomic::MemoryOrderAcquire) || !Jobs::IsInitialized())
+		if (!bRunning.load(Atomic::MemoryOrderAcquire) || !Jobs::IsRuntimeRunning())
 		{
 			return;
 		}
 
-		if (PumpCounter == nullptr)
+		if (PumpDone.IsSignaled())
 		{
-			PumpCounter = Jobs::AllocCounter(0);
-		}
-
-		bool Expected = false;
-		if (bPumpActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
-		{
-			Jobs::RunJob(&FLuminaAudioContext::PumpEntry, this, Jobs::EJobPriority::Normal, PumpCounter, "Audio::Pump", true);
+			PumpDone.Reset();
+			Jobs::Spawn(Jobs::EJobPriority::Normal, PumpDone, &FLuminaAudioContext::PumpTask, this);
 		}
 	}
 
-	void FLuminaAudioContext::PumpEntry(void* Arg, uint32)
+	Jobs::TTask<void> FLuminaAudioContext::PumpTask(FLuminaAudioContext* Self)
 	{
-		FLuminaAudioContext* Self = static_cast<FLuminaAudioContext*>(Arg);
 		Self->PumpOnce();
-		Self->bPumpActive.store(false, Atomic::MemoryOrderRelease);
+		co_return;
 	}
 
 	void FLuminaAudioContext::PumpOnce()
@@ -414,7 +404,7 @@ namespace Lumina
 				TVector<uint8> Bytes;
 				if (!VFS::ReadFile(Bytes, FStringView(Play.Path)))
 				{
-					LOG_WARN("Audio: failed to read file '{}'", Play.Path.c_str());
+					LOG_WARN("Audio: failed to read file '{}'", *Play.Path);
 					ReleaseVoiceSlot(Slot, Play.Handle.Generation);
 					return;
 				}
@@ -537,7 +527,7 @@ namespace Lumina
 
 	SAudioHandle FLuminaAudioContext::PlayAudio(const TSharedPtr<FAudioData>& Data, const SAudioPlayParams& Params)
 	{
-		if (!Data || Data->Bytes.empty())
+		if (!Data || Data->Bytes.IsEmpty())
 		{
 			return SAudioHandle::Invalid();
 		}
@@ -567,7 +557,7 @@ namespace Lumina
 
 	SAudioHandle FLuminaAudioContext::PlayFile(FStringView File, const SAudioPlayParams& Params)
 	{
-		if (File.empty())
+		if (File.IsEmpty())
 		{
 			return SAudioHandle::Invalid();
 		}
@@ -663,14 +653,14 @@ namespace Lumina
 	TSharedPtr<FAudioGraphInstance> FLuminaAudioContext::FindGraphInstance(SAudioHandle Handle) const
 	{
 		FScopeLock Lock(GraphInstanceLock);
-		const auto It = GraphInstances.find(MakeGraphKey(Handle));
-		return It != GraphInstances.end() ? It->second : nullptr;
+		const auto It = GraphInstances.Find(MakeGraphKey(Handle));
+		return It != nullptr ? (*It) : nullptr;
 	}
 
 	void FLuminaAudioContext::ForgetGraphInstance(SAudioHandle Handle)
 	{
 		FScopeLock Lock(GraphInstanceLock);
-		GraphInstances.erase(MakeGraphKey(Handle));
+		GraphInstances.Remove(MakeGraphKey(Handle));
 	}
 
 	void FLuminaAudioContext::SweepGraphInstances()
@@ -679,12 +669,12 @@ namespace Lumina
 
 		for (auto It = GraphInstances.begin(); It != GraphInstances.end();)
 		{
-			const uint32 Slot = (uint32)(It->first & 0xFFFFFFFFull);
-			const uint32 Generation = (uint32)(It->first >> 32);
+			const uint32 Slot = (uint32)(It->Key & 0xFFFFFFFFull);
+			const uint32 Generation = (uint32)(It->Key >> 32);
 
 			if (Slot >= MaxVoiceSlots || SlotGeneration[Slot].load(Atomic::MemoryOrderRelaxed) != Generation)
 			{
-				It = GraphInstances.erase(It);
+				It = GraphInstances.Remove(It);
 			}
 			else
 			{

@@ -41,7 +41,7 @@ namespace Lumina
             {
                 if (Value != nullptr)
                 {
-                    Collected.insert(Value);
+                    Collected.Add(Value);
                 }
                 return *this;
             }
@@ -50,7 +50,7 @@ namespace Lumina
             {
                 if (CObject* Resolved = Value.Resolve())
                 {
-                    Collected.insert(Resolved);
+                    Collected.Add(Resolved);
                 }
                 return *this;
             }
@@ -83,7 +83,7 @@ namespace Lumina
 
         bool NameLess(const FName& A, const FName& B)
         {
-            return strcmp(A.c_str(), B.c_str()) < 0;
+            return strcmp(*A, *B) < 0;
         }
 
         constexpr double kRowsRebuildIntervalSeconds = 1.0;
@@ -162,26 +162,26 @@ namespace Lumina
             const FMeshResource& MR = Mesh->GetMeshResource();
             uint64 Bytes = 0;
 
-            Bytes += MR.Positions.capacity()  * sizeof(FVector3);
-            Bytes += MR.Normals.capacity()    * sizeof(uint32);
-            Bytes += MR.Tangents.capacity()   * sizeof(uint32);
-            Bytes += MR.UVs.capacity()        * sizeof(uint32);
-            Bytes += MR.Colors.capacity()     * sizeof(uint32);
-            Bytes += MR.JointIndices.capacity() * sizeof(FU16Vector4);
-            Bytes += MR.JointWeights.capacity() * sizeof(FU8Vector4);
-            Bytes += MR.Indices.capacity()    * sizeof(uint32);
-            Bytes += MR.GeometrySurfaces.capacity() * sizeof(FGeometrySurface);
+            Bytes += MR.Positions.Max()  * sizeof(FVector3);
+            Bytes += MR.Normals.Max()    * sizeof(uint32);
+            Bytes += MR.Tangents.Max()   * sizeof(uint32);
+            Bytes += MR.UVs.Max()        * sizeof(uint32);
+            Bytes += MR.Colors.Max()     * sizeof(uint32);
+            Bytes += MR.JointIndices.Max() * sizeof(FU16Vector4);
+            Bytes += MR.JointWeights.Max() * sizeof(FU8Vector4);
+            Bytes += MR.Indices.Max()    * sizeof(uint32);
+            Bytes += MR.GeometrySurfaces.Max() * sizeof(FGeometrySurface);
 
-            Bytes += MR.MeshletData.Meshlets.capacity()              * sizeof(FMeshlet);
-            Bytes += MR.MeshletData.VertexPositions.capacity()       * sizeof(FMeshVertexPosition);
-            Bytes += MR.MeshletData.VertexAttributes.capacity()      * sizeof(FMeshVertexAttributes);
-            Bytes += MR.MeshletData.VertexUV1s.capacity()            * sizeof(uint32);
-            Bytes += MR.MeshletData.VertexColors.capacity()          * sizeof(uint32);
-            Bytes += MR.MeshletData.MeshletVertexRefs.capacity()     * sizeof(uint32);
-            Bytes += MR.MeshletData.MeshletSkinnedVertices.capacity()* sizeof(FMeshletSkinnedVertex);
-            Bytes += MR.MeshletData.MeshletTriangles.capacity()      * sizeof(uint32);
-            Bytes += MR.MeshletData.MeshletSpheres.capacity()        * sizeof(FMeshletSphere);
-            Bytes += MR.MeshletData.MeshletCones.capacity()          * sizeof(FMeshletCone);
+            Bytes += MR.MeshletData.Meshlets.Max()              * sizeof(FMeshlet);
+            Bytes += MR.MeshletData.VertexPositions.Max()       * sizeof(FMeshVertexPosition);
+            Bytes += MR.MeshletData.VertexAttributes.Max()      * sizeof(FMeshVertexAttributes);
+            Bytes += MR.MeshletData.VertexUV1s.Max()            * sizeof(uint32);
+            Bytes += MR.MeshletData.VertexColors.Max()          * sizeof(uint32);
+            Bytes += MR.MeshletData.MeshletVertexRefs.Max()     * sizeof(uint32);
+            Bytes += MR.MeshletData.MeshletSkinnedVertices.Max()* sizeof(FMeshletSkinnedVertex);
+            Bytes += MR.MeshletData.MeshletTriangles.Max()      * sizeof(uint32);
+            Bytes += MR.MeshletData.MeshletSpheres.Max()        * sizeof(FMeshletSphere);
+            Bytes += MR.MeshletData.MeshletCones.Max()          * sizeof(FMeshletCone);
 
             return Bytes;
         }
@@ -191,9 +191,9 @@ namespace Lumina
             uint64 Bytes = 0;
             for (const SMaterialStageBlob& Blob : Material->Stages)
             {
-                Bytes += Blob.Spirv.capacity() * sizeof(uint32);
+                Bytes += Blob.Spirv.Max() * sizeof(uint32);
             }
-            Bytes += Material->Parameters.capacity() * sizeof(SMaterialParameter);
+            Bytes += Material->Parameters.Max() * sizeof(SMaterialParameter);
             return Bytes;
         }
 
@@ -202,7 +202,7 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::RebuildRegistryReferencers(const FGuid& Target)
     {
-        Referencers.clear();
+        Referencers.Reset();
         CachedReferencerTarget   = Target;
         bReferencersFromLiveScan = false;
 
@@ -211,8 +211,8 @@ namespace Lumina
             FReferencer Ref;
             Ref.Name    = Data->AssetName;
             Ref.Class   = Data->AssetClass;
-            Ref.Package = FName(Data->Path.c_str());
-            Referencers.push_back(Ref);
+            Ref.Package = FName(*Data->Path);
+            Referencers.Add(Ref);
         }
 
         Algo::Sort(Referencers, [](const FReferencer& A, const FReferencer& B)
@@ -225,7 +225,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Referencers.clear();
+        Referencers.Reset();
         CachedReferencerTarget   = Target ? Target->GetGUID() : FGuid();
         bReferencersFromLiveScan = true;
 
@@ -243,17 +243,17 @@ namespace Lumina
                 return;
             }
 
-            Collected.clear();
+            Collected.Reset();
             FReferenceCollectorArchive Archive(Collected);
             Candidate->Serialize(Archive);
 
-            if (Collected.find(Target) != Collected.end())
+            if (Collected.Contains(Target))
             {
                 FReferencer Ref;
                 Ref.Name    = Candidate->GetName();
                 Ref.Class   = Candidate->GetClass() ? Candidate->GetClass()->GetName() : FName("None");
                 Ref.Package = Candidate->GetPackage() ? Candidate->GetPackage()->GetName() : FName("None");
-                Referencers.push_back(Ref);
+                Referencers.Add(Ref);
             }
         });
 
@@ -271,13 +271,13 @@ namespace Lumina
         }
 
         // Only explicitly unticked classes are stored, so a new asset type is never silently hidden.
-        auto TypeIt = TypeVisibility.find(Row.Class);
-        if (TypeIt != TypeVisibility.end() && !TypeIt->second)
+        auto TypeIt = TypeVisibility.Find(Row.Class);
+        if (TypeIt != nullptr && !(*TypeIt))
         {
             return false;
         }
 
-        if (!SearchFilter.empty() && !ImGuiX::PassSearchFilter(FStringView(SearchFilter.c_str(), SearchFilter.size()), FStringView(Row.Name.c_str())))
+        if (!SearchFilter.IsEmpty() && !ImGuiX::PassSearchFilter(FStringView(*SearchFilter, SearchFilter.Len()), FStringView(*Row.Name)))
         {
             return false;
         }
@@ -288,9 +288,9 @@ namespace Lumina
     uint32 FAssetRegistryEditorTool::CountHiddenTypes() const
     {
         uint32 Hidden = 0;
-        for (const auto& Pair : TypeVisibility)
+        for (const auto& [Type, bVisible] : TypeVisibility)
         {
-            if (!Pair.second)
+            if (!bVisible)
             {
                 ++Hidden;
             }
@@ -302,9 +302,9 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Rows.clear();
-        RowIndexByGUID.clear();
-        AssetTypes.clear();
+        Rows.Reset();
+        RowIndexByGUID.Reset();
+        AssetTypes.Reset();
         LoadedCount     = 0;
         TotalCpuBytes   = 0;
         TotalDiskBytes  = 0;
@@ -313,8 +313,8 @@ namespace Lumina
         THashSet<FName> Types;
         {
             const FAssetDataMap& Assets = FAssetRegistry::Get().GetAssets();
-            Rows.reserve(Assets.size());
-            RowIndexByGUID.reserve(Assets.size());
+            Rows.Reserve(Assets.Num());
+            RowIndexByGUID.Reserve(Assets.Num());
 
             for (const TSharedPtr<FAssetData>& Data : Assets)
             {
@@ -325,21 +325,22 @@ namespace Lumina
                 Row.DiskBytes = Data->FileSize;
 
                 TotalDiskBytes += Row.DiskBytes;
-                Types.insert(Row.Class);
-                RowIndexByGUID.emplace(Row.GUID, (uint32)Rows.size());
-                Rows.push_back(Row);
+                Types.Add(Row.Class);
+                RowIndexByGUID.TryAdd(Row.GUID, (uint32)Rows.Num());
+                Rows.Add(Row);
             }
         }
 
-        AssetTypes.assign(Types.begin(), Types.end());
+        AssetTypes.Reset();
+        AssetTypes.Append(Types.begin(), Types.end());
         Algo::Sort(AssetTypes, NameLess);
 
         // Resolved once, so the sort compares raw strings instead of going through the name table each time.
-        TVector<const char*> RowNames(Rows.size());
-        RowsByName.resize(Rows.size());
-        for (uint32 Index = 0; Index < (uint32)Rows.size(); ++Index)
+        TVector<const char*> RowNames(Rows.Num());
+        RowsByName.SetNum(Rows.Num());
+        for (int32 Index = 0; Index < Rows.Num(); ++Index)
         {
-            RowNames[Index]   = Rows[Index].Name.c_str();
+            RowNames[Index]   = *Rows[Index].Name;
             RowsByName[Index] = Index;
         }
         Task::ParallelSort(RowsByName.begin(), RowsByName.end(), [&RowNames](uint32 A, uint32 B)
@@ -349,25 +350,25 @@ namespace Lumina
 
         // A counting sort by class over the name order, which keeps each class already sorted by name.
         THashMap<FName, uint32> ClassSlots;
-        ClassSlots.reserve(AssetTypes.size());
-        for (uint32 Slot = 0; Slot < (uint32)AssetTypes.size(); ++Slot)
+        ClassSlots.Reserve(AssetTypes.Num());
+        for (int32 Slot = 0; Slot < AssetTypes.Num(); ++Slot)
         {
-            ClassSlots.emplace(AssetTypes[Slot], Slot);
+            ClassSlots.TryAdd(AssetTypes[Slot], Slot);
         }
 
-        TVector<uint32> RowSlots(Rows.size());
-        TVector<uint32> SlotStarts(AssetTypes.size() + 1, 0);
-        for (uint32 Index = 0; Index < (uint32)Rows.size(); ++Index)
+        TVector<uint32> RowSlots(Rows.Num());
+        TVector<uint32> SlotStarts(AssetTypes.Num() + 1, 0);
+        for (int32 Index = 0; Index < Rows.Num(); ++Index)
         {
             RowSlots[Index] = ClassSlots[Rows[Index].Class];
             ++SlotStarts[RowSlots[Index] + 1];
         }
-        for (size_t Slot = 1; Slot < SlotStarts.size(); ++Slot)
+        for (int32 Slot = 1; Slot < SlotStarts.Num(); ++Slot)
         {
             SlotStarts[Slot] += SlotStarts[Slot - 1];
         }
 
-        RowsByCategory.resize(Rows.size());
+        RowsByCategory.SetNum(Rows.Num());
         for (uint32 Index : RowsByName)
         {
             RowsByCategory[SlotStarts[RowSlots[Index]]++] = Index;
@@ -380,7 +381,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        const uint32 NumRows = (uint32)Rows.size();
+        const uint32 NumRows = (uint32)Rows.Num();
         const uint32 End = LiveSweepCursor + kLiveRowsPerFrame < NumRows ? LiveSweepCursor + kLiveRowsPerFrame : NumRows;
 
         for (uint32 Index = LiveSweepCursor; Index < End; ++Index)
@@ -432,20 +433,20 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        VisibleRows.clear();
-        VisibleGroups.clear();
+        VisibleRows.Reset();
+        VisibleGroups.Reset();
         bVisibleStale = false;
 
         // Both orders are presorted, so a filter change is one parallel test and one pass with no sorting.
         const TVector<uint32>& Order = bGroupByCategory ? RowsByCategory : RowsByName;
-        TVector<uint8> Passes(Order.size(), 0);
-        Task::ParallelFor((uint32)Order.size(), [&](uint32 Index)
+        TVector<uint8> Passes(Order.Num(), 0);
+        Jobs::ParallelFor((uint32)Order.Num(), [&](uint32 Index)
         {
             Passes[Index] = PassesFilter(Rows[Order[Index]]) ? 1 : 0;
         }, kFilterRowsPerTask);
 
-        VisibleRows.reserve(Order.size());
-        for (size_t OrderIndex = 0; OrderIndex < Order.size(); ++OrderIndex)
+        VisibleRows.Reserve(Order.Num());
+        for (int32 OrderIndex = 0; OrderIndex < Order.Num(); ++OrderIndex)
         {
             if (Passes[OrderIndex] == 0)
             {
@@ -455,15 +456,15 @@ namespace Lumina
 
             if (bGroupByCategory)
             {
-                if (VisibleGroups.empty() || VisibleGroups.back().Category != Row.Class)
+                if (VisibleGroups.IsEmpty() || VisibleGroups.Last().Category != Row.Class)
                 {
                     FRowGroup Group;
                     Group.Category = Row.Class;
-                    Group.Start    = (uint32)VisibleRows.size();
-                    VisibleGroups.push_back(Group);
+                    Group.Start    = (uint32)VisibleRows.Num();
+                    VisibleGroups.Add(Group);
                 }
 
-                FRowGroup& Group = VisibleGroups.back();
+                FRowGroup& Group = VisibleGroups.Last();
                 ++Group.Count;
                 if (Row.bLoaded)
                 {
@@ -472,7 +473,7 @@ namespace Lumina
                 }
             }
 
-            VisibleRows.push_back(&Row);
+            VisibleRows.Add(&Row);
         }
     }
 
@@ -493,29 +494,29 @@ namespace Lumina
 
         if (IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false))
         {
-            SelectedGUIDs.clear();
-            SelectedGUIDs.reserve(VisibleRows.size());
+            SelectedGUIDs.Reset();
+            SelectedGUIDs.Reserve(VisibleRows.Num());
             for (const FAssetRow* Row : VisibleRows)
             {
-                SelectedGUIDs.insert(Row->GUID);
+                SelectedGUIDs.Add(Row->GUID);
             }
 
-            if (!VisibleRows.empty())
+            if (!VisibleRows.IsEmpty())
             {
-                SelectedGUID = VisibleRows.front()->GUID;
+                SelectedGUID = VisibleRows[0]->GUID;
                 RangeAnchor  = 0;
             }
         }
-        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !SelectedGUIDs.empty())
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !SelectedGUIDs.IsEmpty())
         {
-            SelectedGUIDs.clear();
+            SelectedGUIDs.Reset();
             RangeAnchor = Constants::kIndexNone;
         }
     }
 
     void FAssetRegistryEditorTool::ApplyRowClick(uint32 VisibleIndex)
     {
-        if (VisibleIndex >= (uint32)VisibleRows.size())
+        if (VisibleIndex >= (uint32)VisibleRows.Num())
         {
             return;
         }
@@ -523,37 +524,37 @@ namespace Lumina
         const ImGuiIO& IO  = ImGui::GetIO();
         const FGuid    GUID = VisibleRows[VisibleIndex]->GUID;
 
-        if (IO.KeyShift && RangeAnchor != Constants::kIndexNone && (uint32)RangeAnchor < (uint32)VisibleRows.size())
+        if (IO.KeyShift && RangeAnchor != Constants::kIndexNone && (uint32)RangeAnchor < (uint32)VisibleRows.Num())
         {
             // Range replaces the selection like every file browser, and Ctrl+Shift extends instead.
             if (!IO.KeyCtrl)
             {
-                SelectedGUIDs.clear();
+                SelectedGUIDs.Reset();
             }
 
             const uint32 Low  = (uint32)RangeAnchor < VisibleIndex ? (uint32)RangeAnchor : VisibleIndex;
             const uint32 High = (uint32)RangeAnchor < VisibleIndex ? VisibleIndex : (uint32)RangeAnchor;
             for (uint32 i = Low; i <= High; ++i)
             {
-                SelectedGUIDs.insert(VisibleRows[i]->GUID);
+                SelectedGUIDs.Add(VisibleRows[i]->GUID);
             }
         }
         else if (IO.KeyCtrl)
         {
-            if (SelectedGUIDs.find(GUID) != SelectedGUIDs.end())
+            if (SelectedGUIDs.Contains(GUID))
             {
-                SelectedGUIDs.erase(GUID);
+                SelectedGUIDs.Remove(GUID);
             }
             else
             {
-                SelectedGUIDs.insert(GUID);
+                SelectedGUIDs.Add(GUID);
             }
             RangeAnchor = (int32)VisibleIndex;
         }
         else
         {
-            SelectedGUIDs.clear();
-            SelectedGUIDs.insert(GUID);
+            SelectedGUIDs.Reset();
+            SelectedGUIDs.Add(GUID);
             RangeAnchor = (int32)VisibleIndex;
         }
 
@@ -606,7 +607,7 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::DrawStatsBar()
     {
-        const uint32 Total     = (uint32)Rows.size();
+        const uint32 Total     = (uint32)Rows.Num();
         const uint32 Loaded    = LoadedCount;
         const uint64 TotalCpu  = TotalCpuBytes;
         const uint64 TotalDisk = TotalDiskBytes;
@@ -619,7 +620,7 @@ namespace Lumina
                 ImGui::PushStyleColor(ImGuiCol_Text, Color);
                 ImGui::TextUnformatted(Label);
                 ImGui::PopStyleColor();
-                ImGui::Text("%s", Value.c_str());
+                ImGui::Text("%s", *Value);
             };
 
             ImGui::Columns(5, nullptr, false);
@@ -645,14 +646,14 @@ namespace Lumina
 
         if (ImGui::MenuItem("Show All"))
         {
-            TypeVisibility.clear();
+            TypeVisibility.Reset();
             bVisibleStale = true;
         }
         if (ImGui::MenuItem("Hide All"))
         {
             for (const FName& Type : Types)
             {
-                TypeVisibility.insert_or_assign(Type, false);
+                TypeVisibility.Add(Type, false);
             }
             bVisibleStale = true;
         }
@@ -661,20 +662,20 @@ namespace Lumina
 
         for (const FName& Type : Types)
         {
-            auto It = TypeVisibility.find(Type);
-            bool bVisible = (It == TypeVisibility.end()) || It->second;
+            auto It = TypeVisibility.Find(Type);
+            bool bVisible = (It == nullptr) || (*It);
 
-            if (ImGui::Checkbox(Type.c_str(), &bVisible))
+            if (ImGui::Checkbox(*Type, &bVisible))
             {
                 bVisibleStale = true;
                 if (bVisible)
                 {
                     // Erase rather than store true, so "absent == visible" stays the only rule.
-                    TypeVisibility.erase(Type);
+                    TypeVisibility.Remove(Type);
                 }
                 else
                 {
-                    TypeVisibility.insert_or_assign(Type, false);
+                    TypeVisibility.Add(Type, false);
                 }
             }
         }
@@ -714,7 +715,7 @@ namespace Lumina
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
         }
-        if (ImGui::Button(TypeLabel.c_str()))
+        if (ImGui::Button(*TypeLabel))
         {
             ImGui::OpenPopup("##TypeFilter");
         }
@@ -735,15 +736,15 @@ namespace Lumina
         bVisibleStale |= ImGui::Checkbox("Loaded Only", &bShowLoadedOnly);
 
         // The fallback to everything visible is what makes filter-then-resave a one-click migration.
-        const uint32 SelectedCount = (uint32)SelectedGUIDs.size();
-        const uint32 TargetCount   = SelectedCount > 0 ? SelectedCount : (uint32)VisibleRows.size();
+        const uint32 SelectedCount = (uint32)SelectedGUIDs.Num();
+        const uint32 TargetCount   = SelectedCount > 0 ? SelectedCount : (uint32)VisibleRows.Num();
 
         ImGui::SameLine();
         ImGui::BeginDisabled(TargetCount == 0);
 
         FFixedString ResaveLabel;
         FormatTo(ResaveLabel, LE_ICON_CONTENT_SAVE_ALL " Resave ({})", TargetCount);
-        if (ImGui::Button(ResaveLabel.c_str()))
+        if (ImGui::Button(*ResaveLabel))
         {
             OpenResaveModal();
         }
@@ -763,8 +764,8 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::OpenResaveModal()
     {
-        ResaveQueue.clear();
-        ResavedPackages.clear();
+        ResaveQueue.Reset();
+        ResavedPackages.Reset();
         ResaveIndex   = 0;
         ResaveSaved   = 0;
         ResaveFailed  = 0;
@@ -772,24 +773,24 @@ namespace Lumina
         ResavePhase   = EResavePhase::Confirm;
 
         // VisibleRows points into a per-frame array and the selection can change while the modal is up.
-        if (!SelectedGUIDs.empty())
+        if (!SelectedGUIDs.IsEmpty())
         {
-            ResaveQueue.reserve(SelectedGUIDs.size());
+            ResaveQueue.Reserve(SelectedGUIDs.Num());
             for (const FGuid& GUID : SelectedGUIDs)
             {
-                ResaveQueue.push_back(GUID);
+                ResaveQueue.Add(GUID);
             }
         }
         else
         {
-            ResaveQueue.reserve(VisibleRows.size());
+            ResaveQueue.Reserve(VisibleRows.Num());
             for (const FAssetRow* Row : VisibleRows)
             {
-                ResaveQueue.push_back(Row->GUID);
+                ResaveQueue.Add(Row->GUID);
             }
         }
 
-        if (ToolContext == nullptr || ResaveQueue.empty())
+        if (ToolContext == nullptr || ResaveQueue.IsEmpty())
         {
             return;
         }
@@ -800,7 +801,7 @@ namespace Lumina
             {
             case EResavePhase::Confirm:
             {
-                ImGui::TextWrapped("Rewrite %u asset(s)?", (uint32)ResaveQueue.size());
+                ImGui::TextWrapped("Rewrite %u asset(s)?", (uint32)ResaveQueue.Num());
                 ImGui::Spacing();
                 ImGui::TextWrapped(
                     "Every package is saved whether or not it is dirty, and anything not currently in "
@@ -829,15 +830,15 @@ namespace Lumina
             {
                 TickResave();
 
-                const float Progress = ResaveQueue.empty()
+                const float Progress = ResaveQueue.IsEmpty()
                     ? 1.0f
-                    : (float)((double)ResaveIndex / (double)ResaveQueue.size());
+                    : (float)((double)ResaveIndex / (double)ResaveQueue.Num());
 
-                ImGui::Text("Resaving... %u / %u", ResaveIndex, (uint32)ResaveQueue.size());
+                ImGui::Text("Resaving... %u / %u", ResaveIndex, (uint32)ResaveQueue.Num());
                 ImGui::Spacing();
                 ImGui::ProgressBar(Progress, ImVec2(-1.0f, 0.0f));
                 ImGui::Spacing();
-                ImGui::TextDisabled("%s", ResaveCurrent.IsNone() ? "" : ResaveCurrent.c_str());
+                ImGui::TextDisabled("%s", ResaveCurrent.IsNone() ? "" : *ResaveCurrent);
 
                 ImGui::Spacing();
                 ImGui::Separator();
@@ -849,7 +850,7 @@ namespace Lumina
                     ResavePhase = EResavePhase::Done;
                 }
 
-                if (ResaveIndex >= ResaveQueue.size())
+                if (ResaveIndex >= static_cast<uint32>(ResaveQueue.Num()))
                 {
                     ResavePhase = EResavePhase::Done;
                 }
@@ -865,9 +866,9 @@ namespace Lumina
                     ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1.0f),
                         "%u asset(s) failed -- see the log.", ResaveFailed);
                 }
-                if (ResaveIndex < ResaveQueue.size())
+                if (ResaveIndex < static_cast<uint32>(ResaveQueue.Num()))
                 {
-                    ImGui::TextDisabled("Stopped with %u remaining.", (uint32)ResaveQueue.size() - ResaveIndex);
+                    ImGui::TextDisabled("Stopped with %u remaining.", (uint32)ResaveQueue.Num() - ResaveIndex);
                 }
 
                 ImGui::Spacing();
@@ -902,7 +903,7 @@ namespace Lumina
         constexpr uint32 kPackagesPerFrame = 4;
 
         uint32 Processed = 0;
-        while (Processed < kPackagesPerFrame && ResaveIndex < ResaveQueue.size())
+        while (Processed < kPackagesPerFrame && ResaveIndex < static_cast<uint32>(ResaveQueue.Num()))
         {
             const FGuid GUID = ResaveQueue[ResaveIndex];
             ++ResaveIndex;
@@ -929,11 +930,11 @@ namespace Lumina
             }
 
             // One save per package, or the same file is rewritten once per export it holds.
-            if (ResavedPackages.find(Package) != ResavedPackages.end())
+            if (ResavedPackages.Contains(Package))
             {
                 continue;
             }
-            ResavedPackages.insert(Package);
+            ResavedPackages.Add(Package);
 
             FCoreEditorDelegates::OnAssetPreSave.Broadcast(Asset);
 
@@ -964,8 +965,8 @@ namespace Lumina
                 ImGui::PushID(i);
 
                 ImGui::TableSetColumnIndex(0);
-                const bool bSelected = (SelectedGUIDs.find(Row.GUID) != SelectedGUIDs.end());
-                if (ImGui::Selectable(Row.Name.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                const bool bSelected = (SelectedGUIDs.Contains(Row.GUID));
+                if (ImGui::Selectable(*Row.Name, bSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
                 {
                     ApplyRowClick(BaseIndex + (uint32)i);
 
@@ -978,10 +979,10 @@ namespace Lumina
                 if (ImGui::BeginPopupContextItem("##RowCtx"))
                 {
                     // Right-clicking outside the selection retargets it, so the menu acts on what is visible.
-                    if (SelectedGUIDs.find(Row.GUID) == SelectedGUIDs.end())
+                    if (!SelectedGUIDs.Contains(Row.GUID))
                     {
-                        SelectedGUIDs.clear();
-                        SelectedGUIDs.insert(Row.GUID);
+                        SelectedGUIDs.Reset();
+                        SelectedGUIDs.Add(Row.GUID);
                         SelectedGUID = Row.GUID;
                         RangeAnchor  = (int32)(BaseIndex + (uint32)i);
                     }
@@ -996,8 +997,8 @@ namespace Lumina
 
                     {
                         FFixedString ResaveLabel;
-                        FormatTo(ResaveLabel, LE_ICON_CONTENT_SAVE_ALL " Resave {} Selected", (uint32)SelectedGUIDs.size());
-                        if (ImGui::MenuItem(ResaveLabel.c_str()))
+                        FormatTo(ResaveLabel, LE_ICON_CONTENT_SAVE_ALL " Resave {} Selected", (uint32)SelectedGUIDs.Num());
+                        if (ImGui::MenuItem(*ResaveLabel))
                         {
                             OpenResaveModal();
                         }
@@ -1006,25 +1007,25 @@ namespace Lumina
                     ImGui::Separator();
                     if (ImGui::MenuItem("Copy Name"))
                     {
-                        ImGui::SetClipboardText(Row.Name.c_str());
+                        ImGui::SetClipboardText(*Row.Name);
                     }
                     if (ImGui::MenuItem("Copy Path"))
                     {
                         if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Row.GUID))
                         {
-                            ImGui::SetClipboardText(Data->Path.c_str());
+                            ImGui::SetClipboardText(*Data->Path);
                         }
                     }
                     if (ImGui::MenuItem("Copy GUID"))
                     {
-                        ImGui::SetClipboardText(Row.GUID.ToString().c_str());
+                        ImGui::SetClipboardText(*Row.GUID.ToString());
                     }
                     ImGui::EndPopup();
                 }
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(Row.Class));
-                ImGui::TextUnformatted(Row.Class.c_str());
+                ImGui::TextUnformatted(*Row.Class);
                 ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(2);
@@ -1048,7 +1049,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(4);
                 if (Row.bLoaded)
                 {
-                    ImGui::TextUnformatted(ImGuiX::FormatSize(Row.CpuBytes).c_str());
+                    ImGui::TextUnformatted(*ImGuiX::FormatSize(Row.CpuBytes));
                 }
                 else
                 {
@@ -1056,7 +1057,7 @@ namespace Lumina
                 }
 
                 ImGui::TableSetColumnIndex(5);
-                ImGui::TextUnformatted(ImGuiX::FormatSize(Row.DiskBytes).c_str());
+                ImGui::TextUnformatted(*ImGuiX::FormatSize(Row.DiskBytes));
 
                 ImGui::PopID();
             }
@@ -1092,21 +1093,21 @@ namespace Lumina
             {
                 // The triple hash keeps the header's open state stable while its counts change.
                 FFixedString Header;
-                FormatTo(Header, "{}  ({}/{} loaded, {})###{}", Group.Category.c_str(), Group.Loaded, Group.Count,
-                    ImGuiX::FormatSize(Group.CpuBytes).c_str(), Group.Category.c_str());
+                FormatTo(Header, "{}  ({}/{} loaded, {})###{}", *Group.Category, Group.Loaded, Group.Count,
+                    *ImGuiX::FormatSize(Group.CpuBytes), *Group.Category);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(Group.Category));
-                const bool bOpen = ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+                const bool bOpen = ImGui::CollapsingHeader(*Header, ImGuiTreeNodeFlags_DefaultOpen);
                 ImGui::PopStyleColor();
 
                 if (bOpen)
                 {
                     FFixedString TableID;
-                    FormatTo(TableID, "##Table_{}", Group.Category.c_str());
-                    if (ImGui::BeginTable(TableID.c_str(), 6, TableFlags))
+                    FormatTo(TableID, "##Table_{}", *Group.Category);
+                    if (ImGui::BeginTable(*TableID, 6, TableFlags))
                     {
                         SetupColumns(false);
-                        DrawAssetTableRows(VisibleRows.data() + Group.Start, Group.Count, Group.Start);
+                        DrawAssetTableRows(VisibleRows.GetData() + Group.Start, Group.Count, Group.Start);
                         ImGui::EndTable();
                     }
                     ImGui::Spacing();
@@ -1118,7 +1119,7 @@ namespace Lumina
             if (ImGui::BeginTable("##AssetTable", 6, TableFlags | ImGuiTableFlags_ScrollY, ImVec2(0, 0)))
             {
                 SetupColumns(true);
-                DrawAssetTableRows(VisibleRows.data(), (uint32)VisibleRows.size(), 0);
+                DrawAssetTableRows(VisibleRows.GetData(), (uint32)VisibleRows.Num(), 0);
                 ImGui::EndTable();
             }
         }
@@ -1126,8 +1127,8 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::DrawDetailsPanel()
     {
-        auto Found = RowIndexByGUID.find(SelectedGUID);
-        const FAssetRow* Selected = Found != RowIndexByGUID.end() ? &Rows[Found->second] : nullptr;
+        auto Found = RowIndexByGUID.Find(SelectedGUID);
+        const FAssetRow* Selected = Found != nullptr ? &Rows[(*Found)] : nullptr;
 
         if (Selected == nullptr)
         {
@@ -1145,7 +1146,7 @@ namespace Lumina
         {
             ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.68f, 1.0f), "%s", Label);
             ImGui::PushStyleColor(ImGuiCol_Text, Color);
-            ImGui::TextWrapped("%s", Value.c_str());
+            ImGui::TextWrapped("%s", *Value);
             ImGui::PopStyleColor();
             ImGui::Spacing();
         };
@@ -1153,18 +1154,18 @@ namespace Lumina
         Field("Name",  Selected->Name.ToString());
         Field("Class", Selected->Class.ToString(), CategoryColor(Selected->Class));
         const FAssetData* SelectedData = FAssetRegistry::Get().GetAssetByGUID(Selected->GUID);
-        Field("Path",  SelectedData != nullptr ? FString(SelectedData->Path.c_str()) : FString());
+        Field("Path",  SelectedData != nullptr ? FString(*SelectedData->Path) : FString());
         Field("GUID",  Selected->GUID.ToString(), ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
 
         // Looked up live, since the referencer scan dereferences it and the row may not have been rechecked yet.
         CObject* LoadedObject = FindObject<CObject>(Selected->GUID);
         const bool bLoaded = LoadedObject != nullptr;
         Field("Status", StatusLabel(bLoaded), StatusColor(bLoaded));
-        Field("On Disk", ImGuiX::FormatSize(Selected->DiskBytes).c_str());
+        Field("On Disk", *ImGuiX::FormatSize(Selected->DiskBytes));
 
         if (bLoaded)
         {
-            Field("CPU Memory", ImGuiX::FormatSize(Selected->CpuBytes).c_str(), ImVec4(1.0f, 0.75f, 0.4f, 1.0f));
+            Field("CPU Memory", *ImGuiX::FormatSize(Selected->CpuBytes), ImVec4(1.0f, 0.75f, 0.4f, 1.0f));
             Field("Ref Count", Format("{}", Selected->RefCount),
                 Selected->RefCount > 0 ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.9f, 0.6f, 0.3f, 1.0f));
         }
@@ -1192,7 +1193,7 @@ namespace Lumina
         }
         ImGui::TextDisabled("%s", bReferencersFromLiveScan ? "From a scan of objects in memory." : "From saved packages.");
 
-        if (Referencers.empty())
+        if (Referencers.IsEmpty())
         {
             ImGui::TextDisabled("No references found.");
             if (bReferencersFromLiveScan)
@@ -1209,7 +1210,7 @@ namespace Lumina
             ImGui::TableHeadersRow();
 
             ImGuiListClipper Clipper;
-            Clipper.Begin((int)Referencers.size());
+            Clipper.Begin(Referencers.Num());
             while (Clipper.Step())
             {
                 for (int Index = Clipper.DisplayStart; Index < Clipper.DisplayEnd; ++Index)
@@ -1217,14 +1218,14 @@ namespace Lumina
                     const FReferencer& Ref = Referencers[Index];
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(Ref.Name.c_str());
+                    ImGui::TextUnformatted(*Ref.Name);
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("Package %s", Ref.Package.c_str());
+                        ImGui::SetTooltip("Package %s", *Ref.Package);
                     }
                     ImGui::TableSetColumnIndex(1);
                     ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(Ref.Class));
-                    ImGui::TextUnformatted(Ref.Class.c_str());
+                    ImGui::TextUnformatted(*Ref.Class);
                     ImGui::PopStyleColor();
                 }
             }

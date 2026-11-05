@@ -8,11 +8,11 @@ namespace Lumina
     void FMemorySink::Write(const Logging::FLogRecord& Record)
     {
         FConsoleMessage Message;
-        Message.Time.assign(Record.Timestamp->Clock, Record.Timestamp->Clock + 8);
+        Message.Time = FStringView(Record.Timestamp->Clock, 8);
         Message.LoggerName = "Lumina";
-        Message.Message.assign(Record.Message.data(), Record.Message.data() + Record.Message.size());
+        Message.Message = Record.Message;
         Message.Level      = Record.Level;
 
-        OutputMessages.push_back(Move(Message));
+        OutputMessages.Add(Move(Message));
     }
 }

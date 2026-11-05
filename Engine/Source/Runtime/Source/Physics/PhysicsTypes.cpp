@@ -17,7 +17,7 @@ namespace Lumina
         }
         const TVector<FName>& Names = GetDefault<CCollisionSettings>()->ChannelNames;
         const int32 Channel = Layer - (int32)CollisionLayers::kFirstChannel;
-        return Channel >= 0 && Channel < (int32)Names.size() ? Names[Channel] : NAME_None;
+        return Channel >= 0 && Channel < Names.Num() ? Names[Channel] : NAME_None;
     }
 
     ECollisionProfiles SCollisionProfile::FindLayer(FName Name)

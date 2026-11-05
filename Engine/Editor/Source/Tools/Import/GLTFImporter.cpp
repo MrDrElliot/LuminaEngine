@@ -65,13 +65,13 @@ namespace Lumina
 
             const size_t Length = strlen(Encoded);
 
-            OutBytes.clear();
-            OutBytes.reserve((Length / 4) * 3);
+            OutBytes.Reset();
+            OutBytes.Reserve(IntCastChecked<int32>((Length / 4) * 3));
 
             uint32 Buffer = 0;
             uint32 BufferBits = 0;
 
-            for (size_t i = 0; i < Length; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Length); i < Limit; ++i)
             {
                 const char C = Encoded[i];
                 if (C == '=')
@@ -91,11 +91,11 @@ namespace Lumina
                 if (BufferBits >= 8)
                 {
                     BufferBits -= 8;
-                    OutBytes.push_back((uint8)(Buffer >> BufferBits));
+                    OutBytes.Add((uint8)(Buffer >> BufferBits));
                 }
             }
 
-            return !OutBytes.empty();
+            return !OutBytes.IsEmpty();
         }
 
         FStringView ResultToString(cgltf_result Result)
@@ -182,7 +182,7 @@ namespace Lumina
                     const cgltf_node* Joint = Skin.joints[j];
                     if (Joint->parent != nullptr && !Algo::Contains(Skin.joints, Skin.joints + Skin.joints_count, Joint->parent))
                     {
-                        Parents.emplace(Joint, FTransform(NodeWorldMatrix(Joint->parent)));
+                        Parents.TryAdd(Joint, FTransform(NodeWorldMatrix(Joint->parent)));
                     }
                 }
             }
@@ -196,11 +196,11 @@ namespace Lumina
 
             float* Reserve(size_t Count)
             {
-                if (Floats.size() < Count)
+                if (static_cast<size_t>(Floats.Num()) < Count)
                 {
-                    Floats.resize(Count);
+                    Floats.SetNum(IntCastChecked<int32>(Count));
                 }
-                return Floats.data();
+                return Floats.GetData();
             }
         };
     }
@@ -217,8 +217,8 @@ namespace Lumina
         }
 
         // After cgltf_free the views pointing at these are gone, so nothing can read them now.
-        DecodedBufferViews.clear();
-        DecodedBufferViews.shrink_to_fit();
+        DecodedBufferViews.Reset();
+        DecodedBufferViews.Shrink();
     }
 
     bool CGLTFImporter::ValidateRequiredExtensions(cgltf_data& Data, FString& OutError) const
@@ -259,32 +259,32 @@ namespace Lumina
 
             if (!bFound)
             {
-                if (!Unsupported.empty()) { Unsupported.append(", "); }
-                Unsupported.append(Name);
+                if (!Unsupported.IsEmpty()) { Unsupported.Append(", "); }
+                Unsupported.Append(Name);
             }
         }
 
-        if (Unsupported.empty())
+        if (Unsupported.IsEmpty())
         {
             return true;
         }
 
         // Blender's Compression checkbox turns Draco on, and the library is not vendored.
-        const bool bDraco = Unsupported.find("KHR_draco_mesh_compression") != FFixedString::npos;
+        const bool bDraco = Unsupported.Find("KHR_draco_mesh_compression") != Constants::kIndexNone;
 
-        OutError = FString(Format(
+        OutError = FString(*Format(
             "This glTF requires extension(s) the importer does not support: {}.{}",
-            Unsupported.c_str(),
-            bDraco ? " Re-export from Blender with Compression turned OFF (Draco is not supported)." : "").c_str());
+            *Unsupported,
+            bDraco ? " Re-export from Blender with Compression turned OFF (Draco is not supported)." : ""));
         return false;
     }
 
     bool CGLTFImporter::DecompressMeshopt(cgltf_data& Data, FString& OutError)
     {
-        DecodedBufferViews.clear();
-        DecodedBufferViews.resize(Data.buffer_views_count);
+        DecodedBufferViews.Reset();
+        DecodedBufferViews.SetNum(IntCastChecked<int32>(Data.buffer_views_count));
 
-        for (cgltf_size i = 0; i < Data.buffer_views_count; ++i)
+        for (int32 i = 0; i < DecodedBufferViews.Num(); ++i)
         {
             cgltf_buffer_view& View = Data.buffer_views[i];
             if (!View.has_meshopt_compression)
@@ -295,12 +295,18 @@ namespace Lumina
             const cgltf_meshopt_compression& MC = View.meshopt_compression;
             if (MC.buffer == nullptr || MC.buffer->data == nullptr)
             {
-                OutError = FString(Format("Buffer view {} is meshopt-compressed but its source buffer never loaded.", (uint32)i).c_str());
+                OutError = FString(*Format("Buffer view {} is meshopt-compressed but its source buffer never loaded.", i));
+                return false;
+            }
+
+            if (MC.stride != 0 && MC.count > static_cast<cgltf_size>(TNumericLimits<int32>::Max()) / MC.stride)
+            {
+                OutError = FString(*Format("Buffer view {} decodes to more bytes than one buffer can hold.", i));
                 return false;
             }
 
             TVector<uint8>& Dest = DecodedBufferViews[i];
-            Dest.resize(MC.count * MC.stride);
+            Dest.SetNum(static_cast<int32>(MC.count * MC.stride));
 
             const uint8* Src     = (const uint8*)MC.buffer->data + MC.offset;
             const size_t SrcSize = MC.size;
@@ -309,25 +315,25 @@ namespace Lumina
             switch (MC.mode)
             {
             case cgltf_meshopt_compression_mode_attributes:
-                DecodeResult = meshopt_decodeVertexBuffer(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                DecodeResult = meshopt_decodeVertexBuffer(Dest.GetData(), MC.count, MC.stride, Src, SrcSize);
                 break;
 
             case cgltf_meshopt_compression_mode_triangles:
-                DecodeResult = meshopt_decodeIndexBuffer(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                DecodeResult = meshopt_decodeIndexBuffer(Dest.GetData(), MC.count, MC.stride, Src, SrcSize);
                 break;
 
             case cgltf_meshopt_compression_mode_indices:
-                DecodeResult = meshopt_decodeIndexSequence(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                DecodeResult = meshopt_decodeIndexSequence(Dest.GetData(), MC.count, MC.stride, Src, SrcSize);
                 break;
 
             default:
-                OutError = FString(Format("Buffer view {} uses an unknown meshopt compression mode.", (uint32)i).c_str());
+                OutError = FString(*Format("Buffer view {} uses an unknown meshopt compression mode.", i));
                 return false;
             }
 
             if (DecodeResult != 0)
             {
-                OutError = FString(Format("Failed to decode meshopt buffer view {} (error {}).", (uint32)i, DecodeResult).c_str());
+                OutError = FString(*Format("Failed to decode meshopt buffer view {} (error {}).", i, DecodeResult));
                 return false;
             }
 
@@ -335,15 +341,15 @@ namespace Lumina
             switch (MC.filter)
             {
             case cgltf_meshopt_compression_filter_octahedral:
-                meshopt_decodeFilterOct(Dest.data(), MC.count, MC.stride);
+                meshopt_decodeFilterOct(Dest.GetData(), MC.count, MC.stride);
                 break;
 
             case cgltf_meshopt_compression_filter_quaternion:
-                meshopt_decodeFilterQuat(Dest.data(), MC.count, MC.stride);
+                meshopt_decodeFilterQuat(Dest.GetData(), MC.count, MC.stride);
                 break;
 
             case cgltf_meshopt_compression_filter_exponential:
-                meshopt_decodeFilterExp(Dest.data(), MC.count, MC.stride);
+                meshopt_decodeFilterExp(Dest.GetData(), MC.count, MC.stride);
                 break;
 
             case cgltf_meshopt_compression_filter_none:
@@ -352,7 +358,7 @@ namespace Lumina
             }
 
             // The documented cgltf hook, which accessors read in preference to buffer->data.
-            View.data = Dest.data();
+            View.data = Dest.GetData();
         }
 
         return true;
@@ -383,11 +389,11 @@ namespace Lumina
 
         const FFixedString SourcePath = Request.SourcePath;
 
-        cgltf_result Result = cgltf_parse_file(&ParseOptions, SourcePath.c_str(), &ParsedData);
+        cgltf_result Result = cgltf_parse_file(&ParseOptions, *SourcePath, &ParsedData);
         if (Result != cgltf_result_success)
         {
-            OutError = FString(Format("Failed to parse '{0}': {1}.",
-                SourcePath.c_str(), ResultToString(Result).data()).c_str());
+            OutError = FString(*Format("Failed to parse '{0}': {1}.",
+                *SourcePath, ResultToString(Result).GetData()));
             return false;
         }
 
@@ -399,11 +405,11 @@ namespace Lumina
             return false;
         }
 
-        Result = cgltf_load_buffers(&ParseOptions, ParsedData, SourcePath.c_str());
+        Result = cgltf_load_buffers(&ParseOptions, ParsedData, *SourcePath);
         if (Result != cgltf_result_success)
         {
-            OutError = FString(Format("Failed to load buffers for '{0}': {1}.",
-                SourcePath.c_str(), ResultToString(Result).data()).c_str());
+            OutError = FString(*Format("Failed to load buffers for '{0}': {1}.",
+                *SourcePath, ResultToString(Result).GetData()));
             cgltf_free(ParsedData);
             ParsedData = nullptr;
             return false;
@@ -414,7 +420,7 @@ namespace Lumina
         {
             cgltf_free(ParsedData);
             ParsedData = nullptr;
-            DecodedBufferViews.clear();
+            DecodedBufferViews.Reset();
             return false;
         }
 
@@ -422,17 +428,17 @@ namespace Lumina
         Result = cgltf_validate(ParsedData);
         if (Result == cgltf_result_data_too_short)
         {
-            OutError = FString(Format(
-                "'{0}' is malformed: an accessor reads past the end of its buffer.", SourcePath.c_str()).c_str());
+            OutError = FString(*Format(
+                "'{0}' is malformed: an accessor reads past the end of its buffer.", *SourcePath));
             cgltf_free(ParsedData);
             ParsedData = nullptr;
-            DecodedBufferViews.clear();
+            DecodedBufferViews.Reset();
             return false;
         }
         if (Result != cgltf_result_success)
         {
             LOG_WARN("[glTF] '{}' failed validation ({}); importing anyway. Geometry or animation may be off.",
-                     SourcePath.c_str(), ResultToString(Result).data());
+                     *SourcePath, ResultToString(Result).GetData());
         }
 
         const cgltf_data& Data = *ParsedData;
@@ -441,14 +447,14 @@ namespace Lumina
 
         //~ Deduplicated by source key and never copied, so an embedded payload stays a view into the buffer.
 
-        TVector<int32> ImageToUnique(Data.images_count, Constants::kIndexNone);
+        TVector<int32> ImageToUnique(IntCastChecked<int32>(Data.images_count), Constants::kIndexNone);
 
         if (Options.bImportTextures)
         {
             THashMap<FFixedString, int32> KeyToUnique;
-            OutData.Images.reserve(Data.images_count);
+            OutData.Images.Reserve(IntCastChecked<int32>(Data.images_count));
 
-            for (cgltf_size i = 0; i < Data.images_count; ++i)
+            for (int32 i = 0; i < ImageToUnique.Num(); ++i)
             {
                 const cgltf_image& Image = Data.images[i];
 
@@ -465,7 +471,7 @@ namespace Lumina
                     Source.Key = (Image.name != nullptr && Image.name[0] != '\0')
                         ? SanitizedSourceName(Image.name)
                         : FormatAs<FFixedString>("{}_Image_{}",
-                                                 SanitizedSourceName(SourceName.data(), SourceName.length()), (uint32)i);
+                                                 SanitizedSourceName(SourceName.GetData(), SourceName.Len()), i);
 
                     if (bDataURI)
                     {
@@ -475,7 +481,7 @@ namespace Lumina
 
                         if (!bBase64 || !DecodeBase64(Comma + 1, Source.OwnedBytes))
                         {
-                            LOG_WARN("[glTF] image {} has a data URI this importer cannot decode; skipping.", (uint32)i);
+                            LOG_WARN("[glTF] image {} has a data URI this importer cannot decode; skipping.", i);
                             continue;
                         }
 
@@ -485,28 +491,28 @@ namespace Lumina
                     {
                         if (const uint8* Base = cgltf_buffer_view_data(Image.buffer_view))
                         {
-                            Source.Bytes = TSpan<const uint8>(Base, Image.buffer_view->size);
+                            Source.Bytes = TSpan<const uint8>(Base, IntCastChecked<int32>(Image.buffer_view->size));
                         }
                     }
 
-                    if (Source.Bytes.empty())
+                    if (Source.Bytes.IsEmpty())
                     {
-                        LOG_WARN("[glTF] image {} has no readable payload; skipping.", (uint32)i);
+                        LOG_WARN("[glTF] image {} has no readable payload; skipping.", i);
                         continue;
                     }
                 }
 
-                auto Existing = KeyToUnique.find(Source.Key);
-                if (Existing != KeyToUnique.end())
+                auto Existing = KeyToUnique.Find(Source.Key);
+                if (Existing != nullptr)
                 {
-                    ImageToUnique[i] = Existing->second;
+                    ImageToUnique[i] = (*Existing);
                     continue;
                 }
 
-                const int32 Slot = (int32)OutData.Images.size();
-                KeyToUnique.emplace(Source.Key, Slot);
+                const int32 Slot = OutData.Images.Num();
+                KeyToUnique.TryAdd(Source.Key, Slot);
                 ImageToUnique[i] = Slot;
-                OutData.Images.push_back(Move(Source));
+                OutData.Images.Add(Move(Source));
             }
         }
 
@@ -577,14 +583,14 @@ namespace Lumina
                 return Constants::kIndexNone;
             }
 
-            const cgltf_size Index = cgltf_image_index(&Data, Image);
-            return (Index < ImageToUnique.size()) ? ImageToUnique[Index] : Constants::kIndexNone;
+            const int32 Index = static_cast<int32>(cgltf_image_index(&Data, Image));
+            return ImageToUnique.IsValidIndex(Index) ? ImageToUnique[Index] : Constants::kIndexNone;
         };
 
         // Resolved from how each material uses the image rather than guessed from the filename.
         auto MarkRole = [&](int32 ImageIndex, ETextureColorSpace Role)
         {
-            if (ImageIndex >= 0 && (size_t)ImageIndex < OutData.Images.size())
+            if (ImageIndex >= 0 && (size_t)ImageIndex < static_cast<size_t>(OutData.Images.Num()))
             {
                 OutData.Images[ImageIndex].IntendedColorSpace = Role;
             }
@@ -592,21 +598,21 @@ namespace Lumina
 
         //~ Stage 2 and 3, materials deduplicated by their resolved parameter set.
 
-        TVector<int32> MaterialToUnique(Data.materials_count, Constants::kIndexNone);
+        TVector<int32> MaterialToUnique(IntCastChecked<int32>(Data.materials_count), Constants::kIndexNone);
 
         if (Options.bImportMaterials)
         {
             FKeyDedup MaterialDedup(Data.materials_count);
-            OutData.Materials.reserve(Data.materials_count);
+            OutData.Materials.Reserve(IntCastChecked<int32>(Data.materials_count));
 
-            for (cgltf_size i = 0; i < Data.materials_count; ++i)
+            for (int32 i = 0; i < MaterialToUnique.Num(); ++i)
             {
                 const cgltf_material& Source = Data.materials[i];
 
                 FMeshImportMaterial Material;
                 Material.Name = (Source.name != nullptr && Source.name[0] != '\0')
                     ? FString(Source.name)
-                    : Format("{}_Mat{}", FStringView(SourceName.data(), SourceName.length()), (uint32)i);
+                    : Format("{}_Mat{}", FStringView(SourceName.GetData(), SourceName.Len()), i);
 
                 if (Source.has_pbr_metallic_roughness)
                 {
@@ -681,8 +687,8 @@ namespace Lumina
                     {
                         if (bPresent)
                         {
-                            if (!Unsupported.empty()) { Unsupported.append(", "); }
-                            Unsupported.append(Name);
+                            if (!Unsupported.IsEmpty()) { Unsupported.Append(", "); }
+                            Unsupported.Append(Name);
                         }
                     };
 
@@ -692,11 +698,11 @@ namespace Lumina
                     Note(Source.has_iridescence != 0,  "iridescence");
                     Note(Source.has_anisotropy != 0,   "anisotropy");
 
-                    if (!Unsupported.empty())
+                    if (!Unsupported.IsEmpty())
                     {
                         LOG_WARN("[glTF] Material '{}' uses {}, which the engine's Lit shading model cannot "
                                  "represent. Imported as standard metallic-roughness; those effects are lost.",
-                                 Material.Name, Unsupported.c_str());
+                                 Material.Name, *Unsupported);
                     }
                 }
 
@@ -709,58 +715,58 @@ namespace Lumina
 
                 if (!bDeduplicateMaterials)
                 {
-                    MaterialToUnique[i] = (int32)OutData.Materials.size();
-                    OutData.Materials.push_back(Move(Material));
+                    MaterialToUnique[i] = OutData.Materials.Num();
+                    OutData.Materials.Add(Move(Material));
                     continue;
                 }
 
                 TVector<uint32> Key;
-                Key.reserve(16);
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.x));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.y));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.z));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.w));
-                Key.push_back(QuantizeFloat(Material.MetallicFactor));
-                Key.push_back(QuantizeFloat(Material.RoughnessFactor));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.x));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.y));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.z));
-                Key.push_back(QuantizeFloat(Material.AlphaCutoff));
-                Key.push_back((uint32)Material.AlphaMode | (Material.bTwoSided ? 0x100u : 0u) | (Material.bUnlit ? 0x200u : 0u));
-                Key.push_back((uint32)Material.BaseColorImage);
-                Key.push_back((uint32)Material.MetallicRoughnessImage);
-                Key.push_back((uint32)Material.NormalImage);
-                Key.push_back((uint32)Material.EmissiveImage);
-                Key.push_back((uint32)Material.OcclusionImage);
+                Key.Reserve(16);
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.x));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.y));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.z));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.w));
+                Key.Add(QuantizeFloat(Material.MetallicFactor));
+                Key.Add(QuantizeFloat(Material.RoughnessFactor));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.x));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.y));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.z));
+                Key.Add(QuantizeFloat(Material.AlphaCutoff));
+                Key.Add((uint32)Material.AlphaMode | (Material.bTwoSided ? 0x100u : 0u) | (Material.bUnlit ? 0x200u : 0u));
+                Key.Add((uint32)Material.BaseColorImage);
+                Key.Add((uint32)Material.MetallicRoughnessImage);
+                Key.Add((uint32)Material.NormalImage);
+                Key.Add((uint32)Material.EmissiveImage);
+                Key.Add((uint32)Material.OcclusionImage);
 
                 // Same images mapped or filtered differently are NOT the same material and must not collapse.
                 for (const FTextureUVTransform& UVT : Material.UVTransforms)
                 {
-                    Key.push_back(UVT.TexCoordSet);
-                    Key.push_back(QuantizeFloat(UVT.Offset.x));
-                    Key.push_back(QuantizeFloat(UVT.Offset.y));
-                    Key.push_back(QuantizeFloat(UVT.Scale.x));
-                    Key.push_back(QuantizeFloat(UVT.Scale.y));
-                    Key.push_back(QuantizeFloat(UVT.Rotation));
+                    Key.Add(UVT.TexCoordSet);
+                    Key.Add(QuantizeFloat(UVT.Offset.x));
+                    Key.Add(QuantizeFloat(UVT.Offset.y));
+                    Key.Add(QuantizeFloat(UVT.Scale.x));
+                    Key.Add(QuantizeFloat(UVT.Scale.y));
+                    Key.Add(QuantizeFloat(UVT.Rotation));
                 }
                 for (EImportSampler Sampler : Material.Samplers)
                 {
-                    Key.push_back((uint32)Sampler);
+                    Key.Add((uint32)Sampler);
                 }
-                Key.push_back(QuantizeFloat(Material.IOR));
-                Key.push_back(QuantizeFloat(Material.SpecularFactor));
-                Key.push_back(QuantizeFloat(Material.NormalScale));
-                Key.push_back(QuantizeFloat(Material.OcclusionStrength));
+                Key.Add(QuantizeFloat(Material.IOR));
+                Key.Add(QuantizeFloat(Material.SpecularFactor));
+                Key.Add(QuantizeFloat(Material.NormalScale));
+                Key.Add(QuantizeFloat(Material.OcclusionStrength));
                 // Clearcoat selects a different SHADING MODEL, so a coated and uncoated pair must not collapse.
-                Key.push_back(QuantizeFloat(Material.ClearcoatFactor));
-                Key.push_back(QuantizeFloat(Material.ClearcoatRoughness));
+                Key.Add(QuantizeFloat(Material.ClearcoatFactor));
+                Key.Add(QuantizeFloat(Material.ClearcoatRoughness));
 
                 bool bIsNew = false;
                 const uint32 Slot = MaterialDedup.Insert(Move(Key), bIsNew);
                 MaterialToUnique[i] = (int32)Slot;
                 if (bIsNew)
                 {
-                    OutData.Materials.push_back(Move(Material));
+                    OutData.Materials.Add(Move(Material));
                 }
             }
         }
@@ -811,48 +817,48 @@ namespace Lumina
 
         if (bImportAllScenes)
         {
-            Scenes.reserve(Data.scenes_count);
+            Scenes.Reserve(IntCastChecked<int32>(Data.scenes_count));
             for (cgltf_size i = 0; i < Data.scenes_count; ++i)
             {
-                Scenes.push_back(&Data.scenes[i]);
+                Scenes.Add(&Data.scenes[i]);
             }
         }
         else if (Data.scene != nullptr)
         {
-            Scenes.push_back(Data.scene);
+            Scenes.Add(Data.scene);
         }
         else if (Data.scenes_count > 0)
         {
-            Scenes.push_back(&Data.scenes[0]);
+            Scenes.Add(&Data.scenes[0]);
         }
 
         // Bounded by the node count, so a 200k-node scene never grows this mid-walk.
-        Stack.reserve(Math::Max<size_t>(64, Data.nodes_count));
-        OutData.MeshInstances.reserve(Data.nodes_count);
-        OutData.SceneNodes.reserve(Data.nodes_count);
+        Stack.Reserve(IntCastChecked<int32>(Math::Max<size_t>(64, Data.nodes_count)));
+        OutData.MeshInstances.Reserve(IntCastChecked<int32>(Data.nodes_count));
+        OutData.SceneNodes.Reserve(IntCastChecked<int32>(Data.nodes_count));
 
-        TVector<uint8> MeshReferenced(Data.meshes_count, 0);
+        TVector<uint8> MeshReferenced(IntCastChecked<int32>(Data.meshes_count), 0);
         uint32 VisitedNodes = 0;
 
         for (const cgltf_scene* Scene : Scenes)
         {
             for (cgltf_size i = 0; i < Scene->nodes_count; ++i)
             {
-                Stack.push_back(FStackEntry{ Scene->nodes[i], FMatrix4(1.0f), Constants::kIndexNone });
+                Stack.Emplace(Scene->nodes[i], FMatrix4(1.0f), Constants::kIndexNone);
             }
 
-            while (!Stack.empty())
+            while (!Stack.IsEmpty())
             {
-                const FStackEntry Entry = Stack.back();
-                Stack.pop_back();
+                const FStackEntry Entry = Stack.Last();
+                Stack.Pop();
                 ++VisitedNodes;
 
                 const cgltf_node& Node = *Entry.Node;
                 const FMatrix4 World = Entry.ParentWorld * NodeLocalMatrix(Node);
 
                 // Appended in visit order, so a child is only pushed once its parent has been popped and recorded.
-                const int32 SceneNodeIndex = (int32)OutData.SceneNodes.size();
-                FSourceSceneNode& SceneNode = OutData.SceneNodes.push_back();
+                const int32 SceneNodeIndex = OutData.SceneNodes.Num();
+                FSourceSceneNode& SceneNode = OutData.SceneNodes.AddDefaultedGetRef();
                 SceneNode.ParentIndex = Entry.ParentSceneNode;
                 SceneNode.Name = (Node.name != nullptr && Node.name[0] != '\0')
                     ? FName(Node.name)
@@ -889,16 +895,15 @@ namespace Lumina
                 if (Node.mesh != nullptr)
                 {
                     // MeshSlot and SlotIndex hold the raw mesh index until the dedup table rewrites them.
-                    const cgltf_size MeshIndex = cgltf_mesh_index(&Data, Node.mesh);
+                    const int32 MeshIndex = static_cast<int32>(cgltf_mesh_index(&Data, Node.mesh));
                     MeshReferenced[MeshIndex] = 1;
                     SceneNode.Kind     = ESourceNodeKind::Mesh;
-                    SceneNode.MeshSlot = (int32)MeshIndex;
-                    OutData.MeshInstances.push_back(FSourceMeshInstance{
-                        (uint32)MeshIndex, (uint32)cgltf_node_index(&Data, &Node), World });
+                    SceneNode.MeshSlot = MeshIndex;
+                    OutData.MeshInstances.Emplace((uint32)MeshIndex, (uint32)cgltf_node_index(&Data, &Node), World);
 
                     if (Node.light != nullptr)
                     {
-                        DetachedLights.push_back(FDetachedLight{ SceneNodeIndex, Node.light });
+                        DetachedLights.Emplace(SceneNodeIndex, Node.light);
                     }
                 }
                 else if (Node.light != nullptr)
@@ -933,14 +938,14 @@ namespace Lumina
 
                 for (cgltf_size i = 0; i < Node.children_count; ++i)
                 {
-                    Stack.push_back(FStackEntry{ Node.children[i], World, SceneNodeIndex });
+                    Stack.Emplace(Node.children[i], World, SceneNodeIndex);
                 }
             }
         }
 
         for (const FDetachedLight& Detached : DetachedLights)
         {
-            FSourceSceneNode& LightNode = OutData.SceneNodes.push_back();
+            FSourceSceneNode& LightNode = OutData.SceneNodes.AddDefaultedGetRef();
             LightNode.ParentIndex = Detached.ParentSceneNode;
             LightNode.Name = (Detached.Light->name != nullptr && Detached.Light->name[0] != '\0')
                 ? FName(Detached.Light->name)
@@ -949,12 +954,12 @@ namespace Lumina
         }
 
         // A file with no scene graph still has meshes worth importing.
-        if (Scenes.empty())
+        if (Scenes.IsEmpty())
         {
-            for (cgltf_size i = 0; i < Data.meshes_count; ++i)
+            for (int32 i = 0; i < MeshReferenced.Num(); ++i)
             {
                 MeshReferenced[i] = 1;
-                OutData.MeshInstances.push_back(FSourceMeshInstance{ (uint32)i, 0u, FMatrix4(1.0f) });
+                OutData.MeshInstances.Emplace((uint32)i, 0u, FMatrix4(1.0f));
             }
             VisitedNodes = (uint32)Data.meshes_count;
         }
@@ -964,13 +969,13 @@ namespace Lumina
         //~ Keyed by the accessors their primitives reference, so duplicates collapse without comparing vertices.
 
         TVector<uint32> UniqueMeshes;         // unique slot -> representative cgltf mesh index
-        TVector<int32>  MeshToUnique(Data.meshes_count, Constants::kIndexNone);
+        TVector<int32>  MeshToUnique(IntCastChecked<int32>(Data.meshes_count), Constants::kIndexNone);
         {
             FKeyDedup MeshDedup(Data.meshes_count);
-            UniqueMeshes.reserve(Data.meshes_count);
+            UniqueMeshes.Reserve(IntCastChecked<int32>(Data.meshes_count));
 
             TVector<uint32> Key;
-            for (cgltf_size MeshIndex = 0; MeshIndex < Data.meshes_count; ++MeshIndex)
+            for (int32 MeshIndex = 0; MeshIndex < MeshToUnique.Num(); ++MeshIndex)
             {
                 if (MeshReferenced[MeshIndex] == 0)
                 {
@@ -981,29 +986,29 @@ namespace Lumina
 
                 if (!bDeduplicateMeshes)
                 {
-                    MeshToUnique[MeshIndex] = (int32)UniqueMeshes.size();
-                    UniqueMeshes.push_back((uint32)MeshIndex);
+                    MeshToUnique[MeshIndex] = UniqueMeshes.Num();
+                    UniqueMeshes.Add((uint32)MeshIndex);
                     continue;
                 }
 
-                Key.clear();
+                Key.Reset();
                 for (cgltf_size p = 0; p < Mesh.primitives_count; ++p)
                 {
                     const cgltf_primitive& Primitive = Mesh.primitives[p];
-                    Key.push_back((uint32)Primitive.type);
-                    Key.push_back(Primitive.indices != nullptr ? (uint32)cgltf_accessor_index(&Data, Primitive.indices) : Constants::kIndexNoneU32);
+                    Key.Add((uint32)Primitive.type);
+                    Key.Add(Primitive.indices != nullptr ? (uint32)cgltf_accessor_index(&Data, Primitive.indices) : Constants::kIndexNoneU32);
 
                     const int32 MaterialSlot = (Primitive.material != nullptr)
-                        ? MaterialToUnique[cgltf_material_index(&Data, Primitive.material)] : Constants::kIndexNone;
-                    Key.push_back((uint32)MaterialSlot);
+                        ? MaterialToUnique[static_cast<int32>(cgltf_material_index(&Data, Primitive.material))] : Constants::kIndexNone;
+                    Key.Add((uint32)MaterialSlot);
 
-                    Key.push_back((uint32)Primitive.attributes_count);
+                    Key.Add((uint32)Primitive.attributes_count);
                     for (cgltf_size a = 0; a < Primitive.attributes_count; ++a)
                     {
                         const cgltf_attribute& Attribute = Primitive.attributes[a];
-                        Key.push_back((uint32)Attribute.type);
-                        Key.push_back((uint32)Attribute.index);
-                        Key.push_back((uint32)cgltf_accessor_index(&Data, Attribute.data));
+                        Key.Add((uint32)Attribute.type);
+                        Key.Add((uint32)Attribute.index);
+                        Key.Add((uint32)cgltf_accessor_index(&Data, Attribute.data));
                     }
                 }
 
@@ -1013,7 +1018,7 @@ namespace Lumina
                 MeshToUnique[MeshIndex] = (int32)Slot;
                 if (bIsNew)
                 {
-                    UniqueMeshes.push_back((uint32)MeshIndex);
+                    UniqueMeshes.Add((uint32)MeshIndex);
                 }
             }
 
@@ -1035,8 +1040,8 @@ namespace Lumina
         //~ Stage 4, geometry processing.
 
         // Merge mode multiplies these out rather than re-walking primitives once per placement.
-        struct FMeshCounts { size_t StaticVerts, StaticIndices, SkinnedVerts, SkinnedIndices; };
-        TVector<FMeshCounts> PerMeshCounts(Data.meshes_count, FMeshCounts{0, 0, 0, 0});
+        struct FMeshCounts { int64 StaticVerts, StaticIndices, SkinnedVerts, SkinnedIndices; };
+        TVector<FMeshCounts> PerMeshCounts(IntCastChecked<int32>(Data.meshes_count), FMeshCounts{0, 0, 0, 0});
 
         auto IsSkinnedPrimitive = [](const cgltf_primitive& Primitive) -> bool
         {
@@ -1062,8 +1067,8 @@ namespace Lumina
                     continue;
                 }
 
-                const size_t VertexCount = Position->count;
-                const size_t IndexCount  = (Primitive.indices != nullptr) ? Primitive.indices->count : VertexCount;
+                const int64 VertexCount = Position->count;
+                const int64 IndexCount  = (Primitive.indices != nullptr) ? Primitive.indices->count : Position->count;
                 const bool bSkinned = IsSkinnedPrimitive(Primitive);
 
                 (bSkinned ? Counts.SkinnedVerts   : Counts.StaticVerts)   += VertexCount;
@@ -1113,38 +1118,38 @@ namespace Lumina
 
                 FMeshResource& Resource = bSkinned ? *SkinnedTarget : *StaticTarget;
 
-                const size_t BaseVertex = Resource.GetNumVertices();
-                const size_t BaseIndex  = Resource.GetNumIndices();
-                const size_t VertexCount = Position->count;
+                const int32 BaseVertex  = Resource.GetNumVertices();
+                const int32 BaseIndex   = Resource.GetNumIndices();
+                const int32 VertexCount = IntCastChecked<int32>(Position->count);
 
                 FGeometrySurface Surface;
                 Surface.StartIndex = (uint32)BaseIndex;
 
-                FFixedString SurfaceName(MeshName.data(), MeshName.size());
+                FFixedString SurfaceName(MeshName.GetData(), MeshName.Len());
                 if (Mesh.primitives_count > 1 || MergedMaterialRemap != nullptr)
                 {
-                    SurfaceName.append("_").append(Format("{}", Resource.GetNumSurfaces()));
+                    SurfaceName.Append("_").Append(Format("{}", Resource.GetNumSurfaces()));
                 }
                 Surface.ID = SurfaceName;
 
                 if (Primitive.material != nullptr)
                 {
-                    const cgltf_size SourceIndex = cgltf_material_index(&Data, Primitive.material);
-                    const int16 UniqueIndex = (SourceIndex < MaterialToUnique.size() && MaterialToUnique[SourceIndex] >= 0)
+                    const int32 SourceIndex = static_cast<int32>(cgltf_material_index(&Data, Primitive.material));
+                    const int16 UniqueIndex = (MaterialToUnique.IsValidIndex(SourceIndex) && MaterialToUnique[SourceIndex] >= 0)
                         ? (int16)MaterialToUnique[SourceIndex] : (int16)SourceIndex;
 
                     if (MergedMaterialRemap != nullptr)
                     {
-                        auto It = MergedMaterialRemap->find(UniqueIndex);
-                        if (It == MergedMaterialRemap->end())
+                        auto It = MergedMaterialRemap->Find(UniqueIndex);
+                        if (It == nullptr)
                         {
-                            const int16 NewSlot = (int16)MergedMaterialRemap->size();
-                            MergedMaterialRemap->emplace(UniqueIndex, NewSlot);
+                            const int16 NewSlot = (int16)MergedMaterialRemap->Num();
+                            MergedMaterialRemap->TryAdd(UniqueIndex, NewSlot);
                             Surface.MaterialIndex = NewSlot;
                         }
                         else
                         {
-                            Surface.MaterialIndex = It->second;
+                            Surface.MaterialIndex = (*It);
                         }
                     }
                     else
@@ -1157,7 +1162,7 @@ namespace Lumina
 
                 // Positions land straight in the destination, then transform in place with no intermediate array.
                 cgltf_accessor_unpack_floats(Position, &Resource.Positions[BaseVertex].x, VertexCount * 3);
-                for (size_t i = 0; i < VertexCount; ++i)
+                for (int32 i = 0; i < VertexCount; ++i)
                 {
                     FVector3& P = Resource.Positions[BaseVertex + i];
                     P = FVector3(PositionMatrix * FVector4(P, 1.0f));
@@ -1167,7 +1172,7 @@ namespace Lumina
                 {
                     float* Raw = Scratch.Reserve(VertexCount * 3);
                     cgltf_accessor_unpack_floats(Normals, Raw, VertexCount * 3);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         const FVector3 N(Raw[i * 3 + 0], Raw[i * 3 + 1], Raw[i * 3 + 2]);
                         Resource.Normals[BaseVertex + i] = PackNormal(Math::Normalize(NormalMatrix * N));
@@ -1176,7 +1181,7 @@ namespace Lumina
                 else
                 {
                     const uint32 DefaultNormal = PackNormal(Math::Normalize(NormalMatrix * FViewVolume::UpAxis));
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Resource.Normals[BaseVertex + i] = DefaultNormal;
                     }
@@ -1187,7 +1192,7 @@ namespace Lumina
                 {
                     float* Raw = Scratch.Reserve(VertexCount * 2);
                     cgltf_accessor_unpack_floats(UVs, Raw, VertexCount * 2);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Resource.UVs[BaseVertex + i] = Math::PackHalf2x16(FVector2(Raw[i * 2 + 0], Raw[i * 2 + 1]));
                     }
@@ -1197,7 +1202,7 @@ namespace Lumina
                 {
                     float* Raw = Scratch.Reserve(VertexCount * 2);
                     cgltf_accessor_unpack_floats(UVs1, Raw, VertexCount * 2);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Resource.UVs1[BaseVertex + i] = Math::PackHalf2x16(FVector2(Raw[i * 2 + 0], Raw[i * 2 + 1]));
                     }
@@ -1205,7 +1210,7 @@ namespace Lumina
                 else
                 {
                     // Mirroring set 0 makes a material asking for set 1 render like set 0 rather than one texel.
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Resource.UVs1[BaseVertex + i] = Resource.UVs[BaseVertex + i];
                     }
@@ -1216,7 +1221,7 @@ namespace Lumina
                     const size_t Components = cgltf_num_components(Colors->type);
                     float* Raw = Scratch.Reserve(VertexCount * Components);
                     cgltf_accessor_unpack_floats(Colors, Raw, VertexCount * Components);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         const float* C = Raw + i * Components;
                         Resource.Colors[BaseVertex + i] = PackColor(FVector4(C[0], C[1], C[2], Components >= 4 ? C[3] : 1.0f));
@@ -1224,7 +1229,7 @@ namespace Lumina
                 }
                 else
                 {
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Resource.Colors[BaseVertex + i] = 0xFFFFFFFFu;
                     }
@@ -1234,7 +1239,7 @@ namespace Lumina
                 {
                     float* RawJoints = Scratch.Reserve(VertexCount * 4);
                     cgltf_accessor_unpack_floats(Joints, RawJoints, VertexCount * 4);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         const float* J = RawJoints + i * 4;
                         Resource.JointIndices[BaseVertex + i] = FU16Vector4(
@@ -1245,7 +1250,7 @@ namespace Lumina
                     // glTF only normalizes across ALL sets, so using WEIGHTS_1 pulls those vertices toward the origin.
                     float* RawWeights = Scratch.Reserve(VertexCount * 4);
                     cgltf_accessor_unpack_floats(Weights, RawWeights, VertexCount * 4);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         const float* W = RawWeights + i * 4;
                         Resource.JointWeights[BaseVertex + i] = PackSkinWeights(FVector4(W[0], W[1], W[2], W[3]));
@@ -1254,33 +1259,33 @@ namespace Lumina
 
                 if (Primitive.indices != nullptr)
                 {
-                    const size_t IndexCount = Primitive.indices->count;
-                    Resource.Indices.resize(BaseIndex + IndexCount);
-                    cgltf_accessor_unpack_indices(Primitive.indices, Resource.Indices.data() + BaseIndex, sizeof(uint32), IndexCount);
-                    for (size_t i = 0; i < IndexCount; ++i)
+                    const int32 IndexCount = IntCastChecked<int32>(Primitive.indices->count);
+                    Resource.Indices.SetNum(BaseIndex + IndexCount);
+                    cgltf_accessor_unpack_indices(Primitive.indices, Resource.Indices.GetData() + BaseIndex, sizeof(uint32), IndexCount);
+                    for (int32 i = 0; i < IndexCount; ++i)
                     {
-                        Resource.Indices[BaseIndex + i] += (uint32)BaseVertex;
+                        Resource.Indices[BaseIndex + i] += static_cast<uint32>(BaseVertex);
                     }
                 }
                 else
                 {
-                    Resource.Indices.resize(BaseIndex + VertexCount);
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    Resource.Indices.SetNum(BaseIndex + VertexCount);
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
-                        Resource.Indices[BaseIndex + i] = (uint32)(BaseVertex + i);
+                        Resource.Indices[BaseIndex + i] = static_cast<uint32>(BaseVertex + i);
                     }
                 }
 
                 if (bReverseWinding)
                 {
-                    for (size_t i = BaseIndex; i + 2 < Resource.Indices.size(); i += 3)
+                    for (int32 i = BaseIndex; i + 2 < Resource.Indices.Num(); i += 3)
                     {
                         std::swap(Resource.Indices[i + 1], Resource.Indices[i + 2]);
                     }
                 }
 
                 Surface.IndexCount = (uint32)Resource.GetNumIndices() - Surface.StartIndex;
-                Resource.GeometrySurfaces.push_back(Surface);
+                Resource.GeometrySurfaces.Add(Surface);
             }
         };
 
@@ -1311,26 +1316,26 @@ namespace Lumina
                 TUniquePtr<FMeshResource> Skinned;
             };
 
-            TVector<FMeshSlot> Slots(UniqueMeshes.size());
+            TVector<FMeshSlot> Slots(UniqueMeshes.Num());
 
             // Named serially so a collision suffix is deterministic, then the parallel pass owns its own slot.
-            TVector<FFixedString> MeshNames(UniqueMeshes.size());
+            TVector<FFixedString> MeshNames(UniqueMeshes.Num());
             {
                 THashMap<FFixedString, uint32> NameCounts;
-                for (size_t Slot = 0; Slot < UniqueMeshes.size(); ++Slot)
+                for (int32 Slot = 0; Slot < UniqueMeshes.Num(); ++Slot)
                 {
                     const cgltf_mesh& Mesh = Data.meshes[UniqueMeshes[Slot]];
 
                     FFixedString Name = (Mesh.name != nullptr && Mesh.name[0] != '\0')
                         ? SanitizedSourceName(Mesh.name)
                         : FormatAs<FFixedString>("{}_{}",
-                                                 FStringView(SourceName.data(), SourceName.length()), (uint32)UniqueMeshes[Slot]);
+                                                 FStringView(SourceName.GetData(), SourceName.Len()), (uint32)UniqueMeshes[Slot]);
 
                     // glTF mesh names are not unique, so suffix only genuine collisions and keep the common case clean.
                     uint32& Count = NameCounts[Name];
                     if (Count > 0)
                     {
-                        Name.append("_").append(Format("{}", Count));
+                        Name.Append("_").Append(Format("{}", Count));
                     }
                     ++Count;
 
@@ -1338,10 +1343,10 @@ namespace Lumina
                 }
             }
 
-            const float GeometryStep = 0.6f / (float)Math::Max<size_t>(1, UniqueMeshes.size());
+            const float GeometryStep = 0.6f / (float)Math::Max<size_t>(1, UniqueMeshes.Num());
             TAtomic<uint32> Completed{0};
 
-            Task::ParallelFor((uint32)UniqueMeshes.size(), [&](uint32 SlotIndex)
+            Jobs::ParallelFor((uint32)UniqueMeshes.Num(), [&](uint32 SlotIndex)
             {
                 const cgltf_mesh& Mesh = Data.meshes[UniqueMeshes[SlotIndex]];
                 const FFixedString& MeshName = MeshNames[SlotIndex];
@@ -1358,18 +1363,18 @@ namespace Lumina
 
                 if (Counts.StaticVerts > 0)
                 {
-                    Slot.Static->ReserveVertices(Counts.StaticVerts);
-                    Slot.Static->Indices.reserve(Counts.StaticIndices);
+                    Slot.Static->ReserveVertices(IntCastChecked<int32>(Counts.StaticVerts));
+                    Slot.Static->Indices.Reserve(IntCastChecked<int32>(Counts.StaticIndices));
                 }
                 if (Counts.SkinnedVerts > 0)
                 {
-                    Slot.Skinned->ReserveVertices(Counts.SkinnedVerts);
-                    Slot.Skinned->Indices.reserve(Counts.SkinnedIndices);
+                    Slot.Skinned->ReserveVertices(IntCastChecked<int32>(Counts.SkinnedVerts));
+                    Slot.Skinned->Indices.Reserve(IntCastChecked<int32>(Counts.SkinnedIndices));
                 }
 
                 // One scratch buffer per task, reused across the mesh's primitives.
                 FGeometryScratch Scratch;
-                AppendMesh(Mesh, FStringView(MeshName.c_str(), MeshName.size()),
+                AppendMesh(Mesh, FStringView(*MeshName, MeshName.Len()),
                            Slot.Static.get(), Slot.Skinned.get(), nullptr, FMatrix4(1.0f), Scratch);
 
                 if (Slot.Static->GetNumVertices() > 0)
@@ -1385,26 +1390,26 @@ namespace Lumina
                 {
                     const uint32 Done = Completed.fetch_add(1) + 1;
                     const FFixedString Message = FormatAs<FFixedString>("Processing geometry ({}/{} meshes)...",
-                                                                        Done, (uint32)UniqueMeshes.size());
+                                                                        Done, (uint32)UniqueMeshes.Num());
                     Progress->EnterProgressFrame(GeometryStep, Message);
                 }
             });
 
-            OutData.Resources.reserve(UniqueMeshes.size());
-            OutData.MeshSlots.resize(Slots.size());
+            OutData.Resources.Reserve(UniqueMeshes.Num());
+            OutData.MeshSlots.SetNum(Slots.Num());
 
-            for (size_t SlotIndex = 0; SlotIndex < Slots.size(); ++SlotIndex)
+            for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
             {
                 FMeshSlot& Slot = Slots[SlotIndex];
                 if (Slot.Static && Slot.Static->GetNumVertices() > 0)
                 {
-                    OutData.MeshSlots[SlotIndex].StaticResource = (int32)OutData.Resources.size();
-                    OutData.Resources.push_back(Move(Slot.Static));
+                    OutData.MeshSlots[SlotIndex].StaticResource = OutData.Resources.Num();
+                    OutData.Resources.Add(Move(Slot.Static));
                 }
                 if (Slot.Skinned && Slot.Skinned->GetNumVertices() > 0)
                 {
-                    OutData.MeshSlots[SlotIndex].SkinnedResource = (int32)OutData.Resources.size();
-                    OutData.Resources.push_back(Move(Slot.Skinned));
+                    OutData.MeshSlots[SlotIndex].SkinnedResource = OutData.Resources.Num();
+                    OutData.Resources.Add(Move(Slot.Skinned));
                 }
             }
         }
@@ -1415,7 +1420,7 @@ namespace Lumina
 
         if (Options.bImportSkeleton)
         {
-            OutData.Skeletons.reserve(Data.skins_count);
+            OutData.Skeletons.Reserve(IntCastChecked<int32>(Data.skins_count));
             for (cgltf_size s = 0; s < Data.skins_count; ++s)
             {
                 const cgltf_skin& Skin = Data.skins[s];
@@ -1423,27 +1428,28 @@ namespace Lumina
                 TUniquePtr<FSkeletonResource> Skeleton = MakeUnique<FSkeletonResource>();
                 Skeleton->Name = (Skin.name != nullptr && Skin.name[0] != '\0')
                     ? FName(Skin.name)
-                    : FName("Skeleton_" + Format("{}", OutData.Skeletons.size()));
+                    : FName("Skeleton_" + Format("{}", OutData.Skeletons.Num()));
 
-                Skeleton->Bones.reserve(Skin.joints_count);
+                Skeleton->Bones.Reserve(IntCastChecked<int32>(Skin.joints_count));
 
                 TVector<FMatrix4> InverseBindMatrices;
                 if (Skin.inverse_bind_matrices != nullptr)
                 {
-                    InverseBindMatrices.resize(Skin.inverse_bind_matrices->count);
+                    InverseBindMatrices.SetNum(IntCastChecked<int32>(Skin.inverse_bind_matrices->count));
                     cgltf_accessor_unpack_floats(Skin.inverse_bind_matrices,
-                        &InverseBindMatrices[0][0][0], InverseBindMatrices.size() * 16);
+                        &InverseBindMatrices[0][0][0], InverseBindMatrices.Num() * 16);
                 }
 
                 // Joint parent lookup by node pointer; the joint list is not ordered by hierarchy.
                 THashMap<const cgltf_node*, int32> NodeToJoint;
-                NodeToJoint.reserve(Skin.joints_count);
-                for (cgltf_size j = 0; j < Skin.joints_count; ++j)
+                const int32 JointCount = IntCastChecked<int32>(Skin.joints_count);
+                NodeToJoint.Reserve(JointCount);
+                for (int32 j = 0; j < JointCount; ++j)
                 {
-                    NodeToJoint.emplace(Skin.joints[j], (int32)j);
+                    NodeToJoint.TryAdd(Skin.joints[j], j);
                 }
 
-                for (cgltf_size j = 0; j < Skin.joints_count; ++j)
+                for (int32 j = 0; j < JointCount; ++j)
                 {
                     const cgltf_node& JointNode = *Skin.joints[j];
 
@@ -1455,39 +1461,39 @@ namespace Lumina
                     Bone.ParentIndex = Constants::kIndexNone;
                     if (JointNode.parent != nullptr)
                     {
-                        auto It = NodeToJoint.find(JointNode.parent);
-                        if (It != NodeToJoint.end())
+                        auto It = NodeToJoint.Find(JointNode.parent);
+                        if (It != nullptr)
                         {
-                            Bone.ParentIndex = It->second;
+                            Bone.ParentIndex = (*It);
                         }
                     }
 
                     Bone.LocalTransform = NodeLocalMatrix(JointNode);
-                    if (auto Parent = RootJointParents.find(&JointNode); Parent != RootJointParents.end())
+                    if (auto Parent = RootJointParents.Find(&JointNode); Parent != nullptr)
                     {
-                        Bone.LocalTransform = Parent->second.GetMatrix() * Bone.LocalTransform;
+                        Bone.LocalTransform = Parent->GetMatrix() * Bone.LocalTransform;
                     }
-                    Bone.InvBindMatrix  = (j < InverseBindMatrices.size()) ? ToEngineSpace(InverseBindMatrices[j]) : FMatrix4(1.0f);
+                    Bone.InvBindMatrix  = (j < InverseBindMatrices.Num()) ? ToEngineSpace(InverseBindMatrices[j]) : FMatrix4(1.0f);
 
-                    Skeleton->BoneNameToIndex[Bone.Name] = (int32)j;
-                    Skeleton->Bones.push_back(Bone);
+                    Skeleton->BoneNameToIndex[Bone.Name] = j;
+                    Skeleton->Bones.Add(Bone);
                 }
 
                 Skeleton->BuildBindPoseCache();
-                OutData.Skeletons.push_back(Move(Skeleton));
+                OutData.Skeletons.Add(Move(Skeleton));
             }
         }
 
         if (Options.bImportAnimations)
         {
-            OutData.Animations.reserve(Data.animations_count);
+            OutData.Animations.Reserve(IntCastChecked<int32>(Data.animations_count));
             for (cgltf_size a = 0; a < Data.animations_count; ++a)
             {
                 const cgltf_animation& Animation = Data.animations[a];
 
                 TUniquePtr<FAnimationResource> Clip = MakeUnique<FAnimationResource>();
                 Clip->Name = (Animation.name != nullptr) ? Animation.name : "";
-                Clip->Channels.reserve(Animation.channels_count);
+                Clip->Channels.Reserve(IntCastChecked<int32>(Animation.channels_count));
 
                 for (cgltf_size c = 0; c < Animation.channels_count; ++c)
                 {
@@ -1517,21 +1523,21 @@ namespace Lumina
                         continue;
                     }
 
-                    Channel.Timestamps.resize(Times->count);
-                    cgltf_accessor_unpack_floats(Times, Channel.Timestamps.data(), Times->count);
+                    Channel.Timestamps.SetNum(IntCastChecked<int32>(Times->count));
+                    cgltf_accessor_unpack_floats(Times, Channel.Timestamps.GetData(), Times->count);
 
                     const size_t Components = cgltf_num_components(Values->type);
-                    TVector<float> Raw(Values->count * Components);
-                    cgltf_accessor_unpack_floats(Values, Raw.data(), Raw.size());
+                    TVector<float> Raw(IntCastChecked<int32>(Values->count * Components));
+                    cgltf_accessor_unpack_floats(Values, Raw.GetData(), Raw.Num());
 
                     // A root joint's keys take its non-joint parent as the bone did, each channel on its own since that parent scales uniformly.
-                    const auto Parent = RootJointParents.find(Source.target_node);
-                    const FTransform ParentWorld = Parent != RootJointParents.end() ? Parent->second : FTransform();
+                    const auto Parent = RootJointParents.Find(Source.target_node);
+                    const FTransform ParentWorld = Parent != nullptr ? (*Parent) : FTransform();
 
                     if (Channel.TargetPath == FAnimationChannel::ETargetPath::Translation)
                     {
-                        Channel.Translations.resize(Values->count);
-                        for (cgltf_size i = 0; i < Values->count; ++i)
+                        Channel.Translations.SetNum(IntCastChecked<int32>(Values->count));
+                        for (int32 i = 0; i < Channel.Translations.Num(); ++i)
                         {
                             const FVector3 Local = ToEngineSpace(FVector3(Raw[i * 3 + 0], Raw[i * 3 + 1], Raw[i * 3 + 2]));
                             Channel.Translations[i] = (ParentWorld.GetLocation() + ParentWorld.GetRotation() * (ParentWorld.GetScale() * Local)) * Options.Scale;
@@ -1539,32 +1545,32 @@ namespace Lumina
                     }
                     else if (Channel.TargetPath == FAnimationChannel::ETargetPath::Scale)
                     {
-                        Channel.Scales.resize(Values->count);
-                        for (cgltf_size i = 0; i < Values->count; ++i)
+                        Channel.Scales.SetNum(IntCastChecked<int32>(Values->count));
+                        for (int32 i = 0; i < Channel.Scales.Num(); ++i)
                         {
                             Channel.Scales[i] = ParentWorld.GetScale() * FVector3(Raw[i * 3 + 0], Raw[i * 3 + 1], Raw[i * 3 + 2]);
                         }
                     }
                     else
                     {
-                        Channel.Rotations.resize(Values->count);
-                        for (cgltf_size i = 0; i < Values->count; ++i)
+                        Channel.Rotations.SetNum(IntCastChecked<int32>(Values->count));
+                        for (int32 i = 0; i < Channel.Rotations.Num(); ++i)
                         {
                             Channel.Rotations[i] = ParentWorld.GetRotation() * ToEngineSpace(FQuat(Raw[i * 4 + 3], Raw[i * 4 + 0], Raw[i * 4 + 1], Raw[i * 4 + 2]));
                         }
                     }
 
-                    Clip->Duration = Math::Max(Clip->Duration, Channel.Timestamps.back());
-                    Clip->Channels.push_back(Move(Channel));
+                    Clip->Duration = Math::Max(Clip->Duration, Channel.Timestamps.Last());
+                    Clip->Channels.Add(Move(Channel));
                 }
 
-                OutData.Animations.push_back(Move(Clip));
+                OutData.Animations.Add(Move(Clip));
             }
         }
 
         LOG_INFO("[glTF] '{}': {} nodes, {} mesh instances -> {} unique meshes, {} materials, {} images.",
-                 SourceName.data(), OutData.SourceNodeCount, OutData.MeshInstances.size(),
-                 OutData.Resources.size(), OutData.Materials.size(), OutData.Images.size());
+                 SourceName.GetData(), OutData.SourceNodeCount, OutData.MeshInstances.Num(),
+                 OutData.Resources.Num(), OutData.Materials.Num(), OutData.Images.Num());
 
         return true;
     }

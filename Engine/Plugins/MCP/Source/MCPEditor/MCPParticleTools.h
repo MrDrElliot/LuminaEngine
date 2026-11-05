@@ -3,18 +3,43 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
-#include "MCPMaterialTools.h"
+#include "MCPToolTypes.h"
 
 #include "MCPParticleTools.generated.h"
 
 namespace Lumina
 {
     REFLECT()
+    enum class EParticleEmitterAction : uint8
+    {
+        Add,
+        AddAsset,
+        Remove,
+        MakeLocal,
+        SaveAsAsset,
+    };
+
+    REFLECT()
+    enum class EParticleModuleAction : uint8
+    {
+        Add,
+        Remove,
+        Move,
+    };
+
+    REFLECT()
+    enum class EParticleUserParameterAction : uint8
+    {
+        Set,
+        Remove,
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SParticleModuleTypeInfo
     {
         GENERATED_BODY()
 
-        // Type name to pass to particle.add_module.
+        // Type name to pass to particle.module Add.
         PROPERTY()
         FString Name;
 
@@ -24,7 +49,7 @@ namespace Lumina
         PROPERTY()
         FString Category;
 
-        // Spawn runs once per particle at birth and Update every frame after, Grid on every grid cell and Target on every render target texel.
+        // Spawn runs once per particle at birth, Update every frame, Grid per grid cell, Target per texel.
         PROPERTY()
         FString Stage;
 
@@ -45,7 +70,7 @@ namespace Lumina
         PROPERTY()
         FString Contains;
 
-        // Include each type's parameter schema, which is large. Off by default.
+        // Include each type's parameter schema, which is large.
         PROPERTY()
         bool bIncludeSchema = false;
     };
@@ -64,7 +89,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Position in its stage, which is what every module tool takes.
+        // Position in its stage, which every module tool takes.
         PROPERTY()
         int32 Index = 0;
 
@@ -97,7 +122,7 @@ namespace Lumina
         PROPERTY()
         bool bCompiled = false;
 
-        // Path of the emitter asset this system shares, or empty when the emitter belongs to the system.
+        // Path of the shared emitter asset, or empty when the emitter belongs to the system.
         PROPERTY()
         FString SharedAsset;
 
@@ -141,7 +166,7 @@ namespace Lumina
         PROPERTY()
         FString Type;
 
-        // The asset default as JSON, a number, a bool, or an object with X, Y, Z and W.
+        // The asset default as JSON: a number, a bool, or an object with X, Y, Z and W.
         PROPERTY()
         FString Value;
     };
@@ -154,7 +179,7 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        // Named values a module input binds to through its ParameterName, and a component can override from script.
+        // Named values a module input binds to through its ParameterName, overridable per component from script.
         PROPERTY()
         TVector<SParticleUserParameterInfo> UserParameters;
 
@@ -193,73 +218,61 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddParticleEmitterParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString System;
-
-        // Display name for the new emitter. Empty picks a unique one.
-        PROPERTY()
-        FString Name;
-
-        PROPERTY()
-        bool bStarterStack = true;
-    };
-
-    REFLECT()
     struct MCPEDITOR_API SParticleEmitterParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        EParticleEmitterAction Action = EParticleEmitterAction::Add;
+
+        PROPERTY()
         FString System;
 
-        // Emitter index, as particle.describe reports it.
+        // Emitter index, as particle.describe reports it. Remove, MakeLocal and SaveAsAsset.
         PROPERTY()
         int32 Emitter = 0;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SAddParticleEmitterAssetParams
-    {
-        GENERATED_BODY()
-
+        // Add only. Display name for the new emitter; empty picks a unique one.
         PROPERTY()
-        FString System;
+        FString Name;
 
-        // GUID of the emitter asset to share.
+        // AddAsset only. GUID of the emitter asset to share.
         PROPERTY()
         FString Asset;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SSaveParticleEmitterAssetParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString System;
-
-        PROPERTY()
-        int32 Emitter = 0;
-
-        // Virtual path of the new asset, such as /Game/Content/Effects/E_Sparks.lasset.
+        // SaveAsAsset only. Virtual path of the new asset, such as /Game/Content/Effects/E_Sparks.lasset.
         PROPERTY()
         FString Path;
+
+        // Add only. Start from the starter stack; off starts both stacks empty.
+        PROPERTY()
+        bool bStarterStack = true;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddParticleEmitterResult
+    struct MCPEDITOR_API SParticleEmitterResult
     {
         GENERATED_BODY()
 
+        // Add and AddAsset: index of the new emitter.
         PROPERTY()
         int32 Index = 0;
 
+        // Add and AddAsset: name of the new emitter.
         PROPERTY()
         FString Name;
+
+        // SaveAsAsset: GUID of the new emitter asset.
+        PROPERTY()
+        FString Guid;
+
+        // SaveAsAsset: path of the new emitter asset.
+        PROPERTY()
+        FString Path;
+
+        // Remove and MakeLocal.
+        PROPERTY()
+        bool bSucceeded = false;
     };
 
     REFLECT()
@@ -283,78 +296,56 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SAddParticleModuleParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString System;
-
-        PROPERTY()
-        int32 Emitter = 0;
-
-        // Module type name, from particle.list_module_types. The type decides its stage.
-        PROPERTY()
-        FString ModuleType;
-
-        // Position within its stage. Negative appends, but Solve Forces and Velocity usually belongs last.
-        PROPERTY()
-        int32 Index = -1;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SAddParticleModuleResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString Stage;
-
-        PROPERTY()
-        int32 Index = 0;
-
-        PROPERTY()
-        FString Values;
-    };
-
-    REFLECT()
     struct MCPEDITOR_API SParticleModuleParams
     {
         GENERATED_BODY()
 
         PROPERTY()
+        EParticleModuleAction Action = EParticleModuleAction::Add;
+
+        PROPERTY()
         FString System;
 
         PROPERTY()
         int32 Emitter = 0;
 
-        // Spawn, Update, Grid or Target.
+        // Remove and Move. Spawn, Update, Grid or Target.
         PROPERTY()
         FString Stage;
 
+        // Position in the stage. For Add, negative appends, though Solve Forces and Velocity usually goes last.
         PROPERTY()
-        int32 Index = 0;
+        int32 Index = -1;
+
+        // Move only.
+        PROPERTY()
+        int32 NewIndex = 0;
+
+        // Add only. Type name from particle.list_module_types, which decides the stage.
+        PROPERTY()
+        FString ModuleType;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SMoveParticleModuleParams
+    struct MCPEDITOR_API SParticleModuleResult
     {
         GENERATED_BODY()
 
-        PROPERTY()
-        FString System;
-
-        PROPERTY()
-        int32 Emitter = 0;
-
+        // Add: the stage the module joined.
         PROPERTY()
         FString Stage;
 
+        // Add: the module's position in its stage.
         PROPERTY()
         int32 Index = 0;
 
+        // Add: the module's settable fields, as JSON.
         PROPERTY()
-        int32 NewIndex = 0;
+        FString Values;
+
+        // Remove and Move.
+        PROPERTY()
+        bool bSucceeded = false;
     };
 
     REFLECT()
@@ -382,7 +373,6 @@ namespace Lumina
         FString Value;
     };
 
-    // Addresses a Graph Module by the Stage and Index the stack tools use.
     REFLECT()
     struct MCPEDITOR_API SParticleGraphParams
     {
@@ -394,6 +384,7 @@ namespace Lumina
         PROPERTY()
         int32 Emitter = 0;
 
+        // Stage and Index of the Graph Module, as the module tools take them.
         PROPERTY()
         FString Stage;
 
@@ -407,7 +398,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
-        TVector<SMaterialNodeInfo> Nodes;
+        TVector<SGraphNodeInfo> Nodes;
 
         // Node types particle.graph_add_node takes, including one per material formula.
         PROPERTY()
@@ -431,7 +422,7 @@ namespace Lumina
         PROPERTY()
         int32 Index = 0;
 
-        // A node name from particle.graph_describe's NodeTypes, such as Particle, Set Particle or a formula such as Inverse Lerp.
+        // A name from particle.graph_describe's NodeTypes, such as Set Particle or Inverse Lerp.
         PROPERTY()
         FString NodeType;
 
@@ -517,7 +508,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // An entity with a particle system component, in the scene editor.target_scene points at.
+        // An entity with a particle system component, in the scene editor.tabs Target points at.
         PROPERTY()
         FString Entity;
 
@@ -555,7 +546,7 @@ namespace Lumina
         PROPERTY()
         float Value = 0.0f;
 
-        // False until a copy of the grid has come back, which needs Read Back Grid on the emitter and a few frames.
+        // False until a grid copy has come back, which needs Read Back Grid on the emitter and a few frames.
         PROPERTY()
         bool bHasSnapshot = false;
 
@@ -580,9 +571,12 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SSetParticleUserParameterParams
+    struct MCPEDITOR_API SParticleUserParameterParams
     {
         GENERATED_BODY()
+
+        PROPERTY()
+        EParticleUserParameterAction Action = EParticleUserParameterAction::Set;
 
         PROPERTY()
         FString System;
@@ -590,25 +584,13 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        // Float, Int, Bool, Vec2, Vec3, Vec4 or Color.
+        // Set only. Float, Int, Bool, Vec2, Vec3, Vec4 or Color.
         PROPERTY()
         FString Type;
 
-        // A number, a bool, or an object with X, Y, Z and W, matching Type.
+        // Set only. A number, a bool, or an object with X, Y, Z and W, matching Type.
         PROPERTY(RawJson)
         FString Value;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SRemoveParticleUserParameterParams
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString System;
-
-        PROPERTY()
-        FString Name;
     };
 
     REFLECT()

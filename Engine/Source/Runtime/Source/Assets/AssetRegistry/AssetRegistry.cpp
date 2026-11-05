@@ -43,19 +43,19 @@ namespace Lumina
         FString AssetDbPath()
         {
             FString Out;
-            if (GEngine != nullptr && !GEngine->GetProjectPath().empty())
+            if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
             {
                 const FStringView Project = GEngine->GetProjectPath();
-                Out.assign(Project.data(), Project.size());
+                Out = FStringView(Project.GetData(), Project.Len());
             }
             else
             {
                 Out = Paths::GetEngineInstallDirectory();
             }
-            if (Out.empty()) return {};
-            while (!Out.empty() && Out.back() == '/')
+            if (Out.IsEmpty()) return {};
+            while (!Out.IsEmpty() && Out.Last() == '/')
             {
-                Out.pop_back();
+                Out.LeftChopInline(1);
             }
             Out += "/Intermediates/AssetRegistry.bin";
             return Out;
@@ -71,7 +71,7 @@ namespace Lumina
         int64 FileMTimeNanos(FStringView VirtualPath)
         {
             const FPathString Resolved = VFS::ResolvePath(VirtualPath);
-            return Resolved.empty() ? 0 : Filesystem::LastWriteTime(Resolved);
+            return Resolved.IsEmpty() ? 0 : Filesystem::LastWriteTime(Resolved);
         }
 
         // Read through the VFS so it works for any mounted alias, including a plugin's content.
@@ -82,7 +82,7 @@ namespace Lumina
             {
                 return 0;
             }
-            const uint64 H = Hash::XXHash::GetHash64(Bytes.data(), Bytes.size());
+            const uint64 H = Hash::XXHash::GetHash64(Bytes.GetData(), Bytes.Num());
             if (OutBytes)
             {
                 *OutBytes = Move(Bytes);
@@ -93,16 +93,16 @@ namespace Lumina
         // Returns the plugin name without the slash, or empty when the alias is not a plugin.
         FName ExtractOwningPlugin(FStringView VirtualPath)
         {
-            if (VirtualPath.empty() || VirtualPath[0] != '/')
+            if (VirtualPath.IsEmpty() || VirtualPath[0] != '/')
             {
                 return FName();
             }
-            size_t SecondSlash = VirtualPath.find('/', 1);
-            if (SecondSlash == FStringView::npos)
+            int32 SecondSlash = VirtualPath.Find('/', 1);
+            if (SecondSlash == Constants::kIndexNone)
             {
                 return FName();
             }
-            FStringView Alias = VirtualPath.substr(1, SecondSlash - 1);
+            FStringView Alias = VirtualPath.Mid(1, SecondSlash - 1);
             if (Alias == "Game" || Alias == "Engine" || Alias == "Config")
             {
                 return FName();
@@ -137,8 +137,8 @@ namespace Lumina
 
         TVector<FDiscoveredPackage> Packages;
         TVector<FFixedString> WalkedRoots;
-        Packages.reserve(256);
-        WalkedRoots.reserve(8);
+        Packages.Reserve(256);
+        WalkedRoots.Reserve(8);
 
         auto Callback = [&](const VFS::FFileInfo& File)
         {
@@ -148,14 +148,14 @@ namespace Lumina
             }
             if (File.IsLAsset())
             {
-                Packages.push_back(FDiscoveredPackage{ FFixedString(File.VirtualPath.c_str(), File.VirtualPath.size()), File.LastModifyTime, File.Size });
+                Packages.Emplace(FFixedString(*File.VirtualPath, File.VirtualPath.Len()), File.LastModifyTime, File.Size);
             }
         };
 
-        WalkedRoots.emplace_back(FFixedString("/Engine/Resources/Content"));
+        WalkedRoots.Emplace(FFixedString("/Engine/Resources/Content"));
         VFS::RecursiveDirectoryIterator("/Engine/Resources/Content", Callback);
 
-        WalkedRoots.emplace_back(FFixedString("/Game/Content"));
+        WalkedRoots.Emplace(FFixedString("/Game/Content"));
         VFS::RecursiveDirectoryIterator("/Game/Content", Callback);
         
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
@@ -169,43 +169,40 @@ namespace Lumina
                 continue;
             }
             const FString MountAlias = Plugin->GetMountAlias();
-            WalkedRoots.emplace_back(FFixedString(MountAlias.c_str()));
+            WalkedRoots.Emplace(FFixedString(*MountAlias));
             VFS::RecursiveDirectoryIterator(MountAlias, Callback);
         }
 
         // Snapshotted so completion can reap cache entries whose files no longer exist under a walked root.
         LastDiscoveryWalkedRoots = WalkedRoots;
-        LastDiscoveryVisitedPaths.clear();
-        LastDiscoveryVisitedPaths.reserve(Packages.size());
+        LastDiscoveryVisitedPaths.Reset();
+        LastDiscoveryVisitedPaths.Reserve(Packages.Num());
         for (const FDiscoveredPackage& Package : Packages)
         {
-            LastDiscoveryVisitedPaths.push_back(Package.Path);
+            LastDiscoveryVisitedPaths.Add(Package.Path);
         }
         Algo::Sort(LastDiscoveryVisitedPaths);
 
         RunTextAssetDiscovery();
         DiscoveryWalkMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - WalkStart);
 
-        const uint32 NumPackages = (uint32)Packages.size();
+        const uint32 NumPackages = (uint32)Packages.Num();
         if (NumPackages == 0)
         {
             OnInitialDiscoveryCompleted();
             return;
         }
 
-        Task::AsyncTask(NumPackages, NumPackages, [this, Packages = Move(Packages)] (uint32 Start, uint32 End, uint32)
+        Jobs::Spawn(Jobs::EJobPriority::Background, [](FAssetRegistry* Self, TVector<FDiscoveredPackage> Discovered) -> Jobs::TTask<void>
         {
-            for (uint32 i = Start; i < End; ++i)
+            for (const FDiscoveredPackage& Package : Discovered)
             {
-                const FDiscoveredPackage& Package = Packages[i];
-                ProcessPackage(FStringView(Package.Path.c_str(), Package.Path.size()), Package.MTimeNs, Package.FileSize);
+                Self->ProcessPackage(FStringView(*Package.Path, Package.Path.Len()), Package.MTimeNs, Package.FileSize);
             }
 
-            if (End == Packages.size())
-            {
-                OnInitialDiscoveryCompleted();
-            }
-        }, ETaskPriority::Background);
+            Self->OnInitialDiscoveryCompleted();
+            co_return;
+        }, this, Move(Packages));
     }
 
     void FAssetRegistry::OnInitialDiscoveryCompleted()
@@ -227,10 +224,10 @@ namespace Lumina
         }
         const double SaveMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - SaveStart);
 
-        ImGuiX::Notifications::NotifySuccess("Asset Registry Finished Initial Discovery: Num [{}]", Assets.size());
+        ImGuiX::Notifications::NotifySuccess("Asset Registry Finished Initial Discovery: Num [{}]", Assets.Num());
         LOG_INFO("Asset Registry Finished Initial Discovery: Num [{}] in {:.0f} ms (cache load {:.0f} ms, walk {:.0f} ms, "
                  "process {:.0f} ms with {} unchanged, {} rehashed, {} extracted, {} reaped, save {:.0f} ms{})",
-                 Assets.size(), PlatformTime::ToMilliseconds(PlatformTime::Cycles() - DiscoveryStartCycles),
+                 Assets.Num(), PlatformTime::ToMilliseconds(PlatformTime::Cycles() - DiscoveryStartCycles),
                  DiscoveryCacheLoadMs, DiscoveryWalkMs, ProcessMs, Unchanged, Rehashed, Extracted, Reaped, SaveMs,
                  bCacheChanged ? "" : ", skipped");
 
@@ -275,14 +272,14 @@ namespace Lumina
         {
             return false;
         }
-        auto Found = PathIndex.find(Key);
-        if (Found == PathIndex.end())
+        auto Found = PathIndex.Find(Key);
+        if (Found == nullptr)
         {
             return false;
         }
 
         // A classless entry was cached before its header was read; the UI font resolver keys on the class.
-        const FAssetData* Data = Found->second;
+        const FAssetData* Data = (*Found);
         return !Data->AssetClass.IsNone() && Data->SourceMTimeNs == MTimeNs && Data->FileSize == FileSize;
     }
 
@@ -293,13 +290,13 @@ namespace Lumina
         {
             RebuildPathIndex();
         }
-        auto Found = PathIndex.find(FString(VFS::RemoveExtension(Path)));
-        if (Found == PathIndex.end())
+        auto Found = PathIndex.Find(FString(VFS::RemoveExtension(Path)));
+        if (Found == nullptr)
         {
             return false;
         }
 
-        FAssetData* Data = Found->second;
+        FAssetData* Data = (*Found);
         if (Data->AssetClass.IsNone() || Data->ContentHash != ContentHash)
         {
             return false;
@@ -325,7 +322,7 @@ namespace Lumina
 
     void FAssetRegistry::DispatchRegistryChanged()
     {
-        // Asset creation runs on a task fiber, so broadcasting inline raced the main thread's redraw.
+        // Asset creation runs on a worker, so broadcasting inline raced the main thread's redraw.
         if (Threading::IsMainThread())
         {
             OnAssetRegistryUpdated.Broadcast();
@@ -379,7 +376,7 @@ namespace Lumina
         // Every create path saves before announcing, so the file's import table is the dependency list a fresh entry lacks.
         if (bOnDisk)
         {
-            ProcessPackagePath(FStringView(FilePath.c_str(), FilePath.size()));
+            ProcessPackagePath(FStringView(*FilePath, FilePath.Len()));
         }
 
         {
@@ -399,39 +396,40 @@ namespace Lumina
 
         // A replace import or a file dropped over an old one leaves a new GUID at a known path, and two entries for one path make lookups pick either.
         FString PathKey(VFS::RemoveExtension(AssetData->Path));
-        auto Stale = PathIndex.find(PathKey);
-        if (Stale != PathIndex.end())
+        auto Stale = PathIndex.Find(PathKey);
+        if (Stale != nullptr)
         {
-            auto Entry = Assets.find_as(Stale->second->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
-            if (Entry != Assets.end())
+            auto Entry = Assets.FindAs((*Stale)->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
+            if (Entry != nullptr)
             {
                 RetireLocked(*Entry);
-                Assets.erase(Entry);
+                Assets.Remove(*Entry);
             }
-            PathIndex.erase(Stale);
+            PathIndex.Remove(PathKey);
         }
 
         // An external move keeps the GUID, so a stale entry would otherwise leave a dangling old path.
-        auto SameGuid = Assets.find_as(AssetData->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
-        if (SameGuid != Assets.end())
+        auto SameGuid = Assets.FindAs(AssetData->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
+        if (SameGuid != nullptr)
         {
-            auto OldKey = PathIndex.find(FString(VFS::RemoveExtension((*SameGuid)->Path)));
-            if (OldKey != PathIndex.end() && OldKey->second == SameGuid->get())
+            const FString OldPathKey(VFS::RemoveExtension((*SameGuid)->Path));
+            auto OldKey = PathIndex.Find(OldPathKey);
+            if (OldKey != nullptr && (*OldKey) == SameGuid->get())
             {
-                PathIndex.erase(OldKey);
+                PathIndex.Remove(OldPathKey);
             }
             RetireLocked(*SameGuid);
-            Assets.erase(SameGuid);
+            Assets.Remove(*SameGuid);
         }
 
         FAssetData* Added = AssetData.get();
-        Assets.emplace(Move(AssetData));
+        Assets.TryAdd(Move(AssetData));
         PathIndex[Move(PathKey)] = Added;
     }
 
     void FAssetRegistry::RetireLocked(const TSharedPtr<FAssetData>& Entry)
     {
-        RetiredAssets.push_back(Entry);
+        RetiredAssets.Add(Entry);
         if (!bReclaimQueued.exchange(true, std::memory_order_acq_rel))
         {
             MainThread::Enqueue([] { FAssetRegistry::Get().ReclaimRetired(); });
@@ -444,7 +442,7 @@ namespace Lumina
         {
             RetireLocked(Entry);
         }
-        Assets.clear();
+        Assets.Reset();
     }
 
     void FAssetRegistry::ReclaimRetired()
@@ -454,7 +452,7 @@ namespace Lumina
         {
             FWriteScopeLock Lock(AssetsMutex);
             Freed = Move(RetiredAssets);
-            RetiredAssets.clear();
+            RetiredAssets.Reset();
             bReclaimQueued.store(false, std::memory_order_release);
         }
     }
@@ -465,15 +463,15 @@ namespace Lumina
             FWriteScopeLock Lock(AssetsMutex);
             InvalidatePathIndex();
 
-            auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
-            if (It == Assets.end())
+            auto It = Assets.FindAs(GUID, FGuidHash(), FAssetDataGuidEqual());
+            if (It == nullptr)
             {
                 LOG_WARN("AssetRegistry::AssetDeleted: GUID not present in registry; ignoring");
                 return;
             }
 
             RetireLocked(*It);
-            Assets.erase(It);
+            Assets.Remove(*It);
         }
 
         {
@@ -511,8 +509,8 @@ namespace Lumina
             {
                 LOG_WARN("AssetRegistry::AssetRenamed: dropping stale entry at {} colliding with rename {} -> {}", NewPath, OldPath, NewPath);
                 RetireLocked(*Colliding);
-                Assets.erase(Colliding);
-                // hash_set::erase can invalidate other iterators; re-find.
+                Assets.Remove(Colliding);
+                // Remove can invalidate other iterators, so re-find.
                 It = Algo::FindIf(Assets, [&OldPath](const TSharedPtr<FAssetData>& Asset)
                 {
                     return Asset->Path == OldPath;
@@ -521,7 +519,7 @@ namespace Lumina
             }
 
             const TSharedPtr<FAssetData>& Data = *It;
-            Data->Path.assign(NewPath);
+            Data->Path = NewPath;
             Data->AssetName    = VFS::FileName(NewPath, true);
             Data->OwningPlugin = ExtractOwningPlugin(NewPath);
         }
@@ -547,18 +545,18 @@ namespace Lumina
     {
         FReadScopeLock Lock(AssetsMutex);
 
-        auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
-        return It == Assets.end() ? nullptr : It->get();
+        auto It = Assets.FindAs(GUID, FGuidHash(), FAssetDataGuidEqual());
+        return It == nullptr ? nullptr : It->get();
     }
 
     void FAssetRegistry::RebuildPathIndex() const
     {
-        PathIndex.clear();
-        PathIndex.reserve(Assets.size());
+        PathIndex.Reset();
+        PathIndex.Reserve(Assets.Num());
 
         for (const TSharedPtr<FAssetData>& Data : Assets)
         {
-            PathIndex.emplace(FString(VFS::RemoveExtension(Data->Path)), Data.get());
+            PathIndex.TryAdd(FString(VFS::RemoveExtension(Data->Path)), Data.get());
         }
         bPathIndexValid = true;
     }
@@ -573,8 +571,8 @@ namespace Lumina
             FReadScopeLock Lock(AssetsMutex);
             if (bPathIndexValid)
             {
-                auto Found = PathIndex.find(Key);
-                return Found == PathIndex.end() ? nullptr : Found->second;
+                auto Found = PathIndex.Find(Key);
+                return Found == nullptr ? nullptr : (*Found);
             }
         }
 
@@ -584,14 +582,14 @@ namespace Lumina
             RebuildPathIndex();
         }
 
-        auto It = PathIndex.find(Key);
-        return It == PathIndex.end() ? nullptr : It->second;
+        auto It = PathIndex.Find(Key);
+        return It == nullptr ? nullptr : (*It);
     }
 
     void FAssetRegistry::GetAssetsByPath(TSpan<const FStringView> Paths, TSpan<const FAssetData*> OutAssets) const
     {
         LUMINA_PROFILE_SCOPE();
-        DEBUG_ASSERT(Paths.size() == OutAssets.size());
+        DEBUG_ASSERT(Paths.Num() == OutAssets.Num());
 
         // The index can be invalidated between the rebuild and the read, so the read retries until it sees a valid one.
         while (true)
@@ -600,10 +598,10 @@ namespace Lumina
                 FReadScopeLock Lock(AssetsMutex);
                 if (bPathIndexValid)
                 {
-                    for (size_t Index = 0; Index < Paths.size(); ++Index)
+                    for (int32 Index = 0; Index < Paths.Num(); ++Index)
                     {
-                        auto Found = PathIndex.find(VFS::RemoveExtension(Paths[Index]));
-                        OutAssets[Index] = Found == PathIndex.end() ? nullptr : Found->second;
+                        auto Found = PathIndex.Find(VFS::RemoveExtension(Paths[Index]));
+                        OutAssets[Index] = Found == nullptr ? nullptr : (*Found);
                     }
                     return;
                 }
@@ -617,12 +615,12 @@ namespace Lumina
         FReadScopeLock Lock(AssetsMutex);
 
         TVector<FAssetData*> Datas;
-        Datas.reserve(Assets.size() / 2);
+        Datas.Reserve(Assets.Num() / 2);
         for (const TSharedPtr<FAssetData>& Data : Assets)
         {
             if (Predicate(*Data))
             {
-                Datas.emplace_back(Data.get());
+                Datas.Emplace(Data.get());
             }
         }
 
@@ -637,13 +635,13 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         TVector<FFixedString> Roots;
-        Roots.emplace_back(FFixedString("/Engine/Resources/Content"));
-        Roots.emplace_back(FFixedString("/Game/Content"));
+        Roots.Emplace(FFixedString("/Engine/Resources/Content"));
+        Roots.Emplace(FFixedString("/Game/Content"));
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
             if (!Plugin->IsEnabled())        continue;
             if (!Plugin->IsContentMounted()) continue;
-            Roots.emplace_back(FFixedString(Plugin->GetMountAlias().c_str()));
+            Roots.Emplace(FFixedString(*Plugin->GetMountAlias()));
         }
 
         FTextAssetMap Rebuilt;
@@ -651,7 +649,7 @@ namespace Lumina
         auto Callback = [&](const VFS::FFileInfo& File)
         {
             if (File.IsDirectory()) return;
-            const FStringView Vp(File.VirtualPath.c_str(), File.VirtualPath.size());
+            const FStringView Vp(*File.VirtualPath, File.VirtualPath.Len());
             if (TextAssetSidecar::IsSidecarPath(Vp)) return;
 
             const ETextAssetKind Kind = TextAsset::KindFromPath(Vp);
@@ -662,22 +660,22 @@ namespace Lumina
 
             auto Data = MakeUnique<FTextAssetData>();
             Data->Guid          = Guid;
-            Data->Path          .assign(Vp);
+            Data->Path = Vp;
             Data->Name          = VFS::FileName(Vp, true);
             Data->Kind          = Kind;
             Data->OwningPlugin  = ExtractOwningPlugin(Vp);
             Data->SourceMTimeNs = FileMTimeNanos(Vp);
 
             // The first of two files sharing a stale GUID wins, and the duplicate re-mints next pass.
-            if (Rebuilt.find_as(Guid, FGuidHash(), FTextAssetGuidEqual()) == Rebuilt.end())
+            if (Rebuilt.FindAs(Guid, FGuidHash(), FTextAssetGuidEqual()) == nullptr)
             {
-                Rebuilt.emplace(Move(Data));
+                Rebuilt.TryAdd(Move(Data));
             }
         };
 
         for (const FFixedString& Root : Roots)
         {
-            VFS::RecursiveDirectoryIterator(FStringView(Root.c_str(), Root.size()), Callback);
+            VFS::RecursiveDirectoryIterator(FStringView(*Root, Root.Len()), Callback);
         }
 
         FWriteScopeLock Lock(TextAssetsMutex);
@@ -705,16 +703,16 @@ namespace Lumina
 
         auto Data = MakeUnique<FTextAssetData>();
         Data->Guid          = Guid;
-        Data->Path          .assign(Path);
+        Data->Path = Path;
         Data->Name          = VFS::FileName(Path, true);
         Data->Kind          = Kind;
         Data->OwningPlugin  = ExtractOwningPlugin(Path);
         Data->SourceMTimeNs = FileMTimeNanos(Path);
 
         FWriteScopeLock Lock(TextAssetsMutex);
-        if (TextAssets.find_as(Guid, FGuidHash(), FTextAssetGuidEqual()) == TextAssets.end())
+        if (TextAssets.FindAs(Guid, FGuidHash(), FTextAssetGuidEqual()) == nullptr)
         {
-            TextAssets.emplace(Move(Data));
+            TextAssets.TryAdd(Move(Data));
         }
         return Guid;
     }
@@ -722,8 +720,8 @@ namespace Lumina
     FTextAssetData* FAssetRegistry::GetTextAssetByGUID(const FGuid& GUID) const
     {
         FReadScopeLock Lock(TextAssetsMutex);
-        auto It = TextAssets.find_as(GUID, FGuidHash(), FTextAssetGuidEqual());
-        return It == TextAssets.end() ? nullptr : It->get();
+        auto It = TextAssets.FindAs(GUID, FGuidHash(), FTextAssetGuidEqual());
+        return It == nullptr ? nullptr : It->get();
     }
 
     FTextAssetData* FAssetRegistry::GetTextAssetByPath(FStringView Path) const
@@ -732,7 +730,7 @@ namespace Lumina
         const FStringView PathNoExt = VFS::RemoveExtension(Path);
         auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
         {
-            return VFS::RemoveExtension(FStringView(Data->Path.c_str(), Data->Path.size())) == PathNoExt;
+            return VFS::RemoveExtension(FStringView(*Data->Path, Data->Path.Len())) == PathNoExt;
         });
         return It == TextAssets.end() ? nullptr : It->get();
     }
@@ -745,7 +743,7 @@ namespace Lumina
         {
             if (Kind == ETextAssetKind::None || Data->Kind == Kind)
             {
-                Out.push_back(Data.get());
+                Out.Add(Data.get());
             }
         }
         return Out;
@@ -768,7 +766,7 @@ namespace Lumina
 
             auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
-                return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
+                return FStringView(*Data->Path, Data->Path.Len()) == OldPath;
             });
             if (It == TextAssets.end())
             {
@@ -779,20 +777,20 @@ namespace Lumina
             const FGuid RenamedGuid = (*It)->Guid;
             auto Colliding = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
-                return Data->Guid != RenamedGuid && FStringView(Data->Path.c_str(), Data->Path.size()) == NewPath;
+                return Data->Guid != RenamedGuid && FStringView(*Data->Path, Data->Path.Len()) == NewPath;
             });
             if (Colliding != TextAssets.end())
             {
-                TextAssets.erase(Colliding);
+                TextAssets.Remove(Colliding);
                 It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
                 {
-                    return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
+                    return FStringView(*Data->Path, Data->Path.Len()) == OldPath;
                 });
                 if (It == TextAssets.end()) return;
             }
 
             const TUniquePtr<FTextAssetData>& Data = *It;
-            Data->Path.assign(NewPath);
+            Data->Path = NewPath;
             Data->Name         = VFS::FileName(NewPath, true);
             Data->Kind         = TextAsset::KindFromPath(NewPath);
             Data->OwningPlugin = ExtractOwningPlugin(NewPath);
@@ -815,11 +813,11 @@ namespace Lumina
             FWriteScopeLock Lock(TextAssetsMutex);
             auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
-                return FStringView(Data->Path.c_str(), Data->Path.size()) == Path;
+                return FStringView(*Data->Path, Data->Path.Len()) == Path;
             });
             if (It != TextAssets.end())
             {
-                TextAssets.erase(It);
+                TextAssets.Remove(It);
             }
         }
 
@@ -834,28 +832,28 @@ namespace Lumina
             FReadScopeLock Lock(TextAssetsMutex);
             for (const TUniquePtr<FTextAssetData>& Data : TextAssets)
             {
-                const FStringView P(Data->Path.c_str(), Data->Path.size());
+                const FStringView P(*Data->Path, Data->Path.Len());
                 if (VFS::IsUnderDirectory(OldDir, P))
                 {
-                    OldPaths.emplace_back(Data->Path);
+                    OldPaths.Emplace(Data->Path);
                 }
             }
         }
 
         for (const FFixedString& Old : OldPaths)
         {
-            const FStringView OldView(Old.c_str(), Old.size());
+            const FStringView OldView(*Old, Old.Len());
             // new = NewDir + (Old - OldDir)
-            FStringView Tail = OldView.substr(OldDir.size());
-            FFixedString NewPath(NewDir.data(), NewDir.size());
-            NewPath.append(Tail.data(), Tail.size());
-            TextAssetRenamed(OldView, FStringView(NewPath.c_str(), NewPath.size()));
+            FStringView Tail = OldView.Mid(OldDir.Len());
+            FFixedString NewPath(NewDir.GetData(), NewDir.Len());
+            NewPath.Append(Tail.GetData(), Tail.Len());
+            TextAssetRenamed(OldView, FStringView(*NewPath, NewPath.Len()));
         }
     }
 
     size_t FAssetRegistry::ReapStaleEntries()
     {
-        if (LastDiscoveryWalkedRoots.empty())
+        if (LastDiscoveryWalkedRoots.IsEmpty())
         {
             return 0;
         }
@@ -867,13 +865,13 @@ namespace Lumina
         for (auto It = Assets.begin(); It != Assets.end(); )
         {
             const FFixedString& Path = (*It)->Path;
-            const FStringView PathView(Path.c_str(), Path.size());
+            const FStringView PathView(*Path, Path.Len());
 
             bool bUnderWalkedRoot = false;
             for (const FFixedString& Root : LastDiscoveryWalkedRoots)
             {
-                const FStringView RootView(Root.c_str(), Root.size());
-                if (PathView.starts_with(RootView))
+                const FStringView RootView(*Root, Root.Len());
+                if (PathView.StartsWith(RootView))
                 {
                     bUnderWalkedRoot = true;
                     break;
@@ -892,7 +890,7 @@ namespace Lumina
             if (!bVisited)
             {
                 RetireLocked(*It);
-                It = Assets.erase(It);
+                It = Assets.Remove(It);
                 ++Reaped;
             }
             else
@@ -908,8 +906,8 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        LastDiscoveryWalkedRoots.clear();
-        LastDiscoveryVisitedPaths.clear();
+        LastDiscoveryWalkedRoots.Reset();
+        LastDiscoveryVisitedPaths.Reset();
         return Reaped;
     }
 
@@ -918,14 +916,14 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Asset Registry");
         // Caller holds ReverseMapMutex write lock.
-        ReverseDepMap.clear();
+        ReverseDepMap.Reset();
         FReadScopeLock AssetsLock(AssetsMutex);
-        ReverseDepMap.reserve(Assets.size());
+        ReverseDepMap.Reserve(Assets.Num());
         for (const TSharedPtr<FAssetData>& Data : Assets)
         {
             for (const FAssetDependency& Dep : Data->Dependencies)
             {
-                ReverseDepMap[Dep.TargetGUID].push_back(Data->AssetGUID);
+                ReverseDepMap[Dep.TargetGUID].Add(Data->AssetGUID);
             }
         }
         bReverseMapDirty = false;
@@ -945,17 +943,17 @@ namespace Lumina
         TVector<FAssetData*> Result;
         {
             FReadScopeLock RLock(ReverseMapMutex);
-            auto It = ReverseDepMap.find(GUID);
-            if (It == ReverseDepMap.end()) return Result;
+            auto It = ReverseDepMap.Find(GUID);
+            if (It == nullptr) return Result;
 
             FReadScopeLock ALock(AssetsMutex);
-            Result.reserve(It->second.size());
-            for (const FGuid& ReferrerGuid : It->second)
+            Result.Reserve(It->Num());
+            for (const FGuid& ReferrerGuid : (*It))
             {
-                auto AIt = Assets.find_as(ReferrerGuid, FGuidHash(), FAssetDataGuidEqual());
-                if (AIt != Assets.end())
+                auto AIt = Assets.FindAs(ReferrerGuid, FGuidHash(), FAssetDataGuidEqual());
+                if (AIt != nullptr)
                 {
-                    Result.push_back(AIt->get());
+                    Result.Add(AIt->get());
                 }
             }
         }
@@ -965,7 +963,7 @@ namespace Lumina
     void FAssetRegistry::ProcessPackagePath(FStringView Path)
     {
         const FPathString Resolved = VFS::ResolvePath(Path);
-        const Filesystem::FFileStat Stat = Resolved.empty() ? Filesystem::FFileStat{} : Filesystem::Stat(Resolved);
+        const Filesystem::FFileStat Stat = Resolved.IsEmpty() ? Filesystem::FFileStat{} : Filesystem::Stat(Resolved);
         ProcessPackage(Path, Stat.bValid ? Stat.LastModifyTime : 0, Stat.bValid ? Stat.Size : 0);
     }
 
@@ -988,7 +986,7 @@ namespace Lumina
         }
         DiscoveryExtracted.fetch_add(1, std::memory_order_relaxed);
 
-        if (RawBytes.empty())
+        if (RawBytes.IsEmpty())
         {
             LOG_ERROR("AssetRegistry: failed to read {}", Path);
             RecordFailedAsset(Path);
@@ -1004,7 +1002,7 @@ namespace Lumina
             return;
         }
 
-        if (Bytes.size() < sizeof(FPackageHeader))
+        if (static_cast<size_t>(Bytes.Num()) < sizeof(FPackageHeader))
         {
             LOG_ERROR("AssetRegistry: {} is too small to be a valid package", Path);
             RecordFailedAsset(Path);
@@ -1043,7 +1041,7 @@ namespace Lumina
         }
         Reader.SetNameTable(&Names);
 
-        if (Header.ExportTableOffset < 0 || static_cast<size_t>(Header.ExportTableOffset) > Bytes.size())
+        if (Header.ExportTableOffset < 0 || Header.ExportTableOffset > Bytes.Num())
         {
             LOG_ERROR("AssetRegistry: {} has out-of-range export table offset", Path);
             RecordFailedAsset(Path);
@@ -1071,21 +1069,21 @@ namespace Lumina
         TVector<FAssetDependency> Dependencies;
         TVector<FAssetBundleEntry> Bundles;
         if (Header.ImportTableOffset >= 0
-            && static_cast<size_t>(Header.ImportTableOffset) <= Bytes.size())
+            && Header.ImportTableOffset <= Bytes.Num())
         {
             Reader.Seek(Header.ImportTableOffset);
             TVector<FObjectImport> Imports;
             Reader << Imports;
-            Dependencies.reserve(Imports.size());
+            Dependencies.Reserve(Imports.Num());
             for (const FObjectImport& Import : Imports)
             {
                 FAssetDependency Dep;
                 Dep.TargetGUID = Import.ObjectGUID;
                 Dep.Type       = Import.Type;
-                Dependencies.emplace_back(Dep);
+                Dependencies.Emplace(Dep);
                 for (const FName& Bundle : Import.Bundles)
                 {
-                    Bundles.push_back({ Bundle, Import.ObjectGUID });
+                    Bundles.Emplace(Bundle, Import.ObjectGUID);
                 }
             }
         }
@@ -1094,7 +1092,7 @@ namespace Lumina
         AssetData->AssetClass     = Export->ClassName;
         AssetData->AssetGUID      = Export->ObjectGUID;
         AssetData->AssetName      = Export->ObjectName;
-        AssetData->Path           .assign(Path);
+        AssetData->Path = Path;
         AssetData->ContentHash    = Hash;
         AssetData->SourceMTimeNs  = MTimeNs;
         AssetData->FileSize       = FileSize;
@@ -1109,7 +1107,7 @@ namespace Lumina
     void FAssetRegistry::RecordFailedAsset(FStringView Path)
     {
         FWriteScopeLock Lock(FailedAssetsMutex);
-        FailedAssets.emplace_back(Path.data(), Path.size());
+        FailedAssets.Emplace(Path.GetData(), Path.Len());
     }
 
     void FAssetRegistry::ClearAssets()
@@ -1122,12 +1120,12 @@ namespace Lumina
 
             {
                 FWriteScopeLock TextLock(TextAssetsMutex);
-                TextAssets.clear();
+                TextAssets.Reset();
             }
 
             {
                 FWriteScopeLock RLock(ReverseMapMutex);
-                ReverseDepMap.clear();
+                ReverseDepMap.Reset();
                 bReverseMapDirty = false;
             }
         }
@@ -1141,21 +1139,21 @@ namespace Lumina
         Ar << Tag;
 
         FReadScopeLock Lock(AssetsMutex);
-        uint32 Count = (uint32)Assets.size();
+        uint32 Count = (uint32)Assets.Num();
         Ar << Count;
 
         for (const TSharedPtr<FAssetData>& Data : Assets)
         {
-            Ar << const_cast<FGuid&>(Data->AssetGUID);
-            Ar << const_cast<FFixedString&>(Data->Path);
-            Ar << const_cast<FName&>(Data->AssetName);
-            Ar << const_cast<FName&>(Data->AssetClass);
-            Ar << const_cast<uint64&>(Data->ContentHash);
-            Ar << const_cast<int64&>(Data->SourceMTimeNs);
+            Ar << Data->AssetGUID;
+            Ar << Data->Path;
+            Ar << Data->AssetName;
+            Ar << Data->AssetClass;
+            Ar << Data->ContentHash;
+            Ar << Data->SourceMTimeNs;
             uint32 Flags = (uint32)Data->Flags;
             Ar << Flags;
 
-            uint32 DepCount = (uint32)Data->Dependencies.size();
+            uint32 DepCount = (uint32)Data->Dependencies.Num();
             Ar << DepCount;
             for (const FAssetDependency& Dep : Data->Dependencies)
             {
@@ -1164,10 +1162,10 @@ namespace Lumina
                 Ar << T;
             }
 
-            Ar << const_cast<FName&>(Data->OwnerChunk);
-            Ar << const_cast<FName&>(Data->OwningPlugin);
+            Ar << Data->OwnerChunk;
+            Ar << Data->OwningPlugin;
 
-            uint32 BundleCount = (uint32)Data->Bundles.size();
+            uint32 BundleCount = (uint32)Data->Bundles.Num();
             Ar << BundleCount;
             for (const FAssetBundleEntry& Entry : Data->Bundles)
             {
@@ -1178,17 +1176,17 @@ namespace Lumina
 
         // Text-asset identity table (v2+).
         FReadScopeLock TextLock(TextAssetsMutex);
-        uint32 TextCount = (uint32)TextAssets.size();
+        uint32 TextCount = (uint32)TextAssets.Num();
         Ar << TextCount;
         for (const TUniquePtr<FTextAssetData>& Data : TextAssets)
         {
-            Ar << const_cast<FGuid&>(Data->Guid);
-            Ar << const_cast<FFixedString&>(Data->Path);
-            Ar << const_cast<FName&>(Data->Name);
+            Ar << Data->Guid;
+            Ar << Data->Path;
+            Ar << Data->Name;
             uint8 Kind = (uint8)Data->Kind;
             Ar << Kind;
-            Ar << const_cast<FName&>(Data->OwningPlugin);
-            Ar << const_cast<int64&>(Data->SourceMTimeNs);
+            Ar << Data->OwningPlugin;
+            Ar << Data->SourceMTimeNs;
         }
     }
 
@@ -1212,7 +1210,7 @@ namespace Lumina
         FWriteScopeLock Lock(AssetsMutex);
         InvalidatePathIndex();
         RetireAllLocked();
-        Assets.reserve(Count);
+        Assets.Reserve(Count);
 
         for (uint32 i = 0; i < Count && !Ar.HasError(); ++i)
         {
@@ -1234,7 +1232,7 @@ namespace Lumina
                 Ar.SetHasError(true);
                 break;
             }
-            Data->Dependencies.resize(DepCount);
+            Data->Dependencies.SetNum(DepCount);
             for (uint32 d = 0; d < DepCount; ++d)
             {
                 Ar << Data->Dependencies[d].TargetGUID;
@@ -1253,20 +1251,20 @@ namespace Lumina
                 Ar.SetHasError(true);
                 break;
             }
-            Data->Bundles.resize(BundleCount);
+            Data->Bundles.SetNum(BundleCount);
             for (FAssetBundleEntry& Entry : Data->Bundles)
             {
                 Ar << Entry.Bundle;
                 Ar << Entry.Target;
             }
 
-            Assets.emplace(Move(Data));
+            Assets.TryAdd(Move(Data));
         }
 
         // Text-asset identity table (v2+).
         {
             FWriteScopeLock TextLock(TextAssetsMutex);
-            TextAssets.clear();
+            TextAssets.Reset();
 
             uint32 TextCount = 0;
             Ar << TextCount;
@@ -1275,7 +1273,7 @@ namespace Lumina
                 Ar.SetHasError(true);
                 TextCount = 0;
             }
-            TextAssets.reserve(TextCount);
+            TextAssets.Reserve(TextCount);
             for (uint32 i = 0; i < TextCount && !Ar.HasError(); ++i)
             {
                 auto Data = MakeUnique<FTextAssetData>();
@@ -1288,9 +1286,9 @@ namespace Lumina
                 Ar << Data->OwningPlugin;
                 Ar << Data->SourceMTimeNs;
 
-                if (TextAssets.find_as(Data->Guid, FGuidHash(), FTextAssetGuidEqual()) == TextAssets.end())
+                if (TextAssets.FindAs(Data->Guid, FGuidHash(), FTextAssetGuidEqual()) == nullptr)
                 {
-                    TextAssets.emplace(Move(Data));
+                    TextAssets.TryAdd(Move(Data));
                 }
             }
         }
@@ -1321,12 +1319,12 @@ namespace Lumina
             FString Text;
             if (Ar.IsWriting() && !Name.IsNone())
             {
-                Text = Name.c_str();
+                Text = *Name;
             }
             Ar << Text;
             if (Ar.IsReading())
             {
-                Name = Text.empty() ? FName() : FName(Text);
+                Name = Text.IsEmpty() ? FName() : FName(Text);
             }
         }
 
@@ -1347,7 +1345,7 @@ namespace Lumina
             SerializeName(Ar, Data.OwnerChunk);
             SerializeName(Ar, Data.OwningPlugin);
 
-            uint32 DependencyCount = (uint32)Data.Dependencies.size();
+            uint32 DependencyCount = (uint32)Data.Dependencies.Num();
             Ar << DependencyCount;
             if (Ar.IsReading())
             {
@@ -1356,7 +1354,7 @@ namespace Lumina
                     Ar.SetHasError(true);
                     return;
                 }
-                Data.Dependencies.resize(DependencyCount);
+                Data.Dependencies.SetNum(DependencyCount);
             }
             for (FAssetDependency& Dependency : Data.Dependencies)
             {
@@ -1370,7 +1368,7 @@ namespace Lumina
             {
                 return;
             }
-            uint32 BundleCount = (uint32)Data.Bundles.size();
+            uint32 BundleCount = (uint32)Data.Bundles.Num();
             Ar << BundleCount;
             if (Ar.IsReading())
             {
@@ -1379,7 +1377,7 @@ namespace Lumina
                     Ar.SetHasError(true);
                     return;
                 }
-                Data.Bundles.resize(BundleCount);
+                Data.Bundles.SetNum(BundleCount);
             }
             for (FAssetBundleEntry& Entry : Data.Bundles)
             {
@@ -1406,7 +1404,7 @@ namespace Lumina
     void FAssetRegistry::SaveCache() const
     {
         const FString CachePath = AssetDbPath();
-        if (CachePath.empty()) return;
+        if (CachePath.IsEmpty()) return;
 
         Filesystem::MakeParentDirectoryTree(CachePath);
 
@@ -1420,7 +1418,7 @@ namespace Lumina
 
         {
             FReadScopeLock Lock(AssetsMutex);
-            uint32 Count = (uint32)Assets.size();
+            uint32 Count = (uint32)Assets.Num();
             Writer << Count;
             for (const TSharedPtr<FAssetData>& Data : Assets)
             {
@@ -1430,7 +1428,7 @@ namespace Lumina
 
         {
             FReadScopeLock TextLock(TextAssetsMutex);
-            uint32 Count = (uint32)TextAssets.size();
+            uint32 Count = (uint32)TextAssets.Num();
             Writer << Count;
             for (const TUniquePtr<FTextAssetData>& Data : TextAssets)
             {
@@ -1448,7 +1446,7 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Asset Registry");
         const FString CachePath = AssetDbPath();
-        if (CachePath.empty()) return false;
+        if (CachePath.IsEmpty()) return false;
 
         // A first launch has no cache, so exit quietly and let the full rescan handle it.
         if (!Filesystem::Exists(CachePath))
@@ -1457,7 +1455,7 @@ namespace Lumina
         }
 
         TVector<uint8> Bytes;
-        if (!FileHelper::LoadFileToArray(Bytes, CachePath) || Bytes.empty())
+        if (!FileHelper::LoadFileToArray(Bytes, CachePath) || Bytes.IsEmpty())
         {
             return false;
         }
@@ -1477,12 +1475,12 @@ namespace Lumina
         uint32 AssetCount = 0;
         Reader << AssetCount;
         TVector<TSharedPtr<FAssetData>> LoadedAssets;
-        LoadedAssets.reserve(Reader.HasError() ? 0 : Math::Min<uint32>(AssetCount, (uint32)(Bytes.size() / 32)));
+        LoadedAssets.Reserve(Reader.HasError() ? 0 : Math::Min<uint32>(AssetCount, (uint32)(Bytes.Num() / 32)));
         for (uint32 i = 0; i < AssetCount && !Reader.HasError(); ++i)
         {
             auto Data = MakeShared<FAssetData>();
             SerializeAssetEntry(Reader, *Data, Version);
-            LoadedAssets.push_back(Move(Data));
+            LoadedAssets.Add(Move(Data));
         }
 
         uint32 TextCount = 0;
@@ -1492,7 +1490,7 @@ namespace Lumina
         {
             auto Data = MakeUnique<FTextAssetData>();
             SerializeTextEntry(Reader, *Data);
-            LoadedText.push_back(Move(Data));
+            LoadedText.Add(Move(Data));
         }
 
         if (Reader.HasError())
@@ -1505,22 +1503,22 @@ namespace Lumina
             FWriteScopeLock Lock(AssetsMutex);
             InvalidatePathIndex();
             RetireAllLocked();
-            Assets.reserve(LoadedAssets.size());
+            Assets.Reserve(LoadedAssets.Num());
             for (TSharedPtr<FAssetData>& Data : LoadedAssets)
             {
-                Assets.emplace(Move(Data));
+                Assets.TryAdd(Move(Data));
             }
         }
 
         {
             FWriteScopeLock TextLock(TextAssetsMutex);
-            TextAssets.clear();
-            TextAssets.reserve(LoadedText.size());
+            TextAssets.Reset();
+            TextAssets.Reserve(LoadedText.Num());
             for (TUniquePtr<FTextAssetData>& Data : LoadedText)
             {
-                if (TextAssets.find_as(Data->Guid, FGuidHash(), FTextAssetGuidEqual()) == TextAssets.end())
+                if (TextAssets.FindAs(Data->Guid, FGuidHash(), FTextAssetGuidEqual()) == nullptr)
                 {
-                    TextAssets.emplace(Move(Data));
+                    TextAssets.TryAdd(Move(Data));
                 }
             }
         }
@@ -1530,7 +1528,7 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        LOG_INFO("AssetRegistry: loaded {} entries from cache {}", Assets.size(), CachePath);
+        LOG_INFO("AssetRegistry: loaded {} entries from cache {}", Assets.Num(), CachePath);
         return true;
     }
 }

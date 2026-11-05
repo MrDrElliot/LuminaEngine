@@ -364,16 +364,16 @@ namespace Lumina
 
         ImGui::SeparatorText("Foliage Types");
 
-        const int32 TypeCount = (int32)Foliage.Types.size();
+        const int32 TypeCount = Foliage.Types.Num();
 
         // One pass rather than a scan per type, and this is the only place painted counts are visible.
         TVector<int32> Counts;
-        Counts.resize((size_t)Math::Max(TypeCount, 1), 0);
+        Counts.SetNum(Math::Max(TypeCount, 1), 0);
         for (const SFoliageInstance& Inst : Foliage.Instances)
         {
             if (Inst.TypeIndex >= 0 && Inst.TypeIndex < TypeCount)
             {
-                ++Counts[(size_t)Inst.TypeIndex];
+                ++Counts[Inst.TypeIndex];
             }
         }
 
@@ -393,11 +393,11 @@ namespace Lumina
 
             // A type with no mesh cannot paint anything, so it is called out rather than looking ready.
             const bool bPaintable = Type.Mesh.IsValid();
-            FString Label = Type.Name.empty() ? FString("Unnamed") : Type.Name;
+            FString Label = Type.Name.IsEmpty() ? FString("Unnamed") : Type.Name;
             if (bPaintable)
             {
                 Label += "  (";
-                Label += Type.Mesh->GetName().c_str();
+                Label += *Type.Mesh->GetName();
                 Label += ")";
             }
             else
@@ -407,17 +407,17 @@ namespace Lumina
 
             ImGui::PushStyleColor(ImGuiCol_Text, bPaintable ? IM_COL32(225, 225, 230, 255)
                                                             : IM_COL32(210, 150, 110, 255));
-            if (ImGui::Selectable(Label.c_str(), ActiveType == i))
+            if (ImGui::Selectable(*Label, ActiveType == i))
             {
                 ActiveType = i;
             }
             ImGui::PopStyleColor();
 
             // Right-aligned instance count.
-            const FString CountText = Format("{}", Counts[(size_t)i]).c_str();
-            const float   CountW    = ImGui::CalcTextSize(CountText.c_str()).x;
+            const FString CountText = *Format("{}", Counts[i]);
+            const float   CountW    = ImGui::CalcTextSize(*CountText).x;
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - CountW);
-            ImGui::TextDisabled("%s", CountText.c_str());
+            ImGui::TextDisabled("%s", *CountText);
 
             ImGui::PopID();
         }
@@ -426,9 +426,9 @@ namespace Lumina
 
         if (ImGui::Button("Add"))
         {
-            SFoliageType& NewType = Foliage.Types.emplace_back();
+            SFoliageType& NewType = Foliage.Types.EmplaceGetRef();
             NewType.Name = Format("Type{}", TypeCount);
-            ActiveType = (int32)Foliage.Types.size() - 1;
+            ActiveType = Foliage.Types.Num() - 1;
             MarkFoliageDirty(World, Foliage);
         }
         ImGui::SameLine();
@@ -436,11 +436,11 @@ namespace Lumina
         ImGui::BeginDisabled(!Foliage.IsValidType(ActiveType));
         if (ImGui::Button("Duplicate"))
         {
-            // Copied by value first, since emplace_back can reallocate and dangle the reference.
+            // Copied by value first, since Emplace can reallocate and dangle the reference.
             const SFoliageType Source = Foliage.Types[ActiveType];
-            Foliage.Types.push_back(Source);
-            Foliage.Types.back().Name = Source.Name + " Copy";
-            ActiveType = (int32)Foliage.Types.size() - 1;
+            Foliage.Types.Add(Source);
+            Foliage.Types.Last().Name = Source.Name + " Copy";
+            ActiveType = Foliage.Types.Num() - 1;
             // The copy carries an unstamped resolve, so without this it paints instances with no mesh.
             MarkFoliageDirty(World, Foliage);
         }
@@ -448,10 +448,7 @@ namespace Lumina
 
         if (ImGui::Button("Remove"))
         {
-            Foliage.Instances.erase(
-                Algo::RemoveIf(Foliage.Instances,
-                    [this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; }),
-                Foliage.Instances.end());
+            Foliage.Instances.RemoveAll([this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; });
             // Re-index instances that pointed past the removed type.
             for (SFoliageInstance& Inst : Foliage.Instances)
             {
@@ -460,14 +457,14 @@ namespace Lumina
                     --Inst.TypeIndex;
                 }
             }
-            Foliage.Types.erase(Foliage.Types.begin() + ActiveType);
-            ActiveType = Math::Min(ActiveType, (int32)Foliage.Types.size() - 1);
+            Foliage.Types.RemoveAt(ActiveType);
+            ActiveType = Math::Min(ActiveType, Foliage.Types.Num() - 1);
             // Instances were removed and re-indexed, so the cache would keep drawing the deleted type.
             MarkFoliageDirty(World, Foliage);
         }
         ImGui::EndDisabled();
 
-        ActiveType = Math::Clamp(ActiveType, 0, Math::Max((int32)Foliage.Types.size() - 1, 0));
+        ActiveType = Math::Clamp(ActiveType, 0, Math::Max(Foliage.Types.Num() - 1, 0));
         RebindTypeSettings(World, Foliage);
 
         if (!Foliage.IsValidType(ActiveType))

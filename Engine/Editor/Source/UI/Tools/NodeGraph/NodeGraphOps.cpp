@@ -22,13 +22,13 @@ namespace Lumina::NodeGraphOps
         }
 
         const THashSet<CClass*>& Classes = FGraphNodeRegistry::Get().GetNodesForGraphClass(GraphClass);
-        Types.reserve(Classes.size());
+        Types.Reserve(Classes.Num());
 
         for (CClass* Class : Classes)
         {
             if (Class != nullptr)
             {
-                Types.push_back(Class);
+                Types.Add(Class);
             }
         }
 
@@ -37,7 +37,7 @@ namespace Lumina::NodeGraphOps
 
     CClass* ResolveNodeType(CClass* GraphClass, FStringView TypeName)
     {
-        if (TypeName.empty())
+        if (TypeName.IsEmpty())
         {
             return nullptr;
         }
@@ -104,15 +104,15 @@ namespace Lumina::NodeGraphOps
                 continue;
             }
 
-            if (!Names.empty())
+            if (!Names.IsEmpty())
             {
-                Names.append(", ");
+                Names.Append(", ");
             }
 
-            Names.append(Pin->GetPinName());
+            Names.Append(Pin->GetPinName());
         }
 
-        return Names.empty() ? FString("none") : Names;
+        return Names.IsEmpty() ? FString("none") : Names;
     }
 
     bool ConnectPins(CEdNodeGraph* Graph, CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString& OutError)
@@ -201,15 +201,15 @@ namespace Lumina::NodeGraphOps
         }
 
         // The window name leads with an icon glyph and ends in an ImGui id, so only the id between is retypeable.
-        const FString WindowName(Tool->GetToolName().c_str());
-        const size_t Hash = WindowName.find("###");
-        const FString Label = WindowName.substr(0, Hash);
-        size_t Start = 0;
-        while (Start < Label.size() && ((uint8)Label[Start] >= 0x80 || Label[Start] == ' '))
+        const FString WindowName(*Tool->GetToolName());
+        const int32 Hash = WindowName.Find("###");
+        const FString Label = Hash == Constants::kIndexNone ? WindowName : WindowName.Left(Hash);
+        int32 Start = 0;
+        while (Start < Label.Len() && ((uint8)Label[Start] >= 0x80 || Label[Start] == ' '))
         {
             ++Start;
         }
-        const FString Id = Hash == FString::npos ? WindowName : WindowName.substr(Hash + 3);
-        return Lumina::Format("the {} editor (tab {})", Label.substr(Start), Id);
+        const FString Id = Hash == Constants::kIndexNone ? WindowName : WindowName.Mid(Hash + 3);
+        return Lumina::Format("the {} editor (tab {})", Label.Mid(Start), Id);
     }
 }

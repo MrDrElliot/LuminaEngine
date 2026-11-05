@@ -69,7 +69,7 @@
 
   <!-- Only the native tests and benchmarks call these hooks, so a shipped game carries none of them. -->
   <ItemGroup Condition="'$(Configuration)' == 'Shipping'">
-    <Compile Remove="Interop\InteropTestHooks.cs;Interop\InteropBenchHooks.cs" />
+    <Compile Remove="Interop\InteropTestHooks.cs;Interop\InteropBenchHooks.cs;Interop\SystemParamTestHooks.cs;Interop\ChangeFilterTestHooks.cs;Interop\ResourceTestHooks.cs;Interop\SystemContextTestHooks.cs;Interop\ReadOnlyAccessTestHooks.cs" />
   </ItemGroup>
 
   <!-- The runtime script compiler loads the generator itself, so it has to sit beside this assembly. -->

@@ -52,14 +52,14 @@ namespace Lumina
         {
             if (Guid.IsValid())
             {
-                GuidToEntity.erase(Guid.Value);
+                GuidToEntity.Remove(Guid.Value);
             }
         }
 
         NODISCARD ECS::FEntity Find(SNetGUID Guid) const
         {
-            auto It = GuidToEntity.find(Guid.Value);
-            return It != GuidToEntity.end() ? It->second : ECS::NullEntity;
+            auto It = GuidToEntity.Find(Guid.Value);
+            return It != nullptr ? (*It) : ECS::NullEntity;
         }
 
         NODISCARD SNetGUID AllocateDynamic() { return SNetGUID{ NextDynamic++ }; }

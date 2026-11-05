@@ -30,7 +30,7 @@ namespace Lumina
 
         FString Describe(const SAssetId& Id)
         {
-            return FString(Id.Group.c_str()) + ":" + Id.Name.c_str();
+            return FString(*Id.Group) + ":" + *Id.Name;
         }
     }
 
@@ -74,7 +74,7 @@ namespace Lumina
                               :            Describe(*Id);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
         ImGui::PushStyleColor(ImGuiCol_Text, bHasId && !bMissing ? AssetPickerFilter::kMutedText : AssetPickerFilter::kEmptyText);
-        const bool bOpen = ImGui::BeginCombo("##Pick", Preview.c_str(), ImGuiComboFlags_HeightLarge | ImGuiComboFlags_PopupAlignLeft);
+        const bool bOpen = ImGui::BeginCombo("##Pick", *Preview, ImGuiComboFlags_HeightLarge | ImGuiComboFlags_PopupAlignLeft);
         ImGui::PopStyleColor();
 
         // A grouped asset dragged from the content browser fills the slot without loading anything.
@@ -82,7 +82,7 @@ namespace Lumina
         {
             if (const DragDrop::FPayload* Payload = DragDrop::PeekPayload(); Payload != nullptr && Payload->Kind == DragDrop::EPayloadKind::Asset)
             {
-                const SAssetId Dropped = IdOf(FAssetRegistry::Get().GetAssetByPath(FStringView(Payload->AssetPath.c_str(), Payload->AssetPath.size())), RequiredGroup);
+                const SAssetId Dropped = IdOf(FAssetRegistry::Get().GetAssetByPath(FStringView(*Payload->AssetPath, Payload->AssetPath.Len())), RequiredGroup);
                 if (Dropped.IsValid() && ImGui::AcceptDragDropPayload(DragDrop::GImGuiPayloadType) != nullptr)
                 {
                     Assign(Dropped);
@@ -93,10 +93,10 @@ namespace Lumina
 
         if (!bOpen)
         {
-            const FString Tip = bMissing         ? FString("Nothing in group ") + Id->Group.c_str() + " is named " + Id->Name.c_str()
-                              : Data != nullptr  ? FString(Data->Path.c_str())
+            const FString Tip = bMissing         ? FString("Nothing in group ") + *Id->Group + " is named " + *Id->Name
+                              : Data != nullptr  ? FString(*Data->Path)
                               : RequiredGroup.IsNone() ? FString("No asset. Pick one, or drop a grouped asset here.")
-                              :                  FString("No asset. Pick a ") + RequiredGroup.c_str() + ", or drop one here.";
+                              :                  FString("No asset. Pick a ") + *RequiredGroup + ", or drop one here.";
             ImGuiX::TextTooltip("{}", Tip);
         }
         else
@@ -116,11 +116,11 @@ namespace Lumina
             if (RequiredGroup.IsNone())
             {
                 Manager.GetGroups(Groups);
-                Algo::Sort(Groups, [](const FName& A, const FName& B) { return strcmp(A.c_str(), B.c_str()) < 0; });
+                Algo::Sort(Groups, [](const FName& A, const FName& B) { return strcmp(*A, *B) < 0; });
             }
             else
             {
-                Groups.push_back(RequiredGroup);
+                Groups.Add(RequiredGroup);
             }
 
             uint32 Shown = 0;
@@ -128,25 +128,25 @@ namespace Lumina
             {
                 TVector<SAssetId> Members;
                 Manager.GetGroup(Group, Members);
-                Algo::Sort(Members, [](const SAssetId& A, const SAssetId& B) { return strcmp(A.Name.c_str(), B.Name.c_str()) < 0; });
+                Algo::Sort(Members, [](const SAssetId& A, const SAssetId& B) { return strcmp(*A.Name, *B.Name) < 0; });
 
                 bool bHeader = false;
                 for (const SAssetId& Member : Members)
                 {
                     const FString Label = Describe(Member);
-                    if (!ImGuiX::PassSearchFilter(SearchFilter, Label.c_str()))
+                    if (!ImGuiX::PassSearchFilter(SearchFilter, *Label))
                     {
                         continue;
                     }
                     if (!bHeader)
                     {
-                        ImGui::SeparatorText(Group.c_str());
+                        ImGui::SeparatorText(*Group);
                         bHeader = true;
                     }
 
-                    ImGui::PushID(Label.c_str());
-                    const FString Item = FString(LE_ICON_TAG_OUTLINE " ") + Member.Name.c_str();
-                    if (ImGui::Selectable(Item.c_str(), Member == *Id))
+                    ImGui::PushID(*Label);
+                    const FString Item = FString(LE_ICON_TAG_OUTLINE " ") + *Member.Name;
+                    if (ImGui::Selectable(*Item, Member == *Id))
                     {
                         Assign(Member);
                     }
@@ -157,7 +157,7 @@ namespace Lumina
 
             if (Shown == 0)
             {
-                ImGui::TextDisabled("%s", Groups.empty() ? "No asset class declares REFLECT(Group = ...)." : "Nothing matches.");
+                ImGui::TextDisabled("%s", Groups.IsEmpty() ? "No asset class declares REFLECT(Group = ...)." : "Nothing matches.");
             }
             ImGui::EndCombo();
         }
@@ -176,7 +176,7 @@ namespace Lumina
         ImGui::BeginDisabled(Data == nullptr);
         if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", AssetPickerFilter::kButtonSize) && EditorUI != nullptr && Data != nullptr)
         {
-            EditorUI->BrowseToAsset(FStringView(Data->Path.c_str(), Data->Path.size()));
+            EditorUI->BrowseToAsset(FStringView(*Data->Path, Data->Path.Len()));
         }
         ImGui::EndDisabled();
         ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");

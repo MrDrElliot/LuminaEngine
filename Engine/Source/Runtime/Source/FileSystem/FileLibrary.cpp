@@ -8,24 +8,24 @@ namespace Lumina
 {
     bool CFileLibrary::FileExists(const FString& Path)
     {
-        return !Path.empty() && VFS::Exists(FStringView(Path.c_str(), Path.size()));
+        return !Path.IsEmpty() && VFS::Exists(FStringView(*Path, Path.Len()));
     }
 
     void CFileLibrary::ReadFileBytes(const FString& Path, TVector<uint8>& Out)
     {
-        Out.clear();
-        if (!Path.empty() && !VFS::ReadFile(Out, FStringView(Path.c_str(), Path.size())))
+        Out.Reset();
+        if (!Path.IsEmpty() && !VFS::ReadFile(Out, FStringView(*Path, Path.Len())))
         {
-            Out.clear();
+            Out.Reset();
         }
     }
 
     FString CFileLibrary::ReadFileText(const FString& Path)
     {
         FString Text;
-        if (!Path.empty() && !VFS::ReadFile(Text, FStringView(Path.c_str(), Path.size())))
+        if (!Path.IsEmpty() && !VFS::ReadFile(Text, FStringView(*Path, Path.Len())))
         {
-            Text.clear();
+            Text.Reset();
         }
         return Text;
     }

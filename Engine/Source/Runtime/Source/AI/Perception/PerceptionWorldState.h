@@ -6,7 +6,8 @@
 #include "Core/Math/Math.h"
 #include "Containers/Vector.h"
 #include "AI/Perception/PerceptionTypes.h"
-#include "GameplayTags/GameplayTag.h"
+#include "HierarchicalTags/HierarchicalTag.h"
+#include "World/Entity/Systems/SystemResources.h"
 
 namespace Lumina
 {
@@ -16,7 +17,7 @@ namespace Lumina
     {
         ECS::FEntity                    Entity              = ECS::NullEntity;
         FVector3                        AimPoint            = FVector3(0.0f);   // sight target point (origin + SightTargetOffset).
-        const SGameplayTagContainer*    AffiliationTags     = nullptr;
+        const SHierarchicalTagContainer*    AffiliationTags     = nullptr;
         uint8                           RegisteredSenses    = 0;                // EAISenseChannel bits.
     };
 
@@ -49,12 +50,12 @@ namespace Lumina
         void Build(float InCellSize)
         {
             CellSize = InCellSize > 1.0f ? InCellSize : 1.0f;
-            const int32 N = (int32)Sources.size();
+            const int32 N = Sources.Num();
             if (N == 0)
             {
                 DimX = DimZ = 0;
-                CellStart.clear();
-                SortedIndices.clear();
+                CellStart.Reset();
+                SortedIndices.Reset();
                 return;
             }
 
@@ -76,26 +77,26 @@ namespace Lumina
             if (DimZ < 1) DimZ = 1;
 
             const int32 Cells = DimX * DimZ;
-            CellStart.assign((size_t)Cells + 1, 0);
+            CellStart.Init(0, Cells + 1);
 
             for (int32 i = 0; i < N; ++i)
             {
                 int32 cx, cz;
                 CellCoords(Sources[i].AimPoint, cx, cz);
-                ++CellStart[(size_t)CellIndex(cx, cz) + 1];
+                ++CellStart[CellIndex(cx, cz) + 1];
             }
             for (int32 c = 1; c <= Cells; ++c)
             {
                 CellStart[c] += CellStart[c - 1];
             }
 
-            SortedIndices.resize((size_t)N);
+            SortedIndices.SetNum(N);
             TVector<int32> Cursor = CellStart; // running write offset per cell.
             for (int32 i = 0; i < N; ++i)
             {
                 int32 cx, cz;
                 CellCoords(Sources[i].AimPoint, cx, cz);
-                SortedIndices[(size_t)Cursor[CellIndex(cx, cz)]++] = i;
+                SortedIndices[Cursor[CellIndex(cx, cz)]++] = i;
             }
         }
 
@@ -118,7 +119,7 @@ namespace Lumina
                     const int32 Cell = CellIndex(cx, cz);
                     for (int32 i = CellStart[Cell]; i < CellStart[Cell + 1]; ++i)
                     {
-                        Func(Sources[(size_t)SortedIndices[i]]);
+                        Func(Sources[SortedIndices[i]]);
                     }
                 }
             }
@@ -126,7 +127,7 @@ namespace Lumina
     };
 
     // Per-world perception scratch in the registry context, out-of-line because FMutex is non-movable.
-    struct FPerceptionWorldState
+    struct FPerceptionWorldState : ECS::FResource
     {
         FPerceptionGrid             SourceGrid;
         TVector<FAIStimulusEvent>   PendingStimuli;   // drained (swap-and-clear) by SPerceptionSystem each tick.
@@ -150,7 +151,7 @@ namespace Lumina
         inline void EnqueueStimulus(FPerceptionWorldState& State, const FAIStimulusEvent& Event)
         {
             FScopeLock Lock(State.StimuliMutex);
-            State.PendingStimuli.push_back(Event);
+            State.PendingStimuli.Add(Event);
         }
     }
 }

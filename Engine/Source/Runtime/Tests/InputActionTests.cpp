@@ -73,7 +73,7 @@ namespace
         SInputAction Action;
         Action.Name = FName(Name);
         Action.Type = Lumina::EInputActionType::Digital;
-        Action.Bindings.push_back(KeyBinding(Key));
+        Action.Bindings.Add(KeyBinding(Key));
         return Action;
     }
 }
@@ -175,8 +175,8 @@ TEST(InputActionTests, Axis1DSumsOpposingBindings)
     SInputAction Action;
     Action.Name = FName("MoveForward");
     Action.Type = Lumina::EInputActionType::Axis1D;
-    Action.Bindings.push_back(KeyBinding(Lumina::EKey::W, 1.0f));
-    Action.Bindings.push_back(KeyBinding(Lumina::EKey::S, -1.0f));
+    Action.Bindings.Add(KeyBinding(Lumina::EKey::W, 1.0f));
+    Action.Bindings.Add(KeyBinding(Lumina::EKey::S, -1.0f));
     Author({ Action });
 
     FInputContext Context;
@@ -205,8 +205,8 @@ TEST(InputActionTests, Axis2DSplitsChannels)
     Right.Channel = Lumina::EInputAxisChannel::X;
     SInputActionBinding Forward = KeyBinding(Lumina::EKey::W, 1.0f);
     Forward.Channel = Lumina::EInputAxisChannel::Y;
-    Action.Bindings.push_back(Right);
-    Action.Bindings.push_back(Forward);
+    Action.Bindings.Add(Right);
+    Action.Bindings.Add(Forward);
     Author({ Action });
 
     FInputContext Context;
@@ -229,7 +229,7 @@ TEST(InputActionTests, MouseSourceFeedsAnAxisWithSensitivity)
     SInputActionBinding Binding;
     Binding.Source = Lumina::EInputAxisSource::MouseX;
     Binding.Scale = 1.0f;
-    Action.Bindings.push_back(Binding);
+    Action.Bindings.Add(Binding);
     Author({ Action });
 
     FInputContext Context;
@@ -255,7 +255,7 @@ TEST(InputActionTests, DeadZoneCutsSmallInputAndRescalesTheRest)
     SInputActionBinding Binding;
     Binding.Source = Lumina::EInputAxisSource::MouseX;
     Binding.Scale = 1.0f;
-    Action.Bindings.push_back(Binding);
+    Action.Bindings.Add(Binding);
     Author({ Action });
 
     FInputContext Context;
@@ -284,7 +284,7 @@ TEST(InputActionTests, InvertFlipsTheValue)
     Action.bInvert = true;
     SInputActionBinding Binding;
     Binding.Source = Lumina::EInputAxisSource::MouseY;
-    Action.Bindings.push_back(Binding);
+    Action.Bindings.Add(Binding);
     Author({ Action });
 
     FInputContext Context;
@@ -316,7 +316,7 @@ TEST(InputActionTests, LegacyAxisFlagMigratesToTheAxisType)
     SInputAction Action;
     Action.Name = FName("Legacy");
     Action.bAxis = true;   // authored before EInputActionType existed
-    Action.Bindings.push_back(KeyBinding(Lumina::EKey::W, 2.0f));
+    Action.Bindings.Add(KeyBinding(Lumina::EKey::W, 2.0f));
     Author({ Action });
 
     const SInputAction* Resolved = FInputActionMap::Get().FindAction(FName("Legacy"));
@@ -509,7 +509,7 @@ TEST(InputActionTests, RepushingALayerDoesNotStackIt)
 
     Context.PushInputLayer(FName("Menu"));
     Context.PushInputLayer(FName("Menu"));
-    EXPECT_EQ(Context.GetInputLayers().size(), 1u) << "a double push must not need two pops";
+    EXPECT_EQ(Context.GetInputLayers().Num(), 1) << "a double push must not need two pops";
 
     EXPECT_TRUE(Context.PopInputLayer(FName("Menu")));
     EXPECT_FALSE(Context.HasInputLayer(FName("Menu")));

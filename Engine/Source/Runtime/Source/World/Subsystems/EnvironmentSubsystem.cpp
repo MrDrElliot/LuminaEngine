@@ -20,7 +20,7 @@ namespace Lumina
             }
 
             ECS::FRegistry& Registry = World->GetEntityRegistry();
-            auto View = Registry.View<STerrainComponent, STransformComponent>();
+            auto View = Registry.View<ECS::Read<STerrainComponent>, ECS::Read<STransformComponent>>();
             for (auto [Entity, Terrain, Transform] : View.Each())
             {
                 const FVector3 Origin = Transform.GetWorldLocationCached();

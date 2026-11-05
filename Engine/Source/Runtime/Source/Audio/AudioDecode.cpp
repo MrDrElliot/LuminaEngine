@@ -30,11 +30,11 @@ namespace Lumina::Audio
 
 		const FAudioInfo Info = Reader.GetInfo();
 
-		OutSamples.clear();
-		OutSamples.resize((size_t)(Info.NumFrames * Info.NumChannels));
+		OutSamples.Reset();
+		OutSamples.SetNum(IntCastChecked<int32>(Info.NumFrames * Info.NumChannels));
 
-		const uint64 FramesRead = Reader.ReadFrames(0, Info.NumFrames, OutSamples.data());
-		OutSamples.resize((size_t)(FramesRead * Info.NumChannels));
+		const uint64 FramesRead = Reader.ReadFrames(0, Info.NumFrames, OutSamples.GetData());
+		OutSamples.SetNum(IntCastChecked<int32>(FramesRead * Info.NumChannels));
 
 		OutInfo = Info;
 		OutInfo.NumFrames = FramesRead;

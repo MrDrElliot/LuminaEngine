@@ -156,7 +156,7 @@ namespace PackageLoadBench
     void Retire(CPackage* Package)
     {
         TVector<CObject*> Objects;
-        Objects.reserve(32);
+        Objects.Reserve(32);
         GetObjectsWithPackage(Package, Objects);
 
         for (CObject* Object : Objects)
@@ -167,8 +167,8 @@ namespace PackageLoadBench
             }
         }
 
-        Package->ExportTable.clear();
-        Package->ImportTable.clear();
+        Package->ExportTable.Reset();
+        Package->ImportTable.Reset();
         // The root set holds the only strong reference, so unrooting is what destroys it.
         Package->RemoveFromRoot();
     }
@@ -211,7 +211,7 @@ namespace PackageLoadBench
 
         // property lists flatten lazily, and an unlinked class serializes nothing at all
         ExportClass->Link();
-        EXPECT_GT(ExportClass->GetProperties().size(), 0u) << "the benchmark would measure an empty serialize";
+        EXPECT_GT(ExportClass->GetProperties().Num(), 0) << "the benchmark would measure an empty serialize";
 
         FCorpus Corpus;
         FLegacyFormat Legacy(bLegacyNames);
@@ -241,8 +241,8 @@ namespace PackageLoadBench
 
             if (CPackage::SavePackage(Package, Path))
             {
-                Corpus.Paths.emplace_back(Path);
-                Corpus.FileBytes += (int64)VFS::Size(Path);
+                Corpus.Paths.Emplace(Path);
+                Corpus.FileBytes += VFS::Size(Path);
                 Corpus.NumExports += ExportsPerPackage;
             }
 
@@ -263,7 +263,7 @@ namespace PackageLoadBench
             TVector<uint8> Binary;
             if (CPackage::ReadPackageFile(Path, Binary, nullptr))
             {
-                Corpus.PlainBytes += (int64)Binary.size();
+                Corpus.PlainBytes += Binary.Num();
             }
         }
 
@@ -280,7 +280,7 @@ namespace PackageLoadBench
     void Report(const char* Name, const FCorpus& Corpus, const FPhases& Phases)
     {
         const double Total    = Phases.LoadPackageMs + Phases.FullyLoadMs;
-        const int32  NumPkgs  = (int32)Corpus.Paths.size();
+        const int32  NumPkgs  = Corpus.Paths.Num();
         const double PerPkgUs = NumPkgs ? (Total * 1000.0) / NumPkgs : 0.0;
         const double PerExpUs = Corpus.NumExports ? (Total * 1000.0) / Corpus.NumExports : 0.0;
 
@@ -329,12 +329,12 @@ namespace PackageLoadBench
         for (int32 Rep = 0; Rep < Reps; ++Rep)
         {
             TVector<CPackage*> Packages;
-            Packages.reserve(Corpus.Paths.size());
+            Packages.Reserve(Corpus.Paths.Num());
             {
                 PlatformTime::FStopwatch Watch;
                 for (const FFixedString& Path : Corpus.Paths)
                 {
-                    Packages.push_back(CPackage::LoadPackage(Path));
+                    Packages.Add(CPackage::LoadPackage(Path));
                 }
                 Phases.LoadPackageMs += Watch.ElapsedMilliseconds();
             }
@@ -444,8 +444,8 @@ TEST(PackageLoadBenchmark, DISABLED_NameTableVsInlineNames)
     {
         char InlineTag[64];
         char TableTag[64];
-        std::snprintf(InlineTag, sizeof(InlineTag), "Cmp_Inline_%d_%d_%s", Case.Packages, Case.Exports, Case.Class->GetName().c_str());
-        std::snprintf(TableTag, sizeof(TableTag), "Cmp_Table_%d_%d_%s", Case.Packages, Case.Exports, Case.Class->GetName().c_str());
+        std::snprintf(InlineTag, sizeof(InlineTag), "Cmp_Inline_%d_%d_%s", Case.Packages, Case.Exports, *Case.Class->GetName());
+        std::snprintf(TableTag, sizeof(TableTag), "Cmp_Table_%d_%d_%s", Case.Packages, Case.Exports, *Case.Class->GetName());
 
         FCorpus Old = BuildCorpus(InlineTag, Case.Packages, Case.Exports, Case.Class, nullptr, /*bLegacyNames*/ true);
         FCorpus New = BuildCorpus(TableTag, Case.Packages, Case.Exports, Case.Class, nullptr, /*bLegacyNames*/ false);
@@ -533,18 +533,18 @@ TEST(PackageLoadBenchmark, DISABLED_Primitives)
 
     {
         TVector<FFixedString> Strings;
-        Strings.reserve(N);
+        Strings.Reserve(N);
         for (int32 i = 0; i < N; ++i)
         {
             char Buf[64];
             std::snprintf(Buf, sizeof(Buf), "BenchName_%d", i);
-            Strings.emplace_back(Buf);
+            Strings.Emplace(Buf);
         }
 
         PlatformTime::FStopwatch Watch;
         for (const FFixedString& S : Strings)
         {
-            FName Name(S.c_str());
+            FName Name(*S);
             (void)Name;
         }
         std::printf("FName(new string)                  %8.1f ns\n", (Watch.ElapsedMilliseconds() * 1e6) / N);
@@ -552,7 +552,7 @@ TEST(PackageLoadBenchmark, DISABLED_Primitives)
         Watch.Restart();
         for (const FFixedString& S : Strings)
         {
-            FName Name(S.c_str());
+            FName Name(*S);
             (void)Name;
         }
         std::printf("FName(existing string)             %8.1f ns\n", (Watch.ElapsedMilliseconds() * 1e6) / N);
@@ -565,13 +565,13 @@ TEST(PackageLoadBenchmark, DISABLED_Primitives)
         CPackage* Package = CPackage::GetTransientPackage();
 
         TVector<CObject*> Objects;
-        Objects.reserve(20000);
+        Objects.Reserve(20000);
 
         Sampler::Start();
         PlatformTime::FStopwatch Watch;
         for (int32 i = 0; i < 20000; ++i)
         {
-            Objects.push_back(NewObject(Class, Package, NAME_None, FGuid::New(), OF_Transient));
+            Objects.Add(NewObject(Class, Package, NAME_None, FGuid::New(), OF_Transient));
         }
         const double NewObjectNs = (Watch.ElapsedMilliseconds() * 1e6) / 20000;
         Sampler::Stop();
@@ -608,20 +608,20 @@ TEST(PackageLoadBenchmark, DISABLED_Primitives)
             TVector<uint8> One;
             FMemoryWriter Writer(One);
             Property->Serialize(Writer, Property->GetValuePtr<void>(Subject));
-            PayloadBytes += One.size();
-            NameChars += Property->GetPropertyName().Length() + Property->GetTypeName().Length();
-            DistinctNames.insert(Property->GetPropertyName());
-            DistinctNames.insert(Property->GetTypeName());
+            PayloadBytes += One.Num();
+            NameChars += Property->GetPropertyName().Len() + Property->GetTypeName().Len();
+            DistinctNames.Add(Property->GetPropertyName());
+            DistinctNames.Add(Property->GetTypeName());
         }
 
-        const size_t NumProps = Subject_Class->GetProperties().size();
-        std::printf("reflected properties               %8zu\n", NumProps);
-        std::printf("tagged bytes for those properties  %8zu\n", Buffer.size());
+        const int32 NumProps = Subject_Class->GetProperties().Num();
+        std::printf("reflected properties               %8d\n", NumProps);
+        std::printf("tagged bytes for those properties  %8d\n", Buffer.Num());
         std::printf("  of which property VALUES         %8zu  (%.1f%%)\n",
-            PayloadBytes, 100.0 * (double)PayloadBytes / (double)Buffer.size());
+            PayloadBytes, 100.0 * (double)PayloadBytes / (double)Buffer.Num());
         std::printf("  of which name/type TEXT          %8zu\n", NameChars);
-        std::printf("  distinct names in the whole class %7zu  (interned %zu times per object)\n",
-            DistinctNames.size(), 2 * NumProps);
+        std::printf("  distinct names in the whole class %7d  (interned %d times per object)\n",
+            DistinctNames.Num(), 2 * NumProps);
 
         constexpr int32 Reps = 20000;
 

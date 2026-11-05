@@ -13,7 +13,7 @@ namespace Lumina
         // Falls back to the plain TooltipText when no rich fields are set.
         void DrawTreeNodeTooltip(const FTreeNodeDisplay& Display)
         {
-            const bool bRich = !Display.TooltipTitle.empty() || !Display.TooltipChips.empty();
+            const bool bRich = !Display.TooltipTitle.IsEmpty() || !Display.TooltipChips.IsEmpty();
             if (!bRich)
             {
                 ImGuiX::TextTooltip("{}", Display.TooltipText);
@@ -30,26 +30,26 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(11.0f * Scale, 9.0f * Scale));
             if (ImGui::BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None))
             {
-                const char* Title = Display.TooltipTitle.empty() ? Display.DisplayName.c_str() : Display.TooltipTitle.c_str();
+                const char* Title = Display.TooltipTitle.IsEmpty() ? *Display.DisplayName : *Display.TooltipTitle;
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.97f, 1.0f, 1.0f));
                 ImGui::TextUnformatted(Title);
                 ImGui::PopStyleColor();
 
-                if (!Display.TooltipSubtitle.empty())
+                if (!Display.TooltipSubtitle.IsEmpty())
                 {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.52f, 0.55f, 0.62f, 1.0f));
-                    ImGui::TextUnformatted(Display.TooltipSubtitle.c_str());
+                    ImGui::TextUnformatted(*Display.TooltipSubtitle);
                     ImGui::PopStyleColor();
                 }
 
-                if (!Display.TooltipChips.empty())
+                if (!Display.TooltipChips.IsEmpty())
                 {
                     ImGui::Dummy(ImVec2(0.0f, 3.0f * Scale));
 
-                    if (!Display.TooltipChipHeader.empty())
+                    if (!Display.TooltipChipHeader.IsEmpty())
                     {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.47f, 0.53f, 1.0f));
-                        ImGui::TextUnformatted(Display.TooltipChipHeader.c_str());
+                        ImGui::TextUnformatted(*Display.TooltipChipHeader);
                         ImGui::PopStyleColor();
                         ImGui::Dummy(ImVec2(0.0f, 2.0f * Scale));
                     }
@@ -69,7 +69,7 @@ namespace Lumina
                     float X = 0.0f, Y = 0.0f, LineHeight = 0.0f, MaxRight = 0.0f;
                     for (const FString& Chip : Display.TooltipChips)
                     {
-                        const ImVec2 TextSize = ImGui::CalcTextSize(Chip.c_str());
+                        const ImVec2 TextSize = ImGui::CalcTextSize(*Chip);
                         const float W = TextSize.x + ChipPad.x * 2.0f;
                         const float H = TextSize.y + ChipPad.y * 2.0f;
 
@@ -84,7 +84,7 @@ namespace Lumina
                         const ImVec2 P1(P0.x + W, P0.y + H);
                         DL->AddRectFilled(P0, P1, ChipBg, Rounding);
                         DL->AddRect(P0, P1, ChipBorder, Rounding);
-                        DL->AddText(ImVec2(P0.x + ChipPad.x, P0.y + ChipPad.y), ChipText, Chip.c_str());
+                        DL->AddText(ImVec2(P0.x + ChipPad.x, P0.y + ChipPad.y), ChipText, *Chip);
 
                         MaxRight = ImMax(MaxRight, X + W);
                         X += W + GapX;
@@ -130,13 +130,13 @@ namespace Lumina
         const TVector<int32>* Rows = &VisibleList;
         if (Context.FilterFunction && Context.bFilterActive)
         {
-            FilteredList.clear();
-            FilteredList.reserve(VisibleList.size());
+            FilteredList.Reset();
+            FilteredList.Reserve(VisibleList.Num());
             for (int32 NodeIdx : VisibleList)
             {
                 if (Context.FilterFunction(*this, FTreeNodeID{NodeIdx}))
                 {
-                    FilteredList.push_back(NodeIdx);
+                    FilteredList.Add(NodeIdx);
                 }
             }
             Rows = &FilteredList;
@@ -148,7 +148,7 @@ namespace Lumina
         int32 ScrollToRow = -1;
         if (PendingScrollNode >= 0)
         {
-            for (int32 i = 0; i < (int32)Rows->size(); ++i)
+            for (int32 i = 0; i < Rows->Num(); ++i)
             {
                 if ((*Rows)[i] == PendingScrollNode)
                 {
@@ -176,7 +176,7 @@ namespace Lumina
             ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
 
             ImGuiListClipper Clipper;
-            Clipper.Begin(static_cast<int>(Rows->size()));
+            Clipper.Begin(Rows->Num());
 
             // The target row is off-screen by definition, and SetScrollHereY needs its real item rect.
             if (ScrollToRow != -1)
@@ -244,10 +244,10 @@ namespace Lumina
                 Node.UserDataDeleter(Node.UserData);
             }
         }
-        Nodes.clear();
-        FreeList.clear();
-        Roots.clear();
-        VisibleList.clear();
+        Nodes.Reset();
+        FreeList.Reset();
+        Roots.Reset();
+        VisibleList.Reset();
         CurrentRows = nullptr;
         SelectionAnchor = -1;
         AliveCount = 0;
@@ -261,12 +261,12 @@ namespace Lumina
         DEBUG_ASSERT(bDirty);
 
         THashSet<uint64> CachedExpandedItems;
-        CachedExpandedItems.reserve(AliveCount);
+        CachedExpandedItems.Reserve(AliveCount);
         for (const FNode& Node : Nodes)
         {
             if (Node.bAlive && Node.State.bExpanded)
             {
-                CachedExpandedItems.emplace(Node.Hash);
+                CachedExpandedItems.TryAdd(Node.Hash);
             }
         }
 
@@ -279,13 +279,13 @@ namespace Lumina
 
         // Top-down, so an expanded lazy node rebuilds its children before the arrow shows open.
         TVector<int32> Stack(Roots.begin(), Roots.end());
-        while (!Stack.empty())
+        while (!Stack.IsEmpty())
         {
-            const int32 Idx = Stack.back();
-            Stack.pop_back();
+            const int32 Idx = Stack.Last();
+            Stack.Pop();
 
             FNode& Node = Nodes[Idx];
-            if (CachedExpandedItems.find(Node.Hash) != CachedExpandedItems.end())
+            if (CachedExpandedItems.Contains(Node.Hash))
             {
                 Node.State.bExpanded = true;
                 if (Node.bHasLazyChildren && !Node.bChildrenBuilt)
@@ -296,7 +296,7 @@ namespace Lumina
 
             for (int32 Child : Nodes[Idx].Children)
             {
-                Stack.push_back(Child);
+                Stack.Add(Child);
             }
         }
 
@@ -307,8 +307,8 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        VisibleList.clear();
-        VisibleList.reserve(AliveCount);
+        VisibleList.Reset();
+        VisibleList.Reserve(AliveCount);
 
         for (int32 RootIdx : Roots)
         {
@@ -320,14 +320,14 @@ namespace Lumina
 
     void FTreeListView::AppendVisibleSubtree(int32 NodeIdx)
     {
-        VisibleList.push_back(NodeIdx);
+        VisibleList.Add(NodeIdx);
         const FNode& Node = Nodes[NodeIdx];
         if (!Node.State.bExpanded)
         {
             return;
         }
 
-        const int32 NumChildren = static_cast<int32>(Node.Children.size());
+        const int32 NumChildren = Node.Children.Num();
         for (int32 i = 0; i < NumChildren; ++i)
         {
             AppendVisibleSubtree(Nodes[NodeIdx].Children[i]);
@@ -339,7 +339,7 @@ namespace Lumina
         FNode& Node = Nodes[NodeIdx];
         FTreeNodeDisplay& Display = Node.Display;
         FTreeNodeState& State = Node.State;
-        const bool bDeclaresChildren = !Node.Children.empty() || Node.bHasLazyChildren;
+        const bool bDeclaresChildren = !Node.Children.IsEmpty() || Node.bHasLazyChildren;
         const float kIndentPerDepth = Context.IndentPerDepth;
 
         // Depth is cached because row callbacks can reallocate Nodes and invalidate these references.
@@ -401,15 +401,15 @@ namespace Lumina
 
         // Scoped to the node, since pushing it wider also blanks selected rows in menus and tooltips.
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        const bool bNowExpanded = ImGui::TreeNodeEx("##TreeNode", Flags, "%s", Display.DisplayName.c_str());
+        const bool bNowExpanded = ImGui::TreeNodeEx("##TreeNode", Flags, "%s", *Display.DisplayName);
         ImGui::PopStyleColor();
 
-        if (!Display.IconText.empty() && !State.bEditingText)
+        if (!Display.IconText.IsEmpty() && !State.bEditingText)
         {
             const ImGuiStyle& Style = ImGui::GetStyle();
             const float IconX = RowCursorScreenPos.x + ImGui::GetFontSize() + Style.FramePadding.x * 2.0f;
             const float IconY = RowCursorScreenPos.y + Style.FramePadding.y;
-            ImGui::GetWindowDrawList()->AddText(ImVec2(IconX, IconY), ImGui::GetColorU32(Display.IconColor), Display.IconText.c_str());
+            ImGui::GetWindowDrawList()->AddText(ImVec2(IconX, IconY), ImGui::GetColorU32(Display.IconColor), *Display.IconText);
         }
 
 
@@ -440,7 +440,7 @@ namespace Lumina
                 for (int32 d = MaxDepth; d >= 1 && Cur >= 0; --d)
                 {
                     const int32 PIdx = Nodes[Cur].ParentIdx;
-                    LastChild[d] = (PIdx < 0) || Nodes[PIdx].Children.empty() || (Nodes[PIdx].Children.back() == Cur);
+                    LastChild[d] = (PIdx < 0) || Nodes[PIdx].Children.IsEmpty() || (Nodes[PIdx].Children.Last() == Cur);
                     Cur = PIdx;
                 }
 
@@ -469,7 +469,7 @@ namespace Lumina
             }
 
             // Drop a stub from this node's own arrow down toward its first visible child.
-            if (bNowExpanded && !Node.Children.empty())
+            if (bNowExpanded && !Node.Children.IsEmpty())
             {
                 const float ChildLineX = BaseX + Node.Depth * kIndentPerDepth + Gutter;
                 DL->AddLine(ImVec2(ChildLineX, MidY), ImVec2(ChildLineX, LineBot), LineCol, LineThickness);
@@ -579,7 +579,7 @@ namespace Lumina
                 Context.SetDragDropFunction(*this, FTreeNodeID{NodeIdx});
             }
 
-            ImGui::TextUnformatted(Display.DisplayName.c_str());
+            ImGui::TextUnformatted(*Display.DisplayName);
             ImGui::EndDragDropSource();
         }
 
@@ -638,7 +638,7 @@ namespace Lumina
                 if (Display.bShowSecondaryIcon)
                 {
                     ImGui::PushID("##SecondaryToggle");
-                    const char* Icon = State.bSecondaryToggled ? Display.SecondaryIconOff.c_str() : Display.SecondaryIconOn.c_str();
+                    const char* Icon = State.bSecondaryToggled ? *Display.SecondaryIconOff : *Display.SecondaryIconOn;
                     // Dim while toggled off so the on/off state reads at a glance.
                     if (State.bSecondaryToggled)
                     {
@@ -682,15 +682,15 @@ namespace Lumina
 
                         // Cascade disabled state down the subtree iteratively.
                         TVector<int32> Stack(Nodes[NodeIdx].Children.begin(), Nodes[NodeIdx].Children.end());
-                        while (!Stack.empty())
+                        while (!Stack.IsEmpty())
                         {
-                            int32 Current = Stack.back();
-                            Stack.pop_back();
+                            int32 Current = Stack.Last();
+                            Stack.Pop();
 
                             Nodes[Current].State.bDisabled = State.bDisabled;
                             for (int32 Grandchild : Nodes[Current].Children)
                             {
-                                Stack.push_back(Grandchild);
+                                Stack.Add(Grandchild);
                             }
                         }
 
@@ -774,16 +774,16 @@ namespace Lumina
     int32 FTreeListView::AllocNode()
     {
         int32 Idx;
-        if (!FreeList.empty())
+        if (!FreeList.IsEmpty())
         {
-            Idx = FreeList.back();
-            FreeList.pop_back();
+            Idx = FreeList.Last();
+            FreeList.Pop();
             Nodes[Idx] = FNode{};
         }
         else
         {
-            Idx = static_cast<int32>(Nodes.size());
-            Nodes.emplace_back();
+            Idx = Nodes.Num();
+            Nodes.Emplace();
         }
         Nodes[Idx].bAlive = true;
         ++AliveCount;
@@ -795,28 +795,28 @@ namespace Lumina
     {
         const int32 Idx = AllocNode();
 
-        const uint64 NodeHash = (Hash == 0) ? Hash::GetHash64(Name.data(), Name.length()) : Hash;
+        const uint64 NodeHash = (Hash == 0) ? Hash::GetHash64(Name.GetData(), Name.Len()) : Hash;
 
         bool bShouldBeDisabled = false;
         int32 ParentDepth = -1;
-        if (Parent.IsValid() && Parent.Index < static_cast<int32>(Nodes.size()) && Nodes[Parent.Index].bAlive)
+        if (Parent.IsValid() && Parent.Index < Nodes.Num() && Nodes[Parent.Index].bAlive)
         {
             ParentDepth = Nodes[Parent.Index].Depth;
             bShouldBeDisabled = Nodes[Parent.Index].State.bDisabled;
-            Nodes[Parent.Index].Children.push_back(Idx);
+            Nodes[Parent.Index].Children.Add(Idx);
             // Do NOT set bChildrenBuilt, since explicit CreateNode can mix with the lazy build callback.
         }
         else
         {
-            Roots.push_back(Idx);
+            Roots.Add(Idx);
         }
 
         FNode& Node = Nodes[Idx];
         Node.Hash = NodeHash;
         Node.ParentIdx = (ParentDepth >= 0) ? Parent.Index : -1;
         Node.Depth = ParentDepth + 1;
-        Node.Display.DisplayName.assign(Name.data(), Name.length());
-        Node.Display.TooltipText.assign(Name.data(), Name.length());
+        Node.Display.DisplayName = FStringView(Name.GetData(), Name.Len());
+        Node.Display.TooltipText = FStringView(Name.GetData(), Name.Len());
         Node.State.bDisabled = bShouldBeDisabled;
 
         bVisibleListDirty = true;
@@ -839,27 +839,27 @@ namespace Lumina
     void FTreeListView::RemoveNodes(const TVector<FTreeNodeID>& Handles)
     {
         TVector<int32> Parents;
-        Parents.reserve(Handles.size());
+        Parents.Reserve(Handles.Num());
         for (FTreeNodeID Handle : Handles)
         {
             if (IsValid(Handle) && !Nodes[Handle.Index].bPendingRemoval)
             {
                 Nodes[Handle.Index].bPendingRemoval = true;
-                Parents.push_back(Nodes[Handle.Index].ParentIdx);
+                Parents.Add(Nodes[Handle.Index].ParentIdx);
             }
         }
-        if (Parents.empty())
+        if (Parents.IsEmpty())
         {
             return;
         }
 
         Algo::Sort(Parents);
-        Parents.erase(Algo::Unique(Parents), Parents.end());
+        Parents.SetNum(static_cast<int32>(Algo::Unique(Parents) - Parents.begin()));
         const auto IsRemoved = [this](int32 Child) { return Nodes[Child].bPendingRemoval; };
         for (int32 ParentIdx : Parents)
         {
             TVector<int32>& Siblings = ParentIdx >= 0 ? Nodes[ParentIdx].Children : Roots;
-            Siblings.erase(Algo::RemoveIf(Siblings, IsRemoved), Siblings.end());
+            Siblings.RemoveAll(IsRemoved);
         }
 
         // A handle inside another's subtree died with it, which the alive check skips.
@@ -880,27 +880,27 @@ namespace Lumina
         if (ParentIdx >= 0)
         {
             auto& Children = Nodes[ParentIdx].Children;
-            Children.erase(Algo::Remove(Children, Idx), Children.end());
+            Children.Remove(Idx);
         }
         else
         {
-            Roots.erase(Algo::Remove(Roots, Idx), Roots.end());
+            Roots.Remove(Idx);
         }
     }
 
     void FTreeListView::RemoveSubtree(int32 RootIdx)
     {
         TVector<int32> Stack;
-        Stack.push_back(RootIdx);
-        while (!Stack.empty())
+        Stack.Add(RootIdx);
+        while (!Stack.IsEmpty())
         {
-            const int32 Cur = Stack.back();
-            Stack.pop_back();
+            const int32 Cur = Stack.Last();
+            Stack.Pop();
 
             // Push children first so we can free them too.
             for (int32 Child : Nodes[Cur].Children)
             {
-                Stack.push_back(Child);
+                Stack.Add(Child);
             }
 
             DestroyNodeData(Cur);
@@ -916,12 +916,12 @@ namespace Lumina
             Node.UserData = nullptr;
             Node.UserDataDeleter = nullptr;
         }
-        Node.Children.clear();
+        Node.Children.Reset();
         Node.bAlive = false;
         Node.bChildrenBuilt = false;
         Node.bHasLazyChildren = false;
         Node.bPendingRemoval = false;
-        FreeList.push_back(Idx);
+        FreeList.Add(Idx);
         --AliveCount;
         ++StructureVersion;
     }
@@ -943,7 +943,7 @@ namespace Lumina
     bool FTreeListView::IsValid(FTreeNodeID Handle) const
     {
         return Handle.IsValid()
-            && Handle.Index < static_cast<int32>(Nodes.size())
+            && Handle.Index < Nodes.Num()
             && Nodes[Handle.Index].bAlive;
     }
 
@@ -961,7 +961,7 @@ namespace Lumina
     {
         if (!Handle.IsValid())
         {
-            return (int32)Roots.size();
+            return Roots.Num();
         }
 
         if (!IsValid(Handle))
@@ -969,7 +969,7 @@ namespace Lumina
             return 0;
         }
 
-        return (int32)Nodes[Handle.Index].Children.size();
+        return Nodes[Handle.Index].Children.Num();
     }
 
     FTreeNodeID FTreeListView::GetChildNode(FTreeNodeID Handle, int32 ChildIndex) const
@@ -981,7 +981,7 @@ namespace Lumina
 
         if (!Handle.IsValid())
         {
-            return ChildIndex < (int32)Roots.size() ? FTreeNodeID{Roots[ChildIndex]} : InvalidTreeNode;
+            return ChildIndex < Roots.Num() ? FTreeNodeID{Roots[ChildIndex]} : InvalidTreeNode;
         }
 
         if (!IsValid(Handle))
@@ -990,7 +990,7 @@ namespace Lumina
         }
 
         const TVector<int32>& Children = Nodes[Handle.Index].Children;
-        return ChildIndex < (int32)Children.size() ? FTreeNodeID{Children[ChildIndex]} : InvalidTreeNode;
+        return ChildIndex < Children.Num() ? FTreeNodeID{Children[ChildIndex]} : InvalidTreeNode;
     }
 
     void FTreeListView::SetSelectionSilent(FTreeNodeID Handle)
@@ -1081,7 +1081,7 @@ namespace Lumina
 
         // Otherwise the selection came from elsewhere, such as the viewport or a rebuild, and the nearest selected row stands in.
         int32 Best = -1;
-        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        for (int32 i = 0; i < Rows.Num(); ++i)
         {
             if (i != TargetRow && Nodes[Rows[i]].bAlive && Nodes[Rows[i]].State.bSelected
                 && (Best < 0 || Math::Abs(i - TargetRow) < Math::Abs(Best - TargetRow)))

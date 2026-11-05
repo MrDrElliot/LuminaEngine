@@ -58,14 +58,14 @@ namespace Lumina
             {
                 if (Reflection::IsTextConvertible(Property))
                 {
-                    Out.push_back(Property);
+                    Out.Add(Property);
                 }
             });
         }
     }
 
     FDataTableEditorTool::FDataTableEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -89,7 +89,7 @@ namespace Lumina
             BoundRowMemory = nullptr;
             BoundRowStruct = nullptr;
             PendingRowStruct = nullptr;
-            Columns.clear();
+            Columns.Reset();
             CancelCellEdit();
             DraggingRow = Constants::kIndexNone;
             bDisplayOrderDirty = true;
@@ -113,8 +113,8 @@ namespace Lumina
         ImGuiID RightID = 0;
         const ImGuiID LeftID = ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Left, 0.72f, nullptr, &RightID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(TableWindowName).c_str(), LeftID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RowDetailsWindowName).c_str(), RightID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(TableWindowName), LeftID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(RowDetailsWindowName), RightID);
     }
 
     void FDataTableEditorTool::OnDeinitialize(const FUpdateContext& /*UpdateContext*/)
@@ -132,7 +132,7 @@ namespace Lumina
 
     void FDataTableEditorTool::RebuildColumns()
     {
-        Columns.clear();
+        Columns.Reset();
 
         CDataTable* Table = GetAsset<CDataTable>();
         if (Table == nullptr || Table->GetRowStruct() == nullptr)
@@ -162,7 +162,7 @@ namespace Lumina
 
         RowPropertyTable->SetObject(nullptr, nullptr);
         BoundRowMemory = nullptr;
-        Columns.clear();
+        Columns.Reset();
         CancelCellEdit();
         DraggingRow = Constants::kIndexNone;
 
@@ -178,7 +178,7 @@ namespace Lumina
         {
             SelectedRow = Constants::kIndexNone;
         }
-        if (SortColumn >= static_cast<int32>(Columns.size()))
+        if (SortColumn >= Columns.Num())
         {
             SortColumn = Constants::kIndexNone;
             bSortActive = false;
@@ -189,7 +189,7 @@ namespace Lumina
     void FDataTableEditorTool::RebuildDisplayOrder()
     {
         bDisplayOrderDirty = false;
-        DisplayOrder.clear();
+        DisplayOrder.Reset();
 
         CDataTable* Table = GetAsset<CDataTable>();
         if (Table == nullptr)
@@ -206,13 +206,13 @@ namespace Lumina
             if (bFiltering)
             {
                 // Matches every visible cell, so searching for a value finds the row holding it.
-                bool bMatched = ImGuiX::PassSearchFilter(Filter, Row.Name.c_str());
+                bool bMatched = ImGuiX::PassSearchFilter(Filter, *Row.Name);
                 if (!bMatched)
                 {
                     const void* RowMemory = Row.Value.GetMemory();
                     bMatched = RowMemory != nullptr && Algo::AnyOf(Columns, [&](FProperty* Property)
                     {
-                        return ImGuiX::PassSearchFilter(Filter, Reflection::ToText(Property, RowMemory).c_str());
+                        return ImGuiX::PassSearchFilter(Filter, *Reflection::ToText(Property, RowMemory));
                     });
                 }
 
@@ -222,7 +222,7 @@ namespace Lumina
                 }
             }
 
-            DisplayOrder.push_back(i);
+            DisplayOrder.Add(i);
         }
 
         if (!bSortActive)
@@ -231,7 +231,7 @@ namespace Lumina
         }
 
         // SortColumn -1 is the name column; anything else indexes Columns.
-        FProperty* SortProperty = (SortColumn >= 0 && SortColumn < (int32)Columns.size()) ? Columns[SortColumn] : nullptr;
+        FProperty* SortProperty = (SortColumn >= 0 && SortColumn < Columns.Num()) ? Columns[SortColumn] : nullptr;
         const bool bNumeric = SortProperty != nullptr && IsNumericProperty(SortProperty);
         const bool bAscending = bSortAscending;
 
@@ -244,7 +244,7 @@ namespace Lumina
                 int32 Comparison = 0;
                 if (SortProperty == nullptr)
                 {
-                    Comparison = strcmp(RowA.Name.c_str(), RowB.Name.c_str());
+                    Comparison = strcmp(*RowA.Name, *RowB.Name);
                 }
                 else
                 {
@@ -255,13 +255,13 @@ namespace Lumina
 
                     if (bNumeric)
                     {
-                        const double ValueA = atof(TextA.c_str());
-                        const double ValueB = atof(TextB.c_str());
+                        const double ValueA = atof(*TextA);
+                        const double ValueB = atof(*TextB);
                         Comparison = (ValueA < ValueB) ? -1 : (ValueA > ValueB ? 1 : 0);
                     }
                     else
                     {
-                        Comparison = strcmp(TextA.c_str(), TextB.c_str());
+                        Comparison = strcmp(*TextA, *TextB);
                     }
                 }
 
@@ -293,7 +293,7 @@ namespace Lumina
             const FString Trimmed(EditBuffer);
             const FName NewName(Trimmed);
 
-            if (!Trimmed.empty() && NewName != Row.Name)
+            if (!Trimmed.IsEmpty() && NewName != Row.Name)
             {
                 // Names key the table, so uniquify rather than reject and the edit is never silently lost.
                 const int32 Collision = Table->FindRowIndex(NewName);
@@ -303,7 +303,7 @@ namespace Lumina
                 bDisplayOrderDirty = true;
             }
         }
-        else if (EditingColumn >= 0 && EditingColumn < (int32)Columns.size())
+        else if (EditingColumn >= 0 && EditingColumn < Columns.Num())
         {
             void* RowMemory = Row.Value.GetMutableMemory();
             if (RowMemory != nullptr)
@@ -322,7 +322,7 @@ namespace Lumina
                 else
                 {
                     ImGuiX::Notifications::NotifyWarning("'{}' is not a valid value for {}.",
-                        FString(EditBuffer).c_str(), Property->GetPropertyName().c_str());
+                        *FString(EditBuffer), *Property->GetPropertyName());
                 }
             }
         }
@@ -362,10 +362,10 @@ namespace Lumina
 
         CancelCellEdit();
 
-        // Copied by value first, since emplace_back can reallocate and dangle the source reference.
+        // Copied by value first, since Emplace can reallocate and dangle the source reference.
         const SDataTableRow Source = Table->Rows[SelectedRow];
 
-        SDataTableRow& Copy = Table->Rows.emplace_back();
+        SDataTableRow& Copy = Table->Rows.EmplaceGetRef();
         Copy.Value = Source.Value;
         Copy.Name = Table->MakeUniqueRowName(Source.Name);
 
@@ -410,9 +410,9 @@ namespace Lumina
         }
 
         FString Text;
-        if (!FileHelper::LoadFileIntoString(Text, SelectedFile.c_str()))
+        if (!FileHelper::LoadFileIntoString(Text, *SelectedFile))
         {
-            ImGuiX::Notifications::NotifyError("Could not read '{}'.", SelectedFile.c_str());
+            ImGuiX::Notifications::NotifyError("Could not read '{}'.", *SelectedFile);
             return;
         }
 
@@ -422,7 +422,7 @@ namespace Lumina
 
         if (!LastImportResult.bSucceeded)
         {
-            ImGuiX::Notifications::NotifyError("Import failed: {}", LastImportResult.FailureReason.c_str());
+            ImGuiX::Notifications::NotifyError("Import failed: {}", *LastImportResult.FailureReason);
             return;
         }
 
@@ -432,9 +432,9 @@ namespace Lumina
         MarkDirty();
 
         // Only interrupt with the report when something needs a decision; a clean import just says so.
-        const bool bHasWarnings = !LastImportResult.Errors.empty()
-            || !LastImportResult.UnknownColumns.empty()
-            || !LastImportResult.MissingColumns.empty();
+        const bool bHasWarnings = !LastImportResult.Errors.IsEmpty()
+            || !LastImportResult.UnknownColumns.IsEmpty()
+            || !LastImportResult.MissingColumns.IsEmpty();
 
         if (bHasWarnings)
         {
@@ -464,14 +464,14 @@ namespace Lumina
         const FFixedString FilePath = Paths::Combine(Folder, Table->GetName().ToString() + ".csv");
         const FString Text = DataTableCSV::ExportText(Table);
 
-        if (FileHelper::SaveStringToFile(Text, FilePath.c_str()))
+        if (FileHelper::SaveStringToFile(Text, *FilePath))
         {
             ImGuiX::Notifications::NotifySuccess("Exported {} rows.", Table->GetRowCount());
-            Platform::ShowFileInExplorer(UTF8_TO_TCHAR(FilePath.c_str()));
+            Platform::ShowFileInExplorer(UTF8_TO_TCHAR(*FilePath));
         }
         else
         {
-            ImGuiX::Notifications::NotifyError("Could not write '{}'.", FilePath.c_str());
+            ImGuiX::Notifications::NotifyError("Could not write '{}'.", *FilePath);
         }
     }
 
@@ -524,7 +524,7 @@ namespace Lumina
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Row Struct:");
         ImGui::SameLine();
-        if (ImGui::Button(bHasRowStruct ? RowStruct->GetName().c_str() : "<none>"))
+        if (ImGui::Button(bHasRowStruct ? *RowStruct->GetName() : "<none>"))
         {
             PendingRowStruct = RowStruct;
             bShowChangeRowStruct = true;
@@ -597,7 +597,7 @@ namespace Lumina
             ImGuiSelectableFlags_AllowDoubleClick |
             ImGuiSelectableFlags_AllowOverlap;
 
-        if (ImGui::Selectable(Row.Name.c_str(), bSelected, NameFlags))
+        if (ImGui::Selectable(*Row.Name, bSelected, NameFlags))
         {
             SelectedRow = RowIndex;
 
@@ -610,7 +610,7 @@ namespace Lumina
 
                 Memory::Memzero(EditBuffer, sizeof(EditBuffer));
                 const FString Current = Row.Name.ToString();
-                Memory::Memcpy(EditBuffer, Current.c_str(), Math::Min(Current.size(), sizeof(EditBuffer) - 1));
+                Memory::Memcpy(EditBuffer, *Current, Math::Min(Current.Len(), static_cast<int32>(sizeof(EditBuffer) - 1)));
             }
         }
 
@@ -707,7 +707,7 @@ namespace Lumina
         // A text item is not hit-testable, and an InputText per cell is what costs at this row count.
         const FString Text = Reflection::ToText(Property, RowMemory);
 
-        if (ImGui::Selectable(Text.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap))
+        if (ImGui::Selectable(*Text, false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap))
         {
             SelectedRow = RowIndex;
 
@@ -719,7 +719,7 @@ namespace Lumina
                 bEditorJustOpened = true;
 
                 Memory::Memzero(EditBuffer, sizeof(EditBuffer));
-                Memory::Memcpy(EditBuffer, Text.c_str(), Math::Min(Text.size(), sizeof(EditBuffer) - 1));
+                Memory::Memcpy(EditBuffer, *Text, Math::Min(Text.Len(), static_cast<int32>(sizeof(EditBuffer) - 1)));
             }
         }
 
@@ -751,7 +751,7 @@ namespace Lumina
         }
 
         // One extra for the name column, which is always present.
-        const int32 ColumnCount = (int32)Columns.size() + 1;
+        const int32 ColumnCount = Columns.Num() + 1;
 
         if (!ImGui::BeginTable("##datatable", ColumnCount, TableFlags))
         {
@@ -762,7 +762,7 @@ namespace Lumina
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_WidthFixed, 180.0f);
         for (FProperty* Property : Columns)
         {
-            ImGui::TableSetupColumn(Property->GetPropertyDisplayName().c_str(), ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn(*Property->GetPropertyDisplayName(), ImGuiTableColumnFlags_WidthFixed, 140.0f);
         }
         ImGui::TableHeadersRow();
 
@@ -790,7 +790,7 @@ namespace Lumina
 
         // Clipped over the display order, so thousands of rows build widgets only for what is visible.
         ImGuiListClipper Clipper;
-        Clipper.Begin((int32)DisplayOrder.size());
+        Clipper.Begin(DisplayOrder.Num());
 
         // Clipping these away destroys the InputText mid-edit, and drops the drag's active id.
         for (const int32 KeepAlive : {EditingRow, DraggingRow})
@@ -800,7 +800,7 @@ namespace Lumina
                 continue;
             }
 
-            for (int32 i = 0; i < (int32)DisplayOrder.size(); ++i)
+            for (int32 i = 0; i < DisplayOrder.Num(); ++i)
             {
                 if (DisplayOrder[i] == KeepAlive)
                 {
@@ -823,12 +823,12 @@ namespace Lumina
                 ImGui::TableNextRow();
 
                 // Keyed by name, since an index-derived id changes under a dragged row and drops it.
-                ImGui::PushID(Table->Rows[RowIndex].Name.c_str());
+                ImGui::PushID(*Table->Rows[RowIndex].Name);
 
                 ImGui::TableSetColumnIndex(0);
                 DrawNameCell(RowIndex);
 
-                for (int32 Col = 0; Col < (int32)Columns.size(); ++Col)
+                for (int32 Col = 0; Col < Columns.Num(); ++Col)
                 {
                     if (!ImGui::TableSetColumnIndex(Col + 1))
                     {
@@ -856,7 +856,7 @@ namespace Lumina
         }
 
         // Row count changes from anywhere (import, undo) must not leave stale indices in the view.
-        if ((int32)DisplayOrder.size() > Table->GetRowCount() && !Filter.IsActive())
+        if (DisplayOrder.Num() > Table->GetRowCount() && !Filter.IsActive())
         {
             bDisplayOrderDirty = true;
         }
@@ -877,8 +877,8 @@ namespace Lumina
                 RebuildDisplayOrder();
             }
 
-            ImGui::TextDisabled("%d row%s%s", (int32)DisplayOrder.size(),
-                DisplayOrder.size() == 1 ? "" : "s",
+            ImGui::TextDisabled("%d row%s%s", DisplayOrder.Num(),
+                DisplayOrder.Num() == 1 ? "" : "s",
                 Filter.IsActive() ? " (filtered)" : "");
 
             DrawGrid();
@@ -920,7 +920,7 @@ namespace Lumina
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Row:");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "%s", Row.Name.c_str());
+        ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "%s", *Row.Name);
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -959,34 +959,34 @@ namespace Lumina
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (!LastImportResult.UnknownColumns.empty())
+        if (!LastImportResult.UnknownColumns.IsEmpty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.4f, 1.0f), "Columns with no matching field:");
             for (const FString& Column : LastImportResult.UnknownColumns)
             {
-                ImGui::BulletText("%s", Column.c_str());
+                ImGui::BulletText("%s", *Column);
             }
             ImGui::Spacing();
         }
 
-        if (!LastImportResult.MissingColumns.empty())
+        if (!LastImportResult.MissingColumns.IsEmpty())
         {
             ImGui::TextDisabled("Fields the file did not supply (left at their defaults):");
             for (const FString& Column : LastImportResult.MissingColumns)
             {
-                ImGui::BulletText("%s", Column.c_str());
+                ImGui::BulletText("%s", *Column);
             }
             ImGui::Spacing();
         }
 
-        if (!LastImportResult.Errors.empty())
+        if (!LastImportResult.Errors.IsEmpty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "Problems:");
             if (ImGui::BeginChild("##errors", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders))
             {
                 for (const FString& Error : LastImportResult.Errors)
                 {
-                    ImGui::TextWrapped("%s", Error.c_str());
+                    ImGui::TextWrapped("%s", *Error);
                 }
             }
             ImGui::EndChild();

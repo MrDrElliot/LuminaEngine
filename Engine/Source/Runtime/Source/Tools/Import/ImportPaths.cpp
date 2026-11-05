@@ -22,10 +22,10 @@ namespace Lumina::Import::PathReservations
         // Neither the extension nor case tells two packages apart, so neither may tell two reservations apart.
         FFixedString KeyOf(FStringView Path)
         {
-            FFixedString Key(Path.data(), Path.size());
+            FFixedString Key(Path.GetData(), Path.Len());
             if (VFS::HasExtension(Key, ".lasset"))
             {
-                Key.resize(Key.size() - FStringView(".lasset").size());
+                Key.SetLen(Key.Len() - FStringView(".lasset").Len());
             }
             for (char& Character : Key)
             {
@@ -50,7 +50,7 @@ namespace Lumina::Import::PathReservations
                 return true;
             }
 
-            return GReserved.find(KeyOf(Path)) != GReserved.end();
+            return GReserved.Contains(KeyOf(Path));
         }
 
         FFixedString FindFreeUnlocked(const FFixedString& Base)
@@ -63,7 +63,7 @@ namespace Lumina::Import::PathReservations
             for (uint32 N = 1; N < kMaxSuffix; ++N)
             {
                 FFixedString Candidate = Base;
-                Candidate.append("_").append(Format("{}", N).c_str());
+                Candidate.Append("_").Append(*Format("{}", N));
                 if (!IsOwnedUnlocked(Candidate))
                 {
                     return Candidate;
@@ -75,57 +75,57 @@ namespace Lumina::Import::PathReservations
 
     bool IsFree(FStringView Path)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return false;
         }
 
         FScopeLock Lock(GMutex);
-        return !IsOwnedUnlocked(FFixedString(Path.data(), Path.size()));
+        return !IsOwnedUnlocked(FFixedString(Path.GetData(), Path.Len()));
     }
 
     FFixedString FindFree(FStringView Path)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return {};
         }
 
         FScopeLock Lock(GMutex);
-        return FindFreeUnlocked(FFixedString(Path.data(), Path.size()));
+        return FindFreeUnlocked(FFixedString(Path.GetData(), Path.Len()));
     }
 
     FFixedString Reserve(FStringView Path)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return {};
         }
 
         FScopeLock Lock(GMutex);
-        FFixedString Free = FindFreeUnlocked(FFixedString(Path.data(), Path.size()));
-        if (!Free.empty())
+        FFixedString Free = FindFreeUnlocked(FFixedString(Path.GetData(), Path.Len()));
+        if (!Free.IsEmpty())
         {
-            GReserved.insert(KeyOf(Free));
+            GReserved.Add(KeyOf(Free));
         }
         return Free;
     }
 
     void Release(FStringView Path)
     {
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             return;
         }
 
         FScopeLock Lock(GMutex);
-        GReserved.erase(KeyOf(Path));
+        GReserved.Remove(KeyOf(Path));
     }
 
     void ReleaseAll()
     {
         FScopeLock Lock(GMutex);
-        GReserved.clear();
+        GReserved.Reset();
     }
 
     FScopedReservation::FScopedReservation(FStringView Path)

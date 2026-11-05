@@ -45,7 +45,7 @@ namespace Lumina
         {
             for (const FUIDesignScalar& Scalar : Scalars)
             {
-                if (FStringView(Scalar.Name.c_str(), Scalar.Name.size()) == InName)
+                if (FStringView(*Scalar.Name, Scalar.Name.Len()) == InName)
                 {
                     return &Scalar;
                 }
@@ -62,15 +62,15 @@ namespace Lumina
             // A bound struct is described member by member, as Player.Name and Player.Level.
             for (const FUIDesignScalar& Scalar : Scalars)
             {
-                const FStringView Path(Scalar.Name.c_str(), Scalar.Name.size());
-                if (Path.size() > InName.size() && Path[InName.size()] == '.' && Path.substr(0, InName.size()) == InName)
+                const FStringView Path(*Scalar.Name, Scalar.Name.Len());
+                if (Path.Len() > InName.Len() && Path[InName.Len()] == '.' && Path.Mid(0, InName.Len()) == InName)
                 {
                     return true;
                 }
             }
             for (const FUIDesignList& List : Lists)
             {
-                if (FStringView(List.Name.c_str(), List.Name.size()) == InName)
+                if (FStringView(*List.Name, List.Name.Len()) == InName)
                 {
                     return true;
                 }
@@ -82,7 +82,7 @@ namespace Lumina
         {
             for (const FUIDesignCommand& Command : Commands)
             {
-                if (FStringView(Command.Name.c_str(), Command.Name.size()) == InName)
+                if (FStringView(*Command.Name, Command.Name.Len()) == InName)
                 {
                     return true;
                 }

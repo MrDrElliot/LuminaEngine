@@ -17,14 +17,14 @@ namespace Lumina
 
     bool FPakWriter::AddEntry(FStringView VirtualPath, FStringView Data)
     {
-        return AddEntry(VirtualPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Data.data()), Data.size()));
+        return AddEntry(VirtualPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Data.GetData()), Data.Len()));
     }
 
     bool FPakWriter::AddEntry(FStringView VirtualPath, TVector<uint8>&& Data, bool bPrecompressed)
     {
-        FFixedString Key(VirtualPath.data(), VirtualPath.size());
+        FFixedString Key(VirtualPath.GetData(), VirtualPath.Len());
 
-        if (!SeenPaths.insert(Key).second)
+        if (!SeenPaths.TryAdd(Key))
         {
             // Silently de-dup; dependency walker can revisit assets via different paths.
             return false;
@@ -34,18 +34,18 @@ namespace Lumina
         Pending.VirtualPath    = Move(Key);
         Pending.Data           = Move(Data);
         Pending.bPrecompressed = bPrecompressed;
-        TotalDataSize += Pending.Data.size();
-        Entries.emplace_back(Move(Pending));
+        TotalDataSize += Pending.Data.Num();
+        Entries.Emplace(Move(Pending));
         return true;
     }
 
     void FPakWriter::GetEntryPaths(TVector<FFixedString>& OutPaths) const
     {
-        OutPaths.clear();
-        OutPaths.reserve(Entries.size());
+        OutPaths.Reset();
+        OutPaths.Reserve(Entries.Num());
         for (const FPendingEntry& Entry : Entries)
         {
-            OutPaths.push_back(Entry.VirtualPath);
+            OutPaths.Add(Entry.VirtualPath);
         }
     }
 
@@ -53,10 +53,10 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        std::ofstream File(FString(NativeFilePath.data(), NativeFilePath.size()).c_str(), std::ios::binary | std::ios::trunc);
+        std::ofstream File(*FString(NativeFilePath.GetData(), NativeFilePath.Len()), std::ios::binary | std::ios::trunc);
         if (!File)
         {
-            LOG_ERROR("FPakWriter: cannot open '{}' for write", FString(NativeFilePath.data(), NativeFilePath.size()).c_str());
+            LOG_ERROR("FPakWriter: cannot open '{}' for write", *FString(NativeFilePath.GetData(), NativeFilePath.Len()));
             return false;
         }
 
@@ -64,7 +64,7 @@ namespace Lumina
         FPakHeader Header{};
         Header.Magic      = PAK_MAGIC;
         Header.Version    = PAK_VERSION;
-        Header.EntryCount = (uint32)Entries.size();
+        Header.EntryCount = (uint32)Entries.Num();
         Header.TocOffset  = 0;
         Header._Pad       = 0;
 
@@ -87,45 +87,45 @@ namespace Lumina
         };
 
         TVector<FWriteRecord> Records;
-        Records.reserve(Entries.size());
-        size_t TotalCompressed = 0;
+        Records.Reserve(Entries.Num());
+        int64 TotalCompressed = 0;
 
         // Encoded in parallel batches and written in order, so the file is deterministic and only one batch of output is held at once.
-        constexpr size_t kBatchSize = 512;
+        constexpr int32 kBatchSize = 512;
         TVector<FEncoded> Batch;
-        for (size_t First = 0; First < Entries.size(); First += kBatchSize)
+        for (int32 First = 0; First < Entries.Num(); First += kBatchSize)
         {
-            const size_t Count = Math::Min(kBatchSize, Entries.size() - First);
-            Batch.clear();
-            Batch.resize(Count);
+            const int32 Count = Math::Min(kBatchSize, Entries.Num() - First);
+            Batch.Reset();
+            Batch.SetNum(Count);
 
-            Task::ParallelFor((uint32)Count, [&](uint32 i)
+            Jobs::ParallelFor((uint32)Count, [&](uint32 i)
             {
                 const FPendingEntry& Entry = Entries[First + i];
                 FEncoded& Out = Batch[i];
-                const uint64 Original = (uint64)Entry.Data.size();
-                Out.ContentHash = Original > 0 ? Hash::XXHash::GetHash64(Entry.Data.data(), Entry.Data.size()) : 0;
+                const uint64 Original = (uint64)Entry.Data.Num();
+                Out.ContentHash = Original > 0 ? Hash::XXHash::GetHash64(Entry.Data.GetData(), Entry.Data.Num()) : 0;
 
-                if (Entry.bPrecompressed || Original < PAK_COMPRESSION_MIN_SIZE)
+                if (Entry.bPrecompressed || static_cast<size_t>(Original) < PAK_COMPRESSION_MIN_SIZE)
                 {
                     return;
                 }
 
                 mz_ulong OutLen = mz_compressBound((mz_ulong)Original);
-                Out.Compressed.resize((size_t)OutLen);
-                const int Ret = mz_compress2(Out.Compressed.data(), &OutLen, Entry.Data.data(), (mz_ulong)Original, MZ_DEFAULT_COMPRESSION);
-                if (Ret == MZ_OK && OutLen < Original)
+                Out.Compressed.SetNum(IntCastChecked<int32>(OutLen));
+                const int Ret = mz_compress2(Out.Compressed.GetData(), &OutLen, Entry.Data.GetData(), (mz_ulong)Original, MZ_DEFAULT_COMPRESSION);
+                if (Ret == MZ_OK && OutLen < static_cast<mz_ulong>(Original))
                 {
-                    Out.Compressed.resize((size_t)OutLen);
+                    Out.Compressed.SetNum(IntCastChecked<int32>(OutLen));
                     Out.Method = (uint8)EPakCompression::Deflate;
                 }
                 else
                 {
-                    Out.Compressed.clear();
+                    Out.Compressed.Reset();
                 }
             }, 1);
 
-            for (size_t i = 0; i < Count; ++i)
+            for (int32 i = 0; i < Count; ++i)
             {
                 const FPendingEntry& Entry = Entries[First + i];
                 const FEncoded& Encoded = Batch[i];
@@ -133,33 +133,33 @@ namespace Lumina
 
                 FWriteRecord Rec{};
                 Rec.Offset           = (uint64)File.tellp();
-                Rec.UncompressedSize = (uint64)Entry.Data.size();
+                Rec.UncompressedSize = (uint64)Entry.Data.Num();
                 Rec.ContentHash      = Encoded.ContentHash;
                 Rec.Method           = Encoded.Method;
-                Rec.CompressedSize   = bDeflated ? (uint64)Encoded.Compressed.size() : Rec.UncompressedSize;
+                Rec.CompressedSize   = bDeflated ? (uint64)Encoded.Compressed.Num() : Rec.UncompressedSize;
 
-                const uint8* WritePtr = bDeflated ? Encoded.Compressed.data() : Entry.Data.data();
+                const uint8* WritePtr = bDeflated ? Encoded.Compressed.GetData() : Entry.Data.GetData();
                 if (Rec.CompressedSize > 0)
                 {
                     File.write(reinterpret_cast<const char*>(WritePtr), (std::streamsize)Rec.CompressedSize);
                 }
 
-                TotalCompressed += (size_t)Rec.CompressedSize;
-                Records.emplace_back(Rec);
+                TotalCompressed += Rec.CompressedSize;
+                Records.Emplace(Rec);
             }
         }
 
         const uint64 TocOffset = (uint64)File.tellp();
-        for (size_t i = 0; i < Entries.size(); ++i)
+        for (int32 i = 0; i < Entries.Num(); ++i)
         {
             const FPendingEntry& Entry = Entries[i];
             const FWriteRecord& Rec = Records[i];
 
-            const uint32 PathLen = (uint32)Entry.VirtualPath.size();
+            const uint32 PathLen = (uint32)Entry.VirtualPath.Len();
             File.write(reinterpret_cast<const char*>(&PathLen), sizeof(PathLen));
             if (PathLen > 0)
             {
-                File.write(Entry.VirtualPath.c_str(), PathLen);
+                File.write(*Entry.VirtualPath, PathLen);
             }
 
             File.write(reinterpret_cast<const char*>(&Rec.Offset),           sizeof(Rec.Offset));
@@ -179,7 +179,7 @@ namespace Lumina
 
         if (!File.good())
         {
-            LOG_ERROR("FPakWriter: write failed for '{}'", FString(NativeFilePath.data(), NativeFilePath.size()).c_str());
+            LOG_ERROR("FPakWriter: write failed for '{}'", *FString(NativeFilePath.GetData(), NativeFilePath.Len()));
             return false;
         }
 
@@ -188,8 +188,8 @@ namespace Lumina
             : 1.0;
 
         LOG_INFO("FPakWriter: wrote '{}' ({} entries, {} -> {} bytes, ratio {:.2f}, TOC at {})",
-            FString(NativeFilePath.data(), NativeFilePath.size()).c_str(),
-            (uint32)Entries.size(), TotalDataSize, TotalCompressed, Ratio, TocOffset);
+            *FString(NativeFilePath.GetData(), NativeFilePath.Len()),
+            Entries.Num(), TotalDataSize, TotalCompressed, Ratio, TocOffset);
         return true;
     }
 }

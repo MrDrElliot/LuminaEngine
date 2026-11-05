@@ -3,27 +3,24 @@
 #include "EntityScriptSystem.h"
 
 #include "Core/Math/Math.h"
-#include "Core/Profiler/Profile.h"
 #include "Scripting/EntityScript.h"
 #include "World/World.h"
 #include "World/Subsystems/WorldSettings.h"
 #include "World/Entity/Systems/SystemContext.h"
-#include "World/Entity/Systems/SystemSingletons.h"
 
 namespace Lumina
 {
-    namespace
+    namespace EntityScriptSystemInternal
     {
         // Fixed 1/PhysicsHz steps for worlds without a physics scene, as a simulating one dispatches from its pre-step hook.
-        void DispatchFixedUpdates(ECS::FRegistry& Registry, float DeltaSeconds)
+        void DispatchFixedUpdates(ECS::FRegistry& Registry, CWorld* World, float& Accumulator, float DeltaSeconds)
         {
             float FixedDt  = 1.0f / 60.0f;
             int32 MaxSteps = 8;
 
-            // find, not get, because a bare registry has no world and the defaults above stand.
-            if (CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>(); WorldPtr != nullptr && *WorldPtr != nullptr)
+            if (World != nullptr)
             {
-                const SDefaultWorldSettings& Settings = (*WorldPtr)->GetDefaultWorldSettings();
+                const SDefaultWorldSettings& Settings = World->GetDefaultWorldSettings();
                 FixedDt  = 1.0f / Math::Max(10.0f, Settings.PhysicsHz);
                 MaxSteps = (int32)Settings.MaxPhysicsSteps;
             }
@@ -33,22 +30,18 @@ namespace Lumina
                 return;
             }
 
-            auto& Ctx = Registry.Ctx();
-            FScriptFixedUpdateState* StatePtr = Ctx.Find<FScriptFixedUpdateState>();
-            FScriptFixedUpdateState& FixedState = StatePtr ? *StatePtr : Ctx.Emplace<FScriptFixedUpdateState>();
-
             // Clamped as a spiral-of-death guard, so a long hitch cannot queue a hundred steps.
-            FixedState.Accumulator = Math::Min(FixedState.Accumulator + DeltaSeconds, (float)MaxSteps * FixedDt);
+            Accumulator = Math::Min(Accumulator + DeltaSeconds, (float)MaxSteps * FixedDt);
 
-            const int32 Steps = (FixedState.Accumulator >= FixedDt)
-                ? Math::Min(MaxSteps, (int32)(FixedState.Accumulator / FixedDt))
+            const int32 Steps = (Accumulator >= FixedDt)
+                ? Math::Min(MaxSteps, (int32)(Accumulator / FixedDt))
                 : 0;
             if (Steps <= 0)
             {
                 return;
             }
 
-            FixedState.Accumulator -= (float)Steps * FixedDt;
+            Accumulator -= (float)Steps * FixedDt;
 
             for (int32 Step = 0; Step < Steps; ++Step)
             {
@@ -64,31 +57,25 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PostPhysics);
     }
 
-    void SEntityScriptSystem::OnUpdate(const SSystemContext& Context)
+    void SEntityScriptSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-
         ECS::FRegistry& Registry = Context.GetRegistry();
 
         if (Context.GetUpdateStage() == EUpdateStage::PrePhysics)
         {
-            EntityScripts::Tick(Registry, (float)Context.GetDeltaTime(), EScriptUpdatePhase::PrePhysics);
+            EntityScripts::Tick(Registry, Context.GetDeltaTime(), EScriptUpdatePhase::PrePhysics);
         }
         else
         {
-            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
-            const bool bPhysicsDriven = WorldPtr != nullptr && *WorldPtr != nullptr
-                && (*WorldPtr)->GetPhysicsScene() != nullptr;
-
-            if (!bPhysicsDriven)
+            CWorld* World = Context.GetWorld();
+            if (World == nullptr || World->GetPhysicsScene() == nullptr)
             {
                 // The frame delta feeds the accumulator, so each frame is counted exactly once.
-                DispatchFixedUpdates(Registry, (float)Context.GetDeltaTime());
+                EntityScriptSystemInternal::DispatchFixedUpdates(Registry, World, FixedAccumulator, Context.GetDeltaTime());
             }
 
             // After the step, so an [Reflect(UpdatePhase = PostPhysics)] script reads settled transforms.
-            EntityScripts::Tick(Registry, (float)Context.GetDeltaTime(), EScriptUpdatePhase::PostPhysics);
+            EntityScripts::Tick(Registry, Context.GetDeltaTime(), EScriptUpdatePhase::PostPhysics);
         }
     }
 }
