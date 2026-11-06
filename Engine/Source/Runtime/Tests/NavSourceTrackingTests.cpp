@@ -3,7 +3,10 @@
 #include <cmath>
 
 #include "AI/Navigation/NavOctree.h"
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Config/NavigationSettings.h"
+#include "Core/Engine/Engine.h"
+#include "Renderer/MeshData.h"
 #include "NavWorldTestUtil.h"
 #include "World/Entity/Components/NavModifierComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
@@ -151,6 +154,40 @@ TEST(NavSourceTracking, ADestroyedColliderReopensTheGround)
     World.Registry().Destroy(Wall);
     ASSERT_TRUE(World.WaitSettled());
     EXPECT_TRUE(World.IsGroundWalkable(0.0f, 12.0f));
+    World.Stop();
+}
+
+// Every collider brings a rigid body that defaults to Dynamic, and physics keeps a concave mesh static regardless, so nav must bake it too.
+TEST(NavSourceTracking, AConcaveMeshColliderOnADefaultRigidBodyCarvesTheMesh)
+{
+    const bool bWasHeadless = GIsHeadless;
+    GIsHeadless = true;
+    CStaticMesh* Shelf = NewObject<CStaticMesh>();
+    Shelf->SetMeshResource(MakeUnique<FMeshResource>());
+    GIsHeadless = bWasHeadless;
+
+    const FVector3 Half(2.0f, 0.7f, 2.0f);
+    Shelf->Collision.bUseTriangleMesh = true;
+    for (int32 Corner = 0; Corner < 8; ++Corner)
+    {
+        Shelf->Collision.TriangleVertices.Emplace((Corner & 1) ? Half.x : -Half.x, (Corner & 2) ? Half.y : -Half.y, (Corner & 4) ? Half.z : -Half.z);
+    }
+    Shelf->Collision.TriangleIndices = { 0,1,3, 0,3,2, 4,6,7, 4,7,5, 0,4,5, 0,5,1, 2,3,7, 2,7,6, 0,2,6, 0,6,4, 1,5,7, 1,7,3 };
+
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    ECS::FRegistry& Registry = World.Registry();
+    const ECS::FEntity Entity = Registry.Create();
+    FTransform Transform;
+    Transform.SetLocation(FVector3(-12.0f, 0.7f, 0.0f));
+    Registry.Emplace<STransformComponent>(Entity, Transform);
+    Registry.Emplace<SMeshColliderComponent>(Entity).Mesh = Shelf;
+    ASSERT_EQ(Registry.Emplace<SRigidBodyComponent>(Entity).BodyType, EBodyType::Dynamic);
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    EXPECT_FALSE(World.IsGroundWalkable(-12.0f, 0.0f));
+    EXPECT_TRUE(World.IsGroundWalkable(12.0f, 0.0f));
     World.Stop();
 }
 

@@ -61,5 +61,8 @@ namespace Lumina
 
         // Replaces OutCollision with what Generator makes from Mesh. False when the mesh gave no geometry.
         RUNTIME_API bool Generate(ECollisionGenerator Generator, const CStaticMesh* Mesh, SMeshCollision& OutCollision);
+
+        // A mesh collider that builds triangles stays static whatever its rigid body asks for, and navigation bakes it as level geometry.
+        RUNTIME_API bool IsConcaveMeshCollider(const CStaticMesh& Mesh, bool bConvex);
     }
 }
