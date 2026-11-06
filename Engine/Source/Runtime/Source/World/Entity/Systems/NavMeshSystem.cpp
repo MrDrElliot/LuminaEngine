@@ -1151,7 +1151,7 @@ namespace Lumina
 
         void CollectNavSources(SNavMeshSystem::FSourceQueries& Queries, const FVector3& BakeMin, const FVector3& BakeMax, TVector<FNavSourceEntry>& Out, FNavFoliageCache* FoliageCache, const ECS::FEntity* Only = nullptr)
         {
-            // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles.
+            // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles. Concave colliders never simulate.
             auto IsSimulated = [&Queries](ECS::FEntity Entity)
             {
                 const SRigidBodyComponent* Body = Queries.RigidBodies.TryGet<SRigidBodyComponent>(Entity);
@@ -1223,10 +1223,11 @@ namespace Lumina
 
             ForEachNavSource<SMeshColliderComponent>(Queries.MeshColliders, Only, [&](ECS::FEntity E, const SMeshColliderComponent& MC, const STransformComponent& X)
             {
-                if (!MC.bAffectsNavigation || IsSimulated(E)) return;
+                if (!MC.bAffectsNavigation) return;
                 const SStaticMeshComponent* Fallback = Queries.StaticMeshes.TryGet<SStaticMeshComponent>(E);
                 CStaticMesh* Mesh = ResolveMeshColliderAsset(MC, Fallback);
                 if (!Mesh || Mesh->GetMeshResource().bSkinnedMesh) return;
+                if (IsSimulated(E) && !Physics::CollisionGen::IsConcaveMeshCollider(*Mesh, MC.bConvex)) return;
 
                 // The mesh's simplified collision replaces its render triangles, as it does for the physics body.
                 if (const SMeshCollision* Collision = Mesh->GetCollision())
@@ -1263,7 +1264,7 @@ namespace Lumina
             // Fingerprinted on the render-data version so a re-commit with unchanged bounds still dirties the tile.
             ForEachNavSource<SDynamicMeshColliderComponent>(Queries.DynamicMeshColliders, Only, [&](ECS::FEntity E, const SDynamicMeshColliderComponent& DMC, const STransformComponent& X)
             {
-                if (!DMC.bAffectsNavigation || IsSimulated(E)) return;
+                if (!DMC.bAffectsNavigation || (DMC.bConvex && IsSimulated(E))) return;
                 const SDynamicMeshComponent* DMFound = Queries.DynamicMeshes.TryGet<SDynamicMeshComponent>(E);
                 if (DMFound == nullptr) return;
                 const SDynamicMeshComponent& DM = *DMFound;
