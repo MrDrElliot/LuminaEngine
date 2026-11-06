@@ -88,7 +88,7 @@ TEST(PlatformSocket, AConnectionIsAcceptedAndDescribesItsPeer)
     const FSocketConnectionPtr Served = Listener->Accept(GAcceptTimeoutMs);
     ASSERT_TRUE(Served);
     EXPECT_TRUE(Served->IsOpen());
-    EXPECT_FALSE(Served->GetPeerDescription().empty());
+    EXPECT_FALSE(Served->GetPeerDescription().IsEmpty());
 }
 
 TEST(PlatformSocket, BytesTravelFromClientToServer)

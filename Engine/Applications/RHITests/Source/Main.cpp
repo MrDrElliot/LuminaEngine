@@ -92,7 +92,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("RHITests Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     // Without this every RHI GPU-AV flag parses, prints nothing, and changes nothing.
     FCommandLine ParsedCommandLine{ ArgC, ArgV };
@@ -124,7 +124,7 @@ int main(int ArgC, char** ArgV)
 
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     return FailedCount == 0 ? 0 : 1;

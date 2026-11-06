@@ -18,7 +18,7 @@ namespace Lumina
             CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
             if (Texture == nullptr)
             {
-                LOG_ERROR("[TextureImport] could not create '{0}'; a package already exists at that path", PackagePath.c_str());
+                LOG_ERROR("[TextureImport] could not create '{0}'; a package already exists at that path", *PackagePath);
                 return nullptr;
             }
 
@@ -53,7 +53,7 @@ namespace Lumina
         CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
         if (Texture == nullptr)
         {
-            OutResult.Error = FString("A package already exists at ") + FString(PackagePath.c_str());
+            OutResult.Error = FString("A package already exists at ") + FString(*PackagePath);
             return;
         }
 
@@ -64,7 +64,7 @@ namespace Lumina
         if (!CTextureFactory::CookIntoTexture(Texture, CookRequest))
         {
             CFactory::DiscardNew(Texture);
-            OutResult.Error = FString("Failed to cook ") + FString(Request.SourcePath.c_str());
+            OutResult.Error = FString("Failed to cook ") + FString(*Request.SourcePath);
             return;
         }
 
@@ -77,13 +77,13 @@ namespace Lumina
         if (!CPackage::SavePackage(Package, Package->GetPackagePath()))
         {
             // Discarded rather than left unsaved in memory, where it would make every retry at this path skip.
-            OutResult.Error = FString("Failed to save ") + FString(Package->GetPackagePath().c_str());
+            OutResult.Error = FString("Failed to save ") + FString(*Package->GetPackagePath());
             CFactory::DiscardNew(Texture);
             return;
         }
 
         FAssetRegistry::Get().AssetCreated(Texture);
-        OutResult.CreatedObjects.push_back(Texture);
+        OutResult.CreatedObjects.Add(Texture);
     }
 
     bool CTextureImporter::CanReimport(const CStruct* AssetClass) const
@@ -114,7 +114,7 @@ namespace Lumina
 
         // Restored on failure, since claiming a source it was never cooked from is worse than no change.
         const FString PreviousSource = Texture->SourcePath;
-        Texture->SourcePath = FString(Request.SourcePath.c_str());
+        Texture->SourcePath = FString(*Request.SourcePath);
 
         if (!CTextureFactory::Recook(Texture))
         {

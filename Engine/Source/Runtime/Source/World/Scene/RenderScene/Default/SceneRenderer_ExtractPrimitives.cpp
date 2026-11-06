@@ -3,11 +3,72 @@
 
 namespace Lumina
 {
-    void FDefaultSceneRenderer::ExtractBatchedTriangles(ECS::FRegistry& Registry)
+    namespace SceneRendererExtractPrimitivesInternal
+    {
+        float DecalLifetimeFade(const SDecalComponent& Decal, float WorldTime)
+        {
+            if (Decal.Lifetime <= 0.0f)
+            {
+                return 1.0f;
+            }
+            const float SpawnTime = Decal.SpawnTime >= 0.0f ? Decal.SpawnTime : WorldTime;
+            const float Remaining = Decal.Lifetime + Decal.FadeOutDuration - (WorldTime - SpawnTime);
+            if (Decal.FadeOutDuration <= 0.0f)
+            {
+                return Remaining > 0.0f ? 1.0f : 0.0f;
+            }
+            return Math::Clamp(Remaining / Decal.FadeOutDuration, 0.0f, 1.0f);
+        }
+
+        FVector4 DecalAtlasTransform(const SDecalComponent& Decal)
+        {
+            const int32 Columns = Math::Max(Decal.AtlasColumns, 1);
+            const int32 Rows    = Math::Max(Decal.AtlasRows, 1);
+            const int32 Cell    = Math::Clamp(Decal.AtlasCell, 0, Columns * Rows - 1);
+            return FVector4(1.0f / (float)Columns, 1.0f / (float)Rows,
+                            (float)(Cell % Columns) / (float)Columns, (float)(Cell / Columns) / (float)Rows);
+        }
+
+        uint64 DecalBoxKey(const FTransform& World, const FVector3& Size)
+        {
+            return HashExtractValue(Size, HashExtractValue(World, 0));
+        }
+    }
+
+    void FDefaultSceneRenderer::SchedulePrimitiveExtracts(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        auto Transforms   = Registry.GetStorage<STransformComponent>();
+        auto TriangleView = Registry.View<FTriangleBatcherComponent>();
+        auto WidgetView   = Registry.View<ECS::Write<SWidgetComponent>, ECS::Without<SDisabledTag>>();
+        auto TextView     = Registry.View<ECS::Read<STextComponent>, ECS::Without<SDisabledTag>>();
+        auto SpriteView   = Registry.View<ECS::Read<SSprite3DComponent>, ECS::Without<SDisabledTag>>();
+        auto DecalView    = Registry.View<ECS::Read<SDecalComponent>, ECS::Without<SDisabledTag>>();
+        auto WaterView    = Registry.View<ECS::Read<SWaterComponent>, ECS::Without<SDisabledTag>>();
+
+        const bool bTextMayHaveChanged  = PoolMayHaveChanged(Registry, ECS::GetComponentTypeID<STextComponent>(), TextPoolWatch);
+
+        #if USING(WITH_EDITOR)
+        auto SelectedView = Registry.View<FSelectedInEditorComponent>();
+        #endif
+
+        Jobs::Spawn(Jobs::EJobPriority::Normal, ExtractLatch, [=, this, &Frame]() -> Jobs::TTask<void>
+        {
+            co_await Jobs::Fork([this, TriangleView]                                    { ExtractBatchedTriangles(TriangleView); });
+            co_await Jobs::Fork([this, &Frame, WidgetView, Transforms]                  { ExtractWidgets(Frame, WidgetView, Transforms); });
+            co_await Jobs::Fork([this, &Frame, TextView, Transforms, bTextMayHaveChanged] { ExtractText(Frame, TextView, Transforms, bTextMayHaveChanged); });
+            co_await Jobs::Fork([this, &Frame, SpriteView, Transforms]                  { ExtractSprites(Frame, SpriteView, Transforms); });
+            #if USING(WITH_EDITOR)
+            co_await Jobs::Fork([this, &Frame, SelectedView]                            { ExtractSelection(Frame, SelectedView); });
+            #endif
+            co_await Jobs::Fork([this, &Frame, DecalView, Transforms]                   { ExtractDecals(Frame, DecalView, Transforms); });
+            co_await Jobs::Call([this, &Frame, WaterView, Transforms]                   { ExtractWater(Frame, WaterView, Transforms); });
+            co_await Jobs::Join();
+        });
+    }
+
+    void FDefaultSceneRenderer::ExtractBatchedTriangles(const auto& TriangleBatcherView)
     {
         LUMINA_PROFILE_SECTION("Batched Triangle Processing");
-
-        auto TriangleBatcherView = Registry.View<FTriangleBatcherComponent>();
 
         TriangleBatcherView.ForEach([&](FTriangleBatcherComponent& TriangleBatcherComponent)
         {
@@ -15,23 +76,22 @@ namespace Lumina
         });
     }
 
-    void FDefaultSceneRenderer::ExtractWidgets(ECS::FRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractWidgets(FFrameData& Frame, const auto& WidgetView, const auto& Transforms)
     {
         LUMINA_PROFILE_SECTION("Process Widget Primitives");
 
         const FSceneGlobalData& SceneGlobalData = Frame.SceneGlobalData;
         auto& WidgetInstances = Frame.Primitives.WidgetInstances;
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto WidgetView = Registry.View<SWidgetComponent>(ECS::TExclude<SDisabledTag>{});
 
         const FFrustum& WidgetFrustum = Frame.CameraFrustum;
         const bool      bCullWidgets   = SceneGlobalData.CullData.bFrustumCull != 0u;
 
-        WidgetView.ForEach([&](ECS::FEntity Entity, SWidgetComponent& WidgetComponent)
+        WidgetView.ForEach([&](ECS::FEntity Entity, ECS::TMut<SWidgetComponent> WidgetComponentMut)
         {
+            SWidgetComponent& WidgetComponent = WidgetComponentMut.BypassChangeDetection();
             FWidgetRuntime& Runtime = WidgetComponent.Runtime;
 
-            const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
             const FVector3 Center = FVector3(WorldMatrix[3]);
             const float ScaleXY = Math::Max(Math::Length(FVector3(WorldMatrix[0])), Math::Length(FVector3(WorldMatrix[1])));
             const float Radius  = 0.5f * Math::Length(WidgetComponent.WorldSize) * Math::Max(1.0f, ScaleXY);
@@ -44,36 +104,35 @@ namespace Lumina
                 return;
             }
 
-            FWidgetInstance& Inst = WidgetInstances.emplace_back();
+            FWidgetInstance& Inst = WidgetInstances.EmplaceGetRef();
             Inst.Transform    = WorldMatrix;
             Inst.WorldSize    = WidgetComponent.WorldSize;
             Inst.TextureIndex = (uint32)Runtime.ResourceID;
             Inst.Flags        = WidgetComponent.bBillboard ? WIDGET_FLAG_BILLBOARD : 0u;
             Inst.ColorPack    = PackColor(WidgetComponent.Tint);
-            Inst.EntityID     = (Entity).Value;
+            Inst.EntityID     = Entity.Value;
             Inst.Pad0         = 0u;
             Inst.Pad1         = 0u;
         });
     }
 
-    void FDefaultSceneRenderer::ExtractText(ECS::FRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractText(FFrameData& Frame, const auto& TextView, const auto& Transforms, bool bTextMayHaveChanged)
     {
         LUMINA_PROFILE_SECTION("Process Text Primitives");
 
         const FSceneGlobalData& SceneGlobalData = Frame.SceneGlobalData;
         auto& GlyphInstances = Frame.Primitives.GlyphInstances;
         auto& TextBatches    = Frame.Primitives.TextBatches;
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto TextView = Registry.View<STextComponent>(ECS::TExclude<SDisabledTag>{});
 
         const FFrustum& TextFrustum = Frame.CameraFrustum;
         const bool      bCullText   = SceneGlobalData.CullData.bFrustumCull != 0u;
         const FVector3  CamRight    = FVector3(SceneGlobalData.CameraData.Right);
         const FVector3  CamUp       = FVector3(SceneGlobalData.CameraData.Up);
 
-        TextView.ForEach([&](ECS::FEntity Entity, STextComponent& TextComponent)
+        uint32 TextVisited = 0;
+        TextView.ForEach([&](ECS::FEntity Entity, const STextComponent& TextComponent)
         {
-            if (TextComponent.Text.empty() || !Frame.ViewLayers.Draws(TextComponent.RenderLayers))
+            if (TextComponent.Text.IsEmpty() || !Frame.ViewLayers.Draws(TextComponent.RenderLayers))
             {
                 return;
             }
@@ -95,7 +154,7 @@ namespace Lumina
                 return;
             }
 
-            const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
             const FVector3 Origin = FVector3(WorldMatrix[3]);
 
             const float HAlign = (TextComponent.HorizontalAlign == ETextHorizontalAlign::Left)   ? 0.0f
@@ -104,21 +163,25 @@ namespace Lumina
             const float VAlign = (TextComponent.VerticalAlign == ETextVerticalAlign::Top)        ? 1.0f
                                : (TextComponent.VerticalAlign == ETextVerticalAlign::Middle)     ? 0.5f : 0.0f;
 
-            FTextRenderCache& Cache = TextComponent.RenderCache;
-            const uint64      TextHash = Hash::GetHash64(TextComponent.Text);
+            FTextRenderCache& Cache = TextCache.FindOrAdd(Entity);
+            Cache.SeenSerial = ExtractSerial;
+            ++TextVisited;
+            // A pool nothing wrote cannot hold a new string, so only a possible write pays for the hash.
+            const uint64      TextHash = (bTextMayHaveChanged || !Cache.bValid) ? Hash::GetHash64(TextComponent.Text) : Cache.TextHash;
 
             const bool bCacheValid =
                    Cache.bValid
                 && Cache.Font        == Font
                 && Cache.FontVersion == Font->GetShapeVersion()
                 && Cache.TextHash    == TextHash
-                && Cache.TextLength  == (uint32)TextComponent.Text.size()
+                && Cache.TextLength  == (uint32)TextComponent.Text.Len()
                 && Cache.HAlign      == TextComponent.HorizontalAlign
                 && Cache.VAlign      == TextComponent.VerticalAlign
                 && Cache.LineSpacing == TextComponent.LineSpacing;
 
             if (!bCacheValid)
             {
+                Cache.bValid = false;
                 if (!Font->ShapeText(TextComponent.Text, HAlign, VAlign, TextComponent.LineSpacing, Cache.Glyphs))
                 {
                     return;
@@ -133,7 +196,7 @@ namespace Lumina
 
                 Cache.EmExtent    = EmExtent;
                 Cache.TextHash    = TextHash;
-                Cache.TextLength  = (uint32)TextComponent.Text.size();
+                Cache.TextLength  = (uint32)TextComponent.Text.Len();
                 Cache.Font        = Font;
                 Cache.FontVersion = Font->GetShapeVersion();
                 Cache.HAlign      = TextComponent.HorizontalAlign;
@@ -143,7 +206,7 @@ namespace Lumina
             }
 
             const TVector<FShapedGlyph>& Shaped = Cache.Glyphs;
-            if (Shaped.empty())
+            if (Shaped.IsEmpty())
             {
                 return;
             }
@@ -153,7 +216,8 @@ namespace Lumina
                 return;
             }
 
-            FVector3 RightDir, UpDir;
+            FVector3 RightDir;
+            FVector3 UpDir;
             if (TextComponent.bBillboard)
             {
                 RightDir = CamRight;
@@ -168,11 +232,11 @@ namespace Lumina
             const FVector3 RightScaled = RightDir * TextComponent.WorldSize;
             const FVector3 UpScaled    = UpDir    * TextComponent.WorldSize;
             const uint32   Color       = PackColor(TextComponent.Color);
-            const uint32   First       = (uint32)GlyphInstances.size();
+            const uint32   First       = (uint32)GlyphInstances.Num();
 
             for (const FShapedGlyph& S : Shaped)
             {
-                FGPUGlyph& G = GlyphInstances.emplace_back();
+                FGPUGlyph& G = GlyphInstances.EmplaceGetRef();
                 G.Origin    = Origin;
                 G.Intensity = TextComponent.Intensity;
                 G.Right     = RightScaled;
@@ -183,15 +247,15 @@ namespace Lumina
                 G.PlaneMin  = S.Min;
                 G.PlaneMax  = S.Max;
                 G.ColorPack = Color;
-                G.EntityID  = (Entity).Value;
+                G.EntityID  = Entity.Value;
             }
 
-            const uint32 GlyphCount = (uint32)GlyphInstances.size() - First;
+            const uint32 GlyphCount = (uint32)GlyphInstances.Num() - First;
 
             // Extending the open batch never reorders anything, and same-font neighbors are common.
-            if (!TextBatches.empty())
+            if (!TextBatches.IsEmpty())
             {
-                FFrameData::FTextBatch& Last = TextBatches.back();
+                FFrameData::FTextBatch& Last = TextBatches.Last();
                 if (Last.AtlasIndex == (uint32)AtlasID
                     && Last.bDepthTest == TextComponent.bDepthTest
                     && Last.FirstInstance + Last.Count == First)
@@ -201,7 +265,7 @@ namespace Lumina
                 }
             }
 
-            FFrameData::FTextBatch& Batch = TextBatches.emplace_back();
+            FFrameData::FTextBatch& Batch = TextBatches.EmplaceGetRef();
             Batch.AtlasIndex    = (uint32)AtlasID;
             Batch.AtlasWidth    = Font->GetAtlasWidth();
             Batch.AtlasHeight   = Font->GetAtlasHeight();
@@ -210,17 +274,17 @@ namespace Lumina
             Batch.Count         = GlyphCount;
             Batch.bDepthTest    = TextComponent.bDepthTest;
         });
+
+        SweepUnseenExtractCache(TextCache, ExtractSerial, TextVisited);
     }
 
-    void FDefaultSceneRenderer::ExtractSprites(ECS::FRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractSprites(FFrameData& Frame, const auto& SpriteView, const auto& Transforms)
     {
         LUMINA_PROFILE_SECTION("Process Sprite Primitives");
 
         const FSceneGlobalData& SceneGlobalData = Frame.SceneGlobalData;
         auto& SpriteInstances = Frame.Primitives.SpriteInstances;
         auto& SpriteBatches   = Frame.Primitives.SpriteBatches;
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto SpriteView = Registry.View<SSprite3DComponent>(ECS::TExclude<SDisabledTag>{});
 
         const FFrustum& SpriteFrustum  = Frame.CameraFrustum;
         const bool      bCullSprites   = SceneGlobalData.CullData.bFrustumCull != 0u;
@@ -228,7 +292,7 @@ namespace Lumina
         const FVector3  SpriteCamUp    = FVector3(SceneGlobalData.CameraData.Up);
         const FVector3  SpriteCamPos   = FVector3(SceneGlobalData.CameraData.Location);
 
-        SpriteSortScratch.clear();
+        SpriteSortScratch.Reset();
 
         SpriteView.ForEach([&](ECS::FEntity Entity, const SSprite3DComponent& Sprite)
         {
@@ -285,7 +349,7 @@ namespace Lumina
                 const float SwapV = V0; V0 = V1; V1 = SwapV;
             }
 
-            const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
             const FVector3 Origin      = FVector3(WorldMatrix[3]);
 
             const float ScaleX = Math::Length(FVector3(WorldMatrix[0]));
@@ -337,7 +401,7 @@ namespace Lumina
                 break;
             }
 
-            FSpriteSortEntry& Entry = SpriteSortScratch.emplace_back();
+            FSpriteSortEntry& Entry = SpriteSortScratch.EmplaceGetRef();
             Entry.TextureIndex = (uint32)Texture->GetResourceID();
             Entry.SortOrder    = Sprite.SortOrder;
             Entry.ViewDepthSq  = Math::LengthSquared(Origin - SpriteCamPos);
@@ -352,12 +416,12 @@ namespace Lumina
             Out.PlaneMin = PlaneMin;
             Out.PlaneMax = PlaneMax;
             Out.ColorPack = PackColor(Sprite.Modulate);
-            Out.EntityID  = (Entity).Value;
+            Out.EntityID  = Entity.Value;
             Out.Flags     = (Sprite.AlphaCut == ESpriteAlphaCut::Discard) ? SPRITE_FLAG_ALPHA_CUT : 0u;
             Out.AlphaCutThreshold = Sprite.AlphaCutThreshold;
         });
 
-        if (SpriteSortScratch.empty())
+        if (SpriteSortScratch.IsEmpty())
         {
             return;
         }
@@ -371,15 +435,15 @@ namespace Lumina
             return A.ViewDepthSq > B.ViewDepthSq;
         });
 
-        SpriteInstances.reserve(SpriteSortScratch.size());
+        SpriteInstances.Reserve(SpriteSortScratch.Num());
         for (const FSpriteSortEntry& Entry : SpriteSortScratch)
         {
-            const uint32 First = (uint32)SpriteInstances.size();
-            SpriteInstances.push_back(Entry.Gpu);
+            const uint32 First = (uint32)SpriteInstances.Num();
+            SpriteInstances.Add(Entry.Gpu);
 
-            if (!SpriteBatches.empty())
+            if (!SpriteBatches.IsEmpty())
             {
-                FFrameData::FSpriteBatch& Last = SpriteBatches.back();
+                FFrameData::FSpriteBatch& Last = SpriteBatches.Last();
                 if (Last.TextureIndex == Entry.TextureIndex
                     && Last.bDepthTest == Entry.bDepthTest
                     && Last.bDoubleSided == Entry.bDoubleSided
@@ -390,7 +454,7 @@ namespace Lumina
                 }
             }
 
-            FFrameData::FSpriteBatch& Batch = SpriteBatches.emplace_back();
+            FFrameData::FSpriteBatch& Batch = SpriteBatches.EmplaceGetRef();
             Batch.TextureIndex  = Entry.TextureIndex;
             Batch.FirstInstance = First;
             Batch.Count         = 1;
@@ -399,139 +463,142 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ExtractBillboards(ECS::FRegistry& Registry, FFrameData& Frame)
+    // In the draw tasks, since the editor icons reuse what the light pass read instead of walking the lights again.
+    void FDefaultSceneRenderer::ScheduleBillboardExtract(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        auto Transforms    = Registry.GetStorage<STransformComponent>();
+        auto BillboardView = Registry.View<ECS::Read<SBillboardComponent>, ECS::Without<SDisabledTag>>();
+
+        #if USING(WITH_EDITOR)
+        if (bRecordLightIcons)
+        {
+            auto CameraView        = Registry.View<ECS::Read<SCameraComponent>, ECS::Without<SDisabledTag>, ECS::Without<FEditorComponent>>();
+            auto CharacterView     = Registry.View<ECS::Read<SCharacterControllerComponent>, ECS::Without<SDisabledTag>>();
+            auto SkyLightView      = Registry.View<ECS::Read<SSkyLightComponent>, ECS::Without<SDisabledTag>>();
+            auto ParticleView      = Registry.View<ECS::Read<SParticleSystemComponent>, ECS::Without<SDisabledTag>>();
+            auto AudioSourceView   = Registry.View<ECS::Read<SAudioSourceComponent>, ECS::Without<SDisabledTag>>();
+            auto AudioListenerView = Registry.View<ECS::Read<SAudioListenerComponent>, ECS::Without<SDisabledTag>>();
+
+            Jobs::Spawn(Jobs::EJobPriority::Normal, ExtractLatch,
+                [this, &Frame, Transforms, BillboardView, CameraView, CharacterView, SkyLightView, ParticleView, AudioSourceView, AudioListenerView]() -> Jobs::TTask<void>
+            {
+                ExtractBillboards(Frame, BillboardView, Transforms);
+
+                // After the component billboards, so the icons keep their place at the end of the list.
+                co_await LightsReady;
+                ExtractEditorIcons(Frame, Transforms, CameraView, CharacterView, SkyLightView, ParticleView, AudioSourceView, AudioListenerView);
+            });
+            return;
+        }
+        #endif
+
+        Jobs::Spawn(Jobs::EJobPriority::Normal, ExtractLatch, [this, &Frame, BillboardView, Transforms]
+        {
+            ExtractBillboards(Frame, BillboardView, Transforms);
+        });
+    }
+
+    void FDefaultSceneRenderer::ExtractBillboards(FFrameData& Frame, const auto& BillboardView, const auto& Transforms)
     {
         LUMINA_PROFILE_SECTION("Process Billboard Primitives");
 
         auto& BillboardInstances = Frame.Primitives.BillboardInstances;
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto BillboardView = Registry.View<SBillboardComponent>(ECS::TExclude<SDisabledTag>{});
-
-        BillboardView.ForEach([this, &BillboardInstances, &TransformStorage](ECS::FEntity Entity, const SBillboardComponent& BillboardComponent)
+        BillboardView.ForEach([&](ECS::FEntity Entity, const SBillboardComponent& BillboardComponent)
         {
             if (!BillboardComponent.Texture.IsValid() || BillboardComponent.Texture->GetResourceID() < 0)
             {
                 return;
             }
 
-            FBillboardInstance& Billboard   = BillboardInstances.emplace_back();
+            FBillboardInstance& Billboard   = BillboardInstances.EmplaceGetRef();
             Billboard.TextureIndex          = BillboardComponent.Texture->GetResourceID();
-            Billboard.Position              = TransformStorage.Get(Entity).GetWorldLocationCached();
+            Billboard.Position              = Transforms.Get(Entity).GetWorldLocationCached();
             Billboard.Size                  = BillboardComponent.Scale;
-            Billboard.EntityID              = (Entity).Value;
+            Billboard.EntityID              = Entity.Value;
         });
-        
-        #if USING(WITH_EDITOR)
-        auto CameraView = Registry.View<SCameraComponent>(ECS::TExclude<SDisabledTag>{});
-        auto CharacterView = Registry.View<SCharacterControllerComponent>(ECS::TExclude<SDisabledTag>{});
-        auto PointLightView = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
-        auto SpotLightView = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
-        auto AreaLightView = Registry.View<SAreaLightComponent>(ECS::TExclude<SDisabledTag>{});
-        auto DirectionalView = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
-        auto SkyLightView = Registry.View<SSkyLightComponent>(ECS::TExclude<SDisabledTag>{});
-        auto ParticleView = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
-        auto AudioSourceView = Registry.View<SAudioSourceComponent>(ECS::TExclude<SDisabledTag>{});
-        auto AudioListenerView = Registry.View<SAudioListenerComponent>(ECS::TExclude<SDisabledTag>{});
-        // Editor visualizer billboards, skipped in game and thumbnail worlds.
-        if (!World->IsGameWorld())
-        {
-            auto EmplaceVisualizer = [this, &BillboardInstances](ECS::FEntity Entity, const FVector3& Position, ENamedImage Icon, const FVector4& Color, float Size = 0.20f)
-            {
-                FBillboardInstance& Billboard = BillboardInstances.emplace_back();
-                Billboard.TextureIndex        = (uint32)GetNamedImage(Icon).GetResourceID();
-                Billboard.ColorPack           = PackColor(Color);
-                Billboard.Position            = Position;
-                Billboard.Size                = Size;
-                Billboard.EntityID            = (Entity).Value;
-            };
-
-            // Skip editor viewport camera so the billboard doesn't sit on the user's view.
-            CameraView.ForEach([&](ECS::FEntity Entity, SCameraComponent&)
-            {
-                if (Registry.HasAll<FEditorComponent>(Entity))
-                {
-                    return;
-                }
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CameraIcon, FColor::White);
-            });
-
-            CharacterView.ForEach([&](ECS::FEntity Entity, SCharacterControllerComponent&)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CharacterIcon, FColor::White);
-            });
-
-            PointLightView.ForEach([&](ECS::FEntity Entity, const SPointLightComponent& Light)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
-            });
-
-            SpotLightView.ForEach([&](ECS::FEntity Entity, const SSpotLightComponent& Light)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
-            });
-
-            AreaLightView.ForEach([&](ECS::FEntity Entity, const SAreaLightComponent& Light)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
-            });
-
-            DirectionalView.ForEach([&](ECS::FEntity Entity, const SDirectionalLightComponent& Light)
-            {
-                const auto& Transform = Registry.Get<STransformComponent>(Entity);
-                EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::DirectionalLightIcon, FVector4(Light.Color, 1.0f));
-            });
-
-            SkyLightView.ForEach([&](ECS::FEntity Entity, const SSkyLightComponent&)
-            {
-                const auto& Transform = Registry.Get<STransformComponent>(Entity);
-                EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::SkyLightIcon, FVector4(1.0f));
-            });
-
-            ParticleView.ForEach([&](ECS::FEntity Entity, const SParticleSystemComponent&)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
-            });
-
-            AudioSourceView.ForEach([&](ECS::FEntity Entity, const SAudioSourceComponent& Source)
-            {
-                // A live voice tints cyan, so an audible emitter is obvious without selecting it.
-                const FVector4 Tint = Source.bPlaying ? FVector4(0.35f, 0.95f, 1.0f, 1.0f) : FVector4(1.0f);
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioSourceIcon, Tint);
-            });
-
-            AudioListenerView.ForEach([&](ECS::FEntity Entity, const SAudioListenerComponent&)
-            {
-                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioListenerIcon, FVector4(1.0f));
-            });
-        }
-        #endif
     }
 
 #if USING(WITH_EDITOR)
-    void FDefaultSceneRenderer::ExtractSelection(ECS::FRegistry& Registry, FFrameData& Frame)
+    // Editor visualizer billboards, skipped in game and thumbnail worlds.
+    void FDefaultSceneRenderer::ExtractEditorIcons(FFrameData& Frame, const auto& Transforms, const auto& CameraView, const auto& CharacterView,
+                                                   const auto& SkyLightView, const auto& ParticleView, const auto& AudioSourceView, const auto& AudioListenerView)
+    {
+        LUMINA_PROFILE_SECTION("Process Editor Icons");
+
+        auto& BillboardInstances = Frame.Primitives.BillboardInstances;
+        auto EmplaceVisualizer = [this, &BillboardInstances](ECS::FEntity Entity, const FVector3& Position, ENamedImage Icon, const FVector4& Color)
+        {
+            FBillboardInstance& Billboard = BillboardInstances.EmplaceGetRef();
+            Billboard.TextureIndex        = (uint32)GetNamedImage(Icon).GetResourceID();
+            Billboard.ColorPack           = PackColor(Color);
+            Billboard.Position            = Position;
+            Billboard.Size                = 0.20f;
+            Billboard.EntityID            = Entity.Value;
+        };
+
+        auto EmplaceAt = [&](ECS::FEntity Entity, ENamedImage Icon, const FVector4& Color)
+        {
+            EmplaceVisualizer(Entity, Transforms.Get(Entity).GetWorldLocationCached(), Icon, Color);
+        };
+
+        // The light pass recorded each light's icon; its chunks run back to front to match a whole-pool walk.
+        auto EmplaceLightIcons = [&](uint32 FirstChunk, uint32 NumChunks, ENamedImage Icon)
+        {
+            for (uint32 Chunk = FirstChunk + NumChunks; Chunk-- > FirstChunk;)
+            {
+                const FLightBatch& Batch = LightBatches[Chunk];
+                for (uint32 Index = 0; Index < Batch.NumIcons; ++Index)
+                {
+                    const FLightIcon& LightIcon = Batch.Icons[Index];
+                    EmplaceVisualizer(LightIcon.Entity, LightIcon.Position, Icon, FVector4(LightIcon.Color, 1.0f));
+                }
+            }
+        };
+
+        CameraView.ForEach([&](ECS::FEntity Entity, const SCameraComponent&)                            { EmplaceAt(Entity, ENamedImage::CameraIcon, FColor::White); });
+        CharacterView.ForEach([&](ECS::FEntity Entity, const SCharacterControllerComponent&)            { EmplaceAt(Entity, ENamedImage::CharacterIcon, FColor::White); });
+
+        EmplaceLightIcons(0u, NumPointLightChunks, ENamedImage::PointLightIcon);
+        EmplaceLightIcons(NumPointLightChunks, NumSpotLightChunks, ENamedImage::SpotLightIcon);
+        EmplaceLightIcons(NumPointLightChunks + NumSpotLightChunks, NumAreaLightChunks, ENamedImage::SpotLightIcon);
+        for (const FLightIcon& LightIcon : DirectionalLightIcons)
+        {
+            EmplaceVisualizer(LightIcon.Entity, LightIcon.Position, ENamedImage::DirectionalLightIcon, FVector4(LightIcon.Color, 1.0f));
+        }
+
+        SkyLightView.ForEach([&](ECS::FEntity Entity, const SSkyLightComponent&)                  { EmplaceAt(Entity, ENamedImage::SkyLightIcon, FVector4(1.0f)); });
+        ParticleView.ForEach([&](ECS::FEntity Entity, const SParticleSystemComponent&)            { EmplaceAt(Entity, ENamedImage::ParticleSystemIcon, FVector4(1.0f)); });
+        AudioSourceView.ForEach([&](ECS::FEntity Entity, const SAudioSourceComponent& Source)
+        {
+            // A live voice tints cyan, so an audible emitter is obvious without selecting it.
+            EmplaceAt(Entity, ENamedImage::AudioSourceIcon, Source.bPlaying ? FVector4(0.35f, 0.95f, 1.0f, 1.0f) : FVector4(1.0f));
+        });
+        AudioListenerView.ForEach([&](ECS::FEntity Entity, const SAudioListenerComponent&)        { EmplaceAt(Entity, ENamedImage::AudioListenerIcon, FVector4(1.0f)); });
+    }
+
+    void FDefaultSceneRenderer::ExtractSelection(FFrameData& Frame, const auto& SelectedView)
     {
         LUMINA_PROFILE_SECTION("Extract Selection");
 
         TVector<uint32>& Bits = Frame.Extracts.SelectionBits;
-        Bits.clear();
+        Bits.Reset();
 
         // Sized to the highest selected slot, since an entity above the top bit reads as unselected.
         uint32 HighestWord = 0u;
         bool   bAnySelected = false;
-        auto   Selected = Registry.View<FSelectedInEditorComponent>();
-        Selected.ForEach([&](ECS::FEntity Entity)
+        SelectedView.ForEach([&](ECS::FEntity Entity)
         {
-            HighestWord  = Math::Max(HighestWord, (uint32)(Entity).GetIndex() >> 5u);
+            HighestWord  = Math::Max(HighestWord, Entity.GetIndex() >> 5u);
             bAnySelected = true;
         });
 
         // Sized once, since the view yields entities in no particular order.
         if (bAnySelected)
         {
-            Bits.resize(HighestWord + 1u, 0u);
-            Selected.ForEach([&](ECS::FEntity Entity)
+            Bits.SetNum(HighestWord + 1u, 0u);
+            SelectedView.ForEach([&](ECS::FEntity Entity)
             {
-                const uint32 Index = (uint32)(Entity).GetIndex();
+                const uint32 Index = Entity.GetIndex();
                 Bits[Index >> 5u] |= (1u << (Index & 31u));
             });
         }
@@ -540,7 +607,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ExtractDebugText(FFrameData& Frame)
     {
-        Frame.Primitives.DebugTextGlyphs.clear();
+        Frame.Primitives.DebugTextGlyphs.Reset();
         Frame.Primitives.DebugTextBatch = {};
 #if !defined(LE_SHIPPING)
         {
@@ -549,9 +616,10 @@ namespace Lumina
 
             CFont* DebugFont = CFontManager::Get().GetDefaultFont();
             const int32 DebugAtlasID = DebugFont ? DebugFont->GetAtlasResourceID() : -1;
-            if (!DebugLines.empty() && DebugFont && DebugFont->HasAtlas() && DebugAtlasID >= 0)
+            if (!DebugLines.IsEmpty() && DebugFont && DebugFont->HasAtlas() && DebugAtlasID >= 0)
             {
-                const float PxSize = 32.0f;   // pixels per em
+                // Pixels per em.
+                const float PxSize = 32.0f;
                 const float Margin = 12.0f;
                 float       PenY   = Margin;
 
@@ -559,11 +627,11 @@ namespace Lumina
                 for (const FDebugTextLine& Line : DebugLines)
                 {
                     const uint32 Color = PackColor(Line.Color);
-                    if (DebugFont->ShapeText(Line.Text, 0.0f /*left*/, 0.0f, 1.0f, DebugShaped))
+                    if (DebugFont->ShapeText(Line.Text, 0.0f, 0.0f, 1.0f, DebugShaped))
                     {
                         for (const FShapedGlyph& S : DebugShaped)
                         {
-                            FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.emplace_back();
+                            FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.EmplaceGetRef();
                             G.PlaneMin  = FVector2(Margin + S.Min.x * PxSize, PenY - S.Max.y * PxSize);
                             G.PlaneMax  = FVector2(Margin + S.Max.x * PxSize, PenY - S.Min.y * PxSize);
                             G.UVRect    = S.UV;
@@ -579,7 +647,7 @@ namespace Lumina
                     PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
                 }
 
-                if (!Frame.Primitives.DebugTextGlyphs.empty())
+                if (!Frame.Primitives.DebugTextGlyphs.IsEmpty())
                 {
                     FFrameData::FTextBatch& Batch = Frame.Primitives.DebugTextBatch;
                     Batch.AtlasIndex    = (uint32)DebugAtlasID;
@@ -587,55 +655,60 @@ namespace Lumina
                     Batch.AtlasHeight   = DebugFont->GetAtlasHeight();
                     Batch.DistanceRange = DebugFont->GetDistanceRange();
                     Batch.FirstInstance = 0;
-                    Batch.Count         = (uint32)Frame.Primitives.DebugTextGlyphs.size();
+                    Batch.Count         = (uint32)Frame.Primitives.DebugTextGlyphs.Num();
                 }
             }
         }
 #endif
     }
 
-    static float DecalLifetimeFade(SDecalComponent& Decal, float WorldTime)
+    FDefaultSceneRenderer::FDecalMaterialState FDefaultSceneRenderer::FindOrResolveDecalMaterial(CMaterialInterface* Material)
     {
-        if (Decal.Lifetime <= 0.0f)
+        if (Material == nullptr)
         {
-            return 1.0f;
+            return {};
         }
-        if (Decal.SpawnTime < 0.0f)
+        if (const int32* Found = DecalMaterialLookup.Find(Material))
         {
-            Decal.SpawnTime = WorldTime;
+            return DecalMaterialStates[*Found];
         }
-        const float Remaining = Decal.Lifetime + Decal.FadeOutDuration - (WorldTime - Decal.SpawnTime);
-        if (Decal.FadeOutDuration <= 0.0f)
+
+        FDecalMaterialState State;
+        FShaderH DecalVS;
+        FShaderH DecalPS;
+        // Textures load on demand, and a decal drawn on the placeholder would stamp the missing-texture color onto the world.
+        if (Material->ResolveDomainShaders(EMaterialType::Decal, DecalVS, DecalPS) && Material->RequestTexturesResolved())
         {
-            return Remaining > 0.0f ? 1.0f : 0.0f;
+            State.ShaderOwner   = Material->GetMaterial();
+            State.MaterialIndex = Material->GetMaterialIndex();
+            State.bUsable       = State.MaterialIndex >= 0;
         }
-        return Math::Clamp(Remaining / Decal.FadeOutDuration, 0.0f, 1.0f);
+
+        DecalMaterialLookup.Add(Material, DecalMaterialStates.Add(State));
+        return State;
     }
 
-    static FVector4 DecalAtlasTransform(const SDecalComponent& Decal)
+    void FDefaultSceneRenderer::ExtractDecals(FFrameData& Frame, const auto& DecalView, const auto& Transforms)
     {
-        const int32 Columns = Math::Max(Decal.AtlasColumns, 1);
-        const int32 Rows    = Math::Max(Decal.AtlasRows, 1);
-        const int32 Cell    = Math::Clamp(Decal.AtlasCell, 0, Columns * Rows - 1);
-        return FVector4(1.0f / (float)Columns, 1.0f / (float)Rows,
-                        (float)(Cell % Columns) / (float)Columns, (float)(Cell / Columns) / (float)Rows);
-    }
+        using namespace SceneRendererExtractPrimitivesInternal;
 
-    void FDefaultSceneRenderer::ExtractDecals(ECS::FRegistry& Registry, FFrameData& Frame)
-    {
         LUMINA_PROFILE_SECTION("Extract Decals");
 
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto DecalView = Registry.View<SDecalComponent>(ECS::TExclude<SDisabledTag>{});
-
-        Frame.Primitives.DecalExtracts.clear();
-        Frame.Primitives.DecalBatches.clear();
-        DecalSortScratch.clear();
+        Frame.Primitives.DecalExtracts.Reset();
+        Frame.Primitives.DecalBatches.Reset();
+        DecalSortScratch.Reset();
+        DecalMaterialStates.Reset();
+        DecalMaterialLookup.Reset();
 
         const float WorldTime = (float)World->GetTimeSinceWorldCreation();
 
-        DecalView.ForEach([&](ECS::FEntity Entity, SDecalComponent& Decal)
+        uint32 Visited = 0;
+        DecalView.ForEach([&](ECS::FEntity Entity, const SDecalComponent& Decal)
         {
+            ++Visited;
+            FDecalExtractCache& Cache = DecalCache.FindOrAdd(Entity);
+            Cache.SeenSerial = ExtractSerial;
+
             if (!Frame.ViewLayers.Draws(Decal.RenderLayers))
             {
                 return;
@@ -647,31 +720,29 @@ namespace Lumina
                 return;
             }
 
-            CMaterialInterface* Material = Decal.DecalMaterial.Get();
-            FShaderH DecalVS;
-            FShaderH DecalPS;
-            if (Material == nullptr || !Material->ResolveDomainShaders(EMaterialType::Decal, DecalVS, DecalPS))
-            {
-                return;
-            }
-            // Textures load on demand, and a decal drawn on the placeholder would stamp the missing-texture color onto the world.
-            if (!Material->RequestTexturesResolved())
-            {
-                return;
-            }
-            CMaterial* ShaderOwner = Material->GetMaterial();
-            const int32 MaterialIndex = Material->GetMaterialIndex();
-            if (MaterialIndex < 0)
+            const FDecalMaterialState Material = FindOrResolveDecalMaterial(Decal.DecalMaterial.Get());
+            if (!Material.bUsable)
             {
                 return;
             }
 
+            // Transforms carry no change ticks, so the cheap key is checked every frame and only the inverse is cached.
+            const FTransform& WorldTransform = Transforms.Get(Entity).GetWorldTransformCached();
+            const uint64      Key            = DecalBoxKey(WorldTransform, Decal.Size);
+            if (!Cache.bValid || Cache.Key != Key)
+            {
+                Cache.DecalToWorld = Math::Scale(WorldTransform.GetMatrix(), Decal.Size);
+                Cache.WorldToDecal = Math::Inverse(Cache.DecalToWorld);
+                Cache.Key          = Key;
+                Cache.bValid       = true;
+            }
+
             FGPUDecal Item;
-            Item.DecalToWorld  = Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Decal.Size);
-            Item.WorldToDecal  = Math::Inverse(Item.DecalToWorld);
-            Item.FadeAngleCos  = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
+            Item.DecalToWorld   = Cache.DecalToWorld;
+            Item.WorldToDecal   = Cache.WorldToDecal;
+            Item.FadeAngleCos   = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
             Item.Opacity        = Math::Clamp(Decal.Opacity * Decal.Modulate.w, 0.0f, 1.0f) * LifetimeFade;
-            Item.MaterialIndex  = (uint32)MaterialIndex;
+            Item.MaterialIndex  = (uint32)Material.MaterialIndex;
             Item.EmissionEnergy = Math::Max(Decal.EmissionEnergy, 0.0f);
             Item.UVTransform    = DecalAtlasTransform(Decal);
             Item.Modulate       = FVector4(Decal.Modulate.x, Decal.Modulate.y, Decal.Modulate.z, Math::Clamp(Decal.AlbedoMix, 0.0f, 1.0f));
@@ -679,8 +750,10 @@ namespace Lumina
                                            Math::Max(Decal.DistanceFadeLength, 0.0f),
                                            Math::Clamp(Decal.UpperFade, 0.0f, 1.0f), Math::Clamp(Decal.LowerFade, 0.0f, 1.0f));
 
-            DecalSortScratch.push_back({ ShaderOwner, Decal.SortOrder, Item });
+            DecalSortScratch.Emplace(Material.ShaderOwner, Decal.SortOrder, Item);
         });
+
+        SweepUnseenExtractCache(DecalCache, ExtractSerial, Visited);
 
         // Sort order decides first, so materials interleave exactly, and runs of one material within an order still batch.
         Algo::StableSort(DecalSortScratch, [](const FDecalSortEntry& A, const FDecalSortEntry& B)
@@ -692,20 +765,20 @@ namespace Lumina
             return A.ShaderOwner < B.ShaderOwner;
         });
 
-        Frame.Primitives.DecalExtracts.reserve(DecalSortScratch.size());
+        Frame.Primitives.DecalExtracts.Reserve(DecalSortScratch.Num());
         CMaterial* PrevOwner = nullptr;
-        for (uint32 i = 0; i < (uint32)DecalSortScratch.size(); ++i)
+        for (int32 i = 0; i < DecalSortScratch.Num(); ++i)
         {
-            Frame.Primitives.DecalExtracts.push_back(DecalSortScratch[i].Gpu);
+            Frame.Primitives.DecalExtracts.Add(DecalSortScratch[i].Gpu);
 
             CMaterial* Owner = DecalSortScratch[i].ShaderOwner;
-            if (Owner == PrevOwner && !Frame.Primitives.DecalBatches.empty())
+            if (Owner == PrevOwner && !Frame.Primitives.DecalBatches.IsEmpty())
             {
-                Frame.Primitives.DecalBatches.back().Count++;
+                Frame.Primitives.DecalBatches.Last().Count++;
             }
             else
             {
-                FFrameData::FDecalBatch& Batch = Frame.Primitives.DecalBatches.emplace_back();
+                FFrameData::FDecalBatch& Batch = Frame.Primitives.DecalBatches.EmplaceGetRef();
                 Batch.Shaders.VertexShader = Owner->GetVertexShader();
                 Batch.Shaders.PixelShader  = Owner->GetPixelShader();
                 Batch.FirstInstance        = i;
@@ -715,14 +788,11 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ExtractWater(ECS::FRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractWater(FFrameData& Frame, const auto& WaterView, const auto& Transforms)
     {
         LUMINA_PROFILE_SECTION("Extract Water");
 
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto WaterView = Registry.View<SWaterComponent>(ECS::TExclude<SDisabledTag>{});
-
-        Frame.Water.Surfaces.clear();
+        Frame.Water.Surfaces.Reset();
         Frame.Water.bUnderwaterActive = false;
 
         const FVector4& CamLoc = Frame.SceneGlobalData.CameraData.Location;
@@ -740,8 +810,10 @@ namespace Lumina
 
         WaterView.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water)
         {
+            const STransformComponent& Transform = Transforms.Get(Entity);
+
             FGPUWater Item    = {};
-            Item.WaterToWorld = WaterToWorld(Water, TransformStorage.Get(Entity).GetWorldMatrix());
+            Item.WaterToWorld = WaterToWorld(Water, Transform.GetWorldMatrixCached());
             Item.WorldToWater = Math::Inverse(Item.WaterToWorld);
 
             Item.ShallowColor = FVector4(Water.ShallowColor, 1.0f);
@@ -783,14 +855,14 @@ namespace Lumina
             const float BodyWidth  = Math::Max(Math::Max(Water.Extent.x, Water.Extent.y), 1.0f);
             Item.HorizonScale      = Math::Max(Water.HorizonExtent / BodyWidth, 1.0f);
 
-            Frame.Water.Surfaces.push_back(Item);
+            Frame.Water.Surfaces.Add(Item);
             const FVector4 LocalCam = Item.WorldToWater * FVector4(CameraPos, 1.0f);
             if (Math::Abs(LocalCam.x) <= 0.5f && Math::Abs(LocalCam.z) <= 0.5f &&
                 LocalCam.y < 0.0f && LocalCam.y > BestUnderwaterLocalY)
             {
                 BestUnderwaterLocalY = LocalCam.y;
 
-                const FVector3 SurfaceCenter = TransformStorage.Get(Entity).GetWorldLocation();
+                const FVector3 SurfaceCenter = Transform.GetWorldLocationCached();
                 Frame.Water.bUnderwaterActive = true;
                 Frame.Water.Underwater.PlaneNormalAndHeight = FVector4(0.0f, 1.0f, 0.0f, SurfaceCenter.y);
                 Frame.Water.Underwater.FogColorDensity      = FVector4(Water.UnderwaterFogColor, Math::Max(Water.UnderwaterFogDensity, 0.0f));

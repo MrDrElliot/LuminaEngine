@@ -49,7 +49,7 @@ namespace Lumina
 
         void DrawNodeBody() override;
 
-        FStringView GetRerouteName() const { return FStringView(Name.c_str(), Name.size()); }
+        FStringView GetRerouteName() const { return FStringView(*Name, Name.Len()); }
 
         /** Name usage nodes match on. Must be unique within the graph. */
         PROPERTY(Editable, Category = "Named Reroute")

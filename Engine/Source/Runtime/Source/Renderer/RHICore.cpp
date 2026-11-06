@@ -76,7 +76,8 @@ namespace Lumina::RHI
         TVector<FRetireItem> RetireQueues[kFramesInFlight];
         FMutex               RetireMutex;
 
-        FTaskHandle          PendingPresent;
+        Jobs::FTaskEvent     PendingPresent;
+        bool                 bPresentPending = false;
         FMutex               PendingPresentMutex;
         TAtomic<bool>        bPresentRejected{false};
 
@@ -219,7 +220,7 @@ namespace Lumina::RHI
                 {
                     DestroyRetired(Item);
                 }
-                Queue.clear();
+                Queue.Reset();
             }
         }
 
@@ -232,7 +233,7 @@ namespace Lumina::RHI
 
         for (TVector<FCmdListH>& Lists : GCore.SlotCommandLists)
         {
-            Lists.clear();
+            Lists.Reset();
         }
 
         for (FSemaphoreH& Timeline : GCore.QueueTimeline)
@@ -310,17 +311,17 @@ namespace Lumina::RHI
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
 
         FScopeLock Lock(GCore.RetireMutex);
-        GCore.RetireQueues[Slot].push_back(std::move(Item));
+        GCore.RetireQueues[Slot].Add(std::move(Item));
     }
 
     // Metered, since a destroy can reach the driver free and a streaming burst retires hundreds.
     static constexpr uint32 kMaxDestroysPerDrain = 64;
 
     // Past this the backlog is itself VRAM the frame is trying to allocate, so the cap widens to a share of it.
-    static constexpr size_t kRetireBacklogHighWater = 512;
+    static constexpr int32 kRetireBacklogHighWater = 512;
 
     // A quarter a drain clears a streaming burst in a few frames instead of stalling one on thousands of frees.
-    static constexpr size_t kRetireBacklogShareDivisor = 4;
+    static constexpr int32 kRetireBacklogShareDivisor = 4;
 
     static void DrainRetireQueue(uint32 Slot)
     {
@@ -364,7 +365,7 @@ namespace Lumina::RHI
         };
 
         static thread_local TVector<FRetireItem> Ready;
-        Ready.clear();
+        Ready.Reset();
 
         size_t Backlog = 0;
         {
@@ -372,18 +373,18 @@ namespace Lumina::RHI
             TVector<FRetireItem>& Queue = GCore.RetireQueues[Slot];
 
             // A callback is paired with the resource beside it, so metering some kinds fires it a drain early.
-            const size_t Cap = Queue.size() > kRetireBacklogHighWater
-                ? Math::Max(kRetireBacklogHighWater / 2, Queue.size() / kRetireBacklogShareDivisor)
+            const int32 Cap = Queue.Num() > kRetireBacklogHighWater
+                ? Math::Max(kRetireBacklogHighWater / 2, Queue.Num() / kRetireBacklogShareDivisor)
                 : kMaxDestroysPerDrain;
 
             // Compacted in place rather than swap-popped, so retire order is destroy order.
-            size_t Write = 0;
-            for (size_t Read = 0; Read < Queue.size(); ++Read)
+            int32 Write = 0;
+            for (int32 Read = 0; Read < Queue.Num(); ++Read)
             {
-                const bool bUnderCap = Ready.size() < Cap;
+                const bool bUnderCap = Ready.Num() < Cap;
                 if (bUnderCap && HasRetired(Queue[Read]))
                 {
-                    Ready.push_back(std::move(Queue[Read]));
+                    Ready.Add(std::move(Queue[Read]));
                     continue;
                 }
 
@@ -393,14 +394,14 @@ namespace Lumina::RHI
                 }
                 ++Write;
             }
-            Queue.resize(Write);
+            Queue.SetNum(Write);
 
-            Backlog = Queue.size();
+            Backlog = Queue.Num();
         }
 
         // A backlog that does not fall between frames means retires are outrunning destroys.
-        LUMINA_PROFILE_VALUE("RHI/RetireBacklog", (int64)Backlog);
-        LUMINA_PROFILE_VALUE("RHI/RetireDestroyed", (int64)Ready.size());
+        LUMINA_PROFILE_VALUE("RHI/RetireBacklog", Backlog);
+        LUMINA_PROFILE_VALUE("RHI/RetireDestroyed", Ready.Num());
 
         // Outside the lock, since the destroy paths take their own backend locks.
         for (const FRetireItem& Item : Ready)
@@ -409,7 +410,7 @@ namespace Lumina::RHI
         }
 
         // Parked storage keeps its capacity, but a callback's captures must die here rather than next drain.
-        Ready.clear();
+        Ready.Reset();
     }
 
     void Retire(const FGPUAllocation& Memory)
@@ -551,11 +552,11 @@ namespace Lumina::RHI
         {
             ResetCommandList(CommandList);
         }
-        GCore.SlotCommandLists[Slot].clear();
+        GCore.SlotCommandLists[Slot].Reset();
 
         // Released after CurrentSlot advances, so they land on the slot gated by the upload's timeline.
         static thread_local TVector<FGPUAllocation> UploadStaging;
-        UploadStaging.clear();
+        UploadStaging.Reset();
 
         {
             {
@@ -598,7 +599,7 @@ namespace Lumina::RHI
                                  bWaitGraphics ? TSpan<const FSemaphoreInfo>{&GraphicsWait, 1} : TSpan<const FSemaphoreInfo>{},
                                  TSpan<const FSemaphoreInfo>{&Signal, 1});
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
-                GCore.SlotCommandLists[Slot].push_back(CL);
+                GCore.SlotCommandLists[Slot].Add(CL);
 
                 if (Queue == EQueueType::Transfer)
                 {
@@ -692,7 +693,7 @@ namespace Lumina::RHI
         if (Queue != EQueueType::Transfer
             && GCore.PendingTransferWait != 0
             && !GCore.bQueueTookTransferWait[QueueIndex]
-            && Waits.size() < std::size(WaitStorage))
+            && static_cast<size_t>(Waits.Num()) < std::size(WaitStorage))
         {
             SIZE_T Count = 0;
             for (const FSemaphoreInfo& Wait : Waits)
@@ -702,7 +703,7 @@ namespace Lumina::RHI
             WaitStorage[Count++] = FSemaphoreInfo{ GCore.QueueTimeline[(uint32)EQueueType::Transfer],
                                                    GCore.PendingTransferWait };
 
-            EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, Count);
+            EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, IntCastChecked<int32>(Count));
             GCore.bQueueTookTransferWait[QueueIndex] = true;
         }
 
@@ -714,7 +715,7 @@ namespace Lumina::RHI
         GCore.SlotWaitValue[Slot][QueueIndex] = Value;
         for (FCmdListH CommandList : CommandLists)
         {
-            GCore.SlotCommandLists[Slot].push_back(CommandList);
+            GCore.SlotCommandLists[Slot].Add(CommandList);
         }
 
         return Value;
@@ -748,7 +749,7 @@ namespace Lumina::RHI
                                  GCore.QueueTimeline[(uint32)EQueueType::Transfer], TransferWait);
 
             GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;
-            GCore.SlotCommandLists[Slot].push_back(CommandList);
+            GCore.SlotCommandLists[Slot].Add(CommandList);
         }
 
         // Outside the submit lock, since the driver's present call is slow and orders nothing the timelines track.
@@ -766,28 +767,36 @@ namespace Lumina::RHI
         WaitPendingPresent();
 
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
-        FTaskHandle Task = Task::AsyncTask(1, 1, [Swapchain, CommandList, Slot](uint32, uint32, uint32)
+        FScopeLock Lock(GCore.PendingPresentMutex);
+        GCore.PendingPresent.Reset();
+        GCore.bPresentPending = true;
+        Jobs::Spawn(Jobs::EJobPriority::High, GCore.PendingPresent, [](FSwapchainH Chain, FCmdListH List, uint32 FrameSlot) -> Jobs::TTask<void>
         {
             LUMINA_PROFILE_SECTION("Async Present");
-            if (!PresentOnSlot(Swapchain, CommandList, Slot))
+            if (!PresentOnSlot(Chain, List, FrameSlot))
             {
                 GCore.bPresentRejected.store(true, std::memory_order_release);
             }
-        }, ETaskPriority::High);
-
-        FScopeLock Lock(GCore.PendingPresentMutex);
-        GCore.PendingPresent = Move(Task);
+            co_return;
+        }, Swapchain, CommandList, Slot);
     }
 
+    // The wait helps the pool, so it must not hold the mutex while it runs other tasks.
     void WaitPendingPresent()
     {
-        FScopeLock Lock(GCore.PendingPresentMutex);
-        if (GCore.PendingPresent)
+        {
+            FScopeLock Lock(GCore.PendingPresentMutex);
+            if (!GCore.bPresentPending)
+            {
+                return;
+            }
+        }
         {
             LUMINA_PROFILE_SECTION("Wait Pending Present");
-            GCore.PendingPresent->Wait();
-            GCore.PendingPresent = nullptr;
+            GCore.PendingPresent.Wait();
         }
+        FScopeLock Lock(GCore.PendingPresentMutex);
+        GCore.bPresentPending = false;
     }
 
     bool TakePresentRejected()
@@ -838,7 +847,7 @@ namespace Lumina::RHI
 
         if (Vertex == nullptr || !Vertex->IsValid() || Pixel == nullptr || !Pixel->IsValid())
         {
-            LOG_ERROR("RHICore: missing shaders for pipeline ({} / {})", VertexShader.c_str(), PixelShader.c_str());
+            LOG_ERROR("RHICore: missing shaders for pipeline ({} / {})", *VertexShader, *PixelShader);
             return {};
         }
 
@@ -855,14 +864,13 @@ namespace Lumina::RHI
 
         TVector<FString> Blocks;
 
-        // NVIDIA implements the statistics half of the extension but withholds the disassembly, so the
-        // per-executable counters are the most this facility can report there.
+        // NVIDIA withholds the disassembly half of the extension, so per-executable statistics are all it can report there.
         if (!RHI::GetPipelineDisassembly(Pipeline, Blocks))
         {
             TVector<FPipelineStat> Stats;
-            if (!RHI::GetPipelineStatistics(Pipeline, Stats) || Stats.empty())
+            if (!RHI::GetPipelineStatistics(Pipeline, Stats) || Stats.IsEmpty())
             {
-                LOG_WARN("ShaderISA: driver gave neither disassembly nor statistics for '{}'.", Name.c_str());
+                LOG_WARN("ShaderISA: driver gave neither disassembly nor statistics for '{}'.", *Name);
                 return;
             }
 
@@ -872,7 +880,7 @@ namespace Lumina::RHI
                 StatText += Stat.bIsFloat ? Lumina::Format("{} / {} = {}\n", Stat.Stage, Stat.Name, Stat.Value)
                                           : Lumina::Format("{} / {} = {}\n", Stat.Stage, Stat.Name, (int64)Stat.Value);
             }
-            Blocks.push_back(Move(StatText));
+            Blocks.Add(Move(StatText));
         }
 
         // Beside the live log, which is already the per-project place diagnostics land.
@@ -891,7 +899,7 @@ namespace Lumina::RHI
         }
 
         // The shader name is a virtual path, so flatten the separators into one legal filename.
-        FString Leaf = Name.ToString().c_str();
+        FString Leaf = *Name.ToString();
         for (char& C : Leaf)
         {
             if (C == '/' || C == '\\' || C == ':')
@@ -901,10 +909,10 @@ namespace Lumina::RHI
         }
 
         const FString Path = Dir + "/" + Leaf + ".isa.txt";
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Text.data()), Text.size());
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len());
         if (Filesystem::WriteFile(Path, Bytes))
         {
-            LOG_DISPLAY("ShaderISA: wrote '{}' ({} bytes).", Path, (uint64)Text.size());
+            LOG_DISPLAY("ShaderISA: wrote '{}' ({} bytes).", Path, (uint64)Text.Len());
         }
         else
         {
@@ -918,7 +926,7 @@ namespace Lumina::RHI
 
         if (Compute == nullptr || !Compute->IsValid())
         {
-            LOG_ERROR("RHICore: missing compute shader {}", ComputeShader.c_str());
+            LOG_ERROR("RHICore: missing compute shader {}", *ComputeShader);
             return {};
         }
         

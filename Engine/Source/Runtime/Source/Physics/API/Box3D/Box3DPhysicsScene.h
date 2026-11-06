@@ -134,9 +134,9 @@ namespace Lumina::Physics
 
         void Clear()
         {
-            Pushes.clear();
-            Landings.clear();
-            Jumps.clear();
+            Pushes.Reset();
+            Landings.Reset();
+            Jumps.Reset();
         }
     };
 
@@ -228,6 +228,7 @@ namespace Lumina::Physics
 
         void OnConstraintComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnConstraintComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        bool OwnsComponentConstraint(uint32 Handle, ECS::FEntity Entity);
 
         void AddForce(ECS::FEntity Entity, const FVector3& Force) override;
         void AddImpulse(ECS::FEntity Entity, const FVector3& Impulse) override;
@@ -251,6 +252,7 @@ namespace Lumina::Physics
         FQuat GetBodyRotation(ECS::FEntity Entity) const override;
 
         uint32 GetBodyCount() override;
+        uint32 GetAwakeBodyCount() override;
 
         // Joints alive in the solver, counted here because Box3D's world registry is private to the module that links it.
         uint32 GetLiveJointCount();
@@ -659,12 +661,12 @@ namespace Lumina::Physics
 
             void PushBack()
             {
-                Entities.emplace_back();
-                Flags.emplace_back();
-                PrevPos.emplace_back();
-                CurrPos.emplace_back();
-                PrevQx.emplace_back(); PrevQy.emplace_back(); PrevQz.emplace_back(); PrevQw.emplace_back();
-                CurrQx.emplace_back(); CurrQy.emplace_back(); CurrQz.emplace_back(); CurrQw.emplace_back();
+                Entities.Emplace();
+                Flags.Emplace();
+                PrevPos.Emplace();
+                CurrPos.Emplace();
+                PrevQx.Emplace(); PrevQy.Emplace(); PrevQz.Emplace(); PrevQw.Emplace();
+                CurrQx.Emplace(); CurrQy.Emplace(); CurrQz.Emplace(); CurrQw.Emplace();
             }
 
             void Resize(size_t Count)
@@ -674,26 +676,26 @@ namespace Lumina::Physics
 
             void EnsureLerpCapacity()
             {
-                const size_t N = Entities.size();
-                LerpPos.resize(N);
-                LerpQx.resize(N); LerpQy.resize(N); LerpQz.resize(N); LerpQw.resize(N);
+                const int32 N = Entities.Num();
+                LerpPos.SetNum(N);
+                LerpQx.SetNum(N); LerpQy.SetNum(N); LerpQz.SetNum(N); LerpQw.SetNum(N);
             }
 
             void Truncate(size_t Count)
             {
-                Entities.resize(Count); Flags.resize(Count);
-                PrevPos.resize(Count);  CurrPos.resize(Count);
-                PrevQx.resize(Count); PrevQy.resize(Count); PrevQz.resize(Count); PrevQw.resize(Count);
-                CurrQx.resize(Count); CurrQy.resize(Count); CurrQz.resize(Count); CurrQw.resize(Count);
+                Entities.SetNum(IntCastChecked<int32>(Count)); Flags.SetNum(IntCastChecked<int32>(Count));
+                PrevPos.SetNum(IntCastChecked<int32>(Count));  CurrPos.SetNum(IntCastChecked<int32>(Count));
+                PrevQx.SetNum(IntCastChecked<int32>(Count)); PrevQy.SetNum(IntCastChecked<int32>(Count)); PrevQz.SetNum(IntCastChecked<int32>(Count)); PrevQw.SetNum(IntCastChecked<int32>(Count));
+                CurrQx.SetNum(IntCastChecked<int32>(Count)); CurrQy.SetNum(IntCastChecked<int32>(Count)); CurrQz.SetNum(IntCastChecked<int32>(Count)); CurrQw.SetNum(IntCastChecked<int32>(Count));
             }
 
             void Clear()
             {
-                Entities.clear(); Flags.clear();
-                PrevPos.clear();  CurrPos.clear();  LerpPos.clear();
-                PrevQx.clear(); PrevQy.clear(); PrevQz.clear(); PrevQw.clear();
-                CurrQx.clear(); CurrQy.clear(); CurrQz.clear(); CurrQw.clear();
-                LerpQx.clear(); LerpQy.clear(); LerpQz.clear(); LerpQw.clear();
+                Entities.Reset(); Flags.Reset();
+                PrevPos.Reset();  CurrPos.Reset();  LerpPos.Reset();
+                PrevQx.Reset(); PrevQy.Reset(); PrevQz.Reset(); PrevQw.Reset();
+                CurrQx.Reset(); CurrQy.Reset(); CurrQz.Reset(); CurrQw.Reset();
+                LerpQx.Reset(); LerpQy.Reset(); LerpQz.Reset(); LerpQw.Reset();
             }
         };
         FInterpStaging                          InterpStaging;

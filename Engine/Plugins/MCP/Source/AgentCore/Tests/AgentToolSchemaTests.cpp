@@ -17,7 +17,7 @@
 using namespace Lumina;
 using namespace Lumina::Agent;
 
-namespace
+namespace AgentToolSchemaTestsInternal
 {
     // Reflection is off for this module, so every fixture is a type the engine already reflects and exports.
     FSchemaResult SchemaOfProperty(CStruct* Struct, const char* PropertyName)
@@ -26,12 +26,14 @@ namespace
     }
 }
 
+using namespace AgentToolSchemaTestsInternal;
+
 TEST(AgentToolSchema, ANullStructIsRejected)
 {
     const FSchemaResult Result = GenerateSchema(nullptr);
 
     EXPECT_FALSE(Result.IsValid());
-    EXPECT_FALSE(Result.Error.empty());
+    EXPECT_FALSE(Result.Error.IsEmpty());
 }
 
 TEST(AgentToolSchema, ANullPropertyIsRejected)
@@ -44,17 +46,17 @@ TEST(AgentToolSchema, AStructBecomesAnObjectWithProperties)
 {
     const FSchemaResult Result = GenerateSchema(SLifetimeComponent::StaticStruct());
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "object");
-    ASSERT_TRUE(Result.Schema.contains("properties"));
-    EXPECT_TRUE(Result.Schema["properties"].contains("Lifetime"));
+    ASSERT_TRUE(Result.Schema.Contains("properties"));
+    EXPECT_TRUE(Result.Schema["properties"].Contains("Lifetime"));
 }
 
 TEST(AgentToolSchema, AFloatBecomesANumber)
 {
     const FSchemaResult Result = SchemaOfProperty(SLifetimeComponent::StaticStruct(), "Lifetime");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "number");
 }
 
@@ -62,7 +64,7 @@ TEST(AgentToolSchema, ABoolBecomesABoolean)
 {
     const FSchemaResult Result = SchemaOfProperty(SMeshComponent::StaticStruct(), "bCastShadow");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "boolean");
 }
 
@@ -70,7 +72,7 @@ TEST(AgentToolSchema, ANameBecomesAString)
 {
     const FSchemaResult Result = SchemaOfProperty(SNameComponent::StaticStruct(), "Name");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
 }
 
@@ -79,23 +81,23 @@ TEST(AgentToolSchema, ADocCommentBecomesTheDescription)
 {
     const FSchemaResult Result = SchemaOfProperty(SNameComponent::StaticStruct(), "Name");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
-    ASSERT_TRUE(Result.Schema.contains("description"));
-    EXPECT_FALSE(Result.Schema["description"].get<std::string>().empty());
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
+    ASSERT_TRUE(Result.Schema.Contains("description"));
+    EXPECT_FALSE(Result.Schema["description"].AsString().IsEmpty());
 }
 
 TEST(AgentToolSchema, AnEnumBecomesAConstrainedString)
 {
     const FSchemaResult Result = SchemaOfProperty(SAudioSourceComponent::StaticStruct(), "Bus");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
 
-    ASSERT_TRUE(Result.Schema.contains("enum"));
-    ASSERT_TRUE(Result.Schema["enum"].is_array());
+    ASSERT_TRUE(Result.Schema.Contains("enum"));
+    ASSERT_TRUE(Result.Schema["enum"].IsArray());
 
     bool bFoundKnownValue = false;
-    for (const nlohmann::json& Name : Result.Schema["enum"])
+    for (const FJsonValue& Name : Result.Schema["enum"].AsArray())
     {
         bFoundKnownValue = bFoundKnownValue || Name == "SFX";
     }
@@ -107,12 +109,12 @@ TEST(AgentToolSchema, ANestedStructBecomesANestedObject)
 {
     const FSchemaResult Result = SchemaOfProperty(SAudioSourceComponent::StaticStruct(), "Occlusion");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "object");
 
     // The nesting has to reach real leaves rather than stop at an empty object.
-    ASSERT_TRUE(Result.Schema.contains("properties"));
-    EXPECT_FALSE(Result.Schema["properties"].empty());
+    ASSERT_TRUE(Result.Schema.Contains("properties"));
+    EXPECT_FALSE(Result.Schema["properties"].IsEmpty());
 }
 
 // An object reference travels as its asset GUID, so the schema has to say which class is wanted.
@@ -120,9 +122,9 @@ TEST(AgentToolSchema, AnObjectReferenceBecomesAGuidString)
 {
     const FSchemaResult Result = SchemaOfProperty(SAudioSourceComponent::StaticStruct(), "Sound");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
-    EXPECT_NE(Result.Schema["description"].get<std::string>().find("CSoundBase"), std::string::npos);
+    EXPECT_NE(Result.Schema["description"].AsString().Find("CSoundBase"), Constants::kIndexNone);
 }
 
 // A refusal has to name the offending property, or nobody can tell which field broke registration.
@@ -131,7 +133,7 @@ TEST(AgentToolSchema, ARefusalNamesTheOffendingProperty)
     const FSchemaResult Result = SchemaOfProperty(SRigidBodyComponent::StaticStruct(), "CollisionProfile");
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("CollisionProfile"), FString::npos);
+    EXPECT_NE(Result.Error.Find("CollisionProfile"), Constants::kIndexNone);
 }
 
 // One bad field has to sink the whole struct, or a tool would advertise a shape missing a parameter.
@@ -140,7 +142,7 @@ TEST(AgentToolSchema, OneUnsupportedFieldRejectsTheWholeStruct)
     const FSchemaResult Result = GenerateSchema(SRigidBodyComponent::StaticStruct());
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_NE(Result.Error.find("cannot be described"), FString::npos);
+    EXPECT_NE(Result.Error.Find("cannot be described"), Constants::kIndexNone);
 }
 
 TEST(AgentToolSchema, ARefusedStructYieldsNoPartialSchema)
@@ -148,7 +150,7 @@ TEST(AgentToolSchema, ARefusedStructYieldsNoPartialSchema)
     const FSchemaResult Result = GenerateSchema(SRigidBodyComponent::StaticStruct());
 
     ASSERT_FALSE(Result.IsValid());
-    EXPECT_TRUE(Result.Schema.is_null());
+    EXPECT_TRUE(Result.Schema.IsNull());
 }
 
 TEST(AgentToolSchema, TheSameStructGeneratesTheSameSchemaTwice)
@@ -161,15 +163,15 @@ TEST(AgentToolSchema, TheSameStructGeneratesTheSameSchemaTwice)
     EXPECT_EQ(First.Schema, Second.Schema);
 }
 
-// ---------------------------------------------------------------------------------------------------------------
 // Container and reference kinds, described so a model knows the shape before it calls.
-// ---------------------------------------------------------------------------------------------------------------
 
-namespace
+namespace AgentToolSchemaTestsInternal
 {
     constexpr FPropertyDesc GSchemaStartupMap{ .Name = "GameStartupMap", .Type = PropertyTypeOf<TSoftObjectPtr<CWorld>> };
     constexpr FPropertyDesc GSchemaScriptClass{ .Name = "ScriptClass", .Type = PropertyTypeOf<TSubclassOf<CEntityScript>> };
 }
+
+using namespace AgentToolSchemaTestsInternal;
 
 TEST(AgentToolSchema, ASoftObjectIsAStringNamingItsClass)
 {
@@ -179,9 +181,9 @@ TEST(AgentToolSchema, ASoftObjectIsAStringNamingItsClass)
 
     const FSchemaResult Result = GeneratePropertySchema(Owner.Build<FSoftObjectProperty>(GSchemaStartupMap));
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
-    EXPECT_NE(Result.Schema["description"].get<std::string>().find("CWorld"), std::string::npos);
+    EXPECT_NE(Result.Schema["description"].AsString().Find("CWorld"), Constants::kIndexNone);
 }
 
 TEST(AgentToolSchema, AClassIsAStringNamingItsBase)
@@ -192,16 +194,16 @@ TEST(AgentToolSchema, AClassIsAStringNamingItsBase)
 
     const FSchemaResult Result = GeneratePropertySchema(Owner.Build<FClassProperty>(GSchemaScriptClass));
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "string");
-    EXPECT_NE(Result.Schema["description"].get<std::string>().find("CEntityScript"), std::string::npos);
+    EXPECT_NE(Result.Schema["description"].AsString().Find("CEntityScript"), Constants::kIndexNone);
 }
 
 TEST(AgentToolSchema, AnInstancedStructDescribesTypeAndData)
 {
     const FSchemaResult Result = SchemaOfProperty(SAnimMontageNotify::StaticStruct(), "Notify");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
     EXPECT_EQ(Result.Schema["type"], "object");
     EXPECT_EQ(Result.Schema["properties"]["StructType"]["type"], "string");
     EXPECT_EQ(Result.Schema["properties"]["Data"]["type"], "object");
@@ -212,6 +214,6 @@ TEST(AgentToolSchema, ADelegateIsSkippedNotRejected)
 {
     const FSchemaResult Result = SchemaOfProperty(SRigidBodyComponent::StaticStruct(), "OnWake");
 
-    ASSERT_TRUE(Result.IsValid()) << Result.Error.c_str();
-    EXPECT_TRUE(Result.Schema.is_null());
+    ASSERT_TRUE(Result.IsValid()) << *Result.Error;
+    EXPECT_TRUE(Result.Schema.IsNull());
 }

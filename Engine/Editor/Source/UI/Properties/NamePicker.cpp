@@ -23,8 +23,8 @@ namespace Lumina::NamePicker
 
     const INamePickerSource* Find(const FName& Kind)
     {
-        const auto It = GetSources().find(Kind);
-        return (It != GetSources().end()) ? It->second.get() : nullptr;
+        const auto It = GetSources().Find(Kind);
+        return (It != nullptr) ? It->get() : nullptr;
     }
 
     FNamePickerResult Draw(const INamePickerSource& Source, const FNamePickerArgs& Args)
@@ -51,27 +51,27 @@ namespace Lumina::NamePicker
         {
             Preview = LE_ICON_ALERT_CIRCLE_OUTLINE "  ";
         }
-        Preview += Args.Current.IsNone() ? "None" : Args.Current.c_str();
+        Preview += Args.Current.IsNone() ? "None" : *Args.Current;
 
         FFixedString Created;
 
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        const int32 Picked = ImGuiX::SearchableCombo(Args.StrId, Preview.c_str(), (int32)Choices.size() + NoneOffset,
+        const int32 Picked = ImGuiX::SearchableCombo(Args.StrId, *Preview, Choices.Num() + NoneOffset,
             CurrentIndex, [&Choices](int32 Index)
             {
-                return (Index < NoneOffset) ? FFixedString("None") : FFixedString(Choices[Index - NoneOffset].c_str());
+                return (Index < NoneOffset) ? FFixedString("None") : FFixedString(*Choices[Index - NoneOffset]);
             }, Source.GetItemIcon(), Source.AllowsCustomNames() ? &Created : nullptr);
 
         const char* Hint = bStale ? Source.GetStaleHint()
-                                  : (Choices.empty() ? Source.GetUnavailableHint(Args.Context) : nullptr);
+                                  : (Choices.IsEmpty() ? Source.GetUnavailableHint(Args.Context) : nullptr);
         if (Hint != nullptr)
         {
             ImGuiX::TextTooltip_Internal(Hint);
         }
 
-        if (!Created.empty())
+        if (!Created.IsEmpty())
         {
-            return { true, FName(Created.c_str()) };
+            return { true, FName(*Created) };
         }
 
         if (Picked != Constants::kIndexNone && Picked != CurrentIndex)

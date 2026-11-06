@@ -72,7 +72,7 @@ namespace Lumina::ReplaceReferences
         void DrawReplacementPicker(FAssetReferenceFixup& Entry, const THashSet<FGuid>& ExcludedGUIDs, ImGuiTextFilter& Filter)
         {
             const FAssetData* Selected = FindAsset(Entry.ReplacementGUID);
-            const char* Preview = Selected != nullptr ? Selected->AssetName.c_str() : kClearLabel;
+            const char* Preview = Selected != nullptr ? *Selected->AssetName : kClearLabel;
 
             ImGui::SetNextItemWidth(-1.0f);
             if (!ImGui::BeginCombo("##Replacement", Preview))
@@ -103,7 +103,7 @@ namespace Lumina::ReplaceReferences
 
             TVector<FAssetData*> Candidates = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
             {
-                if (Data.AssetGUID == Entry.AssetGUID || ExcludedGUIDs.find(Data.AssetGUID) != ExcludedGUIDs.end())
+                if (Data.AssetGUID == Entry.AssetGUID || ExcludedGUIDs.Contains(Data.AssetGUID))
                 {
                     return false;
                 }
@@ -123,13 +123,13 @@ namespace Lumina::ReplaceReferences
 
             for (const FAssetData* Candidate : Candidates)
             {
-                if (!ImGuiX::PassSearchFilter(Filter, Candidate->AssetName.c_str()))
+                if (!ImGuiX::PassSearchFilter(Filter, *Candidate->AssetName))
                 {
                     continue;
                 }
 
                 ImGui::PushID(Candidate);
-                if (ImGui::Selectable(Candidate->AssetName.c_str(), Candidate->AssetGUID == Entry.ReplacementGUID))
+                if (ImGui::Selectable(*Candidate->AssetName, Candidate->AssetGUID == Entry.ReplacementGUID))
                 {
                     Entry.ReplacementGUID = Candidate->AssetGUID;
                 }
@@ -157,7 +157,7 @@ namespace Lumina::ReplaceReferences
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
-            for (SIZE_T Index = 0; Index < State.Entries.size(); ++Index)
+            for (int32 Index = 0; Index < State.Entries.Num(); ++Index)
             {
                 FAssetReferenceFixup& Entry = State.Entries[Index];
 
@@ -165,11 +165,11 @@ namespace Lumina::ReplaceReferences
                 ImGui::TableNextRow();
 
                 ImGui::TableSetColumnIndex(0);
-                const bool bExpanded = ImGui::TreeNodeEx("##Entry", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", Entry.AssetName.c_str());
+                const bool bExpanded = ImGui::TreeNodeEx("##Entry", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", *Entry.AssetName);
                 ImGuiX::TextTooltip("{}", Entry.AssetPath);
 
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%u", (uint32)Entry.Referencers.size());
+                ImGui::Text("%u", (uint32)Entry.Referencers.Num());
 
                 ImGui::TableSetColumnIndex(2);
                 DrawReplacementPicker(Entry, State.ExcludedGUIDs, State.PickerFilter);
@@ -183,11 +183,11 @@ namespace Lumina::ReplaceReferences
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
                         ImGui::Indent();
-                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? Referencer->Path.c_str() : "<missing>");
+                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? *Referencer->Path : "<missing>");
                         ImGui::Unindent();
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? Referencer->AssetClass.c_str() : "");
+                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? *Referencer->AssetClass : "");
                     }
                     ImGui::TreePop();
                 }
@@ -218,7 +218,7 @@ namespace Lumina::ReplaceReferences
                 if (Entry.ReplacementGUID.IsValid() && Replacement == nullptr)
                 {
                     ImGuiX::Notifications::NotifyError("Could not load replacement '{0}'; those references are cleared instead.", ReplacementName);
-                    ReplacementPath.clear();
+                    ReplacementPath.Reset();
                 }
 
                 if (Target != nullptr)
@@ -235,9 +235,9 @@ namespace Lumina::ReplaceReferences
                 const FGuid ReplacementGUID = Replacement != nullptr ? Entry.ReplacementGUID : FGuid();
 
                 State.Replacer->AddSoftReplacement(Entry.AssetGUID,
-                    FStringView(Entry.AssetPath.c_str(), Entry.AssetPath.size()),
+                    FStringView(*Entry.AssetPath, Entry.AssetPath.Len()),
                     ReplacementGUID,
-                    FStringView(ReplacementPath.c_str(), ReplacementPath.size()));
+                    FStringView(*ReplacementPath, ReplacementPath.Len()));
             }
 
             // One registry broadcast for the whole sweep instead of one per package saved.
@@ -250,7 +250,7 @@ namespace Lumina::ReplaceReferences
             constexpr uint32 kReferencersPerFrame = 2;
 
             uint32 Processed = 0;
-            while (Processed < kReferencersPerFrame && State.WorkIndex < State.Work.size())
+            while (Processed < kReferencersPerFrame && State.WorkIndex < static_cast<uint32>(State.Work.Num()))
             {
                 const FGuid ReferencerGUID = State.Work[State.WorkIndex];
                 ++State.WorkIndex;
@@ -273,11 +273,11 @@ namespace Lumina::ReplaceReferences
                     continue;
                 }
 
-                if (State.VisitedPackages.find(Package) != State.VisitedPackages.end())
+                if (State.VisitedPackages.Contains(Package))
                 {
                     continue;
                 }
-                State.VisitedPackages.insert(Package);
+                State.VisitedPackages.Add(Package);
 
                 uint32 ReplacedHere = 0;
 
@@ -290,7 +290,7 @@ namespace Lumina::ReplaceReferences
                 {
                     if (Object != nullptr && !Object->HasAnyFlag(OF_MarkedDestroy) && Object->GetStrongRefCount() > 0)
                     {
-                        KeepAlive.emplace_back(Object);
+                        KeepAlive.Emplace(Object);
                     }
                 }
 
@@ -325,7 +325,7 @@ namespace Lumina::ReplaceReferences
                 }
             }
 
-            if (State.WorkIndex >= State.Work.size())
+            if (State.WorkIndex >= static_cast<uint32>(State.Work.Num()))
             {
                 State.RegistryBatch.reset();
                 State.Replacer.reset();
@@ -339,7 +339,7 @@ namespace Lumina::ReplaceReferences
             uint32 ReplacedCount = 0;
             for (const FAssetReferenceFixup& Entry : State.Entries)
             {
-                ReferencerCount += (uint32)Entry.Referencers.size();
+                ReferencerCount += (uint32)Entry.Referencers.Num();
                 ReplacedCount += Entry.ReplacementGUID.IsValid() ? 1u : 0u;
             }
 
@@ -348,7 +348,7 @@ namespace Lumina::ReplaceReferences
             if (bDeleting)
             {
                 ImGui::TextColored(kWarningColor, LE_ICON_ALERT " %u asset(s) you are deleting are still in use.",
-                    (uint32)State.Entries.size());
+                    (uint32)State.Entries.Num());
 
                 ImGui::Spacing();
                 ImGui::TextWrapped(
@@ -400,11 +400,11 @@ namespace Lumina::ReplaceReferences
                 ImGui::PushStyleColor(ImGuiCol_Text, kWarningColor);
             }
 
-            const bool bConfirmed = ImGui::Button(ConfirmLabel.c_str(), ImVec2(220.0f, 0.0f));
+            const bool bConfirmed = ImGui::Button(*ConfirmLabel, ImVec2(220.0f, 0.0f));
             ImGui::PopStyleColor();
 
             ImGui::SameLine();
-            ImGui::TextColored(kDimColor, "%u replace, %u clear", ReplacedCount, (uint32)State.Entries.size() - ReplacedCount);
+            ImGui::TextColored(kDimColor, "%u replace, %u clear", ReplacedCount, (uint32)State.Entries.Num() - ReplacedCount);
 
             if (bCanceled)
             {
@@ -428,15 +428,15 @@ namespace Lumina::ReplaceReferences
         {
             TickApply(State);
 
-            const float Progress = State.Work.empty()
+            const float Progress = State.Work.IsEmpty()
                 ? 1.0f
-                : (float)((double)State.WorkIndex / (double)State.Work.size());
+                : (float)((double)State.WorkIndex / (double)State.Work.Num());
 
-            ImGui::Text("Updating referencing assets... %u / %u", State.WorkIndex, (uint32)State.Work.size());
+            ImGui::Text("Updating referencing assets... %u / %u", State.WorkIndex, (uint32)State.Work.Num());
             ImGui::Spacing();
             ImGui::ProgressBar(Progress, ImVec2(-1.0f, 0.0f));
             ImGui::Spacing();
-            ImGui::TextColored(kDimColor, "%s", State.Current.IsNone() ? "" : State.Current.c_str());
+            ImGui::TextColored(kDimColor, "%s", State.Current.IsNone() ? "" : *State.Current);
 
             return false;
         }
@@ -516,10 +516,10 @@ namespace Lumina::ReplaceReferences
                         return;
                     }
 
-                    FFixedString Contained(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
+                    FFixedString Contained(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
                     if (VFS::HasExtension(Contained, ".lasset"))
                     {
-                        AssetPaths.push_back(Move(Contained));
+                        AssetPaths.Add(Move(Contained));
                     }
                 });
                 continue;
@@ -527,7 +527,7 @@ namespace Lumina::ReplaceReferences
 
             if (VFS::HasExtension(Path, ".lasset"))
             {
-                AssetPaths.push_back(Path);
+                AssetPaths.Add(Path);
             }
         }
 
@@ -541,14 +541,14 @@ namespace Lumina::ReplaceReferences
                 continue;
             }
 
-            ExcludedGUIDs.insert(Data->AssetGUID);
+            ExcludedGUIDs.Add(Data->AssetGUID);
 
             FAssetReferenceFixup Entry;
             Entry.AssetGUID  = Data->AssetGUID;
             Entry.AssetPath  = Data->Path;
             Entry.AssetName  = Data->AssetName;
             Entry.AssetClass = FindObject<CClass>(Data->AssetClass);
-            Targets.push_back(Move(Entry));
+            Targets.Add(Move(Entry));
         }
 
         TVector<FAssetReferenceFixup> Plan;
@@ -557,17 +557,17 @@ namespace Lumina::ReplaceReferences
             for (const FAssetData* Referencer : Registry.GetReferencersOf(Entry.AssetGUID))
             {
                 // An asset in the subject set is never fixed up, so its own edges are left alone.
-                if (Referencer == nullptr || ExcludedGUIDs.find(Referencer->AssetGUID) != ExcludedGUIDs.end())
+                if (Referencer == nullptr || ExcludedGUIDs.Contains(Referencer->AssetGUID))
                 {
                     continue;
                 }
 
-                Entry.Referencers.push_back(Referencer->AssetGUID);
+                Entry.Referencers.Add(Referencer->AssetGUID);
             }
 
-            if (!Entry.Referencers.empty())
+            if (!Entry.Referencers.IsEmpty())
             {
-                Plan.push_back(Move(Entry));
+                Plan.Add(Move(Entry));
             }
         }
 
@@ -577,7 +577,7 @@ namespace Lumina::ReplaceReferences
     void OpenModal(IEditorToolContext* Context, TVector<FAssetReferenceFixup> Plan, EReferenceFixupMode Mode,
                    uint32 TargetCount, TFunction<void(bool)> OnResolved)
     {
-        if (Context == nullptr || Plan.empty())
+        if (Context == nullptr || Plan.IsEmpty())
         {
             if (OnResolved)
             {
@@ -595,16 +595,16 @@ namespace Lumina::ReplaceReferences
         THashSet<FGuid> UniqueReferencers;
         for (const FAssetReferenceFixup& Entry : State->Entries)
         {
-            State->ExcludedGUIDs.insert(Entry.AssetGUID);
+            State->ExcludedGUIDs.Add(Entry.AssetGUID);
 
             for (const FGuid& ReferencerGUID : Entry.Referencers)
             {
-                if (!UniqueReferencers.insert(ReferencerGUID).second)
+                if (!UniqueReferencers.TryAdd(ReferencerGUID))
                 {
                     continue;
                 }
 
-                State->Work.push_back(ReferencerGUID);
+                State->Work.Add(ReferencerGUID);
 
                 // FindObject rather than LoadObject, since only an already resident package can be dirty.
                 const CObject* Resident = FindObject<CObject>(ReferencerGUID);

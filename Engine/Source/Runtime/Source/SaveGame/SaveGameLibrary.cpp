@@ -35,37 +35,37 @@ namespace Lumina
             {
                 Clean += IsSlotCharacter(Character) ? Character : '_';
             }
-            while (!Clean.empty() && (Clean.front() == '.' || Clean.front() == ' '))
+            while (!Clean.IsEmpty() && (Clean[0] == '.' || Clean[0] == ' '))
             {
-                Clean.erase(Clean.begin());
+                Clean.RemoveAt(0);
             }
-            while (!Clean.empty() && (Clean.back() == '.' || Clean.back() == ' '))
+            while (!Clean.IsEmpty() && (Clean.Last() == '.' || Clean.Last() == ' '))
             {
-                Clean.pop_back();
+                Clean.LeftChopInline(1);
             }
             return Clean;
         }
 
         FStringView View(const FString& String)
         {
-            return FStringView(String.c_str(), String.size());
+            return FStringView(*String, String.Len());
         }
     }
 
     FString CSaveGameLibrary::GetSaveGameDirectory(int32 UserIndex)
     {
         FString Directory;
-        if (GEngine != nullptr && !GEngine->GetProjectPath().empty())
+        if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
         {
             const FFixedString Path = Paths::Combine(GEngine->GetProjectPath(), "Saved", "SaveGames");
-            Directory.assign(Path.c_str(), Path.size());
+            Directory = FStringView(*Path, Path.Len());
         }
         else
         {
             const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
             Directory = Paths::GetUserDataDirectory();
             Directory += "/";
-            Directory += ProjectName.empty() ? FString("Lumina") : FString(ProjectName.data(), ProjectName.size());
+            Directory += ProjectName.IsEmpty() ? FString("Lumina") : FString(ProjectName.GetData(), ProjectName.Len());
             Directory += "/SaveGames";
         }
         if (UserIndex > 0)
@@ -78,17 +78,17 @@ namespace Lumina
     FString CSaveGameLibrary::GetSlotFilePath(const FString& SlotName, int32 UserIndex)
     {
         const FString Clean = SanitizeSlotName(SlotName);
-        if (Clean.empty())
+        if (Clean.IsEmpty())
         {
-            LOG_WARN("Save game slot name '{}' has nothing a file name can use.", SlotName.c_str());
+            LOG_WARN("Save game slot name '{}' has nothing a file name can use.", *SlotName);
             return FString();
         }
-        return GetSaveGameDirectory(UserIndex) + "/" + Clean + FString(SlotExtension.data(), SlotExtension.size());
+        return GetSaveGameDirectory(UserIndex) + "/" + Clean + FString(SlotExtension.GetData(), SlotExtension.Len());
     }
 
     bool CSaveGameLibrary::SaveGameToBytes(CSaveGame* SaveGame, TVector<uint8>& OutBytes)
     {
-        OutBytes.clear();
+        OutBytes.Reset();
         if (SaveGame == nullptr || SaveGame->GetClass() == nullptr)
         {
             LOG_WARN("Asked to save a null save game.");
@@ -137,7 +137,7 @@ namespace Lumina
         CClass* Class = FScriptableRegistry::ResolveClass(ClassName);
         if (Class == nullptr || !Class->IsChildOf(CSaveGame::StaticClass()))
         {
-            LOG_ERROR("The save game's class '{}' is not a loaded CSaveGame class.", ClassName.c_str());
+            LOG_ERROR("The save game's class '{}' is not a loaded CSaveGame class.", *ClassName);
             return nullptr;
         }
 
@@ -158,7 +158,7 @@ namespace Lumina
     {
         const FString Path = GetSlotFilePath(SlotName, UserIndex);
         TVector<uint8> Bytes;
-        if (Path.empty() || !SaveGameToBytes(SaveGame, Bytes))
+        if (Path.IsEmpty() || !SaveGameToBytes(SaveGame, Bytes))
         {
             return false;
         }
@@ -166,17 +166,17 @@ namespace Lumina
         Filesystem::MakeParentDirectoryTree(View(Path));
         if (!Filesystem::AtomicWriteFile(View(Path), Bytes))
         {
-            LOG_ERROR("Could not write the save game to {}.", Path.c_str());
+            LOG_ERROR("Could not write the save game to {}.", *Path);
             return false;
         }
-        LOG_INFO("Saved game slot '{}' to {} ({} bytes).", SlotName.c_str(), Path.c_str(), Bytes.size());
+        LOG_INFO("Saved game slot '{}' to {} ({} bytes).", *SlotName, *Path, Bytes.Num());
         return true;
     }
 
     CSaveGame* CSaveGameLibrary::LoadGameFromSlot(const FString& SlotName, int32 UserIndex)
     {
         const FString Path = GetSlotFilePath(SlotName, UserIndex);
-        if (Path.empty() || !Filesystem::IsFile(View(Path)))
+        if (Path.IsEmpty() || !Filesystem::IsFile(View(Path)))
         {
             return nullptr;
         }
@@ -184,7 +184,7 @@ namespace Lumina
         TVector<uint8> Bytes;
         if (!Filesystem::ReadFile(Bytes, View(Path)))
         {
-            LOG_ERROR("Could not read the save game at {}.", Path.c_str());
+            LOG_ERROR("Could not read the save game at {}.", *Path);
             return nullptr;
         }
         return LoadGameFromBytes(Bytes);
@@ -193,18 +193,18 @@ namespace Lumina
     bool CSaveGameLibrary::DoesSaveGameExist(const FString& SlotName, int32 UserIndex)
     {
         const FString Path = GetSlotFilePath(SlotName, UserIndex);
-        return !Path.empty() && Filesystem::IsFile(View(Path));
+        return !Path.IsEmpty() && Filesystem::IsFile(View(Path));
     }
 
     bool CSaveGameLibrary::DeleteGameInSlot(const FString& SlotName, int32 UserIndex)
     {
         const FString Path = GetSlotFilePath(SlotName, UserIndex);
-        return !Path.empty() && Filesystem::IsFile(View(Path)) && Filesystem::RemoveFile(View(Path));
+        return !Path.IsEmpty() && Filesystem::IsFile(View(Path)) && Filesystem::RemoveFile(View(Path));
     }
 
     void CSaveGameLibrary::GetSlotNames(int32 UserIndex, TVector<FString>& OutSlots)
     {
-        OutSlots.clear();
+        OutSlots.Reset();
         const FString Directory = GetSaveGameDirectory(UserIndex);
         if (!Filesystem::IsDirectory(View(Directory)))
         {
@@ -215,17 +215,17 @@ namespace Lumina
         Filesystem::IterateDirectory(View(Directory), [&](const Filesystem::FDirectoryEntry& Entry)
         {
             const FStringView Name = Entry.Name;
-            if (!Entry.IsDirectory() && Name.size() > SlotExtension.size() && Name.ends_with(SlotExtension))
+            if (!Entry.IsDirectory() && Name.Len() > SlotExtension.Len() && Name.EndsWith(SlotExtension))
             {
-                const FStringView Slot = Name.substr(0, Name.size() - SlotExtension.size());
-                Found.push_back({ Entry.LastModifyTime, FString(Slot.data(), Slot.size()) });
+                const FStringView Slot = Name.Mid(0, Name.Len() - SlotExtension.Len());
+                Found.Add({ Entry.LastModifyTime, FString(Slot.GetData(), Slot.Len()) });
             }
         });
 
-        std::sort(Found.begin(), Found.end(), [](const auto& A, const auto& B) { return A.first > B.first; });
-        for (auto& Pair : Found)
+        std::sort(Found.begin(), Found.end(), [](const auto& A, const auto& B) { return A.Key > B.Key; });
+        for (auto& [ModifyTime, Slot] : Found)
         {
-            OutSlots.push_back(Move(Pair.second));
+            OutSlots.Add(Move(Slot));
         }
     }
 }

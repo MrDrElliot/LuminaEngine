@@ -20,11 +20,8 @@ public class Reflector : ModuleRules
 
         PrivateIncludePaths.Add("Source");
 
-        PrivateDependencyModuleNames.AddRange(new[]
-        {
-            "XXHash",
-            "NlohmannJson",
-        });
+        // Names hash exactly as the engine hashes them, through the same header-only XXH64.
+        PrivateIncludePaths.Add(ModulePath("../../Source/Runtime/Source/Core/Math/Hash"));
 
         // Prebuilt libclang and LLVM, vendored under the engine's External directory.
         PublicSystemIncludePaths.Add(ModulePath("../../../External/LLVM/include"));

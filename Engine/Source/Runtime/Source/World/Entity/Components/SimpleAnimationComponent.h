@@ -113,7 +113,7 @@ namespace Lumina
             bPlaying        = (InAnimation != nullptr);
             bFinished       = false;
             bDirty          = true;
-            ActiveNotifyStates.clear();
+            ActiveNotifyStates.Reset();
         }
 
         /** Stop playback and freeze the pose at the current time. */

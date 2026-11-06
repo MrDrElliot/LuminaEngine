@@ -61,10 +61,10 @@ namespace Lumina
         virtual const FMaterialFormula& GetFormula() const;
 
         void BuildNode() override;
-        FFixedString GetNodeCategory() const override { return GetFormula().Category.data(); }
+        FFixedString GetNodeCategory() const override { return GetFormula().Category.GetData(); }
         FStringView GetNodeDisplayName() const override { return GetFormula().Name; }
         FStringView GetNodeTooltip() const override { return GetFormula().Tooltip; }
-        void* GetNodeDefaultValue() override { return Values.data(); }
+        void* GetNodeDefaultValue() override { return Values.GetData(); }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         // Each unwired input's value, by pin index.

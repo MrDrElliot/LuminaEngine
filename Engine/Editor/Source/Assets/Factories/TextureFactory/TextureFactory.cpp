@@ -41,9 +41,9 @@ namespace Lumina
         }
 
         FTextureResource& Resource = *Texture->TextureResource;
-        if (Resource.Mips.size() > 1)
+        if (Resource.Mips.Num() > 1)
         {
-            Resource.Mips.resize(1);
+            Resource.Mips.SetNum(1);
         }
         Resource.ImageDescription.NumMips = 1;
     }
@@ -54,7 +54,7 @@ namespace Lumina
     {
         DstW = Math::Max(SrcW >> 1, 1u);
         DstH = Math::Max(SrcH >> 1, 1u);
-        Dst.resize((size_t)DstW * DstH * 4);
+        Dst.SetNum(IntCastChecked<int32>(static_cast<int64>(DstW) * DstH * 4));
 
         for (uint32 y = 0; y < DstH; ++y)
         {
@@ -65,12 +65,12 @@ namespace Lumina
                 const uint32 sx0 = Math::Min(x * 2u, SrcW - 1u);
                 const uint32 sx1 = Math::Min(sx0 + 1u, SrcW - 1u);
 
-                const float* P00 = &Src[((size_t)sy0 * SrcW + sx0) * 4];
-                const float* P01 = &Src[((size_t)sy0 * SrcW + sx1) * 4];
-                const float* P10 = &Src[((size_t)sy1 * SrcW + sx0) * 4];
-                const float* P11 = &Src[((size_t)sy1 * SrcW + sx1) * 4];
+                const float* P00 = &Src[(sy0 * SrcW + sx0) * 4];
+                const float* P01 = &Src[(sy0 * SrcW + sx1) * 4];
+                const float* P10 = &Src[(sy1 * SrcW + sx0) * 4];
+                const float* P11 = &Src[(sy1 * SrcW + sx1) * 4];
 
-                float* D = &Dst[((size_t)y * DstW + x) * 4];
+                float* D = &Dst[(y * DstW + x) * 4];
                 for (int c = 0; c < 4; ++c)
                 {
                     D[c] = (P00[c] + P01[c] + P10[c] + P11[c]) * 0.25f;
@@ -100,7 +100,7 @@ namespace Lumina
             case EFormat::RGBA32_FLOAT: SrcChannels = 4; break;
             default:
                 LOG_WARN("CookEnvironmentTexture: '{0}' isn't a float source; Environment color space requires .hdr",
-                         Texture->GetName().c_str());
+                         *Texture->GetName());
                 return false;
         }
 
@@ -108,10 +108,10 @@ namespace Lumina
         if (HasPerTexelAdjustments(Texture))
         {
             LOG_WARN("TextureFactory: '{0}' is an HDR source; its per-texel adjustments are ignored because "
-                     "applying them would quantize the radiances to 8 bits.", Texture->GetName().c_str());
+                     "applying them would quantize the radiances to 8 bits.", *Texture->GetName());
         }
 
-        const float* SrcFloats = reinterpret_cast<const float*>(Source.Pixels.data());
+        const float* SrcFloats = reinterpret_cast<const float*>(Source.Pixels.GetData());
         
         auto Sanitize = [](float X) -> float
         {
@@ -123,8 +123,8 @@ namespace Lumina
         };
 
         // Mip 0 as a packed RGBA-float32 working buffer; each subsequent mip box-downsamples the prior.
-        TVector<float> MipFloat((size_t)NumTexels * 4);
-        for (uint64 i = 0; i < NumTexels; ++i)
+        TVector<float> MipFloat(IntCastChecked<int32>(static_cast<int64>(NumTexels) * 4));
+        for (int32 i = 0, Limit = IntCastChecked<int32>(NumTexels); i < Limit; ++i)
         {
             const float* Src = SrcFloats + i * SrcChannels;
             float* D = &MipFloat[i * 4];
@@ -148,18 +148,18 @@ namespace Lumina
         }
 
         Texture->TextureResource->ImageDescription = ImageDescription;
-        Texture->TextureResource->Mips.clear();
-        Texture->TextureResource->Mips.resize(NumMips);
+        Texture->TextureResource->Mips.Reset();
+        Texture->TextureResource->Mips.SetNum(NumMips);
 
         uint32 MipW = Width, MipH = Height;
         TVector<float> NextFloat;
         for (uint32 MipIndex = 0; MipIndex < NumMips; ++MipIndex)
         {
-            const uint64 MipTexels = (uint64)MipW * MipH;
+            const int64 MipTexels = static_cast<int64>(MipW) * MipH;
 
             // RGBA16F packs two uint32 per pixel, (R,G) low half and (B,A) high half, eight bytes per pixel.
-            TVector<uint32> Halves(MipTexels * 2);
-            for (uint64 i = 0; i < MipTexels; ++i)
+            TVector<uint32> Halves(IntCastChecked<int32>(MipTexels * 2));
+            for (int32 i = 0, Limit = IntCastChecked<int32>(MipTexels); i < Limit; ++i)
             {
                 const float* P = &MipFloat[i * 4];
                 Halves[i * 2 + 0] = Math::PackHalf2x16(FVector2(P[0], P[1]));
@@ -175,8 +175,9 @@ namespace Lumina
             Mip.RowPitch   = RowPitch;
             Mip.Depth      = 1;
             Mip.SlicePitch = SlicePitch;
-            Mip.Pixels.assign(reinterpret_cast<uint8*>(Halves.data()),
-                              reinterpret_cast<uint8*>(Halves.data()) + SlicePitch);
+            Mip.Pixels.Reset();
+            Mip.Pixels.Append(reinterpret_cast<uint8*>(Halves.GetData()),
+                              reinterpret_cast<uint8*>(Halves.GetData()) + SlicePitch);
 
             if (MipIndex + 1u < NumMips)
             {
@@ -189,7 +190,7 @@ namespace Lumina
         }
         
         ApplyTextureGroupMipPolicy(Texture);
-        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.Num();
 
         if (!bCreateGPUResource)
         {
@@ -204,12 +205,12 @@ namespace Lumina
             .Height = Height,
             .Mips   = UploadMips,
             .Format = EFormat::RGBA16_FLOAT,
-            .DebugName = DebugName.c_str(),
+            .DebugName = *DebugName,
         });
         for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
-            RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
+            RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.GetData(), Mip.Pixels.Num(), Mip.Width, Mip.Width, Mip.Height);
         }
 
         // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
@@ -221,7 +222,7 @@ namespace Lumina
 
     static bool NormalizeToRGBA8(Import::Textures::FTextureImportResult& Result)
     {
-        const uint64 PixelCount = (uint64)Result.Dimensions.x * Result.Dimensions.y;
+        const int64 PixelCount = static_cast<int64>(Result.Dimensions.x) * Result.Dimensions.y;
         if (PixelCount == 0)
         {
             return false;
@@ -234,7 +235,7 @@ namespace Lumina
         {
             case EFormat::RGBA8_UNORM:
             case EFormat::SRGBA8_UNORM:
-                return Result.Pixels.size() >= PixelCount * 4;
+                return Result.Pixels.Num() >= PixelCount * 4;
             case EFormat::R8_UNORM:     Channels = 1; break;
             case EFormat::RG8_UNORM:    Channels = 2; break;
             case EFormat::R16_UNORM:    Channels = 1; BytesPerChannel = 2; break;
@@ -244,19 +245,19 @@ namespace Lumina
                 return false;
         }
 
-        if (Result.Pixels.size() < PixelCount * Channels * BytesPerChannel)
+        if (Result.Pixels.Num() < PixelCount * Channels * BytesPerChannel)
         {
             return false;
         }
 
-        TVector<uint8> Converted(PixelCount * 4);
-        for (uint64 i = 0; i < PixelCount; ++i)
+        TVector<uint8> Converted(IntCastChecked<int32>(PixelCount * 4));
+        for (int32 i = 0, Limit = IntCastChecked<int32>(PixelCount); i < Limit; ++i)
         {
             uint8 Value[4];
             for (uint32 c = 0; c < Channels; ++c)
             {
                 // 16-bit sources keep the high byte (little-endian uint16).
-                const uint64 Offset = (i * Channels + c) * BytesPerChannel;
+                const int64 Offset = (static_cast<int64>(i) * Channels + c) * BytesPerChannel;
                 Value[c] = Result.Pixels[Offset + BytesPerChannel - 1];
             }
 
@@ -347,7 +348,7 @@ namespace Lumina
     }
 
     // Per-texel source edits on an RGBA8 buffer, in place, before block compression.
-    static void ApplySourceAdjustments(const CTexture* Texture, TVector<uint8>& Pixels, uint64 PixelCount)
+    static void ApplySourceAdjustments(const CTexture* Texture, TVector<uint8>& Pixels, int64 PixelCount)
     {
         if (!HasPerTexelAdjustments(Texture))
         {
@@ -371,7 +372,7 @@ namespace Lumina
             return (uint8)Math::Clamp((int32)std::lround(Math::Clamp(X, 0.0f, 1.0f) * 255.0f), 0, 255);
         };
 
-        for (uint64 i = 0; i < PixelCount; ++i)
+        for (int32 i = 0, Limit = IntCastChecked<int32>(PixelCount); i < Limit; ++i)
         {
             uint8* Texel = &Pixels[i * 4];
 
@@ -495,7 +496,7 @@ namespace Lumina
         if (Target.x != Result.Dimensions.x || Target.y != Result.Dimensions.y)
         {
             LOG_INFO("TextureFactory: '{0}' capped from {1}x{2} to {3}x{4} by MaxTextureSize.",
-                     Texture->GetName().c_str(), Result.Dimensions.x, Result.Dimensions.y, Target.x, Target.y);
+                     *Texture->GetName(), Result.Dimensions.x, Result.Dimensions.y, Target.x, Target.y);
             Import::Textures::ResizeImportResult(Result, Target);
         }
     }
@@ -507,7 +508,7 @@ namespace Lumina
         {
             Passing += (A * Scale >= Cutoff) ? 1 : 0;
         }
-        return Alpha.empty() ? 0.0f : float(Passing) / float(Alpha.size());
+        return Alpha.IsEmpty() ? 0.0f : float(Passing) / float(Alpha.Num());
     }
 
     // Coverage only rises with the scale, so bisection finds the scale that restores the target.
@@ -543,12 +544,12 @@ namespace Lumina
 
         const uint8 Threshold = (uint8)Math::Clamp((int32)std::lround(Cutoff * 255.0f), 1, 255);
         TVector<FLevel> Levels;
-        FLevel& Base = Levels.emplace_back();
+        FLevel& Base = Levels.EmplaceGetRef();
         Base.Width = Dimensions.x;
         Base.Height = Dimensions.y;
-        Base.Texels.resize((size_t)Base.Width * Base.Height);
+        Base.Texels.SetNum(IntCastChecked<int32>(static_cast<int64>(Base.Width) * Base.Height));
         bool bAnyHidden = false;
-        for (size_t i = 0; i < Base.Texels.size(); ++i)
+        for (int32 i = 0; i < Base.Texels.Num(); ++i)
         {
             const uint8* Texel = &Pixels[i * 4];
             const float Weight = Texel[3] >= Threshold ? 1.0f : 0.0f;
@@ -561,13 +562,13 @@ namespace Lumina
         }
 
         // Pull, so each coarser texel averages whatever visible color lies under it.
-        while (Levels.back().Width > 1 || Levels.back().Height > 1)
+        while (Levels.Last().Width > 1 || Levels.Last().Height > 1)
         {
-            const FLevel& Fine = Levels.back();
+            const FLevel& Fine = Levels.Last();
             FLevel Coarse;
             Coarse.Width = Math::Max(1u, Fine.Width / 2);
             Coarse.Height = Math::Max(1u, Fine.Height / 2);
-            Coarse.Texels.resize((size_t)Coarse.Width * Coarse.Height);
+            Coarse.Texels.SetNum(IntCastChecked<int32>(static_cast<int64>(Coarse.Width) * Coarse.Height));
             for (uint32 Y = 0; Y < Coarse.Height; ++Y)
             {
                 for (uint32 X = 0; X < Coarse.Width; ++X)
@@ -577,16 +578,16 @@ namespace Lumina
                     {
                         const uint32 SX = Math::Min(X * 2 + (Tap & 1), Fine.Width - 1);
                         const uint32 SY = Math::Min(Y * 2 + (Tap >> 1), Fine.Height - 1);
-                        Sum += Fine.Texels[(size_t)SY * Fine.Width + SX];
+                        Sum += Fine.Texels[SY * Fine.Width + SX];
                     }
-                    Coarse.Texels[(size_t)Y * Coarse.Width + X] = Sum;
+                    Coarse.Texels[Y * Coarse.Width + X] = Sum;
                 }
             }
-            Levels.push_back(Move(Coarse));
+            Levels.Add(Move(Coarse));
         }
 
         // Push, so an empty texel inherits the nearest coarser level that saw any color.
-        for (size_t L = Levels.size() - 1; L-- > 0;)
+        for (int32 L = Levels.Num() - 1; L-- > 0;)
         {
             FLevel& Fine = Levels[L];
             const FLevel& Coarse = Levels[L + 1];
@@ -594,17 +595,17 @@ namespace Lumina
             {
                 for (uint32 X = 0; X < Fine.Width; ++X)
                 {
-                    FVector4& Texel = Fine.Texels[(size_t)Y * Fine.Width + X];
+                    FVector4& Texel = Fine.Texels[Y * Fine.Width + X];
                     if (Texel.w <= 0.0f)
                     {
-                        const FVector4& Parent = Coarse.Texels[(size_t)Math::Min(Y / 2, Coarse.Height - 1) * Coarse.Width + Math::Min(X / 2, Coarse.Width - 1)];
+                        const FVector4& Parent = Coarse.Texels[Math::Min(Y / 2, Coarse.Height - 1) * Coarse.Width + Math::Min(X / 2, Coarse.Width - 1)];
                         Texel = Parent.w > 0.0f ? Parent / Parent.w : Parent;
                     }
                 }
             }
         }
 
-        for (size_t i = 0; i < Base.Texels.size(); ++i)
+        for (int32 i = 0; i < Base.Texels.Num(); ++i)
         {
             uint8* Texel = &Pixels[i * 4];
             if (Texel[3] < Threshold && Levels[0].Texels[i].w > 0.0f)
@@ -639,9 +640,9 @@ namespace Lumina
 
         uint32 Width = Dimensions.x;
         uint32 Height = Dimensions.y;
-        TVector<FVector3> Color((size_t)Width * Height);
-        TVector<float> Alpha((size_t)Width * Height);
-        for (size_t i = 0; i < Color.size(); ++i)
+        TVector<FVector3> Color(IntCastChecked<int32>(static_cast<int64>(Width) * Height));
+        TVector<float> Alpha(IntCastChecked<int32>(static_cast<int64>(Width) * Height));
+        for (int32 i = 0; i < Color.Num(); ++i)
         {
             const uint8* Texel = &Pixels[i * 4];
             Color[i] = FVector3(ToLinear[Texel[0]], ToLinear[Texel[1]], ToLinear[Texel[2]]);
@@ -655,8 +656,8 @@ namespace Lumina
         {
             const uint32 NextWidth = Math::Max(1u, Width / 2);
             const uint32 NextHeight = Math::Max(1u, Height / 2);
-            TVector<FVector3> NextColor((size_t)NextWidth * NextHeight);
-            TVector<float> NextAlpha((size_t)NextWidth * NextHeight);
+            TVector<FVector3> NextColor(IntCastChecked<int32>(static_cast<int64>(NextWidth) * NextHeight));
+            TVector<float> NextAlpha(IntCastChecked<int32>(static_cast<int64>(NextWidth) * NextHeight));
 
             for (uint32 Y = 0; Y < NextHeight; ++Y)
             {
@@ -666,20 +667,20 @@ namespace Lumina
                 {
                     const uint32 X0 = Math::Min(X * 2, Width - 1);
                     const uint32 X1 = Math::Min(X * 2 + 1, Width - 1);
-                    const size_t Taps[4] = { (size_t)Y0 * Width + X0, (size_t)Y0 * Width + X1, (size_t)Y1 * Width + X0, (size_t)Y1 * Width + X1 };
+                    const uint32 Taps[4] = { Y0 * Width + X0, Y0 * Width + X1, Y1 * Width + X0, Y1 * Width + X1 };
 
                     // Weighting color by alpha keeps the invisible texels around a cutout from bleeding into its edge.
                     FVector3 Weighted(0.0f);
                     FVector3 Plain(0.0f);
                     float AlphaSum = 0.0f;
-                    for (size_t Tap : Taps)
+                    for (uint32 Tap : Taps)
                     {
                         Weighted += Color[Tap] * Alpha[Tap];
                         Plain += Color[Tap];
                         AlphaSum += Alpha[Tap];
                     }
 
-                    const size_t Out = (size_t)Y * NextWidth + X;
+                    const uint32 Out = Y * NextWidth + X;
                     NextColor[Out] = AlphaSum > 1e-4f ? Weighted / AlphaSum : Plain * 0.25f;
                     NextAlpha[Out] = AlphaSum * 0.25f;
                 }
@@ -691,8 +692,8 @@ namespace Lumina
             Alpha = Move(NextAlpha);
 
             const float Scale = FindCoverageScale(Alpha, Cutoff, TargetCoverage);
-            Stored.resize(Color.size() * 4);
-            for (size_t i = 0; i < Color.size(); ++i)
+            Stored.SetNum(Color.Num() * 4);
+            for (int32 i = 0; i < Color.Num(); ++i)
             {
                 Stored[i * 4 + 0] = ToStored(Color[i].x);
                 Stored[i * 4 + 1] = ToStored(Color[i].y);
@@ -701,7 +702,7 @@ namespace Lumina
             }
 
             OutMips.push_back(basisu::image());
-            OutMips.back().init(Stored.data(), Width, Height, 4);
+            OutMips.back().init(Stored.GetData(), Width, Height, 4);
         }
     }
 
@@ -755,7 +756,7 @@ namespace Lumina
         FRGBA8Level Next;
         Next.Width  = Math::Max(1u, Source.Width / 2);
         Next.Height = Math::Max(1u, Source.Height / 2);
-        Next.Texels.resize((size_t)Next.Width * Next.Height * 4);
+        Next.Texels.SetNum(IntCastChecked<int32>(static_cast<int64>(Next.Width) * Next.Height * 4));
 
         for (uint32 Y = 0; Y < Next.Height; ++Y)
         {
@@ -765,15 +766,15 @@ namespace Lumina
             {
                 const uint32 X0 = Math::Min(X * 2, Source.Width - 1);
                 const uint32 X1 = Math::Min(X * 2 + 1, Source.Width - 1);
-                const size_t Taps[4] = { (size_t)Y0 * Source.Width + X0, (size_t)Y0 * Source.Width + X1,
-                                         (size_t)Y1 * Source.Width + X0, (size_t)Y1 * Source.Width + X1 };
+                const uint32 Taps[4] = { Y0 * Source.Width + X0, Y0 * Source.Width + X1,
+                                         Y1 * Source.Width + X0, Y1 * Source.Width + X1 };
 
-                uint8* Out = &Next.Texels[((size_t)Y * Next.Width + X) * 4];
+                uint8* Out = &Next.Texels[(Y * Next.Width + X) * 4];
                 for (uint32 Channel = 0; Channel < 4; ++Channel)
                 {
                     const bool bGamma = bSRGB && Channel < 3;
                     float Sum = 0.0f;
-                    for (size_t Tap : Taps)
+                    for (uint32 Tap : Taps)
                     {
                         const uint8 Value = Source.Texels[Tap * 4 + Channel];
                         Sum += bGamma ? GToLinear[Value] : float(Value) / 255.0f;
@@ -924,15 +925,15 @@ namespace Lumina
 
         const uint32 BlocksX = (Level.Width + 3) / 4;
         const uint32 BlocksY = (Level.Height + 3) / 4;
-        const uint32 BlockBytes = 8u * (uint32)Channels.size();
-        TVector<uint8> Encoded((size_t)BlocksX * BlocksY * BlockBytes);
+        const uint32 BlockBytes = 8u * (uint32)Channels.Num();
+        TVector<uint8> Encoded(IntCastChecked<int32>(static_cast<int64>(BlocksX) * BlocksY * BlockBytes));
 
-        Task::ParallelFor(BlocksY, [&](uint32 By)
+        Jobs::ParallelFor(BlocksY, [&](uint32 By)
         {
             for (uint32 Bx = 0; Bx < BlocksX; ++Bx)
             {
-                uint8* Block = &Encoded[((size_t)By * BlocksX + Bx) * BlockBytes];
-                for (size_t Slot = 0; Slot < Channels.size(); ++Slot)
+                uint8* Block = &Encoded[(By * BlocksX + Bx) * BlockBytes];
+                for (int32 Slot = 0; Slot < Channels.Num(); ++Slot)
                 {
                     const uint32 Channel = Channels[Slot];
                     const bool bLinearize = bLinearizeColor && Channel < 3;
@@ -944,7 +945,7 @@ namespace Lumina
                         for (uint32 Tx = 0; Tx < 4; ++Tx)
                         {
                             const uint32 X = Math::Min(Bx * 4 + Tx, Level.Width - 1);
-                            const uint8 Value = Level.Texels[((size_t)Y * Level.Width + X) * 4 + Channel];
+                            const uint8 Value = Level.Texels[(Y * Level.Width + X) * 4 + Channel];
                             Values[Ty * 4 + Tx] = bLinearize ? GLinear255[Value] : float(Value);
                         }
                     }
@@ -957,8 +958,8 @@ namespace Lumina
 
     static TVector<uint8> ExtractR8(const FRGBA8Level& Level, bool bLinearize)
     {
-        TVector<uint8> Out((size_t)Level.Width * Level.Height);
-        for (size_t i = 0; i < Out.size(); ++i)
+        TVector<uint8> Out(IntCastChecked<int32>(static_cast<int64>(Level.Width) * Level.Height));
+        for (int32 i = 0; i < Out.Num(); ++i)
         {
             const uint8 Value = Level.Texels[i * 4];
             Out[i] = bLinearize ? (uint8)std::lround(SRGBToLinear(float(Value) / 255.0f) * 255.0f) : Value;
@@ -976,7 +977,7 @@ namespace Lumina
         }
 
         const FTextureResource::FDescription& Desc = Texture->TextureResource->ImageDescription;
-        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.Num();
         const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -984,15 +985,15 @@ namespace Lumina
             .Height = Desc.Extent.y,
             .Mips   = UploadMips,
             .Format = Desc.Format,
-            .DebugName = DebugName.c_str(),
+            .DebugName = *DebugName,
             .Swizzle = Desc.Swizzle,
         });
         for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
-            if (!Mip.Pixels.empty())
+            if (!Mip.Pixels.IsEmpty())
             {
-                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
+                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.GetData(), Mip.Pixels.Num(), Mip.Width, Mip.Width, Mip.Height);
             }
         }
 
@@ -1016,8 +1017,8 @@ namespace Lumina
         Desc.NumMips = (uint8)NumMips;
 
         Texture->TextureResource->ImageDescription = Desc;
-        Texture->TextureResource->Mips.clear();
-        Texture->TextureResource->Mips.resize(NumMips);
+        Texture->TextureResource->Mips.Reset();
+        Texture->TextureResource->Mips.SetNum(NumMips);
     }
 
     static void StoreMip(CTexture* Texture, uint32 MipIndex, uint32 Width, uint32 Height, uint32 RowPitch, TVector<uint8>&& Bytes)
@@ -1027,7 +1028,7 @@ namespace Lumina
         Mip.Height     = Height;
         Mip.Depth      = 1;
         Mip.RowPitch   = RowPitch;
-        Mip.SlicePitch = (uint32)Bytes.size();
+        Mip.SlicePitch = (uint32)Bytes.Num();
         Mip.Pixels     = Move(Bytes);
     }
 
@@ -1042,7 +1043,7 @@ namespace Lumina
         }
 
         TVector<FRGBA8Level> Levels;
-        Levels.push_back(FRGBA8Level{ Dimensions.x, Dimensions.y, Pixels });
+        Levels.Emplace(Dimensions.x, Dimensions.y, Pixels);
 
         if (Texture->GetResolvedPolicy().bGenerateMips)
         {
@@ -1052,16 +1053,16 @@ namespace Lumina
                 BuildCoveragePreservingMips(Pixels, Dimensions, bSRGB, Texture->AlphaCoverageCutoff, CoverageMips);
                 for (const basisu::image& Image : CoverageMips)
                 {
-                    FRGBA8Level& Level = Levels.emplace_back();
+                    FRGBA8Level& Level = Levels.EmplaceGetRef();
                     Level.Width  = Image.get_width();
                     Level.Height = Image.get_height();
-                    Level.Texels.resize((size_t)Level.Width * Level.Height * 4);
+                    Level.Texels.SetNum(IntCastChecked<int32>(static_cast<int64>(Level.Width) * Level.Height * 4));
                     for (uint32 Y = 0; Y < Level.Height; ++Y)
                     {
                         for (uint32 X = 0; X < Level.Width; ++X)
                         {
                             const basisu::color_rgba& Texel = Image(X, Y);
-                            uint8* Out = &Level.Texels[((size_t)Y * Level.Width + X) * 4];
+                            uint8* Out = &Level.Texels[(Y * Level.Width + X) * 4];
                             Out[0] = Texel.r;
                             Out[1] = Texel.g;
                             Out[2] = Texel.b;
@@ -1072,10 +1073,10 @@ namespace Lumina
             }
             else
             {
-                while (Levels.back().Width > 1 || Levels.back().Height > 1)
+                while (Levels.Last().Width > 1 || Levels.Last().Height > 1)
                 {
-                    FRGBA8Level Next = DownsampleRGBA8(Levels.back(), bSRGB);
-                    Levels.push_back(Move(Next));
+                    FRGBA8Level Next = DownsampleRGBA8(Levels.Last(), bSRGB);
+                    Levels.Add(Move(Next));
                 }
             }
         }
@@ -1091,14 +1092,14 @@ namespace Lumina
         default:                                                 Format = bSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM; break;
         }
 
-        ResetCookedResource(Texture, Format, Swizzle, Dimensions, (uint32)Levels.size());
+        ResetCookedResource(Texture, Format, Swizzle, Dimensions, (uint32)Levels.Num());
 
         const int32 SearchRadius = BC4SearchRadius(Texture->CompressionQuality);
         constexpr uint32 RedOnly[]   = { 0 };
         constexpr uint32 AlphaOnly[] = { 3 };
         constexpr uint32 RedGreen[]  = { 0, 1 };
 
-        for (uint32 MipIndex = 0; MipIndex < (uint32)Levels.size(); ++MipIndex)
+        for (int32 MipIndex = 0; MipIndex < Levels.Num(); ++MipIndex)
         {
             FRGBA8Level& Level = Levels[MipIndex];
             const uint32 BlocksX = (Level.Width + 3) / 4;
@@ -1137,7 +1138,7 @@ namespace Lumina
     // The first channel at the source's own precision, so a 16-bit or float heightmap keeps its steps.
     static bool ReadFirstChannel(const Import::Textures::FTextureImportResult& Source, TVector<float>& Out)
     {
-        const uint64 Texels = (uint64)Source.Dimensions.x * Source.Dimensions.y;
+        const int64 Texels = static_cast<int64>(Source.Dimensions.x) * Source.Dimensions.y;
         uint32 Stride = 0;
         uint32 Bytes  = 1;
         switch (Source.Format)
@@ -1157,30 +1158,30 @@ namespace Lumina
             return false;
         }
 
-        if (Texels == 0 || Source.Pixels.size() < Texels * Stride * Bytes)
+        if (Texels == 0 || Source.Pixels.Num() < Texels * Stride * Bytes)
         {
             return false;
         }
 
-        Out.resize(Texels);
-        for (uint64 i = 0; i < Texels; ++i)
+        Out.SetNum(IntCastChecked<int32>(Texels));
+        for (int64 i = 0; i < Texels; ++i)
         {
             const uint8* Texel = &Source.Pixels[i * Stride * Bytes];
             if (Bytes == 1)
             {
-                Out[i] = float(Texel[0]) / 255.0f;
+                Out[static_cast<int32>(i)] = float(Texel[0]) / 255.0f;
             }
             else if (Bytes == 2)
             {
                 uint16 Value;
                 Memory::Memcpy(&Value, Texel, sizeof(Value));
-                Out[i] = float(Value) / 65535.0f;
+                Out[static_cast<int32>(i)] = float(Value) / 65535.0f;
             }
             else
             {
                 float Value;
                 Memory::Memcpy(&Value, Texel, sizeof(Value));
-                Out[i] = std::isfinite(Value) ? Math::Clamp(Value, -65504.0f, 65504.0f) : 0.0f;
+                Out[static_cast<int32>(i)] = std::isfinite(Value) ? Math::Clamp(Value, -65504.0f, 65504.0f) : 0.0f;
             }
         }
         return true;
@@ -1192,14 +1193,14 @@ namespace Lumina
         if (!ReadFirstChannel(Source, Level))
         {
             LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for HalfFloat (format {1}).",
-                      Texture->GetName().c_str(), (uint32)Source.Format);
+                      *Texture->GetName(), (uint32)Source.Format);
             return false;
         }
 
         if (HasPerTexelAdjustments(Texture))
         {
             LOG_WARN("TextureFactory: '{0}' cooks as HalfFloat, which ignores per-texel adjustments to keep the source's precision.",
-                     Texture->GetName().c_str());
+                     *Texture->GetName());
         }
 
         const bool bLinearize = Texture->IsSRGB() && !IsFloatSourceFormat(Source.Format);
@@ -1227,8 +1228,8 @@ namespace Lumina
 
         for (uint32 MipIndex = 0; MipIndex < NumMips; ++MipIndex)
         {
-            TVector<uint8> Bytes((size_t)Width * Height * 2);
-            for (size_t i = 0; i < (size_t)Width * Height; ++i)
+            TVector<uint8> Bytes(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 2));
+            for (int32 i = 0, Limit = IntCastChecked<int32>(static_cast<int64>(Width) * Height); i < Limit; ++i)
             {
                 const uint16 Half = (uint16)(Math::PackHalf2x16(FVector2(Level[i], 0.0f)) & 0xFFFFu);
                 Memory::Memcpy(&Bytes[i * 2], &Half, sizeof(Half));
@@ -1239,7 +1240,7 @@ namespace Lumina
             {
                 const uint32 NextWidth = Math::Max(1u, Width / 2);
                 const uint32 NextHeight = Math::Max(1u, Height / 2);
-                TVector<float> Next((size_t)NextWidth * NextHeight);
+                TVector<float> Next(IntCastChecked<int32>(static_cast<int64>(NextWidth) * NextHeight));
                 for (uint32 Y = 0; Y < NextHeight; ++Y)
                 {
                     const uint32 Y0 = Math::Min(Y * 2, Height - 1);
@@ -1248,8 +1249,8 @@ namespace Lumina
                     {
                         const uint32 X0 = Math::Min(X * 2, Width - 1);
                         const uint32 X1 = Math::Min(X * 2 + 1, Width - 1);
-                        Next[(size_t)Y * NextWidth + X] = 0.25f * (Level[(size_t)Y0 * Width + X0] + Level[(size_t)Y0 * Width + X1]
-                                                                 + Level[(size_t)Y1 * Width + X0] + Level[(size_t)Y1 * Width + X1]);
+                        Next[Y * NextWidth + X] = 0.25f * (Level[Y0 * Width + X0] + Level[Y0 * Width + X1]
+                                                                 + Level[Y1 * Width + X0] + Level[Y1 * Width + X1]);
                     }
                 }
                 Level = Move(Next);
@@ -1264,11 +1265,11 @@ namespace Lumina
     // An 8-bit source widened to float, so an HDR setting on an ordinary image still cooks.
     static void PromoteToFloat(const CTexture* Texture, Import::Textures::FTextureImportResult& Source)
     {
-        const uint64 Texels = (uint64)Source.Dimensions.x * Source.Dimensions.y;
+        const int64 Texels = static_cast<int64>(Source.Dimensions.x) * Source.Dimensions.y;
         const bool bSRGB = Texture->IsSRGB();
-        TVector<uint8> Floats(Texels * 4 * sizeof(float));
-        float* Out = reinterpret_cast<float*>(Floats.data());
-        for (uint64 i = 0; i < Texels; ++i)
+        TVector64<uint8> Floats(Texels * 4 * static_cast<int64>(sizeof(float)));
+        float* Out = reinterpret_cast<float*>(Floats.GetData());
+        for (int64 i = 0; i < Texels; ++i)
         {
             for (uint32 Channel = 0; Channel < 4; ++Channel)
             {
@@ -1282,15 +1283,15 @@ namespace Lumina
 
     static bool CookTexturePixels(CTexture* Texture, TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
-        const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
-        if (RequiredBytes == 0 || Pixels.size() < RequiredBytes)
+        const int64 RequiredBytes = static_cast<int64>(Dimensions.x) * Dimensions.y * 4;
+        if (RequiredBytes == 0 || Pixels.Num() < RequiredBytes)
         {
             LOG_ERROR("CookTexturePixels: '{0}' pixel buffer ({1} bytes) doesn't cover {2}x{3} RGBA8 ({4} bytes); refusing to cook.",
-                      Texture->GetName().c_str(), Pixels.size(), Dimensions.x, Dimensions.y, RequiredBytes);
+                      *Texture->GetName(), Pixels.Num(), Dimensions.x, Dimensions.y, RequiredBytes);
             return false;
         }
         
-        ApplySourceAdjustments(Texture, Pixels, (uint64)Dimensions.x * Dimensions.y);
+        ApplySourceAdjustments(Texture, Pixels, static_cast<int64>(Dimensions.x) * Dimensions.y);
 
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
 
@@ -1310,7 +1311,7 @@ namespace Lumina
         Params.m_pJob_pool = &JobPool;
 
         Params.m_source_images.resize(1);
-        Params.m_source_images[0].init(Pixels.data(), Dimensions.x, Dimensions.y, 4);
+        Params.m_source_images[0].init(Pixels.GetData(), Dimensions.x, Dimensions.y, 4);
 
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
@@ -1320,7 +1321,7 @@ namespace Lumina
         if (Texture->bPreserveAlphaCoverage && !Texture->bCompressWithoutAlpha)
         {
             BleedColorIntoCutout(Pixels, Dimensions, Texture->AlphaCoverageCutoff);
-            Params.m_source_images[0].init(Pixels.data(), Dimensions.x, Dimensions.y, 4);
+            Params.m_source_images[0].init(Pixels.GetData(), Dimensions.x, Dimensions.y, 4);
         }
         if (bCoverageMips)
         {
@@ -1396,7 +1397,7 @@ namespace Lumina
                     BasisData.data(), (uint32_t)BasisData.size(),
                     0,
                     MipIndex,
-                    TranscodedData.data(), TotalBlocks,
+                    TranscodedData.GetData(), TotalBlocks,
                     TranscodeTarget))
             {
                 continue;
@@ -1422,7 +1423,7 @@ namespace Lumina
     // DDS magic "DDS " + a full DDS_HEADER (124B); the smallest valid file is magic(4)+header(124).
     static bool LooksLikeDDS(TSpan<const uint8> Data)
     {
-        return Data.size() >= 128 && Data[0] == 'D' && Data[1] == 'D' && Data[2] == 'S' && Data[3] == ' ';
+        return Data.Num() >= 128 && Data[0] == 'D' && Data[1] == 'D' && Data[2] == 'S' && Data[3] == ' ';
     }
 
     // Maps the DDS format to EFormat and uploads the blocks VERBATIM, losslessly, with no recompress.
@@ -1434,7 +1435,7 @@ namespace Lumina
             return false;
         }
 
-        const uint8* Bytes = Data.data();
+        const uint8* Bytes = Data.GetData();
         const uint32 Height   = ReadU32LE(Bytes + 12);   // DDS_HEADER.dwHeight
         const uint32 Width    = ReadU32LE(Bytes + 16);   // DDS_HEADER.dwWidth
         uint32       MipCount = ReadU32LE(Bytes + 28);   // DDS_HEADER.dwMipMapCount
@@ -1458,7 +1459,7 @@ namespace Lumina
         if (FourCC == MakeFourCC('D', 'X', '1', '0'))
         {
             // DDS_HEADER_DXT10 (20B) follows; dxgiFormat is its first field. Pixel data then starts at 148.
-            if (Data.size() < 148)
+            if (Data.Num() < 148)
             {
                 return false;
             }
@@ -1501,8 +1502,8 @@ namespace Lumina
         {
             Texture->TextureResource = MakeUnique<FTextureResource>();
         }
-        Texture->TextureResource->Mips.clear();
-        Texture->TextureResource->Mips.reserve(MipCount);
+        Texture->TextureResource->Mips.Reset();
+        Texture->TextureResource->Mips.Reserve(MipCount);
 
         size_t Offset     = DataOffset;
         uint32 StoredMips = 0;
@@ -1514,7 +1515,7 @@ namespace Lumina
             const uint32 BlocksY = Math::Max(1u, (MipH + 3u) / 4u);
             const size_t MipSize = (size_t)BlocksX * BlocksY * BytesPerBlock;
 
-            if (Offset + MipSize > Data.size())
+            if (Offset + MipSize > static_cast<size_t>(Data.Num()))
             {
                 break;   // truncated file, keep whatever mips parsed cleanly
             }
@@ -1525,8 +1526,9 @@ namespace Lumina
             Mip.Depth      = 1;
             Mip.RowPitch   = BlocksX * BytesPerBlock;
             Mip.SlicePitch = (uint32)MipSize;
-            Mip.Pixels.assign(Bytes + Offset, Bytes + Offset + MipSize);
-            Texture->TextureResource->Mips.push_back(Move(Mip));
+            Mip.Pixels.Reset();
+            Mip.Pixels.Append(Bytes + Offset, Bytes + Offset + MipSize);
+            Texture->TextureResource->Mips.Add(Move(Mip));
 
             Offset += MipSize;
             ++StoredMips;
@@ -1551,9 +1553,28 @@ namespace Lumina
         return PublishCookedMips(Texture, bCreateGPUResource);
     }
 
+    // Cooked mips and the LDR cook count in int32, and the float cook stores eight bytes a texel in its mips.
+    static bool FitsWorkingBuffers(const CTexture* Texture, FUIntVector2 Dimensions, uint64 BytesPerTexel)
+    {
+        if (static_cast<uint64>(Dimensions.x) * Dimensions.y * BytesPerTexel <= static_cast<uint64>(TNumericLimits<int32>::Max()))
+        {
+            return true;
+        }
+        LOG_ERROR("TextureFactory: '{0}' is {1}x{2}, too large for the cook's in-memory buffers.", *Texture->GetName(), Dimensions.x, Dimensions.y);
+        return false;
+    }
+
     // Filename suffix heuristic for Auto; falls back to SRGB. Editable in the inspector for misclassifications.
     static bool CookImportedSource(CTexture* Texture, Import::Textures::FTextureImportResult& Source, uint32 EncodeThreads, bool bCreateGPUResource)
     {
+        const bool bFloatCook = Texture->CompressionSettings == ETextureCompressionSettings::HalfFloat
+            || Texture->CompressionSettings == ETextureCompressionSettings::HDR
+            || Texture->ColorSpace == ETextureColorSpace::Environment;
+        if (!FitsWorkingBuffers(Texture, Source.Dimensions, bFloatCook ? 8 : 4))
+        {
+            return false;
+        }
+
         if (Texture->CompressionSettings == ETextureCompressionSettings::HalfFloat)
         {
             return CookHalfFloatTexture(Texture, Source, bCreateGPUResource);
@@ -1576,17 +1597,17 @@ namespace Lumina
         if (!NormalizeToRGBA8(Source))
         {
             LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the cook (format {1}, {2}x{3}).",
-                      Texture->GetName().c_str(), (uint32)Source.Format, Source.Dimensions.x, Source.Dimensions.y);
+                      *Texture->GetName(), (uint32)Source.Format, Source.Dimensions.x, Source.Dimensions.y);
             return false;
         }
 
-        TVector<uint8> Pixels = Move(Source.Pixels);
+        TVector<uint8> Pixels(Move(Source.Pixels));
         return CookTexturePixels(Texture, Pixels, Source.Dimensions, Texture->ColorSpace, EncodeThreads, bCreateGPUResource);
     }
 
     ETextureColorSpace CTextureFactory::ClassifyColorSpaceByFilename(FStringView Path)
     {
-        FString Stem(Path.data(), Path.size());
+        FString Stem(Path.GetData(), Path.Len());
 
         // Lowercase first so .HDR/.hdr both match.
         for (char& C : Stem)
@@ -1595,22 +1616,21 @@ namespace Lumina
         }
 
         // Route .hdr to Environment before suffix heuristics run.
-        if (Stem.size() >= 4 && Stem.compare(Stem.size() - 4, 4, ".hdr") == 0)
+        if (Stem.EndsWith(".hdr"))
         {
             return ETextureColorSpace::Environment;
         }
 
         // Strip extension before suffix match.
-        const size_t DotPos = Stem.find_last_of('.');
-        if (DotPos != FString::npos)
+        const int32 DotPos = Stem.FindLastOf('.');
+        if (DotPos != Constants::kIndexNone)
         {
-            Stem.resize(DotPos);
+            Stem.SetLen(DotPos);
         }
 
         auto EndsWith = [&Stem](const char* Suffix)
         {
-            const size_t SufLen = strlen(Suffix);
-            return Stem.size() >= SufLen && Stem.compare(Stem.size() - SufLen, SufLen, Suffix) == 0;
+            return Stem.EndsWith(Suffix);
         };
 
         // Normals resolve to Linear BC7 rather than NormalMap, since the BC5-packed path is broken.
@@ -1648,7 +1668,7 @@ namespace Lumina
     {
         const uint32 Width  = Source.Dimensions.x;
         const uint32 Height = Source.Dimensions.y;
-        if (Width == 0 || Height == 0 || Source.Pixels.empty())
+        if (Width == 0 || Height == 0 || Source.Pixels.IsEmpty())
         {
             return;
         }
@@ -1668,13 +1688,13 @@ namespace Lumina
 
         if (FloatChannels > 0)
         {
-            if (Source.Pixels.size() < (size_t)Width * Height * FloatChannels * sizeof(float))
+            if (Source.Pixels.Num() < static_cast<int64>(Width) * Height * FloatChannels * static_cast<int64>(sizeof(float)))
             {
                 return;
             }
 
-            const float* Src = reinterpret_cast<const float*>(Source.Pixels.data());
-            Converted.resize((size_t)Width * Height * 4);
+            const float* Src = reinterpret_cast<const float*>(Source.Pixels.GetData());
+            Converted.SetNum(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 4));
             for (size_t i = 0; i < (size_t)Width * Height; ++i)
             {
                 const float* P = Src + i * FloatChannels;
@@ -1682,22 +1702,22 @@ namespace Lumina
                 const float G = (FloatChannels >= 2) ? P[1] : P[0];
                 const float B = (FloatChannels >= 3) ? P[2] : P[0];
 
-                uint8* Dst = Converted.data() + i * 4;
+                uint8* Dst = Converted.GetData() + i * 4;
                 Dst[0] = HdrChannelToSRGB8(R);
                 Dst[1] = HdrChannelToSRGB8(G);
                 Dst[2] = HdrChannelToSRGB8(B);
                 Dst[3] = 255;
             }
-            RGBA8Source = Converted.data();
+            RGBA8Source = Converted.GetData();
         }
         else
         {
             // LDR import path already produced RGBA8.
-            if (Source.Pixels.size() < (size_t)Width * Height * 4)
+            if (Source.Pixels.Num() < static_cast<int64>(Width) * Height * 4)
             {
                 return;
             }
-            RGBA8Source = Source.Pixels.data();
+            RGBA8Source = Source.Pixels.GetData();
         }
 
         ThumbnailUtils::StoreDownsampledRGBA(*Texture->GetPackage()->GetPackageThumbnail(),
@@ -1707,7 +1727,7 @@ namespace Lumina
 
     bool CTextureFactory::RecoverSourceImage(CTexture* Texture, Import::Textures::FTextureImportResult& OutResult)
     {
-        if (Texture->TextureResource == nullptr || Texture->TextureResource->Mips.empty())
+        if (Texture->TextureResource == nullptr || Texture->TextureResource->Mips.IsEmpty())
         {
             return false;
         }
@@ -1720,7 +1740,7 @@ namespace Lumina
 
         const uint32 Width  = Mip.Width;
         const uint32 Height = Mip.Height;
-        if (Width == 0 || Height == 0 || Mip.Pixels.empty())
+        if (Width == 0 || Height == 0 || Mip.Pixels.IsEmpty())
         {
             return false;
         }
@@ -1729,18 +1749,18 @@ namespace Lumina
 
         if (Format == EFormat::RGBA16_FLOAT)
         {
-            const uint64 Texels = (uint64)Width * Height;
-            if (Mip.Pixels.size() < Texels * 8)
+            const int64 Texels = static_cast<int64>(Width) * Height;
+            if (Mip.Pixels.Num() < Texels * 8)
             {
                 return false;
             }
 
             OutResult.Format = EFormat::RGBA32_FLOAT;
-            OutResult.Pixels.resize(Texels * 4 * sizeof(float));
+            OutResult.Pixels.SetNum(Texels * 4 * static_cast<int64>(sizeof(float)));
 
-            const uint32* Halves = reinterpret_cast<const uint32*>(Mip.Pixels.data());
-            float* Floats = reinterpret_cast<float*>(OutResult.Pixels.data());
-            for (uint64 i = 0; i < Texels; ++i)
+            const uint32* Halves = reinterpret_cast<const uint32*>(Mip.Pixels.GetData());
+            float* Floats = reinterpret_cast<float*>(OutResult.Pixels.GetData());
+            for (int64 i = 0; i < Texels; ++i)
             {
                 const FVector2 RG = Math::UnpackHalf2x16(Halves[i * 2 + 0]);
                 const FVector2 BA = Math::UnpackHalf2x16(Halves[i * 2 + 1]);
@@ -1754,19 +1774,20 @@ namespace Lumina
 
         if (Format == EFormat::RGBA8_UNORM || Format == EFormat::SRGBA8_UNORM)
         {
-            const uint64 Required = (uint64)Width * Height * 4;
-            if (Mip.Pixels.size() < Required)
+            const int64 Required = static_cast<int64>(Width) * Height * 4;
+            if (Mip.Pixels.Num() < Required)
             {
                 return false;
             }
 
             OutResult.Format = EFormat::RGBA8_UNORM;
-            OutResult.Pixels.assign(Mip.Pixels.begin(), Mip.Pixels.begin() + (size_t)Required);
+            OutResult.Pixels.Reset();
+            OutResult.Pixels.Append(Mip.Pixels.begin(), Mip.Pixels.begin() + Required);
             return true;
         }
 
         const ETextureSwizzle Swizzle = Texture->TextureResource->ImageDescription.Swizzle;
-        const uint64 Texels = (uint64)Width * Height;
+        const int64 Texels = static_cast<int64>(Width) * Height;
 
         // The cook linearized color for formats with no sRGB variant, so an sRGB texture gets its gamma back here.
         static const TArray<uint8, 256> GLinearToSRGB8 = []
@@ -1781,7 +1802,7 @@ namespace Lumina
         const bool bRestoreGamma = Texture->IsSRGB() && Swizzle != ETextureSwizzle::Alpha;
         auto Color = [&](uint8 Value) { return bRestoreGamma ? GLinearToSRGB8[Value] : Value; };
 
-        auto WriteTexel = [&](uint64 Index, uint8 R, uint8 G, uint8 B, uint8 A)
+        auto WriteTexel = [&](int64 Index, uint8 R, uint8 G, uint8 B, uint8 A)
         {
             uint8* Out = &OutResult.Pixels[Index * 4];
             switch (Swizzle)
@@ -1793,31 +1814,31 @@ namespace Lumina
         };
 
         OutResult.Format = EFormat::RGBA8_UNORM;
-        OutResult.Pixels.resize((size_t)Texels * 4);
+        OutResult.Pixels.SetNum(Texels * 4);
 
         if (Format == EFormat::R8_UNORM)
         {
-            if (Mip.Pixels.size() < Texels)
+            if (Mip.Pixels.Num() < Texels)
             {
                 return false;
             }
-            for (uint64 i = 0; i < Texels; ++i)
+            for (int64 i = 0; i < Texels; ++i)
             {
-                WriteTexel(i, Mip.Pixels[i], 0, 0, 0xFF);
+                WriteTexel(i, Mip.Pixels[static_cast<int32>(i)], 0, 0, 0xFF);
             }
             return true;
         }
 
         if (Format == EFormat::R16_FLOAT)
         {
-            if (Mip.Pixels.size() < Texels * 2)
+            if (Mip.Pixels.Num() < Texels * 2)
             {
                 return false;
             }
-            for (uint64 i = 0; i < Texels; ++i)
+            for (int64 i = 0; i < Texels; ++i)
             {
                 uint16 Half;
-                Memory::Memcpy(&Half, &Mip.Pixels[i * 2], sizeof(Half));
+                Memory::Memcpy(&Half, &Mip.Pixels[static_cast<int32>(i * 2)], sizeof(Half));
                 const float Value = Math::UnpackHalf2x16((uint32)Half).x;
                 WriteTexel(i, (uint8)std::lround(Math::Clamp(Value, 0.0f, 1.0f) * 255.0f), 0, 0, 0xFF);
             }
@@ -1842,7 +1863,7 @@ namespace Lumina
         const uint32 BlocksY = (Height + 3u) / 4u;
         const uint32 BytesPerBlock = RHI::Format::BytesPerBlock(Format);
 
-        if (Mip.Pixels.size() < (uint64)BlocksX * BlocksY * BytesPerBlock)
+        if (Mip.Pixels.Num() < static_cast<int64>(BlocksX) * BlocksY * BytesPerBlock)
         {
             return false;
         }
@@ -1857,7 +1878,7 @@ namespace Lumina
                     Texel.set(0, 0, 0, 255);
                 }
 
-                const uint8* Source = Mip.Pixels.data() + ((uint64)By * BlocksX + Bx) * BytesPerBlock;
+                const uint8* Source = Mip.Pixels.GetData() + ((uint64)By * BlocksX + Bx) * BytesPerBlock;
                 if (!basisu::unpack_block(BlockFormat, Source, Block, false))
                 {
                     return false;
@@ -1880,7 +1901,7 @@ namespace Lumina
                         }
 
                         const basisu::color_rgba& Texel = Block[Ty * 4 + Tx];
-                        const uint64 Index = (uint64)Y * Width + X;
+                        const int64 Index = static_cast<int64>(Y) * Width + X;
                         if (bLinearColor)
                         {
                             WriteTexel(Index, Color(Texel.r), Color(Texel.g), 0, 0xFF);
@@ -1910,16 +1931,16 @@ namespace Lumina
         }
 
         // Embedded bytes have no file, so SourcePath is only a color-space name hint and is not persisted.
-        const bool bEmbedded = !Request.EmbeddedBytes.empty();
+        const bool bEmbedded = !Request.EmbeddedBytes.IsEmpty();
         const FFixedString& SourcePath = Request.SourcePath;
 
         // DDS holds pre-compressed blocks stb_image cannot read, so pass them straight through to the GPU.
         {
             auto HasDDSExtension = [](const FFixedString& P) -> bool
             {
-                const size_t N = P.size();
+                const int32 N = P.Len();
                 if (N < 4) { return false; }
-                const char* S = P.c_str();
+                const char* S = *P;
                 return S[N - 4] == '.'
                     && (S[N - 3] == 'd' || S[N - 3] == 'D')
                     && (S[N - 2] == 'd' || S[N - 2] == 'D')
@@ -1932,34 +1953,34 @@ namespace Lumina
             {
                 DDSBytes = Request.EmbeddedBytes;
             }
-            else if (HasDDSExtension(SourcePath) && FileHelper::LoadFileToArray(DDSStorage, SourcePath.c_str()))
+            else if (HasDDSExtension(SourcePath) && FileHelper::LoadFileToArray(DDSStorage, *SourcePath))
             {
-                DDSBytes = TSpan<const uint8>(DDSStorage.data(), DDSStorage.size());
+                DDSBytes = TSpan<const uint8>(DDSStorage.GetData(), DDSStorage.Num());
             }
 
             if (LooksLikeDDS(DDSBytes))
             {
                 const ETextureColorSpace Role = (Request.ColorSpace != ETextureColorSpace::Auto)
                     ? Request.ColorSpace
-                    : ClassifyColorSpaceByFilename(SourcePath.c_str());
+                    : ClassifyColorSpaceByFilename(*SourcePath);
                 Texture->ColorSpace = Role;
 
                 // Editing finished BCn blocks means a decode/re-encode, so the edits are declined out loud.
                 if (HasSourceAdjustments(Texture) || Texture->GetResolvedPolicy().MaxDimension > 0)
                 {
                     LOG_WARN("TextureFactory: '{0}' is a DDS passthrough; its source adjustments and size cap "
-                             "are ignored because the file is already block-compressed.", SourcePath.c_str());
+                             "are ignored because the file is already block-compressed.", *SourcePath);
                 }
 
                 if (!CookDDS(Texture, DDSBytes, Role, Request.bCreateGPUResource))
                 {
-                    LOG_WARN("TextureFactory: unsupported DDS format for '{}'.", SourcePath.c_str());
+                    LOG_WARN("TextureFactory: unsupported DDS format for '{}'.", *SourcePath);
                     return false;
                 }
 
                 if (!bEmbedded)
                 {
-                    Texture->SourcePath = FString(SourcePath.c_str());
+                    Texture->SourcePath = FString(*SourcePath);
                 }
                 return true;
             }
@@ -1969,18 +1990,19 @@ namespace Lumina
         TVector<uint8> SourceBytes;
         if (bEmbedded)
         {
-            SourceBytes.assign(Request.EmbeddedBytes.begin(), Request.EmbeddedBytes.end());
+            SourceBytes.Reset();
+            SourceBytes.Append(Request.EmbeddedBytes.begin(), Request.EmbeddedBytes.end());
         }
-        else if (!FileHelper::LoadFileToArray(SourceBytes, SourcePath.c_str()))
+        else if (!FileHelper::LoadFileToArray(SourceBytes, *SourcePath))
         {
-            LOG_ERROR("TextureFactory: could not read '{0}'.", SourcePath.c_str());
+            LOG_ERROR("TextureFactory: could not read '{0}'.", *SourcePath);
             return false;
         }
 
         TOptional<Import::Textures::FTextureImportResult> MaybeResult =
-            Import::Textures::ImportTexture(TSpan<const uint8>(SourceBytes.data(), SourceBytes.size()), false);
+            Import::Textures::ImportTexture(TSpan<const uint8>(SourceBytes.GetData(), SourceBytes.Num()), false);
 
-        if (!MaybeResult.has_value())
+        if (!MaybeResult.IsSet())
         {
             return false;
         }
@@ -1994,14 +2016,14 @@ namespace Lumina
             Texture->AlphaCoverageCutoff    = Request.AlphaCoverageCutoff;
         }
 
-        PrepareSource(Texture, MaybeResult.value());
+        PrepareSource(Texture, MaybeResult.GetValue());
 
-        const Import::Textures::FTextureImportResult& Result = MaybeResult.value();
+        const Import::Textures::FTextureImportResult& Result = MaybeResult.GetValue();
 
         // A new texture starts as SRGB rather than Auto, so an Auto request classifies by filename unconditionally.
         Texture->ColorSpace = Request.ColorSpace != ETextureColorSpace::Auto
             ? Request.ColorSpace
-            : ClassifyColorSpaceByFilename(SourcePath.c_str());
+            : ClassifyColorSpaceByFilename(*SourcePath);
 
         // Float-source data must take the Environment path; Basis would silently corrupt it.
         if (IsFloatSourceFormat(Result.Format) && Texture->CompressionSettings != ETextureCompressionSettings::HalfFloat)
@@ -2022,10 +2044,10 @@ namespace Lumina
 
         if (!bEmbedded)
         {
-            Texture->SourcePath = FString(SourcePath.c_str());
+            Texture->SourcePath = FString(*SourcePath);
         }
 
-        return CookImportedSource(Texture, MaybeResult.value(), Request.EncodeThreadBudget, Request.bCreateGPUResource);
+        return CookImportedSource(Texture, MaybeResult.GetValue(), Request.EncodeThreadBudget, Request.bCreateGPUResource);
     }
 
     bool CTextureFactory::CookLayerFromFile(CTexture* Scratch, FStringView SourcePath, ETextureColorSpace ColorSpace,
@@ -2036,15 +2058,15 @@ namespace Lumina
             return false;
         }
         
-        const FFixedString Path(SourcePath.data(), SourcePath.size());
+        const FFixedString Path(SourcePath.GetData(), SourcePath.Len());
         TOptional<Import::Textures::FTextureImportResult> MaybeResult = Import::Textures::ImportTexture(Path, false, TargetSize);
-        if (!MaybeResult.has_value())
+        if (!MaybeResult.IsSet())
         {
-            LOG_ERROR("TextureFactory: could not load '{0}' as an array layer.", Path.c_str());
+            LOG_ERROR("TextureFactory: could not load '{0}' as an array layer.", *Path);
             return false;
         }
 
-        Import::Textures::FTextureImportResult& Result = MaybeResult.value();
+        Import::Textures::FTextureImportResult& Result = MaybeResult.GetValue();
 
         PrepareSource(Scratch, Result);
 
@@ -2055,19 +2077,24 @@ namespace Lumina
             Result.Format == EFormat::RGBA32_FLOAT;
         if (bIsFloatSource)
         {
-            LOG_ERROR("TextureFactory: '{0}' is a float/HDR source; array layers must be LDR.", Path.c_str());
+            LOG_ERROR("TextureFactory: '{0}' is a float/HDR source; array layers must be LDR.", *Path);
             return false;
         }
 
         if (!NormalizeToRGBA8(Result))
         {
             LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
-                      Path.c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+                      *Path, (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+            return false;
+        }
+
+        if (!FitsWorkingBuffers(Scratch, Result.Dimensions, 4))
+        {
             return false;
         }
 
         // The caller cooks layers in a loop, so a full basisu pool per layer would oversubscribe.
-        TVector<uint8> Pixels = Move(Result.Pixels);
+        TVector<uint8> Pixels(Move(Result.Pixels));
         return CookTexturePixels(Scratch, Pixels, Result.Dimensions, ColorSpace, 1u, /*bCreateGPUResource*/ false);
     }
 
@@ -2117,20 +2144,20 @@ namespace Lumina
         TOptional<Import::Textures::FTextureImportResult> MaybeResult;
 
         // The file on disk wins when present, since the user may have edited it since the import.
-        if (!Texture->SourcePath.empty())
+        if (!Texture->SourcePath.IsEmpty())
         {
             MaybeResult = Import::Textures::ImportTexture(Texture->SourcePath, false);
         }
 
         // Then the copy the import kept. Same pristine bytes, so settings stay absolute with the file gone.
-        if (!MaybeResult.has_value() && Texture->LoadSourceFileBytes())
+        if (!MaybeResult.IsSet() && Texture->LoadSourceFileBytes())
         {
             MaybeResult = Import::Textures::ImportTexture(
-                TSpan<const uint8>(Texture->SourceFile.Bytes.data(), Texture->SourceFile.Bytes.size()), false);
+                TSpan<const uint8>(Texture->SourceFile.Bytes.GetData(), Texture->SourceFile.Bytes.Num()), false);
         }
 
         // Last resort, for an asset imported before the source was kept. What it costs is logged below.
-        if (!MaybeResult.has_value())
+        if (!MaybeResult.IsSet())
         {
             Import::Textures::FTextureImportResult Recovered;
             if (!RecoverSourceImage(Texture, Recovered))
@@ -2139,7 +2166,7 @@ namespace Lumina
                     ? (uint32)Texture->TextureResource->ImageDescription.Format : 0u;
                 LOG_ERROR("TextureFactory::Recook: '{0}' has no readable source and its cooked format ({1}) "
                           "cannot be decoded back to an image; nothing to re-cook from.",
-                          Texture->GetName().c_str(), CookedFormat);
+                          *Texture->GetName(), CookedFormat);
                 return false;
             }
 
@@ -2148,7 +2175,7 @@ namespace Lumina
             {
                 LOG_WARN("TextureFactory::Recook: '{0}' is re-cooking from its own compressed blocks; this is a second "
                          "compression generation. Reimport it to give the asset a stored source.",
-                         Texture->GetName().c_str());
+                         *Texture->GetName());
             }
 
             // The recovered pixels already carry the last cook's adjustments, so a new pass compounds.
@@ -2156,13 +2183,13 @@ namespace Lumina
             {
                 LOG_WARN("TextureFactory::Recook: '{0}' has source adjustments and no stored source; they apply on "
                          "top of the already-cooked pixels rather than replacing the previous pass. Reimport it "
-                         "to make them absolute.", Texture->GetName().c_str());
+                         "to make them absolute.", *Texture->GetName());
             }
 
             MaybeResult = Move(Recovered);
         }
 
-        return CookFromSource(Texture, MaybeResult.value());
+        return CookFromSource(Texture, MaybeResult.GetValue());
     }
 
     bool CTextureFactory::CookFromSource(CTexture* Texture, Import::Textures::FTextureImportResult& Source)

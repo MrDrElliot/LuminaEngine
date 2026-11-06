@@ -8,12 +8,12 @@ namespace Lumina::MCP
     // An empty needle matches everything, since a filter nobody set should not exclude anything.
     NODISCARD inline bool ContainsText(FStringView Haystack, const FString& Needle)
     {
-        return Needle.empty() || Haystack.find(FStringView(Needle)) != FStringView::npos;
+        return Needle.IsEmpty() || Haystack.Find(FStringView(Needle)) != Constants::kIndexNone;
     }
 
     NODISCARD inline bool EqualsTextFold(FStringView A, FStringView B)
     {
-        if (A.size() != B.size())
+        if (A.Len() != B.Len())
         {
             return false;
         }
@@ -23,7 +23,7 @@ namespace Lumina::MCP
             return (Character >= 'A' && Character <= 'Z') ? static_cast<char>(Character - 'A' + 'a') : Character;
         };
 
-        for (size_t Index = 0; Index < A.size(); ++Index)
+        for (int32 Index = 0; Index < A.Len(); ++Index)
         {
             if (Lower(A[Index]) != Lower(B[Index]))
             {
@@ -36,12 +36,12 @@ namespace Lumina::MCP
 
     NODISCARD inline bool ContainsTextFold(FStringView Haystack, const FString& Needle)
     {
-        if (Needle.empty())
+        if (Needle.IsEmpty())
         {
             return true;
         }
 
-        if (Needle.size() > Haystack.size())
+        if (Needle.Len() > Haystack.Len())
         {
             return false;
         }
@@ -51,10 +51,10 @@ namespace Lumina::MCP
             return (Character >= 'A' && Character <= 'Z') ? static_cast<char>(Character - 'A' + 'a') : Character;
         };
 
-        for (size_t Start = 0; Start + Needle.size() <= Haystack.size(); ++Start)
+        for (int32 Start = 0; Start + Needle.Len() <= Haystack.Len(); ++Start)
         {
             bool bMatches = true;
-            for (size_t Index = 0; Index < Needle.size() && bMatches; ++Index)
+            for (int32 Index = 0; Index < Needle.Len() && bMatches; ++Index)
             {
                 bMatches = Lower(Haystack[Start + Index]) == Lower(Needle[Index]);
             }

@@ -122,7 +122,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("Grain Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
@@ -143,7 +143,7 @@ int main(int ArgC, char** ArgV)
     RHI::FSwapchainTarget Target;
     Target.Initialize(RHI::CreateSurface(Window.GetWindow()), Window.GetExtent());
 
-    const uint32 Seed = uint32(ParsedCommandLine.GetInt("seed").value_or(1337));
+    const uint32 Seed = uint32(ParsedCommandLine.GetInt("seed").Get(1337));
 
     FVoxelWorld World;
     World.Generate(Seed);
@@ -197,9 +197,9 @@ int main(int ArgC, char** ArgV)
     {
         const FModelLibrary& Models = Game.GetModels();
         bReady = Renderer.UploadModels(
-            TSpan<const uint32>(reinterpret_cast<const uint32*>(Models.Descs().data()),
-                                Models.Descs().size() * 4),
-            TSpan<const uint32>(Models.PackedCells().data(), Models.PackedCells().size()));
+            TSpan<const uint32>(reinterpret_cast<const uint32*>(Models.Descs().GetData()),
+                                Models.Descs().Num() * 4),
+            TSpan<const uint32>(Models.PackedCells().GetData(), Models.PackedCells().Num()));
     }
 
     FHud Hud;
@@ -219,12 +219,12 @@ int main(int ArgC, char** ArgV)
     double Previous = PlatformTime::Seconds();
     const double Started = Previous;
     uint32 Frames = 0;
-    const uint32 CaptureFrame = uint32(ParsedCommandLine.GetInt("frames").value_or(48));
+    const uint32 CaptureFrame = uint32(ParsedCommandLine.GetInt("frames").Get(48));
     uint32 Timed = 0;
     float Rendered = 0.0f;
 
     TVector<FEntityGpu> Visible;
-    Visible.reserve(kMaxRenderEntities);
+    Visible.Reserve(kMaxRenderEntities);
 
     for (uint32 FrameSlot = 0; bReady && !Window.ShouldClose() && !Input.bQuit;
          FrameSlot = (FrameSlot + 1) % RHI::kFramesInFlight)
@@ -339,14 +339,14 @@ int main(int ArgC, char** ArgV)
 
         //~ Everything the game owns that the ray marcher has to see.
 
-        Visible.clear();
+        Visible.Reset();
         {
             const FVector3 Eye = Camera.GetPosition();
 
             const auto Push = [&Visible, &Game](const FVector3& Position, float Yaw, float Scale,
                                                 EModel Model, const FVector3& Tint, float Emissive)
             {
-                if (Visible.size() >= kMaxRenderEntities)
+                if (Visible.Num() >= kMaxRenderEntities)
                 {
                     return;
                 }
@@ -361,7 +361,7 @@ int main(int ArgC, char** ArgV)
                 Record.Model = uint32(Model);
                 Record.Tint = Tint;
                 Record.Emissive = Emissive;
-                Visible.push_back(Record);
+                Visible.Add(Record);
             };
 
             const FPlayerState& Player = Game.GetPlayer();
@@ -401,7 +401,7 @@ int main(int ArgC, char** ArgV)
             }
         }
 
-        Renderer.SetEntities(TSpan<const FEntityGpu>(Visible.data(), Visible.size()));
+        Renderer.SetEntities(TSpan<const FEntityGpu>(Visible.GetData(), Visible.Num()));
         Renderer.SetSky(Game.GetSky());
 
         {
@@ -479,7 +479,7 @@ int main(int ArgC, char** ArgV)
     GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     return bReady ? 0 : 1;

@@ -9,7 +9,7 @@
 
 namespace Lumina::Agent
 {
-    namespace
+    namespace AgentPropertyPathInternal
     {
         struct FSegment
         {
@@ -21,7 +21,7 @@ namespace Lumina::Agent
 
         bool ParseIndex(FStringView Text, int32& OutIndex)
         {
-            if (Text.empty() || Text.size() > 9)
+            if (Text.IsEmpty() || Text.Len() > 9)
             {
                 return false;
             }
@@ -44,30 +44,30 @@ namespace Lumina::Agent
         // Splits "Materials[2].Slot" into Materials, [2], Slot so each step is one lookup.
         bool ParsePath(FStringView Path, TVector<FSegment>& Out, FString& OutError)
         {
-            size_t Cursor = 0;
+            int32 Cursor = 0;
 
-            while (Cursor < Path.size())
+            while (Cursor < Path.Len())
             {
                 if (Path[Cursor] == '[')
                 {
-                    const size_t Close = Path.find(']', Cursor);
-                    if (Close == FStringView::npos)
+                    const int32 Close = Path.Find(']', Cursor);
+                    if (Close == Constants::kIndexNone)
                     {
                         OutError = "The path has an unclosed bracket.";
                         return false;
                     }
 
                     FSegment Segment;
-                    if (!ParseIndex(Path.substr(Cursor + 1, Close - Cursor - 1), Segment.Index))
+                    if (!ParseIndex(Path.Mid(Cursor + 1, Close - Cursor - 1), Segment.Index))
                     {
                         OutError = "An index in the path is not a number.";
                         return false;
                     }
 
-                    Out.push_back(Move(Segment));
+                    Out.Add(Move(Segment));
                     Cursor = Close + 1;
 
-                    if (Cursor < Path.size() && Path[Cursor] == '.')
+                    if (Cursor < Path.Len() && Path[Cursor] == '.')
                     {
                         ++Cursor;
                     }
@@ -75,8 +75,8 @@ namespace Lumina::Agent
                     continue;
                 }
 
-                size_t End = Cursor;
-                while (End < Path.size() && Path[End] != '.' && Path[End] != '[')
+                int32 End = Cursor;
+                while (End < Path.Len() && Path[End] != '.' && Path[End] != '[')
                 {
                     ++End;
                 }
@@ -88,17 +88,17 @@ namespace Lumina::Agent
                 }
 
                 FSegment Segment;
-                Segment.Name = FString(Path.data() + Cursor, End - Cursor);
-                Out.push_back(Move(Segment));
+                Segment.Name = FString(Path.GetData() + Cursor, End - Cursor);
+                Out.Add(Move(Segment));
 
                 Cursor = End;
-                if (Cursor < Path.size() && Path[Cursor] == '.')
+                if (Cursor < Path.Len() && Path[Cursor] == '.')
                 {
                     ++Cursor;
                 }
             }
 
-            if (Out.empty())
+            if (Out.IsEmpty())
             {
                 OutError = "The path is empty.";
                 return false;
@@ -111,7 +111,7 @@ namespace Lumina::Agent
         {
             for (CStruct* Current : Detail::CollectStructChain(Struct))
             {
-                if (FProperty* Found = Current->GetProperty(FName(Name.c_str())))
+                if (FProperty* Found = Current->GetProperty(FName(*Name)))
                 {
                     return Found;
                 }
@@ -120,6 +120,8 @@ namespace Lumina::Agent
             return nullptr;
         }
     }
+
+    using namespace AgentPropertyPathInternal;
 
     bool ResolvePropertyPath(CStruct* Root, void* RootData, FStringView Path, FResolvedProperty& Out, FString& OutError)
     {
@@ -143,7 +145,7 @@ namespace Lumina::Agent
         FProperty* Property = nullptr;
         void* ValuePtr = nullptr;
 
-        for (size_t Step = 0; Step < Segments.size(); ++Step)
+        for (int32 Step = 0; Step < Segments.Num(); ++Step)
         {
             const FSegment& Segment = Segments[Step];
 
@@ -174,15 +176,15 @@ namespace Lumina::Agent
 
                 FArrayProperty* Array = static_cast<FArrayProperty*>(Property);
 
-                const size_t Count = Array->GetNum(ValuePtr);
-                if (static_cast<size_t>(Segment.Index) >= Count)
+                const int32 Count = Array->Num(ValuePtr);
+                if (static_cast<uint32>(Segment.Index) >= static_cast<uint32>(Count))
                 {
                     OutError = Lumina::Format("Index {} is past the end of an array holding {}.",
                         Segment.Index, Count);
                     return false;
                 }
 
-                ValuePtr = Array->GetAt(ValuePtr, static_cast<size_t>(Segment.Index));
+                ValuePtr = Array->GetAt(ValuePtr, Segment.Index);
                 Property = Array->GetInternalProperty();
 
                 if (Property == nullptr)
@@ -193,7 +195,7 @@ namespace Lumina::Agent
             }
 
             // Only a struct can be stepped into, so anything else has to be the end of the path.
-            const bool bMore = Step + 1 < Segments.size();
+            const bool bMore = Step + 1 < Segments.Num();
             if (!bMore)
             {
                 break;

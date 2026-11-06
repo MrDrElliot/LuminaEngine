@@ -34,7 +34,6 @@
 #include "Renderer/RendererUtils.h"
 #include "Renderer/SkeletonResource.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
-#include "TaskSystem/Future.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Assets/AssetEvents.h"
@@ -55,60 +54,57 @@ namespace Lumina
         // Directory and extension are stripped, leaving the prefix and a clean stem.
         FFixedString TextureAssetName(FStringView Raw)
         {
-            const size_t Slash = Raw.find_last_of("/\\");
-            FStringView Stem = (Slash == FStringView::npos) ? Raw : Raw.substr(Slash + 1);
-            const size_t Dot = Stem.find_last_of('.');
-            if (Dot != FStringView::npos && Dot > 0)
+            const int32 Slash = Raw.FindLastOf("/\\");
+            FStringView Stem = (Slash == Constants::kIndexNone) ? Raw : Raw.Mid(Slash + 1);
+            const int32 Dot = Stem.FindLastOf('.');
+            if (Dot != Constants::kIndexNone && Dot > 0)
             {
-                Stem = Stem.substr(0, Dot);
+                Stem = Stem.Mid(0, Dot);
             }
-            return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
+            return FFixedString(*Import::MakeAssetName("T_", Stem));
         }
 
         // Blender custom properties arrive as node extras naming collision, render, nav, tag, or a component.
         void ApplyNodeExtras(ECS::FRegistry& Registry, ECS::FEntity Entity, const FSourceSceneNode& Node,
                              CStaticMesh* Mesh, ESceneCollision DefaultCollision)
         {
-            nlohmann::json Extras = nlohmann::json::object();
-            if (!Node.Extras.empty())
+            FJsonValue Extras = FJsonValue::MakeObject();
+            if (!Node.Extras.IsEmpty())
             {
-                Extras = nlohmann::json::parse(Node.Extras.c_str(), nullptr, false);
-                if (Extras.is_discarded() || !Extras.is_object())
+                if (!FJsonValue::Parse(Node.Extras.View(), Extras) || !Extras.IsObject())
                 {
                     LOG_WARN("[Import] node '{}' has extras that are not a JSON object", Node.Name);
-                    Extras = nlohmann::json::object();
+                    Extras = FJsonValue::MakeObject();
                 }
             }
 
-            const FStringView Name(Node.Name.c_str());
+            const FStringView Name(*Node.Name);
             ESceneCollision Collision = Mesh != nullptr ? DefaultCollision : ESceneCollision::None;
             bool bRender = true;
             bool bTrigger = false;
             bool bNav = true;
             bool bBodyFromExtras = false;
-            if (Name.starts_with("UCX_"))
+            if (Name.StartsWith("UCX_"))
             {
                 Collision = ESceneCollision::ConvexHull;
                 bRender = false;
             }
-            else if (Name.starts_with("COL_"))
+            else if (Name.StartsWith("COL_"))
             {
                 Collision = ESceneCollision::TriangleMesh;
                 bRender = false;
             }
 
-            auto IsTrue = [](const nlohmann::json& Value)
+            auto IsTrue = [](const FJsonValue& Value)
             {
-                return Value.is_boolean() ? Value.get<bool>() : Value.is_number() && Value.get<double>() != 0.0;
+                return Value.IsBool() ? Value.AsBool() : Value.IsNumber() && Value.AsDouble() != 0.0;
             };
 
-            for (auto It = Extras.begin(); It != Extras.end(); ++It)
+            for (const auto& [Key, Value] : Extras.Members())
             {
-                const std::string& Key = It.key();
-                const nlohmann::json& Value = It.value();
-                if (Key == "collision" && Value.is_string())
+                if (Key == "collision" && Value.IsString())
                 {
-                    const std::string Kind = Value.get<std::string>();
+                    const FStringView Kind = Value.AsString();
                     bTrigger = Kind == "trigger";
                     Collision = Kind == "mesh" ? ESceneCollision::TriangleMesh
                               : (Kind == "convex" || bTrigger) ? ESceneCollision::ConvexHull
@@ -122,17 +118,21 @@ namespace Lumina
                 {
                     bNav = IsTrue(Value);
                 }
-                else if (Key == "tag" && Value.is_string())
+                else if (Key == "tag" && Value.IsString())
                 {
-                    ECS::Utils::SetEntityTag(Registry, Entity, FName(Value.get<std::string>().c_str()));
+                    ECS::Utils::SetEntityTag(Registry, Entity, FName(Value.AsCString()));
                 }
-                else if (CStruct* Component = FindComponentStruct(FStringView(Key.c_str(), Key.size())))
+                else if (CStruct* Component = FindComponentStruct(Key.View()))
                 {
                     // A Blender custom property holds a nested object only when typed in Python, so a JSON string works too.
-                    nlohmann::json Fields = Value.is_string() ? nlohmann::json::parse(Value.get<std::string>(), nullptr, false) : Value;
-                    if (Fields.is_discarded() || !Fields.is_object())
+                    FJsonValue Fields = Value;
+                    if (Value.IsString() && !FJsonValue::Parse(Value.AsString(), Fields))
                     {
-                        LOG_WARN("[Import] node '{}' extra '{}' is not a JSON object", Node.Name, Key.c_str());
+                        Fields.Reset();
+                    }
+                    if (!Fields.IsObject())
+                    {
+                        LOG_WARN("[Import] node '{}' extra '{}' is not a JSON object", Node.Name, Key.View());
                         continue;
                     }
                     if (void* Data = Component->GetComponentOps()->Emplace(Registry, Entity))
@@ -143,7 +143,7 @@ namespace Lumina
                 }
                 else
                 {
-                    LOG_WARN("[Import] node '{}' extra '{}' names no component or import key", Node.Name, Key.c_str());
+                    LOG_WARN("[Import] node '{}' extra '{}' names no component or import key", Node.Name, Key.View());
                 }
             }
 
@@ -202,7 +202,7 @@ namespace Lumina
                 NewClip->NotifyStates  = OldClip->NotifyStates;
                 NewClip->NotifyTracks  = OldClip->NotifyTracks;
                 NewClip->SyncTrackName = OldClip->SyncTrackName;
-                if (NewClip->Curves.empty())
+                if (NewClip->Curves.IsEmpty())
                 {
                     NewClip->Curves = OldClip->Curves;
                 }
@@ -239,7 +239,7 @@ namespace Lumina
 
             // The import already reserved its destination, so that one name is this run's to use.
             explicit FUniquePathAllocator(FStringView OwnedDestination)
-                : Owned(OwnedDestination.data(), OwnedDestination.size())
+                : Owned(OwnedDestination.GetData(), OwnedDestination.Len())
             {
             }
 
@@ -247,17 +247,17 @@ namespace Lumina
             {
                 if (IsFree(Desired))
                 {
-                    Claimed.insert(Desired);
+                    Claimed.Add(Desired);
                     return Desired;
                 }
 
                 for (uint32 N = 1; N < 10000; ++N)
                 {
                     FFixedString Candidate = Desired;
-                    Candidate.append("_").append(Format("{}", N));
+                    Candidate.Append("_").Append(Format("{}", N));
                     if (IsFree(Candidate))
                     {
-                        Claimed.insert(Candidate);
+                        Claimed.Add(Candidate);
                         return Candidate;
                     }
                 }
@@ -269,7 +269,7 @@ namespace Lumina
             // A file nothing has loaded and another import's reservation hold a name too, or this run would write over them.
             bool IsFree(const FFixedString& Path) const
             {
-                if (Claimed.find(Path) != Claimed.end())
+                if (Claimed.Contains(Path))
                 {
                     return false;
                 }
@@ -282,7 +282,7 @@ namespace Lumina
 
         void AppendCreateFailure(FImportResult& OutResult, FStringView Path)
         {
-            OutResult.Error += (OutResult.Error.empty() ? "Could not create " : ", ") + FString(Path.data(), Path.size());
+            OutResult.Error += (OutResult.Error.IsEmpty() ? "Could not create " : ", ") + FString(Path.GetData(), Path.Len());
         }
 
         size_t CountMaterialSlots(const FMeshResource& Resource)
@@ -297,7 +297,7 @@ namespace Lumina
                     SlotCount = Math::Max(SlotCount, (size_t)Surface.MaterialIndex + 1);
                 }
             }
-            return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
+            return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.Num();
         }
 
         // A parser indexes by position in the WHOLE file, which leaves dangling slots behind.
@@ -314,26 +314,26 @@ namespace Lumina
                 }
 
                 const int16 Source = Surface.MaterialIndex;
-                const auto It = SourceToSlot.find(Source);
-                if (It != SourceToSlot.end())
+                const auto It = SourceToSlot.Find(Source);
+                if (It != nullptr)
                 {
-                    Surface.MaterialIndex = It->second;
+                    Surface.MaterialIndex = (*It);
                     continue;
                 }
 
-                const int16 NewSlot = (int16)SlotToSource.size();
-                SourceToSlot.emplace(Source, NewSlot);
-                SlotToSource.push_back(Source);
+                const int16 NewSlot = (int16)SlotToSource.Num();
+                SourceToSlot.TryAdd(Source, NewSlot);
+                SlotToSource.Add(Source);
                 Surface.MaterialIndex = NewSlot;
             }
 
             // A source with no materials still gets one slot per surface, pointed at, so assigning a material later takes effect.
-            if (SlotToSource.empty())
+            if (SlotToSource.IsEmpty())
             {
                 for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
                 {
-                    Surface.MaterialIndex = (int16)SlotToSource.size();
-                    SlotToSource.push_back(-1);
+                    Surface.MaterialIndex = (int16)SlotToSource.Num();
+                    SlotToSource.Add(-1);
                 }
             }
 
@@ -355,15 +355,15 @@ namespace Lumina
         {
             FBoneRemapResult Result;
 
-            if (Data.Skeletons.empty() || !Data.Skeletons[0] || Data.Skeletons[0]->Bones.empty())
+            if (Data.Skeletons.IsEmpty() || !Data.Skeletons[0] || Data.Skeletons[0]->Bones.IsEmpty())
             {
                 return Result;
             }
 
             const FSkeletonResource& Source = *Data.Skeletons[0];
 
-            TVector<int32> SourceToTarget(Source.Bones.size(), Constants::kIndexNone);
-            for (size_t i = 0; i < Source.Bones.size(); ++i)
+            TVector<int32> SourceToTarget(Source.Bones.Num(), Constants::kIndexNone);
+            for (int32 i = 0; i < Source.Bones.Num(); ++i)
             {
                 const int32 TargetIndex = Target.FindBoneIndex(Source.Bones[i].Name);
                 SourceToTarget[i] = TargetIndex;
@@ -396,8 +396,8 @@ namespace Lumina
                     continue;
                 }
 
-                const size_t VertexCount = Math::Min(Resource->JointIndices.size(), Resource->JointWeights.size());
-                for (size_t v = 0; v < VertexCount; ++v)
+                const int32 VertexCount = Math::Min(Resource->JointIndices.Num(), Resource->JointWeights.Num());
+                for (int32 v = 0; v < VertexCount; ++v)
                 {
                     FU16Vector4& Indices = Resource->JointIndices[v];
                     FU8Vector4& Weights = Resource->JointWeights[v];
@@ -412,7 +412,7 @@ namespace Lumina
                         }
 
                         const uint32 Old = Indices[w];
-                        const int32  New = (Old < SourceToTarget.size()) ? SourceToTarget[Old] : Constants::kIndexNone;
+                        const int32  New = (Old < static_cast<uint32>(SourceToTarget.Num())) ? SourceToTarget[Old] : Constants::kIndexNone;
 
                         if (New < 0)
                         {
@@ -462,9 +462,9 @@ namespace Lumina
         int32 FindResourceForAsset(const FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
         {
             int32 FirstCompatible = Constants::kIndexNone;
-            const FString TargetName = Import::SanitizeAssetName(AssetName.c_str());
+            const FString TargetName = Import::SanitizeAssetName(*AssetName);
 
-            for (size_t i = 0; i < Data.Resources.size(); ++i)
+            for (int32 i = 0; i < Data.Resources.Num(); ++i)
             {
                 const TUniquePtr<FMeshResource>& Resource = Data.Resources[i];
                 if (!Resource || Resource->bSkinnedMesh != bWantSkinned)
@@ -475,7 +475,7 @@ namespace Lumina
                 {
                     FirstCompatible = (int32)i;
                 }
-                if (Import::SanitizeAssetName(Resource->Name.c_str()) == TargetName)
+                if (Import::SanitizeAssetName(*Resource->Name) == TargetName)
                 {
                     return (int32)i;
                 }
@@ -491,11 +491,11 @@ namespace Lumina
         {
             const size_t SlotCount = CountMaterialSlots(NewResource);
 
-            OutMaterials.clear();
-            OutMaterials.resize(SlotCount);
+            OutMaterials.Reset();
+            OutMaterials.SetNum(IntCastChecked<int32>(SlotCount));
 
             TVector<bool> bSlotResolved;
-            bSlotResolved.resize(SlotCount, false);
+            bSlotResolved.SetNum(IntCastChecked<int32>(SlotCount), false);
 
             for (const FGeometrySurface& NewSurface : NewResource.GeometrySurfaces)
             {
@@ -511,7 +511,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    if (OldSurface.MaterialIndex >= 0 && (size_t)OldSurface.MaterialIndex < OldMaterials.size())
+                    if (OldSurface.MaterialIndex >= 0 && (size_t)OldSurface.MaterialIndex < static_cast<size_t>(OldMaterials.Num()))
                     {
                         OutMaterials[NewSlot] = OldMaterials[OldSurface.MaterialIndex];
                         bSlotResolved[NewSlot] = true;
@@ -520,9 +520,9 @@ namespace Lumina
                 }
             }
 
-            for (size_t Slot = 0; Slot < SlotCount; ++Slot)
+            for (int32 Slot = 0, Limit = IntCastChecked<int32>(SlotCount); Slot < Limit; ++Slot)
             {
-                if (!bSlotResolved[Slot] && Slot < OldMaterials.size())
+                if (!bSlotResolved[Slot] && Slot < OldMaterials.Num())
                 {
                     OutMaterials[Slot] = OldMaterials[Slot];
                 }
@@ -542,7 +542,7 @@ namespace Lumina
         {
             MainThread::Enqueue([Existing = TStrongObjectPtr<CMesh>(Existing), NewResource = Move(NewResource),
                                  Override = TStrongObjectPtr<CMaterialInterface>(OverrideMaterial),
-                                 Source = FString(SourcePath.c_str())]() mutable
+                                 Source = FString(*SourcePath)]() mutable
             {
                 if (!Existing.IsValid())
                 {
@@ -553,7 +553,7 @@ namespace Lumina
                 TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
                 if (Override.IsValid())
                 {
-                    Materials.resize(CountMaterialSlots(*NewResource), Override);
+                    Materials.SetNum(IntCastChecked<int32>(CountMaterialSlots(*NewResource)), Override);
                 }
                 else
                 {
@@ -579,17 +579,17 @@ namespace Lumina
         // The only stage that expands instances, so the cost is paid once and only on merge.
         bool MergeInstancesIntoSingleMesh(FMeshImportData& Data, FString& OutError)
         {
-            size_t TotalStaticVerts = 0, TotalStaticIndices = 0;
-            size_t TotalSkinnedVerts = 0, TotalSkinnedIndices = 0;
+            int64 TotalStaticVerts = 0, TotalStaticIndices = 0;
+            int64 TotalSkinnedVerts = 0, TotalSkinnedIndices = 0;
 
             auto ResourceAt = [&Data](int32 Index) -> FMeshResource*
             {
-                return (Index >= 0 && (size_t)Index < Data.Resources.size()) ? Data.Resources[Index].get() : nullptr;
+                return Data.Resources.IsValidIndex(Index) ? Data.Resources[Index].get() : nullptr;
             };
 
             for (const FSourceMeshInstance& Instance : Data.MeshInstances)
             {
-                if (Instance.SlotIndex >= Data.MeshSlots.size())
+                if (Instance.SlotIndex >= static_cast<uint32>(Data.MeshSlots.Num()))
                 {
                     continue;
                 }
@@ -607,15 +607,15 @@ namespace Lumina
                 }
             }
 
-            // Indices bake into a uint32 stream, so a merge past 4.29B vertices would wrap rather than fail.
-            constexpr size_t MaxMergedVerts = (size_t)0xFFFFFFFFu;
+            // A mesh's vertex arrays count in int32, so a merge past that would fail mid-copy rather than up front.
+            constexpr int64 MaxMergedVerts = TNumericLimits<int32>::Max();
             if (TotalStaticVerts > MaxMergedVerts || TotalSkinnedVerts > MaxMergedVerts)
             {
-                OutError = FString(Format(
+                OutError = FString(*Format(
                     "Merging would flatten every instance into {0} static / {1} skinned vertices, past the {2} "
-                    "vertex limit of the 32-bit index stream. Import with 'Merge Meshes' off to get one asset "
+                    "vertex limit of one mesh. Import with 'Merge Meshes' off to get one asset "
                     "per unique mesh instead.",
-                    TotalStaticVerts, TotalSkinnedVerts, MaxMergedVerts).c_str());
+                    TotalStaticVerts, TotalSkinnedVerts, MaxMergedVerts));
                 return false;
             }
 
@@ -633,13 +633,13 @@ namespace Lumina
             // Growing per instance would memcpy the whole buffer set and hold two allocations mid-realloc.
             if (TotalStaticVerts > 0)
             {
-                MergedStatic->ReserveVertices(TotalStaticVerts);
-                MergedStatic->Indices.reserve(TotalStaticIndices);
+                MergedStatic->ReserveVertices(static_cast<int32>(TotalStaticVerts));
+                MergedStatic->Indices.Reserve(IntCastChecked<int32>(TotalStaticIndices));
             }
             if (TotalSkinnedVerts > 0)
             {
-                MergedSkinned->ReserveVertices(TotalSkinnedVerts);
-                MergedSkinned->Indices.reserve(TotalSkinnedIndices);
+                MergedSkinned->ReserveVertices(static_cast<int32>(TotalSkinnedVerts));
+                MergedSkinned->Indices.Reserve(IntCastChecked<int32>(TotalSkinnedIndices));
             }
 
             TVector<int16> SlotToSource;
@@ -648,13 +648,13 @@ namespace Lumina
             {
                 const FMatrix3 NormalMatrix = Math::Transpose(Math::Inverse(FMatrix3(World)));
 
-                const size_t BaseVertex = Target.GetNumVertices();
-                const size_t BaseIndex  = Target.GetNumIndices();
-                const size_t VertexCount = Source.GetNumVertices();
+                const int32 BaseVertex = Target.GetNumVertices();
+                const int32 BaseIndex  = Target.GetNumIndices();
+                const int32 VertexCount = Source.GetNumVertices();
 
                 Target.ResizeVertices(BaseVertex + VertexCount);
 
-                for (size_t i = 0; i < VertexCount; ++i)
+                for (int32 i = 0; i < VertexCount; ++i)
                 {
                     Target.Positions[BaseVertex + i] = FVector3(World * FVector4(Source.Positions[i], 1.0f));
                     Target.Normals[BaseVertex + i]   = PackNormal(Math::Normalize(NormalMatrix * UnpackNormal(Source.Normals[i])));
@@ -664,18 +664,18 @@ namespace Lumina
                 }
                 if (Target.bSkinnedMesh && Source.bSkinnedMesh)
                 {
-                    for (size_t i = 0; i < VertexCount; ++i)
+                    for (int32 i = 0; i < VertexCount; ++i)
                     {
                         Target.JointIndices[BaseVertex + i] = Source.JointIndices[i];
                         Target.JointWeights[BaseVertex + i] = Source.JointWeights[i];
                     }
                 }
 
-                const size_t IndexCount = Source.GetNumIndices();
-                Target.Indices.resize(BaseIndex + IndexCount);
-                for (size_t i = 0; i < IndexCount; ++i)
+                const int32 IndexCount = Source.GetNumIndices();
+                Target.Indices.SetNum(BaseIndex + IndexCount);
+                for (int32 i = 0; i < IndexCount; ++i)
                 {
-                    Target.Indices[BaseIndex + i] = Source.Indices[i] + (uint32)BaseVertex;
+                    Target.Indices[BaseIndex + i] = Source.Indices[i] + static_cast<uint32>(BaseVertex);
                 }
 
                 // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
@@ -687,27 +687,27 @@ namespace Lumina
 
                     if (SourceSurface.MaterialIndex >= 0)
                     {
-                        auto It = PieceSlots.find(SourceSurface.MaterialIndex);
-                        if (It == PieceSlots.end())
+                        auto It = PieceSlots.Find(SourceSurface.MaterialIndex);
+                        if (It == nullptr)
                         {
-                            const int16 NewSlot = (int16)SlotToSource.size();
-                            SlotToSource.push_back(SourceSurface.MaterialIndex);
-                            PieceSlots.emplace(SourceSurface.MaterialIndex, NewSlot);
+                            const int16 NewSlot = (int16)SlotToSource.Num();
+                            SlotToSource.Add(SourceSurface.MaterialIndex);
+                            PieceSlots.TryAdd(SourceSurface.MaterialIndex, NewSlot);
                             Surface.MaterialIndex = NewSlot;
                         }
                         else
                         {
-                            Surface.MaterialIndex = It->second;
+                            Surface.MaterialIndex = (*It);
                         }
                     }
 
-                    Target.GeometrySurfaces.push_back(Surface);
+                    Target.GeometrySurfaces.Add(Surface);
                 }
             };
 
             for (const FSourceMeshInstance& Instance : Data.MeshInstances)
             {
-                if (Instance.SlotIndex >= Data.MeshSlots.size())
+                if (Instance.SlotIndex >= static_cast<uint32>(Data.MeshSlots.Num()))
                 {
                     continue;
                 }
@@ -726,12 +726,12 @@ namespace Lumina
 
             Data.MergedMaterialSlotToSource = Move(SlotToSource);
 
-            Data.Resources.clear();
-            Data.MeshSlots.clear();
-            Data.MeshInstances.clear();
+            Data.Resources.Reset();
+            Data.MeshSlots.Reset();
+            Data.MeshInstances.Reset();
 
-            if (MergedStatic->GetNumVertices() > 0)  { Data.Resources.push_back(Move(MergedStatic)); }
-            if (MergedSkinned->GetNumVertices() > 0) { Data.Resources.push_back(Move(MergedSkinned)); }
+            if (MergedStatic->GetNumVertices() > 0)  { Data.Resources.Add(Move(MergedStatic)); }
+            if (MergedSkinned->GetNumVertices() > 0) { Data.Resources.Add(Move(MergedSkinned)); }
 
             return true;
         }
@@ -743,13 +743,12 @@ namespace Lumina
         // Luminous efficacy at 555nm, the constant DCC exporters use to convert watts into lumens.
         constexpr float GLuminousEfficacy = 683.0f;
 
-        /** Steradians in a sphere; a point light's candela is its lumens spread over all of them. */
+        // Steradians in a sphere; a point light's candela is its lumens spread over all of them.
         constexpr float GSphereSteradians = 4.0f * Math::Pi<float>();
 
-        /** SPointLightComponent's own default, which is what a relative source's strongest lamp maps onto. */
+        // SPointLightComponent's own default, which a relative source's strongest lamp maps onto.
         constexpr float GDefaultPunctualIntensity = 10.0f;
 
-        /** A relative light's share of the brightest one of its kind in the same file. */
         float RelativeShare(float Intensity, float BrightestOfKind)
         {
             return (BrightestOfKind > 0.0f) ? Math::Clamp(Intensity / BrightestOfKind, 0.0f, 1.0f) : 1.0f;
@@ -762,7 +761,6 @@ namespace Lumina
                 || Kind == ESourceNodeKind::DirectionalLight;
         }
 
-        /** The direction the source light emits in its node's local space, guarded against a degenerate one. */
         FVector3 SourceEmitDirection(const FSourceLight& Light)
         {
             const float LengthSq = Math::LengthSquared(Light.LocalDirection);
@@ -849,17 +847,17 @@ namespace Lumina
                                              const TVector<CMesh*>& ResourceToMesh) const
     {
         const TVector<FSourceSceneNode>& Nodes = SourceData.SceneNodes;
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return nullptr;
         }
 
         // Dropping the rest keeps an exporter's empty grouping nodes from becoming thousands of entities.
-        TVector<uint8> bKeep(Nodes.size(), 0);
-        for (size_t i = 0; i < Nodes.size(); ++i)
+        TVector<uint8> bKeep(Nodes.Num(), 0);
+        for (int32 i = 0; i < Nodes.Num(); ++i)
         {
             // An empty with user properties is a marker the author placed on purpose, such as a spawn point.
-            if (Nodes[i].Kind == ESourceNodeKind::Empty && Nodes[i].Extras.empty())
+            if (Nodes[i].Kind == ESourceNodeKind::Empty && Nodes[i].Extras.IsEmpty())
             {
                 continue;
             }
@@ -908,7 +906,7 @@ namespace Lumina
 
         // A prefab instantiates from a single root, so a source with several top-level nodes gets one.
         size_t RootCount = 0;
-        for (size_t i = 0; i < Nodes.size(); ++i)
+        for (int32 i = 0; i < Nodes.Num(); ++i)
         {
             if (bKeep[i] != 0 && Nodes[i].ParentIndex == Constants::kIndexNone)
             {
@@ -919,14 +917,14 @@ namespace Lumina
         ECS::FEntity SharedRoot = ECS::NullEntity;
         if (RootCount != 1)
         {
-            SharedRoot = MakeEntity(FName(FFixedString(PrefabName.data(), PrefabName.size())), FTransform());
+            SharedRoot = MakeEntity(FName(FFixedString(PrefabName.GetData(), PrefabName.Len())), FTransform());
         }
 
         TVector<ECS::FEntity> NodeEntities;
-        NodeEntities.resize(Nodes.size(), ECS::NullEntity);
+        NodeEntities.SetNum(Nodes.Num(), ECS::NullEntity);
 
         // A directional light stores a world vector rather than deriving one from its transform.
-        TVector<FQuat> WorldRotations(Nodes.size(), FQuat(1.0f, 0.0f, 0.0f, 0.0f));
+        TVector<FQuat> WorldRotations(Nodes.Num(), FQuat(1.0f, 0.0f, 0.0f, 0.0f));
 
         bool   bClaimedActiveCamera = false;
         uint32 LightsImported       = 0;
@@ -950,7 +948,7 @@ namespace Lumina
             }
         }
 
-        for (size_t i = 0; i < Nodes.size(); ++i)
+        for (int32 i = 0; i < Nodes.Num(); ++i)
         {
             const FSourceSceneNode& Node = Nodes[i];
 
@@ -995,7 +993,7 @@ namespace Lumina
             {
             case ESourceNodeKind::Mesh:
                 {
-                    if (Node.MeshSlot < 0 || (size_t)Node.MeshSlot >= SourceData.MeshSlots.size())
+                    if (Node.MeshSlot < 0 || (size_t)Node.MeshSlot >= static_cast<size_t>(SourceData.MeshSlots.Num()))
                     {
                         break;
                     }
@@ -1003,7 +1001,7 @@ namespace Lumina
 
                     auto MeshAt = [&ResourceToMesh](int32 Index) -> CMesh*
                     {
-                        return (Index >= 0 && (size_t)Index < ResourceToMesh.size()) ? ResourceToMesh[Index] : nullptr;
+                        return (Index >= 0 && (size_t)Index < static_cast<size_t>(ResourceToMesh.Num())) ? ResourceToMesh[Index] : nullptr;
                     };
 
                     CStaticMesh* Static = Cast<CStaticMesh>(MeshAt(Slot.StaticResource));
@@ -1122,7 +1120,7 @@ namespace Lumina
             ECS::FEntity EnvironmentRoot = SharedRoot;
             if (EnvironmentRoot == ECS::NullEntity)
             {
-                for (size_t i = 0; i < Nodes.size(); ++i)
+                for (int32 i = 0; i < Nodes.Num(); ++i)
                 {
                     if (NodeEntities[i] != ECS::NullEntity && Nodes[i].ParentIndex == Constants::kIndexNone)
                     {
@@ -1139,7 +1137,7 @@ namespace Lumina
         }
 
         LOG_INFO("[Import] scene prefab '{}': {} entities from {} source nodes, {} light(s); relative anchors sun={} punctual={}",
-                 PackagePath.c_str(), KeptCount + (SharedRoot != ECS::NullEntity ? 1 : 0), Nodes.size(), LightsImported,
+                 *PackagePath, KeptCount + (SharedRoot != ECS::NullEntity ? 1 : 0), Nodes.Num(), LightsImported,
                  BrightestDirectional, BrightestPunctual);
 
         return Prefab;
@@ -1186,12 +1184,12 @@ namespace Lumina
 
     void CMeshImporter::PrepareSettingsPreview()
     {
-        if (SourceData.Images.empty())
+        if (SourceData.Images.IsEmpty())
         {
             return;
         }
 
-        Task::ParallelFor((uint32)SourceData.Images.size(), [this](uint32 Index)
+        Jobs::ParallelFor((uint32)SourceData.Images.Num(), [this](uint32 Index)
         {
             FSourceImage& Image = SourceData.Images[Index];
             if (Image.Thumbnail.IsValid())
@@ -1202,7 +1200,7 @@ namespace Lumina
             {
                 Image.Thumbnail = RenderUtils::CreateImageFromPixels(Image.Bytes, true, FUIntVector2(128, 128), "MeshImport.EmbeddedThumbnail");
             }
-            else if (!Image.ResolvedPath.empty())
+            else if (!Image.ResolvedPath.IsEmpty())
             {
                 Image.Thumbnail = Import::Textures::CreateTextureFromImport(Image.ResolvedPath, true, FUIntVector2(128, 128));
             }
@@ -1283,7 +1281,7 @@ namespace Lumina
         constexpr float kSaveBudget     = 0.10f;
 
         // A scene graph merges through the instance table, while FBX and OBJ fall through to concatenation.
-        if (bMergeMeshes && !SourceData.MeshInstances.empty())
+        if (bMergeMeshes && !SourceData.MeshInstances.IsEmpty())
         {
             if (Progress)
             {
@@ -1303,37 +1301,37 @@ namespace Lumina
 
         FFixedString DestinationDir;
         FFixedString BaseName;
-        const size_t LastSlashPos = Request.DestinationPath.find_last_of('/');
-        if (LastSlashPos == FFixedString::npos)
+        const int32 LastSlashPos = Request.DestinationPath.FindLastOf('/');
+        if (LastSlashPos == Constants::kIndexNone)
         {
             BaseName = Request.DestinationPath;
         }
         else
         {
-            DestinationDir = Request.DestinationPath.substr(0, LastSlashPos + 1);
-            BaseName       = Request.DestinationPath.substr(LastSlashPos + 1, FFixedString::npos);
+            DestinationDir = Request.DestinationPath.Mid(0, LastSlashPos + 1);
+            BaseName       = Request.DestinationPath.Mid(LastSlashPos + 1, Constants::kIndexNone);
         }
         // A reimport names its package file, and any other dot belongs to the name the destination reserved.
         if (VFS::HasExtension(BaseName, ".lasset"))
         {
-            BaseName = BaseName.substr(0, BaseName.size() - FStringView(".lasset").size());
+            BaseName = BaseName.Mid(0, BaseName.Len() - FStringView(".lasset").Len());
         }
 
-        FFixedString TexturesDir  = DestinationDir; TexturesDir.append("Textures/");
-        FFixedString MaterialsDir = DestinationDir; MaterialsDir.append("Materials/");
+        FFixedString TexturesDir  = DestinationDir; TexturesDir.Append("Textures/");
+        FFixedString MaterialsDir = DestinationDir; MaterialsDir.Append("Materials/");
 
         FUniquePathAllocator Paths(Request.DestinationPath);
         auto DesiredPath = [&](FStringView Suffix) -> FFixedString
         {
             FFixedString Path = DestinationDir;
-            Path.append(BaseName);
-            if (!Suffix.empty())
+            Path.Append(BaseName);
+            if (!Suffix.IsEmpty())
             {
-                Path.append("_");
+                Path.Append("_");
                 // Clip and skeleton names come from the source file, where a separator would open a folder.
                 for (char Character : Suffix)
                 {
-                    Path.push_back(FStringView("\\/:*?\"<>|").find(Character) == FStringView::npos ? Character : '_');
+                    Path.AppendChar(FStringView("\\/:*?\"<>|").Find(Character) == Constants::kIndexNone ? Character : '_');
                 }
             }
             return Path;
@@ -1349,14 +1347,14 @@ namespace Lumina
         }
 
         TVector<TStrongObjectPtr<CObject>>& CreatedObjects = OutResult.CreatedObjects;
-        CreatedObjects.reserve(SourceData.Skeletons.size() + SourceData.Resources.size()
-                             + SourceData.Animations.size() + SourceData.Images.size());
+        CreatedObjects.Reserve(SourceData.Skeletons.Num() + SourceData.Resources.Num()
+                             + SourceData.Animations.Num() + SourceData.Images.Num());
 
         // Indexed by Resources index, so the prefab can resolve a scene node's mesh slot to its asset.
-        TVector<CMesh*> ResourceToMesh(SourceData.Resources.size(), nullptr);
+        TVector<CMesh*> ResourceToMesh(SourceData.Resources.Num(), nullptr);
 
         TStrongObjectPtr<CSkeleton> PrimarySkeleton;
-        const bool bMultipleSkeletons = SourceData.Skeletons.size() > 1;
+        const bool bMultipleSkeletons = SourceData.Skeletons.Num() > 1;
 
         // With a target skeleton the file's own only binds skinned meshes, so skip minting a duplicate.
         bool bFileSkeletonNeeded = TargetSkeleton == nullptr;
@@ -1372,7 +1370,7 @@ namespace Lumina
             }
         }
 
-        for (size_t i = 0; bImportSkeleton && bFileSkeletonNeeded && i < SourceData.Skeletons.size(); ++i)
+        for (int32 i = 0; bImportSkeleton && bFileSkeletonNeeded && i < SourceData.Skeletons.Num(); ++i)
         {
             TUniquePtr<FSkeletonResource>& SkeletonRes = SourceData.Skeletons[i];
             if (!SkeletonRes || !SkeletonRes->bShouldImport)
@@ -1395,14 +1393,14 @@ namespace Lumina
             {
                 PrimarySkeleton = NewSkeleton;
             }
-            CreatedObjects.push_back(NewSkeleton);
+            CreatedObjects.Add(NewSkeleton);
         }
 
         // Merge mode densified globally at parse time, so everything else is packed here alongside ResourceToMesh.
-        TVector<TVector<int16>> ResourceSlotToSource(SourceData.Resources.size());
+        TVector<TVector<int16>> ResourceSlotToSource(SourceData.Resources.Num());
         if (!bMergeMeshes)
         {
-            for (size_t i = 0; i < SourceData.Resources.size(); ++i)
+            for (int32 i = 0; i < SourceData.Resources.Num(); ++i)
             {
                 if (SourceData.Resources[i])
                 {
@@ -1411,8 +1409,8 @@ namespace Lumina
             }
         }
 
-        const bool bMultipleMeshes = SourceData.Resources.size() > 1;
-        for (size_t i = 0; bImportMeshes && i < SourceData.Resources.size(); ++i)
+        const bool bMultipleMeshes = SourceData.Resources.Num() > 1;
+        for (int32 i = 0; bImportMeshes && i < SourceData.Resources.Num(); ++i)
         {
             TUniquePtr<FMeshResource>& MeshResource = SourceData.Resources[i];
             if (!MeshResource)
@@ -1467,21 +1465,21 @@ namespace Lumina
                 continue;
             }
             NewMesh->SetFlag(OF_NeedsPostLoad);
-            NewMesh->Materials.clear();
-            NewMesh->Materials.resize(CountMaterialSlots(*MeshResource));
-            NewMesh->SourcePath            = FString(Request.SourcePath.c_str());
+            NewMesh->Materials.Reset();
+            NewMesh->Materials.SetNum(IntCastChecked<int32>(CountMaterialSlots(*MeshResource)));
+            NewMesh->SourcePath            = FString(*Request.SourcePath);
             NewMesh->DistanceFieldSettings = DistanceField;
             NewMesh->MeshResources         = Move(MeshResource);
 
             // Bake the exact box now, while the raw float positions are still around to measure.
             NewMesh->GenerateBoundingBox();
 
-            CreatedObjects.push_back(NewMesh);
+            CreatedObjects.Add(NewMesh);
             ResourceToMesh[i] = NewMesh;
         }
 
-        const bool bMultipleAnims = SourceData.Animations.size() > 1;
-        for (size_t i = 0; bImportAnimations && i < SourceData.Animations.size(); ++i)
+        const bool bMultipleAnims = SourceData.Animations.Num() > 1;
+        for (int32 i = 0; bImportAnimations && i < SourceData.Animations.Num(); ++i)
         {
             TUniquePtr<FAnimationResource>& Clip = SourceData.Animations[i];
             if (!Clip)
@@ -1512,16 +1510,16 @@ namespace Lumina
             NewAnimation->AnimationResource = Move(Clip);
             NewAnimation->Skeleton          = AnimSkeleton;
 
-            CreatedObjects.push_back(NewAnimation);
+            CreatedObjects.Add(NewAnimation);
         }
 
         FScopedAssetRegistryBatch RegistryBatch;
 
         // Resolved by IMAGE INDEX, so binding a channel is an array lookup rather than a path hash.
-        TVector<CTexture*> ImageAssets(SourceData.Images.size(), nullptr);
+        TVector<CTexture*> ImageAssets(SourceData.Images.Num(), nullptr);
 
         const bool bWantTextures = bImportTextures || bImportMaterials;
-        if (bWantTextures && !SourceData.Images.empty())
+        if (bWantTextures && !SourceData.Images.IsEmpty())
         {
             if (Progress)
             {
@@ -1531,7 +1529,7 @@ namespace Lumina
             for (const FMeshImportMaterial& Material : SourceData.Materials)
             {
                 if (Material.AlphaMode == EImportAlphaMode::Mask && Material.BaseColorImage != Constants::kIndexNone
-                    && Material.BaseColorImage < (int32)SourceData.Images.size())
+                    && Material.BaseColorImage < SourceData.Images.Num())
                 {
                     SourceData.Images[Material.BaseColorImage].AlphaCoverageCutoff = Material.AlphaCutoff;
                 }
@@ -1545,17 +1543,17 @@ namespace Lumina
             };
 
             TVector<FTextureWork> Work;
-            Work.reserve(SourceData.Images.size());
+            Work.Reserve(SourceData.Images.Num());
 
-            for (size_t i = 0; i < SourceData.Images.size(); ++i)
+            for (int32 i = 0; i < SourceData.Images.Num(); ++i)
             {
                 const FSourceImage& Image = SourceData.Images[i];
 
-                const FStringView NameSource = Image.ResolvedPath.empty()
-                    ? FStringView(Image.Key.c_str(), Image.Key.size())
+                const FStringView NameSource = Image.ResolvedPath.IsEmpty()
+                    ? FStringView(*Image.Key, Image.Key.Len())
                     : VFS::FileName(Image.ResolvedPath, true);
 
-                FFixedString PackagePath = Lumina::Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
+                FFixedString PackagePath = Lumina::Paths::Combine(TexturesDir, *TextureAssetName(NameSource));
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
@@ -1567,12 +1565,12 @@ namespace Lumina
 
                 CPackage::AddPackageExt(PackagePath);
 
-                Work.push_back(FTextureWork{ Move(PackagePath), (uint32)i, !bAlreadyExists });
+                Work.Emplace(Move(PackagePath), (uint32)i, !bAlreadyExists);
             }
 
-            TVector<CTexture*> Cooked(Work.size(), nullptr);
+            TVector<CTexture*> Cooked(Work.Num(), nullptr);
 
-            Task::ParallelFor((uint32)Work.size(), [&](uint32 i)
+            Jobs::ParallelFor((uint32)Work.Num(), [&](uint32 i)
             {
                 const FTextureWork& W = Work[i];
                 if (!W.bNeedsCook)
@@ -1585,7 +1583,7 @@ namespace Lumina
                 Import::Textures::FTextureCookRequest CookRequest;
                 CookRequest.EmbeddedBytes      = Image.Bytes;
                 // Embedded payloads have no file, so the key only feeds the color-space heuristic and is not stored.
-                CookRequest.SourcePath         = Image.ResolvedPath.empty() ? Image.Key : Image.ResolvedPath;
+                CookRequest.SourcePath         = Image.ResolvedPath.IsEmpty() ? Image.Key : Image.ResolvedPath;
                 CookRequest.ColorSpace         = Image.IntendedColorSpace;
                 CookRequest.AlphaCoverageCutoff = Image.AlphaCoverageCutoff;
                 // This loop already saturates the cores, so a full basisu pool per texture would oversubscribe.
@@ -1596,13 +1594,13 @@ namespace Lumina
                 Cooked[i] = Import::Textures::ImportTextureAsset(W.PackagePath, CookRequest);
             }, 1);
 
-            for (size_t i = 0; i < Work.size(); ++i)
+            for (int32 i = 0; i < Work.Num(); ++i)
             {
                 const FTextureWork& W = Work[i];
                 CTexture* Texture = Cooked[i];
                 if (Texture != nullptr)
                 {
-                    CreatedObjects.push_back(Texture);
+                    CreatedObjects.Add(Texture);
                 }
                 else if (bImportMaterials)
                 {
@@ -1631,11 +1629,11 @@ namespace Lumina
                 }
                 for (size_t Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
                 {
-                    Mesh->SetMaterialAtSlot(Slot, OverrideMaterial.Get());
+                    Mesh->SetMaterialAtSlot(static_cast<int32>(Slot), OverrideMaterial.Get());
                 }
             }
         }
-        else if (bImportMaterials && !SourceData.Materials.empty())
+        else if (bImportMaterials && !SourceData.Materials.IsEmpty())
         {
             if (Progress)
             {
@@ -1644,14 +1642,14 @@ namespace Lumina
 
             {
                 const TVector<CMaterialInstance*> Instances = Import::Materials::GenerateMaterials(
-                    TSpan<const FMeshImportMaterial>(SourceData.Materials.data(), SourceData.Materials.size()),
-                    TSpan<CTexture* const>(ImageAssets.data(), ImageAssets.size()),
+                    TSpan<const FMeshImportMaterial>(SourceData.Materials.GetData(), SourceData.Materials.Num()),
+                    TSpan<CTexture* const>(ImageAssets.GetData(), ImageAssets.Num()),
                     MaterialsDir, BaseName, CreatedObjects, SourceData.bHasVertexColors);
 
                 // Each of the four ways a surface ends up materialless is counted, since the symptom is identical.
                 uint32 SurfacesTotal = 0, NoAssignment = 0, OutOfRange = 0, NoSource = 0, NoInstance = 0;
 
-                for (size_t ResIdx = 0; ResIdx < ResourceToMesh.size(); ++ResIdx)
+                for (int32 ResIdx = 0; ResIdx < ResourceToMesh.Num(); ++ResIdx)
                 {
                     CMesh* Mesh = ResourceToMesh[ResIdx];
                     if (Mesh == nullptr)
@@ -1681,12 +1679,12 @@ namespace Lumina
 
                         // Identity only for a source that never needed remapping at all.
                         int32 SourceIndex = Slot;
-                        if (!SlotToSource.empty())
+                        if (!SlotToSource.IsEmpty())
                         {
-                            SourceIndex = (Slot < (int32)SlotToSource.size()) ? SlotToSource[Slot] : Constants::kIndexNone;
+                            SourceIndex = (Slot < SlotToSource.Num()) ? SlotToSource[Slot] : Constants::kIndexNone;
                         }
 
-                        if (SourceIndex < 0 || (size_t)SourceIndex >= Instances.size())
+                        if (SourceIndex < 0 || (size_t)SourceIndex >= static_cast<size_t>(Instances.Num()))
                         {
                             ++NoSource;
                             return;
@@ -1713,7 +1711,7 @@ namespace Lumina
                              "material not generated: {}). Merge meshes: {}, source materials: {}, "
                              "generated instances: {}.",
                              Unresolved, SurfacesTotal, NoAssignment, OutOfRange, NoSource, NoInstance,
-                             bMergeMeshes, (uint32)SourceData.Materials.size(), (uint32)Instances.size());
+                             bMergeMeshes, (uint32)SourceData.Materials.Num(), (uint32)Instances.Num());
                 }
                 else if (Unresolved > 0)
                 {
@@ -1727,7 +1725,7 @@ namespace Lumina
             // Being skipped here lands every mesh with an all-null Materials array, so say which gate closed.
             LOG_WARN("[Import] no materials were generated: Import Materials is {}, and the source parsed "
                      "{} material(s). Every imported mesh will have empty material slots.",
-                     bImportMaterials ? "ON" : "OFF", (uint32)SourceData.Materials.size());
+                     bImportMaterials ? "ON" : "OFF", (uint32)SourceData.Materials.Num());
             ExpectedNullSlots = UINT32_MAX;
         }
 
@@ -1771,7 +1769,7 @@ namespace Lumina
         }
 
         // Built last so everything it points at exists, and merging already flattened what a prefab preserves.
-        if (bImportAsPrefab && !bMergeMeshes && !SourceData.SceneNodes.empty())
+        if (bImportAsPrefab && !bMergeMeshes && !SourceData.SceneNodes.IsEmpty())
         {
             if (Progress)
             {
@@ -1779,9 +1777,9 @@ namespace Lumina
             }
 
             const FFixedString PrefabPath = BuildPath("Prefab");
-            if (CPrefab* Prefab = BuildScenePrefab(PrefabPath, FStringView(BaseName.c_str(), BaseName.size()), ResourceToMesh))
+            if (CPrefab* Prefab = BuildScenePrefab(PrefabPath, FStringView(*BaseName, BaseName.Len()), ResourceToMesh))
             {
-                CreatedObjects.push_back(Prefab);
+                CreatedObjects.Add(Prefab);
             }
         }
 
@@ -1790,7 +1788,7 @@ namespace Lumina
             Progress->UpdateMessage("Saving packages...");
         }
 
-        const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.size());
+        const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.Num());
         for (const TStrongObjectPtr<CObject>& Created : CreatedObjects)
         {
             CObject* Object = Created.Get();
@@ -1809,8 +1807,8 @@ namespace Lumina
             }
             else
             {
-                OutResult.Error += (OutResult.Error.empty() ? "Could not save " : ", ") + FString(Package->GetPackagePath().c_str());
-                OutResult.UnsavedPackages.push_back(Package);
+                OutResult.Error += (OutResult.Error.IsEmpty() ? "Could not save " : ", ") + FString(*Package->GetPackagePath());
+                OutResult.UnsavedPackages.Add(Package);
             }
 
             // Saved means the file now owns the name, and a failure should free it for the next attempt.
@@ -1821,7 +1819,7 @@ namespace Lumina
                 Progress->EnterProgressFrame(SaveStep);
             }
         }
-        if (CreatedObjects.empty() && Progress)
+        if (CreatedObjects.IsEmpty() && Progress)
         {
             Progress->EnterProgressFrame(kSaveBudget);
         }
@@ -1916,15 +1914,15 @@ namespace Lumina
         if (ResourceIndex == Constants::kIndexNone)
         {
             LOG_ERROR("Reimport: '{0}' contains no {1} mesh to replace '{2}' with.",
-                      Request.SourcePath.c_str(), Mesh->IsSkinned() ? "skinned" : "static", Mesh->GetName().c_str());
+                      *Request.SourcePath, Mesh->IsSkinned() ? "skinned" : "static", *Mesh->GetName());
             return false;
         }
 
         TUniquePtr<FMeshResource>& NewResource = SourceData.Resources[ResourceIndex];
-        if (!NewResource || NewResource->GeometrySurfaces.empty())
+        if (!NewResource || NewResource->GeometrySurfaces.IsEmpty())
         {
             LOG_ERROR("Reimport: the mesh selected from '{0}' has no surfaces; leaving '{1}' untouched.",
-                      Request.SourcePath.c_str(), Mesh->GetName().c_str());
+                      *Request.SourcePath, *Mesh->GetName());
             return false;
         }
 
@@ -1948,7 +1946,7 @@ namespace Lumina
 
         // SetMeshResource rebuilds bounds and buffers and invalidates the resolve cache, so components follow.
         Mesh->SetMeshResource(Move(NewResource));
-        Mesh->SourcePath = FString(Request.SourcePath.c_str());
+        Mesh->SourcePath = FString(*Request.SourcePath);
 
         if (CPackage* Package = Mesh->GetPackage())
         {
@@ -1967,7 +1965,7 @@ namespace Lumina
             if (!ParseSource(ParsedRequest, Error, nullptr))
             {
                 LOG_ERROR("[Import] Re-parse of '{}' failed, nothing will be imported: {}",
-                          ParsedRequest.SourcePath.c_str(), Error.c_str());
+                          *ParsedRequest.SourcePath, *Error);
             }
             PrepareSettingsPreview();
         }
@@ -1981,22 +1979,22 @@ namespace Lumina
 
         Section([&]
         {
-            if (SourceData.Resources.empty())
+            if (SourceData.Resources.IsEmpty())
             {
                 return;
             }
 
-            const FFixedString Header = FormatAs<FFixedString>("Meshes ({})###MeshStats", SourceData.Resources.size());
-            if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            const FFixedString Header = FormatAs<FFixedString>("Meshes ({})###MeshStats", SourceData.Resources.Num());
+            if (!ImGui::CollapsingHeader(*Header, ImGuiTreeNodeFlags_DefaultOpen))
             {
                 return;
             }
 
-            if (SourceData.SourceNodeCount > SourceData.Resources.size())
+            if (SourceData.SourceNodeCount > static_cast<uint32>(SourceData.Resources.Num()))
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
-                ImGui::Text("%u source nodes collapsed to %zu unique meshes",
-                            SourceData.SourceNodeCount, SourceData.Resources.size());
+                ImGui::Text("%u source nodes collapsed to %d unique meshes",
+                            SourceData.SourceNodeCount, SourceData.Resources.Num());
                 ImGui::PopStyleColor();
             }
 
@@ -2004,7 +2002,7 @@ namespace Lumina
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInner |
                 ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-            const float Height = std::min<float>(180.0f, (SourceData.Resources.size() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
+            const float Height = std::min<float>(180.0f, (SourceData.Resources.Num() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
             if (ImGui::BeginTable("MeshStatsTable", 4, Flags, ImVec2(0, Height)))
             {
                 ImGui::TableSetupScrollFreeze(0, 1);
@@ -2015,17 +2013,17 @@ namespace Lumina
                 ImGui::TableHeadersRow();
 
                 ImGuiListClipper Clipper;
-                Clipper.Begin((int)SourceData.Resources.size());
+                Clipper.Begin(SourceData.Resources.Num());
                 while (Clipper.Step())
                 {
                     for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                     {
                         const FMeshResource& Resource = *SourceData.Resources[i];
                         ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::TextUnformatted(Resource.Name.c_str());
+                        ImGui::TableNextColumn(); ImGui::TextUnformatted(*Resource.Name);
                         ImGui::TableNextColumn(); ImGuiX::Text("{0}", ImGuiX::FormatSize(Resource.GetNumVertices()));
-                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", ImGuiX::FormatSize(Resource.Indices.size()));
-                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", Resource.GeometrySurfaces.size());
+                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", ImGuiX::FormatSize(Resource.Indices.Num()));
+                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", Resource.GeometrySurfaces.Num());
                     }
                 }
                 ImGui::EndTable();
@@ -2034,7 +2032,7 @@ namespace Lumina
 
         Section([&]
         {
-            if (SourceData.SceneNodes.empty())
+            if (SourceData.SceneNodes.IsEmpty())
             {
                 return;
             }
@@ -2050,8 +2048,8 @@ namespace Lumina
 
             const uint32 Lights = Points + Spots + Directionals;
             const FFixedString Header = FormatAs<FFixedString>("Scene ({} nodes, {} lights)###SceneGraph",
-                                                               SourceData.SceneNodes.size(), Lights);
-            if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                                                               SourceData.SceneNodes.Num(), Lights);
+            if (!ImGui::CollapsingHeader(*Header, ImGuiTreeNodeFlags_DefaultOpen))
             {
                 return;
             }
@@ -2079,13 +2077,13 @@ namespace Lumina
 
         Section([&]
         {
-            if (SourceData.Images.empty())
+            if (SourceData.Images.IsEmpty())
             {
                 return;
             }
 
-            const FFixedString Header = FormatAs<FFixedString>("Textures ({})###Textures", SourceData.Images.size());
-            if (!ImGui::CollapsingHeader(Header.c_str()))
+            const FFixedString Header = FormatAs<FFixedString>("Textures ({})###Textures", SourceData.Images.Num());
+            if (!ImGui::CollapsingHeader(*Header))
             {
                 return;
             }
@@ -2098,7 +2096,7 @@ namespace Lumina
                 ImGui::TableSetupColumn("Source",  ImGuiTableColumnFlags_WidthStretch);
 
                 ImGuiListClipper Clipper;
-                Clipper.Begin((int)SourceData.Images.size(), ThumbSize + 8);
+                Clipper.Begin(SourceData.Images.Num(), ThumbSize + 8);
                 while (Clipper.Step())
                 {
                     for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
@@ -2121,19 +2119,19 @@ namespace Lumina
 
         Section([&]
         {
-            if (SourceData.Skeletons.empty())
+            if (SourceData.Skeletons.IsEmpty())
             {
                 return;
             }
 
-            const FFixedString Header = FormatAs<FFixedString>("Skeletons ({})###Skeletons", SourceData.Skeletons.size());
-            if (!ImGui::CollapsingHeader(Header.c_str()))
+            const FFixedString Header = FormatAs<FFixedString>("Skeletons ({})###Skeletons", SourceData.Skeletons.Num());
+            if (!ImGui::CollapsingHeader(*Header))
             {
                 return;
             }
 
             const FSkeletonResource* MeshTarget = TargetSkeleton != nullptr ? TargetSkeleton->GetSkeletonResource() : nullptr;
-            if (MeshTarget != nullptr && !SourceData.Skeletons.empty() && SourceData.Skeletons[0])
+            if (MeshTarget != nullptr && !SourceData.Skeletons.IsEmpty() && SourceData.Skeletons[0])
             {
                 const FSkeletonResource& FileSkeleton = *SourceData.Skeletons[0];
 
@@ -2144,9 +2142,9 @@ namespace Lumina
                 }
 
                 ImGui::TextDisabled("Skinned meshes bind to %s; no skeleton is created from this file.",
-                                    TargetSkeleton->GetName().c_str());
+                                    *TargetSkeleton->GetName());
 
-                if (Matched == (int32)FileSkeleton.Bones.size())
+                if (Matched == FileSkeleton.Bones.Num())
                 {
                     ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f),
                         LE_ICON_CHECK_CIRCLE_OUTLINE " Every bone matches by name.");
@@ -2154,8 +2152,8 @@ namespace Lumina
                 else if (Matched > 0)
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
-                        LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %zu bones match; unmatched influences are dropped.",
-                        Matched, FileSkeleton.Bones.size());
+                        LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %d bones match; unmatched influences are dropped.",
+                        Matched, FileSkeleton.Bones.Num());
                 }
                 else
                 {
@@ -2174,22 +2172,22 @@ namespace Lumina
                     Skeleton->bShouldImport = bImport;
                 }
                 ImGui::SameLine();
-                if (ImGui::TreeNodeEx(Skeleton->Name.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+                if (ImGui::TreeNodeEx(*Skeleton->Name, ImGuiTreeNodeFlags_SpanAvailWidth))
                 {
                     auto DrawBone = [&](int32 BoneIdx, auto& Self) -> void
                     {
                         const FSkeletonResource::FBoneInfo& Bone = Skeleton->Bones[BoneIdx];
                         TVector<int32> Children = Skeleton->GetChildBones(BoneIdx);
-                        const ImGuiTreeNodeFlags Flags = Children.empty()
+                        const ImGuiTreeNodeFlags Flags = Children.IsEmpty()
                             ? ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen
                             : ImGuiTreeNodeFlags_None;
-                        if (ImGui::TreeNodeEx(Bone.Name.c_str(), Flags))
+                        if (ImGui::TreeNodeEx(*Bone.Name, Flags))
                         {
                             for (int32 ChildIdx : Children)
                             {
                                 Self(ChildIdx, Self);
                             }
-                            if (!Children.empty())
+                            if (!Children.IsEmpty())
                             {
                                 ImGui::TreePop();
                             }
@@ -2207,13 +2205,13 @@ namespace Lumina
 
         Section([&]
         {
-            if (SourceData.Animations.empty())
+            if (SourceData.Animations.IsEmpty())
             {
                 return;
             }
 
-            const FFixedString Header = FormatAs<FFixedString>("Animations ({})###Animations", SourceData.Animations.size());
-            if (!ImGui::CollapsingHeader(Header.c_str()))
+            const FFixedString Header = FormatAs<FFixedString>("Animations ({})###Animations", SourceData.Animations.Num());
+            if (!ImGui::CollapsingHeader(*Header))
             {
                 return;
             }
@@ -2221,16 +2219,16 @@ namespace Lumina
             const FSkeletonResource* Target = TargetSkeleton != nullptr ? TargetSkeleton->GetSkeletonResource() : nullptr;
             if (TargetSkeleton != nullptr)
             {
-                ImGui::TextDisabled("Binding to %s", TargetSkeleton->GetName().c_str());
+                ImGui::TextDisabled("Binding to %s", *TargetSkeleton->GetName());
             }
 
-            for (size_t i = 0; i < SourceData.Animations.size(); ++i)
+            for (int32 i = 0; i < SourceData.Animations.Num(); ++i)
             {
                 const FAnimationResource& Anim = *SourceData.Animations[i];
                 ImGui::PushID((int)i);
-                if (ImGui::TreeNodeEx(Anim.Name.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+                if (ImGui::TreeNodeEx(*Anim.Name, ImGuiTreeNodeFlags_SpanAvailWidth))
                 {
-                    ImGui::TextDisabled("Duration: %.2fs   Channels: %zu", Anim.Duration, Anim.Channels.size());
+                    ImGui::TextDisabled("Duration: %.2fs   Channels: %d", Anim.Duration, Anim.Channels.Num());
 
                     // An unmatched channel silently freezes its bone at bind pose, so surface it here.
                     if (Target != nullptr)
@@ -2249,8 +2247,8 @@ namespace Lumina
                         else
                         {
                             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
-                                LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %zu channels have no bone of that name.",
-                                Unmatched, Anim.Channels.size());
+                                LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %d channels have no bone of that name.",
+                                Unmatched, Anim.Channels.Num());
                         }
                     }
 

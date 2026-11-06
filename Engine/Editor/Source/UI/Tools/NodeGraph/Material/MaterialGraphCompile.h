@@ -6,7 +6,7 @@
 #include "Memory/SmartPtr.h"
 #include <atomic>
 #include "Renderer/ShaderCompiler.h"
-#include "TaskSystem/TaskTypes.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
@@ -53,17 +53,13 @@ namespace Lumina
         FMaterialCompiler::FShaderStats Stats;
     };
 
-    // Compiles Graph into Material: builds every shader stage (PS/VS, plus MS/VisBuffer/Deferred for the PBR
-    // domain), commits them to the shader library, fills Material->Textures/Parameters, then calls
-    // Material->PostLoad() so it registers and is ready for render. On a graph error returns bSuccess=false
-    // with the errors and leaves the material not-ready. Editor-only (drives GShaderCompiler). Shared by the
-    // material editor tool and the scene importer's procedural material generation.
+    // Compiles Graph into Material and registers it for render; on a graph error returns bSuccess=false and leaves the material not-ready.
     EDITOR_API FMaterialGraphCompileResult CompileMaterialGraph(CMaterial* Material, CMaterialNodeGraph* Graph);
 
     // Finish once OutResult.StageLog settles, holding Compiler and a strong ref to Material until then, since stage callbacks write into both.
     EDITOR_API bool BeginMaterialGraphCompile(CMaterial* Material, CMaterialNodeGraph* Graph, FMaterialCompiler& Compiler,
                                               FMaterialGraphCompileResult& OutResult, const FMaterialCompileTarget& Target = {},
-                                              ETaskPriority Priority = ETaskPriority::Medium);
+                                              Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal);
     EDITOR_API void FinishMaterialGraphCompile(CMaterial* Material, FMaterialCompiler& Compiler,
                                                FMaterialGraphCompileResult& InOutResult, const FMaterialCompileTarget& Target = {});
 

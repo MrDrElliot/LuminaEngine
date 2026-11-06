@@ -15,7 +15,7 @@ namespace Lumina
     {
         using namespace msdfgen;
 
-        if (Font == nullptr || Font->FontData.empty())
+        if (Font == nullptr || Font->FontData.IsEmpty())
         {
             return false;
         }
@@ -26,7 +26,7 @@ namespace Lumina
             return false;
         }
 
-        FontHandle* MFont = loadFontData(FT, Font->FontData.data(), (int)Font->FontData.size());
+        FontHandle* MFont = loadFontData(FT, Font->FontData.GetData(), Font->FontData.Num());
         if (MFont == nullptr)
         {
             deinitializeFreetype(FT);
@@ -76,7 +76,7 @@ namespace Lumina
                 if (Glyph.contours.empty() || !(Bounds.r > Bounds.l && Bounds.t > Bounds.b))
                 {
                     B.HasInk = false;
-                    Baked.push_back(Move(B));
+                    Baked.Add(Move(B));
                     continue;
                 }
 
@@ -89,7 +89,7 @@ namespace Lumina
                 B.HasInk = true;
                 B.Glyph  = Move(Glyph);
 
-                Baked.push_back(Move(B));
+                Baked.Add(Move(B));
             }
         };
 
@@ -100,7 +100,7 @@ namespace Lumina
         destroyFont(MFont);
         deinitializeFreetype(FT);
 
-        if (Baked.empty())
+        if (Baked.IsEmpty())
         {
             return false;
         }
@@ -126,13 +126,13 @@ namespace Lumina
         };
 
         // A cook or a test can bake a font before the task system exists, and ParallelFor does not check.
-        if (GTaskSystem != nullptr)
+        if (Jobs::IsRuntimeRunning())
         {
-            Task::ParallelFor((uint32)Baked.size(), GenerateField, 1);
+            Jobs::ParallelFor((uint32)Baked.Num(), GenerateField, 1);
         }
         else
         {
-            for (uint32 Index = 0; Index < (uint32)Baked.size(); ++Index)
+            for (int32 Index = 0; Index < Baked.Num(); ++Index)
             {
                 GenerateField(Index);
             }
@@ -143,9 +143,9 @@ namespace Lumina
         int PenX = GlyphPad, PenY = GlyphPad, RowH = 0;
 
         struct FPlaced { int X = 0, Y = 0; };
-        TVector<FPlaced> Placed; Placed.resize(Baked.size());
+        TVector<FPlaced> Placed; Placed.SetNum(Baked.Num());
 
-        for (size_t i = 0; i < Baked.size(); ++i)
+        for (int32 i = 0; i < Baked.Num(); ++i)
         {
             if (!Baked[i].HasInk)
             {
@@ -165,7 +165,7 @@ namespace Lumina
 
         // Zeroed, so the cleared border reads as fully outside once resolved.
         TVector<uint8> Pixels;
-        Pixels.resize((size_t)AtlasW * AtlasH * 4, 0);
+        Pixels.SetNum(IntCastChecked<int32>(static_cast<int64>(AtlasW) * AtlasH * 4), 0);
 
         auto ToByte = [](float V) -> uint8
         {
@@ -173,9 +173,9 @@ namespace Lumina
         };
 
         TVector<FFontGlyph> Glyphs;
-        Glyphs.reserve(Baked.size());
+        Glyphs.Reserve(Baked.Num());
 
-        for (size_t i = 0; i < Baked.size(); ++i)
+        for (int32 i = 0; i < Baked.Num(); ++i)
         {
             const FBaked& B = Baked[i];
 
@@ -192,7 +192,7 @@ namespace Lumina
                 for (int y = 0; y < B.H; ++y)
                 {
                     const float* Src = B.Bmp(0, B.H - 1 - y);
-                    uint8*       Dst = &Pixels[((size_t)(GY + y) * AtlasW + GX) * 4];
+                    uint8*       Dst = &Pixels[((GY + y) * AtlasW + GX) * 4];
                     for (int x = 0; x < B.W; ++x)
                     {
                         Dst[x * 4 + 0] = ToByte(Src[x * 4 + 0]);
@@ -207,7 +207,7 @@ namespace Lumina
                 G.Plane   = FVector4((float)B.PL, (float)B.PB, (float)B.PR, (float)B.PT);
             }
 
-            Glyphs.push_back(G);
+            Glyphs.Add(G);
         }
 
         Font->Glyphs        = Move(Glyphs);

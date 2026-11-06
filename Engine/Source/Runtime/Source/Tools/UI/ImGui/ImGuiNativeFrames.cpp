@@ -40,7 +40,7 @@ namespace Lumina::ImGuiX::NativeFrames
         {
             if (Viewport != nullptr)
             {
-                GPendingActions.push_back({ Viewport->ID, Action });
+                GPendingActions.Emplace(Viewport->ID, Action);
             }
         }
 
@@ -107,7 +107,7 @@ namespace Lumina::ImGuiX::NativeFrames
             {
                 if (Node->TabBar != nullptr && !Node->IsHiddenTabBar() && !Node->IsNoTabBar())
                 {
-                    OutNodes.push_back(Node);
+                    OutNodes.Add(Node);
                 }
                 return;
             }
@@ -224,7 +224,7 @@ namespace Lumina::ImGuiX::NativeFrames
             case EWindowAction::Restore:  glfwRestoreWindow(Window);  break;
             }
         }
-        GPendingActions.clear();
+        GPendingActions.Reset();
     }
 
     void Install()
@@ -234,7 +234,7 @@ namespace Lumina::ImGuiX::NativeFrames
 
     void Update()
     {
-        GCaptions.clear();
+        GCaptions.Reset();
 
         ImGuiContext& G = *ImGui::GetCurrentContext();
         if (!(G.IO.ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
@@ -266,9 +266,9 @@ namespace Lumina::ImGuiX::NativeFrames
                 continue;
             }
 
-            TopNodes.clear();
+            TopNodes.Reset();
             GatherTopRowNodes(Root, Viewport->Pos.y, TopNodes);
-            if (TopNodes.empty())
+            if (TopNodes.IsEmpty())
             {
                 continue;
             }
@@ -285,7 +285,7 @@ namespace Lumina::ImGuiX::NativeFrames
             const bool bCanMinimize = (Viewport->Flags & ImGuiViewportFlags_NoTaskBarIcon) == 0;
             const ImGuiID SpacerID = DrawWindowControls(RightMost, Window, bCanMinimize);
 
-            FViewportCaption& Caption = GCaptions.emplace_back();
+            FViewportCaption& Caption = GCaptions.EmplaceGetRef();
             Caption.ViewportID = Viewport->ID;
             for (ImGuiDockNode* Node : TopNodes)
             {
@@ -298,7 +298,7 @@ namespace Lumina::ImGuiX::NativeFrames
                 Rect.Translate(ImVec2(-Viewport->Pos.x, -Viewport->Pos.y));
                 if (Rect.GetWidth() > 0.0f)
                 {
-                    Caption.Rects.push_back(Rect);
+                    Caption.Rects.Add(Rect);
                 }
             }
         }

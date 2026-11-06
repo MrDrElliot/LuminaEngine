@@ -35,7 +35,7 @@ namespace Lumina
 
         void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
         {
-            OutExtensions.insert(OutExtensions.end(), { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr", ".dds" });
+            OutExtensions.Append({ ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr", ".dds" });
         }
 
         void BuildAssets(const FImportRequest& Request, FImportResult& OutResult, FScopedSlowTask* Progress) override;

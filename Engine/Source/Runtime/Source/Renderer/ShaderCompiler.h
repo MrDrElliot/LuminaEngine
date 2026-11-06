@@ -8,8 +8,8 @@
 #include "Memory/SmartPtr.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
-#include "TaskSystem/FiberSync.h"
-#include "TaskSystem/TaskTypes.h"
+#include "Core/Threading/Sync.h"
+#include "TaskSystem/TaskSystem.h"
 
 namespace Lumina
 {
@@ -30,7 +30,7 @@ namespace Lumina
         // Which entry point to compile. Required once a module defines more than one.
         FString EntryPoint;
         // Read by raw compiles, where Background keeps a long compile off any thread only helping out while it waits.
-        ETaskPriority Priority = ETaskPriority::Medium;
+        Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal;
     };
     
     class IShaderCompiler
@@ -65,23 +65,21 @@ namespace Lumina
         NODISCARD uint32 GetOutstanding() const;
         NODISCARD bool IsSettled() const { return GetOutstanding() == 0; }
 
-        // Parks a fiber rather than the worker under it, so a waiter on the task system cannot starve its own compiles.
         void Wait() const;
 
     private:
         struct FState
         {
             TAtomic<uint32>         Outstanding{0};
-            FFiberMutex             Mutex;
-            FFiberConditionVariable Settled;
+            FMutex             Mutex;
+            FConditionVariable Settled;
         };
 
         // Shared with every callback, since the last one still notifies after Wait may have returned.
         TSharedPtr<FState> State;
     };
     
-    // Exported so a host outside Runtime -- RHITests, a cooker -- can stand one up. Note that
-    // Initialize() precompiles the whole VFS-mounted shader tree; CompilerShaderRaw does not need it.
+    // Exported for hosts outside Runtime; Initialize() precompiles the whole VFS shader tree, CompilerShaderRaw does not need it.
     class RUNTIME_API FSpirVShaderCompiler : public IShaderCompiler
     {
     public:
@@ -102,12 +100,17 @@ namespace Lumina
         bool CompileShaderPaths(TSpan<FString> ShaderPaths, TSpan<FShaderCompileOptions> CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) override;
 
         void Flush() const override;
-        
+
         FMutex                      RequestMutex;
         TAtomic<uint32>             PendingTasks;
 
-        // Fiber-aware, so a Flush from a worker parks its fiber instead of the thread underneath it.
-        mutable FFiberMutex             PendingMutex;
-        mutable FFiberConditionVariable PendingSignal;
+        mutable FMutex             PendingMutex;
+        mutable FConditionVariable PendingSignal;
+
+    private:
+
+        struct FBatch;
+
+        void CompileChunk(FBatch& Batch, uint32 Start, uint32 End, uint32 Thread);
     };
 }

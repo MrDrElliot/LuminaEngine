@@ -3,28 +3,12 @@
 
 #include "Thread.h"
 #include "Platform/Time/PlatformTime.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
 
 namespace Lumina
 {
-    namespace
-    {
-        // A fiber can park mid-section and resume on another worker, so a thread id would let the next fiber on that worker in.
-        FORCEINLINE uint64 RecursiveOwnerToken() noexcept
-        {
-            if (const Jobs::FFiberHandle Fiber = Jobs::GetCurrentFiberHandle())
-            {
-                return reinterpret_cast<uint64>(Fiber.Fiber);
-            }
-
-            // The top bit is never set in a user-space address, so a thread can never pass for a fiber.
-            return Threading::GetThreadID() | (1ull << 63);
-        }
-    }
-
     void FRecursiveMutex::Lock() noexcept
     {
-        const uint64 Self = RecursiveOwnerToken();
+        const uint64 Self = Threading::GetThreadID();
 
         if (Owner.load(std::memory_order_relaxed) == Self)
         {
@@ -39,7 +23,7 @@ namespace Lumina
 
     bool FRecursiveMutex::TryLock() noexcept
     {
-        const uint64 Self = RecursiveOwnerToken();
+        const uint64 Self = Threading::GetThreadID();
 
         if (Owner.load(std::memory_order_relaxed) == Self)
         {
@@ -63,6 +47,45 @@ namespace Lumina
         {
             Owner.store(0, std::memory_order_relaxed);
             Inner.Unlock();
+        }
+    }
+
+    void FSemaphore::Acquire() noexcept
+    {
+        FUniqueLock Lock(Mutex);
+        Available.Wait(Lock, [this] { return Permits != 0; });
+        --Permits;
+    }
+
+    bool FSemaphore::TryAcquire() noexcept
+    {
+        FScopeLock Lock(Mutex);
+        if (Permits == 0)
+        {
+            return false;
+        }
+
+        --Permits;
+        return true;
+    }
+
+    void FSemaphore::Release(uint32 Count) noexcept
+    {
+        if (Count == 0)
+        {
+            return;
+        }
+
+        FScopeLock Lock(Mutex);
+        Permits += Count;
+
+        if (Count == 1)
+        {
+            Available.NotifyOne();
+        }
+        else
+        {
+            Available.NotifyAll();
         }
     }
 

@@ -85,14 +85,14 @@ namespace Lumina
             CEdGraphNode* N = Conn->GetOwningNode();
             if (N != nullptr && !N->IsRerouteNode())
             {
-                if (OutSet.insert(N).second)
+                if (OutSet.TryAdd(N))
                 {
-                    Q.push(N);
+                    Q.Enqueue(N);
                 }
             }
             else if (N != nullptr)
             {
-                Q.push(N);
+                Q.Enqueue(N);
             }
         }
 
@@ -108,21 +108,21 @@ namespace Lumina
 
             if (Up->IsRerouteNode())
             {
-                if (VisitedPassthrough.insert(Up).second)
+                if (VisitedPassthrough.TryAdd(Up))
                 {
-                    Q.push(Up);
+                    Q.Enqueue(Up);
                 }
             }
-            else if (OutSet.insert(Up).second)
+            else if (OutSet.TryAdd(Up))
             {
-                Q.push(Up);
+                Q.Enqueue(Up);
             }
         };
 
-        while (!Q.empty())
+        while (!Q.IsEmpty())
         {
-            CEdGraphNode* Node = Q.front();
-            Q.pop();
+            CEdGraphNode* Node = Q.Peek();
+            Q.Pop();
 
             // A named reroute usage carries no input pins; its source is the declaration's input.
             if (Node->IsRerouteNode())
@@ -165,7 +165,7 @@ namespace Lumina
         // Reroutes emit nothing, but their source still has to be walked, possibly downstream of itself.
         if (Node->IsRerouteNode())
         {
-            if (!InProgress.insert(Node).second)
+            if (!InProgress.TryAdd(Node))
             {
                 return;
             }
@@ -179,11 +179,11 @@ namespace Lumina
             return;
         }
 
-        if (StageSet.find(Node) == StageSet.end() || Emitted.find(Node) != Emitted.end())
+        if (!StageSet.Contains(Node) || Emitted.Contains(Node))
         {
             return;
         }
-        if (!InProgress.insert(Node).second)
+        if (!InProgress.TryAdd(Node))
         {
             return;
         }
@@ -197,8 +197,8 @@ namespace Lumina
             }
         }
 
-        Emitted.insert(Node);
-        OutOrder.push_back(Node);
+        Emitted.Add(Node);
+        OutOrder.Add(Node);
     }
 
     // A thin alias so all reroute resolution lives in FMaterialCompiler::ResolveThroughReroutes.
@@ -378,7 +378,7 @@ namespace Lumina
 
     void CMaterialNodeGraph::CompileGraph(FMaterialCompiler& Compiler)
     {
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return;
         }
@@ -468,7 +468,7 @@ namespace Lumina
                                              const TVector<CEdNodeGraphPin*>& RootPins) -> TVector<CEdGraphNode*>
         {
             TVector<CEdGraphNode*> Order;
-            Order.reserve(StageSet.size());
+            Order.Reserve(StageSet.Num());
 
             THashSet<CEdGraphNode*> Emitted;
             THashSet<CEdGraphNode*> InProgress;
@@ -484,14 +484,14 @@ namespace Lumina
                 }
             }
 
-            if (Order.size() != StageSet.size())
+            if (Order.Num() != StageSet.Num())
             {
-                Order.clear();
+                Order.Reset();
                 for (CEdGraphNode* Node : SortedNodes)
                 {
-                    if (StageSet.find(Node) != StageSet.end() && !Node->IsRerouteNode())
+                    if (StageSet.Contains(Node) && !Node->IsRerouteNode())
                     {
-                        Order.push_back(Node);
+                        Order.Add(Node);
                     }
                 }
             }
@@ -505,15 +505,15 @@ namespace Lumina
         THashMap<int64, FNodeInsight> Insights;
         auto EmitNode = [&Compiler, &Insights](CEdGraphNode* Node, bool bVertex)
         {
-            const size_t Start = Compiler.GetActiveChunk().size();
+            const int32 Start = Compiler.GetActiveChunk().Len();
             static_cast<CMaterialGraphNode*>(Node)->GenerateDefinition(Compiler);
             FNodeInsight& Insight = Insights[Node->GetNodeID()];
-            (bVertex ? Insight.VertexCode : Insight.PixelCode) += Compiler.GetActiveChunk().substr(Start);
+            (bVertex ? Insight.VertexCode : Insight.PixelCode) += Compiler.GetActiveChunk().Mid(Start);
         };
 
         Compiler.SetStage(EMaterialCompileStage::Pixel);
         const TVector<CEdGraphNode*> PixelOrder = BuildEmitOrder(PixelSet, PixelRoots);
-        for (size_t i = 0; i < PixelOrder.size(); ++i)
+        for (int32 i = 0; i < PixelOrder.Num(); ++i)
         {
             CEdGraphNode* Node = PixelOrder[i];
             Node->SetDebugExecutionOrder((uint32)i);
@@ -527,12 +527,12 @@ namespace Lumina
         }
 
         // Skipped when VertexSet empty (WPO unconnected); unmodified materials pay zero compile-time cost.
-        if (!VertexSet.empty())
+        if (!VertexSet.IsEmpty())
         {
             Compiler.SetStage(EMaterialCompileStage::Vertex);
 
             TVector<CEdNodeGraphPin*> VertexRoots;
-            VertexRoots.push_back(OutputNode ? OutputNode->WorldPositionOffsetPin : nullptr);
+            VertexRoots.Add(OutputNode ? OutputNode->WorldPositionOffsetPin : nullptr);
 
             for (CEdGraphNode* Node : BuildEmitOrder(VertexSet, VertexRoots))
             {
@@ -557,7 +557,7 @@ namespace Lumina
         for (auto& [NodeID, Insight] : Insights)
         {
             Insight.Cost       = FMaterialCompiler::EstimateCost(Insight.PixelCode, Insight.VertexCode);
-            Insight.bReadsTime = Insight.PixelCode.find("GetTime()") != FString::npos || Insight.VertexCode.find("GetTime()") != FString::npos;
+            Insight.bReadsTime = Insight.PixelCode.Find("GetTime()") != Constants::kIndexNone || Insight.VertexCode.Find("GetTime()") != Constants::kIndexNone;
             MaxNodeCost        = Math::Max(MaxNodeCost, Insight.Cost);
         }
         NodeInsights = Move(Insights);
@@ -580,7 +580,7 @@ namespace Lumina
         }
 
         THashSet<CEdGraphNode*> Closure;
-        Closure.insert(Node);
+        Closure.Add(Node);
         for (const TStrongObjectPtr<CEdNodeGraphPin>& Input : Node->GetInputPins())
         {
             CollectInputClosure(Input.Get(), Closure);
@@ -630,12 +630,12 @@ namespace Lumina
         TVector<CEdGraphNode*> Selected;
         ImVec2 Pivot;
         CollectSelectedNodesForClone(Selected, Pivot);
-        erase_if(Selected, [](const CEdGraphNode* Node)
+        Selected.RemoveAll([](const CEdGraphNode* Node)
         {
             return Node->IsCommentNode() || Node->IsA<CMaterialOutputNode>()
                 || Node->IsA<CMaterialExpression_FunctionInput>() || Node->IsA<CMaterialFunctionOutput>();
         });
-        if (Selected.empty())
+        if (Selected.IsEmpty())
         {
             OutError = "Select the nodes to collapse first.";
             return false;
@@ -644,7 +644,7 @@ namespace Lumina
         THashSet<CEdGraphNode*> Inside;
         for (CEdGraphNode* Node : Selected)
         {
-            Inside.insert(Node);
+            Inside.Add(Node);
         }
 
         // One outside source becomes one function input, and one inside result one function output.
@@ -659,8 +659,8 @@ namespace Lumina
         CollectLinks(Links);
         for (const auto& [InputPin, OutputPin] : Links)
         {
-            const bool bInputInside  = Inside.contains(InputPin->GetOwningNode());
-            const bool bOutputInside = Inside.contains(OutputPin->GetOwningNode());
+            const bool bInputInside  = Inside.Contains(InputPin->GetOwningNode());
+            const bool bOutputInside = Inside.Contains(OutputPin->GetOwningNode());
             if (bInputInside == bOutputInside)
             {
                 continue;
@@ -671,42 +671,42 @@ namespace Lumina
             auto Found = Algo::FindIf(Side, [Source](const FBoundary& Boundary) { return Boundary.Source == Source; });
             if (Found == Side.end())
             {
-                Side.push_back(FBoundary{ OutputPin, { InputPin } });
+                Side.Add(FBoundary{ OutputPin, { InputPin } });
             }
             else
             {
-                Found->Targets.push_back(InputPin);
+                Found->Targets.Add(InputPin);
             }
         }
 
-        const FString Folder = Paths::Parent(FStringView(HostData->Path.c_str()));
+        const FString Folder = Paths::Parent(FStringView(*HostData->Path));
         FFixedString AssetPath;
-        for (int32 Attempt = 1; AssetPath.empty() || VFS::Exists(AssetPath); ++Attempt)
+        for (int32 Attempt = 1; AssetPath.IsEmpty() || VFS::Exists(AssetPath); ++Attempt)
         {
-            const FString Name = Attempt == 1 ? Lumina::Format("MF_{}", Material->GetName().c_str()) : Lumina::Format("MF_{}_{}", Material->GetName().c_str(), Attempt);
+            const FString Name = Attempt == 1 ? Lumina::Format("MF_{}", *Material->GetName()) : Lumina::Format("MF_{}_{}", *Material->GetName(), Attempt);
             AssetPath = Paths::Combine(FStringView(Folder), FStringView(Name));
             CPackage::AddPackageExt(AssetPath);
         }
 
-        CMaterialFunction* Function = CFactory::CreateNewOf<CMaterialFunction>(FStringView(AssetPath.c_str(), AssetPath.size()));
+        CMaterialFunction* Function = CFactory::CreateNewOf<CMaterialFunction>(FStringView(*AssetPath, AssetPath.Len()));
         CMaterialNodeGraph* FunctionGraph = Function != nullptr ? MaterialOps::FindOrCreateFunctionGraph(Function) : nullptr;
         if (FunctionGraph == nullptr)
         {
-            OutError = Lumina::Format("Could not create {}.", AssetPath.c_str());
+            OutError = Lumina::Format("Could not create {}.", *AssetPath);
             return false;
         }
 
         const THashMap<CEdGraphNode*, CEdGraphNode*> Clones = FunctionGraph->CloneNodes(Selected, ImVec2(-Pivot.x, -Pivot.y));
         auto CopiedPin = [&Clones](CEdNodeGraphPin* Pin, bool bInput) -> CEdNodeGraphPin*
         {
-            auto Found = Clones.find(Pin->GetOwningNode());
-            if (Found == Clones.end())
+            auto Found = Clones.Find(Pin->GetOwningNode());
+            if (Found == nullptr)
             {
                 return nullptr;
             }
             const auto& Original = bInput ? Pin->GetOwningNode()->GetInputPins() : Pin->GetOwningNode()->GetOutputPins();
-            const auto& Copied   = bInput ? Found->second->GetInputPins() : Found->second->GetOutputPins();
-            for (size_t Index = 0; Index < Original.size() && Index < Copied.size(); ++Index)
+            const auto& Copied   = bInput ? (*Found)->GetInputPins() : (*Found)->GetOutputPins();
+            for (int32 Index = 0; Index < Original.Num() && Index < Copied.Num(); ++Index)
             {
                 if (Original[Index].Get() == Pin)
                 {
@@ -720,18 +720,18 @@ namespace Lumina
         TVector<FName> TakenNames;
         auto PinIdentifier = [&TakenNames](const CEdNodeGraphPin* Pin)
         {
-            FString Base = Pin->GetOwningNode()->GetNodeTitleText() + (Pin->GetPinName().empty() ? FString() : "_" + Pin->GetPinName());
+            FString Base = Pin->GetOwningNode()->GetNodeTitleText() + (Pin->GetPinName().IsEmpty() ? FString() : "_" + Pin->GetPinName());
             for (char& Character : Base)
             {
                 const bool bWord = (Character >= 'a' && Character <= 'z') || (Character >= 'A' && Character <= 'Z') || (Character >= '0' && Character <= '9');
                 Character = bWord ? Character : '_';
             }
-            FName Name(Base.c_str());
+            FName Name(*Base);
             for (int32 Suffix = 2; Algo::Find(TakenNames, Name) != TakenNames.end(); ++Suffix)
             {
-                Name = FName(Lumina::Format("{}_{}", Base, Suffix).c_str());
+                Name = FName(*Lumina::Format("{}_{}", Base, Suffix));
             }
-            TakenNames.push_back(Name);
+            TakenNames.Add(Name);
             return Name;
         };
 
@@ -747,7 +747,7 @@ namespace Lumina
 
         constexpr float BoundaryGap     = 380.0f;
         constexpr float BoundarySpacing = 140.0f;
-        for (int32 Index = 0; Index < (int32)Incoming.size(); ++Index)
+        for (int32 Index = 0; Index < Incoming.Num(); ++Index)
         {
             CMaterialExpression_FunctionInput* Input = NewObject<CMaterialExpression_FunctionInput>(FunctionGraph->GetNodeOuter());
             Input->InputName    = PinIdentifier(Incoming[Index].Source);
@@ -764,7 +764,7 @@ namespace Lumina
             }
         }
 
-        for (int32 Index = 0; Index < (int32)Outgoing.size(); ++Index)
+        for (int32 Index = 0; Index < Outgoing.Num(); ++Index)
         {
             CMaterialFunctionOutput* Output = NewObject<CMaterialFunctionOutput>(FunctionGraph->GetNodeOuter());
             Output->OutputName   = PinIdentifier(Outgoing[Index].Source);
@@ -779,9 +779,9 @@ namespace Lumina
         }
 
         MaterialOps::SyncFunctionSignature(Function, FunctionGraph);
-        if (!CPackage::SavePackage(Function->GetPackage(), FStringView(AssetPath.c_str(), AssetPath.size())))
+        if (!CPackage::SavePackage(Function->GetPackage(), FStringView(*AssetPath, AssetPath.Len())))
         {
-            OutError = Lumina::Format("Could not save {}.", AssetPath.c_str());
+            OutError = Lumina::Format("Could not save {}.", *AssetPath);
             return false;
         }
         FAssetRegistry::Get().AssetCreated(Function);
@@ -793,11 +793,11 @@ namespace Lumina
         Call->SetGridPos(Pivot.x, Pivot.y);
         RemoveNodes(Selected);
 
-        for (int32 Index = 0; Index < (int32)Incoming.size() && Index < (int32)Call->FunctionInputPins.size(); ++Index)
+        for (int32 Index = 0; Index < Incoming.Num() && Index < Call->FunctionInputPins.Num(); ++Index)
         {
             ConnectPins(Incoming[Index].Source, Call->FunctionInputPins[Index]);
         }
-        for (int32 Index = 0; Index < (int32)Outgoing.size() && Index < (int32)Call->FunctionOutputPins.size(); ++Index)
+        for (int32 Index = 0; Index < Outgoing.Num() && Index < Call->FunctionOutputPins.Num(); ++Index)
         {
             for (CEdNodeGraphPin* Target : Outgoing[Index].Targets)
             {
@@ -807,7 +807,7 @@ namespace Lumina
 
         GetEditor().ClearSelection();
         GetEditor().SelectNode(Call->GetNodeID(), false);
-        OutPath = AssetPath.c_str();
+        OutPath = *AssetPath;
         return true;
     }
 
@@ -828,7 +828,7 @@ namespace Lumina
         }
 
         CMaterialGraphNode* MaterialNode = Cast<CMaterialGraphNode>(Node);
-        if (MaterialNode == nullptr || Node->GetOutputPins().empty())
+        if (MaterialNode == nullptr || Node->GetOutputPins().IsEmpty())
         {
             return;
         }
@@ -842,7 +842,7 @@ namespace Lumina
 
     bool CMaterialNodeGraph::HasNodePreview(const CEdGraphNode* Node)
     {
-        return Cast<CMaterialGraphNode>(Node) != nullptr && !Node->GetOutputPins().empty() && NodePreviewSource;
+        return Cast<CMaterialGraphNode>(Node) != nullptr && !Node->GetOutputPins().IsEmpty() && NodePreviewSource;
     }
 
     void CMaterialNodeGraph::DrawNodePreviewContent(CEdGraphNode* Node)
@@ -918,31 +918,31 @@ namespace Lumina
             return;
         }
         TimeVaryingKey = Key;
-        TimeVaryingNodes.clear();
+        TimeVaryingNodes.Reset();
 
         // Everything downstream of a node reading the time changes every frame too.
         TVector<const CEdGraphNode*> Frontier;
         for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : Nodes)
         {
-            auto Found = NodeInsights.find(NodeRef->GetNodeID());
-            if (Found != NodeInsights.end() && Found->second.bReadsTime && TimeVaryingNodes.insert(NodeRef.Get()).second)
+            auto Found = NodeInsights.Find(NodeRef->GetNodeID());
+            if (Found != nullptr && Found->bReadsTime && TimeVaryingNodes.TryAdd(NodeRef.Get()))
             {
-                Frontier.push_back(NodeRef.Get());
+                Frontier.Add(NodeRef.Get());
             }
         }
 
-        while (!Frontier.empty())
+        while (!Frontier.IsEmpty())
         {
-            const CEdGraphNode* Node = Frontier.back();
-            Frontier.pop_back();
+            const CEdGraphNode* Node = Frontier.Last();
+            Frontier.Pop();
             for (const TStrongObjectPtr<CEdNodeGraphPin>& Output : Node->GetOutputPins())
             {
                 for (CEdNodeGraphPin* Connection : Output->GetConnections())
                 {
                     const CEdGraphNode* Downstream = Connection->GetOwningNode();
-                    if (Downstream != nullptr && TimeVaryingNodes.insert(Downstream).second)
+                    if (Downstream != nullptr && TimeVaryingNodes.TryAdd(Downstream))
                     {
-                        Frontier.push_back(Downstream);
+                        Frontier.Add(Downstream);
                     }
                 }
             }
@@ -952,32 +952,32 @@ namespace Lumina
     bool CMaterialNodeGraph::WantsLinkFlow(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin)
     {
         RefreshTimeVaryingNodes();
-        return TimeVaryingNodes.contains(OutputPin->GetOwningNode());
+        return TimeVaryingNodes.Contains(OutputPin->GetOwningNode());
     }
 
     bool CMaterialNodeGraph::GetNodeHeat(const CEdGraphNode* Node, float& OutHeat, FString& OutLabel)
     {
-        auto Found = bShowCostHeat ? NodeInsights.find(Node->GetNodeID()) : NodeInsights.end();
-        if (Found == NodeInsights.end() || MaxNodeCost == 0)
+        const FNodeInsight* Found = bShowCostHeat ? NodeInsights.Find(Node->GetNodeID()) : nullptr;
+        if (Found == nullptr || MaxNodeCost == 0)
         {
             return false;
         }
 
-        OutHeat  = (float)Found->second.Cost / (float)MaxNodeCost;
-        OutLabel = Lumina::Format("{}", Found->second.Cost);
+        OutHeat  = (float)Found->Cost / (float)MaxNodeCost;
+        OutLabel = Lumina::Format("{}", Found->Cost);
         return true;
     }
 
     bool CMaterialNodeGraph::GetNodeGeneratedCode(const CEdGraphNode* Node, FString& OutCode)
     {
-        auto Found = NodeInsights.find(Node->GetNodeID());
-        if (Found == NodeInsights.end() || (Found->second.PixelCode.empty() && Found->second.VertexCode.empty()))
+        auto Found = NodeInsights.Find(Node->GetNodeID());
+        if (Found == nullptr || (Found->PixelCode.IsEmpty() && Found->VertexCode.IsEmpty()))
         {
             return false;
         }
 
-        const FNodeInsight& Insight = Found->second;
-        OutCode = Insight.VertexCode.empty() ? Insight.PixelCode : "[Vertex]\n" + Insight.VertexCode + "\n[Pixel]\n" + Insight.PixelCode;
+        const FNodeInsight& Insight = (*Found);
+        OutCode = Insight.VertexCode.IsEmpty() ? Insight.PixelCode : "[Vertex]\n" + Insight.VertexCode + "\n[Pixel]\n" + Insight.PixelCode;
         return true;
     }
 
@@ -990,9 +990,9 @@ namespace Lumina
         if (CMaterialOutput* Output = Cast<CMaterialOutput>(Pin))
         {
             const EMaterialInputType Produced = InferOutputPinType(Output);
-            ImGui::TextColored(TypeColor, "%s", FMaterialCompiler::GetHLSLTypeName(Produced).c_str());
+            ImGui::TextColored(TypeColor, "%s", *FMaterialCompiler::GetHLSLTypeName(Produced));
             ImGui::SameLine();
-            ImGui::TextUnformatted(Output->GetPinName().c_str());
+            ImGui::TextUnformatted(*Output->GetPinName());
             return;
         }
 
@@ -1003,13 +1003,13 @@ namespace Lumina
             return;
         }
 
-        ImGui::TextUnformatted(Input->GetPinName().c_str());
+        ImGui::TextUnformatted(*Input->GetPinName());
         ImGui::Separator();
 
         const EMaterialInputType Expected = Input->GetInputType();
         ImGui::TextUnformatted("expects");
         ImGui::SameLine(ValueColumn);
-        ImGui::TextColored(TypeColor, "%s", FMaterialCompiler::GetHLSLTypeName(Expected).c_str());
+        ImGui::TextColored(TypeColor, "%s", *FMaterialCompiler::GetHLSLTypeName(Expected));
 
         if (!Input->HasConnection())
         {
@@ -1023,13 +1023,13 @@ namespace Lumina
         ImGui::TextUnformatted("receives");
         ImGui::SameLine(ValueColumn);
         ImGui::TextColored(bWidthDiffers ? MismatchColor : TypeColor, "%s",
-            FMaterialCompiler::GetHLSLTypeName(Incoming).c_str());
+            *FMaterialCompiler::GetHLSLTypeName(Incoming));
 
         CMaterialOutput* SourcePin = ResolveOutputThroughReroutes(Input->GetConnection<CMaterialOutput>(0));
         if (SourcePin != nullptr && SourcePin->GetOwningNode() != nullptr)
         {
             ImGui::SameLine();
-            ImGui::TextDisabled("from %s", SourcePin->GetOwningNode()->GetNodeFullName().c_str());
+            ImGui::TextDisabled("from %s", *SourcePin->GetOwningNode()->GetNodeFullName());
         }
     }
 
@@ -1055,8 +1055,8 @@ namespace Lumina
 
     void CMaterialNodeGraph::ValidateGraph()
     {
-        Connections.clear();
-        Connections.reserve(16);
+        Connections.Reset();
+        Connections.Reserve(16);
 
         for (const auto& NodeRef : Nodes)
         {
@@ -1066,8 +1066,8 @@ namespace Lumina
                 CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
-                    Connections.push_back(InputPin->PinID);
-                    Connections.push_back(Connection->PinID);
+                    Connections.Add(InputPin->PinID);
+                    Connections.Add(Connection->PinID);
                 }
             }
         }

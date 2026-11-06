@@ -209,8 +209,11 @@ public static unsafe class ElementMarshal
                 return Unsafe.As<FString, T>(ref Value);
             }
             case EElementKind.ObjectRef:
-                // A TStrongObjectPtr is one pointer like the native slot, so only its write differs.
-                return Unsafe.ReadUnaligned<T>((void*)Address);
+            {
+                // Through the native Get, which answers null for an object the slot still names after it was destroyed.
+                IntPtr Live = Native.GetObjectPtr(Address);
+                return Unsafe.As<IntPtr, T>(ref Live);
+            }
 
             case EElementKind.StructView:
             case EElementKind.SlotView:
@@ -366,6 +369,36 @@ public static unsafe class ElementMarshal
             default:
                 Unsafe.WriteUnaligned((void*)Address, Value);
                 break;
+        }
+    }
+
+    internal static T Detach<T>(T Value)
+    {
+        if (ElementKind<T>.Kind == EElementKind.String)
+        {
+            FString Text = Unsafe.As<T, FString>(ref Value);
+            if (Text.IsBound)
+            {
+                FString Owned = new FString(Text.ToString());
+                return Unsafe.As<FString, T>(ref Owned);
+            }
+        }
+        return Value;
+    }
+
+    internal static nint BoundAddress<T>(T Value)
+    {
+        switch (ElementKind<T>.Kind)
+        {
+            case EElementKind.String:
+                return Unsafe.As<T, FString>(ref Value).Address;
+            case EElementKind.StructView:
+            {
+                NativeRef View = Unsafe.As<T, NativeRef>(ref Value);
+                return View.IsNull ? 0 : View.Address;
+            }
+            default:
+                return 0;
         }
     }
 

@@ -100,10 +100,10 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Rows.clear();
+        Rows.Reset();
         TotalAlive = Object::Internal::GetNumAliveObjects();
         TotalSlots = Object::Internal::GetMaxObjects();
-        Rows.reserve((size_t)Math::Max(TotalAlive, 0));
+        Rows.Reserve(Math::Max(TotalAlive, 0));
 
         // The ONE walk, so the draw path never touches the object array or dereferences a CObject.
         ForEachObject([this](CObjectBase* Base, int32 Index)
@@ -114,11 +114,11 @@ namespace Lumina
                 return;
             }
 
-            FObjectBrowserRow& Row = Rows.emplace_back();
+            FObjectBrowserRow& Row = Rows.EmplaceGetRef();
             Row.Object     = Object;
             Row.Name       = Object->GetName();
             Row.Flags      = Object->GetFlags();
-            Row.FlagsText  = ObjectFlagsToString(Row.Flags).c_str();
+            Row.FlagsText  = *ObjectFlagsToString(Row.Flags);
             Row.StrongRefs = Object->GetStrongRefCount();
             Row.bIsAsset   = Object->IsAsset();
 
@@ -140,10 +140,10 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        VisibleRows.clear();
-        VisibleRows.reserve(Rows.size());
+        VisibleRows.Reset();
+        VisibleRows.Reserve(Rows.Num());
 
-        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        for (int32 i = 0; i < Rows.Num(); ++i)
         {
             const FObjectBrowserRow& Row = Rows[i];
 
@@ -153,16 +153,16 @@ namespace Lumina
             if (Filter.bRootedOnly          && !EnumHasAnyFlags(Row.Flags, OF_Rooted))       { continue; }
             if (Filter.bAssetsOnly          && !Row.bIsAsset)                                { continue; }
 
-            if (NameFilter.IsActive() && !ImGuiX::PassSearchFilter(NameFilter, Row.Name.c_str()))
+            if (NameFilter.IsActive() && !ImGuiX::PassSearchFilter(NameFilter, *Row.Name))
             {
                 continue;
             }
-            if (ClassFilter.IsActive() && !ImGuiX::PassSearchFilter(ClassFilter, Row.ClassName.c_str()))
+            if (ClassFilter.IsActive() && !ImGuiX::PassSearchFilter(ClassFilter, *Row.ClassName))
             {
                 continue;
             }
 
-            VisibleRows.push_back(i);
+            VisibleRows.Add(i);
         }
 
         ApplySort();
@@ -184,9 +184,9 @@ namespace Lumina
             switch (Column)
             {
             // The old comparator called ToString on both sides, two heap allocations per compare per frame.
-            case Column_Name:       Comparison = strcmp(RowA.Name.c_str(), RowB.Name.c_str()); break;
-            case Column_Class:      Comparison = strcmp(RowA.ClassName.c_str(), RowB.ClassName.c_str()); break;
-            case Column_Package:    Comparison = strcmp(RowA.PackageName.c_str(), RowB.PackageName.c_str()); break;
+            case Column_Name:       Comparison = strcmp(*RowA.Name, *RowB.Name); break;
+            case Column_Class:      Comparison = strcmp(*RowA.ClassName, *RowB.ClassName); break;
+            case Column_Package:    Comparison = strcmp(*RowA.PackageName, *RowB.PackageName); break;
             case Column_StrongRefs: Comparison = RowA.StrongRefs - RowB.StrongRefs; break;
             case Column_Flags:      Comparison = (int32)RowA.Flags - (int32)RowB.Flags; break;
             default: break;
@@ -253,7 +253,7 @@ namespace Lumina
         // Counts come from the snapshot, so they describe what is actually on screen.
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("%d shown", (int32)VisibleRows.size());
+        ImGui::Text("%d shown", VisibleRows.Num());
         ImGui::SameLine();
         ImGui::TextDisabled("of %d live / %d slots", TotalAlive, TotalSlots);
 
@@ -339,7 +339,7 @@ namespace Lumina
         CObject* Selected = ResolveSelection();
 
         ImGuiListClipper Clipper;
-        Clipper.Begin((int32)VisibleRows.size());
+        Clipper.Begin(VisibleRows.Num());
 
         while (Clipper.Step())
         {
@@ -354,7 +354,7 @@ namespace Lumina
 
                 // Compared by resolved pointer, since the index changes on every refilter and sort.
                 const bool bSelected = (Selected != nullptr) && (Selected == Row.Object.Get());
-                if (ImGui::Selectable(Row.Name.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns))
+                if (ImGui::Selectable(*Row.Name, bSelected, ImGuiSelectableFlags_SpanAllColumns))
                 {
                     SelectedObject = Row.Object;
                 }
@@ -363,25 +363,25 @@ namespace Lumina
                 {
                     if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Name"))
                     {
-                        ImGui::SetClipboardText(Row.Name.c_str());
+                        ImGui::SetClipboardText(*Row.Name);
                     }
                     if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Class"))
                     {
-                        ImGui::SetClipboardText(Row.ClassName.c_str());
+                        ImGui::SetClipboardText(*Row.ClassName);
                     }
                     // Resolved on demand, since the GUID is not worth a string per row per snapshot.
                     if (CObject* Live = Row.Object.Get())
                     {
                         if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy GUID"))
                         {
-                            ImGui::SetClipboardText(Live->GetGUID().ToString().c_str());
+                            ImGui::SetClipboardText(*Live->GetGUID().ToString());
                         }
                     }
                     ImGui::EndPopup();
                 }
 
                 ImGui::TableSetColumnIndex(Column_Class);
-                ImGui::TextUnformatted(Row.ClassName.c_str());
+                ImGui::TextUnformatted(*Row.ClassName);
 
                 ImGui::TableSetColumnIndex(Column_Package);
                 if (Row.PackageName.IsNone())
@@ -390,7 +390,7 @@ namespace Lumina
                 }
                 else
                 {
-                    ImGui::TextUnformatted(Row.PackageName.c_str());
+                    ImGui::TextUnformatted(*Row.PackageName);
                 }
 
                 ImGui::TableSetColumnIndex(Column_StrongRefs);
@@ -398,7 +398,7 @@ namespace Lumina
 
 
                 ImGui::TableSetColumnIndex(Column_Flags);
-                ImGui::TextColored(FlagsTint(Row.Flags), "%s", Row.FlagsText.c_str());
+                ImGui::TextColored(FlagsTint(Row.Flags), "%s", *Row.FlagsText);
 
                 ImGui::PopID();
             }
@@ -429,28 +429,28 @@ namespace Lumina
         }
 
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
-        ImGui::TextUnformatted(Object->GetName().c_str());
+        ImGui::TextUnformatted(*Object->GetName());
         ImGuiX::Font::PopFont();
 
         // The class chain is the quickest way to see what a thing is and what it inherits.
         FString Chain;
         for (CClass* Class = Object->GetClass(); Class != nullptr; Class = Cast<CClass>(Class->GetSuperStruct()))
         {
-            if (!Chain.empty())
+            if (!Chain.IsEmpty())
             {
                 Chain += " < ";
             }
-            Chain += Class->GetName().c_str();
+            Chain += *Class->GetName();
         }
-        ImGui::TextColored(EditorColors::TextDim(), "%s", Chain.c_str());
+        ImGui::TextColored(EditorColors::TextDim(), "%s", *Chain);
 
         if (CPackage* Package = Object->GetPackage())
         {
-            ImGui::TextColored(EditorColors::TextMuted(), "Package: %s", Package->GetName().c_str());
+            ImGui::TextColored(EditorColors::TextMuted(), "Package: %s", *Package->GetName());
         }
 
-        ImGui::TextColored(EditorColors::TextMuted(), "GUID: %s", Object->GetGUID().ToString().c_str());
-        ImGui::TextColored(FlagsTint(Object->GetFlags()), "%s", ObjectFlagsToString(Object->GetFlags()).c_str());
+        ImGui::TextColored(EditorColors::TextMuted(), "GUID: %s", *Object->GetGUID().ToString());
+        ImGui::TextColored(FlagsTint(Object->GetFlags()), "%s", *ObjectFlagsToString(Object->GetFlags()));
         ImGui::TextColored(EditorColors::TextMuted(), "Strong: %d", Object->GetStrongRefCount());
 
         ImGui::Separator();

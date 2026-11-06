@@ -236,9 +236,9 @@ namespace Lumina::Reflection
         
         bool IsBlittableValueStruct(const FReflectedStruct& Struct, const FReflectionDatabase& Db, int& OutSize, int& OutAlign)
         {
-            if (Struct.HasMetadata("Component"))
+            if (Struct.HasMetadata("Component") || Struct.bIsResource)
             {
-                return false; // write-through component wrapper (see EmitForStruct)
+                return false; // write-through wrapper over the live component or world resource (see EmitForStruct)
             }
             if (!Struct.Parent.empty())
             {
@@ -803,12 +803,32 @@ namespace Lumina::Reflection
             return Kind == EBind::Number || Kind == EBind::Bool || Kind == EBind::Enum || Kind == EBind::StructValue;
         }
 
+        // A view mutates the native container with no setter to hook, so handing it out is what marks the owner, as a ref does.
+        void EmitContainerView(FCodeWriter& Writer, const std::string& Signature, const std::string& Construct, const std::string& WriteHook)
+        {
+            if (WriteHook.empty())
+            {
+                Writer.Linef("%s =>", Signature.c_str());
+                Writer.Linef("    %s;", Construct.c_str());
+                return;
+            }
+            Writer.Line(Signature.c_str());
+            Writer.BeginBlock();
+            Writer.Line("get");
+            Writer.BeginBlock();
+            Writer.Linef("%s();", WriteHook.c_str());
+            Writer.Linef("return %s;", Construct.c_str());
+            Writer.EndBlock();
+            Writer.EndBlock();
+        }
+
         // A blittable element reads in place at the offset, everything else falls back to per-index thunks.
         void EmitCSharpArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const std::string& Friendly, const std::string& Module, const std::string& TypeName)
+            const std::string& Friendly, const std::string& Module, const std::string& TypeName, const std::string& WriteHook)
         {
             const std::string& Member = Prop.Name;
             const std::string PropName = SafeIdentifier(Member);
+            const std::string Hook = IsReadOnlyProp(Prop) ? std::string() : WriteHook;
 
             if (IsBlittableElementKind(B.Elem->Kind))
             {
@@ -825,8 +845,10 @@ namespace Lumina::Reflection
                     const std::string OpsFn = "__vecopsfn_" + Member;
                     const std::string OpsField = "__ops_" + Member;
                     const std::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
-                    Writer.Linef("public global::Lumina.TVector<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
-                    Writer.Linef("    new global::Lumina.TVector<%s>(global::LuminaSharp.NativeBindings.FieldAt(Self, %s), %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
+                    EmitContainerView(Writer,
+                        "public global::Lumina.TVector<" + B.Elem->CSharp + "> " + PropName,
+                        "new global::Lumina.TVector<" + B.Elem->CSharp + ">(global::LuminaSharp.NativeBindings.FieldAt(Self, " + OffName + "), " + OpsField + ")",
+                        Hook);
                     Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn.c_str());
                     Writer.Linef("    (delegate* unmanaged[Cdecl]<nint>)global::LuminaSharp.NativeBindings.Resolve(\"%s\", \"%s\");",
                         Module.c_str(), OpsThunk.c_str());
@@ -849,8 +871,9 @@ namespace Lumina::Reflection
                 const std::string OpsField2 = "__ops_" + Member;
                 const std::string OpsThunk2 = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
 
-                Writer.Linef("public %s %s =>", View.c_str(), PropName.c_str());
-                Writer.Linef("    new %s(global::LuminaSharp.NativeBindings.FieldAt(Self, %s), %s);", View.c_str(), OffName2.c_str(), OpsField2.c_str());
+                EmitContainerView(Writer, "public " + View + " " + PropName,
+                    "new " + View + "(global::LuminaSharp.NativeBindings.FieldAt(Self, " + OffName2 + "), " + OpsField2 + ")",
+                    Hook);
                 EmitOffsetField(Writer, OffName2, Prop, TypeName);
                 Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn2.c_str());
                 Writer.Linef("    (delegate* unmanaged[Cdecl]<nint>)global::LuminaSharp.NativeBindings.Resolve(\"%s\", \"%s\");",
@@ -1126,15 +1149,16 @@ namespace Lumina::Reflection
                     break;
                 }
                 case EBind::Array:
-                    EmitCSharpArray(Writer, Prop, B, Friendly, Module, TypeName);
+                    EmitCSharpArray(Writer, Prop, B, Friendly, Module, TypeName, WriteHook);
                     break;
                 case EBind::Map:
                 {
                     // The ops come from the property token, so the token field has to initialize first.
                     const std::string MapOps = "__mapops_" + Member;
                     const std::string View = "global::Lumina.THashMap<" + B.Elem->CSharp + ", " + B.Value->CSharp + ">";
-                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.NativeBindings.FieldAt(Self, %s), %s);",
-                        View.c_str(), PropName.c_str(), View.c_str(), OffName.c_str(), MapOps.c_str());
+                    EmitContainerView(Writer, "public " + View + " " + PropName,
+                        "new " + View + "(global::LuminaSharp.NativeBindings.FieldAt(Self, " + OffName + "), " + MapOps + ")",
+                        bRO ? std::string() : WriteHook);
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
                     EmitOffsetField(Writer, OffName, Prop, TypeName);
                     Writer.Linef("private static readonly nint %s = (nint)global::LuminaSharp.Native.PropMapOps(%s);",
@@ -1659,7 +1683,7 @@ namespace Lumina::Reflection
                     // Read-only by-reference only, so the span never outlives the call and nothing is written back.
                     const std::string Elem = FirstTemplateArgument(F.RawFieldType);
                     std::string ElemCS;
-                    // TFixedVector shares the flag but not the constructor the thunk rebuilds through.
+                    // TInlineVector shares the flag but not the constructor the thunk rebuilds through.
                     if (F.TypeName != "Lumina::TVector"
                         || !bIsArg || F.RawFieldType.find('&') == std::string::npos
                         || F.RawFieldType.find("const") == std::string::npos
@@ -1803,13 +1827,9 @@ namespace Lumina::Reflection
             return true;
         }
         
-        void EmitCSharpFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB,
-            const std::string& CallThunk, const std::string& Module, bool bSuppressGCTransition, bool bStatic)
+        // An out container leaves the signature and comes back as the return, an array of its elements.
+        std::string CSharpSignature(const FFnBinding& FB, std::string& OutParams, std::string& OutCallArgs)
         {
-            const std::string& Name = Fn.Name;
-
-            // An out container leaves the signature and comes back as the return, an array of its elements.
-            std::string SigParams;
             std::string VectorOutCS;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
@@ -1818,13 +1838,36 @@ namespace Lumina::Reflection
                     VectorOutCS = FB.Args[i].CSharp;
                     continue;
                 }
-                if (!SigParams.empty()) { SigParams += ", "; }
-                SigParams += FB.Args[i].CSharp + " " + ArgName(FB.Args[i], i);
-                if (!FB.Args[i].DefaultCSharp.empty()) { SigParams += " = " + FB.Args[i].DefaultCSharp; }
+                const std::string Name = ArgName(FB.Args[i], i);
+                if (!OutParams.empty()) { OutParams += ", "; OutCallArgs += ", "; }
+                OutParams += FB.Args[i].CSharp + " " + Name;
+                OutCallArgs += Name;
+                if (!FB.Args[i].DefaultCSharp.empty()) { OutParams += " = " + FB.Args[i].DefaultCSharp; }
             }
+            return !VectorOutCS.empty() ? (VectorOutCS + "[]") : FB.bVoid ? std::string("void") : FB.Ret.CSharp;
+        }
 
-            const std::string RetCS = !VectorOutCS.empty() ? (VectorOutCS + "[]")
-                                    : FB.bVoid ? std::string("void") : FB.Ret.CSharp;
+        std::string ScriptPropertyName(const FReflectedFunction& Fn, const FFnBinding& FB, const std::string& SigParams)
+        {
+            const std::string* PropertyName = FindMetadata(Fn.Metadata, "ScriptProperty");
+            if (PropertyName == nullptr || !SigParams.empty() || FB.bVoid)
+            {
+                return std::string();
+            }
+            if (!PropertyName->empty() && *PropertyName != "true")
+            {
+                return *PropertyName;
+            }
+            return Fn.Name.rfind("Get", 0) == 0 && Fn.Name.size() > 3 ? Fn.Name.substr(3) : Fn.Name;
+        }
+
+        void EmitCSharpFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB,
+            const std::string& CallThunk, const std::string& Module, bool bSuppressGCTransition, bool bStatic)
+        {
+            const std::string& Name = Fn.Name;
+            std::string SigParams;
+            std::string CallArgs;
+            const std::string RetCS = CSharpSignature(FB, SigParams, CallArgs);
 
             EmitDocSummary(Writer, Fn.Metadata);
             if (bSuppressGCTransition)
@@ -1838,18 +1881,13 @@ namespace Lumina::Reflection
                     Module.c_str(), CallThunk.c_str());
             }
             // A getter that takes nothing reads as a property, so World.Physics stands for World.GetPhysics().
-            const std::string* PropertyName = FindMetadata(Fn.Metadata, "ScriptProperty");
-            const bool bProperty = PropertyName != nullptr && SigParams.empty() && !FB.bVoid && VectorOutCS.empty();
+            const std::string Property = ScriptPropertyName(Fn, FB, SigParams);
+            const bool bProperty = !Property.empty();
             Writer.Linef("%s %spartial %s %s(%s);", (bProperty || FunctionHasMetadata(Fn, "ScriptInternal")) ? "internal" : "public",
                 bStatic ? "static " : "", RetCS.c_str(), Name.c_str(), SigParams.c_str());
 
             if (bProperty)
             {
-                std::string Property = *PropertyName;
-                if (Property.empty() || Property == "true")
-                {
-                    Property = Name.rfind("Get", 0) == 0 && Name.size() > 3 ? Name.substr(3) : Name;
-                }
                 EmitDocSummary(Writer, Fn.Metadata);
                 Writer.Linef("public %s%s %s => %s();", bStatic ? "static " : "", RetCS.c_str(), Property.c_str(), Name.c_str());
             }
@@ -1983,20 +2021,20 @@ namespace Lumina::Reflection
             if (!VectorOutElem.empty())
             {
                 const bool bObjectElem = !VectorOutBuffer.empty();
-                const std::string Read = bObjectElem ? "__vec[(size_t)__i].Get()" : "__vec[(size_t)__i]";
+                const std::string Read = bObjectElem ? "__vec[__i].Get()" : "__vec[__i]";
                 RetCpp = "int";
                 const std::string BufferElem = bObjectElem ? VectorOutBuffer : VectorOutElem;
                 const std::string Stash = bObjectElem
-                    ? ("Lumina::TVector<" + BufferElem + "> __o; __o.resize((size_t)__n); "
-                       + "for (int __i = 0; __i < __n; ++__i) { __o[(size_t)__i] = " + Read + "; } "
-                       + "Lumina::Scripting::StashCallOverflow(Buffer, __o.data(), (size_t)__n * sizeof(" + BufferElem + "));")
-                    : ("Lumina::Scripting::StashCallOverflow(Buffer, __vec.data(), (size_t)__n * sizeof(" + BufferElem + "));");
+                    ? ("Lumina::TVector<" + BufferElem + "> __o; __o.SetNum(__n); "
+                       + "for (int __i = 0; __i < __n; ++__i) { __o[__i] = " + Read + "; } "
+                       + "Lumina::Scripting::StashCallOverflow(Buffer, __o.GetData(), (size_t)__n * sizeof(" + BufferElem + "));")
+                    : ("Lumina::Scripting::StashCallOverflow(Buffer, __vec.GetData(), (size_t)__n * sizeof(" + BufferElem + "));");
                 Body = "Lumina::TVector<" + VectorOutElem + "> __vec; " + CallExpr + "; "
-                     + "const int __n = (int)__vec.size(); "
+                     + "const int __n = __vec.Num(); "
                      + "if (Buffer && Capacity > 0) { const int __c = __n < Capacity ? __n : Capacity; "
                      + (bObjectElem
                          ? "for (int __i = 0; __i < __c; ++__i) { Buffer[__i] = " + Read + "; } } "
-                         : "Lumina::Memory::Memcpy(Buffer, __vec.data(), (size_t)__c * sizeof(" + BufferElem + ")); } ")
+                         : "Lumina::Memory::Memcpy(Buffer, __vec.GetData(), (size_t)__c * sizeof(" + BufferElem + ")); } ")
                      + "if (Buffer && __n > Capacity) { " + Stash + " } "
                      + "return __n;";
                 Params += (Params.empty() ? std::string() : std::string(", "))
@@ -2377,8 +2415,9 @@ namespace Lumina::Reflection
                     AbiArgs   += ", " + An;
                 }
 
-                Writer.Linef("    static %s __ScriptCall_%s_%s(void* __h%s)",
-                    SeRetAbiCpp(FB).c_str(), DeclFriendly.c_str(), Name.c_str(), AbiParams.c_str());
+                // Named for the emitting class too, so a scriptable subclass in the same unity file does not redefine its base's thunk.
+                Writer.Linef("    static %s __ScriptCall_%s__%s_%s(void* __h%s)",
+                    SeRetAbiCpp(FB).c_str(), Friendly.c_str(), DeclFriendly.c_str(), Name.c_str(), AbiParams.c_str());
                 Writer.Line("    {");
                 Writer.Linef("        typedef %s (*FThunk)(void*%s);", SeRetAbiCpp(FB).c_str(), AbiTypes.c_str());
                 // Zero-initialized to skip the thread-safe-static guard, and retried so an early miss is not cached.
@@ -2419,7 +2458,7 @@ namespace Lumina::Reflection
                     AbiArgs   += ", " + SeArgCppToAbi(FB.Args[i], An);
                 }
                 const std::string BaseCall = std::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
-                const std::string Call = "__ScriptCall_" + DeclFriendly + "_" + Name + "(__h" + AbiArgs + ")";
+                const std::string Call = "__ScriptCall_" + Friendly + "__" + DeclFriendly + "_" + Name + "(__h" + AbiArgs + ")";
 
                 Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
                 Writer.Line("        {");
@@ -2455,7 +2494,7 @@ namespace Lumina::Reflection
                     AbiArgs += ", " + SeArgCppToAbi(FB.Args[i],
                         SeParmsField(FB.Args[i], "__p." + E.Fn->Arguments[i].Name));
                 }
-                const std::string Call = "__ScriptCall_" + Friendly + "_" + Name + "(__h" + AbiArgs + ")";
+                const std::string Call = "__ScriptCall_" + Friendly + "__" + Friendly + "_" + Name + "(__h" + AbiArgs + ")";
 
                 Writer.Linef("    static void __ScriptDispatch_%s_%s(const Lumina::FFunction&, void* Context, void* Frame)",
                     Friendly.c_str(), Name.c_str());
@@ -2503,7 +2542,7 @@ namespace Lumina::Reflection
             Writer.Linef("            __I.ShimAlign = (uint32)alignof(%s);", Shim.c_str());
             for (const FScriptEvent& E : Events)
             {
-                Writer.Linef("            __I.EventThunks.push_back({ \"%s\", &__ScriptDispatch_%s_%s });",
+                Writer.Linef("            __I.EventThunks.Add({ \"%s\", &__ScriptDispatch_%s_%s });",
                     E.Fn->Name.c_str(), Friendly.c_str(), E.Fn->Name.c_str());
             }
             Writer.Linef("            Lumina::FScriptableRegistry::RegisterNative(\"%s\", __I);", Type.DisplayName.c_str());
@@ -2566,6 +2605,150 @@ namespace Lumina::Reflection
         }
 
         // A handle is one NativeRef, so every member reads at a constant offset from the address it views.
+        // A read-only view's member, reusing the owner's offsets and tokens; a container or slot view with no read-only form is left out.
+        bool EmitReadOnlyMember(FCodeWriter& Writer, const FReflectedProperty& Prop, const FBinding& B)
+        {
+            const std::string Name = SafeIdentifier(Prop.Name);
+            const std::string Field = "global::LuminaSharp.NativeBindings.FieldAt(Self, __off_" + Prop.Name + ")";
+            const std::string Token = "__prop_" + Prop.Name;
+            const char* N = Name.c_str();
+            const char* F = Field.c_str();
+            const char* CS = B.CSharp.c_str();
+            switch (B.Kind)
+            {
+                case EBind::StructValue:
+                case EBind::Number:
+                case EBind::Bool:
+                case EBind::Enum:
+                {
+                    const char* T = B.Kind == EBind::Bool ? "bool" : CS;
+                    Writer.Linef("public ref readonly %s %s => ref At<%s>(__off_%s);", T, N, T, Prop.Name.c_str());
+                    return true;
+                }
+                case EBind::Str:
+                    Writer.Linef("public string %s => global::LuminaSharp.NativeMarshal.ReadString(%s);", N, F);
+                    break;
+                case EBind::Object:
+                    if (B.bCObject)
+                    {
+                        Writer.Linef("public %s %s => global::LuminaSharp.NativeObjectMarshal.FromHandle<%s>(global::LuminaSharp.Native.GetObjectPtr(%s));", CS, N, CS, F);
+                    }
+                    else
+                    {
+                        Writer.Linef("public %s %s => global::LuminaSharp.NativeStructs.FromAddressOrNull<%s>(global::LuminaSharp.Native.GetObjectPtr(%s));", CS, N, StripNullable(B.CSharp).c_str(), F);
+                    }
+                    break;
+                case EBind::SoftObject:
+                    Writer.Linef("public %s %s => global::LuminaSharp.SoftObjectReferenceMarshal.Read<%s>(global::LuminaSharp.Native.SoftPathGet(%s));", CS, N, CS, F);
+                    break;
+                case EBind::ClassRef:
+                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.Native.PropGetClass(Self, %s));", CS, N, CS, Token.c_str());
+                    break;
+                case EBind::SubStructRef:
+                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.Native.PropGetSubStruct(Self, %s));", CS, N, CS, Token.c_str());
+                    break;
+                case EBind::StructOpaque:
+                    Writer.Linef("public %s.ReadOnly %s => new(__Ref.Field(__off_%s));", CS, N, Prop.Name.c_str());
+                    break;
+                case EBind::Optional:
+                    if (B.Elem == nullptr || IsBlittableElementKind(B.Elem->Kind))
+                    {
+                        Writer.Linef("public %s? %s { get { void* __v = (void*)global::LuminaSharp.Native.PropOptionalGetValue(Self, %s); return __v == null ? default(%s?) : global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<%s>(__v); } }",
+                            CS, N, Token.c_str(), CS, CS);
+                    }
+                    break;
+                case EBind::Array:
+                    if (IsBlittableElementKind(B.Elem->Kind))
+                    {
+                        const char* E = B.Elem->CSharp.c_str();
+                        Writer.Linef("public global::System.ReadOnlySpan<%s> %s => global::LuminaSharp.NativeMarshal.ReadVector<%s>(Self, __off_%s);", E, N, E, Prop.Name.c_str());
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return false;
+        }
+
+        // The same memory seen through ref readonly fields and const functions only, which Read<T> and TRes<T> hand out.
+        void EmitReadOnlyView(FCodeWriter& Writer, const FReflectedStruct& Struct, const std::vector<const FReflectedStruct*>& Ancestors, const FReflectionDatabase& Db, bool bComponent)
+        {
+            const char* Name = Struct.DisplayName.c_str();
+            std::vector<const FReflectedStruct*> Chain = { &Struct };
+            Chain.insert(Chain.end(), Ancestors.begin(), Ancestors.end());
+
+            Writer.Line("public readonly struct ReadOnly");
+            Writer.BeginBlock();
+            Writer.Line("private readonly global::LuminaSharp.NativeRef __Ref;");
+            Writer.Line("public ReadOnly(global::LuminaSharp.NativeRef Ref) { __Ref = Ref; }");
+            Writer.Line("public ReadOnly(System.IntPtr Address) { __Ref = new global::LuminaSharp.NativeRef(Address); }");
+            Writer.Line("private System.IntPtr Self => __Ref.Address;");
+            Writer.Linef("public static implicit operator ReadOnly(%s%s Value) => new(Value.%s);", bComponent ? "in " : "", Name, bComponent ? "SelfRef" : "__Ref");
+
+            bool bFieldRefs = false;
+            std::set<std::string> EmittedProperties;
+            for (const FReflectedStruct* Type : Chain)
+            {
+                for (const auto& Prop : Type->Props)
+                {
+                    if (Prop->bInner || IsScriptHidden(*Prop) || !EmittedProperties.insert(Prop->Name).second)
+                    {
+                        continue;
+                    }
+                    FBinding B;
+                    if (Classify(*Prop, Type->Namespace, Db, B))
+                    {
+                        bFieldRefs |= EmitReadOnlyMember(Writer, *Prop, B);
+                    }
+                }
+            }
+            if (bFieldRefs)
+            {
+                Writer.Line("private ref readonly T At<T>(int Offset) => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<T>((void*)global::LuminaSharp.NativeBindings.FieldAt(Self, Offset));");
+            }
+
+            bool bForwards = false;
+            std::set<std::string> EmittedFunctions;
+            for (const FReflectedStruct* Type : Chain)
+            {
+                for (const auto& Fn : Type->Functions)
+                {
+                    if (IsScriptEvent(*Fn, *Type) || !EmittedFunctions.insert(Fn->Name).second || !Fn->bIsConst || Fn->bIsStatic)
+                    {
+                        continue;
+                    }
+                    FFnBinding FB;
+                    if (!ClassifyFunction(*Fn, *Type, Db, FB))
+                    {
+                        continue;
+                    }
+                    std::string Params;
+                    std::string Args;
+                    const std::string Ret = CSharpSignature(FB, Params, Args);
+                    const std::string Property = ScriptPropertyName(*Fn, FB, Params);
+                    if (!Property.empty())
+                    {
+                        Writer.Linef("public %s %s => Owner.%s;", Ret.c_str(), Property.c_str(), Property.c_str());
+                    }
+                    else
+                    {
+                        Writer.Linef("%s %s %s(%s) => Owner.%s(%s);", FunctionHasMetadata(*Fn, "ScriptInternal") ? "internal" : "public",
+                            Ret.c_str(), Fn->Name.c_str(), Params.c_str(), Fn->Name.c_str(), Args.c_str());
+                    }
+                    bForwards = true;
+                }
+            }
+            if (bForwards && bComponent)
+            {
+                Writer.Linef("private ref readonly %s Owner => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<%s>((void*)Self);", Name, Name);
+            }
+            else if (bForwards)
+            {
+                Writer.Linef("private %s Owner => new(__Ref);", Name);
+            }
+            Writer.EndBlock();
+        }
+
         void EmitHandleStruct(FCodeWriter& Writer, const FReflectedStruct& Struct, const FReflectionDatabase& Database)
         {
             const std::vector<const FReflectedStruct*> Ancestors = ReflectedAncestors(Struct, Database);
@@ -2579,9 +2762,10 @@ namespace Lumina::Reflection
             const char* Name = Struct.DisplayName.c_str();
             EmitDocSummary(Writer, Struct.Metadata);
             Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Name);
-            // An event view also carries the marker the world's event queues are read and sent through.
+            // An event or resource view also carries the marker the world's event queues or resource fields go through.
+            const char* Marker = Struct.HasMetadata("Event") ? ", global::LuminaSharp.IEvent" : (Struct.bIsResource ? ", global::LuminaSharp.IResource" : "");
             Writer.Linef("public readonly unsafe partial struct %s : global::LuminaSharp.%s<%s>%s", Name,
-                bComponent ? "IComponent" : "INativeStruct", Name, Struct.HasMetadata("Event") ? ", global::LuminaSharp.IEvent" : "");
+                bComponent ? "IComponent" : "INativeStruct", Name, Marker);
             Writer.BeginBlock();
             if (bComponent)
             {
@@ -2649,6 +2833,35 @@ namespace Lumina::Reflection
                 EmitProperties(Writer, *Ancestor, Database, &EmittedProperties);
                 EmitFunctions(Writer, *Ancestor, Database, &EmittedFunctions);
             }
+            EmitReadOnlyView(Writer, Struct, Ancestors, Database, bComponent);
+            Writer.EndBlock();
+        }
+
+        // Read<T> and TRes<T> give only the read-only view, as C# 14 extensions in LuminaSharp so they share a scope with the generic managed one they must beat.
+        void EmitParamAccess(FCodeWriter& Writer, const FReflectedStruct& Struct, const FReflectionDatabase& Database)
+        {
+            const bool bComponent = IsComponentStruct(Struct, Database);
+            if (!bComponent && !Struct.bIsResource)
+            {
+                return;
+            }
+            const std::string Type = GlobalCSharp(Struct.QualifiedName);
+            const char* T = Type.c_str();
+            Writer.Line("namespace LuminaSharp");
+            Writer.BeginBlock();
+            Writer.Line("[global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+            Writer.Linef("public static class %sParamAccess", Names::FriendlyFromQualified(Struct.QualifiedName).c_str());
+            Writer.BeginBlock();
+            if (bComponent)
+            {
+                Writer.Linef("extension(Read<%s> Term) { public %s.ReadOnly Value => new(Term.Address); }", T, T);
+            }
+            else
+            {
+                Writer.Linef("extension(TRes<%s> Param) { public %s.ReadOnly Value => new(Param.Address); }", T, T);
+                Writer.Linef("extension(TResMut<%s> Param) { public %s Value => new(Param.Address); }", T, T);
+            }
+            Writer.EndBlock();
             Writer.EndBlock();
         }
     }
@@ -2797,6 +3010,10 @@ namespace Lumina::Reflection
         if (bNs)
         {
             Writer.EndBlock();
+        }
+        if (!bBlittable)
+        {
+            EmitParamAccess(Writer, Struct, Database);
         }
         Writer.Line();
         return true;

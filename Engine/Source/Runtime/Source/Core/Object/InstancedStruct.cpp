@@ -62,10 +62,10 @@ namespace Lumina::InstancedStructInternal
         }
 
         // Each side walks its own stride, which is what a retyped element changed.
-        const SIZE_T Count = Old->GetNum(OldValue);
-        New->Resize(NewValue, 0);
-        New->Resize(NewValue, Count);
-        for (SIZE_T Index = 0; Index < Count; ++Index)
+        const int32 Count = Old->Num(OldValue);
+        New->SetNum(NewValue, 0);
+        New->SetNum(NewValue, Count);
+        for (int32 Index = 0; Index < Count; ++Index)
         {
             MigrateValue(OldInner, Old->GetAt(const_cast<void*>(OldValue), Index), NewInner, New->GetAt(NewValue, Index));
         }
@@ -121,32 +121,19 @@ namespace Lumina
         CopyFrom(Other);
     }
 
-    // Inline storage cannot be stolen, so a move relocates the value and clears the source.
     FInstancedStruct::FInstancedStruct(FInstancedStruct&& Other) noexcept
     {
-        if (Other.bInline)
-        {
-            CopyFrom(Other);
-            Other.Reset();
-            return;
-        }
-
-        ScriptStruct      = Other.ScriptStruct;
-        InstanceMemory    = Other.InstanceMemory;
-        ScriptTypePin     = Move(Other.ScriptTypePin);
-        TypeIdentity      = Other.TypeIdentity;
-        SeededGeneration  = Other.SeededGeneration;
-
-        Other.ScriptStruct = nullptr;
-        Other.InstanceMemory = nullptr;
+        TakeFrom(Other);
     }
 
+    // Through a temporary, since Other may live inside the value this is about to release.
     FInstancedStruct& FInstancedStruct::operator=(const FInstancedStruct& Other)
     {
         if (this != &Other)
         {
+            FInstancedStruct Copy(Other);
             Reset();
-            CopyFrom(Other);
+            TakeFrom(Copy);
         }
         return *this;
     }
@@ -155,25 +142,35 @@ namespace Lumina
     {
         if (this != &Other)
         {
+            FInstancedStruct Taken(Move(Other));
             Reset();
-
-            if (Other.bInline)
-            {
-                CopyFrom(Other);
-                Other.Reset();
-                return *this;
-            }
-
-            ScriptStruct      = Other.ScriptStruct;
-            InstanceMemory    = Other.InstanceMemory;
-            ScriptTypePin     = Move(Other.ScriptTypePin);
-            TypeIdentity      = Other.TypeIdentity;
-            SeededGeneration  = Other.SeededGeneration;
-
-            Other.ScriptStruct = nullptr;
-            Other.InstanceMemory = nullptr;
+            TakeFrom(Taken);
         }
         return *this;
+    }
+
+    void FInstancedStruct::TakeFrom(FInstancedStruct& Other)
+    {
+        ScriptStruct     = Other.ScriptStruct;
+        ScriptTypePin    = Move(Other.ScriptTypePin);
+        TypeIdentity     = Other.TypeIdentity;
+        SeededGeneration = Other.SeededGeneration;
+
+        if (Other.bInline && Other.InstanceMemory != nullptr)
+        {
+            bInline = true;
+            InstanceMemory = InlineStorage;
+            ScriptStruct->RelocateStruct(InstanceMemory, Other.InstanceMemory);
+        }
+        else
+        {
+            bInline = false;
+            InstanceMemory = Other.InstanceMemory;
+        }
+
+        Other.ScriptStruct = nullptr;
+        Other.InstanceMemory = nullptr;
+        Other.bInline = false;
     }
 
     bool IsInstancableStructType(const CStruct* Type)
@@ -259,7 +256,10 @@ namespace Lumina
         }
 
         InitializeAs(Other.ScriptStruct);
-        ScriptStruct->CopyStruct(InstanceMemory, Other.InstanceMemory);
+        if (ScriptStruct != nullptr)
+        {
+            ScriptStruct->CopyStruct(InstanceMemory, Other.InstanceMemory);
+        }
     }
 
     bool FInstancedStruct::Identical(const FInstancedStruct& Other) const
@@ -295,6 +295,10 @@ namespace Lumina
         {
             return;
         }
+        if (Fresh != nullptr && !IsInstancableStructType(Fresh))
+        {
+            Fresh = nullptr;
+        }
 
         CStruct* Stale = ScriptStruct;
         const bool bStaleInline = bInline;
@@ -308,7 +312,10 @@ namespace Lumina
         alignas(kInlineAlign) uint8 StaleCopy[kInlineSize];
         if (bStaleInline && StaleMemory != nullptr)
         {
-            Memory::Memcpy(StaleCopy, StaleMemory, kInlineSize);
+            if (bStaleAlive)
+            {
+                Stale->RelocateStruct(StaleCopy, StaleMemory);
+            }
             StaleMemory = StaleCopy;
         }
 
@@ -390,6 +397,10 @@ namespace Lumina
             if (Type != nullptr)
             {
                 Type->SerializeProperties(Ar, Value.GetMutableMemory());
+            }
+            else if (!StructKey.IsNone())
+            {
+                CStruct::SkipSerializedProperties(Ar);
             }
             return;
         }

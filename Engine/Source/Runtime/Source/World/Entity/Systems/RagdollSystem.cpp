@@ -10,7 +10,6 @@
 #include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
-#include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -38,14 +37,14 @@ namespace Lumina
         }
 
         const int32 NumBones = Skeleton->GetNumBones();
-        const bool bFreshPose = (int32)Mesh.BoneTransforms.size() == NumBones && Mesh.PoseSerial == Mesh.PackedPoseSerial
+        const bool bFreshPose = Mesh.BoneTransforms.Num() == NumBones && Mesh.PoseSerial == Mesh.PackedPoseSerial
                              && !Mesh.bRenderBonesDirty && Mesh.PoseSerial != Ragdoll.CapturedPoseSerial;
-        if (!bFreshPose && (int32)Ragdoll.TargetGlobals.size() == NumBones)
+        if (!bFreshPose && Ragdoll.TargetGlobals.Num() == NumBones)
         {
             return;
         }
 
-        Ragdoll.TargetGlobals.resize(NumBones);
+        Ragdoll.TargetGlobals.SetNum(NumBones);
         for (int32 Bone = 0; Bone < NumBones; ++Bone)
         {
             const FMatrix4& BindGlobal = Skeleton->BindGlobalMatrices[Bone];
@@ -59,61 +58,54 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::PostPhysics);
         RunsAfter<SAnimationSystem>();
+    }
 
-        // Ragdoll bodies are built and torn down at the sync point, so only the pose side is declared.
-        Writes<SRagdollComponent, SSkeletalMeshComponent, STransformComponent>();
-        Reads<SystemResource::Hierarchy, SystemResource::PhysicsQuery>();
+    bool SRagdollSystem::HasWork(const SSystemContext& Context)
+    {
+        return AnyQueryHasRows(Ragdolls);
     }
 
     void SRagdollSystem::OnUpdate(const SSystemContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-
-        Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
-        if (Scene == nullptr)
+        Physics::IPhysicsQueries* PhysicsQueries = Context.GetPhysics();
+        if (PhysicsQueries == nullptr)
         {
             return;
         }
 
         const EUpdateStage Stage = Context.GetUpdateStage();
-        auto View = Context.CreateView<SRagdollComponent, SSkeletalMeshComponent, STransformComponent>();
 
         if (Stage == EUpdateStage::PrePhysics)
         {
-            for (ECS::FEntity Entity : View)
+            Ragdolls.ForEach([&](ECS::FEntity Entity, ECS::TMut<SRagdollComponent> RagdollMut, const SSkeletalMeshComponent& Mesh, const STransformComponent& Transform)
             {
-                SRagdollComponent& Ragdoll = View.Get<SRagdollComponent>(Entity);
-
+                const SRagdollComponent& Ragdoll = RagdollMut.Get();
                 if (Ragdoll.State == ERagdollState::Powered)
                 {
-                    CaptureMuscleTargets(Ragdoll, View.Get<SSkeletalMeshComponent>(Entity));
+                    CaptureMuscleTargets(RagdollMut.GetMut(), Mesh);
                 }
 
                 // Limp and powered share one set of bodies, so moving between them only changes what the muscles do.
                 if (Ragdoll.State != ERagdollState::Inactive && Ragdoll.RealizedState != ERagdollState::Inactive)
                 {
-                    Ragdoll.RealizedState = Ragdoll.State;
+                    RagdollMut.SetIfChanged(&SRagdollComponent::RealizedState, Ragdoll.State);
                 }
 
                 // Into physics, so build the ragdoll from the current animated pose.
                 if (Ragdoll.State != ERagdollState::Inactive && Ragdoll.RealizedState == ERagdollState::Inactive)
                 {
-                    const SSkeletalMeshComponent& Mesh = View.Get<SSkeletalMeshComponent>(Entity);
-                    const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
-
                     CSkeleton* SkeletonAsset = ResolveSkeletonAsset(Mesh);
                     FSkeletonResource* Skeleton = SkeletonAsset ? SkeletonAsset->GetSkeletonResource() : nullptr;
                     if (Skeleton == nullptr || Skeleton->GetNumBones() == 0)
                     {
-                        continue;
+                        return;
                     }
 
                     // Seed from the live pose or the bind pose, both of which are skinning matrices.
                     const int32 NumBones = Skeleton->GetNumBones();
                     TVector<FMatrix4> BindMatrices;
                     const TVector<FMatrix4>* Source = &Mesh.BoneTransforms;
-                    if ((int32)Mesh.BoneTransforms.size() != NumBones)
+                    if (Mesh.BoneTransforms.Num() != NumBones)
                     {
                         SkeletonAsset->ComputeBindPoseSkinningMatrices(BindMatrices);
                         Source = &BindMatrices;
@@ -121,17 +113,18 @@ namespace Lumina
 
                     // Recover component-space bone globals (Global = Skin * inverse(InvBind)).
                     TVector<FMatrix4> Globals;
-                    Globals.resize(NumBones);
+                    Globals.SetNum(NumBones);
                     for (int32 i = 0; i < NumBones; ++i)
                     {
                         Globals[i] = (*Source)[i] * Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
                     }
 
-                    Context.GetCommandBus().Enqueue([Scene, Entity, Skeleton, Globals = Move(Globals),
-                                                           EntityToWorld = Transform.GetWorldMatrix()](ECS::FRegistry& Registry)
+                    Context.Defer([Entity, Skeleton, Globals = Move(Globals), EntityToWorld = Transform.GetWorldMatrix()](const SExclusiveContext& Exclusive)
                     {
+                        Physics::IPhysicsScene* Scene = Exclusive.GetPhysicsScene();
+                        ECS::FRegistry& Registry = Exclusive.GetRegistry();
                         SRagdollComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SRagdollComponent>(Entity) : nullptr;
-                        if (Live == nullptr || Live->State == ERagdollState::Inactive || Live->RealizedState != ERagdollState::Inactive)
+                        if (Scene == nullptr || Live == nullptr || Live->State == ERagdollState::Inactive || Live->RealizedState != ERagdollState::Inactive)
                         {
                             return;
                         }
@@ -151,10 +144,12 @@ namespace Lumina
                 // Out of physics, so tear the bodies down.
                 else if (Ragdoll.State == ERagdollState::Inactive && Ragdoll.RealizedState != ERagdollState::Inactive)
                 {
-                    Context.GetCommandBus().Enqueue([Scene, Entity](ECS::FRegistry& Registry)
+                    Context.Defer([Entity](const SExclusiveContext& Exclusive)
                     {
+                        Physics::IPhysicsScene* Scene = Exclusive.GetPhysicsScene();
+                        ECS::FRegistry& Registry = Exclusive.GetRegistry();
                         SRagdollComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SRagdollComponent>(Entity) : nullptr;
-                        if (Live == nullptr || Live->RealizedState == ERagdollState::Inactive)
+                        if (Scene == nullptr || Live == nullptr || Live->RealizedState == ERagdollState::Inactive)
                         {
                             return;
                         }
@@ -163,27 +158,26 @@ namespace Lumina
                         Live->RealizedState = ERagdollState::Inactive;
                     });
                 }
-            }
+            });
         }
         else if (Stage == EUpdateStage::PostPhysics)
         {
-            for (ECS::FEntity Entity : View)
+            Ragdolls.ForEach([&](ECS::FEntity Entity, ECS::TMut<SRagdollComponent> RagdollMut, const SSkeletalMeshComponent& ReadMesh, const STransformComponent& Transform)
             {
-                SRagdollComponent& Ragdoll = View.Get<SRagdollComponent>(Entity);
-                if (Ragdoll.RealizedState == ERagdollState::Inactive || !Ragdoll.Ragdoll || !Scene->IsRagdollReady(*Ragdoll.Ragdoll))
+                const SRagdollComponent& Ragdoll = RagdollMut.Get();
+                if (Ragdoll.RealizedState == ERagdollState::Inactive || !Ragdoll.Ragdoll || !PhysicsQueries->IsRagdollReady(*Ragdoll.Ragdoll))
                 {
-                    continue;
+                    return;
                 }
 
-                SSkeletalMeshComponent& Mesh = View.Get<SSkeletalMeshComponent>(Entity);
-                const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
-
-                CSkeleton* SkeletonAsset = ResolveSkeletonAsset(Mesh);
+                CSkeleton* SkeletonAsset = ResolveSkeletonAsset(ReadMesh);
                 FSkeletonResource* Skeleton = SkeletonAsset ? SkeletonAsset->GetSkeletonResource() : nullptr;
                 if (Skeleton == nullptr)
                 {
-                    continue;
+                    return;
                 }
+
+                SSkeletalMeshComponent& Mesh = PoseTargets.Get<SSkeletalMeshComponent>(Entity);
 
                 // Optionally follow the ragdoll root so culling bounds track it, and read bones back there, unless the root follows the entity instead.
                 const bool bRootFollowsEntity = Ragdoll.State == ERagdollState::Powered && Ragdoll.RootDrive == ERagdollRootDrive::FollowEntity;
@@ -191,13 +185,13 @@ namespace Lumina
                 if (Ragdoll.bDriveEntityFromRoot && !bRootFollowsEntity)
                 {
                     FVector3 RootPos; FQuat RootRot;
-                    Scene->GetRagdollRootTransform(*Ragdoll.Ragdoll, RootPos, RootRot);
+                    PhysicsQueries->GetRagdollRootTransform(*Ragdoll.Ragdoll, RootPos, RootRot);
 
                     FTransform World;
                     World.SetLocation(RootPos);
                     World.SetRotation(RootRot);
                     World.SetScale(Transform.GetWorldScale());
-                    ECS::Utils::SetEntityWorldTransform(Context.GetRegistry(), Entity, World);
+                    DrivenTransforms.Get<STransformComponent>(Entity).SetWorldTransform(World);
 
                     WorldToEntity = Math::Inverse(AnimPose::ComposeTRS(RootPos, RootRot, World.GetScale()));
                 }
@@ -206,9 +200,9 @@ namespace Lumina
                     WorldToEntity = Math::Inverse(Transform.GetWorldMatrix());
                 }
 
-                Scene->ReadRagdollPose(*Ragdoll.Ragdoll, WorldToEntity, Skeleton, Mesh.BoneTransforms);
+                PhysicsQueries->ReadRagdollPose(*Ragdoll.Ragdoll, WorldToEntity, Skeleton, Mesh.BoneTransforms);
                 Mesh.bRenderBonesDirty = true;
-            }
+            });
         }
     }
 }

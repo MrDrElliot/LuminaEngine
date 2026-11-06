@@ -20,19 +20,19 @@ namespace
         {
             if (bShouldClear)
             {
-                Log.Selected.clear();
+                Log.Selected.Reset();
             }
             if (!Item.IsValid())
             {
                 return;
             }
-            if (const auto It = Algo::Find(Log.Selected, Item.Index); It != Log.Selected.end())
+            if (const int32 Found = Log.Selected.Find(Item.Index); Found != Constants::kIndexNone)
             {
-                Log.Selected.erase(It);
+                Log.Selected.RemoveAt(Found);
             }
             else
             {
-                Log.Selected.push_back(Item.Index);
+                Log.Selected.Add(Item.Index);
             }
             Log.LastReported = Item.Index;
         };
@@ -44,7 +44,7 @@ namespace
         TVector<FTreeNodeID> Rows;
         for (int32 i = 0; i < Count; ++i)
         {
-            Rows.push_back(Tree.CreateNode(InvalidTreeNode, "Row", (uint64)(i + 1)));
+            Rows.Add(Tree.CreateNode(InvalidTreeNode, "Row", (uint64)(i + 1)));
         }
         return Rows;
     }
@@ -52,11 +52,11 @@ namespace
     TVector<int32> SelectedRows(FTreeListView& Tree, const TVector<FTreeNodeID>& Rows)
     {
         TVector<int32> Out;
-        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        for (int32 i = 0; i < Rows.Num(); ++i)
         {
             if (Tree.Get<FTreeNodeState>(Rows[i]).bSelected)
             {
-                Out.push_back(i);
+                Out.Add(i);
             }
         }
         return Out;
@@ -74,7 +74,7 @@ TEST(TreeListViewSelection, ShiftClickSelectsTheRunFromTheLastPlainClick)
     Tree.ClickRow(Rows[3], true, false, Context);
 
     EXPECT_EQ(SelectedRows(Tree, Rows), (TVector<int32>{ 1, 2, 3 }));
-    EXPECT_EQ(Log.Selected.size(), size_t(3));
+    EXPECT_EQ(Log.Selected.Num(), 3);
     EXPECT_EQ(Log.LastReported, Rows[3].Index) << "the clicked row is the one the details panel ends on";
 }
 
@@ -92,7 +92,7 @@ TEST(TreeListViewSelection, ShiftClickRangesFromASelectionMadeElsewhere)
     Tree.ClickRow(Rows[1], true, false, Context);
 
     EXPECT_EQ(SelectedRows(Tree, Rows), (TVector<int32>{ 1, 2, 3, 4 }));
-    EXPECT_EQ(Log.Selected.size(), size_t(4));
+    EXPECT_EQ(Log.Selected.Num(), 4);
     EXPECT_EQ(Log.LastReported, Rows[1].Index);
 }
 
@@ -125,5 +125,5 @@ TEST(TreeListViewSelection, CtrlShiftExtendsWithoutDroppingTheRest)
     Tree.ClickRow(Rows[5], true, true, Context);
 
     EXPECT_EQ(SelectedRows(Tree, Rows), (TVector<int32>{ 0, 3, 4, 5 }));
-    EXPECT_EQ(Log.Selected.size(), size_t(4)) << "rows already selected are not reported again, which would toggle them off";
+    EXPECT_EQ(Log.Selected.Num(), 4) << "rows already selected are not reported again, which would toggle them off";
 }

@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "MCPToolTypes.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 
 #include "MCPAssetTools.generated.h"
@@ -10,24 +11,37 @@
 namespace Lumina
 {
     REFLECT()
-    struct MCPEDITOR_API SAssetInfo
+    struct MCPEDITOR_API SAssetRefParams
     {
         GENERATED_BODY()
 
+        // GUID or content path of the asset, from assets.search.
         PROPERTY()
-        FString Name;
+        FString Asset;
+    };
 
-        /** Content path, which is what the editor shows in the content browser. */
+    REFLECT()
+    struct MCPEDITOR_API SAssetPathParams
+    {
+        GENERATED_BODY()
+
+        // Content path, such as /Game/Content/Environment/Trees.
+        PROPERTY()
+        FString Path;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SPathOpResult
+    {
+        GENERATED_BODY()
+
+        // Where it ended up; use this path in later calls.
         PROPERTY()
         FString Path;
 
-        /** Asset class, so a field wanting a CStaticMesh can be matched against it. */
+        // Asset identities relocated, above one only when a folder moved with assets inside it.
         PROPERTY()
-        FString AssetClass;
-
-        /** Pass this to any component field that takes an asset. */
-        PROPERTY()
-        FString Guid;
+        int32 Relocated = 0;
     };
 
     REFLECT()
@@ -35,19 +49,17 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Only assets whose name or path contains this. Empty matches every asset. */
+        // Substring of the name or path. Empty matches every asset.
         PROPERTY()
         FString Contains;
 
-        /** Only assets whose class contains this, such as StaticMesh. Empty matches every class. */
+        // Substring of the class, such as StaticMesh. Empty matches every class.
         PROPERTY()
         FString AssetClass;
 
-        /** How many to return at most, so a large project cannot flood the reply. */
         PROPERTY()
         int32 Limit = 50;
 
-        /** How many matches to skip first, so a list longer than Limit can be paged. */
         PROPERTY()
         int32 Offset = 0;
     };
@@ -60,7 +72,7 @@ namespace Lumina
         PROPERTY()
         TVector<SAssetInfo> Results;
 
-        /** How many matched before the limit was applied. */
+        // How many matched before Limit was applied.
         PROPERTY()
         int32 Matched = 0;
     };
@@ -73,7 +85,7 @@ namespace Lumina
         PROPERTY()
         FString Path;
 
-        /** How many assets sit directly in this folder, not counting its subfolders. */
+        // Assets directly in this folder, not counting subfolders.
         PROPERTY()
         int32 AssetCount = 0;
     };
@@ -83,11 +95,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Folder to list beneath, such as /Game/Content. Empty lists from every mounted root. */
+        // Folder to list beneath. Empty means /Game/Content.
         PROPERTY()
         FString Under;
 
-        /** How deep to descend below Under. 1 lists only its immediate children. */
+        // Levels below Under; 1 lists only its immediate children.
         PROPERTY()
         int32 Depth = 2;
     };
@@ -102,75 +114,21 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SCreateFolderParams
-    {
-        GENERATED_BODY()
-
-        /** Full path of the folder to create, such as /Game/Content/Environment/Trees. */
-        PROPERTY()
-        FString Path;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SPathOpResult
-    {
-        GENERATED_BODY()
-
-        /** Where the thing ended up, which is the path every later call should use. */
-        PROPERTY()
-        FString Path;
-
-        /** Asset identities relocated, above one only when a folder moved with assets inside it. */
-        PROPERTY()
-        int32 Relocated = 0;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SDuplicateAssetParams
-    {
-        GENERATED_BODY()
-
-        /** Path of the asset to copy, from assets.search. */
-        PROPERTY()
-        FString Path;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SRenameAssetParams
-    {
-        GENERATED_BODY()
-
-        /** Path of the asset or folder to rename, from assets.search or assets.list_folders. */
-        PROPERTY()
-        FString Path;
-
-        /** New name only, with no path and no extension. Use assets.move to change folder. */
-        PROPERTY()
-        FString NewName;
-    };
-
-    REFLECT()
     struct MCPEDITOR_API SMoveAssetParams
     {
         GENERATED_BODY()
 
-        /** Path of the asset or folder to move. */
+        // Asset or folder to move or rename.
         PROPERTY()
         FString Path;
 
-        /** Folder to move it into. It must already exist, so create it first if needed. */
+        // Existing folder to move it into. Empty keeps its folder.
         PROPERTY()
         FString DestinationFolder;
-    };
 
-    REFLECT()
-    struct MCPEDITOR_API SSaveAssetParams
-    {
-        GENERATED_BODY()
-
-        /** GUID of the asset to write to disk, from assets.search or material.create. */
+        // New name with no path or extension. Empty keeps its name.
         PROPERTY()
-        FString Asset;
+        FString NewName;
     };
 
     REFLECT()
@@ -187,27 +145,27 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** OS path of a source file, or a directory whose importable files are all imported. */
+        // OS path of a source file, or a directory whose importable files are all imported.
         PROPERTY()
         FString Source;
 
-        /** Content folder to import into, such as /Game/Content/UI. Created if missing. */
+        // Content folder to import into, such as /Game/Content/UI. Created if missing.
         PROPERTY()
         FString DestinationFolder;
 
-        /** Whether a directory Source also imports its subdirectories, mirrored under DestinationFolder. */
+        // A directory Source also imports subdirectories, mirrored under DestinationFolder.
         PROPERTY()
         bool Recursive = true;
 
-        /** Mip policy for imported textures. UI skips the mip chain, since the UI pass never minifies. */
+        // Mip policy for imported textures. UI skips the mip chain.
         PROPERTY()
         ETextureGroup TextureGroup = ETextureGroup::World;
 
-        // JSON object of importer properties, such as {"bImportAsPrefab": true, "SceneCollision": "TriangleMesh"}.
+        // JSON object of importer properties, such as {"bImportAsPrefab": true}.
         PROPERTY()
         FString Settings;
 
-        // Runs the importer over existing assets, which it replaces in place, instead of skipping the file.
+        // Reimport existing assets in place instead of skipping the file.
         PROPERTY()
         bool ReplaceExisting = false;
     };
@@ -217,17 +175,168 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Content paths of the assets this call created. */
+        // Content paths of the assets this call created.
         PROPERTY()
         TVector<FString> Imported;
 
-        /** Files left alone because an asset with that name already existed, so a rerun resumes. */
+        // Files left alone because the asset already existed.
         PROPERTY()
         int32 Skipped = 0;
 
-        /** Source files that failed, each with the importer's reason. */
+        // Source files that failed, each with the importer's reason.
         PROPERTY()
         TVector<FString> Failed;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAssetClassInfo
+    {
+        GENERATED_BODY()
+
+        // Pass this to assets.create as ClassName.
+        PROPERTY()
+        FString Name;
+
+        // Content browser grouping, such as Gameplay or Materials.
+        PROPERTY()
+        FString Category;
+
+        // True when the content browser would show a creation dialog, which assets.create skips.
+        PROPERTY()
+        bool bHasCreationDialogue = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SListAssetClassesParams
+    {
+        GENERATED_BODY()
+
+        // Substring of the class name or category. Empty lists every class.
+        PROPERTY()
+        FString Contains;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SListAssetClassesResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<SAssetClassInfo> Classes;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SCreateAssetParams
+    {
+        GENERATED_BODY()
+
+        // Asset class name, from assets.list_classes.
+        PROPERTY()
+        FString ClassName;
+
+        // Name without an extension.
+        PROPERTY()
+        FString Name;
+
+        // Existing folder under /Game/Content.
+        PROPERTY()
+        FString Folder;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDescribeAssetResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        FString Path;
+
+        PROPERTY()
+        FString ClassName;
+
+        PROPERTY()
+        FString Guid;
+
+        // Every reflected field as JSON, in the shape assets.set_property takes.
+        PROPERTY()
+        FString Properties;
+
+        // Field paths that cannot be written.
+        PROPERTY()
+        TVector<FString> UnwritableFields;
+
+        // Assets that reference this one, which assets.delete would leave dangling.
+        PROPERTY()
+        TVector<SAssetInfo> Referencers;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetAssetPropertyParams
+    {
+        GENERATED_BODY()
+
+        // GUID or content path of the asset.
+        PROPERTY()
+        FString Asset;
+
+        // Field path, such as Settings.Radius or Layers[2].Name.
+        PROPERTY()
+        FString Path;
+
+        // New value as JSON, such as 12.5, "Torch" or {"X":1,"Y":0,"Z":0}.
+        PROPERTY(RawJson)
+        FString Value;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAssetPropertyResult
+    {
+        GENERATED_BODY()
+
+        // Value before the change, as JSON.
+        PROPERTY()
+        FString Previous;
+
+        // Value read back after the change, as JSON.
+        PROPERTY()
+        FString Current;
+
+        // True when an open editor recorded the edit, so editor.history can undo it.
+        PROPERTY()
+        bool bUndoable = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDeleteAssetParams
+    {
+        GENERATED_BODY()
+
+        // GUID or content path of the asset.
+        PROPERTY()
+        FString Asset;
+
+        // Delete even when other assets reference it, leaving those references dangling.
+        PROPERTY()
+        bool bForce = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDeleteAssetResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Path;
+
+        // False with Referencers listed means bForce was needed.
+        PROPERTY()
+        bool bDeleted = false;
+
+        PROPERTY()
+        TVector<SAssetInfo> Referencers;
     };
 
     namespace MCP

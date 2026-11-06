@@ -89,8 +89,8 @@ namespace Lumina
 
         CObject* Remapped(CObject* Source) const
         {
-            const auto Itr = Remap.find(Source);
-            return Itr != Remap.end() ? Itr->second : Source;
+            const auto Itr = Remap.Find(Source);
+            return Itr != nullptr ? (*Itr) : Source;
         }
 
         const THashMap<CObject*, CObject*>& Remap;

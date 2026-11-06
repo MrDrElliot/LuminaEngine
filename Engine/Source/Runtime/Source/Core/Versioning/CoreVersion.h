@@ -116,6 +116,9 @@ enum class ELuminaEngineVersion : uint32
 	// An array records its element kind beside the element size, so a retyped element converts or is skipped instead of misread.
 	ARRAY_ELEMENT_KIND,
 
+	// An export names its class's type package, so a build without the editor can tell editor data from a missing class.
+	EXPORT_CLASS_PACKAGE,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

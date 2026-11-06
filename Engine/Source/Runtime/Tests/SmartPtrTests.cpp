@@ -178,7 +178,7 @@ namespace LuminaSmartPtrTests
             TVector<TSharedPtr<FCounted>> Pointers;
             for (int32 Index = 0; Index < 200; ++Index)
             {
-                Pointers.push_back(MakeShared<FCounted>(Index));
+                Pointers.Add(MakeShared<FCounted>(Index));
             }
 
             EXPECT_EQ(FCounted::Alive, 200);
@@ -287,7 +287,7 @@ namespace LuminaSmartPtrTests
             TVector<TUniquePtr<FCounted>> Pointers;
             for (int32 Index = 0; Index < 200; ++Index)
             {
-                Pointers.push_back(MakeUnique<FCounted>(Index));
+                Pointers.Add(MakeUnique<FCounted>(Index));
             }
 
             EXPECT_EQ(FCounted::Alive, 200);

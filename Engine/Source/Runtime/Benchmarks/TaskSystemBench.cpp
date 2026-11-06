@@ -2,10 +2,6 @@
 
 #include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
-#include "TaskSystem/TaskGraph.h"
-#include "TaskSystem/Task.h"
-#include "TaskSystem/Future.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
 #include "Core/Threading/Thread.h"
 #include "Containers/Vector.h"
 
@@ -44,15 +40,15 @@ namespace
     FStats Summarize(TVector<double>& Samples)
     {
         std::sort(Samples.begin(), Samples.end());
-        const size_t N = Samples.size();
+        const int32 N = Samples.Num();
         double Sum = 0.0;
         for (double S : Samples) Sum += S;
         FStats St;
-        St.Min    = Samples.front();
-        St.Max    = Samples.back();
+        St.Min    = Samples[0];
+        St.Max    = Samples.Last();
         St.Median = Samples[N / 2];
         St.Mean   = Sum / (double)N;
-        St.P99    = Samples[(size_t)std::min<double>((double)N - 1, std::floor(0.99 * (double)N))];
+        St.P99    = Samples[std::min(N - 1, static_cast<int32>(0.99 * N))];
         return St;
     }
 
@@ -68,15 +64,15 @@ namespace
 // 1. Scheduling-overhead floor, an empty fan-out with no per-element work.
 TEST(TaskBench, EmptyDispatchOverhead)
 {
-    const uint32 Workers = GTaskSystem->GetNumWorkers();
+    const uint32 Workers = Jobs::GetNumWorkers();
     const uint32 Chunks  = Workers * 4u;
     auto Empty = [](uint32) {};
 
-    for (int i = 0; i < 2000; ++i) Task::ParallelFor(Chunks, Empty, 1); // warm
+    for (int i = 0; i < 2000; ++i) Jobs::ParallelFor(Chunks, Empty, 1); // warm
 
     constexpr int Iters = 50000;
     const auto T0 = Lumina::PlatformTime::Cycles();
-    for (int i = 0; i < Iters; ++i) Task::ParallelFor(Chunks, Empty, 1);
+    for (int i = 0; i < Iters; ++i) Jobs::ParallelFor(Chunks, Empty, 1);
     const double NsPerCall = (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - T0) * 1e9) / Iters;
 
     std::printf("[TaskBench] %-40s  %8.0f ns  (%u chunks / %u workers)\n",
@@ -88,13 +84,13 @@ TEST(TaskBench, EmptyDispatchOverhead)
 // 2. Strong scaling on heavy compute-bound work.
 TEST(TaskBench, StrongScaling_HeavyCompute)
 {
-    const uint32 Workers   = GTaskSystem->GetNumWorkers();
+    const uint32 Workers   = Jobs::GetNumWorkers();
     const uint32 Executors = Workers + 1; // workers + the assisting submitter thread
     constexpr uint32 Chunks = 4096;
     constexpr uint64 PerChunk = 200000; // FMAs
 
     TVector<double> Partials;
-    Partials.resize(GTaskSystem->GetNumTaskThreads(), 0.0);
+    Partials.SetNum(Jobs::GetNumThreadSlots(), 0.0);
 
     // Serial baseline over the same total work, with a per-call seed to block memoization.
     volatile double SerialSink = 0.0;
@@ -106,7 +102,7 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
 
     for (double& P : Partials) P = 0.0;
     const auto P0 = Lumina::PlatformTime::Cycles();
-    Task::ParallelFor(Chunks, [&](const Task::FParallelRange& R)
+    Jobs::ParallelFor(Chunks, [&](const Jobs::FParallelRange& R)
     {
         double Acc = 0.0;
         for (uint32 c = R.Start; c < R.End; ++c) Acc += BusySpin(PerChunk, (double)c);
@@ -129,7 +125,7 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
 // 3. Overlap efficiency and spike spread over balanced equal-cost chunks.
 TEST(TaskBench, OverlapEfficiency_BalancedFanout)
 {
-    const uint32 Workers   = GTaskSystem->GetNumWorkers();
+    const uint32 Workers   = Jobs::GetNumWorkers();
     const uint32 Executors = Workers + 1;
     const uint32 Chunks    = Workers * 4u;      // a few chunks per worker
     constexpr uint64 PerChunk = 120000;          // equal cost each
@@ -143,23 +139,23 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
 
     for (int i = 0; i < 200; ++i) // warm
     {
-        Task::ParallelFor(Chunks, [&](uint32 Idx) { Sink = BusySpin(PerChunk, (double)Idx); }, 1);
+        Jobs::ParallelFor(Chunks, [&](uint32 Idx) { Sink = BusySpin(PerChunk, (double)Idx); }, 1);
     }
 
     constexpr int Runs = 300;
     TVector<double> Samples;
-    Samples.reserve(Runs);
+    Samples.Reserve(Runs);
     for (int r = 0; r < Runs; ++r)
     {
         std::atomic<int> Done{0};
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Task::ParallelFor(Chunks, [&](uint32 Idx)
+        Jobs::ParallelFor(Chunks, [&](uint32 Idx)
         {
             volatile double S = BusySpin(PerChunk, (double)(Idx + r));
             (void)S;
             Done.fetch_add(1, std::memory_order_relaxed);
         }, 1);
-        Samples.push_back(MsSince(T0));
+        Samples.Add(MsSince(T0));
         ASSERT_EQ(Done.load(), (int)Chunks);
     }
 
@@ -175,23 +171,23 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
 // 4. Cold-wake cadence, the real per-frame dispatch, idle, dispatch pattern.
 TEST(TaskBench, ColdWakeCadence_PerFramePattern)
 {
-    const uint32 Workers = GTaskSystem->GetNumWorkers();
+    const uint32 Workers = Jobs::GetNumWorkers();
     const uint32 Chunks  = Workers * 4u;
     constexpr uint64 PerChunk = 60000;
     volatile double Sink = 0.0;
 
-    for (int i = 0; i < 100; ++i) Task::ParallelFor(Chunks, [&](uint32 Idx){ Sink = BusySpin(PerChunk, (double)Idx); }, 1);
+    for (int i = 0; i < 100; ++i) Jobs::ParallelFor(Chunks, [&](uint32 Idx){ Sink = BusySpin(PerChunk, (double)Idx); }, 1);
 
     constexpr int Frames = 240;
     TVector<double> Samples;
-    Samples.reserve(Frames);
+    Samples.Reserve(Frames);
     for (int f = 0; f < Frames; ++f)
     {
         // Idle gap so workers drain and park (simulates the rest of a frame).
         Threading::Sleep(2);
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Task::ParallelFor(Chunks, [&](uint32 Idx){ Sink = BusySpin(PerChunk, (double)(Idx + f)); }, 1);
-        Samples.push_back(MsSince(T0));
+        Jobs::ParallelFor(Chunks, [&](uint32 Idx){ Sink = BusySpin(PerChunk, (double)(Idx + f)); }, 1);
+        Samples.Add(MsSince(T0));
     }
     ReportDist("cold-wake per-frame dispatch", Samples);
     SUCCEED();
@@ -202,9 +198,9 @@ TEST(TaskBench, IterationThroughput)
 {
     constexpr uint32 N = 64'000'000;
     TVector<uint64> Partials;
-    Partials.resize(GTaskSystem->GetNumTaskThreads(), 0);
+    Partials.SetNum(Jobs::GetNumThreadSlots(), 0);
 
-    auto Body = [&](const Task::FParallelRange& R)
+    auto Body = [&](const Jobs::FParallelRange& R)
     {
         uint64 h = (uint64)R.Start * 2654435761ull + 1ull;
         for (uint32 i = R.Start; i < R.End; ++i)
@@ -214,11 +210,11 @@ TEST(TaskBench, IterationThroughput)
         Partials[R.Thread] += h;
     };
 
-    for (int i = 0; i < 10; ++i) Task::ParallelFor(4'000'000u, Body, 2048);
+    for (int i = 0; i < 10; ++i) Jobs::ParallelFor(4'000'000u, Body, 2048);
     for (uint64& P : Partials) P = 0;
 
     const auto T0 = Lumina::PlatformTime::Cycles();
-    Task::ParallelFor(N, Body, 4096);
+    Jobs::ParallelFor(N, Body, 4096);
     const double Ms = MsSince(T0);
 
     uint64 Total = 0;
@@ -230,49 +226,49 @@ TEST(TaskBench, IterationThroughput)
     SUCCEED();
 }
 
-// 6. Graph fan-out into a merge, the CompileDrawCommands shape.
-TEST(TaskBench, GraphFanOutMerge_DrawCommandsShape)
+namespace
 {
-    const uint32 Workers = GTaskSystem->GetNumWorkers();
+    Jobs::TTask<void> BenchProducer(uint32 Count, uint64 PerChunk, volatile double* Sink)
+    {
+        co_await Jobs::Call(Jobs::ForEach(Count, [Sink, PerChunk](uint32 Index) { *Sink = BusySpin(PerChunk, (double)Index); }, 1));
+    }
+
+    Jobs::TTask<double> BenchFanOutMerge(uint32 Workers, uint64 PerChunk, volatile double* Sink)
+    {
+        co_await Jobs::Fork(BenchProducer(Workers * 2u, PerChunk, Sink));
+        co_await Jobs::Fork(BenchProducer(Workers * 2u, PerChunk, Sink));
+        co_await Jobs::Fork(BenchProducer(Workers * 2u, PerChunk, Sink));
+        co_await Jobs::Join();
+        *Sink = BusySpin(PerChunk, *Sink);
+        co_return *Sink;
+    }
+}
+
+// 6. Fork-join fan-out into a merge, the CompileDrawCommands shape.
+TEST(TaskBench, FanOutMerge_DrawCommandsShape)
+{
+    const uint32 Workers = Jobs::GetNumWorkers();
     constexpr uint64 PerChunk = 40000;
     volatile double Sink = 0.0;
 
-    FTaskGraph Graph;
-    auto BuildAndRun = [&]() -> double
+    auto Run = [&]() -> double
     {
-        Graph.Reset();
-        auto MakeProducer = [&](uint32 Count)
-        {
-            return Graph.AddParallelFor(Count, 1, [&](const Task::FParallelRange& R)
-            {
-                for (uint32 i = R.Start; i < R.End; ++i) Sink = BusySpin(PerChunk, (double)i);
-            }, ETaskPriority::High);
-        };
-        auto A = MakeProducer(Workers * 2u);
-        auto B = MakeProducer(Workers * 2u);
-        auto C = MakeProducer(Workers * 2u);
-        auto Merge = Graph.Add([&]{ Sink = BusySpin(PerChunk, Sink); }, ETaskPriority::High);
-        Graph.AddDependency(Merge, A);
-        Graph.AddDependency(Merge, B);
-        Graph.AddDependency(Merge, C);
-
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Graph.Dispatch();
-        Graph.Wait();
+        Sink = Jobs::SyncWait(Jobs::EJobPriority::High, &BenchFanOutMerge, Workers, PerChunk, &Sink);
         return MsSince(T0);
     };
 
-    for (int i = 0; i < 100; ++i) BuildAndRun(); // warm
+    for (int i = 0; i < 100; ++i) Run();
 
     constexpr int Runs = 240;
     TVector<double> Samples;
-    Samples.reserve(Runs);
-    for (int r = 0; r < Runs; ++r) Samples.push_back(BuildAndRun());
-    ReportDist("graph fan-out->merge", Samples);
+    Samples.Reserve(Runs);
+    for (int r = 0; r < Runs; ++r) Samples.Add(Run());
+    ReportDist("fork-join fan-out->merge", Samples);
     SUCCEED();
 }
 
-// 7. Nested parallelism throughput, fiber park and resume under fan-out.
+// 7. Nested parallelism throughput under fan-out.
 TEST(TaskBench, NestedParallelThroughput)
 {
     constexpr uint32 Outer = 256, Inner = 256;
@@ -280,14 +276,14 @@ TEST(TaskBench, NestedParallelThroughput)
 
     for (int i = 0; i < 10; ++i)
     {
-        Task::ParallelFor(64u, [&](uint32){ Task::ParallelFor(64u, [&](uint32){ Total.fetch_add(1, std::memory_order_relaxed); }, 8); }, 4);
+        Jobs::ParallelFor(64u, [&](uint32){ Jobs::ParallelFor(64u, [&](uint32){ Total.fetch_add(1, std::memory_order_relaxed); }, 8); }, 4);
     }
     Total.store(0);
 
     const auto T0 = Lumina::PlatformTime::Cycles();
-    Task::ParallelFor(Outer, [&](uint32)
+    Jobs::ParallelFor(Outer, [&](uint32)
     {
-        Task::ParallelFor(Inner, [&](uint32) { Total.fetch_add(1, std::memory_order_relaxed); }, 16);
+        Jobs::ParallelFor(Inner, [&](uint32) { Total.fetch_add(1, std::memory_order_relaxed); }, 16);
     }, 4);
     const double Ms = MsSince(T0);
 
@@ -297,101 +293,122 @@ TEST(TaskBench, NestedParallelThroughput)
     SUCCEED();
 }
 
-// Coroutine fan-out then merge, the same shape as GraphFanOutMerge.
 namespace
 {
-    TTask<void> CoBenchProducer(uint32 Count, uint64 PerChunk, volatile double* Sink)
+    Jobs::TTask<int64> BenchFib(int32 N)
     {
-        co_await Task::ParallelForAsync(Count, 1, [Sink, PerChunk](uint32 i)
+        if (N < 2)
         {
-            *Sink = BusySpin(PerChunk, (double)i);
-        }, ETaskPriority::High);
+            co_return N;
+        }
+        int64 Left = 0;
+        co_await Jobs::Fork(&Left, BenchFib(N - 1));
+        const int64 Right = co_await Jobs::Call(BenchFib(N - 2));
+        co_await Jobs::Join();
+        co_return Left + Right;
     }
 
-    TTask<double> CoBenchFanOutMerge(uint32 Workers, uint64 PerChunk, volatile double* Sink)
+    int64 SerialFib(int32 N)
     {
-        TVector<TTask<void>> Producers;
-        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
-        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
-        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
-        co_await WhenAll(Move(Producers));
-        *Sink = BusySpin(PerChunk, *Sink);
-        co_return *Sink;
+        return N < 2 ? N : SerialFib(N - 1) + SerialFib(N - 2);
+    }
+
+    Jobs::TTask<uint64> BenchReduce(const uint32* Data, uint32 Count)
+    {
+        if (Count <= 4096)
+        {
+            uint64 Sum = 0;
+            for (uint32 Index = 0; Index < Count; ++Index)
+            {
+                Sum += Data[Index];
+            }
+            co_return Sum;
+        }
+        const uint32 Half = Count / 2;
+        uint64 Left  = 0;
+        uint64 Right = 0;
+        co_await Jobs::Fork(&Left, BenchReduce(Data, Half));
+        co_await Jobs::Fork(&Right, BenchReduce(Data + Half, Count - Half));
+        co_await Jobs::Join();
+        co_return Left + Right;
     }
 }
 
-TEST(TaskBench, CoroFanOutMerge_DrawCommandsShape)
+// 8. Fork overhead, a recursive fib where every call is a fork and a join.
+TEST(TaskBench, ForkOverhead_Fib)
 {
-    const uint32 Workers = GTaskSystem->GetNumWorkers();
-    constexpr uint64 PerChunk = 40000;
-    volatile double Sink = 0.0;
+    constexpr int32 N = 32;
+    constexpr int Runs = 10;
 
-    auto Run = [&]() -> double
+    const auto S0 = Lumina::PlatformTime::Cycles();
+    const int64 SerialResult = SerialFib(N);
+    const double SerialMs = MsSince(S0);
+
+    for (int i = 0; i < 2; ++i) (void)Jobs::SyncWait(&BenchFib, N);
+
+    TVector<double> Samples;
+    Samples.Reserve(Runs);
+    int64 Result = 0;
+    for (int r = 0; r < Runs; ++r)
     {
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Sink = SyncWait(CoBenchFanOutMerge(Workers, PerChunk, &Sink));
-        return MsSince(T0);
-    };
+        Result = Jobs::SyncWait(&BenchFib, N);
+        Samples.Add(MsSince(T0));
+    }
+    ASSERT_EQ(Result, SerialResult);
 
-    for (int i = 0; i < 100; ++i) Run(); // warm
-
-    constexpr int Runs = 240;
-    TVector<double> Samples;
-    Samples.reserve(Runs);
-    for (int r = 0; r < Runs; ++r) Samples.push_back(Run());
-    ReportDist("coro fan-out->merge", Samples);
+    const FStats St = Summarize(Samples);
+    const double Calls = 2.0 * (double)SerialResult * 1.618 - 1.0;
+    std::printf("[TaskBench] %-40s  serial %.2f ms  fork-join med %.2f ms  (%.1f ns/task, %.2fx serial)\n",
+        "fork overhead (fib 32)", SerialMs, St.Median, (St.Median * 1e6) / Calls, St.Median / SerialMs);
+    std::fflush(stdout);
     SUCCEED();
 }
 
-// Many coroutines suspended in-flight at once, past the 256-fiber pool cap.
-namespace
+// 9. Tree reduction over a large array, fork-join against ParallelFor with per-slot partials.
+TEST(TaskBench, Reduction_ForkJoinVsParallelFor)
 {
-    TTask<void> CoBenchWaitOn(TFuture<void> Gate)
-    {
-        co_await Move(Gate);
-        co_return;
-    }
+    constexpr uint32 N = 64'000'000;
+    TVector<uint32> Data;
+    Data.SetNum(N);
+    for (uint32 i = 0; i < N; ++i) Data[i] = i & 1023u;
 
-    TTask<int> CoBenchManyWaiters(int N, TFuture<void> Gate)
+    uint64 Expected = 0;
+    for (uint32 Value : Data) Expected += Value;
+
+    constexpr int Runs = 10;
+    TVector<double> ForkSamples;
+    TVector<double> ForSamples;
+    TVector<uint64> Partials;
+    for (int r = 0; r < Runs + 2; ++r)
     {
-        TVector<TTask<void>> Waiters;
-        Waiters.reserve(N);
-        for (int i = 0; i < N; ++i)
+        const auto F0 = Lumina::PlatformTime::Cycles();
+        const uint64 ForkSum = Jobs::SyncWait(&BenchReduce, Data.GetData(), N);
+        const double ForkMs = MsSince(F0);
+
+        Partials.Reset();
+        Partials.SetNum(Jobs::GetNumThreadSlots(), 0);
+        const auto P0 = Lumina::PlatformTime::Cycles();
+        Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
         {
-            Waiters.push_back(CoBenchWaitOn(Gate)); // copies the shared future state
+            uint64 Local = 0;
+            for (uint32 i = R.Start; i < R.End; ++i) Local += Data[i];
+            Partials[R.Thread] += Local;
+        }, 4096);
+        const double ForMs = MsSince(P0);
+
+        uint64 ForSum = 0;
+        for (uint64 P : Partials) ForSum += P;
+        ASSERT_EQ(ForkSum, Expected);
+        ASSERT_EQ(ForSum, Expected);
+        if (r >= 2)
+        {
+            ForkSamples.Add(ForkMs);
+            ForSamples.Add(ForMs);
         }
-        co_await WhenAll(Move(Waiters));
-        co_return N;
     }
-}
-
-TEST(TaskBench, CoroManyInFlightWaiters)
-{
-    constexpr int N = 5000; // far past the 256-fiber cap
-
-    auto Run = [&]() -> double
-    {
-        TPromise<void> GateP;
-        TFuture<void>  Gate = GateP.GetFuture();
-        // Release the gate shortly after the waiters have all suspended.
-        Task::Async([P = Move(GateP)]() mutable { Threading::Sleep(2); P.SetValue(); });
-
-        const auto T0 = Lumina::PlatformTime::Cycles();
-        const int Done = SyncWait(CoBenchManyWaiters(N, Move(Gate)));
-        const double Ms = MsSince(T0);
-        (void)Done;
-        return Ms;
-    };
-
-    for (int i = 0; i < 5; ++i) Run(); // warm
-
-    constexpr int Runs = 40;
-    TVector<double> Samples;
-    Samples.reserve(Runs);
-    for (int r = 0; r < Runs; ++r) Samples.push_back(Run());
-    ReportDist("coro 5000 in-flight waiters", Samples);
-    std::printf("[TaskBench] %-40s  %d coroutines suspended at once (fiber pool = 256)\n", "in-flight scale", N);
-    std::fflush(stdout);
+    ReportDist("reduction (fork-join tree)", ForkSamples);
+    ReportDist("reduction (ParallelFor partials)", ForSamples);
     SUCCEED();
 }
 
@@ -405,19 +422,18 @@ namespace
         std::atomic<double> Sink{0.0};
     };
 
-    void NarrowJob(void* Arg, uint32 /*Worker*/)
+    Jobs::TTask<void> NarrowJob(FNarrowShared* Shared)
     {
-        FNarrowShared* S = static_cast<FNarrowShared*>(Arg);
-        const double V = BusySpin(kNarrowJobIters, 1.0);
-        S->Sink.store(V, std::memory_order_relaxed);
-        S->Done.fetch_add(1, std::memory_order_release);
+        Shared->Sink.store(BusySpin(kNarrowJobIters, 1.0), std::memory_order_relaxed);
+        Shared->Done.fetch_add(1, std::memory_order_release);
+        co_return;
     }
 }
 
 TEST(TaskBench, NarrowColdSubmit_WakeFanout)
 {
-    const uint32 Workers = GTaskSystem->GetNumWorkers();
-    const uint32 K       = std::max(2u, Workers / 4u); // narrow, well under the worker count
+    const uint32 Workers = Jobs::GetNumWorkers();
+    const uint32 K       = std::max(2u, Workers / 4u);
 
     volatile double OneSink = 0.0;
     double OneJobMs = 0.0;
@@ -427,7 +443,7 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
         {
             const auto T0 = Lumina::PlatformTime::Cycles();
             OneSink = BusySpin(kNarrowJobIters, (double)i);
-            One.push_back(MsSince(T0));
+            One.Add(MsSince(T0));
         }
         OneJobMs = Summarize(One).Median;
     }
@@ -439,7 +455,7 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
         const auto T0 = Lumina::PlatformTime::Cycles();
         for (uint32 i = 0; i < K; ++i)
         {
-            Jobs::RunJob(&NarrowJob, &S, Jobs::EJobPriority::Normal, nullptr, "NarrowColdSubmit");
+            Jobs::Spawn(Jobs::EJobPriority::Normal, &NarrowJob, &S);
         }
         while (S.Done.load(std::memory_order_acquire) < K)
         {
@@ -447,20 +463,20 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
         return MsSince(T0);
     };
 
-    for (int i = 0; i < 20; ++i) RunOnce(); // warm
+    for (int i = 0; i < 20; ++i) RunOnce();
 
     constexpr int Runs = 240;
     TVector<double> Samples;
-    Samples.reserve(Runs);
+    Samples.Reserve(Runs);
     for (int r = 0; r < Runs; ++r)
     {
-        Threading::Sleep(2); // let the pool drain and park, the cold-wake precondition
-        Samples.push_back(RunOnce());
+        Threading::Sleep(2);
+        Samples.Add(RunOnce());
     }
 
     const FStats St = Summarize(Samples);
-    ReportDist("narrow cold submit (K single jobs)", Samples);
-    std::printf("[TaskBench]   K=%u jobs / %u workers, 1 job %.4f ms -> median %.2fx one job "
+    ReportDist("narrow cold submit (K single tasks)", Samples);
+    std::printf("[TaskBench]   K=%u tasks / %u workers, 1 task %.4f ms -> median %.2fx one task "
                 "(1.0x = perfect fan-out, %.1fx = fully serialized on one worker)\n",
         K, Workers, OneJobMs, St.Median / OneJobMs, (double)K);
     std::fflush(stdout);
@@ -469,62 +485,52 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
 
 namespace
 {
-    struct FResumeShared
+    Jobs::TTask<void> ParkOnGate(Jobs::FTaskEvent* Gate, std::atomic<uint32>* Resumed)
     {
-        Jobs::FCounter*     Gate    = nullptr;
-        std::atomic<uint32> Parked{0};
-        std::atomic<uint32> Resumed{0};
-    };
+        co_await *Gate;
+        Resumed->fetch_add(1, std::memory_order_release);
+    }
 
-    void ResumeStormJob(void* Arg, uint32 /*Worker*/)
+    Jobs::TTask<void> ParkMany(Jobs::FTaskEvent* Gate, std::atomic<uint32>* Resumed, uint32 Count, Jobs::FTaskEvent* Done)
     {
-        FResumeShared* S = static_cast<FResumeShared*>(Arg);
-        S->Parked.fetch_add(1, std::memory_order_release);
-        Jobs::WaitForCounter(S->Gate, 0);          // parks this fiber
-        S->Resumed.fetch_add(1, std::memory_order_release);
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            co_await Jobs::Fork(ParkOnGate(Gate, Resumed));
+        }
+        co_await Jobs::Join();
+        Done->Signal();
     }
 }
 
-TEST(TaskBench, ResumeStorm_ParkedFiberWake)
+// 10. Many tasks parked on one event, released together.
+TEST(TaskBench, ResumeStorm_ParkedTaskWake)
 {
-    constexpr uint32 N = 200; // under the 256 fiber pool, each parked job pins one
+    constexpr uint32 N = 200;
 
     auto RunOnce = [&]() -> double
     {
-        FResumeShared S;
-        S.Gate = Jobs::AllocCounter(1);
-
-        Jobs::FJobDecl Decls[N];
-        for (uint32 i = 0; i < N; ++i)
-        {
-            Decls[i] = Jobs::FJobDecl{ &ResumeStormJob, &S, "ResumeStorm" };
-        }
-        Jobs::FCounter* Done = Jobs::AllocCounter(0);
-        Jobs::RunJobs(Decls, N, Jobs::EJobPriority::Normal, Done);
-
-        while (S.Parked.load(std::memory_order_acquire) < N) { Threading::ThreadYield(); }
-        Threading::Sleep(1); // let the last few actually park and the pool settle
+        Jobs::FTaskEvent Gate;
+        Jobs::FTaskEvent Done;
+        std::atomic<uint32> Resumed{0};
+        Jobs::Spawn(Jobs::EJobPriority::Normal, &ParkMany, &Gate, &Resumed, N, &Done);
+        Threading::Sleep(1);
 
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Jobs::DecrementCounter(S.Gate, 1);         // releases all N at once
-        Jobs::WaitForCounter(Done, 0);
+        Gate.Signal();
+        Done.Wait();
         const double Ms = MsSince(T0);
-
-        Jobs::FreeCounter(Done);
-        Jobs::FreeCounter(S.Gate);
+        EXPECT_EQ(Resumed.load(), N);
         return Ms;
     };
 
-    for (int i = 0; i < 10; ++i) RunOnce(); // warm
+    for (int i = 0; i < 10; ++i) RunOnce();
 
     constexpr int Runs = 120;
     TVector<double> Samples;
-    Samples.reserve(Runs);
-    for (int r = 0; r < Runs; ++r) Samples.push_back(RunOnce());
+    Samples.Reserve(Runs);
+    for (int r = 0; r < Runs; ++r) Samples.Add(RunOnce());
 
-    ReportDist("resume storm (200 parked fibers)", Samples);
-    std::printf("[TaskBench] %-40s  %u fibers parked then released at once\n", "resume scale", N);
-    std::fflush(stdout);
+    ReportDist("resume storm (200 parked tasks)", Samples);
     SUCCEED();
 }
 
@@ -550,7 +556,7 @@ TEST(TaskBench, GranularityCrossover)
     auto RunGrain = [&](uint32 Grain)
     {
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Task::ParallelFor(N, [&](const Task::FParallelRange& R)
+        Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
         {
             double Local = 0.0;
             for (uint32 i = R.Start; i < R.End; ++i)
@@ -565,8 +571,8 @@ TEST(TaskBench, GranularityCrossover)
     for (int i = 0; i < 3; ++i) { (void)RunSerial(); (void)RunGrain(4096); }
 
     TVector<double> SerialSamples;
-    SerialSamples.reserve(Runs);
-    for (int r = 0; r < Runs; ++r) SerialSamples.push_back(RunSerial());
+    SerialSamples.Reserve(Runs);
+    for (int r = 0; r < Runs; ++r) SerialSamples.Add(RunSerial());
     const double SerialMed = Summarize(SerialSamples).Median;
 
     std::printf("[TaskBench] %-40s  serial %8.4f ms over %u items\n", "granularity sweep", SerialMed, N);
@@ -575,21 +581,21 @@ TEST(TaskBench, GranularityCrossover)
     for (uint32 Grain : Grains)
     {
         TVector<double> Samples;
-        Samples.reserve(Runs);
-        for (int r = 0; r < Runs; ++r) Samples.push_back(RunGrain(Grain));
+        Samples.Reserve(Runs);
+        for (int r = 0; r < Runs; ++r) Samples.Add(RunGrain(Grain));
         const FStats S = Summarize(Samples);
         const double Speedup = SerialMed / S.Median;
         std::printf("[TaskBench]   grain %6u: med %8.4f ms  speedup %5.2fx  efficiency %5.1f%%  (p99 %8.4f)\n",
-            Grain, S.Median, Speedup, 100.0 * Speedup / (double)GTaskSystem->GetNumWorkers(), S.P99);
+            Grain, S.Median, Speedup, 100.0 * Speedup / (double)Jobs::GetNumWorkers(), S.P99);
     }
     std::fflush(stdout);
     SUCCEED();
 }
 
-// Independent producers, measuring queue and counter-pool contention rather than steals.
+// Independent producers, measuring queue contention rather than steals.
 TEST(TaskBench, ConcurrentProducers)
 {
-    const uint32 W = GTaskSystem->GetNumWorkers();
+    const uint32 W = Jobs::GetNumWorkers();
     constexpr uint32 Producers = 4;
     constexpr uint32 Iters     = 400;
 
@@ -600,7 +606,7 @@ TEST(TaskBench, ConcurrentProducers)
         const auto T0 = Lumina::PlatformTime::Cycles();
         for (uint32 i = 0; i < Iters; ++i)
         {
-            Task::ParallelFor(W, Body, 1);
+            Jobs::ParallelFor(W, Body, 1);
         }
         return MsSince(T0) / (double)Iters;
     };
@@ -611,13 +617,13 @@ TEST(TaskBench, ConcurrentProducers)
     TAtomic<uint32> Ready{0};
     TAtomic<uint64> TotalUs{0};
     TVector<FThread> Threads;
-    Threads.reserve(Producers);
+    Threads.Reserve(Producers);
 
     for (uint32 p = 0; p < Producers; ++p)
     {
-        Threads.emplace_back([&]
+        Threads.Emplace([&]
         {
-            GTaskSystem->RegisterExternalThread();
+            (void)Jobs::GetThreadSlot();
             Ready.fetch_add(1, std::memory_order_release);
             while (Ready.load(std::memory_order_acquire) < Producers)
             {
@@ -625,7 +631,7 @@ TEST(TaskBench, ConcurrentProducers)
             }
             const double PerCallMs = MeasureOne();
             TotalUs.fetch_add((uint64)(PerCallMs * 1000.0), std::memory_order_relaxed);
-            GTaskSystem->UnregisterExternalThread();
+            Jobs::ReleaseThreadSlot();
         });
     }
     for (FThread& T : Threads)

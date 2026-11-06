@@ -8,10 +8,10 @@ namespace LuminaSharp;
 // What CTaskLibrary cannot express, so the parallel fan-out plus a disposable wrapper over its raw handle.
 public static unsafe partial class Task
 {
-    // Maps to Lumina::ETaskPriority (High=0, Medium=1, Low=2). Bodies use Medium.
-    private const int PriorityMedium = 1;
+    // Lumina::Jobs::EJobPriority::Normal.
+    private const int PriorityNormal = 1;
 
-    // A body runs on a fiber worker, so blocking, awaiting or re-entering the task system corrupts the CLR.
+    // A body runs on a job worker, so blocking, awaiting or re-entering the task system from it corrupts the CLR.
     public static void ParallelFor(int Count, Action<int> Body)
     {
         if (Count <= 0)
@@ -20,7 +20,7 @@ public static unsafe partial class Task
         }
 
         // Native releases the body once every chunk is done, and the call blocks until then.
-        CTaskLibrary.ParallelFor((uint)Count, 0, ScriptCallback.Bind(new ParallelBody(Body)), PriorityMedium);
+        CTaskLibrary.ParallelFor((uint)Count, 0, ScriptCallback.Bind(new ParallelBody(Body)), PriorityNormal);
     }
 
     // Runs one chunk, Start in the low half of the payload and End in the high half.
@@ -46,7 +46,7 @@ public static unsafe partial class Task
     // Wraps CTaskLibrary.Run so a using block releases the native handle rather than the caller remembering.
     public static TaskHandle Run(Action Body)
     {
-        return new TaskHandle(CTaskLibrary.Run(ScriptCallback.Of(Body), PriorityMedium));
+        return new TaskHandle(CTaskLibrary.Run(ScriptCallback.Of(Body), PriorityNormal));
     }
 }
 

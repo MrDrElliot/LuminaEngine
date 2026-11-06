@@ -1,8 +1,11 @@
 #pragma once
 
 #include "EntitySystem.h"
+#include "SystemResources.h"
+#include "SystemSingletons.h"
 #include "Core/Math/Frustum.h"
 #include "Core/Object/ObjectMacros.h"
+#include "World/Entity/Components/CameraComponent.h"
 #include "DebugDrawSystem.generated.h"
 
 namespace Lumina
@@ -10,30 +13,17 @@ namespace Lumina
     class CWorld;
     class FImmediateLineRenderer;
 
-    /**
-     * This frame's debug-draw view, published by SDebugDrawSystem into the registry context and read by
-     * every debug-line producer. Plain data, transient, never serialized.
-     *
-     * The immediate line path deliberately has no per-line CPU cull -- by the time a line exists it is
-     * already final GPU data, so testing it saves nothing. Culling instead happens one level up, at the
-     * granularity of a draw SOURCE: a physics body, a terrain chunk, a navmesh tile. Ask ShouldDraw
-     * before generating a source's lines and the pruned ones cost nothing at all.
-     */
-    struct FDebugDrawState
+    // This frame's debug-draw view; producers cull whole draw sources through ShouldDraw, never single lines.
+    struct FDebugDrawState : ECS::FResource
     {
-        // Deliberately holds no FImmediateLineRenderer*. The renderer dies with its scene -- on tool
-        // close, or when ReclaimIdleRenderers frees a hidden world's -- and this state is only
-        // refreshed on the world's own tick, which for an editor world is the Paused stage while
-        // editor producers run in FrameStart. A cached pointer dangles in that gap. Resolve the
-        // sink through DebugDraw::GetLines at the point of use instead.
+        // Holds no renderer pointer, since the renderer can die between refreshes; resolve it through DebugDraw::GetLines.
         FFrustum    Frustum;
         FVector3    ViewOrigin      = FVector3(0.0f, 0.0f, 0.0f);
 
         // Beyond this the source is pruned regardless of the frustum. 0 disables the distance test.
         float       MaxDistanceSq   = 0.0f;
 
-        // False when no camera resolved this frame; producers should then draw nothing rather than
-        // draw everything, or a world with no view dumps its entire debug set into the buffer.
+        // False when no camera resolved this frame, and producers then draw nothing.
         bool        bHasView        = false;
 
         // Master switch (DebugDraw.Enabled). Off short-circuits ShouldDraw for every source.
@@ -43,10 +33,7 @@ namespace Lumina
         bool        bCullSources    = true;
     };
 
-    /**
-     * Publishes FDebugDrawState once per frame, ahead of every other system, for both editor (Paused)
-     * and game (FrameStart) worlds. Stateless: the state lives in the registry context.
-     */
+    // Publishes FDebugDrawState once per frame, ahead of every other system, in editor and game worlds.
     REFLECT()
     class RUNTIME_API SDebugDrawSystem : public CEntitySystem
     {
@@ -56,26 +43,29 @@ namespace Lumina
         // Paused as well as FrameStart, so editor worlds get a view too, and its readers all run after the systems in either stage.
         void Configure() override;
 
-    public:
-
-        // Writes only its own ctx singleton and reads the camera's resolved view, so it never conflicts
-        // with a component-touching system. Defined in the .cpp.
-
-        void OnStartup(const SSystemContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
-        void OnTeardown(const SSystemContext& Context) override;
+        void OnTeardown(const SExclusiveContext& Context) override;
+
+        // Publishes the state every frame, even in a world with no camera.
+        bool HasWork(const SSystemContext& Context) override { return true; }
+
+    private:
+
+        ECS::TQuery<ECS::Read<SCameraComponent>> Cameras;
+        TResMut<FDebugDrawState> DrawState;
+        TRes<FResolvedSceneView> ResolvedView;
+        TRes<FCameraGlobalState> CameraState;
     };
 
     namespace DebugDraw
     {
-        /** This frame's state for the world, or null if the world has no registry/state yet. */
+        // This frame's state for the world, or null if it has none yet.
         RUNTIME_API const FDebugDrawState* GetState(CWorld* World);
 
-        /** Immediate line sink for the world, or null when nothing should be drawn this frame.
-         *  Resolved live off the world every call -- never cache the result across a frame boundary. */
+        // The world's line sink, or null when nothing should draw; never cache it across frames.
         RUNTIME_API FImmediateLineRenderer* GetLines(CWorld* World);
 
-        /** Coarse visibility for one draw source. Call it BEFORE generating the source's lines. */
+        // Coarse visibility for one draw source, checked before generating its lines.
         RUNTIME_API bool ShouldDraw(const FDebugDrawState& State, const FVector3& Center, float Radius);
         RUNTIME_API bool ShouldDraw(const FDebugDrawState& State, const SAABB& Bounds);
     }

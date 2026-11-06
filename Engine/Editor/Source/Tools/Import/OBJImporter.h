@@ -15,7 +15,7 @@ namespace Lumina
 
         void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
         {
-            OutExtensions.insert(OutExtensions.end(), { ".obj" });
+            OutExtensions.Add({ ".obj" });
         }
 
     protected:

@@ -15,16 +15,16 @@ namespace Lumina::AudioGraphOperators
         FAudioGraphOperatorSignature Result;
         Result.Variadic = Variadic;
 
-        Result.Inputs.reserve(Inputs.size());
+        Result.Inputs.Reserve(IntCastChecked<int32>(Inputs.size()));
         for (EAudioGraphType Type : Inputs)
         {
-            Result.Inputs.push_back(Type);
+            Result.Inputs.Add(Type);
         }
 
-        Result.Outputs.reserve(Outputs.size());
+        Result.Outputs.Reserve(IntCastChecked<int32>(Outputs.size()));
         for (EAudioGraphType Type : Outputs)
         {
-            Result.Outputs.push_back(Type);
+            Result.Outputs.Add(Type);
         }
 
         return Result;

@@ -81,8 +81,8 @@ namespace Lumina::ImGuiX
         if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
         {
             TString* String = static_cast<TString*>(Data->UserData);
-            String->resize(static_cast<size_t>(Data->BufTextLen));
-            Data->Buf = String->data();
+            String->SetLen(static_cast<size_t>(Data->BufTextLen));
+            Data->Buf = String->GetData();
         }
         return 0;
     }
@@ -91,7 +91,7 @@ namespace Lumina::ImGuiX
     template <typename TString>
     bool InputText(const char* Label, TString& String, ImGuiInputTextFlags Flags = ImGuiInputTextFlags_None)
     {
-        return ImGui::InputText(Label, String.data(), String.capacity() + 1,
+        return ImGui::InputText(Label, String.GetData(), String.GetCapacity() + 1,
             Flags | ImGuiInputTextFlags_CallbackResize, &StringInputResizeCallback<TString>, &String);
     }
 
@@ -100,7 +100,7 @@ namespace Lumina::ImGuiX
     {
         FFixedString Buffer;
         AppendFormat(Buffer, Fmt, std::forward<TArgs>(Args)...);
-        ImGui::TextUnformatted(Buffer.c_str());
+        ImGui::TextUnformatted(*Buffer);
     }
     
     RUNTIME_API void TextUnformatted(FStringView String);
@@ -109,7 +109,7 @@ namespace Lumina::ImGuiX
     void TextColored(const ImVec4& Color, Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
     {
         ImGui::PushStyleColor(ImGuiCol_Text, Color);
-        ImGui::TextUnformatted(Format(fmt, std::forward<TArgs>(Args)...).c_str());
+        ImGui::TextUnformatted(*Format(fmt, std::forward<TArgs>(Args)...));
         ImGui::PopStyleColor();
     }
     

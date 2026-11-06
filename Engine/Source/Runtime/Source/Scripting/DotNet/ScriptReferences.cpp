@@ -10,7 +10,7 @@
 
 #include <string>
 
-#include "nlohmann/json.hpp"
+#include "Core/Json/Json.h"
 
 namespace Lumina::DotNet
 {
@@ -18,33 +18,33 @@ namespace Lumina::DotNet
     {
         FString JoinPath(FStringView A, FStringView B)
         {
-            FString Result(A.data(), A.size());
-            if (!Result.empty() && Result.back() != '/' && Result.back() != '\\')
+            FString Result(A.GetData(), A.Len());
+            if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
             {
                 Result += "/";
             }
-            Result.append(B.data(), B.size());
+            Result.Append(B.GetData(), B.Len());
             return Result;
         }
 
         bool IsAbsolutePath(FStringView Path)
         {
-            if (Path.size() >= 2 && Path[1] == ':')
+            if (Path.Len() >= 2 && Path[1] == ':')
             {
                 return true;
             }
-            return !Path.empty() && (Path[0] == '/' || Path[0] == '\\');
+            return !Path.IsEmpty() && (Path[0] == '/' || Path[0] == '\\');
         }
 
         bool WriteTextFile(FStringView Path, const FString& Text)
         {
             return Filesystem::WriteFile(Path,
-                TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.data()), Text.size()));
+                TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len()));
         }
 
         FString Slashed(FStringView Path)
         {
-            FString Result(Path.data(), Path.size());
+            FString Result(Path.GetData(), Path.Len());
             Algo::Replace(Result, '\\', '/');
             return Result;
         }
@@ -107,7 +107,7 @@ namespace Lumina::DotNet
                     return;
                 }
             }
-            GResolutionCache.push_back({ FString(UnitName), Fingerprint, Assemblies });
+            GResolutionCache.Emplace(FString(UnitName), Fingerprint, Assemblies);
         }
 
         FString BuildRestoreProject(const FScriptReferenceSet& Declared)
@@ -130,26 +130,21 @@ namespace Lumina::DotNet
         }
 
         // Prefers the implementation assemblies, since a reference-only assembly cannot be loaded at run time.
-        void CollectLibraryAssets(const nlohmann::json& Library, TVector<std::string>& Out)
+        void CollectLibraryAssets(const FJsonValue& Library, TVector<FString>& Out)
         {
             const char* Sections[] = { "runtime", "compile" };
             for (const char* Section : Sections)
             {
-                auto It = Library.find(Section);
-                if (It == Library.end() || !It->is_object())
+                for (const FJsonMember& Entry : Library[Section].Members())
                 {
-                    continue;
-                }
-                for (auto Entry = It->begin(); Entry != It->end(); ++Entry)
-                {
-                    const std::string& Relative = Entry.key();
-                    if (Relative.size() >= 3 && Relative.compare(Relative.size() - 3, 3, "_._") == 0)
+                    const FStringView Relative = Entry.Key.View();
+                    if (Relative.EndsWith("_._"))
                     {
                         continue;
                     }
-                    Out.push_back(Relative);
+                    Out.Emplace(Relative);
                 }
-                if (!Out.empty())
+                if (!Out.IsEmpty())
                 {
                     return;
                 }
@@ -164,73 +159,54 @@ namespace Lumina::DotNet
                 return false;
             }
 
-            nlohmann::json J;
-            try
+            FJsonValue J;
+            FJsonParseError Error;
+            if (!FJsonValue::Parse(Text.View(), J, &Error))
             {
-                J = nlohmann::json::parse(Text.c_str(), Text.c_str() + Text.size());
-            }
-            catch (const std::exception& Error)
-            {
-                LOG_ERROR("C#: failed to parse '{}': {}", AssetsPath, Error.what());
+                LOG_ERROR("C#: failed to parse '{}': {}", AssetsPath, Error.Message);
                 return false;
             }
 
             TVector<FString> Folders;
-            if (auto It = J.find("packageFolders"); It != J.end() && It->is_object())
+            for (const FJsonMember& Entry : J["packageFolders"].Members())
             {
-                for (auto Entry = It->begin(); Entry != It->end(); ++Entry)
-                {
-                    Folders.push_back(FString(Entry.key().c_str(), Entry.key().size()));
-                }
+                Folders.Emplace(Entry.Key.View());
             }
-            if (Folders.empty())
+            if (Folders.IsEmpty())
             {
                 LOG_ERROR("C#: '{}' names no package folder; cannot resolve packages.", AssetsPath);
                 return false;
             }
 
-            auto Libraries = J.find("libraries");
-            auto Targets   = J.find("targets");
-            if (Targets == J.end() || !Targets->is_object())
+            const FJsonValue& Libraries = J["libraries"];
+            const FJsonValue& Targets   = J["targets"];
+            if (!Targets.IsObject())
             {
                 return false;
             }
 
-            for (auto Target = Targets->begin(); Target != Targets->end(); ++Target)
+            for (const FJsonMember& Target : Targets.Members())
             {
-                if (!Target.value().is_object())
+                for (const FJsonMember& Entry : Target.Value.Members())
                 {
-                    continue;
-                }
-                for (auto Entry = Target.value().begin(); Entry != Target.value().end(); ++Entry)
-                {
-                    if (!Entry.value().is_object() || Entry.value().value("type", std::string()) != "package")
+                    if (!Entry.Value.IsObject() || Entry.Value["type"].AsString() != "package")
                     {
                         continue;
                     }
 
                     // The library's own folder name, which differs from the target key by case.
-                    std::string Relative = Entry.key();
-                    if (Libraries != J.end() && Libraries->is_object())
-                    {
-                        if (auto Library = Libraries->find(Entry.key()); Library != Libraries->end())
-                        {
-                            Relative = Library->value("path", Relative);
-                        }
-                    }
+                    const FStringView Relative = Libraries[Entry.Key.View()]["path"].AsString(Entry.Key.View());
 
-                    TVector<std::string> Assets;
-                    CollectLibraryAssets(Entry.value(), Assets);
-                    for (const std::string& Asset : Assets)
+                    TVector<FString> Assets;
+                    CollectLibraryAssets(Entry.Value, Assets);
+                    for (const FString& Asset : Assets)
                     {
                         for (const FString& Folder : Folders)
                         {
-                            const FString Candidate = JoinPath(Slashed(Folder),
-                                JoinPath(FStringView(Relative.c_str(), Relative.size()),
-                                         FStringView(Asset.c_str(), Asset.size())));
+                            const FString Candidate = JoinPath(Slashed(Folder), JoinPath(Relative, Asset.View()));
                             if (Filesystem::Exists(Candidate))
                             {
-                                Out.push_back(Candidate);
+                                Out.Add(Candidate);
                                 break;
                             }
                         }
@@ -243,15 +219,15 @@ namespace Lumina::DotNet
         bool RunRestore(FStringView UnitName, FStringView ProjectPath)
         {
             FString Params = "restore \"";
-            Params.append(ProjectPath.data(), ProjectPath.size());
+            Params.Append(ProjectPath.GetData(), ProjectPath.Len());
             Params += "\"";
 
             FString Output;
             const int ExitCode = Platform::RunProcessAndWaitCapture(
-                TEXT("dotnet"), UTF8_TO_TCHAR(Params.c_str()), nullptr,
+                TEXT("dotnet"), UTF8_TO_TCHAR(*Params), nullptr,
                 [&Output](FStringView Line)
                 {
-                    Output.append(Line.data(), Line.size());
+                    Output.Append(Line.GetData(), Line.Len());
                     Output += "\n";
                 });
 
@@ -272,60 +248,43 @@ namespace Lumina::DotNet
             return false;
         }
 
-        nlohmann::json J;
-        try
-        {
-            J = nlohmann::json::parse(Text.c_str(), Text.c_str() + Text.size());
-        }
-        catch (const std::exception&)
+        FJsonValue J;
+        if (!FJsonValue::Parse(Text.View(), J) || !J.IsObject())
         {
             return false; // the descriptor's own loader reports malformed JSON
         }
-        if (!J.is_object())
+
+        const FJsonValue& Section = J["ScriptReferences"];
+        if (!Section.IsObject())
         {
             return false;
         }
 
-        auto Section = J.find("ScriptReferences");
-        if (Section == J.end() || !Section->is_object())
+        for (const FJsonValue& Entry : Section["Packages"].AsArray())
         {
-            return false;
+            if (!Entry.IsObject())
+            {
+                continue;
+            }
+            FScriptPackageRef Package;
+            Package.Name    = Entry.GetString("Name");
+            Package.Version = Entry.GetString("Version");
+            if (Package.Name.IsEmpty() || Package.Version.IsEmpty())
+            {
+                LOG_WARN("C#: '{}' declares a package with no Name or Version; skipping it.", DescriptorPath);
+                continue;
+            }
+            Out.Packages.Add(Move(Package));
         }
 
-        if (auto It = Section->find("Packages"); It != Section->end() && It->is_array())
+        for (const FJsonValue& Entry : Section["Assemblies"].AsArray())
         {
-            for (const nlohmann::json& Entry : *It)
+            if (!Entry.IsString())
             {
-                if (!Entry.is_object())
-                {
-                    continue;
-                }
-                FScriptPackageRef Package;
-                const std::string Name    = Entry.value("Name", std::string());
-                const std::string Version = Entry.value("Version", std::string());
-                if (Name.empty() || Version.empty())
-                {
-                    LOG_WARN("C#: '{}' declares a package with no Name or Version; skipping it.", DescriptorPath);
-                    continue;
-                }
-                Package.Name    = FString(Name.c_str(), Name.size());
-                Package.Version = FString(Version.c_str(), Version.size());
-                Out.Packages.push_back(Move(Package));
+                continue;
             }
-        }
-
-        if (auto It = Section->find("Assemblies"); It != Section->end() && It->is_array())
-        {
-            for (const nlohmann::json& Entry : *It)
-            {
-                if (!Entry.is_string())
-                {
-                    continue;
-                }
-                const std::string& Value = Entry.get_ref<const std::string&>();
-                const FStringView  View(Value.c_str(), Value.size());
-                Out.Assemblies.push_back(IsAbsolutePath(View) ? Slashed(View) : Slashed(JoinPath(RootDir, View)));
-            }
+            const FStringView View = Entry.AsString();
+            Out.Assemblies.Add(IsAbsolutePath(View) ? Slashed(View) : Slashed(JoinPath(RootDir, View)));
         }
 
         return !Out.IsEmpty();
@@ -339,7 +298,7 @@ namespace Lumina::DotNet
         {
             for (const FString& Assembly : Cached->Assemblies)
             {
-                OutAssemblyPaths.push_back(Assembly);
+                OutAssemblyPaths.Add(Assembly);
             }
             return true;
         }
@@ -349,7 +308,7 @@ namespace Lumina::DotNet
         {
             if (Filesystem::Exists(Assembly))
             {
-                Resolved.push_back(Assembly);
+                Resolved.Add(Assembly);
             }
             else
             {
@@ -357,9 +316,9 @@ namespace Lumina::DotNet
             }
         }
 
-        if (!Declared.Packages.empty())
+        if (!Declared.Packages.IsEmpty())
         {
-            if (RestoreDir.empty())
+            if (RestoreDir.IsEmpty())
             {
                 LOG_ERROR("C#: unit '{}' declares packages but has no intermediate directory to restore into.", UnitName);
                 return false;
@@ -378,7 +337,7 @@ namespace Lumina::DotNet
             {
                 WriteTextFile(ProjectPath, BuildRestoreProject(Declared));
 
-                LOG_DISPLAY("C#: restoring {} package(s) for unit '{}'...", Declared.Packages.size(), UnitName);
+                LOG_DISPLAY("C#: restoring {} package(s) for unit '{}'...", Declared.Packages.Num(), UnitName);
                 if (!RunRestore(UnitName, ProjectPath))
                 {
                     return false;
@@ -386,19 +345,19 @@ namespace Lumina::DotNet
                 WriteTextFile(StampPath, Stamp);
             }
 
-            const size_t Before = Resolved.size();
+            const int32 Before = Resolved.Num();
             if (!ReadAssetPaths(AssetsPath, Resolved))
             {
                 LOG_ERROR("C#: unit '{}' restored but its package assets could not be read.", UnitName);
                 return false;
             }
-            LOG_DISPLAY("C#: unit '{}' resolved {} package assembly(ies).", UnitName, Resolved.size() - Before);
+            LOG_DISPLAY("C#: unit '{}' resolved {} package assembly(ies).", UnitName, Resolved.Num() - Before);
         }
 
         StoreCachedResolution(UnitName, CacheKey, Resolved);
         for (const FString& Assembly : Resolved)
         {
-            OutAssemblyPaths.push_back(Assembly);
+            OutAssemblyPaths.Add(Assembly);
         }
         return true;
     }

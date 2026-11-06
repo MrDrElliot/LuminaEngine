@@ -9,7 +9,7 @@
 
 namespace Lumina::Agent
 {
-    namespace
+    namespace AgentGameThreadInternal
     {
         constexpr int32 GDefaultTimeoutMilliseconds = 5000;
 
@@ -29,6 +29,8 @@ namespace Lumina::Agent
             TAtomic<EPhase> Phase { EPhase::Pending };
         };
     }
+
+    using namespace AgentGameThreadInternal;
 
     int32 FGameThreadGate::GetDefaultTimeoutMilliseconds()
     {

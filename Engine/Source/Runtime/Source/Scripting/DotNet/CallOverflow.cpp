@@ -21,10 +21,10 @@ namespace
 void Lumina::Scripting::StashCallOverflow(const void* CallerScratch, const void* Data, size_t Bytes)
 {
     GCallOverflow.Scratch = CallerScratch;
-    GCallOverflow.Bytes.resize(Bytes);
+    GCallOverflow.Bytes.SetNum(IntCastChecked<int32>(Bytes));
     if (Bytes > 0)
     {
-        Memory::Memcpy(GCallOverflow.Bytes.data(), Data, Bytes);
+        Memory::Memcpy(GCallOverflow.Bytes.GetData(), Data, Bytes);
     }
 }
 
@@ -36,15 +36,15 @@ LUMINA_DOTNET_EXPORT(int32, TakeCallOverflow)(const void* CallerScratch, void* D
         return -1;
     }
 
-    const int32 Stashed = (int32)GCallOverflow.Bytes.size();
+    const int32 Stashed = GCallOverflow.Bytes.Num();
     const int32 Copied = Bytes < Stashed ? Bytes : Stashed;
     if (Copied > 0)
     {
-        Memory::Memcpy(Dest, GCallOverflow.Bytes.data(), (size_t)Copied);
+        Memory::Memcpy(Dest, GCallOverflow.Bytes.GetData(), (size_t)Copied);
     }
 
     GCallOverflow.Scratch = nullptr;
-    GCallOverflow.Bytes.clear();
+    GCallOverflow.Bytes.Reset();
     return Copied;
 }
 

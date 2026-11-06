@@ -110,7 +110,7 @@ namespace LuminaBoundedQueueBench
 
             for (uint32 p = 0; p < Producers; ++p)
             {
-                Threads.push_back(FThread([&Queue, p, PerProducer]
+                Threads.Emplace([&Queue, p, PerProducer]
                 {
                     for (uint32 i = 0; i < PerProducer; ++i)
                     {
@@ -119,12 +119,12 @@ namespace LuminaBoundedQueueBench
                             Threading::ThreadYield();
                         }
                     }
-                }));
+                });
             }
 
             for (uint32 c = 0; c < Consumers; ++c)
             {
-                Threads.push_back(FThread([&Queue, &Consumed, Total]
+                Threads.Emplace([&Queue, &Consumed, Total]
                 {
                     uint32 Value = 0;
                     uint64 Sum = 0;
@@ -137,7 +137,7 @@ namespace LuminaBoundedQueueBench
                         }
                     }
                     GQueueBenchSink += Sum;
-                }));
+                });
             }
 
             for (FThread& Thread : Threads)

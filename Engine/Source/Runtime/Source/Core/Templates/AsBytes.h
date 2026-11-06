@@ -10,7 +10,7 @@ namespace Lumina
     template<typename T>
     TSpan<const Byte> AsBytes(TSpan<T> Type) noexcept
     {
-        return TSpan<const Byte>(reinterpret_cast<const Byte*>(Type.data()), Type.size_bytes());
+        return TSpan<const Byte>(reinterpret_cast<const Byte*>(Type.GetData()), Type.NumBytes());
     }
     
     template<typename T>

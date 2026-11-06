@@ -158,6 +158,17 @@ namespace Lumina::Threading
         ::WakeByAddressAll(const_cast<PVOID>(reinterpret_cast<const volatile void*>(Address)));
     }
 
+    void WakeOneOnAddress32(const volatile uint32* Address)
+    {
+        ::WakeByAddressSingle(const_cast<PVOID>(reinterpret_cast<const volatile void*>(Address)));
+    }
+
+    bool ProcessWideMemoryBarrier()
+    {
+        ::FlushProcessWriteBuffers();
+        return true;
+    }
+
     void SetThreadIdealProcessor(uint32 LogicalProcessor)
     {
         PROCESSOR_NUMBER Ideal = {};

@@ -18,10 +18,10 @@ namespace Lumina
         TVector<uint32> MakeBlob(uint32 Seed, uint32 Words = 8)
         {
             TVector<uint32> Blob;
-            Blob.reserve(Words);
+            Blob.Reserve(Words);
             for (uint32 i = 0; i < Words; ++i)
             {
-                Blob.push_back(Seed * 2246822519u + i);
+                Blob.Add(Seed * 2246822519u + i);
             }
             return Blob;
         }
@@ -59,8 +59,8 @@ namespace Lumina
             {
                 return nullptr;
             }
-            Material->StaticSwitches.push_back(MakeSwitch("Detail", false, 0));
-            Material->StaticSwitches.push_back(MakeSwitch("Parallax", true, 1));
+            Material->StaticSwitches.Add(MakeSwitch("Detail", false, 0));
+            Material->StaticSwitches.Add(MakeSwitch("Parallax", true, 1));
             return Material;
         }
 
@@ -84,7 +84,7 @@ namespace Lumina
         ASSERT_NE(Material, nullptr);
 
         const TVector<uint32> Blob = MakeBlob(1);
-        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Blob.data(), Blob.size()));
+        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Blob.GetData(), Blob.Num()));
 
         const uint64 DefaultKey = Material->GetDefaultStaticSwitchKey();
         EXPECT_TRUE(Material->HasPermutation(DefaultKey));
@@ -99,11 +99,11 @@ namespace Lumina
         ASSERT_NE(Material, nullptr);
 
         const TVector<uint32> Base = MakeBlob(2);
-        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Base.data(), Base.size()));
+        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Base.GetData(), Base.Num()));
 
         const uint64          Key  = Material->GetDefaultStaticSwitchKey() ^ 1ull;
         const TVector<uint32> Perm = MakeBlob(3);
-        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
+        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num()));
 
         ASSERT_TRUE(Material->HasPermutation(Key));
         EXPECT_NE(Material->GetStageForKey(EMaterialShaderStage::Pixel, Key), Material->GetPixelShader());
@@ -120,7 +120,7 @@ namespace Lumina
         ASSERT_NE(Material, nullptr);
 
         const TVector<uint32> Base = MakeBlob(4);
-        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Base.data(), Base.size()));
+        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(Base.GetData(), Base.Num()));
 
         const uint64 MissingKey = Material->GetDefaultStaticSwitchKey() ^ 3ull;
         EXPECT_FALSE(Material->HasPermutation(MissingKey));
@@ -137,12 +137,12 @@ namespace Lumina
 
         const TVector<uint32> BasePixel = MakeBlob(5);
         const TVector<uint32> BaseMesh  = MakeBlob(6);
-        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(BasePixel.data(), BasePixel.size()));
-        Material->CommitShaderStage(EMaterialShaderStage::MeshShadow, TSpan<const uint32>(BaseMesh.data(), BaseMesh.size()));
+        Material->CommitShaderStage(EMaterialShaderStage::Pixel, TSpan<const uint32>(BasePixel.GetData(), BasePixel.Num()));
+        Material->CommitShaderStage(EMaterialShaderStage::MeshShadow, TSpan<const uint32>(BaseMesh.GetData(), BaseMesh.Num()));
 
         const uint64          Key  = Material->GetDefaultStaticSwitchKey() ^ 1ull;
         const TVector<uint32> Perm = MakeBlob(7);
-        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
+        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num()));
 
         EXPECT_NE(Material->GetStageForKey(EMaterialShaderStage::Pixel, Key), Material->GetPixelShader());
         EXPECT_EQ(Material->GetStageForKey(EMaterialShaderStage::MeshShadow, Key), Material->GetStage(EMaterialShaderStage::MeshShadow));
@@ -159,12 +159,12 @@ namespace Lumina
         const TVector<uint32> Perm = MakeBlob(8);
 
         const uint32 Before = Material->GetShaderRevision();
-        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
+        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num()));
         const uint32 AfterFirst = Material->GetShaderRevision();
         EXPECT_NE(Before, AfterFirst);
 
         // Content-keyed, so recommitting the same bytecode supersedes nothing.
-        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
+        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num()));
         EXPECT_EQ(AfterFirst, Material->GetShaderRevision());
     }
 
@@ -177,14 +177,14 @@ namespace Lumina
 
         const uint64          Key  = Material->GetDefaultStaticSwitchKey() ^ 1ull;
         const TVector<uint32> Perm = MakeBlob(9);
-        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
+        Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num()));
 
         ASSERT_TRUE(Material->HasPermutation(Key));
-        EXPECT_FALSE(Material->GetPermutationStageBinaries(Key, EMaterialShaderStage::Pixel).empty());
+        EXPECT_FALSE(Material->GetPermutationStageBinaries(Key, EMaterialShaderStage::Pixel).IsEmpty());
 
         Material->ClearPermutation(Key);
         EXPECT_FALSE(Material->HasPermutation(Key));
-        EXPECT_TRUE(Material->GetPermutationStageBinaries(Key, EMaterialShaderStage::Pixel).empty());
+        EXPECT_TRUE(Material->GetPermutationStageBinaries(Key, EMaterialShaderStage::Pixel).IsEmpty());
     }
 
     // A recompile renumbers switch bits by name, so every key minted against the old manifest goes.
@@ -199,12 +199,12 @@ namespace Lumina
         const uint64          KeyB  = Material->GetDefaultStaticSwitchKey() ^ 2ull;
         const TVector<uint32> BlobA = MakeBlob(10);
         const TVector<uint32> BlobB = MakeBlob(11);
-        Material->CommitPermutationStage(KeyA, EMaterialShaderStage::Pixel, TSpan<const uint32>(BlobA.data(), BlobA.size()));
-        Material->CommitPermutationStage(KeyB, EMaterialShaderStage::Pixel, TSpan<const uint32>(BlobB.data(), BlobB.size()));
-        ASSERT_EQ(Material->Permutations.size(), (size_t)2);
+        Material->CommitPermutationStage(KeyA, EMaterialShaderStage::Pixel, TSpan<const uint32>(BlobA.GetData(), BlobA.Num()));
+        Material->CommitPermutationStage(KeyB, EMaterialShaderStage::Pixel, TSpan<const uint32>(BlobB.GetData(), BlobB.Num()));
+        ASSERT_EQ(Material->Permutations.Num(), 2);
 
         Material->ClearPermutations();
-        EXPECT_TRUE(Material->Permutations.empty());
+        EXPECT_TRUE(Material->Permutations.IsEmpty());
         EXPECT_FALSE(Material->HasPermutation(KeyA));
         EXPECT_FALSE(Material->HasPermutation(KeyB));
     }
@@ -225,11 +225,11 @@ namespace Lumina
         EXPECT_NE(Material->GetPermutationGeneration(), DispatchedUnder);
 
         EXPECT_FALSE(Material->CommitPermutationStageIfCurrent(Key, DispatchedUnder, EMaterialShaderStage::Pixel,
-            TSpan<const uint32>(Perm.data(), Perm.size())));
+            TSpan<const uint32>(Perm.GetData(), Perm.Num())));
         EXPECT_FALSE(Material->HasPermutation(Key));
 
         EXPECT_TRUE(Material->CommitPermutationStageIfCurrent(Key, Material->GetPermutationGeneration(),
-            EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size())));
+            EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.GetData(), Perm.Num())));
         EXPECT_TRUE(Material->HasPermutation(Key));
     }
 
@@ -324,7 +324,7 @@ namespace Lumina
     {
         FScopedShaderLibrary Scope;
 
-        constexpr size_t kStageCount = (size_t)EMaterialShaderStage::Count;
+        constexpr int32 kStageCount = (int32)EMaterialShaderStage::Count;
 
         CMaterial* Material = NewObject<CMaterial>();
         ASSERT_NE(Material, nullptr);
@@ -332,22 +332,22 @@ namespace Lumina
         TVector<TVector<uint32>> Blobs;
         for (size_t s = 0; s < kStageCount; ++s)
         {
-            Blobs.push_back(MakeBlob((uint32)s + 11u, 16u + (uint32)s));
+            Blobs.Add(MakeBlob((uint32)s + 11u, 16u + (uint32)s));
         }
 
         TAtomic<uint32> Start{0};
 
         TVector<TUniquePtr<FThread>> Threads;
-        for (size_t s = 0; s < kStageCount; ++s)
+        for (int32 s = 0; s < kStageCount; ++s)
         {
-            Threads.push_back(MakeUnique<FThread>([&Material, &Blobs, &Start, s]()
+            Threads.Add(MakeUnique<FThread>([&Material, &Blobs, &Start, s]()
             {
                 while (Start.load(std::memory_order_acquire) == 0)
                 {
                     Threading::ThreadYield();
                 }
                 Material->SetStageBinaries((EMaterialShaderStage)s,
-                    TSpan<const uint32>(Blobs[s].data(), Blobs[s].size()));
+                    TSpan<const uint32>(Blobs[s].GetData(), Blobs[s].Num()));
             }));
         }
 
@@ -357,10 +357,10 @@ namespace Lumina
             Thread->Join();
         }
 
-        for (size_t s = 0; s < kStageCount; ++s)
+        for (int32 s = 0; s < kStageCount; ++s)
         {
             const TVector<uint32>& Stored = Material->GetShaderStageBinaries((EMaterialShaderStage)s);
-            EXPECT_EQ(Stored.size(), Blobs[s].size()) << "stage " << s << " lost its binaries";
+            EXPECT_EQ(Stored.Num(), Blobs[s].Num()) << "stage " << s << " lost its binaries";
             EXPECT_TRUE(Stored == Blobs[s]) << "stage " << s << " stored another stage's binaries";
         }
     }

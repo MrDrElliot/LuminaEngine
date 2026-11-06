@@ -57,7 +57,7 @@ namespace Grain
 
             GShaderCompiler->Flush();
 
-            if (Spirv.empty())
+            if (Spirv.IsEmpty())
             {
                 LOG_ERROR("Grain: failed to compile '{}'.", DebugName);
             }
@@ -73,7 +73,7 @@ namespace Grain
         const TVector<uint32> Vertex = CompileHud("HudVS", "Grain.HudVS");
         const TVector<uint32> Pixel = CompileHud("HudPS", "Grain.HudPS");
 
-        if (Vertex.empty() || Pixel.empty())
+        if (Vertex.IsEmpty() || Pixel.IsEmpty())
         {
             return false;
         }
@@ -93,8 +93,8 @@ namespace Grain
         {
             return RHI::FShaderSource
             {
-                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                     Spirv.size() * sizeof(uint32)),
+                .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                     Spirv.Num() * sizeof(uint32)),
                 .EntryPoint = Entry,
             };
         };
@@ -123,13 +123,13 @@ namespace Grain
             Font[i >> 2] |= uint32(kFontColumnBits[i]) << ((i & 3u) * 8u);
         }
 
-        Vertices.reserve(4096);
+        Vertices.Reserve(4096);
         return true;
     }
 
     void FHud::Quad(float X, float Y, float Width, float Height, const FVector4& Color)
     {
-        if (Vertices.size() + 6 > kMaxHudVertices || Color.w <= 0.001f)
+        if (static_cast<uint32>(Vertices.Num() + 6) > kMaxHudVertices || Color.w <= 0.001f)
         {
             return;
         }
@@ -147,7 +147,7 @@ namespace Grain
             Vertex.Position = { X + Corner[0] * Width, Y + Corner[1] * Height };
             Vertex.Local = { Corner[0], Corner[1] };
             Vertex.Glyph = kSolidGlyph;
-            Vertices.push_back(Vertex);
+            Vertices.Add(Vertex);
         }
     }
 
@@ -175,7 +175,7 @@ namespace Grain
             return;
         }
 
-        if (Vertices.size() + 6 > kMaxHudVertices || Color.w <= 0.001f)
+        if (static_cast<uint32>(Vertices.Num() + 6) > kMaxHudVertices || Color.w <= 0.001f)
         {
             return;
         }
@@ -196,7 +196,7 @@ namespace Grain
             Vertex.Position = { X + Corner[0] * Width, Y + Corner[1] * Height };
             Vertex.Local = { Corner[0], Corner[1] };
             Vertex.Glyph = Code - kFontFirstGlyph;
-            Vertices.push_back(Vertex);
+            Vertices.Add(Vertex);
         }
     }
 
@@ -232,7 +232,7 @@ namespace Grain
 
     void FHud::Build(const FGame& Game, const FUIntVector2& Extent, float RealTime)
     {
-        Vertices.clear();
+        Vertices.Reset();
 
         if (!bVisible)
         {
@@ -280,12 +280,12 @@ namespace Grain
             Bar(BarX, Y + Unit * 18.0f, BarWidth, BarHeight * 0.7f,
                 Player.Focus / Math::Max(Player.MaxFocus, 1.0f), kFocus, kTrack);
 
-            const FString Vitals = FString("HP ").append(Format("{}", int32(Player.Health)))
-                .append("/").append(Format("{}", int32(Player.MaxHealth)));
-            Text(Vitals.c_str(), BarX, Y + Unit * 25.0f, Unit * 0.9f, kInk);
+            const FString Vitals = FString("HP ").Append(Format("{}", int32(Player.Health)))
+                .Append("/").Append(Format("{}", int32(Player.MaxHealth)));
+            Text(*Vitals, BarX, Y + Unit * 25.0f, Unit * 0.9f, kInk);
 
-            const FString LevelText = FString("LV ").append(Format("{}", Player.Level));
-            Text(LevelText.c_str(), X + PanelWidth - Unit * 22.0f, Y + Unit * 25.0f, Unit * 0.9f, kGoldInk);
+            const FString LevelText = FString("LV ").Append(Format("{}", Player.Level));
+            Text(*LevelText, X + PanelWidth - Unit * 22.0f, Y + Unit * 25.0f, Unit * 0.9f, kGoldInk);
         }
 
         //~ Experience, along the very bottom.
@@ -308,11 +308,11 @@ namespace Grain
             Quad(X, Y, PanelWidth, PanelHeight, kPanel);
             Frame(X, Y, PanelWidth, PanelHeight, 1.0f, kEdge);
 
-            const FString Shards = FString("SHARDS  ").append(Format("{}", Player.Shards));
-            Text(Shards.c_str(), X + Unit * 4.0f, Y + Unit * 4.0f, Unit * 1.1f, kShard);
+            const FString Shards = FString("SHARDS  ").Append(Format("{}", Player.Shards));
+            Text(*Shards, X + Unit * 4.0f, Y + Unit * 4.0f, Unit * 1.1f, kShard);
 
-            const FString Kills = FString("FELLED  ").append(Format("{}", Player.Kills));
-            Text(Kills.c_str(), X + Unit * 4.0f, Y + Unit * 13.0f, Unit * 1.1f, kDim);
+            const FString Kills = FString("FELLED  ").Append(Format("{}", Player.Kills));
+            Text(*Kills, X + Unit * 4.0f, Y + Unit * 13.0f, Unit * 1.1f, kDim);
         }
 
         //~ Objectives, top right.
@@ -323,7 +323,7 @@ namespace Grain
             const float Y = Unit * 6.0f;
 
             const TVector<FObjective>& Objectives = Game.GetObjectives();
-            const float PanelHeight = Unit * (12.0f + float(Objectives.size()) * 9.0f);
+            const float PanelHeight = Unit * (12.0f + float(Objectives.Num()) * 9.0f);
 
             Quad(X, Y, PanelWidth, PanelHeight, kPanel);
             Frame(X, Y, PanelWidth, PanelHeight, 1.0f, kEdge);
@@ -336,11 +336,11 @@ namespace Grain
                 const FVector4 Color = Objective.bComplete ? kStamina : kInk;
 
                 FString Row = Objective.bComplete ? FString("x ") : FString("- ");
-                Row.append(Objective.Text);
-                Row.append(" ").append(Format("{}", Objective.Progress));
-                Row.append("/").append(Format("{}", Objective.Target));
+                Row.Append(Objective.Text);
+                Row.Append(" ").Append(Format("{}", Objective.Progress));
+                Row.Append("/").Append(Format("{}", Objective.Target));
 
-                Text(Row.c_str(), X + Unit * 4.0f, Line, Unit * 0.8f, Color);
+                Text(*Row, X + Unit * 4.0f, Line, Unit * 0.8f, Color);
                 Line += Unit * 9.0f;
             }
         }
@@ -351,10 +351,10 @@ namespace Grain
             const float Phase = Game.GetTimeOfDay();
             const float Shifted = Phase + 0.25f;
             const int32 Hour = int32((Shifted - Math::Floor(Shifted)) * 24.0f);
-            const FString Clock = FString(Hour < 10 ? "0" : "").append(Format("{}", Hour)).append("00");
+            const FString Clock = FString(Hour < 10 ? "0" : "").Append(Format("{}", Hour)).Append("00");
 
             const bool bDay = Game.GetSky().DayFactor > 0.4f;
-            TextCentered(Clock.c_str(), Width * 0.5f, Unit * 6.0f, Unit * 1.1f, bDay ? kGoldInk : kShard);
+            TextCentered(*Clock, Width * 0.5f, Unit * 6.0f, Unit * 1.1f, bDay ? kGoldInk : kShard);
         }
 
         //~ Floating damage and pickup text, projected through the same basis the shaders use.
@@ -405,7 +405,7 @@ namespace Grain
                 const float ScreenY = (NdcY * 0.5f + 0.5f) * Height;
 
                 const FVector4 Color { Entry.Color.x, Entry.Color.y, Entry.Color.z, Life };
-                TextCentered(Entry.Text.c_str(), ScreenX, ScreenY, Unit * 1.0f, Color);
+                TextCentered(*Entry.Text, ScreenX, ScreenY, Unit * 1.0f, Color);
             }
         }
 
@@ -422,7 +422,7 @@ namespace Grain
         {
             const float Remaining = 1.0f - Banner.Age / Banner.Life;
             const float Alpha = Math::Min(Banner.Age * 4.0f, Math::Min(Remaining * 4.0f, 1.0f));
-            TextCentered(Banner.Text.c_str(), Width * 0.5f, Height * 0.22f, Unit * 2.0f, Fade(kInk, Alpha));
+            TextCentered(*Banner.Text, Width * 0.5f, Height * 0.22f, Unit * 2.0f, Fade(kInk, Alpha));
         }
 
         if (!Player.bAlive)
@@ -445,13 +445,13 @@ namespace Grain
 
     void FHud::Draw(RHI::FCmdListH CL, RHI::FTextureH Target, const FUIntVector2& Extent)
     {
-        if (Vertices.empty() || !RHI::IsValid(Pipeline) || VertexBuffer.Cpu == nullptr)
+        if (Vertices.IsEmpty() || !RHI::IsValid(Pipeline) || VertexBuffer.Cpu == nullptr)
         {
             return;
         }
 
-        const uint32 Count = uint32(Math::Min<size_t>(Vertices.size(), kMaxHudVertices));
-        std::memcpy(VertexBuffer.Cpu, Vertices.data(), size_t(Count) * sizeof(FHudVertex));
+        const uint32 Count = uint32(Math::Min<size_t>(Vertices.Num(), kMaxHudVertices));
+        std::memcpy(VertexBuffer.Cpu, Vertices.GetData(), size_t(Count) * sizeof(FHudVertex));
 
         FHudArgs Args;
         Args.Vertices = VertexBuffer.Gpu;

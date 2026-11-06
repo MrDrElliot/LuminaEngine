@@ -108,7 +108,7 @@ namespace Lumina::AnimationGraphEditorToolInternal
         case EAnimTaskType::SampleClip:
             // Time first, since it is the per-frame liveness signal and long clip names get ellipsized.
             return Format("t={:.3f}s   {}", Entry.Time,
-                          Entry.ClipName.IsNone() ? "<no clip>" : Entry.ClipName.c_str());
+                          Entry.ClipName.IsNone() ? "<no clip>" : *Entry.ClipName);
 
         case EAnimTaskType::BlendMasked:
             return Format("alpha {:.2f}   mask {}/{} bones",
@@ -163,10 +163,10 @@ namespace Lumina::AnimationGraphEditorToolInternal
         }
 
         FString Result(Text);
-        while (!Result.empty() &&
-               Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Result.c_str()).x > Budget)
+        while (!Result.IsEmpty() &&
+               Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, *Result).x > Budget)
         {
-            Result.pop_back();
+            Result.LeftChopInline(1);
         }
         Result += Ellipsis;
         return Result;
@@ -200,7 +200,7 @@ namespace Lumina::AnimationGraphEditorToolInternal
 namespace Lumina
 {
     FAnimationGraphEditorTool::FAnimationGraphEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
         , NodeGraph(nullptr)
     {
     }
@@ -243,7 +243,7 @@ namespace Lumina
 
         // Duplicating a state used to hand the copy the original's sub-graph; this splits those apart.
         THashSet<CEdNodeGraph*> VisitedGraphs;
-        VisitedGraphs.insert(NodeGraph.Get());
+        VisitedGraphs.Add(NodeGraph.Get());
         if (const uint32 Repaired = NodeGraph->UnaliasSubGraphs(VisitedGraphs))
         {
             Asset->GetPackage()->MarkDirty();
@@ -295,9 +295,9 @@ namespace Lumina
                 Graph->Shutdown();
             }
         }
-        InitializedGraphs.clear();
-        GraphStack.clear();
-        NavForwardStack.clear();
+        InitializedGraphs.Reset();
+        GraphStack.Reset();
+        NavForwardStack.Reset();
         NodeGraph = nullptr;
     }
 
@@ -306,7 +306,7 @@ namespace Lumina
         FAssetEditorTool::OnPostUndoRedo();
 
         // An undo can take away the node whose sub-graph is open, which leaves the canvas showing an orphan.
-        for (size_t Level = 1; Level < GraphStack.size(); ++Level)
+        for (int32 Level = 1; Level < GraphStack.Num(); ++Level)
         {
             const CEdNodeGraph* Parent = GraphStack[Level - 1].Graph;
             const bool bReachable = Parent != nullptr && Algo::AnyOf(Parent->Nodes, [&](const TStrongObjectPtr<CEdGraphNode>& Node)
@@ -316,17 +316,17 @@ namespace Lumina
 
             if (!bReachable)
             {
-                GraphStack.resize(Level);
-                NavForwardStack.clear();
+                GraphStack.SetNum(Level);
+                NavForwardStack.Reset();
                 break;
             }
         }
 
         // A restore can resize a transition's conditions under its inline table, so those rebuild on the next draw.
-        TransitionTables.clear();
+        TransitionTables.Reset();
 
         // Removed nodes report through the pre-delete callback, but a transition undone away does not.
-        const CAnimStateMachineGraph* SMGraph = GraphStack.empty() ? nullptr : Cast<CAnimStateMachineGraph>(GraphStack.back().Graph);
+        const CAnimStateMachineGraph* SMGraph = GraphStack.IsEmpty() ? nullptr : Cast<CAnimStateMachineGraph>(GraphStack.Last().Graph);
         if (SelectedTransition != nullptr && (SMGraph == nullptr || !Algo::AnyOf(SMGraph->GetTransitions(), [this](const TStrongObjectPtr<CAnimStateTransition>& Transition) { return Transition.Get() == SelectedTransition; })))
         {
             ClearGraphSelection();
@@ -360,7 +360,7 @@ namespace Lumina
         Graph->SetPreNodeDeletedCallback([this](const CEdGraphNode* Node)
         {
             // A deleted node takes its sub-graph with it, which forward history may still point at.
-            NavForwardStack.clear();
+            NavForwardStack.Reset();
 
             // Deleting a State node drops its transitions, so clear the inspected one rather than dangle.
             if (Node == SelectedNode || SelectedTransition != nullptr)
@@ -415,9 +415,9 @@ namespace Lumina
                 return;
             }
 
-            CAnimStateMachineGraph* SMGraph = GraphStack.empty()
+            CAnimStateMachineGraph* SMGraph = GraphStack.IsEmpty()
                 ? nullptr
-                : Cast<CAnimStateMachineGraph>(GraphStack.back().Graph);
+                : Cast<CAnimStateMachineGraph>(GraphStack.Last().Graph);
             if (SMGraph == nullptr)
             {
                 return;
@@ -435,11 +435,11 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::EnsureGraphReady(CEdNodeGraph* Graph)
     {
-        if (Graph == nullptr || InitializedGraphs.find(Graph) != InitializedGraphs.end())
+        if (Graph == nullptr || InitializedGraphs.Contains(Graph))
         {
             return;
         }
-        InitializedGraphs.insert(Graph);
+        InitializedGraphs.Add(Graph);
         Graph->Initialize();
         Graph->SetTransactionManager(&GetTransactionManager());
         WireGraphCallbacks(Graph);
@@ -453,56 +453,56 @@ namespace Lumina
         }
 
         EnsureGraphReady(Graph);
-        GraphStack.push_back({ Graph, Label });
+        GraphStack.Emplace(Graph, Label);
 
         // Descending somewhere new is what abandons the levels forward was going to retrace.
-        NavForwardStack.clear();
+        NavForwardStack.Reset();
 
         ClearGraphSelection();
     }
 
     void FAnimationGraphEditorTool::PopToLevel(int32 Index)
     {
-        if (Index < 0 || Index >= (int32)GraphStack.size() - 1)
+        if (Index < 0 || Index >= GraphStack.Num() - 1)
         {
             return;
         }
 
         // Deepest first, so the next forward step lands on the level just below Index.
-        for (int32 i = (int32)GraphStack.size() - 1; i > Index; --i)
+        for (int32 i = GraphStack.Num() - 1; i > Index; --i)
         {
-            NavForwardStack.push_back(GraphStack[i]);
+            NavForwardStack.Add(GraphStack[i]);
         }
-        GraphStack.resize(Index + 1);
+        GraphStack.SetNum(Index + 1);
 
         ClearGraphSelection();
     }
 
     void FAnimationGraphEditorTool::NavigateBack()
     {
-        if (GraphStack.size() < 2)
+        if (GraphStack.Num() < 2)
         {
             return;
         }
 
-        NavForwardStack.push_back(GraphStack.back());
-        GraphStack.pop_back();
+        NavForwardStack.Add(GraphStack.Last());
+        GraphStack.Pop();
 
         ClearGraphSelection();
     }
 
     void FAnimationGraphEditorTool::NavigateForward()
     {
-        if (NavForwardStack.empty())
+        if (NavForwardStack.IsEmpty())
         {
             return;
         }
 
-        FGraphStackEntry Entry = NavForwardStack.back();
-        NavForwardStack.pop_back();
+        FGraphStackEntry Entry = NavForwardStack.Last();
+        NavForwardStack.Pop();
 
         EnsureGraphReady(Entry.Graph);
-        GraphStack.push_back(Move(Entry));
+        GraphStack.Add(Move(Entry));
 
         ClearGraphSelection();
     }
@@ -512,13 +512,14 @@ namespace Lumina
         // Cached transition tables are tied to the canvas being left and would dangle.
         SelectedNode = nullptr;
         SelectedTransition = nullptr;
-        TransitionTables.clear();
+        TransitionTables.Reset();
         GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
     }
 
     void FAnimationGraphEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -593,11 +594,6 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        if (World.IsValid() && World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
-
         // The skeleton is often assigned after the tool is open, so pick it up here too.
         SyncPreviewMesh();
 
@@ -630,20 +626,20 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.25f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Up, 0.45f, &leftDockID, &bottomDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),            leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationGraphEditorToolInternal::AnimationGraphWindowName).c_str(),      bottomDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationGraphEditorToolInternal::GraphPropertiesWindowName).c_str(),     rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName),            leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationGraphEditorToolInternal::AnimationGraphWindowName),      bottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationGraphEditorToolInternal::GraphPropertiesWindowName),     rightDockID);
         // Parameters share the right pane, tabbed behind Properties.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationGraphEditorToolInternal::GraphParametersWindowName).c_str(),     rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationGraphEditorToolInternal::GraphParametersWindowName),     rightDockID);
         // Task Graph tabs sit behind the node canvas, in the same what-is-this-graph-doing workspace.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationGraphEditorToolInternal::GraphTasksWindowName).c_str(),          bottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationGraphEditorToolInternal::GraphTasksWindowName),          bottomDockID);
         // Clips sit with the other pickers on the right so they can be dragged onto the canvas.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(AnimationGraphEditorToolInternal::GraphClipsWindowName).c_str(),          rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(AnimationGraphEditorToolInternal::GraphClipsWindowName),          rightDockID);
     }
 
     void FAnimationGraphEditorTool::DrawBreadcrumbBar()
     {
-        for (int32 i = 0; i < (int32)GraphStack.size(); ++i)
+        for (int32 i = 0; i < GraphStack.Num(); ++i)
         {
             if (i > 0)
             {
@@ -652,12 +648,12 @@ namespace Lumina
                 ImGui::SameLine(0.0f, 4.0f);
             }
 
-            const bool bIsCurrent = (i == (int32)GraphStack.size() - 1);
+            const bool bIsCurrent = (i == GraphStack.Num() - 1);
 
             // Nesting repeats labels, and a button IDs off its label.
             ImGui::PushID(i);
             ImGui::BeginDisabled(bIsCurrent);
-            if (ImGui::Button(GraphStack[i].Label.c_str()))
+            if (ImGui::Button(*GraphStack[i].Label))
             {
                 PopToLevel(i);
             }
@@ -687,13 +683,13 @@ namespace Lumina
             }
         }
 
-        if (!GraphStack.empty() && GraphStack.back().Graph != nullptr)
+        if (!GraphStack.IsEmpty() && GraphStack.Last().Graph != nullptr)
         {
             const ImVec2 CanvasMin = ImGui::GetCursorScreenPos();
             const ImVec2 CanvasSize = ImGui::GetContentRegionAvail();
             GraphCanvasCenter = ImVec2(CanvasMin.x + CanvasSize.x * 0.5f, CanvasMin.y + CanvasSize.y * 0.5f);
 
-            GraphStack.back().Graph->DrawGraph();
+            GraphStack.Last().Graph->DrawGraph();
 
             // The node editor consumes the region, so the target covers the whole window rect instead.
             if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->Rect(), ImGui::GetCurrentWindow()->ID))
@@ -739,7 +735,7 @@ namespace Lumina
         AnimGraphCtx.Graph = Graph;
 
         // The canvas in view, so a State Alias lists the states it can name.
-        StateMachineCtx.Graph = GraphStack.empty() ? nullptr : Cast<CAnimStateMachineGraph>(GraphStack.back().Graph);
+        StateMachineCtx.Graph = GraphStack.IsEmpty() ? nullptr : Cast<CAnimStateMachineGraph>(GraphStack.Last().Graph);
 
         if (ImGui::Button(LE_ICON_COG " Compile"))
         {
@@ -766,7 +762,7 @@ namespace Lumina
         {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Compile failed");
         }
-        else if (!CompilationLog.empty())
+        else if (!CompilationLog.IsEmpty())
         {
             ImGui::TextColored(ImVec4(0.40f, 0.85f, 0.45f, 1.0f), "Compiled");
         }
@@ -779,7 +775,7 @@ namespace Lumina
 
         // On the state machine canvas a transition is edited by selecting its arrow, which needs a nudge.
         if (SelectedNode == nullptr && SelectedTransition == nullptr &&
-            !GraphStack.empty() && Cast<CAnimStateMachineGraph>(GraphStack.back().Graph) != nullptr)
+            !GraphStack.IsEmpty() && Cast<CAnimStateMachineGraph>(GraphStack.Last().Graph) != nullptr)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
             ImGui::TextWrapped("Click a transition's condition badge to edit it here. Drag from a State's right band "
@@ -802,21 +798,21 @@ namespace Lumina
             DrawTransitionBlend(SelectedTransition);
         }
 
-        if (!CompilationLog.empty())
+        if (!CompilationLog.IsEmpty())
         {
             ImGui::Separator();
-            ImGui::TextUnformatted(CompilationLog.c_str());
+            ImGui::TextUnformatted(*CompilationLog);
         }
     }
 
     void FAnimationGraphEditorTool::DrawOutgoingTransitionsForState(CAnimGraphNode_State* State)
     {
-        if (State == nullptr || GraphStack.empty())
+        if (State == nullptr || GraphStack.IsEmpty())
         {
             return;
         }
 
-        CAnimStateMachineGraph* SMGraph = Cast<CAnimStateMachineGraph>(GraphStack.back().Graph);
+        CAnimStateMachineGraph* SMGraph = Cast<CAnimStateMachineGraph>(GraphStack.Last().Graph);
         if (SMGraph == nullptr)
         {
             return;
@@ -828,10 +824,10 @@ namespace Lumina
         // Drop cached property tables whose backing transition was removed.
         for (auto It = TransitionTables.begin(); It != TransitionTables.end(); )
         {
-            const bool bAlive = Algo::Contains(Outgoing, It->first);
+            const bool bAlive = Algo::Contains(Outgoing, It->Key);
             if (!bAlive)
             {
-                It = TransitionTables.erase(It);
+                It = TransitionTables.Remove(It);
             }
             else
             {
@@ -844,7 +840,7 @@ namespace Lumina
         ImGui::SeparatorText(LE_ICON_ARROW_RIGHT_BOLD " Outgoing Transitions");
         ImGui::PopStyleColor();
 
-        if (Outgoing.empty())
+        if (Outgoing.IsEmpty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
             ImGui::TextWrapped("None. Drag from this State's right edge onto another State to add one.");
@@ -857,7 +853,7 @@ namespace Lumina
                            "Reorder with Priority.");
         ImGui::PopStyleColor();
 
-        for (int32 Index = 0; Index < (int32)Outgoing.size(); ++Index)
+        for (int32 Index = 0; Index < Outgoing.Num(); ++Index)
         {
             CAnimStateTransition* Transition = Outgoing[Index];
             ImGui::PushID(Transition);
@@ -866,19 +862,19 @@ namespace Lumina
             const FString Header = FString(LE_ICON_ARROW_RIGHT_BOLD " ") + ToLabel;
 
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            const bool bOpen = ImGui::CollapsingHeader(Header.c_str());
+            const bool bOpen = ImGui::CollapsingHeader(*Header);
 
             // Condition and blend length are the two things worth scanning without expanding every entry.
             ImGui::SameLine();
-            ImGui::TextColored(Transition->Conditions.empty() ? EditorColors::Warning() : EditorColors::TextDim(),
-                               "   %s", Transition->GetConditionText().c_str());
+            ImGui::TextColored(Transition->Conditions.IsEmpty() ? EditorColors::Warning() : EditorColors::TextDim(),
+                               "   %s", *Transition->GetConditionText());
             ImGui::SameLine();
             ImGui::TextColored(EditorColors::TextMuted(), "   %.2fs", Transition->BlendDuration);
 
             if (bOpen)
             {
-                auto It = TransitionTables.find(Transition);
-                if (It == TransitionTables.end())
+                auto It = TransitionTables.Find(Transition);
+                if (It == nullptr)
                 {
                     TUniquePtr<FPropertyTable> NewTable = MakeUnique<FPropertyTable>(Transition);
                     NewTable->SetContext(&PropertyContext);
@@ -887,15 +883,15 @@ namespace Lumina
                     NewTable->SetPostEditCallback([this](const FPropertyChangedEvent&)
                     {
                         NotifyAssetDataChanged();
-                        if (!GraphStack.empty() && GraphStack.back().Graph != nullptr)
+                        if (!GraphStack.IsEmpty() && GraphStack.Last().Graph != nullptr)
                         {
-                            GraphStack.back().Graph->NotifyContentChanged();
+                            GraphStack.Last().Graph->NotifyContentChanged();
                         }
                     });
                     WirePropertyTableUndo(*NewTable);
-                    It = TransitionTables.emplace(Transition, Move(NewTable)).first;
+                    It = &TransitionTables.FindOrAdd(Transition, Move(NewTable));
                 }
-                It->second->DrawTree();
+                (*It)->DrawTree();
             }
 
             ImGui::PopID();
@@ -916,7 +912,7 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::DrawLiveCurveValues(CAnimationGraph* Graph)
     {
-        if (Graph->CurveNames.empty())
+        if (Graph->CurveNames.IsEmpty())
         {
             return;
         }
@@ -929,15 +925,15 @@ namespace Lumina
 
         for (const FName& Name : Graph->CurveNames)
         {
-            auto It = CurveHistories.find(Name);
-            if (It == CurveHistories.end() || It->second.empty())
+            auto It = CurveHistories.Find(Name);
+            if (It == nullptr || It->IsEmpty())
             {
-                ImGui::TextDisabled("%s", Name.c_str());
+                ImGui::TextDisabled("%s", *Name);
                 continue;
             }
 
-            ImGui::TextUnformatted(Name.c_str());
-            AnimDebugDraw::Plot(It->second, ImVec2(ImGui::GetContentRegionAvail().x, 46.0f), EditorColors::U32(EditorColors::Accent()));
+            ImGui::TextUnformatted(*Name);
+            AnimDebugDraw::Plot((*It), ImVec2(ImGui::GetContentRegionAvail().x, 46.0f), EditorColors::U32(EditorColors::Accent()));
             ImGui::Spacing();
         }
     }
@@ -998,7 +994,7 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::Compile(bool bMarkPackageDirty)
     {
-        CompilationLog.clear();
+        CompilationLog.Reset();
         bHasCompilationErrors = false;
 
         CAnimationGraph* Graph = Cast<CAnimationGraph>(Asset.Get());
@@ -1044,11 +1040,11 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::UpdateDebugOverlay()
     {
-        DebugPinValues.clear();
-        DebugActiveNodes.clear();
+        DebugPinValues.Reset();
+        DebugActiveNodes.Reset();
         DebugTransition = nullptr;
 
-        CEdNodeGraph* Graph = GraphStack.empty() ? nullptr : GraphStack.back().Graph;
+        CEdNodeGraph* Graph = GraphStack.IsEmpty() ? nullptr : GraphStack.Last().Graph;
         if (Graph == nullptr)
         {
             return;
@@ -1077,10 +1073,10 @@ namespace Lumina
             const TVector<float>& Slots = VMState->StateSlots;
             for (const FAnimGraphDebugStateNode& Entry : DebugStateNodes)
             {
-                if (Entry.CurrentStateSlot < Slots.size() &&
+                if (Entry.CurrentStateSlot < Slots.Num() &&
                     (int32)(Slots[Entry.CurrentStateSlot] + 0.5f) == Entry.StateIndex)
                 {
-                    DebugActiveNodes.insert(Entry.Node);
+                    DebugActiveNodes.Add(Entry.Node);
                 }
             }
 
@@ -1110,7 +1106,7 @@ namespace Lumina
             for (const auto& [Pin, Reg] : DebugView.PinRegisters)
             {
                 const CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(Pin);
-                if (AnimPin != nullptr && !AnimPin->bInputPin && AnimPin->GetPinType() == EAnimPinType::Value && Reg < DebugView.Scalars.size())
+                if (AnimPin != nullptr && !AnimPin->bInputPin && AnimPin->GetPinType() == EAnimPinType::Value && Reg < DebugView.Scalars.Num())
                 {
                     DebugPinValues[const_cast<CEdNodeGraphPin*>(Pin)] = Format("{:.2f}", DebugView.Scalars[Reg]);
                 }
@@ -1138,8 +1134,8 @@ namespace Lumina
     {
         DebugView.bLive = VMState != nullptr;
         DebugView.bShowWeights = bDebugEnabled && VMState != nullptr;
-        DebugView.NodeWeights.clear();
-        DebugView.Machines.clear();
+        DebugView.NodeWeights.Reset();
+        DebugView.Machines.Reset();
         if (VMState == nullptr)
         {
             return;
@@ -1147,33 +1143,33 @@ namespace Lumina
 
         DebugView.Scalars = VMState->ScalarRegisters;
 
-        erase_if(DebugView.Histories, [this](const auto& Pair) { return !DebugView.PinRegisters.contains(Pair.first); });
+        DebugView.Histories.RemoveAll([this](const auto& Pair) { return !DebugView.PinRegisters.Contains(Pair.Key); });
         for (const auto& [Pin, Reg] : DebugView.PinRegisters)
         {
             const CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(Pin);
-            if (AnimPin == nullptr || AnimPin->bInputPin || AnimPin->GetPinType() != EAnimPinType::Value || Reg >= DebugView.Scalars.size())
+            if (AnimPin == nullptr || AnimPin->bInputPin || AnimPin->GetPinType() != EAnimPinType::Value || Reg >= DebugView.Scalars.Num())
             {
                 continue;
             }
 
             FAnimValueHistory& History = DebugView.Histories[Pin];
-            History.set_capacity(kAnimValueHistoryLength);
-            History.push_back(DebugView.Scalars[Reg]);
+            History.SetCapacity(kAnimValueHistoryLength);
+            History.Add(DebugView.Scalars[Reg]);
         }
 
         if (const CAnimationGraph* AssetGraph = Cast<CAnimationGraph>(Asset.Get()))
         {
-            for (size_t Index = 0; Index < AssetGraph->CurveNames.size() && Index < VMState->CurveValues.size(); ++Index)
+            for (int32 Index = 0; Index < AssetGraph->CurveNames.Num() && Index < VMState->CurveValues.Num(); ++Index)
             {
                 FAnimValueHistory& History = CurveHistories[AssetGraph->CurveNames[Index]];
-                History.set_capacity(kAnimValueHistoryLength);
-                History.push_back(VMState->CurveValues[Index]);
+                History.SetCapacity(kAnimValueHistoryLength);
+                History.Add(VMState->CurveValues[Index]);
             }
         }
 
-        if (!GraphStack.empty())
+        if (!GraphStack.IsEmpty())
         {
-            UpdateMachineStatuses(GraphStack.back().Graph, *VMState);
+            UpdateMachineStatuses(GraphStack.Last().Graph, *VMState);
         }
     }
 
@@ -1194,7 +1190,7 @@ namespace Lumina
             for (const FAnimGraphDebugStateNode& Entry : DebugStateNodes)
             {
                 const CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(Entry.Node);
-                if (State == nullptr || Entry.Node->GetOwningGraph() != MachineGraph || Entry.CurrentStateSlot >= Slots.size() || Entry.FromStateSlot >= Slots.size())
+                if (State == nullptr || Entry.Node->GetOwningGraph() != MachineGraph || Entry.CurrentStateSlot >= Slots.Num() || Entry.FromStateSlot >= Slots.Num())
                 {
                     continue;
                 }
@@ -1211,7 +1207,7 @@ namespace Lumina
                     Status.From = State->GetStateLabel();
                 }
 
-                if (Entry.MachineIndex < VMState.Inertializers.size())
+                if (Entry.MachineIndex < VMState.Inertializers.Num())
                 {
                     const FAnimInertializer& Inert = VMState.Inertializers[Entry.MachineIndex];
                     Status.Blend = Inert.bActive && Inert.Duration > 1e-5f ? Math::Clamp(Inert.Elapsed / Inert.Duration, 0.0f, 1.0f) : 1.0f;
@@ -1227,12 +1223,12 @@ namespace Lumina
 
     float FAnimationGraphEditorTool::ResolveDisplayedRootWeight() const
     {
-        for (size_t Level = 1; Level < GraphStack.size(); ++Level)
+        for (int32 Level = 1; Level < GraphStack.Num(); ++Level)
         {
             for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : GraphStack[Level - 1].Graph->Nodes)
             {
                 const CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(NodeRef.Get());
-                if (State != nullptr && State->BlendTree.Get() == GraphStack[Level].Graph && !DebugActiveNodes.contains(State))
+                if (State != nullptr && State->BlendTree.Get() == GraphStack[Level].Graph && !DebugActiveNodes.Contains(State))
                 {
                     return 0.0f;
                 }
@@ -1276,7 +1272,7 @@ namespace Lumina
         }
 
         const TVector<float>& Slots = VMState.StateSlots;
-        if (!bFoundMachine || CurrentSlot >= Slots.size() || FromSlot >= Slots.size())
+        if (!bFoundMachine || CurrentSlot >= Slots.Num() || FromSlot >= Slots.Num())
         {
             return;
         }
@@ -1287,21 +1283,21 @@ namespace Lumina
             return;
         }
 
-        auto FromItr = StateNodesByIndex.find((int32)(Slots[FromSlot] + 0.5f));
-        auto ToItr   = StateNodesByIndex.find((int32)(Slots[CurrentSlot] + 0.5f));
-        if (FromItr == StateNodesByIndex.end() || ToItr == StateNodesByIndex.end())
+        auto FromItr = StateNodesByIndex.Find((int32)(Slots[FromSlot] + 0.5f));
+        auto ToItr = StateNodesByIndex.Find((int32)(Slots[CurrentSlot] + 0.5f));
+        if (FromItr == nullptr || ToItr == nullptr)
         {
             return;
         }
 
-        const int64 ToNodeID = ToItr->second->GetNodeID();
-        CAnimStateTransition* Active = SMGraph->FindTransition(FromItr->second->GetNodeID(), ToNodeID);
+        const int64 ToNodeID = (*ToItr)->GetNodeID();
+        CAnimStateTransition* Active = SMGraph->FindTransition((*FromItr)->GetNodeID(), ToNodeID);
         if (Active == nullptr)
         {
             Active = SMGraph->FindAnyStateTransitionTo(ToNodeID);
         }
 
-        if (Active == nullptr || MachineIndex >= VMState.Inertializers.size())
+        if (Active == nullptr || MachineIndex >= VMState.Inertializers.Num())
         {
             return;
         }
@@ -1337,8 +1333,8 @@ namespace Lumina
         // Flattened into one indexable list so the searchable picker can select by index.
         TVector<FString> Labels;
         TVector<TPair<CWorld*, ECS::FEntity>> Targets;
-        Labels.push_back("Preview");
-        Targets.push_back({ nullptr, static_cast<ECS::FEntity>(ECS::NullEntity) });
+        Labels.Add("Preview");
+        Targets.Add({ nullptr, static_cast<ECS::FEntity>(ECS::NullEntity) });
 
         int32 CurrentIndex = DebugTargetWorld.IsValid() ? Constants::kIndexNone : 0;
 
@@ -1361,13 +1357,13 @@ namespace Lumina
                     }
 
                     const SNameComponent* Name = CandidateWorld->TryGetComponent<SNameComponent>(Entity);
-                    Labels.push_back((Name ? Name->Name.ToString() : FString("Entity"))
+                    Labels.Add((Name ? Name->Name.ToString() : FString("Entity"))
                         + "  (" + AnimationGraphEditorToolInternal::WorldTypeLabel(Ctx->Type) + ")");
-                    Targets.push_back({ CandidateWorld, Entity });
+                    Targets.Add({ CandidateWorld, Entity });
 
                     if (DebugTargetWorld.Get() == CandidateWorld && DebugTargetEntity == Entity)
                     {
-                        CurrentIndex = (int32)Targets.size() - 1;
+                        CurrentIndex = Targets.Num() - 1;
                     }
                 }
             }
@@ -1375,24 +1371,24 @@ namespace Lumina
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
-        const int32 Picked = ImGuiX::SearchableCombo("##DebugTarget", CurrentLabel.c_str(), (int32)Labels.size(), CurrentIndex,
-            [&Labels](int32 Index) { return FFixedString(Labels[Index].c_str()); });
+        const int32 Picked = ImGuiX::SearchableCombo("##DebugTarget", *CurrentLabel, Labels.Num(), CurrentIndex,
+            [&Labels](int32 Index) { return FFixedString(*Labels[Index]); });
 
         if (Picked != Constants::kIndexNone)
         {
-            DebugTargetWorld  = Targets[Picked].first;
-            DebugTargetEntity = Targets[Picked].second;
+            DebugTargetWorld  = Targets[Picked].Key;
+            DebugTargetEntity = Targets[Picked].Value;
         }
     }
 
     void FAnimationGraphEditorTool::SpawnClipPlayerNode(CAnimation* Clip, ImVec2 ScreenPos)
     {
-        if (Clip == nullptr || GraphStack.empty())
+        if (Clip == nullptr || GraphStack.IsEmpty())
         {
             return;
         }
 
-        CEdNodeGraph* Canvas = GraphStack.back().Graph;
+        CEdNodeGraph* Canvas = GraphStack.Last().Graph;
         if (Canvas == nullptr)
         {
             return;
@@ -1409,12 +1405,12 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::SpawnBlendSpaceNode(CBlendSpace* BlendSpace, ImVec2 ScreenPos)
     {
-        if (BlendSpace == nullptr || GraphStack.empty() || GraphStack.back().Graph == nullptr)
+        if (BlendSpace == nullptr || GraphStack.IsEmpty() || GraphStack.Last().Graph == nullptr)
         {
             return;
         }
 
-        CEdNodeGraph* Canvas = GraphStack.back().Graph;
+        CEdNodeGraph* Canvas = GraphStack.Last().Graph;
         CAnimGraphNode_BlendSpace* Node = Cast<CAnimGraphNode_BlendSpace>(Canvas->CreateNode(CAnimGraphNode_BlendSpace::StaticClass()));
         if (Node == nullptr)
         {
@@ -1457,8 +1453,8 @@ namespace Lumina
             }
 
             const FString PropertyName = Property->Name.ToString();
-            if (EqualsIgnoreCase(FStringView(PropertyName.c_str(), PropertyName.size()),
-                                 FStringView(AxisNameString.c_str(), AxisNameString.size())))
+            if (EqualsIgnoreCase(FStringView(*PropertyName, PropertyName.Len()),
+                                 FStringView(*AxisNameString, AxisNameString.Len())))
             {
                 MatchedParameter = Property->Name;
             }
@@ -1469,7 +1465,7 @@ namespace Lumina
             return;
         }
 
-        CEdNodeGraph* Canvas = GraphStack.back().Graph;
+        CEdNodeGraph* Canvas = GraphStack.Last().Graph;
         CAnimGraphNode_GetParameter* GetNode = Cast<CAnimGraphNode_GetParameter>(Canvas->CreateNode(CAnimGraphNode_GetParameter::StaticClass()));
         if (GetNode == nullptr)
         {
@@ -1483,7 +1479,7 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::FinishSpawnedNode(CEdGraphNode* Node, ImVec2 ScreenPos)
     {
-        CEdNodeGraph* Canvas = GraphStack.back().Graph;
+        CEdNodeGraph* Canvas = GraphStack.Last().Graph;
 
         Canvas->PlaceNodeAtScreen(Node, ScreenPos);
         Canvas->ValidateGraph();
@@ -1529,7 +1525,7 @@ namespace Lumina
         {
             bClipCacheStale   = false;
             ClipCacheSkeleton = Skeleton;
-            ClipEntries.clear();
+            ClipEntries.Reset();
 
             const FName AnimationClassName = CAnimation::StaticClass()->GetName();
             const TVector<FAssetData*> Clips = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data) { return Data.AssetClass == AnimationClassName; });
@@ -1544,9 +1540,9 @@ namespace Lumina
                 }
 
                 FClipEntry Entry;
-                Entry.Path        = Data->Path.c_str();
+                Entry.Path        = *Data->Path;
                 Entry.DisplayName = Data->AssetName.ToString();
-                ClipEntries.push_back(Move(Entry));
+                ClipEntries.Add(Move(Entry));
             }
 
             Algo::Sort(ClipEntries,
@@ -1555,7 +1551,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        if (ClipEntries.empty())
+        if (ClipEntries.IsEmpty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
             ImGui::TextWrapped(bClipBrowserAnySkeleton
@@ -1574,26 +1570,26 @@ namespace Lumina
         {
             for (const FClipEntry& Entry : ClipEntries)
             {
-                if (!ImGuiX::PassSearchFilter(ClipFilter, Entry.DisplayName.c_str()) && !ImGuiX::PassSearchFilter(ClipFilter, Entry.Path.c_str()))
+                if (!ImGuiX::PassSearchFilter(ClipFilter, *Entry.DisplayName) && !ImGuiX::PassSearchFilter(ClipFilter, *Entry.Path))
                 {
                     continue;
                 }
 
-                ImGui::PushID(Entry.Path.c_str());
+                ImGui::PushID(*Entry.Path);
 
                 FFixedString Label = LE_ICON_RUN_FAST "  ";
-                Label += Entry.DisplayName.c_str();
-                ImGui::Selectable(Label.c_str());
+                Label += *Entry.DisplayName;
+                ImGui::Selectable(*Label);
 
                 // Uses the shared asset drag channel, so this row also drops onto any CAnimation property slot.
                 if (ImGui::BeginDragDropSource())
                 {
-                    const FStringView Path(Entry.Path.c_str(), Entry.Path.size());
+                    const FStringView Path(*Entry.Path, Entry.Path.Len());
                     if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
                     {
                         DragDrop::SetAssetPayload(*Data);
                     }
-                    ImGui::TextUnformatted(Entry.DisplayName.c_str());
+                    ImGui::TextUnformatted(*Entry.DisplayName);
                     ImGui::EndDragDropSource();
                 }
 
@@ -1601,7 +1597,7 @@ namespace Lumina
                 {
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
-                        const FStringView Path(Entry.Path.c_str(), Entry.Path.size());
+                        const FStringView Path(*Entry.Path, Entry.Path.Len());
                         if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
                         {
                             SpawnClipPlayerNode(LoadObject<CAnimation>(Data->AssetGUID), GraphCanvasCenter);
@@ -1609,7 +1605,7 @@ namespace Lumina
                     }
                     else if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                     {
-                        ImGuiX::TextTooltip_Internal(Entry.Path.c_str());
+                        ImGuiX::TextTooltip_Internal(*Entry.Path);
                     }
                 }
 
@@ -1672,7 +1668,7 @@ namespace Lumina
 
         const FAnimTaskSnapshot& Snap = TaskSnapshot;
 
-        if (!Snap.bValid || Snap.Entries.empty())
+        if (!Snap.bValid || Snap.Entries.IsEmpty())
         {
             ImGui::Separator();
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
@@ -1688,11 +1684,11 @@ namespace Lumina
         }
 
         // A summary of what the recipe cost and how much of it was live.
-        const int32 SkippedCount = (int32)Snap.Entries.size() - Snap.ReachableCount;
+        const int32 SkippedCount = Snap.Entries.Num() - Snap.ReachableCount;
 
         ImGui::Separator();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(EditorColors::TextPrimary(), "%d tasks", (int32)Snap.Entries.size());
+        ImGui::TextColored(EditorColors::TextPrimary(), "%d tasks", Snap.Entries.Num());
         ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
         ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::Success(), "%d ran", Snap.ReachableCount);
         if (SkippedCount > 0)
@@ -1747,11 +1743,11 @@ namespace Lumina
         const float HeaderH = SmallFont + 10.0f * Scale;
         const float Pad     = 14.0f * Scale;
 
-        const int32 NumEntries = (int32)Snap.Entries.size();
+        const int32 NumEntries = Snap.Entries.Num();
         const int32 NumLevels  = Math::Max(Snap.NumLevels, 1);
 
         TVector<TVector<int32>> Columns;
-        Columns.resize(NumLevels);
+        Columns.SetNum(NumLevels);
         for (int32 i = 0; i < NumEntries; ++i)
         {
             const FAnimTaskDebugEntry& Entry = Snap.Entries[i];
@@ -1760,28 +1756,28 @@ namespace Lumina
                 continue;
             }
             const int32 Level = Math::Clamp((int32)Entry.Level, 0, NumLevels - 1);
-            Columns[Level].push_back(i);
+            Columns[Level].Add(i);
         }
 
         float MaxColumnHeight = 0.0f;
         for (const TVector<int32>& Column : Columns)
         {
-            const float Height = Column.empty()
+            const float Height = Column.IsEmpty()
                 ? 0.0f
-                : (float)Column.size() * NodeH + (float)(Column.size() - 1) * RowGap;
+                : (float)Column.Num() * NodeH + (float)(Column.Num() - 1) * RowGap;
             MaxColumnHeight = Math::Max(MaxColumnHeight, Height);
         }
 
         TVector<ImVec2> Positions;
-        Positions.resize(NumEntries, ImVec2(0.0f, 0.0f));
+        Positions.SetNum(NumEntries, ImVec2(0.0f, 0.0f));
         for (int32 L = 0; L < NumLevels; ++L)
         {
             const TVector<int32>& Column = Columns[L];
-            if (Column.empty())
+            if (Column.IsEmpty())
             {
                 continue;
             }
-            const float Height = (float)Column.size() * NodeH + (float)(Column.size() - 1) * RowGap;
+            const float Height = (float)Column.Num() * NodeH + (float)(Column.Num() - 1) * RowGap;
             float Y = (MaxColumnHeight - Height) * 0.5f;
             for (int32 Index : Column)
             {
@@ -1811,10 +1807,10 @@ namespace Lumina
                               EditorColors::U32(EditorColors::WithAlpha(EditorColors::PanelBg(), (L % 2) ? 0.55f : 0.28f)),
                               6.0f * Scale);
 
-            const int32 Count = (int32)Columns[L].size();
+            const int32 Count = Columns[L].Num();
             const FString Header = Format("Level {}  ({} task{})", L, Count, Count == 1 ? "" : "s");
             DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 8.0f * Scale, Origin.y - HeaderH + 4.0f * Scale),
-                        EditorColors::U32(EditorColors::TextMuted()), Header.c_str());
+                        EditorColors::U32(EditorColors::TextMuted()), *Header);
         }
 
         // Curves flow producer to consumer, matching the node canvas's reading direction.
@@ -1888,7 +1884,7 @@ namespace Lumina
 
             // Measured first so the title can reserve room instead of running underneath it.
             const FString Order = Entry.bReachable ? Format("#{}", (int32)Entry.ExecOrder) : FString("skipped");
-            const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Order.c_str());
+            const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, *Order);
 
             DL->AddCircleFilled(ImVec2(TextX + 3.0f * Scale, TextY + FontSize * 0.5f), 3.5f * Scale,
                                 EditorColors::U32(EditorColors::WithAlpha(Category, Alpha)));
@@ -1896,17 +1892,17 @@ namespace Lumina
             const float TitleMaxW = BodyMaxW - DotOffset - OrderSize.x - 6.0f * Scale;
             const FString Title = AnimationGraphEditorToolInternal::FitText(Font, FontSize, AnimationGraphEditorToolInternal::TaskTypeName(Entry.Type), TitleMaxW);
             DL->AddText(Font, FontSize, ImVec2(TextX + DotOffset, TextY),
-                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), Title.c_str());
+                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), *Title);
 
             DL->AddText(Font, SmallFont, ImVec2(Max.x - InnerPad - OrderSize.x, TextY + 1.0f * Scale),
                         EditorColors::U32(EditorColors::WithAlpha(
-                            Entry.bReachable ? EditorColors::TextMuted() : EditorColors::Warning(), Alpha)), Order.c_str());
+                            Entry.bReachable ? EditorColors::TextMuted() : EditorColors::Warning(), Alpha)), *Order);
 
             TextY += FontSize + LineGap;
 
-            const FString DetailText = AnimationGraphEditorToolInternal::FitText(Font, SmallFont, AnimationGraphEditorToolInternal::BuildTaskDetail(Entry).c_str(), BodyMaxW);
+            const FString DetailText = AnimationGraphEditorToolInternal::FitText(Font, SmallFont, *AnimationGraphEditorToolInternal::BuildTaskDetail(Entry), BodyMaxW);
             DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
-                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextDim(), Alpha)), DetailText.c_str());
+                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextDim(), Alpha)), *DetailText);
 
             TextY += SmallFont + LineGap;
 
@@ -1915,11 +1911,11 @@ namespace Lumina
             {
                 const FString Where = Format("buffer {}  ({})", (int32)Entry.BufferIndex,
                                              Entry.bStoleBuffer ? "in place" : "new");
-                const FString Chip = AnimationGraphEditorToolInternal::FitText(Font, SmallFont, Where.c_str(), BodyMaxW);
+                const FString Chip = AnimationGraphEditorToolInternal::FitText(Font, SmallFont, *Where, BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(
                                 Entry.bStoleBuffer ? EditorColors::AccentAlt() : EditorColors::TextMuted(), Alpha)),
-                            Chip.c_str());
+                            *Chip);
             }
 
             DL->PopClipRect();
@@ -1931,7 +1927,7 @@ namespace Lumina
                 ImGui::Separator();
                 ImGui::Text("Task index    %d%s", i, bIsOutput ? "   (graph output)" : "");
                 ImGui::Text("Level         %d", (int32)Entry.Level);
-                ImGui::Text("Dependencies  %s", AnimationGraphEditorToolInternal::BuildDepText(Entry).c_str());
+                ImGui::Text("Dependencies  %s", *AnimationGraphEditorToolInternal::BuildDepText(Entry));
                 ImGui::Separator();
                 if (Entry.bReachable)
                 {
@@ -1946,10 +1942,10 @@ namespace Lumina
                     ImGui::TextColored(EditorColors::TextMuted(), "Inactive branches cost nothing to evaluate.");
                 }
                 const FString DetailLine = AnimationGraphEditorToolInternal::BuildTaskDetail(Entry);
-                if (!DetailLine.empty())
+                if (!DetailLine.IsEmpty())
                 {
                     ImGui::Separator();
-                    ImGui::TextColored(EditorColors::TextDim(), "%s", DetailLine.c_str());
+                    ImGui::TextColored(EditorColors::TextDim(), "%s", *DetailLine);
                 }
                 ImGui::EndTooltip();
             }
@@ -1967,6 +1963,6 @@ namespace Lumina
 
     CEdNodeGraph* FAnimationGraphEditorTool::GetActiveNodeGraph()
     {
-        return GraphStack.empty() ? nullptr : GraphStack.back().Graph;
+        return GraphStack.IsEmpty() ? nullptr : GraphStack.Last().Graph;
     }
 }

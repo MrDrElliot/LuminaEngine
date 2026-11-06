@@ -13,143 +13,131 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
-        Reads<STransformComponent>();
-        Writes<STerrainComponent, SFoliageComponent>();
     }
 
-    void SFoliageTerrainSystem::OnStartup(const SSystemContext& Context)
-    {
-
-        (void)Context.CreateView<STerrainComponent, STransformComponent>();
-    }
-
-    namespace
+    namespace FoliageTerrainSystemInternal
     {
         // A terrain's edited region, converted to a world-space XZ rect (with a one-cell margin).
         struct FTerrainDirty
         {
-            STerrainComponent* Terrain = nullptr;
+            ECS::FEntity Entity;
+            const STerrainComponent* Terrain = nullptr;
             FVector3 Origin = FVector3(0.0f);
             bool      bHasRect = false;
             float     MinX = 0.0f, MaxX = 0.0f, MinZ = 0.0f, MaxZ = 0.0f;
         };
     }
 
-    void SFoliageTerrainSystem::OnUpdate(const SSystemContext& Context)
+    void SFoliageTerrainSystem::OnUpdate(const SSystemContext&)
     {
+        using FoliageTerrainSystemInternal::FTerrainDirty;
 
-        LUMINA_PROFILE_SCOPE();
-
-        // Snapshot of terrain origin, accumulated dirty world-rect, and the running version sum.
-        FTerrainDirty Terrains[8];
+        FTerrainDirty Dirties[8];
         int32 NumTerrains = 0;
-        uint32 CombinedVersion = 0;
 
-        Context.CreateView<STerrainComponent, STransformComponent>().ForEach(
-            [&](STerrainComponent& Terrain, const STransformComponent& Transform)
+        Terrains.ForEach([&](ECS::FEntity Entity, const STerrainComponent& Terrain, const STransformComponent& Transform)
+        {
+            const FIntVector2 Min = Terrain.CPUState.FoliageDirtyMin;
+            const FIntVector2 Max = Terrain.CPUState.FoliageDirtyMax;
+            if (NumTerrains >= 8 || Max.x < Min.x || Max.y < Min.y)
             {
-                CombinedVersion += Terrain.CPUState.HeightmapVersion;
-                if (NumTerrains >= 8)
-                {
-                    return;
-                }
+                return;
+            }
 
-                FTerrainDirty& D = Terrains[NumTerrains++];
-                D.Terrain = &Terrain;
-                D.Origin  = Transform.GetWorldLocation();
+            FTerrainDirty& D = Dirties[NumTerrains++];
+            D.Entity  = Entity;
+            D.Terrain = &Terrain;
+            D.Origin  = Transform.GetWorldLocation();
 
-                const FIntVector2 Min = Terrain.CPUState.FoliageDirtyMin;
-                const FIntVector2 Max = Terrain.CPUState.FoliageDirtyMax;
-                if (Max.x >= Min.x && Max.y >= Min.y && Terrain.Resolution > 1)
-                {
-                    const float HalfSize = Terrain.TileWorldSize * 0.5f;
-                    const float Stride   = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
-                    const float Ox = D.Origin.x - HalfSize;
-                    const float Oz = D.Origin.z - HalfSize;
-                    D.MinX = Ox + float(Min.x) * Stride - Stride;
-                    D.MaxX = Ox + float(Max.x) * Stride + Stride;
-                    D.MinZ = Oz + float(Min.y) * Stride - Stride;
-                    D.MaxZ = Oz + float(Max.y) * Stride + Stride;
-                    D.bHasRect = true;
-                }
-            });
+            if (Terrain.Resolution > 1)
+            {
+                const float HalfSize = Terrain.TileWorldSize * 0.5f;
+                const float Stride   = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
+                const float Ox = D.Origin.x - HalfSize;
+                const float Oz = D.Origin.z - HalfSize;
+                D.MinX = Ox + float(Min.x) * Stride - Stride;
+                D.MaxX = Ox + float(Max.x) * Stride + Stride;
+                D.MinZ = Oz + float(Min.y) * Stride - Stride;
+                D.MaxZ = Oz + float(Max.y) * Stride + Stride;
+                D.bHasRect = true;
+            }
+        });
 
         if (NumTerrains == 0)
         {
             return;
         }
 
-        // Re-project each foliage component whose synced version is stale.
-        Context.CreateView<SFoliageComponent>().ForEach(
-            [&](SFoliageComponent& Foliage)
+        FoliageSets.ForEach([&](ECS::FEntity Entity, ECS::TMut<SFoliageComponent> FoliageMut)
+        {
+            if (FoliageMut.Get().Instances.IsEmpty())
             {
-                if (Foliage.LastTerrainVersion == CombinedVersion || Foliage.Instances.empty())
+                return;
+            }
+            SFoliageComponent& Foliage = FoliageMut.GetMut();
+
+            // Each instance reads the shared terrains and writes only its own Position.y.
+            std::atomic<bool> bMovedAny{ false };
+
+            const auto Reproject = [&](uint32 Index)
+            {
+                SFoliageInstance& Inst = Foliage.Instances[Index];
+                if (!Foliage.IsValidType(Inst.TypeIndex))
                 {
-                    Foliage.LastTerrainVersion = CombinedVersion;
+                    return;
+                }
+                const SFoliageType& Type = Foliage.Types[Inst.TypeIndex];
+                if (!Type.bFollowTerrain)
+                {
                     return;
                 }
 
-                // Each instance reads the shared terrains and writes only its own Position.y.
-                std::atomic<bool> bMovedAny{ false };
-
-                const auto Reproject = [&](uint32 Index)
+                for (int32 t = 0; t < NumTerrains; ++t)
                 {
-                    SFoliageInstance& Inst = Foliage.Instances[Index];
-                    if (!Foliage.IsValidType(Inst.TypeIndex))
+                    const FTerrainDirty& D = Dirties[t];
+                    if (!D.bHasRect)
                     {
-                        return;
+                        continue;
                     }
-                    const SFoliageType& Type = Foliage.Types[Inst.TypeIndex];
-                    if (!Type.bFollowTerrain)
+                    if (Inst.Position.x < D.MinX || Inst.Position.x > D.MaxX ||
+                        Inst.Position.z < D.MinZ || Inst.Position.z > D.MaxZ)
                     {
-                        return;
+                        continue;
                     }
 
-                    for (int32 t = 0; t < NumTerrains; ++t)
+                    float Height = 0.0f;
+                    if (FTerrainSculptSystem::SampleHeight(*D.Terrain, D.Origin, Inst.Position.x, Inst.Position.z, Height))
                     {
-                        const FTerrainDirty& D = Terrains[t];
-                        if (!D.bHasRect)
+                        const float NewY = Height + Type.ZOffset;
+                        if (NewY != Inst.Position.y)
                         {
-                            continue;
+                            Inst.Position.y = NewY;
+                            bMovedAny.store(true, std::memory_order_relaxed);
                         }
-                        if (Inst.Position.x < D.MinX || Inst.Position.x > D.MaxX ||
-                            Inst.Position.z < D.MinZ || Inst.Position.z > D.MaxZ)
-                        {
-                            continue;
-                        }
-
-                        float Height = 0.0f;
-                        if (FTerrainSculptSystem::SampleHeight(*D.Terrain, D.Origin, Inst.Position.x, Inst.Position.z, Height))
-                        {
-                            const float NewY = Height + Type.ZOffset;
-                            if (NewY != Inst.Position.y)
-                            {
-                                Inst.Position.y = NewY;
-                                bMovedAny.store(true, std::memory_order_relaxed);
-                            }
-                            break;
-                        }
+                        break;
                     }
-                };
-
-                const uint32 NumInstances = (uint32)Foliage.Instances.size();
-
-                constexpr uint32 kParallelThreshold = 2048;
-                Task::ParallelForOrSerial(NumInstances, kParallelThreshold, Reproject, 256);
-
-                Foliage.LastTerrainVersion = CombinedVersion;
-                if (bMovedAny.load(std::memory_order_relaxed))
-                {
-                    // Invalidate the render cache so the moved instances rebake (transform/bounds changed).
-                    Foliage.MarkInstancesChanged();
                 }
-            });
+            };
+
+            const uint32 NumInstances = (uint32)Foliage.Instances.Num();
+
+            constexpr uint32 kParallelThreshold = 2048;
+            Jobs::ParallelForOrSerial(NumInstances, kParallelThreshold, Reproject, 256);
+
+            if (bMovedAny.load(std::memory_order_relaxed))
+            {
+                Foliage.MarkInstancesChanged();
+
+                DirtyTracker->Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
+            }
+        });
 
         // Clear consumed dirty regions (after every foliage component saw them this frame).
         for (int32 t = 0; t < NumTerrains; ++t)
         {
-            Terrains[t].Terrain->CPUState.FoliageDirtyMin = FIntVector2(INT32_MAX);
-            Terrains[t].Terrain->CPUState.FoliageDirtyMax = FIntVector2(INT32_MIN);
+            STerrainComponent& Terrain = TerrainResets.Get<STerrainComponent>(Dirties[t].Entity);
+            Terrain.CPUState.FoliageDirtyMin = FIntVector2(INT32_MAX);
+            Terrain.CPUState.FoliageDirtyMax = FIntVector2(INT32_MIN);
         }
     }
 }

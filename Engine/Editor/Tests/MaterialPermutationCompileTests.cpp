@@ -61,9 +61,9 @@ TEST(MaterialPermutationSeed, ASeededParameterKeepsTheIndexTheUniformBlockAlread
     FMaterialCompiler Compiler;
 
     TVector<SMaterialParameter> Seed;
-    Seed.push_back(MakeScalar("Roughness", 0));
-    Seed.push_back(MakeScalar("Metallic", 1));
-    Seed.push_back(MakeScalar("DetailStrength", 2));
+    Seed.Add(MakeScalar("Roughness", 0));
+    Seed.Add(MakeScalar("Metallic", 1));
+    Seed.Add(MakeScalar("DetailStrength", 2));
 
     FMaterialUniforms Uniforms = {};
     Uniforms.Scalars[0] = 0.25f;
@@ -93,7 +93,7 @@ TEST(MaterialPermutationSeed, ASeededParameterKeepsItsValueRatherThanTheNodeDefa
     FMaterialCompiler Compiler;
 
     TVector<SMaterialParameter> Seed;
-    Seed.push_back(MakeScalar("Roughness", 0));
+    Seed.Add(MakeScalar("Roughness", 0));
 
     FMaterialUniforms Uniforms = {};
     Uniforms.Scalars[0] = 0.875f;
@@ -116,8 +116,8 @@ TEST(MaterialPermutationSeed, APermutationOnlyParameterAppendsPastTheSeededSlots
     FMaterialCompiler Compiler;
 
     TVector<SMaterialParameter> Seed;
-    Seed.push_back(MakeScalar("Roughness", 0));
-    Seed.push_back(MakeScalar("Metallic", 1));
+    Seed.Add(MakeScalar("Roughness", 0));
+    Seed.Add(MakeScalar("Metallic", 1));
 
     FMaterialUniforms Uniforms = {};
     Compiler.SeedManifest(Seed, Uniforms, {}, {});
@@ -130,7 +130,7 @@ TEST(MaterialPermutationSeed, APermutationOnlyParameterAppendsPastTheSeededSlots
 
     ASSERT_NE(Find(Out, "ParallaxDepth"), nullptr);
     EXPECT_EQ(Find(Out, "ParallaxDepth")->Index, 2) << "must not land on a slot the seed already owns";
-    EXPECT_EQ(Out.size(), (size_t)3) << "the manifest is the union across permutations";
+    EXPECT_EQ(Out.Num(), 3) << "the manifest is the union across permutations";
 }
 
 // Scalars and vectors index into separate arrays, so seeding one must not consume the other.
@@ -139,9 +139,9 @@ TEST(MaterialPermutationSeed, ScalarAndVectorSlotsAreCountedSeparately)
     FMaterialCompiler Compiler;
 
     TVector<SMaterialParameter> Seed;
-    Seed.push_back(MakeScalar("Roughness", 0));
-    Seed.push_back(MakeScalar("Metallic", 1));
-    Seed.push_back(MakeVector("BaseTint", 0));
+    Seed.Add(MakeScalar("Roughness", 0));
+    Seed.Add(MakeScalar("Metallic", 1));
+    Seed.Add(MakeVector("BaseTint", 0));
 
     FMaterialUniforms Uniforms = {};
     Compiler.SeedManifest(Seed, Uniforms, {}, {});
@@ -166,7 +166,7 @@ TEST(MaterialPermutationSeed, AnOverBudgetSeedEntryIsDropped)
     FMaterialCompiler Compiler;
 
     TVector<SMaterialParameter> Seed;
-    Seed.push_back(MakeScalar("Corrupt", (uint16)(MAX_SCALARS + 4)));
+    Seed.Add(MakeScalar("Corrupt", (uint16)(MAX_SCALARS + 4)));
 
     FMaterialUniforms Uniforms = {};
     Compiler.SeedManifest(Seed, Uniforms, {}, {});
@@ -175,7 +175,7 @@ TEST(MaterialPermutationSeed, AnOverBudgetSeedEntryIsDropped)
     FMaterialUniforms           OutUniforms = {};
     Compiler.GetParameters(Out, OutUniforms);
 
-    EXPECT_TRUE(Out.empty());
+    EXPECT_TRUE(Out.IsEmpty());
 }
 
 // The key is what an instance carries, so the compile has to be able to read switch values back out of it.
@@ -184,9 +184,9 @@ TEST(MaterialPermutationTarget, AKeyInvertsBackIntoTheSwitchValuesThatBuiltIt)
     CMaterial* Material = NewObject<CMaterial>();
     ASSERT_NE(Material, nullptr);
 
-    Material->StaticSwitches.push_back(MakeSwitch("Detail", false, 0));
-    Material->StaticSwitches.push_back(MakeSwitch("Parallax", true, 1));
-    Material->StaticSwitches.push_back(MakeSwitch("Tint", false, 2));
+    Material->StaticSwitches.Add(MakeSwitch("Detail", false, 0));
+    Material->StaticSwitches.Add(MakeSwitch("Parallax", true, 1));
+    Material->StaticSwitches.Add(MakeSwitch("Tint", false, 2));
 
     THashMap<FName, bool> Values;
     Values["Detail"] = true;
@@ -198,7 +198,7 @@ TEST(MaterialPermutationTarget, AKeyInvertsBackIntoTheSwitchValuesThatBuiltIt)
 
     EXPECT_TRUE(Target.bPermutation);
     EXPECT_EQ(Target.Key, Key);
-    EXPECT_EQ(Target.StaticSwitchOverrides.size(), (size_t)3) << "every switch is pinned, defaults included";
+    EXPECT_EQ(Target.StaticSwitchOverrides.Num(), 3) << "every switch is pinned, defaults included";
     EXPECT_TRUE(Target.StaticSwitchOverrides["Detail"]);
     EXPECT_TRUE(Target.StaticSwitchOverrides["Parallax"]) << "unnamed in Values, so it keeps its default";
     EXPECT_TRUE(Target.StaticSwitchOverrides["Tint"]);

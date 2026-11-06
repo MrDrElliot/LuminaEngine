@@ -34,7 +34,7 @@ namespace Lumina
     ImVec2 CEdGraphNode::GetMinNodeTitleBarSize() const
     {
         const FString Title = GetNodeTitleText();
-        return ImVec2(ImGui::CalcTextSize(Title.c_str(), Title.c_str() + Title.size()).x, 28);
+        return ImVec2(ImGui::CalcTextSize(*Title, *Title + Title.Len()).x, 28);
     }
 
     void CEdGraphNode::NotifyValueEdited()
@@ -74,22 +74,22 @@ namespace Lumina
         const FString Title = GetNodeTitleText();
         if (HasError())
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.88f, 0.88f, 1.0f), LE_ICON_EXCLAMATION_THICK " %s", Title.c_str());
+            ImGui::TextColored(ImVec4(1.0f, 0.88f, 0.88f, 1.0f), LE_ICON_EXCLAMATION_THICK " %s", *Title);
         }
         else if (HasWarning())
         {
-            ImGui::TextColored(ImVec4(0.14f, 0.11f, 0.03f, 1.0f), LE_ICON_ALERT " %s", Title.c_str());
+            ImGui::TextColored(ImVec4(0.14f, 0.11f, 0.03f, 1.0f), LE_ICON_ALERT " %s", *Title);
         }
         else
         {
-            ImGui::TextUnformatted(Title.c_str());
+            ImGui::TextUnformatted(*Title);
         }
     }
 
     CEdNodeGraphPin* CEdGraphNode::GetRerouteSourcePin() const
     {
         const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Inputs = GetInputPins();
-        return Inputs.empty() ? nullptr : Inputs[0].Get();
+        return Inputs.IsEmpty() ? nullptr : Inputs[0].Get();
     }
 
     CEdNodeGraphPin* CEdGraphNode::GetPin(uint32 ID, ENodePinDirection Direction)
@@ -135,7 +135,7 @@ namespace Lumina
         NewPin->bInputPin = (Direction == ENodePinDirection::Input);
         NewPin->OwningNode = this;
         
-        NodePins[uint32(Direction)].push_back(NewPin);
+        NodePins[uint32(Direction)].Add(NewPin);
 
         return NewPin;
     }

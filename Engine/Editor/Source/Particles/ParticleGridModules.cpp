@@ -87,7 +87,7 @@ namespace Lumina
 
     CParticleModule_GridAdvect::CParticleModule_GridAdvect()
     {
-        Channels.push_back(FName("Density"));
+        Channels.Emplace("Density");
     }
 
     void CParticleModule_GridAdvect::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -219,13 +219,13 @@ namespace Lumina
         case EParticleGridSampleTarget::Brightness: Lvalue = "P.Color.rgb"; break;
         case EParticleGridSampleTarget::Attribute:
         {
-            const FString Name(AttributeName.ToString().c_str());
+            const FString Name(*AttributeName.ToString());
             if (!IsIdentifier(Name))
             {
                 Compiler.AddError({ "Sample Grid", "Attribute '" + Name + "' is not a valid identifier." });
                 return;
             }
-            Lvalue = Compiler.Attribute(Name.c_str());
+            Lvalue = Compiler.Attribute(*Name);
             break;
         }
         default:                                    Lvalue = "P.Color.a"; break;

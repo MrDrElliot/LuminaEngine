@@ -26,22 +26,22 @@ namespace Lumina
 
         void PushSystem(CParticleSystem* System)
         {
-            GetStack().push_back(System);
+            GetStack().Add(System);
         }
 
         void PopSystem()
         {
             auto& Stack = GetStack();
-            if (!Stack.empty())
+            if (!Stack.IsEmpty())
             {
-                Stack.pop_back();
+                Stack.Pop();
             }
         }
 
         CParticleSystem* GetActiveSystem()
         {
             const auto& Stack = GetStack();
-            return Stack.empty() ? nullptr : Stack.back();
+            return Stack.IsEmpty() ? nullptr : Stack.Last();
         }
     }
 
@@ -82,13 +82,13 @@ namespace Lumina
         // Named after the property and uniquified, so binding to code is one click rather than six steps.
         FName MakeUniqueParameterName(const CParticleSystem& System, const FName& Base)
         {
-            const FString BaseStr = Base.IsNone() ? FString("Param") : FString(Base.c_str());
+            const FString BaseStr = Base.IsNone() ? FString("Param") : FString(*Base);
 
-            FName Candidate(BaseStr.c_str());
+            FName Candidate(*BaseStr);
             int32 Suffix = 1;
             while (System.FindUserParameter(Candidate) != nullptr)
             {
-                Candidate = FName((BaseStr + "_" + Format("{}", Suffix).c_str()).c_str());
+                Candidate = FName(*(BaseStr + "_" + *Format("{}", Suffix)));
                 ++Suffix;
             }
             return Candidate;
@@ -105,8 +105,8 @@ namespace Lumina
         FProperty* Prop = Property->Property;
         const EParticleParameterType InputType = ResolveInputType(Value, Prop);
 
-        const float Min = Prop != nullptr ? Prop->GetMetadataNumber<float>("ClampMin").value_or(0.0f) : 0.0f;
-        const float Max = Prop != nullptr ? Prop->GetMetadataNumber<float>("ClampMax").value_or(0.0f) : 0.0f;
+        const float Min = Prop != nullptr ? Prop->GetMetadataNumber<float>("ClampMin").Get(0.0f) : 0.0f;
+        const float Max = Prop != nullptr ? Prop->GetMetadataNumber<float>("ClampMax").Get(0.0f) : 0.0f;
 
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
@@ -117,7 +117,7 @@ namespace Lumina
         {
             // The editor is replaced rather than disabled, since a grayed number still reads as the live value.
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-            if (ImGui::Button((FString(LE_ICON_LINK " ") + Value.ParameterName.c_str()).c_str(), ImVec2(ValueWidth, 0)))
+            if (ImGui::Button(*(FString(LE_ICON_LINK " ") + *Value.ParameterName), ImVec2(ValueWidth, 0)))
             {
                 ImGui::OpenPopup("##ParamBind");
             }
@@ -126,7 +126,7 @@ namespace Lumina
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             {
                 ImGuiX::WrappedTooltip("Driven by the user parameter '{}'. Set it at runtime with the matching ParticleSystemComponent Set call.",
-                    Value.ParameterName.c_str());
+                    *Value.ParameterName);
             }
         }
         else
@@ -212,7 +212,7 @@ namespace Lumina
             {
                 ImGui::TextDisabled("No particle system context.");
             }
-            else if (System->UserParameters.empty())
+            else if (System->UserParameters.IsEmpty())
             {
                 ImGui::TextDisabled("This system declares no parameters.");
             }
@@ -228,11 +228,11 @@ namespace Lumina
                     // Listed disabled rather than hidden, so an incompatible parameter reads as wrong type, not deleted.
                     if (!CanParameterDrive(Param.Type, InputType))
                     {
-                        ImGui::TextDisabled("%s (%s)", Param.Name.c_str(), ParamTypeLabel(Param.Type));
+                        ImGui::TextDisabled("%s (%s)", *Param.Name, ParamTypeLabel(Param.Type));
                         continue;
                     }
 
-                    if (ImGui::Selectable(Param.Name.c_str(), Param.Name == Value.ParameterName))
+                    if (ImGui::Selectable(*Param.Name, Param.Name == Value.ParameterName))
                     {
                         Value.ParameterName = Param.Name;
                         Result = EPropertyChangeOp::Finished;
@@ -250,7 +250,7 @@ namespace Lumina
                 ImGui::Separator();
                 if (ImGui::Selectable("New Parameter From Value"))
                 {
-                    SParticleParameter& New = System->UserParameters.emplace_back();
+                    SParticleParameter& New = System->UserParameters.EmplaceGetRef();
                     New.Name   = MakeUniqueParameterName(*System, Prop != nullptr ? Prop->GetPropertyName() : FName());
                     New.Type   = InputType;
                     New.Scalar = Value.Constant.x;

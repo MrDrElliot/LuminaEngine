@@ -4,7 +4,6 @@
 #include "Core/Object/ObjectReferenceProvider.h"
 #include <imgui/imgui.h>
 #include "Events/EventProcessor.h"
-#include "nlohmann/json.hpp"
 #include "Tools/EditorToolContext.h"
 #include "Tools/EditorToolModal.h"
 #include "Tools/UI/DevelopmentToolUI.h"
@@ -97,6 +96,11 @@ namespace Lumina
         template<typename T, typename... Args>
         requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         T* CreateTool(Args&&... args);
+
+        // A tool that lives in the footer bar and docks like the console, which is also how a plugin adds one.
+        template<typename T, typename... Args>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
+        T* CreateDrawerTool(const char* Icon, const char* Label, ImGuiKeyChord Shortcut, Args&&... args);
 
         // The tool editing this asset, or null when nothing has it open.
         NODISCARD FEditorTool* FindAssetEditor(CObject* Asset) const;
@@ -470,6 +474,15 @@ namespace Lumina
         return static_cast<T*>(FinalizeNewTool(Memory::New<T>(std::forward<Args>(args)...)));
     }
 
+    template <typename T, typename ... Args>
+    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
+    T* FEditorUI::CreateDrawerTool(const char* Icon, const char* Label, ImGuiKeyChord Shortcut, Args&&... args)
+    {
+        T* Tool = CreateTool<T>(std::forward<Args>(args)...);
+        FooterDrawers.Emplace(Tool, Icon, Label, Shortcut);
+        return Tool;
+    }
+
     template <typename T>
     requires std::is_base_of_v<FEditorTool, T>
     T* FEditorUI::FindTool() const
@@ -483,7 +496,7 @@ namespace Lumina
     {
         if (FEditorTool* Existing = FindToolByTypeID(T::s_toolTypeID))
         {
-            ToolsPendingDestroy.push(Existing);
+            ToolsPendingDestroy.Enqueue(Existing);
             return;
         }
         CreateTool<T>(std::forward<Args>(args)...);

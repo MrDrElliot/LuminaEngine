@@ -118,7 +118,7 @@ namespace Lumina
         auto AddRow = [&](FTreeNodeID Parent, const char* Icon, const FString& Text, const FRow& Row) -> FTreeNodeID
         {
             const FString Label = FString(Icon) + "  " + Text;
-            FTreeNodeID Node = Tree.CreateNode(Parent, FStringView(Label.c_str()));
+            FTreeNodeID Node = Tree.CreateNode(Parent, FStringView(*Label));
             Tree.EmplaceUserData<FRow>(Node, Row);
             FTreeNodeState& State = Tree.Get<FTreeNodeState>(Node);
             State.bExpanded = true;
@@ -131,12 +131,12 @@ namespace Lumina
         AddBone = [&](FTreeNodeID Parent, int32 BoneIndex)
         {
             const FName BoneName = Resource->GetBone(BoneIndex).Name;
-            FTreeNodeID BoneNode = AddRow(Parent, LE_ICON_BONE, BoneName.c_str(), FRow{ BoneIndex, FSocketRef() });
+            FTreeNodeID BoneNode = AddRow(Parent, LE_ICON_BONE, *BoneName, FRow{ BoneIndex, FSocketRef() });
             {
                 FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(BoneNode);
                 Display.IconColor = kBoneIconColor;
-                Display.TooltipTitle = BoneName.c_str();
-                Display.TooltipSubtitle = FString("Bone ") + Format("{}", BoneIndex).c_str();
+                Display.TooltipTitle = *BoneName;
+                Display.TooltipSubtitle = FString("Bone ") + *Format("{}", BoneIndex);
             }
 
             // Sockets lead their bone's children, so they stay next to the bone they hang off.
@@ -151,7 +151,7 @@ namespace Lumina
                 const bool bMeshSocket = (Ref.Owner == (CObject*)Mesh);
                 const bool bOverrides = bMeshSocket && Skeleton->FindSocket(Ref.Name) != nullptr;
 
-                FString Text(Ref.Name.c_str());
+                FString Text(*Ref.Name);
                 if (bOverrides)
                 {
                     Text += "  (override)";
@@ -161,8 +161,8 @@ namespace Lumina
                 FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(SocketNode);
                 Display.IconColor = bMeshSocket ? kMeshSocketColor : kSkeletonSocketColor;
                 Display.DisplayColor = bMeshSocket ? kMeshSocketTextColor : kSkeletonSocketTextColor;
-                Display.TooltipTitle = Ref.Name.c_str();
-                Display.TooltipSubtitle = FString(bMeshSocket ? "Mesh socket on " : "Skeleton socket on ") + BoneName.c_str();
+                Display.TooltipTitle = *Ref.Name;
+                Display.TooltipSubtitle = FString(bMeshSocket ? "Mesh socket on " : "Skeleton socket on ") + *BoneName;
                 if (bOverrides)
                 {
                     Display.TooltipSubtitle += ", replacing the skeleton socket of the same name";
@@ -200,7 +200,7 @@ namespace Lumina
             auto AddSocket = [&](CObject* Owner)
             {
                 BeginEdit("Add Socket", Owner);
-                SMeshSocket& Socket = SocketsOf(Owner).emplace_back();
+                SMeshSocket& Socket = SocketsOf(Owner).EmplaceGetRef();
                 Socket.SocketName = MakeUniqueSocketName(BoneName);
                 Socket.BoneName = BoneName;
                 SelectedSocket = FSocketRef{ Owner, Socket.SocketName };
@@ -236,7 +236,7 @@ namespace Lumina
         if (Mesh != nullptr && !bMeshSocket && ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy to Mesh"))
         {
             BeginEdit("Copy Socket to Mesh", Mesh);
-            Mesh->Sockets.push_back(*Find(Row.Socket));
+            Mesh->Sockets.Add(*Find(Row.Socket));
             SelectedSocket = FSocketRef{ Mesh, Row.Socket.Name };
             EndEdit();
             return;
@@ -252,9 +252,9 @@ namespace Lumina
             }
             else
             {
-                Skeleton->Sockets.push_back(Promoted);
+                Skeleton->Sockets.Add(Promoted);
             }
-            Mesh->Sockets.erase(Algo::RemoveIf(Mesh->Sockets, [&](const SMeshSocket& Socket) { return Socket.SocketName == Row.Socket.Name; }), Mesh->Sockets.end());
+            Mesh->Sockets.RemoveAll([&](const SMeshSocket& Socket) { return Socket.SocketName == Row.Socket.Name; });
             SelectedSocket = FSocketRef{ Skeleton, Row.Socket.Name };
             EndEdit();
             return;
@@ -264,7 +264,7 @@ namespace Lumina
         {
             BeginEdit("Delete Socket", Row.Socket.Owner);
             TVector<SMeshSocket>& Sockets = SocketsOf(Row.Socket.Owner);
-            Sockets.erase(Algo::RemoveIf(Sockets, [&](const SMeshSocket& Socket) { return Socket.SocketName == Row.Socket.Name; }), Sockets.end());
+            Sockets.RemoveAll([&](const SMeshSocket& Socket) { return Socket.SocketName == Row.Socket.Name; });
             SelectedSocket = FSocketRef();
             EndEdit();
         }
@@ -272,7 +272,7 @@ namespace Lumina
 
     void FSocketHierarchy::CollectVisibleSockets(TVector<FSocketRef>& Out) const
     {
-        Out.clear();
+        Out.Reset();
         if (Skeleton == nullptr)
         {
             return;
@@ -284,7 +284,7 @@ namespace Lumina
             {
                 if (BoneOf(Socket) != Constants::kIndexNone)
                 {
-                    Out.push_back(FSocketRef{ Mesh, Socket.SocketName });
+                    Out.Emplace(Mesh, Socket.SocketName);
                 }
             }
         }
@@ -294,7 +294,7 @@ namespace Lumina
             const bool bShadowed = Mesh != nullptr && FindSocketByName(Mesh->Sockets, Socket.SocketName) != nullptr;
             if (!bShadowed && BoneOf(Socket) != Constants::kIndexNone)
             {
-                Out.push_back(FSocketRef{ Skeleton, Socket.SocketName });
+                Out.Emplace(Skeleton, Socket.SocketName);
             }
         }
     }
@@ -329,7 +329,7 @@ namespace Lumina
     FMatrix4 FSocketHierarchy::SocketWorldMatrix(const SMeshSocket& Socket) const
     {
         const int32 BoneIndex = BoneOf(Socket);
-        if (BoneIndex < 0 || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex < 0 || BoneIndex >= BoneWorldTransforms.Num())
         {
             return Socket.RelativeTransform.GetMatrix();
         }
@@ -343,11 +343,11 @@ namespace Lumina
             return Skeleton->FindSocket(Name) != nullptr || (Mesh != nullptr && FindSocketByName(Mesh->Sockets, Name) != nullptr);
         };
 
-        const FString Base = FString(BoneName.c_str()) + "_Socket";
-        FName Name(Base.c_str());
+        const FString Base = FString(*BoneName) + "_Socket";
+        FName Name(*Base);
         for (int32 Suffix = 1; IsTaken(Name); ++Suffix)
         {
-            Name = FName((Base + "_" + Format("{}", Suffix).c_str()).c_str());
+            Name = FName(*(Base + "_" + *Format("{}", Suffix)));
         }
         return Name;
     }
@@ -433,7 +433,7 @@ namespace Lumina
     {
         PickRadius = MarkerRadius * 1.8f;
         SCameraComponent* Camera = World != nullptr ? World->GetCamera()->GetActiveCamera() : nullptr;
-        if (Camera == nullptr || BoneWorldTransforms.empty())
+        if (Camera == nullptr || BoneWorldTransforms.IsEmpty())
         {
             return;
         }
@@ -469,7 +469,7 @@ namespace Lumina
     {
         SMeshSocket* Socket = Find(SelectedSocket);
         const int32 BoneIndex = Socket != nullptr ? BoneOf(*Socket) : Constants::kIndexNone;
-        if (BoneIndex < 0 || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex < 0 || BoneIndex >= BoneWorldTransforms.Num())
         {
             return;
         }

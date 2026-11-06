@@ -13,46 +13,36 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // How long to record while the editor keeps running.
+        // How long to record while the editor keeps running, up to 60.
         PROPERTY()
         float Seconds = 5.0f;
+
+        // Lifts the frame rate cap while recording, so the frame time shows the real cost rather than the cap.
+        PROPERTY()
+        bool bUncapFrameRate = true;
+
+        // False returns at once with only CaptureFile set; read the results later with profiler.report.
+        PROPERTY()
+        bool bWait = true;
 
         // How many of the costliest CPU zones and GPU passes to report.
         PROPERTY()
         int32 Top = 20;
 
-        // Only zones whose name contains this, case-insensitive. Empty keeps them all.
+        // Only zones whose name contains this, case-insensitive.
         PROPERTY()
         FString Filter;
 
-        // Time spent in each zone minus its children, which finds the zone doing the work rather than the one calling it.
+        // Rank by time in each zone minus its children, which finds the zone doing the work rather than its caller.
         PROPERTY()
         bool bSelfTime = false;
-
-        // Lifts the frame rate cap for the capture and puts it back after, so the frame time shows the real cost rather than the cap.
-        PROPERTY()
-        bool bUncapFrameRate = true;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SProfilerStartParams
+    enum class EProfilerReportMode : uint8
     {
-        GENERATED_BODY()
-
-        PROPERTY()
-        float Seconds = 5.0f;
-
-        PROPERTY()
-        bool bUncapFrameRate = true;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SProfilerStartResult
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        FString CaptureFile;
+        Zones,
+        Hitches,
     };
 
     REFLECT()
@@ -61,6 +51,14 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
+        EProfilerReportMode Mode = EProfilerReportMode::Zones;
+
+        // Hitches only. The trace to read. Empty reads the last capture.
+        PROPERTY()
+        FString CaptureFile;
+
+        // Zones only, as are Filter and bSelfTime. See profiler.capture.
+        PROPERTY()
         int32 Top = 20;
 
         PROPERTY()
@@ -68,6 +66,18 @@ namespace Lumina
 
         PROPERTY()
         bool bSelfTime = false;
+
+        // Hitches only. Frames longer than this are hitches. Zero picks twice the median, and at least 8 ms over it.
+        PROPERTY()
+        float ThresholdMs = 0.0f;
+
+        // Hitches only.
+        PROPERTY()
+        int32 MaxHitches = 8;
+
+        // Hitches only. Zones to list per hitch, ranked by self time.
+        PROPERTY()
+        int32 TopZones = 10;
     };
 
     REFLECT()
@@ -128,27 +138,6 @@ namespace Lumina
 
         PROPERTY()
         TVector<SProfilerZone> Gpu;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SProfilerHitchParams
-    {
-        GENERATED_BODY()
-
-        // The trace to read. Empty reads the one the last profiler capture wrote.
-        PROPERTY()
-        FString CaptureFile;
-
-        // Frames longer than this count as hitches. Zero picks twice the median frame, and at least 8 ms over it.
-        PROPERTY()
-        float ThresholdMs = 0.0f;
-
-        PROPERTY()
-        int32 MaxHitches = 8;
-
-        // How many zones to list per hitch, ranked by the time spent in each zone itself.
-        PROPERTY()
-        int32 TopZones = 10;
     };
 
     REFLECT()
@@ -216,9 +205,22 @@ namespace Lumina
         TVector<SProfilerHitch> Hitches;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SProfilerReportResult
+    {
+        GENERATED_BODY()
+
+        // Filled in Zones mode.
+        PROPERTY()
+        SProfilerCaptureResult Zones;
+
+        // Filled in Hitches mode.
+        PROPERTY()
+        SProfilerHitchResult Hitches;
+    };
+
     namespace MCP
     {
-        // Records Tracy captures of the running editor and reports where the frame goes.
         void RegisterProfilerTools(FStringView Owner);
     }
 }

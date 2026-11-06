@@ -8,12 +8,13 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Memory/SmartPtr.h"
+#include "Scripting/ScriptTypeRegistry.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/TransformComponent.h"
 
 namespace Lumina
 {
-    namespace
+    namespace TweenManagerInternal
     {
         // A zero-length tweener still has to run its final value once, so it lands on the target.
         constexpr float kMinDuration = 1e-6f;
@@ -41,7 +42,7 @@ namespace Lumina
 
         NODISCARD STransformComponent* FindTransform(ECS::FRegistry* Registry, ECS::FEntity Entity)
         {
-            return Registry->IsValid(Entity) ? Registry->TryGet<STransformComponent>(Entity) : nullptr;
+            return Registry->IsValid(Entity) ? Registry->TryGet<ECS::Write<STransformComponent>>(Entity) : nullptr;
         }
 
         NODISCARD FQuat QuatFromDegrees(const FVector3& Degrees)
@@ -54,8 +55,9 @@ namespace Lumina
         {
             TVector<const FProperty*> Chain;
             ECS::FComponentTypeID     TypeID = ECS::InvalidComponentTypeID;
+            uint64                    Generation = 0;
 
-            NODISCARD const FProperty* Leaf() const { return Chain.back(); }
+            NODISCARD const FProperty* Leaf() const { return Chain.Last(); }
 
             NODISCARD void* Address(void* Component) const
             {
@@ -71,30 +73,31 @@ namespace Lumina
         bool ResolvePropertyPath(const CStruct* Component, FStringView Path, FResolvedProperty& Out)
         {
             const FComponentOps* Ops = Component != nullptr ? Component->GetComponentOps() : nullptr;
-            if (Ops == nullptr || Path.empty())
+            if (Ops == nullptr || Path.IsEmpty())
             {
                 return false;
             }
             Out.TypeID = Ops->GetTypeID();
+            Out.Generation = FScriptStructRegistry::Get().GetGeneration();
 
             const CStruct* Owner = Component;
-            size_t SegmentStart = 0;
-            while (SegmentStart <= Path.size())
+            int32 SegmentStart = 0;
+            while (SegmentStart <= Path.Len())
             {
-                size_t SegmentEnd = SegmentStart;
-                while (SegmentEnd < Path.size() && Path[SegmentEnd] != '.')
+                int32 SegmentEnd = SegmentStart;
+                while (SegmentEnd < Path.Len() && Path[SegmentEnd] != '.')
                 {
                     ++SegmentEnd;
                 }
 
-                const FProperty* Property = Owner != nullptr ? Owner->GetProperty(FName(Path.substr(SegmentStart, SegmentEnd - SegmentStart))) : nullptr;
+                const FProperty* Property = Owner != nullptr ? Owner->GetProperty(FName(Path.Mid(SegmentStart, SegmentEnd - SegmentStart))) : nullptr;
                 if (Property == nullptr)
                 {
                     return false;
                 }
-                Out.Chain.push_back(Property);
+                Out.Chain.Add(Property);
 
-                if (SegmentEnd >= Path.size())
+                if (SegmentEnd >= Path.Len())
                 {
                     return true;
                 }
@@ -190,7 +193,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        return Registry.TryGet<FTweenState>(Handle.Handle);
+        return Registry.TryGet<ECS::Write<FTweenState>>(Handle.Handle);
     }
 
     const FTweenManager::FTweenState* FTweenManager::Find(FTweenHandle Handle) const
@@ -233,7 +236,7 @@ namespace Lumina
         FinishNow(*State);
         bTicking = false;
 
-        FTweenState& Finished = Registry.Get<FTweenState>(Handle.Handle);
+        FTweenState& Finished = Registry.Get<ECS::Write<FTweenState>>(Handle.Handle);
         TFunction<void()> Callback = Finished.bPendingKill ? TFunction<void()>() : Move(Finished.FinishedCallback);
         Registry.Destroy(Handle.Handle);
         if (Callback)
@@ -250,12 +253,12 @@ namespace Lumina
         }
 
         TVector<ECS::FEntity> Doomed;
-        auto View = Registry.View<FTweenState>();
+        auto View = Registry.View<ECS::Read<FTweenState>>();
         for (ECS::FEntity Entity : View)
         {
-            if (View.Get<FTweenState>(Entity).Owner == Owner)
+            if (View.Get<ECS::Read<FTweenState>>(Entity).Owner == Owner)
             {
-                Doomed.push_back(Entity);
+                Doomed.Add(Entity);
             }
         }
 
@@ -263,7 +266,7 @@ namespace Lumina
         {
             if (bTicking)
             {
-                Registry.Get<FTweenState>(Entity).bPendingKill = true;
+                Registry.Get<ECS::Write<FTweenState>>(Entity).bPendingKill = true;
             }
             else
             {
@@ -291,14 +294,14 @@ namespace Lumina
             return;
         }
 
-        if (State->bParallelPending && !State->Steps.empty())
+        if (State->bParallelPending && !State->Steps.IsEmpty())
         {
-            State->Steps.back().Tweeners.push_back(Move(Tweener));
+            State->Steps.Last().Tweeners.Add(Move(Tweener));
         }
         else
         {
-            FStep& Step = State->Steps.emplace_back();
-            Step.Tweeners.push_back(Move(Tweener));
+            FStep& Step = State->Steps.EmplaceGetRef();
+            Step.Tweeners.Add(Move(Tweener));
         }
         State->bParallelPending = false;
     }
@@ -306,11 +309,11 @@ namespace Lumina
     FTweenManager::FTweener* FTweenManager::LastTweener(FTweenHandle Handle)
     {
         FTweenState* State = Find(Handle);
-        if (State == nullptr || State->Steps.empty() || State->Steps.back().Tweeners.empty())
+        if (State == nullptr || State->Steps.IsEmpty() || State->Steps.Last().Tweeners.IsEmpty())
         {
             return nullptr;
         }
-        return &State->Steps.back().Tweeners.back();
+        return &State->Steps.Last().Tweeners.Last();
     }
 
     float FTweenManager::StepLength(const FStep& Step)
@@ -325,7 +328,7 @@ namespace Lumina
 
     float FTweenManager::AdvanceSteps(FTweenState& State, float Remaining)
     {
-        const int32 NumSteps = (int32)State.Steps.size();
+        const int32 NumSteps = State.Steps.Num();
 
         // Looped so a frame long enough to finish a step still starts the next one in the same tick.
         while (Remaining > 0.0f && State.StepIndex < NumSteps)
@@ -358,7 +361,7 @@ namespace Lumina
                 {
                 case ETweenerKind::Value:
                 {
-                    float Raw = (Tweener.Duration <= kMinDuration)
+                    float Raw = (Tweener.Duration <= TweenManagerInternal::kMinDuration)
                               ? 1.0f
                               : Math::Clamp(Active / Tweener.Duration, 0.0f, 1.0f);
 
@@ -400,7 +403,7 @@ namespace Lumina
             }
 
             // Whatever the longest tweener did not use rolls into the next step.
-            Remaining -= Math::Max(StepConsumed, kMinDuration);
+            Remaining -= Math::Max(StepConsumed, TweenManagerInternal::kMinDuration);
             ++State.StepIndex;
 
             if (State.StepCallback)
@@ -440,7 +443,7 @@ namespace Lumina
         for (int32 Pass = 0; ; ++Pass)
         {
             Remaining = AdvanceSteps(State, Remaining);
-            if (State.StepIndex < (int32)State.Steps.size())
+            if (State.StepIndex < State.Steps.Num())
             {
                 return false;
             }
@@ -463,7 +466,7 @@ namespace Lumina
             {
                 PassLength += StepLength(Step);
             }
-            if (Remaining <= 0.0f || PassLength < kMinCarriedPass || Pass + 1 >= kMaxPassesPerTick)
+            if (Remaining <= 0.0f || PassLength < TweenManagerInternal::kMinCarriedPass || Pass + 1 >= TweenManagerInternal::kMaxPassesPerTick)
             {
                 return false;
             }
@@ -484,10 +487,10 @@ namespace Lumina
 
         TVector<ECS::FEntity> Completed;
 
-        auto View = Registry.View<FTweenState>();
+        auto View = Registry.View<ECS::Write<FTweenState>>();
         for (ECS::FEntity Entity : View)
         {
-            FTweenState& State = View.Get<FTweenState>(Entity);
+            FTweenState& State = View.Get<ECS::Write<FTweenState>>(Entity);
 
             // An owner that has gone away takes its tweens with it, so a setter cannot touch a dead entity.
             const bool bOwnerGone = State.Owner != ECS::NullEntity
@@ -496,7 +499,7 @@ namespace Lumina
 
             if (State.bPendingKill || bOwnerGone)
             {
-                Completed.push_back(Entity);
+                Completed.Add(Entity);
                 continue;
             }
 
@@ -509,7 +512,7 @@ namespace Lumina
                 {
                     State.FinishedCallback();
                 }
-                Completed.push_back(Entity);
+                Completed.Add(Entity);
             }
         }
 
@@ -579,7 +582,7 @@ namespace Lumina
         auto StartRotation = MakeShared<TOptional<FQuat>>();
         return AddValueTweener(Duration, [Reg, Entity, Channel, LocationOrScale = Move(LocationOrScale), Rotation = Move(Rotation), StartVector, StartRotation](float Alpha)
         {
-            STransformComponent* Transform = FindTransform(Reg, Entity);
+            STransformComponent* Transform = TweenManagerInternal::FindTransform(Reg, Entity);
             if (Transform == nullptr)
             {
                 return;
@@ -661,7 +664,7 @@ namespace Lumina
         auto Last = MakeShared<FVector3>(0.0f);
         return AddValueTweener(Duration, [Reg, Entity, Channel, OffsetAt = Move(OffsetAt), Last](float Alpha)
         {
-            STransformComponent* Transform = FindTransform(Reg, Entity);
+            STransformComponent* Transform = TweenManagerInternal::FindTransform(Reg, Entity);
             if (Transform == nullptr)
             {
                 return;
@@ -677,7 +680,7 @@ namespace Lumina
                 Transform->SetLocalScale(Transform->GetLocalScale() - *Last + Next);
                 break;
             case ETweenTransformChannel::Rotation:
-                Transform->SetLocalRotation(Math::Normalize(Transform->GetLocalRotation() * Math::Inverse(QuatFromDegrees(*Last)) * QuatFromDegrees(Next)));
+                Transform->SetLocalRotation(Math::Normalize(Transform->GetLocalRotation() * Math::Inverse(TweenManagerInternal::QuatFromDegrees(*Last)) * TweenManagerInternal::QuatFromDegrees(Next)));
                 break;
             }
             *Last = Next;
@@ -706,10 +709,10 @@ namespace Lumina
         const float  TwoPi = Math::TwoPi<float>();
 
         // Each axis runs at its own rate and phase, which reads as random without a per-frame draw.
-        const FVector3 Phase(UnitFromSeed(Seed, 0) * TwoPi, UnitFromSeed(Seed, 1) * TwoPi, UnitFromSeed(Seed, 2) * TwoPi);
-        const FVector3 Rate((0.75f + 0.5f * UnitFromSeed(Seed, 3)) * Swings * TwoPi,
-                            (0.75f + 0.5f * UnitFromSeed(Seed, 4)) * Swings * TwoPi,
-                            (0.75f + 0.5f * UnitFromSeed(Seed, 5)) * Swings * TwoPi);
+        const FVector3 Phase(TweenManagerInternal::UnitFromSeed(Seed, 0) * TwoPi, TweenManagerInternal::UnitFromSeed(Seed, 1) * TwoPi, TweenManagerInternal::UnitFromSeed(Seed, 2) * TwoPi);
+        const FVector3 Rate((0.75f + 0.5f * TweenManagerInternal::UnitFromSeed(Seed, 3)) * Swings * TwoPi,
+                            (0.75f + 0.5f * TweenManagerInternal::UnitFromSeed(Seed, 4)) * Swings * TwoPi,
+                            (0.75f + 0.5f * TweenManagerInternal::UnitFromSeed(Seed, 5)) * Swings * TwoPi);
 
         return AddOffsetTweener(Entity, Channel, Duration, [Strength, Phase, Rate, Swings](float T)
         {
@@ -728,10 +731,10 @@ namespace Lumina
             return *this;
         }
 
-        FResolvedProperty Resolved;
-        if (!ResolvePropertyPath(Component, Path, Resolved) || !TPropertyValue<T>::Accepts(Resolved.Leaf()))
+        TweenManagerInternal::FResolvedProperty Resolved;
+        if (!TweenManagerInternal::ResolvePropertyPath(Component, Path, Resolved) || !TweenManagerInternal::TPropertyValue<T>::Accepts(Resolved.Leaf()))
         {
-            LOG_WARN("Tween PropertyTo: {} has no property '{}' this value can drive", Component != nullptr ? Component->GetName().c_str() : "a null component", FString(Path));
+            LOG_WARN("Tween PropertyTo: {} has no property '{}' this value can drive", Component != nullptr ? *Component->GetName() : "a null component", FString(Path));
 
             // Holds the step's time, so the steps after it still start when they were built to.
             return Interval(Duration);
@@ -739,24 +742,38 @@ namespace Lumina
 
         ECS::FRegistry* Reg = Manager->WorldRegistry;
         auto Start = MakeShared<TOptional<T>>();
-        return AddValueTweener(Duration, [Reg, Entity, Resolved = Move(Resolved), Target, Start](float Alpha)
+        auto State = MakeShared<TweenManagerInternal::FResolvedProperty>(Move(Resolved));
+        return AddValueTweener(Duration, [Reg, Entity, State, PathText = FString(Path), Target, Start](float Alpha)
         {
-            const ECS::FSparseSet* Pool = Reg->IsValid(Entity) ? Reg->FindStorage(Resolved.TypeID) : nullptr;
+            TweenManagerInternal::FResolvedProperty& Live = *State;
+            if (Live.Generation != FScriptStructRegistry::Get().GetGeneration())
+            {
+                // A reload can move or retype fields, so the path is walked again through the component's current struct.
+                TweenManagerInternal::FResolvedProperty Fresh;
+                const CStruct* Current = ECS::FComponentTypeRegistry::Get().GetInfo(Live.TypeID).GetStruct();
+                if (!TweenManagerInternal::ResolvePropertyPath(Current, FStringView(*PathText, PathText.Len()), Fresh) || !TweenManagerInternal::TPropertyValue<T>::Accepts(Fresh.Leaf()))
+                {
+                    return;
+                }
+                Live = Move(Fresh);
+            }
+
+            const ECS::FSparseSet* Pool = Reg->IsValid(Entity) ? Reg->FindStorage(Live.TypeID) : nullptr;
             void* ComponentData = Pool != nullptr ? Pool->GetRaw(Entity) : nullptr;
             if (ComponentData == nullptr)
             {
                 return;
             }
 
-            void* Address = Resolved.Address(ComponentData);
+            void* Address = Live.Address(ComponentData);
             if (!Start->IsSet())
             {
-                *Start = TPropertyValue<T>::Read(Resolved.Leaf(), Address);
+                *Start = TweenManagerInternal::TPropertyValue<T>::Read(Live.Leaf(), Address);
             }
-            TPropertyValue<T>::Write(Resolved.Leaf(), Address, TweenDetail::Lerp(Start->GetValue(), Target, Alpha));
+            TweenManagerInternal::TPropertyValue<T>::Write(Live.Leaf(), Address, TweenDetail::Lerp(Start->GetValue(), Target, Alpha));
 
             // Through the update signal, so whatever caches this component sees the change.
-            Reg->PatchRaw(Resolved.TypeID, Entity);
+            Reg->PatchRaw(Live.TypeID, Entity);
         });
     }
 
@@ -1007,7 +1024,7 @@ namespace Lumina
             return 0.0f;
         }
 
-        const int32 NumSteps = (int32)State->Steps.size();
+        const int32 NumSteps = State->Steps.Num();
         float Elapsed = 0.0f;
         for (int32 Order = 0; Order < NumSteps; ++Order)
         {

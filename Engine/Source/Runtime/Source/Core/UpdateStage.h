@@ -11,10 +11,10 @@ namespace Lumina
     {
         FrameStart,
         PrePhysics,
-        DuringPhysics,
         PostPhysics,
         FrameEnd,
         Paused,
+        FixedUpdate,
         Max,
     };
     
@@ -22,9 +22,11 @@ namespace Lumina
     {
         "FrameStart",
         "PrePhysics",
-        "DuringPhysics",
         "PostPhysics",
         "FrameEnd",
-        "Paused"
+        "Paused",
+        "FixedUpdate",
     };
+
+    static_assert(sizeof(GUpdateStageNames) / sizeof(GUpdateStageNames[0]) == (size_t)EUpdateStage::Max);
 }

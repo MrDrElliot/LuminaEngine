@@ -1,23 +1,25 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
+#include "World/Entity/Systems/SystemResources.h"
 
 #include "Containers/Vector.h"
+#include "Core/Object/ObjectMacros.h"
 #include "Renderer/RenderLayers.h"
 #include "Renderer/ViewVolume.h"
 #include "World/Entity/Components/PostProcessSettings.h"
+#include "SystemSingletons.generated.h"
 
 namespace Lumina
 {
     class CMaterialInterface;
     enum class ECameraBlendFunction : uint8;
 
-    // Registry-context singletons holding per-world state systems produce/consume. Plain (non-reflected),
-    // transient, never serialized. Emplaced in CWorld::InitializeWorld, read in Extract / the systems.
+    // Registry-context singletons holding per-world state systems produce and consume; transient and never serialized.
 
     // Resolved active view. SCameraSystem writes it at end of update (FrameEnd, or Paused in editor);
     // CWorld::Extract reads + forwards it, keeping camera/post-process resolution in a system.
-    struct FResolvedSceneView
+    struct FResolvedSceneView : ECS::FResource
     {
         FViewVolume                     ViewVolume;
         SPostProcessSettings            PostProcess;
@@ -49,8 +51,11 @@ namespace Lumina
     // Active-camera selection + cinematic blend, owned and ticked entirely by SCameraSystem. A non-zero
     // blend snapshots the displayed view and eases to the new camera over Duration; the resolved view is
     // stored back here each frame as the source for the next blend.
-    struct FCameraGlobalState
+    REFLECT()
+    struct RUNTIME_API FCameraGlobalState : ECS::FResource
     {
+        GENERATED_BODY()
+
         struct FBlendState
         {
             bool                    bActive = false;
@@ -65,7 +70,9 @@ namespace Lumina
             SPostProcessSettings    FromPostProcess;
         };
 
+        PROPERTY(Hidden)
         ECS::FEntity            ActiveCameraEntity = ECS::NullEntity;
+
         FBlendState             Blend;
 
         // Live additive shakes summed into the rendered view each frame; handles let callers stop them.
@@ -73,23 +80,27 @@ namespace Lumina
         uint32                          NextShakeHandle = 1;
 
         // Last fully resolved (post-blend) view; the source for the next blend's snapshot.
+        PROPERTY(Hidden)
         FVector3                LastViewPosition = FVector3(0.0f);
+
         FQuat                   LastViewRotation = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+
+        PROPERTY(Hidden)
         float                   LastViewFOV = 90.0f;
+
         SPostProcessSettings    LastPostProcess;
+
+        PROPERTY(Hidden)
         bool                    bHasResolvedView = false;
 
         // Laid over whichever camera is live, so a sequence's fade and bars hold across its cuts.
+        PROPERTY(Hidden)
         float                   OverlayFade = 0.0f;
-        FVector3                OverlayFadeColor = FVector3(0.0f);
-        float                   OverlayLetterbox = 0.0f;
-    };
 
-    // Game-thread accumulator driving EntityScript OnFixedUpdate at the physics fixed rate (1/PhysicsHz).
-    // Owned by SEntityScriptSystem (PostPhysics pass); independent of the physics scene's own accumulator but
-    // uses the same Hz/cap, so it runs the same number of fixed steps per frame.
-    struct FScriptFixedUpdateState
-    {
-        float Accumulator = 0.0f;
+        PROPERTY(Hidden)
+        FVector3                OverlayFadeColor = FVector3(0.0f);
+
+        PROPERTY(Hidden)
+        float                   OverlayLetterbox = 0.0f;
     };
 }

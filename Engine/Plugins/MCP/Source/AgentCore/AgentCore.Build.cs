@@ -18,7 +18,6 @@ public class AgentCore : LuminaModuleRules
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "Editor",
-            "NlohmannJson",
             "RPMalloc",
         });
     }

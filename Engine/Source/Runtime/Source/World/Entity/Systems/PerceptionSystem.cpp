@@ -1,24 +1,12 @@
-#include "Core/Threading/Thread.h"
 #include "RuntimePCH.h"
-#include "World/ECS/Registry.h"
 #include "PerceptionSystem.h"
 #include "EntityScriptSystem.h"
 #include "PathFollowSystem.h"
 
-#include <algorithm>
-
-#include "AI/Perception/PerceptionWorldState.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Threading/Thread.h"
 #include "Physics/PhysicsScene.h"
 #include "Physics/Ray/RayCast.h"
-#include "Scripting/DotNet/DotNetHost.h"
-#include "TaskSystem/TaskSystem.h"
-#include "World/Entity/EntityUtils.h"
-#include "World/Entity/Components/AIStimuliSourceComponent.h"
-#include "World/Entity/Components/PerceptionComponent.h"
-#include "World/Entity/Components/TransformComponent.h"
-#include "World/Entity/Events/PerceptionEvent.h"
-#include "World/Entity/Systems/SignificanceSystem.h"
 
 namespace Lumina
 {
@@ -26,22 +14,9 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RunsBefore<SPathFollowSystem, SEntityScriptSystem>();
-
-        // Perception events fire at the batch's sync point, so the senses only touch these.
-        Writes<SPerceptionComponent>();
-        SendsEvent<SPerceptionEvent>();
-        Reads<SAIStimuliSourceComponent, STransformComponent, SystemResource::PhysicsQuery, SystemResource::Significance>();
     }
 
-
-    void SPerceptionSystem::OnStartup(const SSystemContext& Context)
-    {
-
-        // Created serially at world init so Update only ever READS the registry context.
-        Perception::GetOrCreateState(Context.GetRegistry());
-    }
-
-    namespace
+    namespace PerceptionSystemInternal
     {
         TConsoleVar<bool> CVarPerceptionDebug("ai.Perception.Debug", false,
             "Draw AI perception sight cones, sense ranges, and lines to perceived targets.");
@@ -51,16 +26,8 @@ namespace Lumina
         constexpr uint8 DamageBit     = (uint8)EAISenseChannel::Damage;
         constexpr uint8 MomentaryBits = HearingBit | DamageBit; // cleared every tick after firing; only sight is sticky.
 
-        // Fired after the diff pass so a callback adding components cannot invalidate the walk.
-        struct FPendingEvent
-        {
-            ECS::FEntity     Perceiver;
-            FPerceivedTarget Target;
-            bool             bSensed;
-        };
-
         // An empty perceiver filter senses everyone; otherwise the source must carry a matching tag.
-        bool PassesAffiliation(const SGameplayTagContainer& Filter, const SGameplayTagContainer* SourceTags)
+        bool PassesAffiliation(const SHierarchicalTagContainer& Filter, const SHierarchicalTagContainer* SourceTags)
         {
             if (Filter.IsEmpty())
             {
@@ -130,14 +97,15 @@ namespace Lumina
         }
 
         // Apply one drained hearing/damage report to the relevant perceiver(s).
-        void ApplyStimulus(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Perceivers, const FAIStimulusEvent& Stim)
+        template<typename TPerceiverQuery, typename TInstigatorQuery>
+        void ApplyStimulus(const TPerceiverQuery& PerceiverQuery, const TInstigatorQuery& InstigatorQuery, const TVector<ECS::FEntity>& Perceivers, const FAIStimulusEvent& Stim)
         {
-            const SGameplayTagContainer* SrcTags = nullptr;
+            const SHierarchicalTagContainer* SrcTags = nullptr;
             if (!Stim.Tags.IsEmpty())
             {
                 SrcTags = &Stim.Tags;
             }
-            else if (const SAIStimuliSourceComponent* Src = Registry.TryGet<SAIStimuliSourceComponent>(Stim.Instigator))
+            else if (const SAIStimuliSourceComponent* Src = InstigatorQuery.template TryGet<SAIStimuliSourceComponent>(Stim.Instigator))
             {
                 SrcTags = &Src->AffiliationTags;
             }
@@ -145,7 +113,7 @@ namespace Lumina
             if (Stim.Sense == EAISenseChannel::Damage)
             {
                 // The victim perceives whoever damaged it, since you always notice an attacker.
-                SPerceptionComponent* Comp = Registry.TryGet<SPerceptionComponent>(Stim.Target);
+                SPerceptionComponent* Comp = PerceiverQuery.template TryGet<SPerceptionComponent>(Stim.Target);
                 if (Comp != nullptr && Comp->bDamageEnabled)
                 {
                     MarkSensed(*Comp, Stim.Instigator, DamageBit, Stim.Location, Stim.Strength);
@@ -160,7 +128,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                SPerceptionComponent* Comp = Registry.TryGet<SPerceptionComponent>(E);
+                SPerceptionComponent* Comp = PerceiverQuery.template TryGet<SPerceptionComponent>(E);
                 if (Comp == nullptr || !Comp->bHearingEnabled)
                 {
                     continue;
@@ -169,7 +137,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                const STransformComponent* Xf = Registry.TryGet<STransformComponent>(E);
+                const STransformComponent* Xf = PerceiverQuery.template TryGet<STransformComponent>(E);
                 if (Xf == nullptr)
                 {
                     continue;
@@ -233,83 +201,54 @@ namespace Lumina
         }
     }
 
+    bool SPerceptionSystem::HasWork(const SSystemContext& Context)
+    {
+        return AnyQueryHasRows(Perceivers);
+    }
+
     void SPerceptionSystem::OnUpdate(const SSystemContext& Context)
     {
+        using namespace PerceptionSystemInternal;
 
-        LUMINA_PROFILE_SCOPE();
-
-        const float DeltaTime = (float)Context.GetDeltaTime();
-        auto View = Context.CreateView<SPerceptionComponent>();
-        auto Handle = View.GetDriver();
-        if (Handle->IsEmpty())
-        {
-            return;
-        }
-        
-        // Worker-visible storage, since a lambda never captures a thread_local and workers index this.
-        TVector<ECS::FEntity> Perceivers;
-        Perceivers.reserve(Handle->GetDenseSize());
-        for (ECS::FEntity E : *Handle)
-        {
-            Perceivers.push_back(E);
-        }
-        const int32 NumPerceivers = (int32)Perceivers.size();
+        const float DeltaTime = Context.GetDeltaTime();
 
         // The scheduler resolves dirty transforms before every batch, and the body never mutates one.
 
-        ECS::FRegistry& Registry = Context.GetRegistry();
-        
-        FPerceptionWorldState* StatePtr = Registry.Ctx().Find<FPerceptionWorldState>();
-        if (StatePtr == nullptr)
-        {
-            return;
-        }
-        FPerceptionWorldState& State = *StatePtr;
+        FPerceptionWorldState& State = *PerceptionState;
+        Physics::IPhysicsQueries* Scene = Context.GetPhysics();
 
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
-        
-        State.SourceGrid.Sources.clear();
+        State.SourceGrid.Sources.Reset();
+        Sources.ForEach([&](ECS::FEntity Src, const SAIStimuliSourceComponent& S, const STransformComponent& Xf)
         {
-            auto SourceView = Context.CreateView<SAIStimuliSourceComponent, STransformComponent>();
-            for (ECS::FEntity Src : SourceView)
-            {
-                const SAIStimuliSourceComponent& S = SourceView.Get<SAIStimuliSourceComponent>(Src);
-                const STransformComponent& Xf = SourceView.Get<STransformComponent>(Src);
-                FPerceptionSource PS;
-                PS.Entity = Src;
-                PS.AimPoint = Xf.GetWorldLocationCached() + S.SightTargetOffset;
-                PS.AffiliationTags = &S.AffiliationTags;
-                PS.RegisteredSenses = (uint8)S.RegisteredSenses;
-                State.SourceGrid.Sources.push_back(PS);
-            }
-        }
+            FPerceptionSource PS;
+            PS.Entity = Src;
+            PS.AimPoint = Xf.GetWorldLocationCached() + S.SightTargetOffset;
+            PS.AffiliationTags = &S.AffiliationTags;
+            PS.RegisteredSenses = (uint8)S.RegisteredSenses;
+            State.SourceGrid.Sources.Add(PS);
+        });
 
         float MaxSightRange = 1.0f;
-        for (int32 i = 0; i < NumPerceivers; ++i)
+        Perceivers.ForEach([&](const SPerceptionComponent& C, const STransformComponent&)
         {
-            const SPerceptionComponent& C = View.Get<SPerceptionComponent>(Perceivers[i]);
             MaxSightRange = Math::Max(LoseSightRange(C), MaxSightRange);
-        }
+        });
         State.SourceGrid.Build(MaxSightRange);
 
-        TVector<FAIStimulusEvent> Stimuli;
+        Stimuli.Reset();
         {
             FScopeLock Lock(State.StimuliMutex);
-            Stimuli.swap(State.PendingStimuli);
+            swap(Stimuli, State.PendingStimuli);
         }
 
         const bool bDebugAll = CVarPerceptionDebug.GetValue();
         const FPerceptionGrid& Grid = State.SourceGrid;
 
-        // Read-only for the whole parallel body, so the workers share one pointer without synchronizing.
-        const FSignificanceState* SignificanceState = Significance::GetState(Context);
-        Task::ParallelFor((uint32)NumPerceivers, [&](uint32 Index)
+        // Read-only for the whole parallel body, so the workers share it without synchronizing.
+        const FSignificanceState& Significance = *SignificanceState;
+        Perceivers.ParallelForEach([&](ECS::FEntity E, ECS::TMut<SPerceptionComponent> CompMut, const STransformComponent& Xform)
         {
-            const ECS::FEntity E = Perceivers[Index];
-            SPerceptionComponent& Comp = View.Get<SPerceptionComponent>(E);
-            const STransformComponent& Xform = TransformStorage.Get(E);
-
+            SPerceptionComponent& Comp = CompMut.GetMut();
             const FVector3 Loc = Xform.GetWorldLocationCached();
             const FVector3 Eye = Loc + Comp.EyeOffset;
             const FVector3 Forward = Xform.GetWorldTransformCached().GetForward();
@@ -325,7 +264,7 @@ namespace Lumina
             {
                 return;
             }
-            if (Comp.UpdateAccumulator < Significance::ScaleInterval(SignificanceState, E, Comp.UpdateInterval))
+            if (Comp.UpdateAccumulator < Comp.UpdateInterval * (float)Significance.Get(E).TickInterval)
             {
                 return;
             }
@@ -380,9 +319,9 @@ namespace Lumina
                 Ray.Start = Eye;
                 Ray.End = Src.AimPoint;
                 Ray.LayerMask = Comp.SightBlockingMask;
-                Ray.IgnoreEntities.push_back(SelfBody);
+                Ray.IgnoreEntities.Add(SelfBody);
                 const TOptional<SRayResult> Hit = Scene->CastRay(Ray);
-                if (Hit.has_value() && Hit->Entity != (uint32)Src.Entity)
+                if (Hit.IsSet() && Hit->Entity != (uint32)Src.Entity)
                 {
                     return;
                 }
@@ -390,59 +329,53 @@ namespace Lumina
                 // Nearer reads stronger, which decides who keeps a slot when more are in view than the list holds.
                 MarkSensed(Comp, Src.Entity, SightBit, Src.AimPoint, 1.0f - Dist / Math::Max(Range, 1e-3f));
             });
-        });
+        }, 1u);
 
-        for (const FAIStimulusEvent& Stim : Stimuli)
+        if (!Stimuli.IsEmpty())
         {
-            ApplyStimulus(Registry, Perceivers, Stim);
-        }
-        
-        TVector<FPendingEvent> Events;
-        for (ECS::FEntity E : Perceivers)
-        {
-            SPerceptionComponent* Comp = Registry.TryGet<SPerceptionComponent>(E);
-            if (Comp == nullptr)
+            const TVector<ECS::FEntity>& PerceiverList = Perceivers.Collect();
+            for (const FAIStimulusEvent& Stim : Stimuli)
             {
-                continue;
+                ApplyStimulus(Perceivers, Instigators, PerceiverList, Stim);
             }
+            Perceivers.CompleteRun();
+        }
 
-            for (int32 i = 0; i < Comp->PerceivedCount; )
+        Perceivers.ForEach([&](ECS::FEntity E, ECS::TMut<SPerceptionComponent> CompMut, const STransformComponent&)
+        {
+            SPerceptionComponent& Comp = CompMut.GetMut();
+            for (int32 i = 0; i < Comp.PerceivedCount; )
             {
-                FPerceivedTarget& T = Comp->PerceivedTargets[i];
+                FPerceivedTarget& T = Comp.PerceivedTargets[i];
 
                 if (!Context.IsValidEntity(T.Target))
                 {
                     FPerceivedTarget Lost = T;
                     Lost.ActiveSenses = 0;
-                    RemoveAt(*Comp, i);
-                    Events.push_back({ E, Lost, false });
+                    RemoveAt(Comp, i);
+                    PerceptionEvents.Send(MakePerceptionEvent(E, Lost, false));
                     continue;
                 }
 
                 if (T.bIsNew)
                 {
                     T.bIsNew = false;
-                    Events.push_back({ E, T, true });
+                    PerceptionEvents.Send(MakePerceptionEvent(E, T, true));
                 }
 
                 T.TimeSinceLastSensed = (T.ActiveSenses != 0) ? 0.0f : (T.TimeSinceLastSensed + DeltaTime);
                 T.ActiveSenses &= ~MomentaryBits; // hearing/damage last only the tick of the report.
 
-                if (T.TimeSinceLastSensed > Comp->ForgetTime)
+                if (T.TimeSinceLastSensed > Comp.ForgetTime)
                 {
                     FPerceivedTarget Lost = T;
                     Lost.ActiveSenses = 0;
-                    RemoveAt(*Comp, i);
-                    Events.push_back({ E, Lost, false });
+                    RemoveAt(Comp, i);
+                    PerceptionEvents.Send(MakePerceptionEvent(E, Lost, false));
                     continue;
                 }
                 ++i;
             }
-        }
-
-        for (const FPendingEvent& Ev : Events)
-        {
-            Context.SendEvent(MakePerceptionEvent(Ev.Perceiver, Ev.Target, Ev.bSensed));
-        }
+        });
     }
 }

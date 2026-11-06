@@ -46,28 +46,28 @@ namespace Lumina
         void ResizeDesignRows(FUIDesignList& List, int32 Count)
         {
             Count = std::max(0, Count);
-            while ((int32)List.Rows.size() > Count)
+            while (List.Rows.Num() > Count)
             {
-                List.Rows.pop_back();
+                List.Rows.Pop();
             }
-            while ((int32)List.Rows.size() < Count)
+            while (List.Rows.Num() < Count)
             {
-                TVector<FString>& Cells = List.Rows.emplace_back();
+                TVector<FString>& Cells = List.Rows.EmplaceGetRef();
                 for (const FString& Member : List.Members)
                 {
-                    Cells.push_back(Member + " " + std::to_string(List.Rows.size()).c_str());
+                    Cells.Add(Member + " " + std::to_string(List.Rows.Num()).c_str());
                 }
-                if (List.Members.empty())
+                if (List.Members.IsEmpty())
                 {
-                    Cells.push_back(List.Name + " " + std::to_string(List.Rows.size()).c_str());
+                    Cells.Add(List.Name + " " + std::to_string(List.Rows.Num()).c_str());
                 }
             }
         }
 
-        constexpr size_t kPlaceholderRows = 3;
+        constexpr int32 kPlaceholderRows = 3;
 
         // Text members read "Name 2" and numbers take the row number, so each repeated item is told apart in the preview.
-        void FillPlaceholderItem(const FProperty* Inner, void* Item, size_t Row, const FString& ListName)
+        void FillPlaceholderItem(const FProperty* Inner, void* Item, int32 Row, const FString& ListName)
         {
             auto Fill = [Row](const FProperty* Field, void* Container, const char* Label)
             {
@@ -77,7 +77,7 @@ namespace Lumina
                     : std::to_string(Row);
                 if (Type != EPropertyTypeFlags::Bool)
                 {
-                    Reflection::FromText(Field, Container, FStringView(Text.c_str(), Text.size()));
+                    Reflection::FromText(Field, Container, FStringView(Text.c_str(), IntCastChecked<int32>(Text.size())));
                 }
             };
 
@@ -85,12 +85,12 @@ namespace Lumina
             {
                 for (const FProperty* Member : static_cast<const FStructProperty*>(Inner)->GetStruct()->GetProperties())
                 {
-                    Fill(Member, Item, Member->GetPropertyName().c_str());
+                    Fill(Member, Item, *Member->GetPropertyName());
                 }
             }
             else
             {
-                Fill(Inner, Item, ListName.c_str());
+                Fill(Inner, Item, *ListName);
             }
         }
 
@@ -107,11 +107,11 @@ namespace Lumina
                 }
                 const FArrayProperty* Array = static_cast<const FArrayProperty*>(Bound.Property);
                 void* Items = Bound.Property->GetValuePtr<void>(Preview);
-                const size_t Existing = Array->GetNum(Items);
-                auto Count = RowCounts.find(DesignMemberKey(ModelName, Bound.Name));
-                const size_t Wanted = Count != RowCounts.end() ? (size_t)Count->second : (Existing == 0 ? kPlaceholderRows : Existing);
-                Array->GetOps()->Resize(Items, Wanted);
-                for (size_t Row = Existing; Row < Wanted; ++Row)
+                const int32 Existing = Array->Num(Items);
+                const int32* Count = RowCounts.Find(DesignMemberKey(ModelName, Bound.Name));
+                const int32 Wanted = Count != nullptr ? *Count : (Existing == 0 ? kPlaceholderRows : Existing);
+                Array->SetNum(Items, Wanted);
+                for (int32 Row = Existing; Row < Wanted; ++Row)
                 {
                     FillPlaceholderItem(Array->GetInternalProperty(), Array->GetAt(Items, Row), Row + 1, Bound.Name);
                 }
@@ -120,12 +120,12 @@ namespace Lumina
 
         std::string DesignListSnippet(const FUIDesignList& List)
         {
-            std::string Snippet = "<div data-for=\"item : " + std::string(List.Name.c_str()) + "\">";
+            std::string Snippet = "<div data-for=\"item : " + std::string(*List.Name) + "\">";
             for (const FString& Member : List.Members)
             {
-                Snippet += "{{ item." + std::string(Member.c_str()) + " }} ";
+                Snippet += "{{ item." + std::string(*Member) + " }} ";
             }
-            if (!List.Members.empty())
+            if (!List.Members.IsEmpty())
             {
                 Snippet.pop_back();
             }
@@ -140,10 +140,10 @@ namespace Lumina
 
         std::string DesignCommandSnippet(const FUIDesignCommand& Command)
         {
-            std::string Snippet = "data-event-click=\"" + std::string(Command.Name.c_str()) + "(";
-            for (size_t Index = 0; Index < Command.Params.size(); ++Index)
+            std::string Snippet = "data-event-click=\"" + std::string(*Command.Name) + "(";
+            for (int32 Index = 0; Index < Command.Params.Num(); ++Index)
             {
-                Snippet += (Index > 0 ? ", " : "") + std::string("'") + Command.Params[Index].c_str() + "'";
+                Snippet += (Index > 0 ? ", " : "") + std::string("'") + *Command.Params[Index] + "'";
             }
             return Snippet + ")\"";
         }
@@ -160,8 +160,8 @@ namespace Lumina
         {
             RmlUi::DestroyObjectModel(Model);
         }
-        DesignObjectModels.clear();
-        DesignObjects.clear();
+        DesignObjectModels.Reset();
+        DesignObjects.Reset();
     }
 
     void FRmlUiEditorTool::RefreshDesignModels(const std::string& Body)
@@ -169,14 +169,14 @@ namespace Lumina
         RmlBinding::Scan(Body, Bindings);
 
         ReleaseDesignObjects();
-        DesignModels.clear();
-        DesignDescribed.clear();
+        DesignModels.Reset();
+        DesignDescribed.Reset();
 
         TVector<FUIDesignModel> Inferred;
         for (const FString& Name : Bindings.Models)
         {
             const bool bSeen = std::any_of(DesignModels.begin(), DesignModels.end(), [&Name](const FUIDesignModel& Model) { return Model.Name == Name; });
-            if (bSeen || Name.empty())
+            if (bSeen || Name.IsEmpty())
             {
                 continue;
             }
@@ -184,7 +184,7 @@ namespace Lumina
             // A transient instance of the class, bound the way the game binds it, so the preview shows the class's own defaults.
             FUIDesignModel Model;
             CObject* Preview = nullptr;
-            if (CClass* Class = UIBinding::FindModelClass(FStringView(Name.c_str(), Name.size())))
+            if (CClass* Class = UIBinding::FindModelClass(FStringView(*Name, Name.Len())))
             {
                 Preview = NewObject(Class, nullptr, NAME_None, FGuid::New(), OF_Transient);
             }
@@ -194,13 +194,13 @@ namespace Lumina
                 for (auto& [Key, Value] : DesignOverrides)
                 {
                     const FString Prefix = Name + ".";
-                    if (Key.rfind(Prefix, 0) == 0)
+                    if (Key.FindLast(Prefix, 0) == 0)
                     {
                         void* Container = nullptr;
-                        const FStringView Member(Key.c_str() + Prefix.size(), Key.size() - Prefix.size());
+                        const FStringView Member(*Key + Prefix.Len(), Key.Len() - Prefix.Len());
                         if (const FProperty* Property = UIBinding::ResolvePath(Preview, Member, Container))
                         {
-                            Reflection::FromText(Property, Container, FStringView(Value.c_str(), Value.size()));
+                            Reflection::FromText(Property, Container, FStringView(*Value, Value.Len()));
                         }
                     }
                 }
@@ -213,27 +213,27 @@ namespace Lumina
                 Model = RmlBinding::Infer(Name, Bindings);
                 for (FUIDesignScalar& Scalar : Model.Scalars)
                 {
-                    auto Override = DesignOverrides.find(RmlDataPanel::DesignMemberKey(Model.Name, Scalar.Name));
-                    if (Override != DesignOverrides.end())
+                    auto Override = DesignOverrides.Find(RmlDataPanel::DesignMemberKey(Model.Name, Scalar.Name));
+                    if (Override != nullptr)
                     {
-                        Scalar.Value = Override->second;
+                        Scalar.Value = (*Override);
                     }
                 }
                 for (FUIDesignList& List : Model.Lists)
                 {
-                    auto Count = DesignRowCounts.find(RmlDataPanel::DesignMemberKey(Model.Name, List.Name));
-                    if (Count != DesignRowCounts.end())
+                    auto Count = DesignRowCounts.Find(RmlDataPanel::DesignMemberKey(Model.Name, List.Name));
+                    if (Count != nullptr)
                     {
-                        RmlDataPanel::ResizeDesignRows(List, Count->second);
+                        RmlDataPanel::ResizeDesignRows(List, (*Count));
                     }
                 }
-                Inferred.push_back(Model);
+                Inferred.Add(Model);
             }
 
-            DesignModels.push_back(Move(Model));
-            DesignDescribed.push_back(Preview != nullptr);
-            DesignObjects.push_back(TStrongObjectPtr<CObject>(Preview));
-            DesignObjectModels.push_back(nullptr);
+            DesignModels.Add(Move(Model));
+            DesignDescribed.Add(Preview != nullptr);
+            DesignObjects.Emplace(Preview);
+            DesignObjectModels.Add(nullptr);
         }
 
         RmlBinding::Lint(Bindings, DesignModels, DesignDescribed, BindingProblems);
@@ -242,12 +242,12 @@ namespace Lumina
         if (PreviewContext != nullptr)
         {
             RmlUi::SetEditorDesignModels(PreviewContext, Inferred);
-            for (size_t Index = 0; Index < DesignObjects.size(); ++Index)
+            for (int32 Index = 0; Index < DesignObjects.Num(); ++Index)
             {
                 if (CObject* Preview = DesignObjects[Index].Get())
                 {
                     const FString& Name = DesignModels[Index].Name;
-                    DesignObjectModels[Index] = RmlUi::CreateObjectModel(PreviewContext, FStringView(Name.c_str(), Name.size()), Preview, true);
+                    DesignObjectModels[Index] = RmlUi::CreateObjectModel(PreviewContext, FStringView(*Name, Name.Len()), Preview, true);
                 }
             }
         }
@@ -258,10 +258,10 @@ namespace Lumina
     void FRmlUiEditorTool::ApplyBindingMarkers()
     {
         TVector<FCodeDiagnostic> Diagnostics;
-        Diagnostics.reserve(BindingProblems.size());
+        Diagnostics.Reserve(BindingProblems.Num());
         for (const RmlBinding::FProblem& Problem : BindingProblems)
         {
-            FCodeDiagnostic& Diagnostic = Diagnostics.emplace_back();
+            FCodeDiagnostic& Diagnostic = Diagnostics.EmplaceGetRef();
             Diagnostic.Range = { { Problem.Line - 1, 0 }, { Problem.Line, 0 } };
             Diagnostic.Message = Problem.Message;
             Diagnostic.Severity = Problem.bError ? ECodeSeverity::Error : ECodeSeverity::Warning;
@@ -280,12 +280,12 @@ namespace Lumina
         RmlUi::ConsumeEditorDesignCommands(PreviewContext, Fired);
         for (FString& Call : Fired)
         {
-            ImGuiX::Notifications::NotifyInfo("Preview ran {}", Call.c_str());
-            FiredCommands.push_back(Move(Call));
+            ImGuiX::Notifications::NotifyInfo("Preview ran {}", *Call);
+            FiredCommands.Add(Move(Call));
         }
-        if ((int32)FiredCommands.size() > RmlDataPanel::kMaxPreviewCommands)
+        if (FiredCommands.Num() > RmlDataPanel::kMaxPreviewCommands)
         {
-            FiredCommands.erase(FiredCommands.begin(), FiredCommands.begin() + (FiredCommands.size() - RmlDataPanel::kMaxPreviewCommands));
+            FiredCommands.RemoveAt(0, FiredCommands.Num() - RmlDataPanel::kMaxPreviewCommands);
         }
 
         if (bScriptsReloaded)
@@ -304,7 +304,7 @@ namespace Lumina
     {
         Language.SetStylesheetResolver([this](FStringView Href, FString& OutText)
         {
-            const FString Path = Href.starts_with("/") ? FString(Href) : ParentDir + "/" + FString(Href);
+            const FString Path = Href.StartsWith("/") ? FString(Href) : ParentDir + "/" + FString(Href);
             return VFS::ReadFile(OutText, Path.View());
         });
         if (bIsStylesheet)
@@ -316,8 +316,8 @@ namespace Lumina
         FCodeCompletionSource Source;
         Source.IsTrigger = [](char Typed, const FCodeCompletionRequest& Request)
         {
-            const FStringView Prefix = Request.LinePrefix.substr(0, Request.WordStart.Column);
-            const RmlBinding::ECompletion Kind = RmlBinding::ClassifyCompletion(std::string_view(Prefix.data(), Prefix.size())).Kind;
+            const FStringView Prefix = Request.LinePrefix.Mid(0, Request.WordStart.Column);
+            const RmlBinding::ECompletion Kind = RmlBinding::ClassifyCompletion(std::string_view(Prefix.GetData(), Prefix.Len())).Kind;
             return Kind != RmlBinding::ECompletion::None && Kind != RmlBinding::ECompletion::Attribute;
         };
         Source.Gather = [this](const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out)
@@ -329,12 +329,12 @@ namespace Lumina
 
     void FRmlUiEditorTool::GatherBindingCompletions(const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out)
     {
-        const FStringView Prefix = Request.LinePrefix.substr(0, Request.WordStart.Column);
-        const RmlBinding::FCompletionContext Context = RmlBinding::ClassifyCompletion(std::string_view(Prefix.data(), Prefix.size()));
+        const FStringView Prefix = Request.LinePrefix.Mid(0, Request.WordStart.Column);
+        const RmlBinding::FCompletionContext Context = RmlBinding::ClassifyCompletion(std::string_view(Prefix.GetData(), Prefix.Len()));
 
         auto Add = [&Out](const FString& Name, ECodeCompletionKind Kind, FString Detail, FString Insert, int32 Boost)
         {
-            FCodeCompletionItem& Item = Out.emplace_back();
+            FCodeCompletionItem& Item = Out.EmplaceGetRef();
             Item.Label = Name;
             Item.Kind = Kind;
             Item.Detail = Move(Detail);
@@ -348,7 +348,7 @@ namespace Lumina
             {
                 for (const FUIModelInfo& Info : AvailableModels)
                 {
-                    Add(Info.Name, ECodeCompletionKind::Module, Format("{} {}", Info.bScript ? "UIScript" : "ViewModel", Info.TypeName.c_str()), {}, 20);
+                    Add(Info.Name, ECodeCompletionKind::Module, Format("{} {}", Info.bScript ? "UIScript" : "ViewModel", *Info.TypeName), {}, 20);
                 }
                 break;
             }
@@ -370,7 +370,7 @@ namespace Lumina
                             }
                             for (const FString& Member : List.Members)
                             {
-                                Add(Member, ECodeCompletionKind::Field, Format("item of {}", List.Name.c_str()), {}, 20);
+                                Add(Member, ECodeCompletionKind::Field, Format("item of {}", *List.Name), {}, 20);
                             }
                         }
                     }
@@ -389,17 +389,17 @@ namespace Lumina
                         for (const FUIDesignCommand& Command : Model.Commands)
                         {
                             FString Params;
-                            for (size_t Index = 0; Index < Command.Params.size(); ++Index)
+                            for (int32 Index = 0; Index < Command.Params.Num(); ++Index)
                             {
                                 Params += Index > 0 ? ", " : "";
                                 Params += Command.Params[Index];
                             }
-                            Add(Command.Name, ECodeCompletionKind::Function, "(" + Params + ")", Command.Params.empty() ? Command.Name + "()" : Command.Name + "($0)", 20);
+                            Add(Command.Name, ECodeCompletionKind::Function, "(" + Params + ")", Command.Params.IsEmpty() ? Command.Name + "()" : Command.Name + "($0)", 20);
                         }
                     }
                     for (const FUIDesignList& List : Model.Lists)
                     {
-                        Add(List.Name, ECodeCompletionKind::Field, Format("list of {} members", List.Members.size()), {}, 10);
+                        Add(List.Name, ECodeCompletionKind::Field, Format("list of {} members", List.Members.Num()), {}, 10);
                     }
                     if (Context.Kind == RmlBinding::ECompletion::ListSource)
                     {
@@ -407,12 +407,12 @@ namespace Lumina
                     }
                     for (const FUIDesignScalar& Scalar : Model.Scalars)
                     {
-                        Add(Scalar.Name, ECodeCompletionKind::Variable, Format("{} = {}", RmlDataPanel::DesignTypeLabel(Scalar.Type), Scalar.Value.c_str()), {}, 15);
+                        Add(Scalar.Name, ECodeCompletionKind::Variable, Format("{} = {}", RmlDataPanel::DesignTypeLabel(Scalar.Type), *Scalar.Value), {}, 15);
                     }
                 }
                 for (const RmlBinding::FForScope& Scope : Bindings.ForScopes)
                 {
-                    Add(Scope.Alias, ECodeCompletionKind::Variable, Format("each item of {}", Scope.List.c_str()), {}, 15);
+                    Add(Scope.Alias, ECodeCompletionKind::Variable, Format("each item of {}", *Scope.List), {}, 15);
                 }
                 break;
             }
@@ -435,21 +435,21 @@ namespace Lumina
         }
         ImGuiX::TextTooltip("Describe the models again, after editing their C# without a script reload.");
         ImGui::SameLine();
-        ImGui::BeginDisabled(DesignOverrides.empty() && DesignRowCounts.empty());
+        ImGui::BeginDisabled(DesignOverrides.IsEmpty() && DesignRowCounts.IsEmpty());
         if (ImGui::SmallButton(LE_ICON_RESTORE " Defaults"))
         {
-            DesignOverrides.clear();
-            DesignRowCounts.clear();
+            DesignOverrides.Reset();
+            DesignRowCounts.Reset();
             ReloadDocument();
         }
         ImGui::EndDisabled();
         ImGuiX::TextTooltip("Forget the preview values typed here and go back to the C# defaults.");
         ImGui::Separator();
 
-        if (!BindingProblems.empty())
+        if (!BindingProblems.IsEmpty())
         {
             RmlDataPanel::DataSectionHeader(LE_ICON_ALERT_CIRCLE_OUTLINE, "Problems");
-            for (size_t Index = 0; Index < BindingProblems.size(); ++Index)
+            for (int32 Index = 0; Index < BindingProblems.Num(); ++Index)
             {
                 const RmlBinding::FProblem& Problem = BindingProblems[Index];
                 ImGui::PushID((int)Index);
@@ -462,41 +462,41 @@ namespace Lumina
                 }
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
-                ImGui::TextWrapped("%s", Problem.Message.c_str());
+                ImGui::TextWrapped("%s", *Problem.Message);
                 ImGui::PopID();
             }
             ImGui::Spacing();
         }
 
-        if (DesignModels.empty())
+        if (DesignModels.IsEmpty())
         {
             RmlDataPanel::DataSectionHeader(LE_ICON_DATABASE_OUTLINE, "No data model");
             ImGui::TextWrapped("This document binds no data. Put data-model=\"Name\" on its body, where Name is a class with Bind members, "
                 "a UIScript or CUIScript for instance, or the name its DataModel gives. Then use {{ Member }} and the data-* attributes inside it.");
-            if (!AvailableModels.empty())
+            if (!AvailableModels.IsEmpty())
             {
                 ImGui::Spacing();
                 ImGui::TextDisabled("Models in your scripts");
-                for (size_t Index = 0; Index < AvailableModels.size(); ++Index)
+                for (int32 Index = 0; Index < AvailableModels.Num(); ++Index)
                 {
                     const FUIModelInfo& Info = AvailableModels[Index];
                     ImGui::PushID((int)Index);
                     if (ImGui::SmallButton(LE_ICON_CONTENT_COPY))
                     {
-                        const std::string Attribute = "data-model=\"" + std::string(Info.Name.c_str()) + "\"";
+                        const std::string Attribute = "data-model=\"" + std::string(*Info.Name) + "\"";
                         ImGui::SetClipboardText(Attribute.c_str());
                     }
-                    ImGuiX::TextTooltip("Copy data-model=\"{}\"", Info.Name.c_str());
+                    ImGuiX::TextTooltip("Copy data-model=\"{}\"", *Info.Name);
                     ImGui::SameLine();
-                    ImGui::Text("%s", Info.Name.c_str());
+                    ImGui::Text("%s", *Info.Name);
                     ImGui::SameLine();
-                    ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s %s", Info.bScript ? "UI script" : "Bound class", Info.TypeName.c_str());
+                    ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s %s", Info.bScript ? "UI script" : "Bound class", *Info.TypeName);
                     ImGui::PopID();
                 }
             }
         }
 
-        for (int32 Index = 0; Index < (int32)DesignModels.size(); ++Index)
+        for (int32 Index = 0; Index < DesignModels.Num(); ++Index)
         {
             DrawModelSection(Index);
         }
@@ -506,17 +506,17 @@ namespace Lumina
             ReloadDocument();
         }
 
-        if (!FiredCommands.empty())
+        if (!FiredCommands.IsEmpty())
         {
             ImGui::Spacing();
             RmlDataPanel::DataSectionHeader(LE_ICON_GESTURE_TAP, "Commands the preview ran");
-            for (size_t Index = FiredCommands.size(); Index > 0; --Index)
+            for (int32 Index = FiredCommands.Num(); Index > 0; --Index)
             {
-                ImGui::TextColored(Index == FiredCommands.size() ? ImVec4(0.55f, 0.90f, 0.60f, 1.0f) : RmlDataPanel::kDesignDimColor, "%s", FiredCommands[Index - 1].c_str());
+                ImGui::TextColored(Index == FiredCommands.Num() ? ImVec4(0.55f, 0.90f, 0.60f, 1.0f) : RmlDataPanel::kDesignDimColor, "%s", *FiredCommands[Index - 1]);
             }
             if (ImGui::SmallButton("Clear"))
             {
-                FiredCommands.clear();
+                FiredCommands.Reset();
             }
         }
     }
@@ -524,11 +524,11 @@ namespace Lumina
     void FRmlUiEditorTool::DrawModelSection(int32 ModelIndex)
     {
         FUIDesignModel& Model = DesignModels[ModelIndex];
-        const bool bDescribed = ModelIndex < (int32)DesignDescribed.size() && DesignDescribed[ModelIndex];
+        const bool bDescribed = ModelIndex < DesignDescribed.Num() && DesignDescribed[ModelIndex];
 
         ImGui::PushID(ModelIndex);
         char Header[160];
-        std::snprintf(Header, sizeof(Header), LE_ICON_DATABASE " %s", Model.Name.c_str());
+        std::snprintf(Header, sizeof(Header), LE_ICON_DATABASE " %s", *Model.Name);
         if (!ImGui::CollapsingHeader(Header, ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::PopID();
@@ -537,21 +537,21 @@ namespace Lumina
 
         if (bDescribed)
         {
-            ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s %s", Model.bFromScript ? "UI script" : "Bound class", Model.SourceType.c_str());
+            ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s %s", Model.bFromScript ? "UI script" : "Bound class", *Model.SourceType);
         }
         else
         {
-            ImGui::TextColored(RmlDataPanel::kDesignInfoColor, "Inferred from this document. No class registers '%s' yet.", Model.Name.c_str());
+            ImGui::TextColored(RmlDataPanel::kDesignInfoColor, "Inferred from this document. No class registers '%s' yet.", *Model.Name);
         }
         ImGui::TextColored(RmlDataPanel::kDesignDimColor, "Values here only feed the preview. Insert puts the binding at the code cursor.");
 
-        const FStringView ModelName(Model.Name.c_str(), Model.Name.size());
-        if (!Model.Scalars.empty() && ImGui::BeginTable("##scalars", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+        const FStringView ModelName(*Model.Name, Model.Name.Len());
+        if (!Model.Scalars.IsEmpty() && ImGui::BeginTable("##scalars", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
         {
             ImGui::TableSetupColumn("Member", ImGuiTableColumnFlags_WidthStretch, 0.9f);
             ImGui::TableSetupColumn("Preview", ImGuiTableColumnFlags_WidthStretch, 1.1f);
             ImGui::TableSetupColumn("##insert", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
-            for (size_t Index = 0; Index < Model.Scalars.size(); ++Index)
+            for (int32 Index = 0; Index < Model.Scalars.Num(); ++Index)
             {
                 FUIDesignScalar& Scalar = Model.Scalars[Index];
                 ImGui::PushID((int)Index);
@@ -559,12 +559,12 @@ namespace Lumina
 
                 ImGui::TableNextColumn();
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(Scalar.Name.c_str());
-                ImGuiX::TextTooltip("{} {}{}", RmlDataPanel::DesignTypeLabel(Scalar.Type), Scalar.Name.c_str(), Scalar.bWritable ? ", two-way" : ", display only");
+                ImGui::TextUnformatted(*Scalar.Name);
+                ImGuiX::TextTooltip("{} {}{}", RmlDataPanel::DesignTypeLabel(Scalar.Type), *Scalar.Name, Scalar.bWritable ? ", two-way" : ", display only");
 
                 // Read back each frame, since a two-way control in the preview can change it.
-                const FStringView Member(Scalar.Name.c_str(), Scalar.Name.size());
-                void* ObjectModel = ModelIndex < (int32)DesignObjectModels.size() ? DesignObjectModels[ModelIndex] : nullptr;
+                const FStringView Member(*Scalar.Name, Scalar.Name.Len());
+                void* ObjectModel = ModelIndex < DesignObjectModels.Num() ? DesignObjectModels[ModelIndex] : nullptr;
                 FString Current = ObjectModel != nullptr ? RmlUi::GetObjectModelValue(ObjectModel, Member)
                     : (PreviewContext != nullptr ? RmlUi::GetEditorDesignValue(PreviewContext, ModelName, Member) : Scalar.Value);
                 if (ObjectModel != nullptr && !Scalar.bWritable)
@@ -589,7 +589,7 @@ namespace Lumina
                     }
                     case EUIVarType::Int:
                     {
-                        int Value = std::atoi(Current.c_str());
+                        int Value = std::atoi(*Current);
                         if (ImGui::DragInt("##v", &Value))
                         {
                             Current = std::to_string(Value).c_str();
@@ -600,7 +600,7 @@ namespace Lumina
                     case EUIVarType::Float:
                     case EUIVarType::Double:
                     {
-                        float Value = (float)std::atof(Current.c_str());
+                        float Value = (float)std::atof(*Current);
                         if (ImGui::DragFloat("##v", &Value, 0.1f))
                         {
                             Current = std::to_string(Value).c_str();
@@ -611,7 +611,7 @@ namespace Lumina
                     default:
                     {
                         char Buffer[256];
-                        std::snprintf(Buffer, sizeof(Buffer), "%s", Current.c_str());
+                        std::snprintf(Buffer, sizeof(Buffer), "%s", *Current);
                         if (ImGui::InputText("##v", Buffer, sizeof(Buffer)))
                         {
                             Current = Buffer;
@@ -626,36 +626,36 @@ namespace Lumina
                     DesignOverrides[RmlDataPanel::DesignMemberKey(Model.Name, Scalar.Name)] = Current;
                     if (ObjectModel != nullptr)
                     {
-                        RmlUi::SetObjectModelValue(ObjectModel, Member, FStringView(Current.c_str(), Current.size()));
+                        RmlUi::SetObjectModelValue(ObjectModel, Member, FStringView(*Current, Current.Len()));
                     }
                     else
                     {
-                        RmlUi::SetEditorDesignValue(PreviewContext, ModelName, Member, FStringView(Current.c_str(), Current.size()));
+                        RmlUi::SetEditorDesignValue(PreviewContext, ModelName, Member, FStringView(*Current, Current.Len()));
                     }
                 }
 
                 ImGui::TableNextColumn();
                 if (ImGui::SmallButton(LE_ICON_ARROW_LEFT_BOTTOM))
                 {
-                    const std::string Snippet = "{{ " + std::string(Scalar.Name.c_str()) + " }}";
+                    const std::string Snippet = "{{ " + std::string(*Scalar.Name) + " }}";
                     InsertSnippet(Snippet.c_str());
                 }
-                ImGuiX::TextTooltip("Insert {{ {} }} at the code cursor", Scalar.Name.c_str());
+                ImGuiX::TextTooltip("Insert {{ {} }} at the code cursor", *Scalar.Name);
                 ImGui::PopID();
             }
             ImGui::EndTable();
         }
 
-        for (size_t Index = 0; Index < Model.Lists.size(); ++Index)
+        for (int32 Index = 0; Index < Model.Lists.Num(); ++Index)
         {
             FUIDesignList& List = Model.Lists[Index];
             ImGui::PushID(1000 + (int)Index);
             ImGui::AlignTextToFramePadding();
-            ImGui::Text(LE_ICON_FORMAT_LIST_BULLETED " %s", List.Name.c_str());
+            ImGui::Text(LE_ICON_FORMAT_LIST_BULLETED " %s", *List.Name);
             ImGui::SameLine();
-            int Rows = (int)List.Rows.size();
+            int Rows = List.Rows.Num();
             ImGui::SetNextItemWidth(90.0f);
-            const bool bClassBacked = ModelIndex < (int32)DesignObjectModels.size() && DesignObjectModels[ModelIndex] != nullptr;
+            const bool bClassBacked = ModelIndex < DesignObjectModels.Num() && DesignObjectModels[ModelIndex] != nullptr;
             if (ImGui::InputInt("rows", &Rows))
             {
                 Rows = std::clamp(Rows, 0, 64);
@@ -670,7 +670,7 @@ namespace Lumina
                     RmlDataPanel::ResizeDesignRows(List, Rows);
                     if (PreviewContext != nullptr)
                     {
-                        RmlUi::SetEditorDesignRows(PreviewContext, ModelName, FStringView(List.Name.c_str(), List.Name.size()), List.Rows);
+                        RmlUi::SetEditorDesignRows(PreviewContext, ModelName, FStringView(*List.Name, List.Name.Len()), List.Rows);
                     }
                 }
             }
@@ -685,7 +685,7 @@ namespace Lumina
             std::string Members;
             for (const FString& Member : List.Members)
             {
-                Members += (Members.empty() ? "" : ", ") + std::string(Member.c_str());
+                Members += (Members.empty() ? "" : ", ") + std::string(*Member);
             }
             if (Members.empty())
             {
@@ -698,25 +698,25 @@ namespace Lumina
             ImGui::PopID();
         }
 
-        for (size_t Index = 0; Index < Model.Commands.size(); ++Index)
+        for (int32 Index = 0; Index < Model.Commands.Num(); ++Index)
         {
             const FUIDesignCommand& Command = Model.Commands[Index];
             ImGui::PushID(2000 + (int)Index);
-            const bool bJustRan = !FiredCommands.empty() && FiredCommands.back().rfind(Command.Name + "(", 0) == 0;
+            const bool bJustRan = !FiredCommands.IsEmpty() && FiredCommands.Last().FindLast(Command.Name + "(", 0) == 0;
             std::string Params;
-            for (size_t Param = 0; Param < Command.Params.size(); ++Param)
+            for (int32 Param = 0; Param < Command.Params.Num(); ++Param)
             {
-                Params += (Param > 0 ? ", " : "") + std::string(Command.Params[Param].c_str());
+                Params += (Param > 0 ? ", " : "") + std::string(*Command.Params[Param]);
             }
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(bJustRan ? ImVec4(0.55f, 0.90f, 0.60f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text),
-                LE_ICON_FUNCTION " %s(%s)", Command.Name.c_str(), Params.c_str());
+                LE_ICON_FUNCTION " %s(%s)", *Command.Name, Params.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton(LE_ICON_ARROW_LEFT_BOTTOM))
             {
                 InsertSnippet(RmlDataPanel::DesignCommandSnippet(Command).c_str());
             }
-            ImGuiX::TextTooltip("Insert data-event-click=\"{}(...)\" at the code cursor", Command.Name.c_str());
+            ImGuiX::TextTooltip("Insert data-event-click=\"{}(...)\" at the code cursor", *Command.Name);
             ImGui::PopID();
         }
 
@@ -732,29 +732,29 @@ namespace Lumina
 
         TVector<RmlBinding::FAttribute> Attributes;
         RmlBinding::ReadDataAttributes(std::string_view(CompAssignText.data(), CompAssignText.size()), SelectedOpenLt, Attributes);
-        if (Attributes.empty())
+        if (Attributes.IsEmpty())
         {
             return;
         }
 
         ImGui::Spacing();
         ImGui::TextDisabled(LE_ICON_LINK_VARIANT " Bindings");
-        const FUIDesignModel* Model = DesignModels.empty() ? nullptr : &DesignModels.front();
+        const FUIDesignModel* Model = DesignModels.IsEmpty() ? nullptr : &DesignModels[0];
         for (const RmlBinding::FAttribute& Attribute : Attributes)
         {
-            ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s", Attribute.Name.c_str());
+            ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s", *Attribute.Name);
             ImGui::SameLine();
-            ImGui::TextUnformatted(Attribute.Value.c_str());
+            ImGui::TextUnformatted(*Attribute.Value);
 
             // A bare member name shows what the preview currently feeds it.
-            if (Model != nullptr && PreviewContext != nullptr && Model->FindScalar(FStringView(Attribute.Value.c_str(), Attribute.Value.size())) != nullptr)
+            if (Model != nullptr && PreviewContext != nullptr && Model->FindScalar(FStringView(*Attribute.Value, Attribute.Value.Len())) != nullptr)
             {
-                const FStringView Member(Attribute.Value.c_str(), Attribute.Value.size());
-                const FString Current = (!DesignObjectModels.empty() && DesignObjectModels.front() != nullptr)
-                    ? RmlUi::GetObjectModelValue(DesignObjectModels.front(), Member)
-                    : RmlUi::GetEditorDesignValue(PreviewContext, FStringView(Model->Name.c_str(), Model->Name.size()), Member);
+                const FStringView Member(*Attribute.Value, Attribute.Value.Len());
+                const FString Current = (!DesignObjectModels.IsEmpty() && DesignObjectModels[0] != nullptr)
+                    ? RmlUi::GetObjectModelValue(DesignObjectModels[0], Member)
+                    : RmlUi::GetEditorDesignValue(PreviewContext, FStringView(*Model->Name, Model->Name.Len()), Member);
                 ImGui::SameLine();
-                ImGui::TextColored(RmlDataPanel::kDesignInfoColor, "= %s", Current.c_str());
+                ImGui::TextColored(RmlDataPanel::kDesignInfoColor, "= %s", *Current);
             }
         }
     }

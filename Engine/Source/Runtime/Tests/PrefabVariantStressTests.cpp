@@ -49,8 +49,8 @@ namespace
     ECS::FEntity Find(ECS::FRegistry& Registry, FName ID)
     {
         THashMap<FName, ECS::FEntity> All = Index(Registry);
-        auto It = All.find(ID);
-        return It != All.end() ? It->second : ECS::NullEntity;
+        auto It = All.Find(ID);
+        return It != nullptr ? (*It) : ECS::NullEntity;
     }
 
     ECS::FEntity AddNode(ECS::FRegistry& Registry, FName ID, FVector3 Location, ECS::FEntity Parent = ECS::NullEntity)
@@ -119,15 +119,15 @@ namespace
     {
         for (const auto& [ID, W] : Want)
         {
-            auto It = Got.find(ID);
-            if (It == Got.end())
+            auto It = Got.Find(ID);
+            if (It == nullptr)
             {
-                return std::string("missing node ") + ID.c_str();
+                return std::string("missing node ") + *ID;
             }
-            const FNodeState& G = It->second;
-            const std::string N = ID.c_str();
+            const FNodeState& G = (*It);
+            const std::string N = *ID;
             if (!G.bTransform) return N + " has no transform";
-            if (W.Parent != G.Parent) return N + " parent " + W.Parent.c_str() + " became " + G.Parent.c_str();
+            if (W.Parent != G.Parent) return N + " parent " + *W.Parent + " became " + *G.Parent;
             if (!Near(W.Location, G.Location))
             {
                 return N + " location (" + std::to_string(W.Location.x) + "," + std::to_string(W.Location.y) + "," + std::to_string(W.Location.z)
@@ -143,13 +143,13 @@ namespace
             if (W.bLight && (W.Intensity != G.Intensity || !Near(W.LightColor, G.LightColor))) return N + " light values changed";
             if (W.bLink != G.bLink) return N + (W.bLink ? " lost its link" : " gained a link");
             if (W.bLink && W.LinkValue != G.LinkValue) return N + " link value changed";
-            if (W.bLink && W.LinkTarget != G.LinkTarget) return N + " link target " + W.LinkTarget.c_str() + " became " + G.LinkTarget.c_str();
+            if (W.bLink && W.LinkTarget != G.LinkTarget) return N + " link target " + *W.LinkTarget + " became " + *G.LinkTarget;
         }
         for (const auto& [ID, G] : Got)
         {
-            if (Want.find(ID) == Want.end())
+            if (!Want.Contains(ID))
             {
-                return std::string("unexpected node ") + ID.c_str();
+                return std::string("unexpected node ") + *ID;
             }
         }
         return {};
@@ -163,12 +163,12 @@ namespace
             const STransformComponent* T = Registry.TryGet<STransformComponent>(E);
             if (T == nullptr)
             {
-                return std::string(ID.c_str()) + " has no transform";
+                return std::string(*ID) + " has no transform";
             }
             const FQuat R = T->GetLocalRotation();
             if (Math::Abs(Math::Dot(R, R) - 1.0f) > 1.0e-3f)
             {
-                return std::string(ID.c_str()) + " has a degenerate rotation";
+                return std::string(*ID) + " has a degenerate rotation";
             }
         }
         return {};
@@ -196,20 +196,20 @@ namespace
         const FName RootID = IDOf(InstanceRoot);
         for (const auto& [ID, W] : Want)
         {
-            auto It = ByID.find(ID);
-            if (It == ByID.end())
+            auto It = ByID.Find(ID);
+            if (It == nullptr)
             {
-                return std::string("instance is missing ") + ID.c_str();
+                return std::string("instance is missing ") + *ID;
             }
-            const ECS::FEntity E = It->second;
-            const std::string N = ID.c_str();
+            const ECS::FEntity E = (*It);
+            const std::string N = *ID;
             if (E == InstanceRoot)
             {
                 continue;
             }
             const FName Parent = IDOf(World.GetHierarchy().GetParent(E));
             const FName WantParent = W.Parent.IsNone() ? RootID : W.Parent;
-            if (Parent != WantParent) return N + " instance parent " + WantParent.c_str() + " became " + Parent.c_str();
+            if (Parent != WantParent) return N + " instance parent " + *WantParent + " became " + *Parent;
             const STransformComponent* T = World.TryGet<STransformComponent>(E);
             if (T == nullptr) return N + " instance has no transform";
             if (!Near(T->GetLocalLocation(), W.Location))
@@ -225,13 +225,13 @@ namespace
             const SPrefabLinkTestComponent* K = World.TryGet<SPrefabLinkTestComponent>(E);
             if ((K != nullptr) != W.bLink) return N + " instance link presence differs";
             if (K != nullptr && K->Value != W.LinkValue) return N + " instance link value differs";
-            if (K != nullptr && IDOf(K->Target) != W.LinkTarget) return N + " instance link target " + W.LinkTarget.c_str() + " became " + IDOf(K->Target).c_str();
+            if (K != nullptr && IDOf(K->Target) != W.LinkTarget) return N + " instance link target " + *W.LinkTarget + " became " + *IDOf(K->Target);
         }
         for (const auto& [ID, E] : ByID)
         {
-            if (E != InstanceRoot && Want.find(ID) == Want.end())
+            if (E != InstanceRoot && !Want.Contains(ID))
             {
-                return std::string("instance kept ") + ID.c_str();
+                return std::string("instance kept ") + *ID;
             }
         }
         return {};
@@ -358,7 +358,7 @@ TEST(PrefabVariantStress, ParentEditsFlowThroughUnlessOverridden)
     EXPECT_TRUE(Near(Got[FName("arm")].Location, FVector3(9.0f))) << "an overridden leaf stays pinned";
     EXPECT_TRUE(Near(Got[FName("leg")].Location, FVector3(0.0f, -7.0f, 0.0f))) << "an untouched leaf follows the parent";
     EXPECT_EQ(Got[FName("hand")].Intensity, 11.0f);
-    ASSERT_TRUE(Got.find(FName("tail")) != Got.end()) << "a node the parent adds later appears in the variant";
+    ASSERT_TRUE(Got.Contains(FName("tail"))) << "a node the parent adds later appears in the variant";
     EXPECT_EQ(Got[FName("tail")].Parent, FName("root"));
     EXPECT_TRUE(Near(Got[FName("tail")].Location, FVector3(0.0f, 0.0f, -2.0f)));
 }
@@ -379,9 +379,9 @@ TEST(PrefabVariantStress, ParentDeletingAnOverriddenNodeResolves)
     Variant->ResolveVariant();
     ASSERT_FALSE(Variant->IsUnresolvedVariant());
     auto Got = Snapshot(Variant->Registry);
-    EXPECT_TRUE(Got.find(FName("root")) != Got.end());
-    EXPECT_TRUE(Got.find(FName("leg")) != Got.end());
-    ASSERT_TRUE(Got.find(FName("glove")) != Got.end()) << "a node the variant added survives its anchor going away";
+    EXPECT_TRUE(Got.Contains(FName("root")));
+    EXPECT_TRUE(Got.Contains(FName("leg")));
+    ASSERT_TRUE(Got.Contains(FName("glove"))) << "a node the variant added survives its anchor going away";
     EXPECT_TRUE(Near(Got[FName("glove")].Location, FVector3(0.1f, 0.2f, 0.3f)));
 }
 
@@ -401,6 +401,16 @@ TEST(PrefabVariantStress, CyclesAreRefusedWithoutHanging)
     EXPECT_TRUE(Self->IsUnresolvedVariant());
     A->ParentPrefab = nullptr;
     Self->ParentPrefab = nullptr;
+
+    CPrefab* Top = MakeParent();
+    CPrefab* Loop1 = MakeVariantOf(Top);
+    CPrefab* Loop2 = MakeVariantOf(Loop1);
+    Loop1->ParentPrefab = Loop2;
+    CPrefab* Below = MakeVariantOf(Loop1);
+    EXPECT_FALSE(Loop1->IsDescendantOf(Below)) << "a cycle above the candidate ends the walk";
+    EXPECT_TRUE(Below->IsDescendantOf(Loop2));
+    EXPECT_TRUE(Below->IsUnresolvedVariant());
+    Loop1->ParentPrefab = nullptr;
 }
 
 // The delta survives a trip through the registry serializer, handles included.
@@ -480,7 +490,7 @@ TEST(PrefabVariantStress, InstancesMatchTheVariantThroughRefresh)
     Variant->ClearPreCommitState();
 
     auto Refreshed = InstanceSnapshot();
-    ASSERT_TRUE(Refreshed.find(FName("added")) != Refreshed.end()) << "a node added to the variant reaches its instances";
+    ASSERT_TRUE(Refreshed.Contains(FName("added"))) << "a node added to the variant reaches its instances";
     EXPECT_TRUE(Near(Refreshed[FName("added")], FVector3(0.0f, 0.0f, 4.0f))) << "and spawns at its authored offset, got " << Refreshed[FName("added")].x << "," << Refreshed[FName("added")].y << "," << Refreshed[FName("added")].z;
     EXPECT_TRUE(Near(Refreshed[FName("leg")], FVector3(5.0f, 0.0f, 0.0f))) << "got " << Refreshed[FName("leg")].x << "," << Refreshed[FName("leg")].y << "," << Refreshed[FName("leg")].z;
     EXPECT_TRUE(Near(Refreshed[FName("hand")], FVector3(0.0f, 3.0f, 0.0f)));
@@ -541,9 +551,9 @@ namespace
             TVector<ECS::FEntity> All;
             for (auto& [ID, E] : Index(R))
             {
-                All.push_back(E);
+                All.Add(E);
             }
-            return All.empty() ? ECS::NullEntity : All[Pick((int32)All.size())];
+            return All.IsEmpty() ? ECS::NullEntity : All[Pick(All.Num())];
         }
 
         int32 LastOp = -1;
@@ -553,7 +563,7 @@ namespace
         {
             if (Log != nullptr)
             {
-                *Log += std::string(Prefix) + " " + What + " " + StableIDOf(R, E).c_str() + (Other != ECS::NullEntity ? std::string(" -> ") + StableIDOf(R, Other).c_str() : std::string()) + "\n";
+                *Log += std::string(Prefix) + " " + What + " " + *StableIDOf(R, E) + (Other != ECS::NullEntity ? std::string(" -> ") + *StableIDOf(R, Other) : std::string()) + "\n";
             }
         }
 
@@ -583,7 +593,7 @@ namespace
                 R.Get<STransformComponent>(E).SetLocalScale(FVector3(1.0f + 0.1f * Unit()));
                 break;
             case 4:
-                if (Index(R).size() > 2)
+                if (Index(R).Num() > 2)
                 {
                     Note(R, "delete", E);
                     ECS::Utils::DestroyEntityHierarchy(R, E);

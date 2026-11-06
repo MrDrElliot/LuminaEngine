@@ -239,6 +239,10 @@ namespace Lumina::Reflection
         {
             Registration = "Lumina::Meta::RegisterEventMeta<" + Cpp + ">();";
         }
+        else if (bIsResource)
+        {
+            Registration = "Lumina::Meta::RegisterResourceMeta<" + Cpp + ">();";
+        }
         EmitTypeFunctions(Writer, Registration);
 
         // An alias has no StaticStruct member to define.

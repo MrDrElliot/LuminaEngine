@@ -61,7 +61,7 @@ TEST(PoseCompose, SkinningMatricesMatchUncachedPath)
         Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(Unit(Rng), Unit(Rng), Unit(Rng)), RandomRotation(), FVector3(1.0f));
         Bone.InvBindMatrix  = AnimPose::ComposeTRS(FVector3(Unit(Rng), Unit(Rng), Unit(Rng)), RandomRotation(), FVector3(1.0f));
         Skeleton.BoneNameToIndex[Bone.Name] = i;
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
     }
     Skeleton.BuildBindPoseCache();
     ASSERT_TRUE(Skeleton.HasFlatBoneCache());
@@ -76,12 +76,12 @@ TEST(PoseCompose, SkinningMatricesMatchUncachedPath)
     TVector<FMatrix4> Cached;
     AnimPose::ToSkinningMatrices(Pose, &Skeleton, Cached);
 
-    Skeleton.BoneParents.clear();
+    Skeleton.BoneParents.Reset();
     ASSERT_FALSE(Skeleton.HasFlatBoneCache());
     TVector<FMatrix4> Uncached;
     AnimPose::ToSkinningMatrices(Pose, &Skeleton, Uncached);
 
-    ASSERT_EQ(Cached.size(), Uncached.size());
+    ASSERT_EQ(Cached.Num(), Uncached.Num());
     for (int32 i = 0; i < kBones; ++i)
     {
         for (int c = 0; c < 4; ++c)
@@ -103,7 +103,7 @@ TEST(PoseCompose, RotationBatchMatchesScalarDecode)
     FCompressedAnimData Data;
     Data.NumFrames = kFrames;
     std::mt19937 Rng(99);
-    Data.QuantizedData.resize((size_t)kTracks * kFrames * 4);
+    Data.QuantizedData.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(kTracks) * kFrames * 4));
     for (uint16& Value : Data.QuantizedData)
     {
         Value = (uint16)Rng();
@@ -126,7 +126,7 @@ TEST(PoseCompose, RotationBatchMatchesScalarDecode)
                 uint32 Offsets[FCompressedAnimData::RotationBatchSize];
                 for (int32 k = 0; k < FCompressedAnimData::RotationBatchSize; ++k)
                 {
-                    Offsets[k] = (uint32)((Base + k) * kFrames * 4);
+                    Offsets[k] = (Base + k) * kFrames * 4;
                 }
 
                 float Batch[4][FCompressedAnimData::RotationBatchSize];

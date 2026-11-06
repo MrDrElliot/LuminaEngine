@@ -172,7 +172,7 @@ namespace Lumina
     template<typename T>
     struct TPropertyTypeOf<TWeakObjectPtr<T>>
     {
-        static constexpr FPropertyType Value = PropertyTypeTraits::ObjectOf<TWeakObjectPtr<T>, T>(EPropertyTypeFlags::Object);
+        static_assert(!sizeof(TWeakObjectPtr<T>*), "A TWeakObjectPtr is a handle half the size of the strong pointer an object property reads and writes, so reflect a TStrongObjectPtr instead.");
     };
 
     template<typename T>

@@ -64,9 +64,9 @@ namespace
 TEST(ScriptClassProperties, SchemaFieldsBecomeRealPropertiesPastTheShim)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Enabled", EPropertyTypeFlags::Bool));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Enabled", EPropertyTypeFlags::Bool));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_Layout", Schema, ShimSize);
@@ -116,8 +116,8 @@ TEST(ScriptClassProperties, SchemaFieldsBecomeRealPropertiesPastTheShim)
 TEST(ScriptClassProperties, ScriptPropertiesRoundTripThroughTheStockSerializer)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_Serialize", Schema, ShimSize);
@@ -140,7 +140,7 @@ TEST(ScriptClassProperties, ScriptPropertiesRoundTripThroughTheStockSerializer)
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Sub->SerializeProperties(Ar, Source);
     }
-    ASSERT_FALSE(Bytes.empty());
+    ASSERT_FALSE(Bytes.IsEmpty());
 
     CObject* Restored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Restored, nullptr);
@@ -159,9 +159,9 @@ TEST(ScriptClassProperties, ScriptPropertiesRoundTripThroughTheStockSerializer)
 TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
+    Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_Strings", Schema, ShimSize);
@@ -180,12 +180,12 @@ TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
     ASSERT_NE(Second, nullptr);
 
     // Constructed, so assigning is safe; over memzeroed bytes an FString corrupts the heap.
-    EXPECT_TRUE(Label->GetValuePtr<FString>(First)->empty());
+    EXPECT_TRUE(Label->GetValuePtr<FString>(First)->IsEmpty());
     *Label->GetValuePtr<FString>(First) = "a string long enough to have heap storage rather than SSO";
     *Label->GetValuePtr<FString>(Second) = "another";
 
-    EXPECT_STREQ(Label->GetValuePtr<FString>(First)->c_str(), "a string long enough to have heap storage rather than SSO");
-    EXPECT_STREQ(Label->GetValuePtr<FString>(Second)->c_str(), "another") << "instances share storage";
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(First)), "a string long enough to have heap storage rather than SSO");
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(Second)), "another") << "instances share storage";
 
     // The shim half is untouched.
     ASSERT_NE(Cast<CScriptableTest>(First), nullptr);
@@ -196,8 +196,8 @@ TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
 TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
+    Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_StringSerialize", Schema, ShimSize);
@@ -219,7 +219,7 @@ TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Sub->SerializeProperties(Ar, Source);
     }
-    ASSERT_FALSE(Bytes.empty());
+    ASSERT_FALSE(Bytes.IsEmpty());
 
     CObject* Restored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Restored, nullptr);
@@ -229,7 +229,7 @@ TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
         Sub->SerializeProperties(Ar, Restored);
     }
 
-    EXPECT_STREQ(Label->GetValuePtr<FString>(Restored)->c_str(), "round trip me");
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(Restored)), "round trip me");
     EXPECT_EQ(*Health->GetValuePtr<int32>(Restored), 17);
 }
 
@@ -237,8 +237,8 @@ TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
 TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Schema.Fields.push_back(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_Defaults", Schema, ShimSize);
@@ -259,11 +259,11 @@ TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
     CObject* Instance = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Instance, nullptr);
     EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(Instance), 6.5f) << "instance was not seeded from the CDO";
-    EXPECT_STREQ(Label->GetValuePtr<FString>(Instance)->c_str(), "declared default");
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(Instance)), "declared default");
 
     // Seeded by value, not shared, so writing the instance leaves the CDO alone.
     *Label->GetValuePtr<FString>(Instance) = "mutated";
-    EXPECT_STREQ(Label->GetValuePtr<FString>(Cdo)->c_str(), "declared default");
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(Cdo)), "declared default");
 }
 
 // Which kinds are supported is whatever the property types themselves implement.
@@ -276,56 +276,56 @@ namespace
         using namespace Scripting;
         FScriptExportSchema Schema;
 
-        Schema.Fields.push_back(ScriptTest::ScalarField("AFloat",  EPropertyTypeFlags::Float));
-        Schema.Fields.push_back(ScriptTest::ScalarField("ABool",   EPropertyTypeFlags::Bool));
-        Schema.Fields.push_back(ScriptTest::ScalarField("AnInt",   EPropertyTypeFlags::Int64));
-        Schema.Fields.push_back(ScriptTest::ScalarField("AString", EPropertyTypeFlags::String));
-        Schema.Fields.push_back(ScriptTest::ScalarField("AName",   EPropertyTypeFlags::Name));
+        Schema.Fields.Add(ScriptTest::ScalarField("AFloat",  EPropertyTypeFlags::Float));
+        Schema.Fields.Add(ScriptTest::ScalarField("ABool",   EPropertyTypeFlags::Bool));
+        Schema.Fields.Add(ScriptTest::ScalarField("AnInt",   EPropertyTypeFlags::Int64));
+        Schema.Fields.Add(ScriptTest::ScalarField("AString", EPropertyTypeFlags::String));
+        Schema.Fields.Add(ScriptTest::ScalarField("AName",   EPropertyTypeFlags::Name));
 
         // An enum is its own reflected type, which the field names.
         {
             ScriptTest::PublishEnum("EveryKind_Mode", EPropertyTypeFlags::Int32, { { FName("Off"), 0 }, { FName("On"), 1 } });
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Enum);
             Type->EnumName = FName("EveryKind_Mode");
-            Schema.Fields.push_back(MakeField("AnEnum", Type));
+            Schema.Fields.Add(MakeField("AnEnum", Type));
         }
 
         // Soft object (an asset reference) and a hard object reference.
-        Schema.Fields.push_back(MakeField("AnAsset",  MakeType(EPropertyTypeFlags::SoftObject)));
-        Schema.Fields.push_back(MakeField("AnObject", MakeType(EPropertyTypeFlags::Object)));
+        Schema.Fields.Add(MakeField("AnAsset",  MakeType(EPropertyTypeFlags::SoftObject)));
+        Schema.Fields.Add(MakeField("AnObject", MakeType(EPropertyTypeFlags::Object)));
 
         // Native struct, resolved by registered name.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Struct);
             Type->NativeName = FName("FVector3");
-            Schema.Fields.push_back(MakeField("ANativeStruct", Type));
+            Schema.Fields.Add(MakeField("ANativeStruct", Type));
         }
 
         // A C# struct is published once as its own reflected type, and named like a native one.
         {
             FScriptExportSchema Inner;
-            Inner.Fields.push_back(ScriptTest::ScalarField("Inner", EPropertyTypeFlags::Int32));
-            Inner.Fields.push_back(ScriptTest::ScalarField("InnerText", EPropertyTypeFlags::String));
+            Inner.Fields.Add(ScriptTest::ScalarField("Inner", EPropertyTypeFlags::Int32));
+            Inner.Fields.Add(ScriptTest::ScalarField("InnerText", EPropertyTypeFlags::String));
             FScriptExportSchema Base;
-            Base.Fields.push_back(ScriptTest::ScalarField("Payload", EPropertyTypeFlags::Int32));
+            Base.Fields.Add(ScriptTest::ScalarField("Payload", EPropertyTypeFlags::Int32));
             ScriptTest::PublishStructs({ ScriptTest::StructDefinition("EveryKind_Struct", std::move(Inner)),
                                          ScriptTest::StructDefinition("EveryKind_Base", std::move(Base)) });
 
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Struct);
             Type->NativeName = FName("EveryKind_Struct");
-            Schema.Fields.push_back(MakeField("AScriptStruct", Type));
+            Schema.Fields.Add(MakeField("AScriptStruct", Type));
         }
 
         // An array of a storage-owning element needs its element description wired in by ConstructValue.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Vector);
             Type->ElementType = MakeType(EPropertyTypeFlags::String);
-            Schema.Fields.push_back(MakeField("AStringArray", Type));
+            Schema.Fields.Add(MakeField("AStringArray", Type));
         }
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Vector);
             Type->ElementType = MakeType(EPropertyTypeFlags::Int32);
-            Schema.Fields.push_back(MakeField("AnIntArray", Type));
+            Schema.Fields.Add(MakeField("AnIntArray", Type));
         }
 
         // Map, with a storage-owning key.
@@ -333,14 +333,14 @@ namespace
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Map);
             Type->KeyType = MakeType(EPropertyTypeFlags::String);
             Type->ValueType = MakeType(EPropertyTypeFlags::Float);
-            Schema.Fields.push_back(MakeField("AMap", Type));
+            Schema.Fields.Add(MakeField("AMap", Type));
         }
 
         // Instanced struct, whose base is any reflected struct.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::InstancedStruct);
             Type->BaseName = FName("EveryKind_Base");
-            Schema.Fields.push_back(MakeField("AnInstance", Type));
+            Schema.Fields.Add(MakeField("AnInstance", Type));
         }
 
         return Schema;
@@ -408,30 +408,30 @@ TEST(ScriptClassProperties, AppendedContainersAreUsableThroughTheStockPropertyAp
     ASSERT_NE(Strings, nullptr);
     void* ArrayValue = Strings->GetValuePtr<uint8>(Object);
 
-    EXPECT_EQ(Strings->GetNum(ArrayValue), 0u);
-    Strings->Resize(ArrayValue, 2);
-    ASSERT_EQ(Strings->GetNum(ArrayValue), 2u);
+    EXPECT_EQ(Strings->Num(ArrayValue), 0);
+    Strings->SetNum(ArrayValue, 2);
+    ASSERT_EQ(Strings->Num(ArrayValue), 2);
 
     // Each element was constructed, so assigning a heap-length string is safe.
     *static_cast<FString*>(Strings->GetAt(ArrayValue, 0)) = "element zero, long enough to be heap allocated";
     *static_cast<FString*>(Strings->GetAt(ArrayValue, 1)) = "element one";
-    EXPECT_STREQ(static_cast<FString*>(Strings->GetAt(ArrayValue, 0))->c_str(), "element zero, long enough to be heap allocated");
+    EXPECT_STREQ(*(*static_cast<FString*>(Strings->GetAt(ArrayValue, 0))), "element zero, long enough to be heap allocated");
 
     Strings->RemoveAt(ArrayValue, 0);
-    ASSERT_EQ(Strings->GetNum(ArrayValue), 1u);
-    EXPECT_STREQ(static_cast<FString*>(Strings->GetAt(ArrayValue, 0))->c_str(), "element one");
+    ASSERT_EQ(Strings->Num(ArrayValue), 1);
+    EXPECT_STREQ(*(*static_cast<FString*>(Strings->GetAt(ArrayValue, 0))), "element one");
 
     FMapProperty* Map = static_cast<FMapProperty*>(Sub->GetProperty(FName("AMap")));
     ASSERT_NE(Map, nullptr);
     void* MapValue = Map->GetValuePtr<uint8>(Object);
 
-    EXPECT_EQ(Map->GetNum(MapValue), 0u);
+    EXPECT_EQ(Map->Num(MapValue), 0);
     {
         const FString Key = "speed";
         const float Value = 2.5f;
-        Map->Insert(MapValue, &Key, &Value);
+        Map->Add(MapValue, &Key, &Value);
     }
-    ASSERT_EQ(Map->GetNum(MapValue), 1u);
+    ASSERT_EQ(Map->Num(MapValue), 1);
     {
         const FString Key = "speed";
         void* Found = Map->Find(MapValue, &Key);
@@ -456,7 +456,7 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
     ASSERT_NE(Source, nullptr);
 
     void* SourceArray = Ints->GetValuePtr<uint8>(Source);
-    Ints->Resize(SourceArray, 3);
+    Ints->SetNum(SourceArray, 3);
     *static_cast<int32*>(Ints->GetAt(SourceArray, 0)) = 10;
     *static_cast<int32*>(Ints->GetAt(SourceArray, 1)) = 20;
     *static_cast<int32*>(Ints->GetAt(SourceArray, 2)) = 30;
@@ -468,7 +468,7 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Sub->SerializeProperties(Ar, Source);
     }
-    ASSERT_FALSE(Bytes.empty());
+    ASSERT_FALSE(Bytes.IsEmpty());
 
     CObject* Restored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Restored, nullptr);
@@ -479,10 +479,10 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
     }
 
     void* RestoredArray = Ints->GetValuePtr<uint8>(Restored);
-    ASSERT_EQ(Ints->GetNum(RestoredArray), 3u) << "the array did not round-trip";
+    ASSERT_EQ(Ints->Num(RestoredArray), 3) << "the array did not round-trip";
     EXPECT_EQ(*static_cast<int32*>(Ints->GetAt(RestoredArray, 0)), 10);
     EXPECT_EQ(*static_cast<int32*>(Ints->GetAt(RestoredArray, 2)), 30);
-    EXPECT_STREQ(Text->GetValuePtr<FString>(Restored)->c_str(), "carried alongside");
+    EXPECT_STREQ(*(*Text->GetValuePtr<FString>(Restored)), "carried alongside");
 }
 
 //~ Hot reload rebuilds the appended block, since a changed set cannot be patched in place.
@@ -490,7 +490,7 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
 TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Unchanged", Schema, ShimSize);
@@ -498,27 +498,27 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
 
     // An identical schema must compare equal, or every reload pays a rebuild for nothing.
     Scripting::FScriptExportSchema Same;
-    Same.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Same.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     EXPECT_TRUE(Scripting::ScriptClassLayoutMatches(Sub, Same));
 
     // Metadata is not layout, so retitling a field must not force a rebuild either.
     Scripting::FScriptExportSchema Retitled;
-    Retitled.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     Retitled.Fields[0].Meta.Set(FName("Tooltip"), "now with a tooltip");
     EXPECT_TRUE(Scripting::ScriptClassLayoutMatches(Sub, Retitled));
 
     // Any real shape change does not.
     Scripting::FScriptExportSchema Added;
-    Added.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Added.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Added.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Added.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Added));
 
     Scripting::FScriptExportSchema Retyped;
-    Retyped.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
+    Retyped.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Retyped));
 
     Scripting::FScriptExportSchema Renamed;
-    Renamed.Fields.push_back(ScriptTest::ScalarField("Velocity", EPropertyTypeFlags::Float));
+    Renamed.Fields.Add(ScriptTest::ScalarField("Velocity", EPropertyTypeFlags::Float));
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Renamed));
 }
 
@@ -527,7 +527,7 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
 TEST(ScriptClassReload, ADiffSeparatesLayoutFromMetadataAndDefaults)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     Schema.Fields[0].Meta.Set(FName("Tooltip"), "how fast");
 
     uint32 ShimSize = 0;
@@ -538,12 +538,12 @@ TEST(ScriptClassReload, ADiffSeparatesLayoutFromMetadataAndDefaults)
         << "an identical schema must be clean, or every reload pays for nothing";
 
     Scripting::FScriptExportSchema Retitled;
-    Retitled.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     Retitled.Fields[0].Meta.Set(FName("Tooltip"), "how fast it goes");
     EXPECT_EQ(Scripting::DiffScriptClassLayout(Sub, Retitled), EScriptTypeDirty::Metadata);
 
     Scripting::FScriptExportSchema Retyped;
-    Retyped.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
+    Retyped.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
     EXPECT_TRUE(EnumHasAnyFlags(Scripting::DiffScriptClassLayout(Sub, Retyped), EScriptTypeDirty::Layout));
 }
 
@@ -551,7 +551,7 @@ TEST(ScriptClassReload, ADiffSeparatesLayoutFromMetadataAndDefaults)
 TEST(ScriptClassReload, RefreshingMetadataKeepsTheSamePropertiesAndReachesTheEditor)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     Schema.Fields[0].Meta.Set(FName("Tooltip"), "how fast");
 
     uint32 ShimSize = 0;
@@ -563,7 +563,7 @@ TEST(ScriptClassReload, RefreshingMetadataKeepsTheSamePropertiesAndReachesTheEdi
     EXPECT_EQ(Before->GetMetadata("Tooltip").View(), FStringView("how fast"));
 
     Scripting::FScriptExportSchema Retitled;
-    Retitled.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
     Retitled.Fields[0].Meta.Set(FName("Tooltip"), "how fast it goes");
     Retitled.Fields[0].Meta.Set(FName("Category"), "Movement");
 
@@ -581,7 +581,7 @@ TEST(ScriptClassReload, RefreshingMetadataKeepsTheSamePropertiesAndReachesTheEdi
 TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
 {
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Added", Before, ShimSize);
@@ -590,8 +590,8 @@ TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
     ASSERT_EQ(Sub->GetProperty(FName("Health")), nullptr);
 
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    After.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    After.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     Sub = ScriptTest::Reshape(Sub, "ScriptReshape_V1", After);
     ASSERT_NE(Sub, nullptr);
@@ -625,8 +625,8 @@ TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
 TEST(ScriptClassReload, RemovingAndRetypingAPropertyRebuildTheBlock)
 {
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Before.Fields.push_back(ScriptTest::ScalarField("Doomed", EPropertyTypeFlags::Int32));
+    Before.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(ScriptTest::ScalarField("Doomed", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Removed", Before, ShimSize);
@@ -635,7 +635,7 @@ TEST(ScriptClassReload, RemovingAndRetypingAPropertyRebuildTheBlock)
 
     // Drop one and widen the other in the same reload.
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
+    After.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Double));
 
     Sub = ScriptTest::Reshape(Sub, "ScriptReshape_V2", After);
     ASSERT_NE(Sub, nullptr);
@@ -656,9 +656,9 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
 {
     // The carrier is name-keyed, so a surviving property replays and an added one takes its default.
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Before.Fields.push_back(ScriptTest::ScalarField("Doomed", EPropertyTypeFlags::Int32));
-    Before.Fields.push_back(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
+    Before.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(ScriptTest::ScalarField("Doomed", EPropertyTypeFlags::Int32));
+    Before.Fields.Add(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Values", Before, ShimSize);
@@ -682,9 +682,9 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
     Authored->ForceDestroyNow();
 
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    After.Fields.push_back(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
-    After.Fields.push_back(ScriptTest::ScalarField("Added", EPropertyTypeFlags::Int32));
+    After.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.Add(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
+    After.Fields.Add(ScriptTest::ScalarField("Added", EPropertyTypeFlags::Int32));
 
     Sub = ScriptTest::Reshape(Sub, "ScriptReshape_V3", After);
     ASSERT_NE(Sub, nullptr);
@@ -712,7 +712,7 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
 TEST(ScriptClassReload, ALiveInstanceIsCarriedOntoTheReshapedClass)
 {
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Live", Before, ShimSize);
@@ -723,8 +723,8 @@ TEST(ScriptClassReload, ALiveInstanceIsCarriedOntoTheReshapedClass)
     Sub->GetProperty(FName("Speed"))->SetValue<float>(Live, 3.0f);
 
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    After.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    After.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     // A live instance used to refuse the reshape outright; now it is the case the reinstancer exists for.
     Sub = ScriptTest::Reshape(Sub, "ScriptReload_Live_V2", After);
@@ -748,7 +748,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     Scripting::FScriptExportSchema Before;
     TSharedPtr<Scripting::FScriptExportType> List = MakeType(EPropertyTypeFlags::Vector);
     List->ElementType = MakeType(EPropertyTypeFlags::Int32);
-    Before.Fields.push_back(MakeField("Values", List));
+    Before.Fields.Add(MakeField("Values", List));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptReload_Containers", Before, ShimSize);
@@ -759,7 +759,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     Scripting::FScriptExportSchema After;
     TSharedPtr<Scripting::FScriptExportType> Floats = MakeType(EPropertyTypeFlags::Vector);
     Floats->ElementType = MakeType(EPropertyTypeFlags::Float);
-    After.Fields.push_back(MakeField("Values", Floats));
+    After.Fields.Add(MakeField("Values", Floats));
 
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, After)) << "an element-type change was not noticed";
     Sub = ScriptTest::Reshape(Sub, "ScriptReshape_V4", After);
@@ -775,10 +775,10 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     ASSERT_NE(Object, nullptr);
     void* Array = Values->GetValuePtr<void>(Object);
     ASSERT_NE(Array, nullptr);
-    EXPECT_EQ(Values->GetOps()->Size(Array), 0u);
+    EXPECT_EQ(Values->GetOps()->Num(Array), 0);
     const float One = 1.0f;
-    Values->GetOps()->PushBack(Array, &One);
-    EXPECT_EQ(Values->GetOps()->Size(Array), 1u);
+    Values->GetOps()->Add(Array, &One);
+    EXPECT_EQ(Values->GetOps()->Num(Array), 1);
 }
 
 // The superseded-layout grace existed only for an in-place rebuild. A reshape now mints a new class, so the
@@ -786,7 +786,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
 TEST(ScriptClassReload, AReshapeLeavesTheOldClassWithNoInstances)
 {
     Scripting::FScriptExportSchema Initial;
-    Initial.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Initial.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
     CScriptClass* Old = MintWithSchema("ScriptReload_Bounded", Initial, ShimSize);
@@ -814,8 +814,8 @@ TEST(ScriptClassReload, AReshapeLeavesTheOldClassWithNoInstances)
     ASSERT_EQ(CountInstancesOf(Old), 4u);
 
     Scripting::FScriptExportSchema Next;
-    Next.Fields.push_back(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
-    Next.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
+    Next.Fields.Add(ScriptTest::ScalarField("Speed", EPropertyTypeFlags::Float));
+    Next.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Int32));
 
     CScriptClass* New = ScriptTest::Reshape(Old, "ScriptReload_Bounded_V2", Next);
     ASSERT_NE(New, nullptr);
@@ -846,17 +846,17 @@ namespace
 TEST(ScriptClassProperties, IdenticalTypesShareOneMintedLayout)
 {
     Scripting::FScriptExportSchema Point;
-    Point.Fields.push_back(ScriptTest::ScalarField("X", EPropertyTypeFlags::Float));
-    Point.Fields.push_back(ScriptTest::ScalarField("Y", EPropertyTypeFlags::Float));
+    Point.Fields.Add(ScriptTest::ScalarField("X", EPropertyTypeFlags::Float));
+    Point.Fields.Add(ScriptTest::ScalarField("Y", EPropertyTypeFlags::Float));
     ScriptTest::PublishStructs({ ScriptTest::StructDefinition("SharedMint_Point", std::move(Point)) });
     ScriptTest::PublishEnum("SharedMint_Mode", EPropertyTypeFlags::Int32, { { FName("Off"), 0 }, { FName("On"), 1 } });
 
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(MakeSameShapeStructField("First"));
-    Schema.Fields.push_back(MakeSameShapeStructField("Second"));
-    Schema.Fields.push_back(MakeSameShapeStructField("Third"));
-    Schema.Fields.push_back(MakeSharedEnumField("ModeA"));
-    Schema.Fields.push_back(MakeSharedEnumField("ModeB"));
+    Schema.Fields.Add(MakeSameShapeStructField("First"));
+    Schema.Fields.Add(MakeSameShapeStructField("Second"));
+    Schema.Fields.Add(MakeSameShapeStructField("Third"));
+    Schema.Fields.Add(MakeSharedEnumField("ModeA"));
+    Schema.Fields.Add(MakeSharedEnumField("ModeB"));
 
     uint32 ShimSize = 0;
     CScriptClass* Sub = MintWithSchema("ScriptProps_SharedMint", Schema, ShimSize);
@@ -893,8 +893,8 @@ TEST(ScriptClassReload, EditingAStructShapeSupersedesTheOldType)
         for (int32 Index = 0; Index < InnerCount; ++Index)
         {
             FString FieldName = "Field";
-            FieldName += Format("{}", Index).c_str();
-            Inner.Fields.push_back(ScriptTest::ScalarField(FieldName.c_str(), EPropertyTypeFlags::Float));
+            FieldName += *Format("{}", Index);
+            Inner.Fields.Add(ScriptTest::ScalarField(*FieldName, EPropertyTypeFlags::Float));
         }
         ScriptTest::PublishStructs({ ScriptTest::StructDefinition("ShapeChurn_Inner", std::move(Inner)) });
         return FScriptStructRegistry::Get().Find(FName("ShapeChurn_Inner"));
@@ -904,7 +904,7 @@ TEST(ScriptClassReload, EditingAStructShapeSupersedesTheOldType)
     {
         TSharedPtr<Scripting::FScriptExportType> Nested = MakeType(EPropertyTypeFlags::Struct);
         Nested->NativeName = FName("ShapeChurn_Inner");
-        Schema.Fields.push_back(MakeField("Nested", Nested));
+        Schema.Fields.Add(MakeField("Nested", Nested));
     }
 
     CScriptStruct* Current = PublishInner(1);
@@ -926,7 +926,7 @@ TEST(ScriptClassReload, EditingAStructShapeSupersedesTheOldType)
         EXPECT_EQ(FindObject<CStruct>(FName("ShapeChurn_Inner")), Current) << "the name must resolve to the current shape";
 
         EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Schema)) << "a class holding a superseded struct must be rebuilt";
-        Sub = ScriptTest::Reshape(Sub, Format("ScriptReload_ShapeChurn{}", Pass).c_str(), Schema);
+        Sub = ScriptTest::Reshape(Sub, *Format("ScriptReload_ShapeChurn{}", Pass), Schema);
         ASSERT_NE(Sub, nullptr);
 
         FProperty* Property = Sub->GetProperty(FName("Nested"));

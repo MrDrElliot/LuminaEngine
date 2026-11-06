@@ -19,12 +19,12 @@ namespace
 
     void MakeFlat(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out, uint32 Count)
     {
-        Out.reserve(Count);
+        Out.Reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
             const ECS::FEntity E = Registry.Create();
             Registry.Emplace<STransformComponent>(E).Bind(Registry, E);
-            Out.push_back(E);
+            Out.Add(E);
         }
     }
 
@@ -34,14 +34,14 @@ namespace
         const ECS::FEntity Root = Registry.Create();
         Registry.Emplace<STransformComponent>(Root).Bind(Registry, Root);
 
-        Out.reserve(Count);
+        Out.Reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
             const ECS::FEntity E = Registry.Create();
             Registry.Emplace<STransformComponent>(E);
             Registry.AttachChild(E, Root);
             Registry.Get<STransformComponent>(E).Bind(Registry, E);
-            Out.push_back(E);
+            Out.Add(E);
         }
 
         Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
@@ -77,8 +77,8 @@ namespace
         }
 
         FPhaseTiming Timing;
-        Timing.SetNs     = SetTotal / (double)(Frames * (int32)Entities.size());
-        Timing.ResolveNs = ResolveTotal / (double)(Frames * (int32)Entities.size());
+        Timing.SetNs     = SetTotal / (double)(Frames * Entities.Num());
+        Timing.ResolveNs = ResolveTotal / (double)(Frames * Entities.Num());
         return Timing;
     }
 }
@@ -95,12 +95,12 @@ TEST(TransformBench, DISABLED_ComponentEmplaceAndDestroy)
     {
         ECS::FRegistry Registry;
         TVector<ECS::FEntity> Entities;
-        Entities.reserve(kEntities);
+        Entities.Reserve(kEntities);
         for (uint32 Index = 0; Index < kEntities; ++Index)
         {
             const ECS::FEntity E = Registry.Create();
             Registry.Emplace<STransformComponent>(E);
-            Entities.push_back(E);
+            Entities.Add(E);
         }
         Sink += Registry.NumEntities();
     }
@@ -122,11 +122,11 @@ TEST(TransformBench, DISABLED_RandomAccessComponentGet)
     // Shuffled, so the lookup pays a real cache miss rather than walking the dense order.
     TVector<ECS::FEntity> Order = Entities;
     uint64 Seed = 0x9E3779B97F4A7C15ull;
-    for (size_t Index = Order.size(); Index > 1; --Index)
+    for (int32 Index = Order.Num(); Index > 1; --Index)
     {
         Seed ^= Seed << 13; Seed ^= Seed >> 7; Seed ^= Seed << 17;
-        const size_t Pick = static_cast<size_t>(Seed % Index);
-        std::swap(Order[Index - 1], Order[Pick]);
+        const int32 Pick = static_cast<int32>(Seed % Index);
+        Order.Swap(Index - 1, Pick);
     }
 
     const uint64 Start = PlatformTime::Cycles();
@@ -205,7 +205,7 @@ TEST(TransformBench, DISABLED_HierarchicalWithPublishMoved)
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
         const auto ResolveEnd = Lumina::PlatformTime::Cycles();
 
-        Drained.clear();
+        Drained.Reset();
         ECS::Utils::DrainMovedTransforms(Registry, Consumer, Drained);
         const auto DrainEnd = Lumina::PlatformTime::Cycles();
 
@@ -235,7 +235,7 @@ TEST(TransformBench, DISABLED_ParallelFlatSetters)
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
         const auto Start = Lumina::PlatformTime::Cycles();
-        Task::ParallelFor(Count, [&](uint32 Index)
+        Jobs::ParallelFor(Count, [&](uint32 Index)
         {
             Storage.Get(Entities[Index]).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }, 2048);
@@ -300,7 +300,7 @@ namespace
     // Capsule-like roots, each carrying a mesh, two pieces of gear and a light, with an item socketed under the mesh.
     void MakeCharacters(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count)
     {
-        Roots.reserve(Count);
+        Roots.Reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
             const ECS::FEntity Root = Registry.Create();
@@ -324,14 +324,14 @@ namespace
             Registry.Get<STransformComponent>(Item).Bind(Registry, Item);
 
             Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
-            Roots.push_back(Root);
+            Roots.Add(Root);
         }
     }
 
     // Chains Depth long, moved from the top, the shape where child chasing costs the most per entity.
     void MakeChains(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count, uint32 Depth)
     {
-        Roots.reserve(Count);
+        Roots.Reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
             ECS::FEntity Parent = Registry.Create();
@@ -346,7 +346,7 @@ namespace
                 Parent = Child;
             }
             Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
-            Roots.push_back(Root);
+            Roots.Add(Root);
         }
     }
 

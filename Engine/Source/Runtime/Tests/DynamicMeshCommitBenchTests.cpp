@@ -25,8 +25,8 @@ namespace
             {
                 const float U = (float)Column / (float)Sides;
                 const float Angle = U * 6.2831853f;
-                Data.Positions.emplace_back(0.5f * std::cos(Angle), V * 10.0f, 0.5f * std::sin(Angle));
-                Data.UVs.emplace_back(U, V * 4.0f);
+                Data.Positions.Emplace(0.5f * std::cos(Angle), V * 10.0f, 0.5f * std::sin(Angle));
+                Data.UVs.Emplace(U, V * 4.0f);
             }
         }
         for (uint32 Ring = 0; Ring < Rings; ++Ring)
@@ -37,7 +37,7 @@ namespace
                 const uint32 B = A + 1;
                 const uint32 C = A + Columns;
                 const uint32 D = C + 1;
-                Data.Indices.insert(Data.Indices.end(), { A, C, B, B, C, D });
+                Data.Indices.Append({ A, C, B, B, C, D });
             }
         }
         return Data;
@@ -61,12 +61,12 @@ namespace
             const auto T1 = std::chrono::high_resolution_clock::now();
             Import::Mesh::GenerateMeshlets(*Resource);
             const auto T2 = std::chrono::high_resolution_clock::now();
-            Build.push_back(std::chrono::duration<double, std::milli>(T1 - T0).count());
-            Meshlets.push_back(std::chrono::duration<double, std::milli>(T2 - T1).count());
+            Build.Add(std::chrono::duration<double, std::milli>(T1 - T0).count());
+            Meshlets.Add(std::chrono::duration<double, std::milli>(T2 - T1).count());
         }
         std::sort(Build.begin(), Build.end());
         std::sort(Meshlets.begin(), Meshlets.end());
-        return { Build[Build.size() / 2], Meshlets[Meshlets.size() / 2] };
+        return { Build[Build.Num() / 2], Meshlets[Meshlets.Num() / 2] };
     }
 }
 
@@ -106,7 +106,7 @@ TEST(DynamicMeshCommitBench, DISABLED_StageCosts)
 TEST(DynamicMeshCommit, ChunkedBuildCoversEveryTriangle)
 {
     FDynamicMeshBuildData Data = MakeTrunk(64, 512);
-    const size_t SourceTriangles = Data.Indices.size() / 3;
+    const size_t SourceTriangles = Data.Indices.Num() / 3;
 
     FMeshBuildOptions Options;
     Options.bGenerateTangents = true;
@@ -114,12 +114,12 @@ TEST(DynamicMeshCommit, ChunkedBuildCoversEveryTriangle)
     Import::Mesh::GenerateMeshlets(*Resource);
 
     const FMeshletData& Meshlets = Resource->MeshletData;
-    ASSERT_EQ(Resource->GeometrySurfaces.size(), 1u);
+    ASSERT_EQ(Resource->GeometrySurfaces.Num(), 1);
     const FGeometrySurface& Surface = Resource->GeometrySurfaces[0];
     EXPECT_EQ(Surface.LODMeshletOffset[0], 0u);
-    EXPECT_EQ(Surface.LODMeshletCount[0], (uint32)Meshlets.Meshlets.size());
-    EXPECT_EQ(Meshlets.MeshletSpheres.size(), Meshlets.Meshlets.size());
-    EXPECT_EQ(Meshlets.MeshletCones.size(), Meshlets.Meshlets.size());
+    EXPECT_EQ(Surface.LODMeshletCount[0], (uint32)Meshlets.Meshlets.Num());
+    EXPECT_EQ(Meshlets.MeshletSpheres.Num(), Meshlets.Meshlets.Num());
+    EXPECT_EQ(Meshlets.MeshletCones.Num(), Meshlets.Meshlets.Num());
 
     size_t Triangles   = 0;
     uint32 NextRefWord = 0;
@@ -140,6 +140,6 @@ TEST(DynamicMeshCommit, ChunkedBuildCoversEveryTriangle)
         Triangles    += M.TriangleCount;
     }
     EXPECT_EQ(Triangles, SourceTriangles);
-    EXPECT_EQ((size_t)NextRefWord, Meshlets.MeshletVertexRefs.size());
-    EXPECT_EQ((size_t)NextTriangle, Meshlets.MeshletTriangles.size());
+    EXPECT_EQ(NextRefWord, static_cast<uint32>(Meshlets.MeshletVertexRefs.Num()));
+    EXPECT_EQ(NextTriangle, static_cast<uint32>(Meshlets.MeshletTriangles.Num()));
 }

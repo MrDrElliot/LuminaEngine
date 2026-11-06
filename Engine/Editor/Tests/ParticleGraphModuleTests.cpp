@@ -43,7 +43,7 @@ namespace
 
     bool Contains(const FString& Source, const char* Text)
     {
-        return Source.find(Text) != FString::npos;
+        return Source.Find(Text) != Constants::kIndexNone;
     }
 }
 
@@ -77,9 +77,12 @@ TEST(ParticleGraphModule, SinksReadBeforeAnyWrites)
     const FString Source = Compile(Module, Compiler);
     ASSERT_FALSE(Compiler.HasErrors());
 
-    const size_t FirstWrite = Math::Min(Source.find("P.Velocity = "), Source.find("P.Position = "));
-    const size_t LastRead   = Source.rfind("_in5 = ");
-    ASSERT_NE(FirstWrite, FString::npos);
+    const int32 Velocity   = Source.Find("P.Velocity = ");
+    const int32 Position   = Source.Find("P.Position = ");
+    const int32 FirstWrite = Velocity == Constants::kIndexNone ? Position : (Position == Constants::kIndexNone ? Velocity : Math::Min(Velocity, Position));
+    const int32 LastRead   = Source.FindLast("_in5 = ");
+    ASSERT_NE(FirstWrite, Constants::kIndexNone);
+    ASSERT_NE(LastRead, Constants::kIndexNone);
     EXPECT_LT(LastRead, FirstWrite);
 }
 

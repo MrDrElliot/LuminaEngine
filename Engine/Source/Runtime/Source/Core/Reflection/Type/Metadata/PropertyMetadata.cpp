@@ -5,30 +5,30 @@ namespace Lumina
 {
     void FMetaDataPair::AddValue(const FName& Key, const FString& Value)
     {
-        PairParams.emplace(Key, Value);
+        PairParams.TryAdd(Key, Value);
     }
 
     void FMetaDataPair::SetValue(const FName& Key, const FString& Value)
     {
-        PairParams.insert_or_assign(Key, Value);
+        PairParams.Add(Key, Value);
     }
 
     void FMetaDataPair::RemoveValue(const FName& Key)
     {
-        PairParams.erase(Key);
+        PairParams.Remove(Key);
     }
 
     bool FMetaDataPair::HasMetadata(const FName& Key) const
     {
-        return PairParams.find(Key) != PairParams.end();
+        return PairParams.Contains(Key);
     }
 
     const FString* FMetaDataPair::TryGetMetadata(const FName& Key) const
     {
-        auto It = PairParams.find(Key);
-        if (It != PairParams.end())
+        auto It = PairParams.Find(Key);
+        if (It != nullptr)
         {
-            return &It->second;
+            return &(*It);
         }
         
         return nullptr;
@@ -36,6 +36,6 @@ namespace Lumina
 
     const FString& FMetaDataPair::GetMetadata(const FName& Key) const
     {
-        return PairParams.at(Key);
+        return PairParams.FindChecked(Key);
     }
 }

@@ -19,30 +19,30 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPProfilerToolsInternal
     {
-        constexpr float MaxCaptureSeconds = 60.0f;
-        constexpr char Separator = ';';
-        constexpr const char* FrameZone = "Lumina::FEngine::Update";
-        constexpr const char* LimiterZone = "Frame-Rate-Limiter";
-        constexpr const char* GpuWaitZone = "Frame Fence (GPU)";
+        constexpr float MaxProfilerCaptureSeconds = 60.0f;
+        constexpr char TracySeparator = ';';
+        constexpr const char* TracyFrameZone = "Lumina::FEngine::Update";
+        constexpr const char* TracyLimiterZone = "Frame-Rate-Limiter";
+        constexpr const char* TracyGpuWaitZone = "Frame Fence (GPU)";
 
-        struct FZoneTotals
+        struct FProfilerZoneTotals
         {
             double TotalNs = 0.0;
             double MaxNs = 0.0;
             int64 Count = 0;
         };
 
-        TVector<FStringView> SplitFields(FStringView Line)
+        TVector<FStringView> SplitProfilerFields(FStringView Line)
         {
             TVector<FStringView> Fields;
-            size_t Start = 0;
-            while (Start <= Line.size())
+            int32 Start = 0;
+            while (Start <= Line.Len())
             {
-                const size_t End = Line.find(Separator, Start);
-                Fields.push_back(Line.substr(Start, End == FStringView::npos ? FStringView::npos : End - Start));
-                if (End == FStringView::npos)
+                const int32 End = Line.Find(TracySeparator, Start);
+                Fields.Add(Line.Mid(Start, End == Constants::kIndexNone ? Constants::kIndexNone : End - Start));
+                if (End == Constants::kIndexNone)
                 {
                     break;
                 }
@@ -51,28 +51,51 @@ namespace Lumina::MCP
             return Fields;
         }
 
-        double ToNumber(FStringView Field)
+        double ProfilerNumber(FStringView Field)
         {
-            const FString Text(Field.data(), Field.size());
-            return std::strtod(Text.c_str(), nullptr);
+            const FString Text(Field.GetData(), Field.Len());
+            return std::strtod(*Text, nullptr);
         }
 
-        // Tracy's CLI tools ship beside the engine rather than inside it.
-        FString TracyTool(const char* Name)
+        // Tracy's CLI tools ship beside the engine; off Windows a system install on PATH works too.
+        FString TracyToolPath(const char* Name)
         {
-            return Paths::GetEngineInstallDirectory() + "/External/Tracy/" + Name + ".exe";
+            const FString Bundled = Paths::GetEngineInstallDirectory() + "/External/Tracy/" + Name;
+#ifdef LE_PLATFORM_WINDOWS
+            return Bundled + ".exe";
+#else
+            if (Paths::Exists(Bundled))
+            {
+                return Bundled;
+            }
+
+            const char* PathValue = std::getenv("PATH");
+            const FStringView Search(PathValue != nullptr ? PathValue : "");
+            int32 Start = 0;
+            while (Start < Search.Len())
+            {
+                int32 End = Search.Find(':', Start);
+                End = End == Constants::kIndexNone ? Search.Len() : End;
+                const FString Candidate = FString(Search.Mid(Start, End - Start)) + "/" + Name;
+                if (End > Start && Paths::Exists(Candidate))
+                {
+                    return Candidate;
+                }
+                Start = End + 1;
+            }
+            return Bundled;
+#endif
         }
 
         // Bounded, since a tracy-capture left connected by an earlier run would otherwise hold the tool call forever.
-        // A few seconds of trace exports well inside this, so running past it means the trace itself is bad.
-        constexpr uint32 ExportTimeoutMilliseconds = 30000;
+        constexpr uint32 TracyExportTimeoutMs = 30000;
         // Every event of a long capture, which the hitch report reads, takes longer to write out.
-        constexpr uint32 UnwrapTimeoutMilliseconds = 120000;
+        constexpr uint32 TracyUnwrapTimeoutMs = 120000;
 
-        bool RunTool(const FString& Executable, const FString& Arguments, const TFunction<void(FStringView)>& OnLine,
-                     uint32 TimeoutMilliseconds = ExportTimeoutMilliseconds)
+        bool RunTracyTool(const FString& Executable, const FString& Arguments, const TFunction<void(FStringView)>& OnLine,
+                     uint32 TimeoutMilliseconds = TracyExportTimeoutMs)
         {
-            const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(Executable.c_str()), UTF8_TO_TCHAR(Arguments.c_str()),
+            const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(*Executable), UTF8_TO_TCHAR(*Arguments),
                                                                     nullptr, OnLine, TimeoutMilliseconds);
             if (ExitCode == Platform::ProcessTimedOutExitCode)
             {
@@ -82,10 +105,10 @@ namespace Lumina::MCP
         }
 
         // Rows repeat a name when several source sites share it, so totals are summed by name.
-        void ReadZones(const FString& Executable, const FString& Arguments, bool bGpuRows, THashMap<FString, FZoneTotals>& Out)
+        void ReadTracyZones(const FString& Executable, const FString& Arguments, bool bGpuRows, THashMap<FString, FProfilerZoneTotals>& Out)
         {
             bool bHeader = true;
-            RunTool(Executable, Arguments, [&](FStringView Line)
+            RunTracyTool(Executable, Arguments, [&](FStringView Line)
             {
                 if (bHeader)
                 {
@@ -93,25 +116,25 @@ namespace Lumina::MCP
                     return;
                 }
 
-                const TVector<FStringView> Fields = SplitFields(Line);
-                FZoneTotals& Totals = Out[FString(Fields[0].data(), Fields[0].size())];
-                if (bGpuRows && Fields.size() >= 4)
+                const TVector<FStringView> Fields = SplitProfilerFields(Line);
+                FProfilerZoneTotals& Totals = Out.FindOrAdd(FString(Fields[0].GetData(), Fields[0].Len()));
+                if (bGpuRows && Fields.Num() >= 4)
                 {
-                    const double Ns = ToNumber(Fields[3]);
+                    const double Ns = ProfilerNumber(Fields[3]);
                     Totals.TotalNs += Ns;
                     Totals.MaxNs = Math::Max(Totals.MaxNs, Ns);
                     Totals.Count += 1;
                 }
-                else if (!bGpuRows && Fields.size() >= 9)
+                else if (!bGpuRows && Fields.Num() >= 9)
                 {
-                    Totals.TotalNs += ToNumber(Fields[3]);
-                    Totals.Count += (int64)ToNumber(Fields[5]);
-                    Totals.MaxNs = Math::Max(Totals.MaxNs, ToNumber(Fields[8]));
+                    Totals.TotalNs += ProfilerNumber(Fields[3]);
+                    Totals.Count += (int64)ProfilerNumber(Fields[5]);
+                    Totals.MaxNs = Math::Max(Totals.MaxNs, ProfilerNumber(Fields[8]));
                 }
             });
         }
 
-        TVector<SProfilerZone> Rank(const THashMap<FString, FZoneTotals>& Zones, int32 Frames, int32 Top, const FString& Filter)
+        TVector<SProfilerZone> RankProfilerZones(const THashMap<FString, FProfilerZoneTotals>& Zones, int32 Frames, int32 Top, const FString& Filter)
         {
             TVector<SProfilerZone> Ranked;
             for (const auto& [Name, Totals] : Zones)
@@ -121,7 +144,7 @@ namespace Lumina::MCP
                     continue;
                 }
 
-                SProfilerZone& Zone = Ranked.emplace_back();
+                SProfilerZone& Zone = Ranked.EmplaceGetRef();
                 Zone.Name = Name;
                 Zone.Count = (int32)Totals.Count;
                 Zone.MsPerFrame = (float)(Totals.TotalNs / 1.0e6 / Math::Max(Frames, 1));
@@ -130,20 +153,21 @@ namespace Lumina::MCP
             }
 
             Algo::Sort(Ranked, [](const SProfilerZone& A, const SProfilerZone& B) { return A.MsPerFrame > B.MsPerFrame; });
-            if ((int32)Ranked.size() > Top)
+            if (Ranked.Num() > Top)
             {
-                Ranked.resize(Top);
+                Ranked.SetNum(Top);
             }
             return Ranked;
         }
 
-        float MsPerFrame(const THashMap<FString, FZoneTotals>& Zones, const char* Name, int32 Frames)
+        float ZoneMsPerFrame(const THashMap<FString, FProfilerZoneTotals>& Zones, const char* Name, int32 Frames)
         {
-            const auto Found = Zones.find(FString(Name));
-            return Found == Zones.end() ? 0.0f : (float)(Found->second.TotalNs / 1.0e6 / Math::Max(Frames, 1));
+            const auto Found = Zones.Find(FString(Name));
+            return Found == nullptr ? 0.0f : (float)(Found->TotalNs / 1.0e6 / Math::Max(Frames, 1));
         }
-            // One capture at a time runs on its own thread, so the scene it measures can still be driven through other tools.
-        struct FCaptureJob
+
+        // One capture at a time runs on its own thread, so the scene it measures can still be driven through other tools.
+        struct FProfilerCaptureJob
         {
             FString File;
             FString Failure;
@@ -152,28 +176,28 @@ namespace Lumina::MCP
             FThread Worker;
         };
 
-        FMutex JobMutex;
-        TUniquePtr<FCaptureJob> Job;
-        FString LastCaptureFile;
+        FMutex ProfilerJobMutex;
+        TUniquePtr<FProfilerCaptureJob> ProfilerJob;
+        FString LastProfilerCaptureFile;
 
-        bool StartCapture(float Seconds, bool bUncapFrameRate, FString& OutFile, FString& OutError)
+        bool StartProfilerCapture(float Seconds, bool bUncapFrameRate, FString& OutFile, FString& OutError)
         {
-            FScopeLock Lock(JobMutex);
-            if (Job)
+            FScopeLock Lock(ProfilerJobMutex);
+            if (ProfilerJob)
             {
-                OutError = Lumina::Format("A capture to {} has not been reported yet; call profiler.report first.", Job->File);
+                OutError = Lumina::Format("A capture to {} has not been reported yet; call profiler.report first.", ProfilerJob->File);
                 return false;
             }
 
             FString Directory = Paths::GetEngineDirectory() + "/Saved/Profiling";
-            Paths::CreateDirectories(FStringView(Directory.c_str(), Directory.size()));
+            Paths::CreateDirectories(FStringView(*Directory, Directory.Len()));
 
-            Job = MakeUnique<FCaptureJob>();
-            Job->File = Lumina::Format("{}/Capture_{}.tracy", Directory, (uint64)(PlatformTime::Seconds() * 1000.0));
-            OutFile = Job->File;
+            ProfilerJob = MakeUnique<FProfilerCaptureJob>();
+            ProfilerJob->File = Lumina::Format("{}/Capture_{}.tracy", Directory, (uint64)(PlatformTime::Seconds() * 1000.0));
+            OutFile = ProfilerJob->File;
 
-            FCaptureJob* Running = Job.get();
-            const int32 CaptureSeconds = (int32)Math::Ceil(Math::Clamp(Seconds, 1.0f, MaxCaptureSeconds));
+            FProfilerCaptureJob* Running = ProfilerJob.get();
+            const int32 CaptureSeconds = (int32)Math::Ceil(Math::Clamp(Seconds, 1.0f, MaxProfilerCaptureSeconds));
             Running->Seconds = CaptureSeconds;
             Running->Worker = FThread([Running, CaptureSeconds, bUncapFrameRate]()
             {
@@ -193,13 +217,13 @@ namespace Lumina::MCP
                         }, GateTimeout);
                 }
 
-                const bool bRan = RunTool(TracyTool("tracy-capture"),
+                const bool bRan = RunTracyTool(TracyToolPath("tracy-capture"),
                     Lumina::Format("-o \"{}\" -a 127.0.0.1 -f -s {}", Running->File, CaptureSeconds),
                     [Running](FStringView Line)
                     {
                         if (ContainsTextFold(Line, "error") || ContainsTextFold(Line, "cannot"))
                         {
-                            Running->Failure.append(Line.data(), Line.size());
+                            Running->Failure.Append(Line.GetData(), Line.Len());
                         }
                     },
                     (uint32)CaptureSeconds * 1000u + 30000u);
@@ -219,16 +243,16 @@ namespace Lumina::MCP
             return true;
         }
 
-        Agent::FToolResult FinishCapture(const SProfilerReportParams& In, SProfilerCaptureResult& Out)
+        Agent::FToolResult FinishProfilerCapture(int32 TopZones, const FString& Filter, bool bSelfTime, SProfilerCaptureResult& Out)
         {
-            TUniquePtr<FCaptureJob> Finished;
+            TUniquePtr<FProfilerCaptureJob> Finished;
             {
-                FScopeLock Lock(JobMutex);
-                Finished = Move(Job);
+                FScopeLock Lock(ProfilerJobMutex);
+                Finished = Move(ProfilerJob);
             }
             if (!Finished)
             {
-                return Agent::FToolResult::Error("No capture was started; call profiler.start or profiler.capture.");
+                return Agent::FToolResult::Error("No capture is pending; call profiler.capture with bWait false first.");
             }
 
             if (Finished->Worker.Joinable())
@@ -239,53 +263,52 @@ namespace Lumina::MCP
             Out.CaptureFile = Finished->File;
             if (Finished->bCaptured)
             {
-                FScopeLock Lock(JobMutex);
-                LastCaptureFile = Finished->File;
+                FScopeLock Lock(ProfilerJobMutex);
+                LastProfilerCaptureFile = Finished->File;
             }
             if (!Finished->bCaptured)
             {
                 return Agent::FToolResult::Error(Lumina::Format(
                     "tracy-capture did not produce a trace ({}). Another Tracy client may already be connected.",
-                    Finished->Failure.empty() ? FString("no output") : Finished->Failure));
+                    Finished->Failure.IsEmpty() ? FString("no output") : Finished->Failure));
             }
 
-            const int32 Top = Math::Clamp(In.Top, 1, 200);
-            const FString Export = TracyTool("tracy-csvexport");
-            THashMap<FString, FZoneTotals> Cpu;
-            THashMap<FString, FZoneTotals> Gpu;
-            ReadZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", Separator, In.bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu);
-            if (Cpu.empty())
+            const int32 Top = Math::Clamp(TopZones, 1, 200);
+            const FString Export = TracyToolPath("tracy-csvexport");
+            THashMap<FString, FProfilerZoneTotals> Cpu;
+            THashMap<FString, FProfilerZoneTotals> Gpu;
+            ReadTracyZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", TracySeparator, bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu);
+            if (Cpu.IsEmpty())
             {
                 return Agent::FToolResult::Error(Lumina::Format(
-                    "Tracy could not read the trace at {}. That usually means a job fiber was mid-job as the capture "
-                    "connected; record again.", Out.CaptureFile));
+                    "Tracy could not read the trace at {}; record again.", Out.CaptureFile));
             }
-            ReadZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", Separator, Out.CaptureFile), true, Gpu);
+            ReadTracyZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", TracySeparator, Out.CaptureFile), true, Gpu);
 
             // A frame's self time is only what its children leave over, so frame totals always come from inclusive times.
-            THashMap<FString, FZoneTotals> Inclusive;
-            if (In.bSelfTime)
+            THashMap<FString, FProfilerZoneTotals> Inclusive;
+            if (bSelfTime)
             {
-                ReadZones(Export, Lumina::Format("-s \"{}\" \"{}\"", Separator, Out.CaptureFile), false, Inclusive);
+                ReadTracyZones(Export, Lumina::Format("-s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), false, Inclusive);
             }
-            const THashMap<FString, FZoneTotals>& Totals = In.bSelfTime ? Inclusive : Cpu;
+            const THashMap<FString, FProfilerZoneTotals>& Totals = bSelfTime ? Inclusive : Cpu;
 
-            const auto Frame = Totals.find(FString(FrameZone));
-            if (Frame == Totals.end() || Frame->second.Count == 0)
+            const auto Frame = Totals.Find(FString(TracyFrameZone));
+            if (Frame == nullptr || Frame->Count == 0)
             {
                 return Agent::FToolResult::Error(Lumina::Format(
-                    "The trace at {} has no {} zones to count frames by. Tracy's export usually fails like this when a job "
-                    "fiber was mid-job as the capture connected; record again.", Out.CaptureFile, FrameZone));
+                    "The trace at {} has no {} zones to count frames by, which usually means Tracy's export failed; record again.",
+                    Out.CaptureFile, TracyFrameZone));
             }
 
-            Out.Frames = (int32)Frame->second.Count;
-            Out.FrameMs = (float)(Frame->second.TotalNs / 1.0e6 / Out.Frames);
-            Out.MaxFrameMs = (float)(Frame->second.MaxNs / 1.0e6);
-            Out.LimiterMs = MsPerFrame(Totals, LimiterZone, Out.Frames);
-            Out.GpuWaitMs = MsPerFrame(Totals, GpuWaitZone, Out.Frames);
+            Out.Frames = (int32)Frame->Count;
+            Out.FrameMs = (float)(Frame->TotalNs / 1.0e6 / Out.Frames);
+            Out.MaxFrameMs = (float)(Frame->MaxNs / 1.0e6);
+            Out.LimiterMs = ZoneMsPerFrame(Totals, TracyLimiterZone, Out.Frames);
+            Out.GpuWaitMs = ZoneMsPerFrame(Totals, TracyGpuWaitZone, Out.Frames);
             Out.PeriodMs = (float)(Finished->Seconds * 1000.0 / Out.Frames);
-            Out.Cpu = Rank(Cpu, Out.Frames, Top, In.Filter);
-            Out.Gpu = Rank(Gpu, Out.Frames, Top, In.Filter);
+            Out.Cpu = RankProfilerZones(Cpu, Out.Frames, Top, Filter);
+            Out.Gpu = RankProfilerZones(Gpu, Out.Frames, Top, Filter);
 
             return Agent::FToolResult::Ok(Lumina::Format(
                 "{} frames, {:.2f} ms apart ({:.0f} fps). The frame zone took {:.2f} ms ({:.2f} ms max), with {:.2f} ms more waiting "
@@ -293,12 +316,9 @@ namespace Lumina::MCP
                 Out.Frames, Out.PeriodMs, 1000.0f / Math::Max(Out.PeriodMs, 0.001f), Out.FrameMs, Out.MaxFrameMs, Out.GpuWaitMs,
                 Out.LimiterMs, Out.CaptureFile));
         }
-    }
 
-    namespace
-    {
         // One zone event from an unwrapped export, with its name interned.
-        struct FZoneEvent
+        struct FProfilerZoneEvent
         {
             int64 Start = 0;
             int64 Duration = 0;
@@ -307,37 +327,37 @@ namespace Lumina::MCP
             int32 Thread = 0;
         };
 
-        void RankInto(const THashMap<int32, SProfilerHitchZone>& Totals, int32 Top, TVector<SProfilerHitchZone>& Out)
+        void RankHitchZones(const THashMap<int32, SProfilerHitchZone>& Totals, int32 Top, TVector<SProfilerHitchZone>& Out)
         {
             for (const auto& [Id, Zone] : Totals)
             {
-                Out.push_back(Zone);
+                Out.Add(Zone);
             }
             Algo::Sort(Out, [](const SProfilerHitchZone& A, const SProfilerHitchZone& B) { return A.SelfMs > B.SelfMs; });
-            if ((int32)Out.size() > Top)
+            if (Out.Num() > Top)
             {
-                Out.resize(Top);
+                Out.SetNum(Top);
             }
         }
 
-        Agent::FToolResult FindHitches(const SProfilerHitchParams& In, SProfilerHitchResult& Out)
+        Agent::FToolResult FindProfilerHitches(const SProfilerReportParams& In, SProfilerHitchResult& Out)
         {
             Out.CaptureFile = In.CaptureFile;
-            if (Out.CaptureFile.empty())
+            if (Out.CaptureFile.IsEmpty())
             {
-                FScopeLock Lock(JobMutex);
-                Out.CaptureFile = LastCaptureFile;
+                FScopeLock Lock(ProfilerJobMutex);
+                Out.CaptureFile = LastProfilerCaptureFile;
             }
-            if (Out.CaptureFile.empty() || !Paths::Exists(Out.CaptureFile))
+            if (Out.CaptureFile.IsEmpty() || !Paths::Exists(Out.CaptureFile))
             {
                 return Agent::FToolResult::Error("No trace to read; record one with profiler.capture or pass CaptureFile.");
             }
 
             THashMap<FString, int32> NameIds;
             TVector<FString> Names;
-            TVector<FZoneEvent> Events;
+            TVector<FProfilerZoneEvent> Events;
             bool bHeader = true;
-            RunTool(TracyTool("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", Separator, Out.CaptureFile), [&](FStringView Line)
+            RunTracyTool(TracyToolPath("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), [&](FStringView Line)
             {
                 if (bHeader)
                 {
@@ -345,212 +365,204 @@ namespace Lumina::MCP
                     return;
                 }
 
-                const TVector<FStringView> Fields = SplitFields(Line);
-                if (Fields.size() < 6)
+                const TVector<FStringView> Fields = SplitProfilerFields(Line);
+                if (Fields.Num() < 6)
                 {
                     return;
                 }
 
-                const FString Name(Fields[0].data(), Fields[0].size());
-                auto Found = NameIds.find(Name);
-                if (Found == NameIds.end())
+                const FString Name(Fields[0].GetData(), Fields[0].Len());
+                auto Found = NameIds.Find(Name);
+                if (Found == nullptr)
                 {
-                    Found = NameIds.emplace(Name, (int32)Names.size()).first;
-                    Names.push_back(Name);
+                    Found = &NameIds.FindOrAdd(Name, Names.Num());
+                    Names.Add(Name);
                 }
 
-                FZoneEvent& Event = Events.emplace_back();
-                Event.Name = Found->second;
-                Event.Start = (int64)ToNumber(Fields[3]);
-                Event.Duration = (int64)ToNumber(Fields[4]);
-                Event.Thread = (int32)ToNumber(Fields[5]);
-            }, UnwrapTimeoutMilliseconds);
+                FProfilerZoneEvent& Event = Events.EmplaceGetRef();
+                Event.Name = (*Found);
+                Event.Start = (int64)ProfilerNumber(Fields[3]);
+                Event.Duration = (int64)ProfilerNumber(Fields[4]);
+                Event.Thread = (int32)ProfilerNumber(Fields[5]);
+            }, TracyUnwrapTimeoutMs);
 
-            const auto FrameName = NameIds.find(FString(FrameZone));
-            if (FrameName == NameIds.end())
+            const auto FrameName = NameIds.Find(FString(TracyFrameZone));
+            if (FrameName == nullptr)
             {
-                return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to find frames by.", Out.CaptureFile, FrameZone));
+                return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to find frames by.", Out.CaptureFile, TracyFrameZone));
             }
 
             // Parents sort before the children they contain, which is what the self-time pass below walks.
-            Algo::Sort(Events, [](const FZoneEvent& A, const FZoneEvent& B)
+            Algo::Sort(Events, [](const FProfilerZoneEvent& A, const FProfilerZoneEvent& B)
             {
                 if (A.Thread != B.Thread) { return A.Thread < B.Thread; }
                 if (A.Start != B.Start) { return A.Start < B.Start; }
                 return A.Duration > B.Duration;
             });
 
-            TVector<size_t> Open;
-            for (size_t Index = 0; Index < Events.size(); ++Index)
+            TVector<int32> Open;
+            for (int32 Index = 0; Index < Events.Num(); ++Index)
             {
-                FZoneEvent& Event = Events[Index];
+                FProfilerZoneEvent& Event = Events[Index];
                 Event.Self = Event.Duration;
-                while (!Open.empty())
+                while (!Open.IsEmpty())
                 {
-                    const FZoneEvent& Parent = Events[Open.back()];
+                    const FProfilerZoneEvent& Parent = Events[Open.Last()];
                     if (Parent.Thread == Event.Thread && Event.Start < Parent.Start + Parent.Duration)
                     {
                         break;
                     }
-                    Open.pop_back();
+                    Open.Pop();
                 }
-                if (!Open.empty())
+                if (!Open.IsEmpty())
                 {
-                    Events[Open.back()].Self -= Event.Duration;
+                    Events[Open.Last()].Self -= Event.Duration;
                 }
-                Open.push_back(Index);
+                Open.Add(Index);
             }
 
-            TVector<size_t> Frames;
+            TVector<int32> Frames;
             int64 FirstStart = INT64_MAX;
-            for (size_t Index = 0; Index < Events.size(); ++Index)
+            for (int32 Index = 0; Index < Events.Num(); ++Index)
             {
                 FirstStart = Math::Min(FirstStart, Events[Index].Start);
-                if (Events[Index].Name == FrameName->second)
+                if (Events[Index].Name == (*FrameName))
                 {
-                    Frames.push_back(Index);
+                    Frames.Add(Index);
                 }
             }
-            if (Frames.empty())
+            if (Frames.IsEmpty())
             {
                 return Agent::FToolResult::Error("The trace recorded no whole frames.");
             }
 
             // A frame lasts until the next one starts, so a stall on the GPU fence outside the frame zone still counts.
-            for (size_t Slot = 0; Slot + 1 < Frames.size(); ++Slot)
+            for (int32 Slot = 0; Slot + 1 < Frames.Num(); ++Slot)
             {
                 Events[Frames[Slot]].Duration = Events[Frames[Slot + 1]].Start - Events[Frames[Slot]].Start;
             }
 
             TVector<float> Sorted;
-            for (size_t Index : Frames)
+            for (int32 Index : Frames)
             {
-                Sorted.push_back((float)(Events[Index].Duration / 1.0e6));
+                Sorted.Add((float)(Events[Index].Duration / 1.0e6));
             }
             Algo::Sort(Sorted, [](float A, float B) { return A < B; });
-            Out.Frames = (int32)Sorted.size();
-            Out.MedianFrameMs = Sorted[Sorted.size() / 2];
-            Out.P99FrameMs = Sorted[Math::Min(Sorted.size() - 1, (size_t)((float)Sorted.size() * 0.99f))];
+            Out.Frames = Sorted.Num();
+            Out.MedianFrameMs = Sorted[Sorted.Num() / 2];
+            Out.P99FrameMs = Sorted[Math::Min(Sorted.Num() - 1, static_cast<int32>((float)Sorted.Num() * 0.99f))];
             Out.ThresholdMs = In.ThresholdMs > 0.0f ? In.ThresholdMs : Math::Max(Out.MedianFrameMs * 2.0f, Out.MedianFrameMs + 8.0f);
 
-            TVector<size_t> Slow;
-            for (size_t Index : Frames)
+            TVector<int32> Slow;
+            for (int32 Index : Frames)
             {
                 if ((float)(Events[Index].Duration / 1.0e6) > Out.ThresholdMs)
                 {
-                    Slow.push_back(Index);
+                    Slow.Add(Index);
                 }
             }
-            Out.HitchCount = (int32)Slow.size();
-            Algo::Sort(Slow, [&Events](size_t A, size_t B) { return Events[A].Duration > Events[B].Duration; });
-            if ((int32)Slow.size() > Math::Max(In.MaxHitches, 0))
+            Out.HitchCount = Slow.Num();
+            Algo::Sort(Slow, [&Events](int32 A, int32 B) { return Events[A].Duration > Events[B].Duration; });
+            if (Slow.Num() > Math::Max(In.MaxHitches, 0))
             {
-                Slow.resize(Math::Max(In.MaxHitches, 0));
+                Slow.SetNum(Math::Max(In.MaxHitches, 0));
             }
 
             const int32 Top = Math::Clamp(In.TopZones, 1, 50);
-            for (size_t FrameIndex : Slow)
+            for (int32 FrameIndex : Slow)
             {
-                const FZoneEvent& Frame = Events[FrameIndex];
+                const FProfilerZoneEvent& Frame = Events[FrameIndex];
                 const int64 End = Frame.Start + Frame.Duration;
                 THashMap<int32, SProfilerHitchZone> Game;
                 THashMap<int32, SProfilerHitchZone> Workers;
-                for (const FZoneEvent& Event : Events)
+                for (const FProfilerZoneEvent& Event : Events)
                 {
                     if (Event.Start < Frame.Start || Event.Start >= End || Event.Self <= 0)
                     {
                         continue;
                     }
                     THashMap<int32, SProfilerHitchZone>& Into = Event.Thread == Frame.Thread ? Game : Workers;
-                    SProfilerHitchZone& Zone = Into[Event.Name];
+                    SProfilerHitchZone& Zone = Into.FindOrAdd(Event.Name);
                     Zone.Name = Names[Event.Name];
                     Zone.SelfMs += (float)(Event.Self / 1.0e6);
                     Zone.Count += 1;
                 }
 
-                SProfilerHitch& Hitch = Out.Hitches.emplace_back();
+                SProfilerHitch& Hitch = Out.Hitches.EmplaceGetRef();
                 Hitch.AtSeconds = (float)((Frame.Start - FirstStart) / 1.0e9);
                 Hitch.FrameMs = (float)(Frame.Duration / 1.0e6);
-                RankInto(Game, Top, Hitch.GameThread);
-                RankInto(Workers, Top, Hitch.Workers);
+                RankHitchZones(Game, Top, Hitch.GameThread);
+                RankHitchZones(Workers, Top, Hitch.Workers);
             }
 
             return Agent::FToolResult::Ok(Lumina::Format(
                 "{} frames, median {:.2f} ms, p99 {:.2f} ms. {} over {:.1f} ms{}.",
                 Out.Frames, Out.MedianFrameMs, Out.P99FrameMs, Out.HitchCount, Out.ThresholdMs,
-                Out.Hitches.empty() ? FString() : Lumina::Format(", the worst {:.1f} ms", Out.Hitches[0].FrameMs)));
+                Out.Hitches.IsEmpty() ? FString() : Lumina::Format(", the worst {:.1f} ms", Out.Hitches[0].FrameMs)));
         }
-    }
 
-    void RegisterProfilerTools(FStringView Owner)
-    {
-        Agent::FToolRegistry& Registry = Agent::FToolRegistry::Get();
-
-        Registry.Register<SProfilerStartParams, SProfilerStartResult>(
-            Owner, "profiler.start",
-            "Start recording a Tracy capture of the running editor in the background and return at once, so the scene can be "
-            "driven through other tools while it records. Call profiler.report to wait for it and read the results.",
-            Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
-            [](const SProfilerStartParams& In, SProfilerStartResult& Out)
+        Agent::FToolResult CaptureProfile(const SProfilerCaptureParams& In, SProfilerCaptureResult& Out)
+        {
+            if (!In.bWait)
             {
                 FString Error;
-                if (!StartCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
+                if (!StartProfilerCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
                 {
                     return Agent::FToolResult::Error(Error);
                 }
                 return Agent::FToolResult::Ok(Lumina::Format("Recording to {}.", Out.CaptureFile));
-            });
+            }
 
-        Registry.Register<SProfilerReportParams, SProfilerCaptureResult>(
-            Owner, "profiler.report",
-            "Wait for the capture profiler.start began, then report the frame time, the costliest CPU zones and the costliest GPU passes, per frame.",
-            Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
-            [](const SProfilerReportParams& In, SProfilerCaptureResult& Out)
+            // Tracy occasionally writes a trace its own tools cannot read, so record again.
+            constexpr int32 MaxAttempts = 3;
+            for (int32 Attempt = 1; ; ++Attempt)
             {
-                return FinishCapture(In, Out);
-            });
-
-        Registry.Register<SProfilerHitchParams, SProfilerHitchResult>(
-            Owner, "profiler.hitches",
-            "Find the frames in a Tracy capture that ran long and break each one down by the zones that spent the time, "
-            "on the game thread and on the workers. Reads the last capture unless CaptureFile names another.",
-            Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
-            [](const SProfilerHitchParams& In, SProfilerHitchResult& Out)
-            {
-                return FindHitches(In, Out);
-            });
-
-        Registry.Register<SProfilerCaptureParams, SProfilerCaptureResult>(
-            Owner, "profiler.capture",
-            "Record a Tracy capture of the running editor for a few seconds and report the frame time, the costliest CPU zones "
-            "and the costliest GPU passes, per frame. Other tool calls wait while it records; use profiler.start and "
-            "profiler.report to drive the scene during the capture.",
-            Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
-            [](const SProfilerCaptureParams& In, SProfilerCaptureResult& Out)
-            {
-                SProfilerReportParams Report;
-                Report.Top = In.Top;
-                Report.Filter = In.Filter;
-                Report.bSelfTime = In.bSelfTime;
-
-                // A fiber mid-job when Tracy connects can leave a trace its own tools cannot read, so record again.
-                constexpr int32 MaxAttempts = 3;
-                for (int32 Attempt = 1; ; ++Attempt)
+                Out = SProfilerCaptureResult{};
+                FString Error;
+                if (!StartProfilerCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
                 {
-                    Out = SProfilerCaptureResult{};
-                    FString Error;
-                    if (!StartCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
-                    Agent::FToolResult Result = FinishCapture(Report, Out);
-                    if (Out.Frames > 0 || Attempt == MaxAttempts)
-                    {
-                        return Result;
-                    }
-                    LOG_WARN("profiler.capture: {} could not be read back, recording again.", Out.CaptureFile);
+                    return Agent::FToolResult::Error(Error);
                 }
-            });
+
+                Agent::FToolResult Result = FinishProfilerCapture(In.Top, In.Filter, In.bSelfTime, Out);
+                if (Out.Frames > 0 || Attempt == MaxAttempts)
+                {
+                    return Result;
+                }
+                LOG_WARN("profiler.capture: {} could not be read back, recording again.", Out.CaptureFile);
+            }
+        }
+
+        void RegisterProfilerCapture(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SProfilerCaptureParams, SProfilerCaptureResult>(
+                Owner, "profiler.capture",
+                "Record a Tracy capture of the running editor and report frame time and the costliest CPU zones and GPU passes "
+                "per frame. Other calls wait while it records unless bWait is false.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any, &CaptureProfile);
+        }
+
+        void RegisterProfilerReport(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SProfilerReportParams, SProfilerReportResult>(
+                Owner, "profiler.report",
+                "Zones waits for the capture profiler.capture started with bWait false and ranks its zones. Hitches breaks the "
+                "long frames of a trace down by zone, on the game thread and the workers.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
+                [](const SProfilerReportParams& In, SProfilerReportResult& Out)
+                {
+                    return In.Mode == EProfilerReportMode::Hitches
+                        ? FindProfilerHitches(In, Out.Hitches)
+                        : FinishProfilerCapture(In.Top, In.Filter, In.bSelfTime, Out.Zones);
+                });
+        }
+    }
+
+    using namespace MCPProfilerToolsInternal;
+
+    void RegisterProfilerTools(FStringView Owner)
+    {
+        RegisterProfilerCapture(Owner);
+        RegisterProfilerReport(Owner);
     }
 }

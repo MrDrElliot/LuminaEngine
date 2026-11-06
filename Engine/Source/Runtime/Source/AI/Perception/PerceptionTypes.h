@@ -4,7 +4,7 @@
 
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
-#include "GameplayTags/GameplayTag.h"
+#include "HierarchicalTags/HierarchicalTag.h"
 #include "PerceptionTypes.generated.h"
 
 namespace Lumina
@@ -42,6 +42,6 @@ namespace Lumina
         ECS::FEntity            Target      = ECS::NullEntity;   // damage victim; ECS::NullEntity for area noise.
         FVector3                Location    = FVector3(0.0f);
         float                   Strength    = 1.0f;         // noise loudness (radius scale) or damage amount.
-        SGameplayTagContainer   Tags;                       // optional affiliation override (empty => look up Instigator).
+        SHierarchicalTagContainer   Tags;                       // optional affiliation override (empty => look up Instigator).
     };
 }

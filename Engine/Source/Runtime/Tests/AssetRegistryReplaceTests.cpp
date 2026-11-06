@@ -36,7 +36,7 @@ TEST(AssetRegistryReplace, ANewAssetAtAKnownPathReplacesTheOldEntry)
     {
         return Data.Path == ByPath->Path;
     });
-    EXPECT_EQ(AtPath.size(), 1u);
+    EXPECT_EQ(AtPath.Num(), 1);
 
     Registry.AssetDeleted(Replacement->GetGUID());
 }
@@ -59,7 +59,7 @@ TEST(AssetRegistryReplace, ReRegisteringAnAssetKeepsOneEntry)
     {
         return Data.AssetGUID == Table->GetGUID();
     });
-    EXPECT_EQ(WithGuid.size(), 1u);
+    EXPECT_EQ(WithGuid.Num(), 1);
     EXPECT_NE(Registry.GetAssetByPath(Path), nullptr);
 
     Registry.AssetDeleted(Table->GetGUID());

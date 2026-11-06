@@ -34,8 +34,8 @@ namespace
                 Object->ConditionalBeginDestroy();
             }
         }
-        Package->ExportTable.clear();
-        Package->ImportTable.clear();
+        Package->ExportTable.Reset();
+        Package->ImportTable.Reset();
 
         // The root set holds the package's only strong reference, so unrooting is what destroys it.
         Package->RemoveFromRoot();
@@ -68,7 +68,7 @@ TEST_F(ParticleArtifact, EditorSaveLeavesBinariesOutOfTheAsset)
 
     CParticleEmitter* Read = Cast<CParticleEmitter>(FindObject<CObject>(Guid));
     ASSERT_NE(Read, nullptr);
-    EXPECT_TRUE(Read->ComputeShaderBinaries.empty());
+    EXPECT_TRUE(Read->ComputeShaderBinaries.IsEmpty());
     EXPECT_EQ(Read->CompiledCodeHash, 0x1234u);
 }
 

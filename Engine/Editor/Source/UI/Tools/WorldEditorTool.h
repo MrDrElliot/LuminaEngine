@@ -72,7 +72,6 @@ namespace Lumina
         ECS::FEntity GetModeSelectionFocus() const override { return GetLastSelectedEntity(); }
         void SetModeSelection(ECS::FEntity Entity) override { SetSingleSelectedEntity(Entity); }
 
-        void OnEntityCreated(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity);
 

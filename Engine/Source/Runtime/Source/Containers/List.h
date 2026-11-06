@@ -32,7 +32,7 @@ namespace Lumina::Containers
     public:
 
         using value_type      = T;
-        using size_type       = size_t;
+        using size_type       = int32;
         using reference       = T&;
         using const_reference = const T&;
         using pointer         = T*;
@@ -87,7 +87,7 @@ namespace Lumina::Containers
         {
             for (const T& Element : Other)
             {
-                push_back(Element);
+                AddTail(Element);
             }
         }
 
@@ -96,16 +96,16 @@ namespace Lumina::Containers
             Adopt(Other);
         }
 
-        ~TList() { clear(); }
+        ~TList() { Empty(); }
 
         TList& operator=(const TList& Other)
         {
             if (this != &Other)
             {
-                clear();
+                Empty();
                 for (const T& Element : Other)
                 {
-                    push_back(Element);
+                    AddTail(Element);
                 }
             }
             return *this;
@@ -115,86 +115,82 @@ namespace Lumina::Containers
         {
             if (this != &Other)
             {
-                clear();
+                Empty();
                 Adopt(Other);
             }
             return *this;
         }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Count; }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Count == 0; }
-        NODISCARD FORCEINLINE size_t Num() const noexcept { return Count; }
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return Count; }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Count == 0; }
 
-        NODISCARD iterator begin() noexcept { return iterator(Sentinel.Next); }
-        NODISCARD const_iterator begin() const noexcept { return const_iterator(const_cast<FNodeBase*>(Sentinel.Next)); }
-        NODISCARD iterator end() noexcept { return iterator(&Sentinel); }
-        NODISCARD const_iterator end() const noexcept { return const_iterator(const_cast<FNodeBase*>(&Sentinel)); }
+        template <typename TSelf>
+        NODISCARD auto begin(this TSelf&& Self) noexcept
+        {
+            return std::conditional_t<std::is_const_v<std::remove_reference_t<TSelf>>, const_iterator, iterator>(Self.Sentinel.Next);
+        }
+
+        template <typename TSelf>
+        NODISCARD auto end(this TSelf&& Self) noexcept
+        {
+            return std::conditional_t<std::is_const_v<std::remove_reference_t<TSelf>>, const_iterator, iterator>(const_cast<FNodeBase*>(&Self.Sentinel));
+        }
         NODISCARD const_iterator cbegin() const noexcept { return begin(); }
         NODISCARD const_iterator cend() const noexcept { return end(); }
 
-        NODISCARD FORCEINLINE T& front() noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Head(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return static_cast<FNode*>(Sentinel.Next)->Value;
+            LUMINA_CONTAINER_CHECK(Self.Count != 0);
+            return static_cast<TLikeSelf<TSelf, FNode>*>(Self.Sentinel.Next)->Value;
         }
 
-        NODISCARD FORCEINLINE const T& front() const noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Tail(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return static_cast<const FNode*>(Sentinel.Next)->Value;
-        }
-
-        NODISCARD FORCEINLINE T& back() noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return static_cast<FNode*>(Sentinel.Prev)->Value;
-        }
-
-        NODISCARD FORCEINLINE const T& back() const noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return static_cast<const FNode*>(Sentinel.Prev)->Value;
+            LUMINA_CONTAINER_CHECK(Self.Count != 0);
+            return static_cast<TLikeSelf<TSelf, FNode>*>(Self.Sentinel.Prev)->Value;
         }
 
         template <typename... TArgs>
-        T& emplace_back(TArgs&&... Args)
+        T& EmplaceTail(TArgs&&... Args)
         {
             return InsertBefore(&Sentinel, std::forward<TArgs>(Args)...)->Value;
         }
 
         template <typename... TArgs>
-        T& emplace_front(TArgs&&... Args)
+        T& EmplaceHead(TArgs&&... Args)
         {
             return InsertBefore(Sentinel.Next, std::forward<TArgs>(Args)...)->Value;
         }
 
-        FORCEINLINE T& push_back(const T& Value) { return emplace_back(Value); }
-        FORCEINLINE T& push_back(T&& Value) { return emplace_back(std::move(Value)); }
-        FORCEINLINE T& push_front(const T& Value) { return emplace_front(Value); }
-        FORCEINLINE T& push_front(T&& Value) { return emplace_front(std::move(Value)); }
+        FORCEINLINE T& AddTail(const T& Value) { return EmplaceTail(Value); }
+        FORCEINLINE T& AddTail(T&& Value) { return EmplaceTail(std::move(Value)); }
+        FORCEINLINE T& AddHead(const T& Value) { return EmplaceHead(Value); }
+        FORCEINLINE T& AddHead(T&& Value) { return EmplaceHead(std::move(Value)); }
 
         template <typename... TArgs>
-        iterator emplace(const_iterator Position, TArgs&&... Args)
+        iterator Emplace(const_iterator Position, TArgs&&... Args)
         {
             return iterator(InsertBefore(Position.Node, std::forward<TArgs>(Args)...));
         }
 
-        FORCEINLINE iterator insert(const_iterator Position, const T& Value) { return emplace(Position, Value); }
-        FORCEINLINE iterator insert(const_iterator Position, T&& Value) { return emplace(Position, std::move(Value)); }
+        FORCEINLINE iterator Insert(const_iterator Position, const T& Value) { return Emplace(Position, Value); }
+        FORCEINLINE iterator Insert(const_iterator Position, T&& Value) { return Emplace(Position, std::move(Value)); }
 
-        void pop_back() noexcept
+        void RemoveTail() noexcept
         {
             LUMINA_CONTAINER_CHECK(Count != 0);
             Unlink(Sentinel.Prev);
         }
 
-        void pop_front() noexcept
+        void RemoveHead() noexcept
         {
             LUMINA_CONTAINER_CHECK(Count != 0);
             Unlink(Sentinel.Next);
         }
 
-        iterator erase(const_iterator Position) noexcept
+        iterator Remove(const_iterator Position) noexcept
         {
             LUMINA_CONTAINER_CHECK(Position.Node != &Sentinel);
             FNodeBase* Next = Position.Node->Next;
@@ -202,7 +198,7 @@ namespace Lumina::Containers
             return iterator(Next);
         }
 
-        void clear() noexcept
+        void Empty() noexcept
         {
             FNodeBase* Node = Sentinel.Next;
             while (Node != &Sentinel)
@@ -216,11 +212,11 @@ namespace Lumina::Containers
             Count = 0;
         }
 
-        void swap(TList& Other) noexcept
+        friend void swap(TList& Left, TList& Right) noexcept
         {
-            TList Staged(std::move(*this));
-            *this = std::move(Other);
-            Other = std::move(Staged);
+            TList Staged(std::move(Left));
+            Left = std::move(Right);
+            Right = std::move(Staged);
         }
 
         NODISCARD friend bool operator==(const TList& Left, const TList& Right)
@@ -289,14 +285,9 @@ namespace Lumina::Containers
         }
 
         FNodeBase Sentinel;
-        size_t    Count = 0;
+        int32     Count = 0;
     };
 
-    template <typename T, ContainerAllocatorType TAllocator>
-    FORCEINLINE void swap(TList<T, TAllocator>& Left, TList<T, TAllocator>& Right) noexcept
-    {
-        Left.swap(Right);
-    }
 }
 
 namespace Lumina

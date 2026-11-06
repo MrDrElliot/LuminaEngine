@@ -58,7 +58,7 @@ namespace Lumina
         // so the cooker emits packages in stable order between runs.
         TVector<const FCookNode*> GetReachableNodesSorted() const;
 
-        size_t              NumNodes() const { return Nodes.size(); }
+        size_t              NumNodes() const { return Nodes.Num(); }
         const TVector<FCookGraphIssue>& GetIssues() const { return Issues; }
 
     private:

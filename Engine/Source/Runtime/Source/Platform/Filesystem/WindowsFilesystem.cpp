@@ -86,7 +86,7 @@ namespace Lumina::Filesystem
             if (Attributes & FILE_ATTRIBUTE_READONLY)        { Result |= EAttributes::ReadOnly; }
             if (Attributes & FILE_ATTRIBUTE_SYSTEM)          { Result |= EAttributes::System; }
 
-            if (!Name.empty() && Name.front() == '.')
+            if (!Name.IsEmpty() && Name[0] == '.')
             {
                 Result |= EAttributes::Hidden;
             }
@@ -132,7 +132,7 @@ namespace Lumina::Filesystem
 
             void Assign(FStringView Path)
             {
-                if (Path.empty())
+                if (Path.IsEmpty())
                 {
                     Length = 0;
                     Start  = Data + kPrefixChars;
@@ -141,14 +141,14 @@ namespace Lumina::Filesystem
                     return;
                 }
 
-                const int32 SourceLength = static_cast<int32>(Path.size());
-                const int32 NeededChars  = Platform::GetConvertedLength_UTF8ToWide(Path.data(), SourceLength);
+                const int32 SourceLength = static_cast<int32>(Path.Len());
+                const int32 NeededChars  = Platform::GetConvertedLength_UTF8ToWide(Path.GetData(), SourceLength);
 
                 Start = Data + kPrefixChars;
                 Reserve(NeededChars + kPrefixChars + 1);
 
                 wchar_t* Target = Data + kPrefixChars;
-                const int32 Written = Platform::Convert_UTF8ToWide(Target, NeededChars, Path.data(), SourceLength);
+                const int32 Written = Platform::Convert_UTF8ToWide(Target, NeededChars, Path.GetData(), SourceLength);
                 Target[Written] = L'\0';
 
                 for (int32 Index = 0; Index < Written; ++Index)
@@ -320,7 +320,7 @@ namespace Lumina::Filesystem
         }
     }
 
-    uint64 FFileHandle::Size() const
+    int64 FFileHandle::Size() const
     {
         LARGE_INTEGER Result;
         if (Handle == kInvalidHandle || !::GetFileSizeEx(reinterpret_cast<HANDLE>(Handle), &Result))
@@ -328,10 +328,10 @@ namespace Lumina::Filesystem
             return 0;
         }
 
-        return static_cast<uint64>(Result.QuadPart);
+        return static_cast<int64>(Result.QuadPart);
     }
 
-    uint64 FFileHandle::Tell() const
+    int64 FFileHandle::Tell() const
     {
         LARGE_INTEGER Zero;
         Zero.QuadPart = 0;
@@ -342,7 +342,7 @@ namespace Lumina::Filesystem
             return 0;
         }
 
-        return static_cast<uint64>(Result.QuadPart);
+        return static_cast<int64>(Result.QuadPart);
     }
 
     bool FFileHandle::Seek(int64 Offset, ESeek Origin)
@@ -365,15 +365,15 @@ namespace Lumina::Filesystem
         return ::SetFilePointerEx(reinterpret_cast<HANDLE>(Handle), Distance, nullptr, Method) != FALSE;
     }
 
-    uint64 FFileHandle::Read(void* Dest, uint64 Bytes)
+    int64 FFileHandle::Read(void* Dest, int64 Bytes)
     {
-        if (Handle == kInvalidHandle || Dest == nullptr)
+        if (Handle == kInvalidHandle || Dest == nullptr || Bytes <= 0)
         {
             return 0;
         }
 
         uint8* Cursor    = static_cast<uint8*>(Dest);
-        uint64 Remaining = Bytes;
+        int64 Remaining = Bytes;
 
         while (Remaining > 0)
         {
@@ -398,15 +398,15 @@ namespace Lumina::Filesystem
         return Bytes - Remaining;
     }
 
-    uint64 FFileHandle::Write(const void* Src, uint64 Bytes)
+    int64 FFileHandle::Write(const void* Src, int64 Bytes)
     {
-        if (Handle == kInvalidHandle || Src == nullptr)
+        if (Handle == kInvalidHandle || Src == nullptr || Bytes <= 0)
         {
             return 0;
         }
 
         const uint8* Cursor = static_cast<const uint8*>(Src);
-        uint64 Remaining    = Bytes;
+        int64 Remaining    = Bytes;
 
         while (Remaining > 0)
         {
@@ -426,16 +426,16 @@ namespace Lumina::Filesystem
         return Bytes - Remaining;
     }
 
-    uint64 FFileHandle::ReadAt(void* Dest, uint64 Bytes, uint64 Offset) const
+    int64 FFileHandle::ReadAt(void* Dest, int64 Bytes, int64 Offset) const
     {
-        if (Handle == kInvalidHandle || Dest == nullptr)
+        if (Handle == kInvalidHandle || Dest == nullptr || Bytes <= 0)
         {
             return 0;
         }
 
         uint8* Cursor      = static_cast<uint8*>(Dest);
-        uint64 Remaining   = Bytes;
-        uint64 FilePointer = Offset;
+        int64 Remaining   = Bytes;
+        int64 FilePointer = Offset;
 
         while (Remaining > 0)
         {
@@ -468,16 +468,16 @@ namespace Lumina::Filesystem
         return Bytes - Remaining;
     }
 
-    uint64 FFileHandle::WriteAt(const void* Src, uint64 Bytes, uint64 Offset) const
+    int64 FFileHandle::WriteAt(const void* Src, int64 Bytes, int64 Offset) const
     {
-        if (Handle == kInvalidHandle || Src == nullptr)
+        if (Handle == kInvalidHandle || Src == nullptr || Bytes <= 0)
         {
             return 0;
         }
 
         const uint8* Cursor = static_cast<const uint8*>(Src);
-        uint64 Remaining    = Bytes;
-        uint64 FilePointer  = Offset;
+        int64 Remaining    = Bytes;
+        int64 FilePointer  = Offset;
 
         while (Remaining > 0)
         {
@@ -507,9 +507,9 @@ namespace Lumina::Filesystem
         return Handle != kInvalidHandle && ::FlushFileBuffers(reinterpret_cast<HANDLE>(Handle)) != FALSE;
     }
 
-    bool FFileHandle::Truncate(uint64 NewSize)
+    bool FFileHandle::Truncate(int64 NewSize)
     {
-        if (!Seek(static_cast<int64>(NewSize), ESeek::Begin))
+        if (!Seek(NewSize, ESeek::Begin))
         {
             return false;
         }
@@ -580,8 +580,8 @@ namespace Lumina::Filesystem
             return Result;
         }
 
-        const uint64 FileLength = Handle.Size();
-        if (FileLength == 0)
+        const int64 FileLength = Handle.Size();
+        if (FileLength <= 0)
         {
             return Result;
         }
@@ -705,7 +705,7 @@ namespace Lumina::Filesystem
         return Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
     }
 
-    uint64 FileSize(FStringView Path)
+    int64 FileSize(FStringView Path)
     {
         const FFileStat Info = Stat(Path);
         return Info.bValid ? Info.Size : 0;
@@ -1022,7 +1022,7 @@ namespace Lumina::Filesystem
         EVisit IterateLevel(FIterationState& State, uint32 Depth)
         {
             const int32 WideBase  = State.Wide.Size();
-            const size_t Utf8Base = State.Utf8.size();
+            const int32 Utf8Base = State.Utf8.Len();
 
             State.Wide.Append(L"\\*", 2);
 
@@ -1053,20 +1053,20 @@ namespace Lumina::Filesystem
                 State.Wide.Append(L"\\", 1);
                 State.Wide.Append(Name, NameLength);
 
-                State.Utf8.push_back('/');
+                State.Utf8.AppendChar('/');
 
-                const size_t NameOffset  = State.Utf8.size();
+                const int32 NameOffset  = State.Utf8.Len();
                 const int32 NarrowLength = Platform::GetConvertedLength_WideToUTF8(Name, NameLength);
-                State.Utf8.resize(NameOffset + static_cast<size_t>(NarrowLength));
-                Platform::Convert_WideToUTF8(State.Utf8.data() + NameOffset, NarrowLength, Name, NameLength);
+                State.Utf8.SetLen(NameOffset + NarrowLength);
+                Platform::Convert_WideToUTF8(State.Utf8.GetData() + NameOffset, NarrowLength, Name, NameLength);
 
                 ULARGE_INTEGER EntrySize;
                 EntrySize.LowPart  = FindData.nFileSizeLow;
                 EntrySize.HighPart = FindData.nFileSizeHigh;
 
                 FDirectoryEntry Entry;
-                Entry.FullPath       = FStringView(State.Utf8.data(), State.Utf8.size());
-                Entry.Name           = Entry.FullPath.substr(NameOffset);
+                Entry.FullPath       = State.Utf8.View();
+                Entry.Name           = Entry.FullPath.Mid(NameOffset);
                 Entry.Size           = EntrySize.QuadPart;
                 Entry.LastModifyTime = FileTimeToUnixNanos(FindData.ftLastWriteTime);
                 Entry.Attributes     = TranslateAttributes(FindData.dwFileAttributes, Entry.Name);
@@ -1083,7 +1083,7 @@ namespace Lumina::Filesystem
                     || (bDescend && IterateLevel(State, Depth + 1) == EVisit::Stop);
 
                 State.Wide.Truncate(WideBase);
-                State.Utf8.resize(Utf8Base);
+                State.Utf8.SetLen(Utf8Base);
 
                 if (bStop)
                 {
@@ -1100,15 +1100,15 @@ namespace Lumina::Filesystem
 
     bool IterateDirectoryRaw(FStringView Path, bool bRecursive, FDirectoryVisitor Visitor, void* Context)
     {
-        if (Visitor == nullptr || Path.empty())
+        if (Visitor == nullptr || Path.IsEmpty())
         {
             return false;
         }
 
         FStringView Trimmed = Path;
-        while (Trimmed.size() > 1 && (Trimmed.back() == '/' || Trimmed.back() == '\\'))
+        while (Trimmed.Len() > 1 && (Trimmed.Last() == '/' || Trimmed.Last() == '\\'))
         {
-            Trimmed.remove_suffix(1);
+            Trimmed.RemoveSuffix(1);
         }
 
         if (!IsDirectory(Trimmed))
@@ -1125,8 +1125,8 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        State.Utf8.reserve(1024);
-        State.Utf8.assign(Trimmed.data(), Trimmed.size());
+        State.Utf8.Reserve(1024);
+        State.Utf8 = Trimmed;
         State.Visitor    = Visitor;
         State.Context    = Context;
         State.bRecursive = bRecursive;

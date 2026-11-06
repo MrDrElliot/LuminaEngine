@@ -5,7 +5,6 @@
 #include "Log/Log.h"
 
 #include <exception>
-#include <string>
 
 namespace Lumina::JsonRpc
 {
@@ -13,62 +12,42 @@ namespace Lumina::JsonRpc
     {
         constexpr const char* GProtocolVersion = "2.0";
 
-        std::string ToStandard(FStringView Text)
+        FJsonValue MakeErrorObject(const FError& Error)
         {
-            return std::string(Text.data(), Text.size());
-        }
-
-        FString ToEngine(const std::string& Text)
-        {
-            return FString(Text.c_str(), Text.size());
-        }
-
-        // Replaced rather than thrown, since a stored string that is not UTF-8 must not take the process down with the reply.
-        FString Dump(const nlohmann::json& Value)
-        {
-            return ToEngine(Value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
-        }
-
-        nlohmann::json MakeErrorObject(const FError& Error)
-        {
-            nlohmann::json Object = nlohmann::json::object();
-            Object["code"]    = Error.Code;
-            Object["message"] = ToStandard(Error.Message);
-
-            if (!Error.Data.is_null())
+            FJsonValue Object = FJsonValue::MakeObject(3);
+            Object.Set("code", Error.Code);
+            Object.Set("message", Error.Message);
+            if (!Error.Data.IsNull())
             {
-                Object["data"] = Error.Data;
+                Object.Set("data", Error.Data);
             }
-
             return Object;
         }
 
-        nlohmann::json MakeEnvelope(const nlohmann::json& Id, const FResponse& Response)
+        FJsonValue MakeEnvelope(const FJsonValue& Id, const FResponse& Response)
         {
-            nlohmann::json Envelope = nlohmann::json::object();
-            Envelope["jsonrpc"] = GProtocolVersion;
-            Envelope["id"]      = Id;
-
+            FJsonValue Envelope = FJsonValue::MakeObject(3);
+            Envelope.Set("jsonrpc", GProtocolVersion);
+            Envelope.Set("id", Id);
             if (Response.Error.IsSet())
             {
-                Envelope["error"] = MakeErrorObject(*Response.Error);
+                Envelope.Set("error", MakeErrorObject(*Response.Error));
             }
             else
             {
-                Envelope["result"] = Response.Result;
+                Envelope.Set("result", Response.Result);
             }
-
             return Envelope;
         }
 
         // An id may be a string, a number or null, and anything else makes the whole request invalid.
-        bool IsUsableId(const nlohmann::json& Id)
+        bool IsUsableId(const FJsonValue& Id)
         {
-            return Id.is_string() || Id.is_number() || Id.is_null();
+            return Id.IsString() || Id.IsNumber() || Id.IsNull();
         }
     }
 
-    FResponse FResponse::Success(nlohmann::json Value)
+    FResponse FResponse::Success(FJsonValue Value)
     {
         FResponse Response;
         Response.Result = Move(Value);
@@ -77,14 +56,14 @@ namespace Lumina::JsonRpc
 
     FResponse FResponse::Failure(EErrorCode Code, FStringView Message)
     {
-        return Failure(Code, Message, nlohmann::json());
+        return Failure(Code, Message, FJsonValue());
     }
 
-    FResponse FResponse::Failure(EErrorCode Code, FStringView Message, nlohmann::json Data)
+    FResponse FResponse::Failure(EErrorCode Code, FStringView Message, FJsonValue Data)
     {
         FError Error;
         Error.Code    = static_cast<int32>(Code);
-        Error.Message = FString(Message.data(), Message.size());
+        Error.Message = FString(Message.GetData(), Message.Len());
         Error.Data    = Move(Data);
 
         FResponse Response;
@@ -94,56 +73,56 @@ namespace Lumina::JsonRpc
 
     void FDispatcher::RegisterMethod(FStringView Owner, FStringView Method, FMethodHandler Handler)
     {
-        if (Method.empty() || !Handler)
+        if (Method.IsEmpty() || !Handler)
         {
             LOG_WARN("[JsonRpc] Refused a registration with an empty name or a null handler.");
             return;
         }
 
         FEntry Entry;
-        Entry.Owner   = FString(Owner.data(), Owner.size());
+        Entry.Owner   = FString(Owner.GetData(), Owner.Len());
         Entry.Handler = Move(Handler);
 
-        const FString Key(Method.data(), Method.size());
+        const FString Key(Method.GetData(), Method.Len());
 
         FWriteScopeLock Lock(MethodsMutex);
 
-        if (Methods.find(Key) != Methods.end())
+        if (Methods.Contains(Key))
         {
             LOG_WARN("[JsonRpc] '{}' is already registered and the newer handler replaced it.", Key);
         }
 
-        Methods[Key] = Move(Entry);
+        Methods.Add(Key, Move(Entry));
     }
 
     bool FDispatcher::UnregisterMethod(FStringView Method)
     {
-        const FString Key(Method.data(), Method.size());
+        const FString Key(Method.GetData(), Method.Len());
 
         FWriteScopeLock Lock(MethodsMutex);
 
-        const auto Found = Methods.find(Key);
-        if (Found == Methods.end())
+        const auto Found = Methods.Find(Key);
+        if (Found == nullptr)
         {
             return false;
         }
 
-        Methods.erase(Found);
+        Methods.Remove(Key);
         return true;
     }
 
     int32 FDispatcher::UnregisterOwner(FStringView Owner)
     {
-        const FString Match(Owner.data(), Owner.size());
+        const FString Match(Owner.GetData(), Owner.Len());
 
         FWriteScopeLock Lock(MethodsMutex);
 
         int32 Removed = 0;
         for (auto It = Methods.begin(); It != Methods.end(); )
         {
-            if (It->second.Owner == Match)
+            if (It->Value.Owner == Match)
             {
-                It = Methods.erase(It);
+                It = Methods.Remove(It);
                 ++Removed;
             }
             else
@@ -157,16 +136,16 @@ namespace Lumina::JsonRpc
 
     bool FDispatcher::HasMethod(FStringView Method) const
     {
-        const FString Key(Method.data(), Method.size());
+        const FString Key(Method.GetData(), Method.Len());
 
         FReadScopeLock Lock(MethodsMutex);
-        return Methods.find(Key) != Methods.end();
+        return Methods.Contains(Key);
     }
 
     int32 FDispatcher::GetMethodCount() const
     {
         FReadScopeLock Lock(MethodsMutex);
-        return static_cast<int32>(Methods.size());
+        return Methods.Num();
     }
 
     void FDispatcher::ForEachMethod(const TFunction<void(FStringView Method, FStringView Owner)>& Functor) const
@@ -177,9 +156,9 @@ namespace Lumina::JsonRpc
         }
 
         FReadScopeLock Lock(MethodsMutex);
-        for (const auto& Pair : Methods)
+        for (const auto& [Method, Entry] : Methods)
         {
-            Functor(FStringView(Pair.first), FStringView(Pair.second.Owner));
+            Functor(FStringView(Method), FStringView(Entry.Owner));
         }
     }
 
@@ -187,28 +166,29 @@ namespace Lumina::JsonRpc
     {
         FReadScopeLock Lock(MethodsMutex);
 
-        const auto Found = Methods.find(Method);
-        if (Found == Methods.end())
+        const auto Found = Methods.Find(Method);
+        if (Found == nullptr)
         {
             return NullOpt;
         }
 
-        return Found->second.Handler;
+        return Found->Handler;
     }
 
-    TOptional<nlohmann::json> FDispatcher::HandleOne(const nlohmann::json& Message)
+    TOptional<FJsonValue> FDispatcher::HandleOne(const FJsonValue& Message)
     {
-        if (!Message.is_object())
+        if (!Message.IsObject())
         {
-            return MakeEnvelope(nlohmann::json(),
+            return MakeEnvelope(FJsonValue(),
                 FResponse::Failure(EErrorCode::InvalidRequest, "A request has to be a JSON object."));
         }
 
         // No id member at all is what makes a message a notification, which is different from a null id.
-        const bool bNotification = !Message.contains("id");
-        const nlohmann::json Id  = bNotification ? nlohmann::json() : Message["id"];
+        const FJsonValue* IdMember = Message.Find("id");
+        const bool bNotification   = IdMember == nullptr;
+        const FJsonValue Id        = bNotification ? FJsonValue() : *IdMember;
 
-        const auto Reply = [&](const FResponse& Response) -> TOptional<nlohmann::json>
+        const auto Reply = [&](const FResponse& Response) -> TOptional<FJsonValue>
         {
             if (bNotification)
             {
@@ -220,32 +200,31 @@ namespace Lumina::JsonRpc
 
         if (!IsUsableId(Id))
         {
-            return MakeEnvelope(nlohmann::json(),
+            return MakeEnvelope(FJsonValue(),
                 FResponse::Failure(EErrorCode::InvalidRequest, "An id has to be a string, a number or null."));
         }
 
-        const auto Version = Message.find("jsonrpc");
-        if (Version == Message.end() || !Version->is_string() || Version->get_ref<const std::string&>() != GProtocolVersion)
+        const FJsonValue& Version = Message["jsonrpc"];
+        if (!Version.IsString() || Version.AsString() != GProtocolVersion)
         {
             return Reply(FResponse::Failure(EErrorCode::InvalidRequest, "Only JSON-RPC 2.0 is accepted."));
         }
 
-        const auto Method = Message.find("method");
-        if (Method == Message.end() || !Method->is_string())
+        const FJsonValue& Method = Message["method"];
+        if (!Method.IsString())
         {
             return Reply(FResponse::Failure(EErrorCode::InvalidRequest, "A request needs a string method."));
         }
 
         FRequest Request;
-        Request.Method        = ToEngine(Method->get_ref<const std::string&>());
+        Request.Method        = FString(Method.AsString());
         Request.Id            = Id;
         Request.bNotification = bNotification;
-        Request.Params        = nlohmann::json::object();
+        Request.Params        = FJsonValue::MakeObject();
 
-        const auto Params = Message.find("params");
-        if (Params != Message.end())
+        if (const FJsonValue* Params = Message.Find("params"))
         {
-            if (!Params->is_object() && !Params->is_array())
+            if (!Params->IsObject() && !Params->IsArray())
             {
                 return Reply(FResponse::Failure(EErrorCode::InvalidParams, "Params has to be an object or an array."));
             }
@@ -282,38 +261,36 @@ namespace Lumina::JsonRpc
 
     FString FDispatcher::HandleMessage(FStringView Message)
     {
-        const nlohmann::json Parsed = nlohmann::json::parse(
-            Message.data(), Message.data() + Message.size(), nullptr, false);
-
-        if (Parsed.is_discarded())
+        FJsonValue Parsed;
+        if (!FJsonValue::Parse(Message, Parsed))
         {
-            return Dump(MakeEnvelope(nlohmann::json(),
-                FResponse::Failure(EErrorCode::ParseError, "The message was not valid JSON.")));
+            return MakeEnvelope(FJsonValue(),
+                FResponse::Failure(EErrorCode::ParseError, "The message was not valid JSON.")).ToString();
         }
 
-        if (!Parsed.is_array())
+        if (!Parsed.IsArray())
         {
-            const TOptional<nlohmann::json> Envelope = HandleOne(Parsed);
-            return Envelope.IsSet() ? Dump(*Envelope) : FString();
+            const TOptional<FJsonValue> Envelope = HandleOne(Parsed);
+            return Envelope.IsSet() ? Envelope->ToString() : FString();
         }
 
-        if (Parsed.empty())
+        if (Parsed.IsEmpty())
         {
-            return Dump(MakeEnvelope(nlohmann::json(),
-                FResponse::Failure(EErrorCode::InvalidRequest, "A batch has to hold at least one request.")));
+            return MakeEnvelope(FJsonValue(),
+                FResponse::Failure(EErrorCode::InvalidRequest, "A batch has to hold at least one request.")).ToString();
         }
 
-        nlohmann::json Replies = nlohmann::json::array();
-        for (const nlohmann::json& Element : Parsed)
+        FJsonValue Replies = FJsonValue::MakeArray(Parsed.Num());
+        for (const FJsonValue& Element : Parsed.AsArray())
         {
-            const TOptional<nlohmann::json> Envelope = HandleOne(Element);
+            TOptional<FJsonValue> Envelope = HandleOne(Element);
             if (Envelope.IsSet())
             {
-                Replies.push_back(*Envelope);
+                Replies.Add(Move(*Envelope));
             }
         }
 
         // A batch holding nothing but notifications is answered with silence rather than an empty array.
-        return Replies.empty() ? FString() : Dump(Replies);
+        return Replies.IsEmpty() ? FString() : Replies.ToString();
     }
 }

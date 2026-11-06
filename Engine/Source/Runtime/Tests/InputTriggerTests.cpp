@@ -158,7 +158,7 @@ TEST_F(InputTriggerTests, RepeatFiresOnPressThenAfterTheDelayAtTheInterval)
     for (int i = 0; i < 6; ++i)
     {
         Tick(Context);
-        Fired.push_back(ActionState("Scroll", Context).IsRepeated());
+        Fired.Add(ActionState("Scroll", Context).IsRepeated());
     }
     const TVector<bool> Expected = { true, false, true, true, true, true };
     EXPECT_EQ(Fired, Expected);
@@ -227,7 +227,7 @@ TEST_F(InputTriggerTests, ToggleFlipsOnEachPressAndSurvivesASettingsChange)
 {
     Author({ MakeDigital("Crouch", Lumina::EKey::C) });
     SPlayerInputSettings Settings;
-    Settings.ToggleActions.push_back(FName("Crouch"));
+    Settings.ToggleActions.Emplace("Crouch");
     FInputActionMap::Get().SetPlayerSettings(Settings);
     FInputContext Context;
 
@@ -255,9 +255,9 @@ TEST_F(InputTriggerTests, BindingOverrideReplacesOnlyItsKeySlot)
     Author({ Jump, Look });
 
     SPlayerInputSettings Settings;
-    Settings.BindingOverrides.push_back(SInputBindingOverride{ FName("Jump"), 0, SKey(Lumina::EKey::J) });
-    Settings.BindingOverrides.push_back(SInputBindingOverride{ FName("Look"), 0, SKey(Lumina::EKey::L) });
-    Settings.BindingOverrides.push_back(SInputBindingOverride{ FName("Jump"), 7, SKey(Lumina::EKey::K) });
+    Settings.BindingOverrides.Emplace(FName("Jump"), 0, SKey(Lumina::EKey::J));
+    Settings.BindingOverrides.Emplace(FName("Look"), 0, SKey(Lumina::EKey::L));
+    Settings.BindingOverrides.Emplace(FName("Jump"), 7, SKey(Lumina::EKey::K));
     FInputActionMap::Get().SetPlayerSettings(Settings);
 
     const SInputAction* Rebound = FInputActionMap::Get().FindAction(FName("Jump"));

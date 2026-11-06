@@ -455,7 +455,7 @@ TEST(Coroutine, GeneratorsYieldLazily)
     TVector<int32> Values;
     for (int32 Value : Fibonacci(7))
     {
-        Values.push_back(Value);
+        Values.Add(Value);
     }
     const TVector<int32> Expected = { 0, 1, 1, 2, 3, 5, 8 };
     EXPECT_EQ(Values, Expected);

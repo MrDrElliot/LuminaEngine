@@ -18,13 +18,13 @@ namespace
         const bool bSkinned = Resource.bSkinnedMesh;
 
         FMeshlet Meshlet{};
-        Meshlet.TriangleOffset = (uint32)Resource.MeshletData.MeshletTriangles.size();
-        Meshlet.VertexCount    = (uint32)Positions.size();
-        Meshlet.TriangleCount  = (uint32)Triangles.size();
+        Meshlet.TriangleOffset = (uint32)Resource.MeshletData.MeshletTriangles.Num();
+        Meshlet.VertexCount    = (uint32)Positions.Num();
+        Meshlet.TriangleCount  = (uint32)Triangles.Num();
         Meshlet.LODIndex       = 0;
 
         FMeshletData& Data = Resource.MeshletData;
-        if (Data.Meshlets.empty())
+        if (Data.Meshlets.IsEmpty())
         {
             const FVector3 GridBounds[2] = { FVector3(-256.0f), FVector3(256.0f) };
             Data.PositionGrid = ComputeMeshPositionGrid(GridBounds, 2);
@@ -33,12 +33,12 @@ namespace
         // Whichever stream the resource declares, so a skinned fixture is genuinely populated.
         if (bSkinned)
         {
-            Meshlet.VertexOffset = (uint32)Data.MeshletSkinnedVertices.size();
+            Meshlet.VertexOffset = (uint32)Data.MeshletSkinnedVertices.Num();
             for (const FVector3& P : Positions)
             {
                 FMeshletSkinnedVertex V{};
                 V.Position = EncodeMeshPosition(Data.PositionGrid, P);
-                Data.MeshletSkinnedVertices.push_back(V);
+                Data.MeshletSkinnedVertices.Add(V);
             }
         }
         else
@@ -46,27 +46,27 @@ namespace
             TVector<uint32> Indices;
             for (const FVector3& P : Positions)
             {
-                Indices.push_back((uint32)Data.VertexPositions.size());
-                Data.VertexPositions.push_back(EncodeMeshPosition(Data.PositionGrid, P));
-                Data.VertexAttributes.push_back(FMeshVertexAttributes{});
+                Indices.Add((uint32)Data.VertexPositions.Num());
+                Data.VertexPositions.Add(EncodeMeshPosition(Data.PositionGrid, P));
+                Data.VertexAttributes.AddDefaulted();
             }
-            AppendMeshletVertexRefs(Data, Meshlet, Indices.data(), (uint32)Indices.size());
+            AppendMeshletVertexRefs(Data, Meshlet, Indices.GetData(), (uint32)Indices.Num());
         }
 
         for (const FUIntVector3& T : Triangles)
         {
-            Resource.MeshletData.MeshletTriangles.push_back(T.x | (T.y << 8) | (T.z << 16));
+            Resource.MeshletData.MeshletTriangles.Add(T.x | (T.y << 8) | (T.z << 16));
         }
 
         FGeometrySurface Surface;
         Surface.NumLODs             = 1;
-        Surface.LODMeshletOffset[0] = (uint32)Resource.MeshletData.Meshlets.size();
+        Surface.LODMeshletOffset[0] = (uint32)Resource.MeshletData.Meshlets.Num();
         Surface.LODMeshletCount[0]  = 1;
 
-        Resource.MeshletData.Meshlets.push_back(Meshlet);
-        Resource.MeshletData.MeshletSpheres.push_back(FMeshletSphere{});
-        Resource.MeshletData.MeshletCones.push_back(FMeshletCone{});
-        Resource.GeometrySurfaces.push_back(Surface);
+        Resource.MeshletData.Meshlets.Add(Meshlet);
+        Resource.MeshletData.MeshletSpheres.AddDefaulted();
+        Resource.MeshletData.MeshletCones.AddDefaulted();
+        Resource.GeometrySurfaces.Add(Surface);
     }
 
     /** Axis-aligned box centered on the origin, outward-facing (CCW seen from outside). */
@@ -108,7 +108,7 @@ namespace
             Y = Math::Clamp(Y, 0, (int32)Volume.Dimensions.y - 1);
             Z = Math::Clamp(Z, 0, (int32)Volume.Dimensions.z - 1);
 
-            const size_t Index = ((size_t)Z * Volume.Dimensions.y + Y) * Volume.Dimensions.x + X;
+            const uint32 Index = (Z * Volume.Dimensions.y + Y) * Volume.Dimensions.x + X;
             const float Encoded = Volume.Distances[Index] / 255.0f;
             return Volume.bTwoSided
                 ? Encoded * Volume.MaxDistance

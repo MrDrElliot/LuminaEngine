@@ -3,6 +3,7 @@
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "World/Entity/Systems/SystemResources.h"
 #include "WorldSettings.generated.h"
 
 
@@ -159,5 +160,18 @@ namespace Lumina
         /** Send rate (Hz) for Tier 2 (far) entities. */
         PROPERTY(Editable, Category = "Networking|LOD", ClampMin = 0.0f)
         float TierFarRate = 3.0f;
+    };
+
+    // What systems read of the world's settings, refreshed by CWorld before each stage ticks its systems.
+    REFLECT()
+    struct RUNTIME_API FWorldSettingsState : ECS::FResource
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Hidden)
+        FVector3 Gravity = FVector3(0.0f, -9.81f, 0.0f);
+
+        PROPERTY(Hidden)
+        bool bAnimatesWhilePaused = true;
     };
 }

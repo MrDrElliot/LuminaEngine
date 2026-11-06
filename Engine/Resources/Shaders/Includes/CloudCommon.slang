@@ -34,17 +34,16 @@ float Cloud_Remap(float V, float InMin, float InMax, float OutMin, float OutMax)
     return OutMin + (V - InMin) * (OutMax - OutMin) / max(InMax - InMin, 1e-5);
 }
 
-// Thin bases should not lose their vertical shape the way a full billow profile would.
-float Cloud_HeightGradient(float H, float Billow)
+// The flat and the round height profile Billow blends, since thin bases should not lose their vertical shape the way a full billow profile would.
+float2 Cloud_HeightProfiles(float H)
 {
     float Base = saturate(Cloud_Remap(H, 0.0, 0.15, 0.0, 1.0));
     float Top  = saturate(Cloud_Remap(H, 0.45, 1.0, 1.0, 0.0));
-    float Flat = Base * Top;
 
     // Thinning all the way up from just above the base, so the coverage cut narrows each puff with height into a dome rather than an extruded column.
     float Round = saturate(Cloud_Remap(H, 0.0, 0.12, 0.0, 1.0))
                 * pow(saturate(Cloud_Remap(H, 0.25, 1.0, 1.0, 0.0)), 0.4);
-    return lerp(Flat, Round, Billow);
+    return float2(Base * Top, Round);
 }
 
 float Cloud_HeightFraction(FCloudMedium M, float Y)
@@ -63,6 +62,10 @@ static const float2x2 kWeatherRotation = float2x2(0.8572, -0.5150, 0.5150, 0.857
 // How far the weather layer drags the base shape, as a fraction of one shape tile.
 static const float kWeatherWarp = 0.3;
 
+// The most the weather layer scales Coverage and Billow by anywhere.
+static const float kWeatherCoverageMax = 1.75;
+static const float kWeatherBillowMax   = 1.35;
+
 struct FCloudWeather
 {
     float  Coverage;
@@ -80,8 +83,8 @@ FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
     float Regional = smoothstep(0.3, 0.8, Layout.g * 0.6 + Layout.b * 0.4);
 
     FCloudWeather Weather;
-    Weather.Coverage = saturate(M.Coverage * lerp(0.25, 1.75, Regional));
-    Weather.Billow   = saturate(M.Billow * lerp(0.55, 1.35, Layout.a));
+    Weather.Coverage = saturate(M.Coverage * lerp(0.25, kWeatherCoverageMax, Regional));
+    Weather.Billow   = saturate(M.Billow * lerp(0.55, kWeatherBillowMax, Layout.a));
     Weather.Warp     = (float2(Layout.r, Layout.a) - 0.5) * (M.ShapeScale * kWeatherWarp);
     return Weather;
 }
@@ -90,6 +93,15 @@ FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
 float Cloud_SampleDensityEnvelopeM(FCloudMedium M, float3 WorldPos, float HeightFrac, bool bCheap, out float Envelope)
 {
     Envelope = 0.0;
+
+    // No weather lifts this height's profile over the thinnest coverage floor, so the base shape could never pass and both fetches are skipped.
+    const float2 Profiles   = Cloud_HeightProfiles(HeightFrac);
+    const float  MaxProfile = max(Profiles.x, lerp(Profiles.x, Profiles.y, saturate(M.Billow * kWeatherBillowMax)));
+    if (MaxProfile <= lerp(kCoverageClearFloor, kCoverageOvercastFloor, saturate(M.Coverage * kWeatherCoverageMax)))
+    {
+        return 0.0;
+    }
+
     FCloudWeather Weather = Cloud_SampleWeather(M, WorldPos);
     if (Weather.Coverage <= 0.01)
     {
@@ -106,7 +118,7 @@ float Cloud_SampleDensityEnvelopeM(FCloudMedium M, float3 WorldPos, float Height
     float LowFreq = Shape.g * 0.625 + Shape.b * 0.25 + Shape.a * 0.125;
     float Base    = saturate(Cloud_Remap(Shape.r, LowFreq - 1.0, 1.0, 0.0, 1.0));
 
-    Base *= Cloud_HeightGradient(HeightFrac, Weather.Billow);
+    Base *= lerp(Profiles.x, Profiles.y, Weather.Billow);
 
     // Coverage as the remap floor erodes inward, so puffs shrink rather than uniformly fading out.
     float Floor   = lerp(kCoverageClearFloor, kCoverageOvercastFloor, Weather.Coverage);

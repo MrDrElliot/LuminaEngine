@@ -2,7 +2,7 @@
 
 #include "Containers/String.h"
 #include "Core/Object/ObjectMacros.h"
-#include "MCPPrefabTools.h"
+#include "MCPToolTypes.h"
 
 #include "MCPTerrainTools.generated.h"
 

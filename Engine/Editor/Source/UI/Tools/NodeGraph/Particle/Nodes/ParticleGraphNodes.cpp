@@ -40,13 +40,13 @@ namespace Lumina
     static void BindOutputs(FParticleCompiler& Compiler, CEdGraphNode* Node, std::initializer_list<const char*> Exprs)
     {
         const auto& Outputs = Node->GetOutputPins();
-        size_t Index = 0;
+        int32 Index = 0;
         for (const char* Expr : Exprs)
         {
-            CParticleOutput* Output = Index < Outputs.size() ? Cast<CParticleOutput>(Outputs[Index].Get()) : nullptr;
+            CParticleOutput* Output = Index < Outputs.Num() ? Cast<CParticleOutput>(Outputs[Index].Get()) : nullptr;
             if (Output != nullptr)
             {
-                Output->ResolvedVar = FString(Node->GetNodeFullName()) + "_" + Format("{}", Index).c_str();
+                Output->ResolvedVar = Node->GetNodeFullName() + "_" + *Format("{}", Index);
                 Compiler.EmitCurrent("const " + FParticleCompiler::TypeName(Output->GetPinType()) + " " + Output->ResolvedVar + " = " + Expr + ";");
             }
             ++Index;
@@ -110,7 +110,7 @@ namespace Lumina
         CParticleOutput* Output = Cast<CParticleOutput>(GetOutputPins()[0].Get());
         Output->SetPinType(FParticleCompiler::TypeOfWidth((int32)ParticleParamComponents(Value.Type)));
         const FString Read = Compiler.Param("Value", Value);
-        BindOutputs(Compiler, this, { Read.c_str() });
+        BindOutputs(Compiler, this, { *Read });
     }
 
     void CParticleNode_Random::BuildNode()
@@ -130,12 +130,12 @@ namespace Lumina
         switch (Compiler.GetContext())
         {
         case EParticleContext::Spawn:  Unit = "RandUnit(Seed)"; break;
-        case EParticleContext::Update: Unit = Format("StableRandom(P.Seed, {}u)", Salt).c_str(); break;
-        case EParticleContext::Grid:   Unit = Format("(float)PCGHash((uint)Coord.x * 73856093u ^ (uint)Coord.y * 19349663u ^ {}u) / 4294967295.0", Salt).c_str(); break;
-        default:                       Unit = Format("(float)PCGHash(asuint(UV.x) ^ PCGHash(asuint(UV.y) ^ {}u)) / 4294967295.0", Salt).c_str(); break;
+        case EParticleContext::Update: Unit = *Format("StableRandom(P.Seed, {}u)", Salt); break;
+        case EParticleContext::Grid:   Unit = *Format("(float)PCGHash((uint)Coord.x * 73856093u ^ (uint)Coord.y * 19349663u ^ {}u) / 4294967295.0", Salt); break;
+        default:                       Unit = *Format("(float)PCGHash(asuint(UV.x) ^ PCGHash(asuint(UV.y) ^ {}u)) / 4294967295.0", Salt); break;
         }
         const FString Expr = "lerp(" + Min + ", " + Max + ", " + Unit + ")";
-        BindOutputs(Compiler, this, { Expr.c_str() });
+        BindOutputs(Compiler, this, { *Expr });
     }
 
     void CParticleNode_GetAttribute::BuildNode()
@@ -145,7 +145,7 @@ namespace Lumina
 
     void CParticleNode_GetAttribute::GenerateDefinition(FParticleCompiler& Compiler)
     {
-        const FString Name(AttributeName.ToString().c_str());
+        const FString Name(*AttributeName.ToString());
         if (!Require(Compiler, this, !IsOnCell(Compiler.GetContext())))
         {
             return;
@@ -155,8 +155,8 @@ namespace Lumina
             Compiler.AddError({ "Get Attribute", "Attribute '" + Name + "' is not a valid identifier.", this });
             return;
         }
-        const FString Read = Compiler.Attribute(Name.c_str());
-        BindOutputs(Compiler, this, { Read.c_str() });
+        const FString Read = Compiler.Attribute(*Name);
+        BindOutputs(Compiler, this, { *Read });
     }
 
     void CParticleNode_ArrayElement::BuildNode()
@@ -172,7 +172,7 @@ namespace Lumina
         const FString Index = FParticleCompiler::Coerce(Compiler.GetInputValue(Cast<CParticleInput>(GetInputPins()[0].Get())), EParticlePinType::Float);
         const FString Value = "ArrayAt(" + Array + ", (uint)max(" + Index + ", 0.0))";
         const FString Count = "(float)ArrayCount(" + Array + ")";
-        BindOutputs(Compiler, this, { Value.c_str(), Count.c_str() });
+        BindOutputs(Compiler, this, { *Value, *Count });
     }
 
     void CParticleNode_SampleGrid::BuildNode()
@@ -191,7 +191,7 @@ namespace Lumina
         const FString Channel  = ChannelOf(Compiler, this->Channel);
         const FString Value    = "SampleGrid(" + Channel + ", " + Position + ")";
         const FString Gradient = "GridGradient(" + Channel + ", " + Position + ")";
-        BindOutputs(Compiler, this, { Value.c_str(), Gradient.c_str() });
+        BindOutputs(Compiler, this, { *Value, *Gradient });
     }
 
     void CParticleNode_Cell::BuildNode()
@@ -214,7 +214,7 @@ namespace Lumina
         const bool    bStage   = Compiler.GetContext() == EParticleContext::Grid;
         const FString Average  = bStage ? "0.25 * (GridLaplacian(Coord, " + Channel + ") + 4.0 * GridAt(Coord, " + Channel + "))" : Value;
         const FString Laplace  = bStage ? "GridLaplacian(Coord, " + Channel + ")" : FString("0.0");
-        BindOutputs(Compiler, this, { Value.c_str(), Average.c_str(), Laplace.c_str() });
+        BindOutputs(Compiler, this, { *Value, *Average, *Laplace });
     }
 
     void CParticleNode_GridNeighbor::BuildNode()
@@ -226,8 +226,8 @@ namespace Lumina
     {
         if (Require(Compiler, this, Compiler.GetContext() == EParticleContext::Grid))
         {
-            const FString Read = Format("GridAt(Coord + int2({}, {}), ", OffsetX, OffsetY).c_str() + ChannelOf(Compiler, Channel) + ")";
-            BindOutputs(Compiler, this, { Read.c_str() });
+            const FString Read = Format("*GridAt(Coord + int2({}, {}), ", OffsetX, OffsetY) + ChannelOf(Compiler, Channel) + ")";
+            BindOutputs(Compiler, this, { *Read });
         }
     }
 
@@ -259,7 +259,7 @@ namespace Lumina
         {
             if (Object != nullptr && Object->IsA<CClass>() && Object != Base && static_cast<CClass*>(Object)->IsChildOf(Base))
             {
-                Classes.push_back(static_cast<CClass*>(Object));
+                Classes.Add(static_cast<CClass*>(Object));
             }
         });
 
@@ -297,14 +297,14 @@ namespace Lumina
 
     static bool UsesMaterialStageData(const FMaterialFormula& Formula)
     {
-        return Algo::AnyOf(MaterialStageSymbols, [&](FStringView Symbol) { return Formula.Code.find(Symbol) != FStringView::npos; });
+        return Algo::AnyOf(MaterialStageSymbols, [&](FStringView Symbol) { return Formula.Code.Find(Symbol) != Constants::kIndexNone; });
     }
 
     // A material's unwired default in its particle equivalent, or empty where a particle has none.
     static FString ParticleFallback(FStringView Fallback, int32 FallbackWidth, EParticleContext Context, int32& OutWidth)
     {
         const bool bOnCell = IsOnCell(Context);
-        if (Fallback.starts_with("float"))
+        if (Fallback.StartsWith("float"))
         {
             OutWidth = Math::Max(FallbackWidth, 1);
             return FString(Fallback);
@@ -336,7 +336,7 @@ namespace Lumina
     FFixedString CParticleNode_Formula::GetNodeCategory() const
     {
         const FMaterialFormula* Formula = GetFormula();
-        return Formula != nullptr ? FFixedString(Formula->Category.data(), Formula->Category.size()) : FFixedString("Math");
+        return Formula != nullptr ? FFixedString(Formula->Category.GetData(), Formula->Category.Len()) : FFixedString("Math");
     }
 
     FStringView CParticleNode_Formula::GetNodeDisplayName() const
@@ -361,7 +361,7 @@ namespace Lumina
                 return;
             }
 
-            FGraphNodeVariant& Variant = OutVariants.emplace_back();
+            FGraphNodeVariant& Variant = OutVariants.EmplaceGetRef();
             Variant.Name        = Class->GetName();
             Variant.DisplayName = FString(Formula.Name);
             Variant.Category    = FString(Formula.Category);
@@ -382,7 +382,7 @@ namespace Lumina
         {
             AddInput(Pin.Name, Pin.Width == 0 ? EParticlePinType::Float : FParticleCompiler::TypeOfWidth(Pin.Width), FVector4(Pin.Default));
         }
-        if (Formula->Outputs.empty())
+        if (Formula->Outputs.IsEmpty())
         {
             AddOutput("Result", FParticleCompiler::TypeOfWidth(Formula->Width));
         }
@@ -409,7 +409,7 @@ namespace Lumina
         const auto& Inputs = GetInputPins();
         TVector<TPair<FString, int32>> Reads;
         int32 SharedWidth = 1;
-        for (size_t Index = 0; Index < Formula->Inputs.size() && Index < Inputs.size(); ++Index)
+        for (int32 Index = 0; Index < Formula->Inputs.Num() && Index < Inputs.Num(); ++Index)
         {
             const FMaterialFormulaPin& Spec = Formula->Inputs[Index];
             CParticleInput* Pin = Cast<CParticleInput>(Inputs[Index].Get());
@@ -419,7 +419,7 @@ namespace Lumina
             if (!Pin->HasConnection() && Spec.Fallback != nullptr)
             {
                 Expr = ParticleFallback(Spec.Fallback, Spec.Width, Compiler.GetContext(), Width);
-                if (Expr.empty())
+                if (Expr.IsEmpty())
                 {
                     Compiler.AddError({ FString(Formula->Name), FString("Wire ") + Spec.Name + ", which has no default outside a material.", this });
                     Expr = "0.0";
@@ -437,26 +437,26 @@ namespace Lumina
             {
                 SharedWidth = Math::Max(SharedWidth, Width);
             }
-            Reads.emplace_back(Expr, Width);
+            Reads.Emplace(Expr, Width);
         }
 
-        const FString Prefix = FString(GetNodeFullName());
-        Compiler.EmitCurrent(ExpandFormula(*Formula, Prefix, TSpan<const TPair<FString, int32>>(Reads.data(), Reads.size()), SharedWidth));
+        const FString Prefix = GetNodeFullName();
+        Compiler.EmitCurrent(ExpandFormula(*Formula, Prefix, TSpan<const TPair<FString, int32>>(Reads.GetData(), Reads.Num()), SharedWidth));
 
         const auto& Outputs = GetOutputPins();
-        auto Bind = [&](size_t Index, const FString& Var, int32 Width)
+        auto Bind = [&](int32 Index, const FString& Var, int32 Width)
         {
-            if (CParticleOutput* Output = Index < Outputs.size() ? Cast<CParticleOutput>(Outputs[Index].Get()) : nullptr)
+            if (CParticleOutput* Output = Outputs.IsValidIndex(Index) ? Cast<CParticleOutput>(Outputs[Index].Get()) : nullptr)
             {
                 Output->ResolvedVar = Var;
                 Output->SetPinType(FParticleCompiler::TypeOfWidth(Width == 0 ? SharedWidth : Width));
             }
         };
-        if (Formula->Outputs.empty())
+        if (Formula->Outputs.IsEmpty())
         {
             Bind(0, Prefix, Formula->Width);
         }
-        for (size_t Index = 0; Index < Formula->Outputs.size(); ++Index)
+        for (int32 Index = 0; Index < Formula->Outputs.Num(); ++Index)
         {
             Bind(Index, Prefix + "_" + Formula->Outputs[Index].Name, Formula->Outputs[Index].Width);
         }
@@ -464,18 +464,18 @@ namespace Lumina
 
     FString CParticleSinkNode::InputVar(int32 Pin)
     {
-        return FString(GetNodeFullName()) + "_in" + Format("{}", Pin).c_str();
+        return GetNodeFullName() + "_in" + *Format("{}", Pin);
     }
 
     bool CParticleSinkNode::IsWired(int32 Pin) const
     {
-        return Pin < (int32)GetInputPins().size() && GetInputPins()[Pin]->HasConnection();
+        return Pin < GetInputPins().Num() && GetInputPins()[Pin]->HasConnection();
     }
 
     void CParticleSinkNode::GenerateDefinition(FParticleCompiler& Compiler)
     {
         const auto& Inputs = GetInputPins();
-        for (int32 Index = 0; Index < (int32)Inputs.size(); ++Index)
+        for (int32 Index = 0; Index < Inputs.Num(); ++Index)
         {
             CParticleInput* Pin = Cast<CParticleInput>(Inputs[Index].Get());
             const FString Read = FParticleCompiler::Coerce(Compiler.GetInputValue(Pin), Pin->GetPinType());
@@ -522,7 +522,7 @@ namespace Lumina
 
     void CParticleNode_SetAttribute::Write(FParticleCompiler& Compiler)
     {
-        const FString Name(AttributeName.ToString().c_str());
+        const FString Name(*AttributeName.ToString());
         if (!Require(Compiler, this, !IsOnCell(Compiler.GetContext())))
         {
             return;
@@ -532,7 +532,7 @@ namespace Lumina
             Compiler.AddError({ "Set Attribute", "Attribute '" + Name + "' is not a valid identifier.", this });
             return;
         }
-        Compiler.EmitCurrent(Compiler.Attribute(Name.c_str()) + " = " + InputVar(0) + ";");
+        Compiler.EmitCurrent(Compiler.Attribute(*Name) + " = " + InputVar(0) + ";");
     }
 
     void CParticleNode_WriteToGrid::BuildNode()

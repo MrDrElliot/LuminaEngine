@@ -56,7 +56,7 @@ namespace Lumina::RHI::Textures
     // Caller holds SwapMutex.
     static void PublishSwapCountLocked()
     {
-        GState.PendingSwapCount.store((uint32)GState.PendingSwaps.size(), std::memory_order_release);
+        GState.PendingSwapCount.store((uint32)GState.PendingSwaps.Num(), std::memory_order_release);
     }
 
     // Frames a staged swap may go with no upload landing against it before it is called abandoned.
@@ -94,13 +94,13 @@ namespace Lumina::RHI::Textures
         TVector<uint32> Storage;
         {
             FScopeLock Lock(GState.StorageMutex);
-            for (size_t i = 0; i < GState.StorageSlots.size(); )
+            for (int32 i = 0; i < GState.StorageSlots.Num(); )
             {
                 if (GState.StorageSlots[i].TextureHandle == Texture.Handle)
                 {
-                    Storage.push_back(GState.StorageSlots[i].Slot);
-                    GState.StorageSlots[i] = GState.StorageSlots.back();
-                    GState.StorageSlots.pop_back();
+                    Storage.Add(GState.StorageSlots[i].Slot);
+                    GState.StorageSlots[i] = GState.StorageSlots.Last();
+                    GState.StorageSlots.Pop();
                 }
                 else
                 {
@@ -150,7 +150,7 @@ namespace Lumina::RHI::Textures
                 Upload::CancelTexture(Pending.NewTexture);
                 Retire(Pending.NewTexture);
             }
-            GState.PendingSwaps.clear();
+            GState.PendingSwaps.Reset();
             PublishSwapCountLocked();
         }
 
@@ -294,7 +294,7 @@ namespace Lumina::RHI::Textures
 
             if (!bMerged)
             {
-                FPendingSwap& Staged = GState.PendingSwaps.emplace_back();
+                FPendingSwap& Staged = GState.PendingSwaps.EmplaceGetRef();
                 Staged.Slot       = Tex.SampledSlot;
                 Staged.NewTexture = NewTexture;
                 Staged.OldTexture = Previous;
@@ -350,7 +350,7 @@ namespace Lumina::RHI::Textures
         FTextureH Staged;
         {
             FScopeLock Lock(GState.SwapMutex);
-            for (size_t i = 0; i < GState.PendingSwaps.size(); ++i)
+            for (int32 i = 0; i < GState.PendingSwaps.Num(); ++i)
             {
                 if (GState.PendingSwaps[i].Slot != Tex.SampledSlot)
                 {
@@ -361,8 +361,8 @@ namespace Lumina::RHI::Textures
                 Staged      = GState.PendingSwaps[i].NewTexture;
                 Tex.Texture = GState.PendingSwaps[i].OldTexture;
 
-                GState.PendingSwaps[i] = GState.PendingSwaps.back();
-                GState.PendingSwaps.pop_back();
+                GState.PendingSwaps[i] = GState.PendingSwaps.Last();
+                GState.PendingSwaps.Pop();
                 PublishSwapCountLocked();
                 break;
             }
@@ -433,7 +433,7 @@ namespace Lumina::RHI::Textures
         TVector<FTextureH> Superseded;
         {
             FScopeLock Lock(GState.SwapMutex);
-            for (size_t i = 0; i < GState.PendingSwaps.size(); )
+            for (int32 i = 0; i < GState.PendingSwaps.Num(); )
             {
                 FPendingSwap& Pending = GState.PendingSwaps[i];
 
@@ -460,10 +460,10 @@ namespace Lumina::RHI::Textures
 
                 // Only once the copies have executed does the slot move, and only then is the old image garbage.
                 HeapRepointTexture(GetGlobalHeap(), Pending.Slot, Pending.NewTexture);
-                Superseded.push_back(Pending.OldTexture);
+                Superseded.Add(Pending.OldTexture);
 
-                GState.PendingSwaps[i] = GState.PendingSwaps.back();
-                GState.PendingSwaps.pop_back();
+                GState.PendingSwaps[i] = GState.PendingSwaps.Last();
+                GState.PendingSwaps.Pop();
                 PublishSwapCountLocked();
             }
         }
@@ -533,7 +533,7 @@ namespace Lumina::RHI::Textures
         const uint32 Slot = HeapWriteRWTexture(GetGlobalHeap(), Tex.Texture, Mip);
         if (Slot != kInvalidHeapSlot)
         {
-            GState.StorageSlots.push_back(FStorageSlot{ Handle, Mip, Slot });
+            GState.StorageSlots.Emplace(Handle, Mip, Slot);
         }
         return Slot;
     }
@@ -551,13 +551,13 @@ namespace Lumina::RHI::Textures
         if (Tex.SampledSlot != kInvalidHeapSlot)
         {
             FScopeLock Lock(GState.SwapMutex);
-            for (size_t i = 0; i < GState.PendingSwaps.size(); ++i)
+            for (int32 i = 0; i < GState.PendingSwaps.Num(); ++i)
             {
                 if (GState.PendingSwaps[i].Slot == Tex.SampledSlot)
                 {
                     StillBound = GState.PendingSwaps[i].OldTexture;
-                    GState.PendingSwaps[i] = GState.PendingSwaps.back();
-                    GState.PendingSwaps.pop_back();
+                    GState.PendingSwaps[i] = GState.PendingSwaps.Last();
+                    GState.PendingSwaps.Pop();
                     PublishSwapCountLocked();
                     break;
                 }

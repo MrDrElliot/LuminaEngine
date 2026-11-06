@@ -43,7 +43,7 @@ namespace Lumina::Timeline
 
     FVector4 PaletteColor(int32 Index)
     {
-        constexpr int32 Count = (int32)IM_ARRAYSIZE(Palette);
+        constexpr int32 Count = IM_ARRAYSIZE(Palette);
         return Palette[((Index % Count) + Count) % Count];
     }
 

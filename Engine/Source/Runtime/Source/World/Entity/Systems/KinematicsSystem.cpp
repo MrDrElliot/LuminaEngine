@@ -4,8 +4,6 @@
 
 #include "Core/Console/ConsoleVariable.h"
 #include "Physics/PhysicsScene.h"
-#include "TaskSystem/TaskSystem.h"
-#include "World/World.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -19,96 +17,52 @@ namespace Lumina
     static TConsoleVar<bool> CVarKinematicsEnabled("Kinematics.Enabled", true,
         "Resolve a shared per-entity velocity each frame. Off makes every lookup report zero.");
 
+    namespace KinematicsSystemInternal
+    {
+        constexpr uint32 kKinematicsParallelGrain = 2048;
+    }
+
     void SKinematicsSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
-        Writes<SVelocityComponent, SystemResource::Kinematics>();
-        Reads<STransformComponent, SCharacterMovementComponent, SRigidBodyComponent, SystemResource::PhysicsQuery>();
-        Reads<SSkeletalMeshComponent, SAudioSourceComponent, SAudioListenerComponent, SCameraComponent>();
-    }
-
-    namespace
-    {
-        constexpr uint32 kKinematicsParallelGrain = 2048;
-        constexpr uint32 kKinematicsInvalidBody = Constants::kIndexNoneU32;
-    }
-
-    void SKinematicsSystem::OnStartup(const SSystemContext& Context)
-    {
-
-        Context.GetRegistry().Ctx().Emplace<FKinematicsState>();
     }
 
     void SKinematicsSystem::OnUpdate(const SSystemContext& Context)
     {
+        using namespace KinematicsSystemInternal;
 
-        LUMINA_PROFILE_SCOPE();
-
-        FKinematicsState* StatePtr = Context.GetRegistry().Ctx().Find<FKinematicsState>();
-        if (StatePtr == nullptr)
-        {
-            return;
-        }
-
-        FKinematicsState& State = *StatePtr;
-        State.bEnabled = CVarKinematicsEnabled.GetValue();
-        if (!State.bEnabled)
+        FKinematicsState& KinematicsState = *State;
+        KinematicsState.bEnabled = CVarKinematicsEnabled.GetValue();
+        if (!KinematicsState.bEnabled)
         {
             return;
         }
 
         // Only the components whose systems read a velocity, since differencing every transform paid for static scenery and crowds.
-        const ECS::FSparseSet* Consumers[] =
-        {
-            Context.CreateView<SSkeletalMeshComponent>().GetDriver(),
-            Context.CreateView<SAudioSourceComponent>().GetDriver(),
-            Context.CreateView<SAudioListenerComponent>().GetDriver(),
-            Context.CreateView<SCameraComponent>().GetDriver(),
-            Context.CreateView<SVelocityComponent>().GetDriver(),
-        };
-
-        uint32 MaxIndex = 0;
-        bool bAnyConsumer = false;
-        for (const ECS::FSparseSet* Pool : Consumers)
-        {
-            if (Pool == nullptr || Pool->IsEmpty())
-            {
-                continue;
-            }
-            bAnyConsumer = true;
-            MaxIndex = Math::Max(MaxIndex, Pool->MaxLiveIndex());
-        }
-
-        ++State.Stamp;
-        if (!bAnyConsumer)
+        TStampedEntityCache<FEntityKinematics>& Cache = KinematicsState.Entries;
+        if (!Cache.BeginPass(SkeletalConsumers.View(), AudioSourceConsumers.View(), ListenerConsumers.View(),
+                             CameraConsumers.View(), Velocities.View()))
         {
             return;
         }
 
-        if ((uint32)State.ByEntityIndex.size() <= MaxIndex)
-        {
-            State.ByEntityIndex.resize((size_t)MaxIndex + 1u);
-        }
-
-        auto TransformStorage = Context.GetStorage<STransformComponent>();
-
-        const uint32 Stamp     = State.Stamp;
-        const float  DeltaTime = (float)Context.GetDeltaTime();
+        const uint32 Stamp     = Cache.Stamp;
+        const float  DeltaTime = Context.GetDeltaTime();
         const float  InvDelta  = DeltaTime > 0.0f ? (1.0f / DeltaTime) : 0.0f;
-        FEntityKinematics* Entries = State.ByEntityIndex.data();
+        FEntityKinematics* Entries = Cache.ByEntityIndex.GetData();
 
         // An entity in two consumer pools is differenced once, since the second visit sees this pass's stamp.
-        const auto Difference = [&](ECS::FEntity Entity)
+        const auto Difference = [&](ECS::FEntity Entity, const auto&)
         {
-            const STransformComponent* Xform = Entity.IsTombstone() ? nullptr : TransformStorage.TryGet(Entity);
+            const STransformComponent* Xform = Transforms.TryGet<STransformComponent>(Entity);
             if (Xform == nullptr)
             {
                 return;
             }
 
             FEntityKinematics& Entry = Entries[Entity.GetIndex()];
-            if (Entry.Owner == Entity && Entry.Stamp == Stamp)
+            if (Cache.IsFresh(Entry, Entity))
             {
                 return;
             }
@@ -131,90 +85,48 @@ namespace Lumina
         };
 
         // Pools run one after another, so an entity shared by two is never differenced by two workers at once.
-        for (const ECS::FSparseSet* Pool : Consumers)
-        {
-            if (Pool == nullptr || Pool->IsEmpty())
-            {
-                continue;
-            }
-
-            const ECS::FEntity* Dense = Pool->GetDenseData();
-            const uint32 Num = (uint32)Pool->GetDenseSize();
-            Task::ParallelForOrSerial(Num, kKinematicsParallelGrain, [&](uint32 Index)
-            {
-                Difference(Dense[Index]);
-            }, 256);
-        }
+        SkeletalConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
+        AudioSourceConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
+        ListenerConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
+        CameraConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
+        Velocities.ParallelForEach(Difference, kKinematicsParallelGrain);
 
         // Refines only what the difference pass stamped, so a body with no transform is skipped.
         const auto Refine = [&](ECS::FEntity Entity, const FVector3& Velocity)
         {
-            FEntityKinematics& Entry = Entries[Entity.GetIndex()];
-            if (Entry.Owner != Entity || Entry.Stamp != Stamp)
+            if (FEntityKinematics* Entry = Cache.Find(Entity))
             {
-                return;
+                Entry->LinearVelocity = Velocity;
+                Entry->Speed          = Math::Length(Velocity);
             }
-            Entry.LinearVelocity = Velocity;
-            Entry.Speed          = Math::Length(Velocity);
         };
 
         // The solver's own value beats a difference, which smears a collision across the whole frame.
-        if (Physics::IPhysicsScene* Scene = Context.GetPhysicsScene())
+        if (Physics::IPhysicsQueries* PhysicsQueries = Context.GetPhysics())
         {
-            const auto RefineBody = [&](ECS::FEntity Entity, const SRigidBodyComponent&, const STransformComponent&)
+            // The world is not stepping before physics, so its body reads are safe from every worker at once.
+            Bodies.ParallelForEach([&](ECS::FEntity Entity, const SRigidBodyComponent&, const STransformComponent&)
             {
                 // Most bodies have no consumer, and the stamp check is far cheaper than the scene's status lookup.
-                const uint32 Index = Entity.GetIndex();
-                if (Index >= (uint32)State.ByEntityIndex.size() || Entries[Index].Owner != Entity || Entries[Index].Stamp != Stamp)
+                if (Cache.Find(Entity) != nullptr && PhysicsQueries->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {
-                    return;
+                    Refine(Entity, PhysicsQueries->GetLinearVelocity(Entity));
                 }
-                if (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
-                {
-                    Refine(Entity, Scene->GetLinearVelocity(Entity));
-                }
-            };
-
-            // The world is not stepping before physics, so its body reads are safe from every worker at once.
-            Context.ParallelForEachView(Context.CreateView<SRigidBodyComponent, STransformComponent>(), RefineBody,
-                256, kKinematicsParallelGrain);
+            }, kKinematicsParallelGrain);
         }
 
         // Last, because a character mover owns its velocity outright and SAnimationSystem preferred it.
-        Context.CreateView<SCharacterMovementComponent, STransformComponent>().ForEach(
-            [&](ECS::FEntity Entity, const SCharacterMovementComponent& Movement, const STransformComponent&)
-            {
-                Refine(Entity, Movement.Velocity);
-            });
-
+        Movers.ForEach([&](ECS::FEntity Entity, const SCharacterMovementComponent& Movement, const STransformComponent&)
+        {
+            Refine(Entity, Movement.Velocity);
+        });
 
         // Mirrored so the reflected component reads the same value in the editor and in script.
-        Context.CreateView<SVelocityComponent>().ForEach(
-            [&](ECS::FEntity Entity, SVelocityComponent& Out)
-            {
-                const uint32 Index = Entity.GetIndex();
-                const bool bFresh = Index < (uint32)State.ByEntityIndex.size()
-                                 && Entries[Index].Owner == Entity
-                                 && Entries[Index].Stamp == Stamp;
-                Out.Velocity = bFresh ? Entries[Index].LinearVelocity : FVector3(0.0f);
-                Out.Speed    = bFresh ? Entries[Index].Speed : 0.0f;
-            });
-    }
-
-    namespace Kinematics
-    {
-        const FKinematicsState* GetState(const SSystemContext& Context)
+        Velocities.ForEach([&](ECS::FEntity Entity, ECS::TMut<SVelocityComponent> OutMut)
         {
-            return Context.GetRegistry().Ctx().Find<FKinematicsState>();
-        }
-
-        const FKinematicsState* GetState(CWorld* World)
-        {
-            if (World == nullptr)
-            {
-                return nullptr;
-            }
-            return World->GetEntityRegistry().Ctx().Find<FKinematicsState>();
-        }
+            const FEntityKinematics* Entry = Cache.Find(Entity);
+            OutMut.SetIfChanged(&SVelocityComponent::Velocity, Entry != nullptr ? Entry->LinearVelocity : FVector3(0.0f));
+            OutMut.SetIfChanged(&SVelocityComponent::Speed, Entry != nullptr ? Entry->Speed : 0.0f);
+        });
     }
 }

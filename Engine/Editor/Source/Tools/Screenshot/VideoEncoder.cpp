@@ -32,9 +32,9 @@ namespace Lumina
 
         std::wstring Widen(const FString& Text)
         {
-            const int Length = MultiByteToWideChar(CP_UTF8, 0, Text.c_str(), (int)Text.size(), nullptr, 0);
+            const int Length = MultiByteToWideChar(CP_UTF8, 0, *Text, Text.Len(), nullptr, 0);
             std::wstring Wide((size_t)Length, L'\0');
-            MultiByteToWideChar(CP_UTF8, 0, Text.c_str(), (int)Text.size(), Wide.data(), Length);
+            MultiByteToWideChar(CP_UTF8, 0, *Text, Text.Len(), Wide.data(), Length);
             return Wide;
         }
 

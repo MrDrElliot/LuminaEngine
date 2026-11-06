@@ -34,7 +34,7 @@ namespace Lumina
         FString DDCBaseDir()
         {
             FString Out = Paths::GetEngineInstallDirectory();
-            if (Out.empty()) return {};
+            if (Out.IsEmpty()) return {};
             Out += "/Intermediates/DDC";
             return Out;
         }
@@ -46,7 +46,7 @@ namespace Lumina
                 static_cast<unsigned long long>(Key.Hash));
 
             FString Out = DDCBaseDir();
-            if (Out.empty()) return {};
+            if (Out.IsEmpty()) return {};
             Out += '/';
             Out += Hex[0];
             Out += Hex[1];
@@ -78,7 +78,7 @@ namespace Lumina
         }
 
         const FString Path = DDCPathFor(Key);
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             LOG_WARN("[CookDDC] TryGet: engine install dir not set; cache disabled");
             return false;
@@ -105,14 +105,14 @@ namespace Lumina
             GMisses.fetch_add(1, std::memory_order_relaxed);
         };
 
-        if (Raw.size() < sizeof(FDDCFileHeader))
+        if (static_cast<size_t>(Raw.Num()) < sizeof(FDDCFileHeader))
         {
             DropCorrupt("short file");
             return false;
         }
 
         FDDCFileHeader Header{};
-        std::memcpy(&Header, Raw.data(), sizeof(Header));
+        std::memcpy(&Header, Raw.GetData(), sizeof(Header));
         if (std::memcmp(Header.Magic, kMagic, sizeof(kMagic)) != 0)
         {
             DropCorrupt("bad magic");
@@ -124,8 +124,8 @@ namespace Lumina
             return false;
         }
 
-        const size_t PayloadSize = Raw.size() - sizeof(FDDCFileHeader);
-        const uint8* PayloadPtr  = Raw.data() + sizeof(FDDCFileHeader);
+        const size_t PayloadSize = Raw.Num() - sizeof(FDDCFileHeader);
+        const uint8* PayloadPtr  = Raw.GetData() + sizeof(FDDCFileHeader);
         const uint64 PayloadHash = PayloadSize > 0
             ? Hash::XXHash::GetHash64(PayloadPtr, PayloadSize)
             : 0ull;
@@ -135,7 +135,8 @@ namespace Lumina
             return false;
         }
 
-        OutBytes.assign(PayloadPtr, PayloadPtr + PayloadSize);
+        OutBytes.Reset();
+        OutBytes.Append(PayloadPtr, PayloadPtr + PayloadSize);
 
         GHits.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -143,13 +144,13 @@ namespace Lumina
 
     bool FCookDDC::Put(const FCookInputHash& Key, const TVector<uint8>& Bytes)
     {
-        if (!Key.IsValid() || Bytes.empty())
+        if (!Key.IsValid() || Bytes.IsEmpty())
         {
             return false;
         }
 
         const FString Path = DDCPathFor(Key);
-        if (Path.empty())
+        if (Path.IsEmpty())
         {
             LOG_WARN("[CookDDC] Put: engine install dir not set; cache disabled");
             return false;
@@ -164,22 +165,22 @@ namespace Lumina
         FDDCFileHeader Header{};
         std::memcpy(Header.Magic, kMagic, sizeof(kMagic));
         Header.FileVersion = kFileVersion;
-        Header.PayloadHash = Hash::XXHash::GetHash64(Bytes.data(), Bytes.size());
+        Header.PayloadHash = Hash::XXHash::GetHash64(Bytes.GetData(), Bytes.Num());
 
         TVector<uint8> Framed;
-        Framed.reserve(sizeof(Header) + Bytes.size());
-        Framed.resize(sizeof(Header));
-        std::memcpy(Framed.data(), &Header, sizeof(Header));
-        Framed.insert(Framed.end(), Bytes.begin(), Bytes.end());
+        Framed.Reserve(sizeof(Header) + Bytes.Num());
+        Framed.SetNum(sizeof(Header));
+        std::memcpy(Framed.GetData(), &Header, sizeof(Header));
+        Framed.Append(Bytes);
 
         // A kill mid-write would otherwise leave a short file that TryGet accepts as truth.
-        if (!Filesystem::AtomicWriteFile(Path, TSpan<const uint8>(Framed.data(), Framed.size())))
+        if (!Filesystem::AtomicWriteFile(Path, TSpan<const uint8>(Framed.GetData(), Framed.Num())))
         {
             LOG_WARN("[CookDDC] Put: failed to publish {}", Path);
             return false;
         }
 
-        GWrittenBytes.fetch_add(Bytes.size(), std::memory_order_relaxed);
+        GWrittenBytes.fetch_add(Bytes.Num(), std::memory_order_relaxed);
         return true;
     }
 

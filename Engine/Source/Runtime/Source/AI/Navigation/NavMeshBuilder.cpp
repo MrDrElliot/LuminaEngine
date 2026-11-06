@@ -59,8 +59,8 @@ namespace Lumina::NavMeshBuilder
 
         struct FTileGrid
         {
-            FVector3   Origin;             // BoundsMin
-            float       TileWorldSize;      // TileSizeVoxels * CellSize
+            FVector3   Origin;
+            float       TileWorldSize;
             float       BorderSize;         // world units of per-tile expand for seam consistency
             int32       TilesX = 0;
             int32       TilesY = 0;         // nav-grid Y = world Z
@@ -86,7 +86,7 @@ namespace Lumina::NavMeshBuilder
         struct FTileBins
         {
             TVector<uint32> Offsets;     // size TileCount + 1; tile t owns [Offsets[t], Offsets[t+1])
-            TVector<int32>  TriIndices;  // flattened global triangle indices
+            TVector<int32>  TriIndices;
         };
 
         // Grown by BorderSize to match BakeTile's expanded bounds.
@@ -119,7 +119,7 @@ namespace Lumina::NavMeshBuilder
         FBinTarget WholeGrid(const FTileGrid& Grid)
         {
             FBinTarget Target{ 0, 0, Grid.TilesX, Grid.TilesY, Grid.TilesX * Grid.TilesY };
-            Target.SlotOf.resize((size_t)Target.NumSlots);
+            Target.SlotOf.SetNum(Target.NumSlots);
             Algo::Iota(Target.SlotOf.begin(), Target.SlotOf.end(), 0);
             return Target;
         }
@@ -137,7 +137,7 @@ namespace Lumina::NavMeshBuilder
             {
                 for (int32 tx = TX0; tx <= TX1; ++tx)
                 {
-                    const int32 Slot = Target.SlotOf[(size_t)((ty - Target.Y0) * Target.Width + (tx - Target.X0))];
+                    const int32 Slot = Target.SlotOf[(ty - Target.Y0) * Target.Width + (tx - Target.X0)];
                     if (Slot != Constants::kIndexNone)
                     {
                         Visit(Slot);
@@ -150,11 +150,11 @@ namespace Lumina::NavMeshBuilder
         void BuildTileBins(const FNavBuildInput& In, const FTileGrid& Grid, const FBinTarget& Target, FTileBins& Out, FNavBuildPool* Pool = nullptr)
         {
             constexpr uint32 kMinChunkTris = 16384;
-            const uint32 NumTris = (uint32)(In.Indices.size() / 3);
+            const uint32 NumTris = (uint32)(In.Indices.Num() / 3);
             const uint32 NumSlots = (uint32)Target.NumSlots;
-            Out.Offsets.assign((size_t)NumSlots + 1, 0u);
-            Out.TriIndices.clear();
-            if (NumTris == 0 || NumSlots == 0 || In.Vertices.empty())
+            Out.Offsets.Init(0u, IntCastChecked<int32>(static_cast<int64>(NumSlots) + 1));
+            Out.TriIndices.Reset();
+            if (NumTris == 0 || NumSlots == 0 || In.Vertices.IsEmpty())
             {
                 return;
             }
@@ -163,17 +163,17 @@ namespace Lumina::NavMeshBuilder
             const uint32 MaxChunks = Math::Max(1u, Jobs::GetNumWorkers() * 4);
             const uint32 Chunks = Math::Clamp((NumTris + kMinChunkTris - 1) / kMinChunkTris, 1u, MaxChunks);
             const uint32 ChunkTris = (NumTris + Chunks - 1) / Chunks;
-            TVector<uint32> Cursors((size_t)Chunks * NumSlots, 0u);
+            TVector<uint32> Cursors(IntCastChecked<int32>(static_cast<int64>(Chunks) * NumSlots), 0u);
 
             NavParallelFor(Pool, Chunks, [&](uint32 Chunk)
             {
-                uint32* Tally = &Cursors[(size_t)Chunk * NumSlots];
+                uint32* Tally = &Cursors[Chunk * NumSlots];
                 const uint32 End = Math::Min(NumTris, (Chunk + 1) * ChunkTris);
                 for (uint32 t = Chunk * ChunkTris; t < End; ++t)
                 {
                     ForEachTriSlot(In, Grid, Target, (int32)t, [Tally](int32 Slot) { ++Tally[Slot]; });
                 }
-            }, 1, ETaskPriority::Background);
+            }, 1, Jobs::EJobPriority::Background);
 
             uint32 Running = 0;
             for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
@@ -181,24 +181,24 @@ namespace Lumina::NavMeshBuilder
                 Out.Offsets[Slot] = Running;
                 for (uint32 Chunk = 0; Chunk < Chunks; ++Chunk)
                 {
-                    uint32& Cursor = Cursors[(size_t)Chunk * NumSlots + Slot];
+                    uint32& Cursor = Cursors[Chunk * NumSlots + Slot];
                     const uint32 Count = Cursor;
                     Cursor = Running;
                     Running += Count;
                 }
             }
             Out.Offsets[NumSlots] = Running;
-            Out.TriIndices.resize(Running);
+            Out.TriIndices.SetNum(Running);
 
             NavParallelFor(Pool, Chunks, [&](uint32 Chunk)
             {
-                uint32* Cursor = &Cursors[(size_t)Chunk * NumSlots];
+                uint32* Cursor = &Cursors[Chunk * NumSlots];
                 const uint32 End = Math::Min(NumTris, (Chunk + 1) * ChunkTris);
                 for (uint32 t = Chunk * ChunkTris; t < End; ++t)
                 {
                     ForEachTriSlot(In, Grid, Target, (int32)t, [&Out, Cursor, t](int32 Slot) { Out.TriIndices[Cursor[Slot]++] = (int32)t; });
                 }
-            }, 1, ETaskPriority::Background);
+            }, 1, Jobs::EJobPriority::Background);
         }
 
 #if defined(LUMINA_HAS_RECAST)
@@ -262,7 +262,6 @@ namespace Lumina::NavMeshBuilder
         };
         #endif
 
-        // Rasterize, filter, compact and erode, everything a cached tile gets to skip.
         // The ledge filter's steep slope test spans the cells on both sides of a span, so it needs the rise of the steepest walkable slope across them.
         int LedgeFilterClimb(const rcConfig& Cfg)
         {
@@ -288,12 +287,12 @@ namespace Lumina::NavMeshBuilder
                 return true;
             }
 
-            const float* Verts    = reinterpret_cast<const float*>(In.Vertices.data());
-            const int32  NumVerts  = (int32)In.Vertices.size();
-            const int32  GlobalTris = (int32)(In.Indices.size() / 3);
+            const float* Verts    = reinterpret_cast<const float*>(In.Vertices.GetData());
+            const int32  NumVerts  = In.Vertices.Num();
+            const int32  GlobalTris = In.Indices.Num() / 3;
 
             // Gather just this tile's triangles into a local index list (rcRasterizeonly walks these).
-            TVector<int>   Tris;     Tris.resize((size_t)NumTileTris * 3);
+            TVector<int>   Tris;     Tris.SetNum(IntCastChecked<int32>(static_cast<int64>(NumTileTris) * 3));
             TVector<uint8> TriAreas(NumTileTris, 0);
             for (int32 i = 0; i < NumTileTris; ++i)
             {
@@ -303,9 +302,9 @@ namespace Lumina::NavMeshBuilder
                 Tris[i * 3 + 2] = (int)In.Indices[t * 3 + 2];
             }
 
-            rcMarkWalkableTriangles(&Ctx, Cfg.walkableSlopeAngle, Verts, NumVerts, Tris.data(), NumTileTris, TriAreas.data());
+            rcMarkWalkableTriangles(&Ctx, Cfg.walkableSlopeAngle, Verts, NumVerts, Tris.GetData(), NumTileTris, TriAreas.GetData());
 
-            if (!In.Areas.empty() && (int32)In.Areas.size() == GlobalTris)
+            if (!In.Areas.IsEmpty() && In.Areas.Num() == GlobalTris)
             {
                 for (int32 i = 0; i < NumTileTris; ++i)
                 {
@@ -316,7 +315,7 @@ namespace Lumina::NavMeshBuilder
                 }
             }
 
-            if (!rcRasterizeTriangles(&Ctx, Verts, NumVerts, Tris.data(), TriAreas.data(), NumTileTris, *Solid, Cfg.walkableClimb))
+            if (!rcRasterizeTriangles(&Ctx, Verts, NumVerts, Tris.GetData(), TriAreas.GetData(), NumTileTris, *Solid, Cfg.walkableClimb))
             {
                 rcFreeHeightField(Solid);
                 return false;
@@ -385,7 +384,7 @@ namespace Lumina::NavMeshBuilder
             const SNavBuildSettings& S = In.Settings;
             Out.X = TX;
             Out.Y = TY;
-            Out.Blob.clear();
+            Out.Blob.Reset();
 
             const float TileMinX = Grid.Origin.x + (float)TX * Grid.TileWorldSize;
             const float TileMinZ = Grid.Origin.z + (float)TY * Grid.TileWorldSize;
@@ -444,11 +443,11 @@ namespace Lumina::NavMeshBuilder
             // Stamped after erosion so a Null volume carves a hole the agent radius cannot reopen.
             for (const FNavAreaVolume& Volume : In.AreaVolumes)
             {
-                if (Volume.Hull.size() < 3)
+                if (Volume.Hull.Num() < 3)
                 {
                     continue;
                 }
-                rcMarkConvexPolyArea(&Ctx, reinterpret_cast<const float*>(Volume.Hull.data()), (int)Volume.Hull.size(),
+                rcMarkConvexPolyArea(&Ctx, reinterpret_cast<const float*>(Volume.Hull.GetData()), Volume.Hull.Num(),
                                      Volume.MinY, Volume.MaxY, Volume.Area, *Compact);
             }
 
@@ -529,13 +528,13 @@ namespace Lumina::NavMeshBuilder
             }
 
             // Detour keeps only the links whose start point lands inside this tile, so pass them all.
-            const int32 LinkCount = (int32)In.Links.size();
-            TVector<float>  LinkVerts;  LinkVerts.resize((size_t)LinkCount * 6);
-            TVector<float>  LinkRadii;  LinkRadii.resize(LinkCount);
-            TVector<uint8>  LinkDirs;   LinkDirs.resize(LinkCount);
-            TVector<uint8>  LinkAreas;  LinkAreas.resize(LinkCount);
-            TVector<uint16> LinkFlags;  LinkFlags.resize(LinkCount);
-            TVector<uint32> LinkIds;    LinkIds.resize(LinkCount);
+            const int32 LinkCount = In.Links.Num();
+            TVector<float>  LinkVerts;  LinkVerts.SetNum(IntCastChecked<int32>(static_cast<int64>(LinkCount) * 6));
+            TVector<float>  LinkRadii;  LinkRadii.SetNum(LinkCount);
+            TVector<uint8>  LinkDirs;   LinkDirs.SetNum(LinkCount);
+            TVector<uint8>  LinkAreas;  LinkAreas.SetNum(LinkCount);
+            TVector<uint16> LinkFlags;  LinkFlags.SetNum(LinkCount);
+            TVector<uint32> LinkIds;    LinkIds.SetNum(LinkCount);
             for (int32 i = 0; i < LinkCount; ++i)
             {
                 const FNavOffMeshLink& Link = In.Links[i];
@@ -578,12 +577,12 @@ namespace Lumina::NavMeshBuilder
             Params.buildBvTree      = true;
             if (LinkCount > 0)
             {
-                Params.offMeshConVerts  = LinkVerts.data();
-                Params.offMeshConRad    = LinkRadii.data();
-                Params.offMeshConDir    = LinkDirs.data();
-                Params.offMeshConAreas  = LinkAreas.data();
-                Params.offMeshConFlags  = LinkFlags.data();
-                Params.offMeshConUserID = LinkIds.data();
+                Params.offMeshConVerts  = LinkVerts.GetData();
+                Params.offMeshConRad    = LinkRadii.GetData();
+                Params.offMeshConDir    = LinkDirs.GetData();
+                Params.offMeshConAreas  = LinkAreas.GetData();
+                Params.offMeshConFlags  = LinkFlags.GetData();
+                Params.offMeshConUserID = LinkIds.GetData();
                 Params.offMeshConCount  = LinkCount;
             }
 
@@ -599,7 +598,8 @@ namespace Lumina::NavMeshBuilder
             }
 
             // Copy out of Detour's allocator; runtime addTile copies again.
-            Out.Blob.assign(NavData, NavData + NavDataSize);
+            Out.Blob.Reset();
+            Out.Blob.Append(NavData, NavData + NavDataSize);
             dtFree(NavData);
             return true;
         }
@@ -623,7 +623,7 @@ namespace Lumina::NavMeshBuilder
                       "Raise Navigation settings MaxBakeTiles, raise Settings.CellSize or TileSizeVoxels, "
                       "or shrink the bounds / entity scale.",
                       TileCount, Grid.TilesX, Grid.TilesY, MaxBakeTiles, Grid.TileWorldSize);
-            Handle.Output.Tiles.clear();
+            Handle.Output.Tiles.Reset();
             Handle.TilesScheduled = 0;
             Handle.bDone.store(true, std::memory_order_release);
             return;
@@ -652,7 +652,7 @@ namespace Lumina::NavMeshBuilder
         Handle.Output.TilesY = Grid.TilesY;
         Handle.Output.MaxTiles = (int32)TileCount;
         Handle.Output.MaxPolysPerTile = 1 << 14;
-        Handle.Output.Tiles.resize(TileCount);
+        Handle.Output.Tiles.SetNum(TileCount);
         Handle.TilesScheduled = TileCount;
 
         // Bin triangles per tile once so each tile bakes only its overlapping geometry.
@@ -662,9 +662,7 @@ namespace Lumina::NavMeshBuilder
         // Aggregate per-tile failures into one log line.
         std::atomic<uint32> FailCount{ 0 };
 
-        // Row-major order has workers scattered across unrelated bands at once, which reads as random
-        // chunks appearing. Sorting by distance from the middle makes the mesh grow outwards instead, and
-        // it costs one sort of the tile indices.
+        // Sorting tiles by distance from the middle makes the mesh grow outwards instead of appearing as random chunks.
         TVector<uint32> Order((size_t)TileCount);
         {
             for (uint32 i = 0; i < TileCount; ++i)
@@ -683,7 +681,7 @@ namespace Lumina::NavMeshBuilder
             });
         }
 
-        Task::ParallelFor(TileCount, [&](uint32 Slot)
+        Jobs::ParallelFor(TileCount, [&](uint32 Slot)
         {
             if (Handle.bCancelRequested.load(std::memory_order_acquire))
             {
@@ -708,7 +706,7 @@ namespace Lumina::NavMeshBuilder
             Handle.Output.Tiles[Index].Y = TY;
 #endif
             Handle.TilesCompleted.fetch_add(1, std::memory_order_release);
-        }, 1, ETaskPriority::Background);
+        }, 1, Jobs::EJobPriority::Background);
 
         const uint32 Failed = FailCount.load(std::memory_order_relaxed);
         if (Failed > 0)
@@ -723,10 +721,11 @@ namespace Lumina::NavMeshBuilder
     {
         TSharedPtr<FNavBakeHandle> Handle = MakeShared<FNavBakeHandle>();
 
-        Task::AsyncTask(1, 1, [Handle, In = std::move(Input)](uint32, uint32, uint32) mutable
+        Jobs::Spawn(Jobs::EJobPriority::Background, [](TSharedPtr<FNavBakeHandle> Baking, FNavBuildInput In) -> Jobs::TTask<void>
         {
-            RunBake(In, *Handle);
-        }, ETaskPriority::Background);
+            RunBake(In, *Baking);
+            co_return;
+        }, Handle, std::move(Input));
 
         return Handle;
     }
@@ -735,14 +734,15 @@ namespace Lumina::NavMeshBuilder
     {
         TSharedPtr<FNavBakeHandle> Handle = MakeShared<FNavBakeHandle>();
 
-        Task::AsyncTask(1, 1, [Handle, In = std::move(Input), Prepare = Move(Prepare)](uint32, uint32, uint32) mutable
+        Jobs::Spawn(Jobs::EJobPriority::Background, [](TSharedPtr<FNavBakeHandle> Baking, FNavBuildInput In, TFunction<void(FNavBuildInput&)> Fixup) -> Jobs::TTask<void>
         {
-            if (Prepare)
+            if (Fixup)
             {
-                Prepare(In);
+                Fixup(In);
             }
-            RunBake(In, *Handle);
-        }, ETaskPriority::Background);
+            RunBake(In, *Baking);
+            co_return;
+        }, Handle, std::move(Input), Move(Prepare));
 
         return Handle;
     }
@@ -780,9 +780,9 @@ namespace Lumina::NavMeshBuilder
     {
         LUMINA_PROFILE_SCOPE();
 
-        Out.clear();
-        Out.resize(Coords.size());
-        if (Coords.empty())
+        Out.Reset();
+        Out.SetNum(Coords.Num());
+        if (Coords.IsEmpty())
         {
             return;
         }
@@ -794,7 +794,7 @@ namespace Lumina::NavMeshBuilder
         Target.X0 = Grid.TilesX;
         Target.Y0 = Grid.TilesY;
         int32 X1 = -1, Y1 = -1;
-        for (int32 i = 0; i < (int32)Coords.size(); ++i)
+        for (int32 i = 0; i < Coords.Num(); ++i)
         {
             Out[i].X = Coords[i].X;
             Out[i].Y = Coords[i].Y;
@@ -808,13 +808,13 @@ namespace Lumina::NavMeshBuilder
         }
         Target.Width = Math::Max(0, X1 - Target.X0 + 1);
         Target.Height = Math::Max(0, Y1 - Target.Y0 + 1);
-        Target.NumSlots = (int32)Coords.size();
-        Target.SlotOf.assign((size_t)Target.Width * Target.Height, Constants::kIndexNone);
-        for (int32 i = 0; i < (int32)Coords.size(); ++i)
+        Target.NumSlots = Coords.Num();
+        Target.SlotOf.Init(Constants::kIndexNone, (size_t)Target.Width * Target.Height);
+        for (int32 i = 0; i < Coords.Num(); ++i)
         {
             if (Coords[i].X >= Target.X0 && Coords[i].X <= X1 && Coords[i].Y >= Target.Y0 && Coords[i].Y <= Y1)
             {
-                Target.SlotOf[(size_t)((Coords[i].Y - Target.Y0) * Target.Width + (Coords[i].X - Target.X0))] = i;
+                Target.SlotOf[(Coords[i].Y - Target.Y0) * Target.Width + (Coords[i].X - Target.X0)] = i;
             }
         }
 
@@ -829,31 +829,31 @@ namespace Lumina::NavMeshBuilder
         };
         if (Pool != nullptr)
         {
-            Pool->ParallelFor((uint32)Coords.size(), BakeSlot);
+            Pool->ParallelFor((uint32)Coords.Num(), BakeSlot);
             return;
         }
 
         // A tile is several milliseconds no one can preempt, so a runtime rebake takes a few lanes rather than every worker the frame needs.
-        const uint32 Lanes = Math::Clamp(Jobs::GetNumWorkers() / kRebakeWorkerShare, 1u, (uint32)Coords.size());
+        const uint32 Lanes = Math::Clamp(Jobs::GetNumWorkers() / kRebakeWorkerShare, 1u, (uint32)Coords.Num());
         std::atomic<uint32> NextTile{0};
-        Task::ParallelFor(Lanes, [&](uint32)
+        Jobs::ParallelFor(Lanes, [&](uint32)
         {
-            for (uint32 i = NextTile.fetch_add(1, std::memory_order_relaxed); i < (uint32)Coords.size();
+            for (uint32 i = NextTile.fetch_add(1, std::memory_order_relaxed); i < (uint32)Coords.Num();
                  i = NextTile.fetch_add(1, std::memory_order_relaxed))
             {
                 BakeSlot(i);
             }
-        }, 1, ETaskPriority::Background);
+        }, 1, Jobs::EJobPriority::Background);
     }
 
     bool BakeSingleTile(const FNavBuildInput& Input, const FNavBuildOutput& BaseLayout, int32 TX, int32 TY, SNavTileData& Out)
     {
         TVector<FNavTileCoord> Coords;
-        Coords.push_back(FNavTileCoord{ TX, TY });
+        Coords.Emplace(TX, TY);
 
         TVector<SNavTileData> Baked;
         BakeTiles(Input, BaseLayout, Coords, Baked);
-        if (Baked.empty())
+        if (Baked.IsEmpty())
         {
             return false;
         }
@@ -868,8 +868,8 @@ namespace Lumina::NavMeshBuilder
 
     void BakeTiles(const FNavBuildInput&, const FNavBuildOutput&, const TVector<FNavTileCoord>& Coords, TVector<SNavTileData>& Out, FNavBuildPool*, FNavTileCache*)
     {
-        Out.clear();
-        Out.resize(Coords.size());
+        Out.Reset();
+        Out.SetNum(Coords.Num());
     }
 #endif
 }
@@ -897,7 +897,7 @@ namespace Lumina
         TVector<rcCompactSpan>  Spans;
         TVector<uint8>          Areas;
 
-        size_t GetBytes() const { return Cells.size() * sizeof(rcCompactCell) + Spans.size() * sizeof(rcCompactSpan) + Areas.size(); }
+        size_t GetBytes() const { return Cells.Num() * sizeof(rcCompactCell) + Spans.Num() * sizeof(rcCompactSpan) + Areas.Num(); }
     };
 #else
     struct FNavTileCache::FEntry
@@ -921,40 +921,40 @@ namespace Lumina
         const uint64 Key = NavTile::PackKey(X, Y);
         FScopeLock Guard(Lock);
         ++Generations[Key];
-        auto It = Entries.find(Key);
-        if (It != Entries.end() && It->second->Pins == 0)
+        auto It = Entries.Find(Key);
+        if (It != nullptr && (*It)->Pins == 0)
         {
-            Bytes -= It->second->GetBytes();
-            Entries.erase(It);
+            Bytes -= (*It)->GetBytes();
+            Entries.Remove(Key);
         }
     }
 
     uint32 FNavTileCache::GetGeneration(int32 X, int32 Y) const
     {
         FScopeLock Guard(Lock);
-        auto It = Generations.find(NavTile::PackKey(X, Y));
-        return It != Generations.end() ? It->second : 0;
+        auto It = Generations.Find(NavTile::PackKey(X, Y));
+        return It != nullptr ? (*It) : 0;
     }
 
     bool FNavTileCache::Pin(int32 X, int32 Y, uint32 Generation)
     {
         FScopeLock Guard(Lock);
-        auto It = Entries.find(NavTile::PackKey(X, Y));
-        if (It == Entries.end() || It->second->Generation != Generation)
+        auto It = Entries.Find(NavTile::PackKey(X, Y));
+        if (It == nullptr || (*It)->Generation != Generation)
         {
             return false;
         }
-        ++It->second->Pins;
+        ++(*It)->Pins;
         return true;
     }
 
     void FNavTileCache::Unpin(int32 X, int32 Y)
     {
         FScopeLock Guard(Lock);
-        auto It = Entries.find(NavTile::PackKey(X, Y));
-        if (It != Entries.end() && It->second->Pins > 0)
+        auto It = Entries.Find(NavTile::PackKey(X, Y));
+        if (It != nullptr && (*It)->Pins > 0)
         {
-            --It->second->Pins;
+            --(*It)->Pins;
         }
     }
 
@@ -962,14 +962,14 @@ namespace Lumina
     bool FNavTileCache::Load(int32 X, int32 Y, uint32 Generation, rcCompactHeightfield*& Out)
     {
         FScopeLock Guard(Lock);
-        auto It = Entries.find(NavTile::PackKey(X, Y));
-        if (It == Entries.end() || It->second->Generation != Generation)
+        auto It = Entries.Find(NavTile::PackKey(X, Y));
+        if (It == nullptr || (*It)->Generation != Generation)
         {
             Misses.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
 
-        const FEntry& Entry = *It->second;
+        const FEntry& Entry = *(*It);
         rcCompactHeightfield* Compact = rcAllocCompactHeightfield();
         if (Compact == nullptr)
         {
@@ -977,7 +977,7 @@ namespace Lumina
         }
         Compact->width = Entry.Width;
         Compact->height = Entry.Height;
-        Compact->spanCount = (int)Entry.Spans.size();
+        Compact->spanCount = Entry.Spans.Num();
         Compact->walkableHeight = Entry.WalkableHeight;
         Compact->walkableClimb = Entry.WalkableClimb;
         Compact->borderSize = Entry.BorderSize;
@@ -987,18 +987,18 @@ namespace Lumina
         rcVcopy(Compact->bmax, Entry.BMax);
         Compact->cs = Entry.CellSize;
         Compact->ch = Entry.CellHeight;
-        Compact->cells = (rcCompactCell*)rcAlloc(sizeof(rcCompactCell) * Entry.Cells.size(), RC_ALLOC_PERM);
-        Compact->spans = (rcCompactSpan*)rcAlloc(sizeof(rcCompactSpan) * Entry.Spans.size(), RC_ALLOC_PERM);
-        Compact->areas = (unsigned char*)rcAlloc(Entry.Areas.size(), RC_ALLOC_PERM);
+        Compact->cells = (rcCompactCell*)rcAlloc(sizeof(rcCompactCell) * Entry.Cells.Num(), RC_ALLOC_PERM);
+        Compact->spans = (rcCompactSpan*)rcAlloc(sizeof(rcCompactSpan) * Entry.Spans.Num(), RC_ALLOC_PERM);
+        Compact->areas = (unsigned char*)rcAlloc(Entry.Areas.Num(), RC_ALLOC_PERM);
         if (Compact->cells == nullptr || Compact->spans == nullptr || Compact->areas == nullptr)
         {
             rcFreeCompactHeightfield(Compact);
             return false;
         }
-        memcpy(Compact->cells, Entry.Cells.data(), sizeof(rcCompactCell) * Entry.Cells.size());
-        memcpy(Compact->spans, Entry.Spans.data(), sizeof(rcCompactSpan) * Entry.Spans.size());
-        memcpy(Compact->areas, Entry.Areas.data(), Entry.Areas.size());
-        It->second->LastUse = ++Clock;
+        memcpy(Compact->cells, Entry.Cells.GetData(), sizeof(rcCompactCell) * Entry.Cells.Num());
+        memcpy(Compact->spans, Entry.Spans.GetData(), sizeof(rcCompactSpan) * Entry.Spans.Num());
+        memcpy(Compact->areas, Entry.Areas.GetData(), Entry.Areas.Num());
+        (*It)->LastUse = ++Clock;
         Hits.fetch_add(1, std::memory_order_relaxed);
         Out = Compact;
         return true;
@@ -1024,32 +1024,34 @@ namespace Lumina
         rcVcopy(Entry->BMax, Compact.bmax);
         Entry->CellSize = Compact.cs;
         Entry->CellHeight = Compact.ch;
-        Entry->Cells.assign(Compact.cells, Compact.cells + (size_t)Compact.width * (size_t)Compact.height);
-        Entry->Spans.assign(Compact.spans, Compact.spans + Compact.spanCount);
-        Entry->Areas.assign(Compact.areas, Compact.areas + Compact.spanCount);
+        Entry->Cells.Reset();
+        Entry->Cells.Append(Compact.cells, Compact.cells + (size_t)Compact.width * (size_t)Compact.height);
+        Entry->Spans.Reset();
+        Entry->Spans.Append(Compact.spans, Compact.spans + Compact.spanCount);
+        Entry->Areas.Reset();
+        Entry->Areas.Append(Compact.areas, Compact.areas + Compact.spanCount);
 
         const uint64 Key = NavTile::PackKey(X, Y);
         FScopeLock Guard(Lock);
-        auto Current = Generations.find(Key);
-        if ((Current != Generations.end() ? Current->second : 0) != Generation)
+        auto Current = Generations.Find(Key);
+        if ((Current != nullptr ? (*Current) : 0) != Generation)
         {
             return;
         }
 
         Entry->LastUse = ++Clock;
         Bytes += Entry->GetBytes();
-        auto [It, bAdded] = Entries.try_emplace(Key);
-        if (!bAdded)
+        if (auto It = Entries.Find(Key); It != nullptr)
         {
             // A pinned entry is what a bake in flight was promised, so it stays as it is until released.
-            if (It->second->Pins > 0)
+            if ((*It)->Pins > 0)
             {
                 Bytes -= Entry->GetBytes();
                 return;
             }
-            Bytes -= It->second->GetBytes();
+            Bytes -= (*It)->GetBytes();
         }
-        It->second = std::move(Entry);
+        Entries.Add(Key, std::move(Entry));
 
         // Least recently used first, never one a bake has pinned.
         while (Bytes > BudgetBytes)
@@ -1057,7 +1059,7 @@ namespace Lumina
             auto Oldest = Entries.end();
             for (auto Candidate = Entries.begin(); Candidate != Entries.end(); ++Candidate)
             {
-                if (Candidate->second->Pins == 0 && Candidate->first != Key && (Oldest == Entries.end() || Candidate->second->LastUse < Oldest->second->LastUse))
+                if (Candidate->Value->Pins == 0 && Candidate->Key != Key && (Oldest == Entries.end() || Candidate->Value->LastUse < Oldest->Value->LastUse))
                 {
                     Oldest = Candidate;
                 }
@@ -1066,8 +1068,8 @@ namespace Lumina
             {
                 break;
             }
-            Bytes -= Oldest->second->GetBytes();
-            Entries.erase(Oldest);
+            Bytes -= Oldest->Value->GetBytes();
+            Entries.Remove(Oldest);
         }
     }
 #else

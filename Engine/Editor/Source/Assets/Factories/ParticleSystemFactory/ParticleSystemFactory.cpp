@@ -21,7 +21,7 @@ namespace Lumina
         if (Emitter != nullptr)
         {
             // The header every system sharing it shows, which would otherwise read just "Emitter".
-            Emitter->EmitterName = Name.c_str();
+            Emitter->EmitterName = *Name;
         }
         return Emitter;
     }

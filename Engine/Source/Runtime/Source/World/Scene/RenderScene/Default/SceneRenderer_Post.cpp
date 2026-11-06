@@ -144,10 +144,12 @@ namespace Lumina
             PC.Letterbox          = FVector4(Settings->LetterboxAspect, 0.0f, 0.0f, 0.0f);
             return PC;
         }
-    }
 
-    namespace
-    {
+        const SPostProcessSettings* GetActivePostProcess(const FDefaultSceneRenderer::FFrameData& Frame)
+        {
+            return Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        }
+
         // Push constants for BloomDownsample.slang; one dispatch per mip.
         struct FBloomDownPushConstants
         {
@@ -195,7 +197,7 @@ namespace Lumina
     void FDefaultSceneRenderer::BloomPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const SPostProcessSettings* ActivePostProcess = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        const SPostProcessSettings* ActivePostProcess = GetActivePostProcess(Frame);
 
         if (ActivePostProcess == nullptr || !ActivePostProcess->bEnabled || ActivePostProcess->BloomIntensity <= 0.0f)
         {
@@ -341,7 +343,7 @@ namespace Lumina
     void FDefaultSceneRenderer::AutoExposurePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const SPostProcessSettings* ActivePostProcess = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        const SPostProcessSettings* ActivePostProcess = GetActivePostProcess(Frame);
 
         if (ActivePostProcess == nullptr || !ActivePostProcess->bEnabled || !ActivePostProcess->bAutoExposure)
         {
@@ -424,7 +426,7 @@ namespace Lumina
 
         const FFrameData& Frame = *RenderFrame;
         const auto& ActivePostProcessMaterials = Frame.PostProcess.ActivePostProcessMaterials;
-        const SPostProcessSettings* ActivePostProcess = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        const SPostProcessSettings* ActivePostProcess = GetActivePostProcess(Frame);
         const auto& SceneGlobalData            = Frame.SceneGlobalData;
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
@@ -435,7 +437,7 @@ namespace Lumina
         }
 
         const bool bSMAAEnabled = GetViewSMAAMode(*CurrentView) != ESMAAMode::Off;
-        const bool bPPMaterials = !ActivePostProcessMaterials.empty();
+        const bool bPPMaterials = !ActivePostProcessMaterials.IsEmpty();
         const FSceneImage& Output = (bSMAAEnabled || bPPMaterials) ? GetNamedImage(ENamedImage::LDR) : CurrentView->Output;
 
         const FSceneImage& HDRTex     = GetPostInputImage();
@@ -459,7 +461,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FColorGradingConstants Constants = BuildColorGradingConstants(ActivePostProcess, SceneGlobalData.Time);
@@ -490,7 +492,7 @@ namespace Lumina
     void FDefaultSceneRenderer::DepthOfFieldPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const SPostProcessSettings* Settings = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        const SPostProcessSettings* Settings = GetActivePostProcess(Frame);
         if (Settings == nullptr || !Settings->bEnabled || Settings->DepthOfFieldFStop <= 0.0f)
         {
             return;
@@ -535,7 +537,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VS;
         Key.PS = PS;
-        Key.ColorTargets.push_back({ HDR.Desc.Format, {} });
+        Key.ColorTargets.Add({ HDR.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FDepthOfFieldPushConstants
@@ -590,7 +592,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const auto& ActivePostProcessMaterials = Frame.PostProcess.ActivePostProcessMaterials;
 
-        if (ActivePostProcessMaterials.empty())
+        if (ActivePostProcessMaterials.IsEmpty())
         {
             return;
         }
@@ -622,7 +624,7 @@ namespace Lumina
             FGraphicsPipelineKey Key;
             Key.VS = VS;
             Key.PS = PS;
-            Key.ColorTargets.push_back({ Dest->Desc.Format, {} });
+            Key.ColorTargets.Add({ Dest->Desc.Format, {} });
             // Skipped before the pass opens, so Source still holds the previous result.
             const RHI::FPipelineH Pipeline = FindPipeline(Key);
             if (!Pipeline)
@@ -692,63 +694,66 @@ namespace Lumina
         }
     }
 
-    struct FSMAAPushConstants
+    namespace
     {
-        FVector4 RTMetrics;  // x = 1/w, y = 1/h, z = w, w = h
-        float     EdgeThreshold;
-        float     DebugMode;
-        uint32    TexIndex0;  // bindless SRV index of the pass's primary input
-        uint32    TexIndex1;  // pass-specific extra input (0 if unused)
-        uint32    TexIndex2;  // pass-specific extra input (0 if unused)
-        float     MaxSearchSteps;      // blend-weight pass only; the other two ignore these
-        float     MaxSearchStepsDiag;
-        uint32    _Pad2;
-        // AreaTex slice per axis; 0 is the SMAA 1x pattern and 1 and 2 are the T2x subsample pair.
-        FVector4  SubsampleIndices;
-    };
-    static_assert(sizeof(FSMAAPushConstants) == 64, "FSMAAPushConstants must match the slang push block.");
-
-    static float GetSMAAEdgeThreshold(ESMAAQuality Quality)
-    {
-        switch (Quality)
+        struct FSMAAPushConstants
         {
-        case ESMAAQuality::Low:    return 0.15f;
-        case ESMAAQuality::Medium: return 0.12f;
-        case ESMAAQuality::High:   return 0.10f;
-        case ESMAAQuality::Ultra:  return 0.05f;
-        default:                   return 0.10f;
-        }
-    }
+            FVector4 RTMetrics;  // x = 1/w, y = 1/h, z = w, w = h
+            float     EdgeThreshold;
+            float     DebugMode;
+            uint32    TexIndex0;  // bindless SRV index of the pass's primary input
+            uint32    TexIndex1;  // pass-specific extra input (0 if unused)
+            uint32    TexIndex2;  // pass-specific extra input (0 if unused)
+            float     MaxSearchSteps;      // blend-weight pass only; the other two ignore these
+            float     MaxSearchStepsDiag;
+            uint32    _Pad2;
+            // AreaTex slice per axis; 0 is the SMAA 1x pattern and 1 and 2 are the T2x subsample pair.
+            FVector4  SubsampleIndices;
+        };
+        static_assert(sizeof(FSMAAPushConstants) == 64, "FSMAAPushConstants must match the slang push block.");
 
-    // Reference SMAA preset step counts. High matches the old hardcoded 16/8, so it is unchanged.
-    static FVector2 GetSMAASearchSteps(ESMAAQuality Quality)
-    {
-        switch (Quality)
+        float GetSMAAEdgeThreshold(ESMAAQuality Quality)
         {
-        case ESMAAQuality::Low:    return FVector2(4.0f,  2.0f);
-        case ESMAAQuality::Medium: return FVector2(8.0f,  4.0f);
-        case ESMAAQuality::High:   return FVector2(16.0f, 8.0f);
-        case ESMAAQuality::Ultra:  return FVector2(32.0f, 16.0f);
-        default:                   return FVector2(16.0f, 8.0f);
+            switch (Quality)
+            {
+            case ESMAAQuality::Low:    return 0.15f;
+            case ESMAAQuality::Medium: return 0.12f;
+            case ESMAAQuality::High:   return 0.10f;
+            case ESMAAQuality::Ultra:  return 0.05f;
+            default:                   return 0.10f;
+            }
         }
-    }
 
-    static FSMAAPushConstants BuildSMAAPushConstants(const FSceneImage& Image, ESMAAQuality Quality)
-    {
-        FSMAAPushConstants PC;
-        const float W = (float)Image.GetSizeX();
-        const float H = (float)Image.GetSizeY();
-        PC.RTMetrics      = FVector4(1.0f / W, 1.0f / H, W, H);
-        PC.EdgeThreshold  = GetSMAAEdgeThreshold(Quality);
-        PC.DebugMode      = 0.0f;
-        PC.TexIndex0 = 0; PC.TexIndex1 = 0; PC.TexIndex2 = 0;
+        // Reference SMAA preset step counts. High matches the old hardcoded 16/8, so it is unchanged.
+        FVector2 GetSMAASearchSteps(ESMAAQuality Quality)
+        {
+            switch (Quality)
+            {
+            case ESMAAQuality::Low:    return FVector2(4.0f,  2.0f);
+            case ESMAAQuality::Medium: return FVector2(8.0f,  4.0f);
+            case ESMAAQuality::High:   return FVector2(16.0f, 8.0f);
+            case ESMAAQuality::Ultra:  return FVector2(32.0f, 16.0f);
+            default:                   return FVector2(16.0f, 8.0f);
+            }
+        }
 
-        const FVector2 Steps = GetSMAASearchSteps(Quality);
-        PC.MaxSearchSteps     = Steps.x;
-        PC.MaxSearchStepsDiag = Steps.y;
-        PC._Pad2 = 0;
-        PC.SubsampleIndices = FVector4(0.0f);
-        return PC;
+        FSMAAPushConstants BuildSMAAPushConstants(const FSceneImage& Image, ESMAAQuality Quality)
+        {
+            FSMAAPushConstants PC;
+            const float W = (float)Image.GetSizeX();
+            const float H = (float)Image.GetSizeY();
+            PC.RTMetrics      = FVector4(1.0f / W, 1.0f / H, W, H);
+            PC.EdgeThreshold  = GetSMAAEdgeThreshold(Quality);
+            PC.DebugMode      = 0.0f;
+            PC.TexIndex0 = 0; PC.TexIndex1 = 0; PC.TexIndex2 = 0;
+
+            const FVector2 Steps = GetSMAASearchSteps(Quality);
+            PC.MaxSearchSteps     = Steps.x;
+            PC.MaxSearchStepsDiag = Steps.y;
+            PC._Pad2 = 0;
+            PC.SubsampleIndices = FVector4(0.0f);
+            return PC;
+        }
     }
 
     void FDefaultSceneRenderer::SMAAEdgeDetectionPass(RHI::FCmdListH CL)
@@ -793,7 +798,7 @@ namespace Lumina
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
         Key.DepthFormat = EdgeMask.Desc.Format;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
@@ -847,7 +852,7 @@ namespace Lumina
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
         Key.DepthFormat = EdgeMask.Desc.Format;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
@@ -895,7 +900,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
@@ -952,7 +957,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FData
@@ -982,9 +987,9 @@ namespace Lumina
         const uint64 Bytes = RetainedTransformBuffer.Size;
         const FFrameData::FGeometry::FRetainedUpload& Upload = RenderFrame->Geometry.RetainedUpload;
 
-        // The past already matches the present everywhere this frame did not upload, except grass the GPU scattered.
+        // The past already matches the present in every slot this frame did not write.
         const bool bFullCopy = !bPrevMotionStateValid || !PrevRetainedTransformBuffer || PrevRetainedTransformBuffer.Size != Bytes
-                            || Upload.bFull || HasGrassScatter(*RenderFrame);
+                            || Upload.bFull;
         if (!PrevRetainedTransformBuffer || PrevRetainedTransformBuffer.Size != Bytes)
         {
             if (PrevRetainedTransformBuffer)
@@ -1003,31 +1008,66 @@ namespace Lumina
         if (bFullCopy || !CopyShader)
         {
             RHI::CmdMemcpy(CL, { PrevRetainedTransformBuffer.Gpu, Bytes }, { RetainedTransformBuffer.Gpu, Bytes });
+            bPrevMotionStateValid = true;
+            return;
         }
-        else if (!Upload.DirtySlots.empty())
-        {
-            static_assert(sizeof(FTransform3x4) % 16 == 0, "CopyBufferSlots moves whole 16-byte words.");
-            constexpr uint32 kWordsPerTransform = sizeof(FTransform3x4) / 16;
 
-            struct FCopySlotsPC
+        // The grass scatter rewrites its whole block every frame, and the CPU never sees which of its slots it used.
+        if (HasGrassScatter(*RenderFrame))
+        {
+            ScenePrimitives.GetGPUWrittenSlotRanges(MotionGrassRangeScratch);
+            for (const FUIntVector2& Range : MotionGrassRangeScratch)
             {
-                RHI::TGPUSpan<FVector4> Source;
-                RHI::TGPUSpan<FVector4> Dest;
-                RHI::TGPUSpan<uint32>   Slots;
-                uint32 WordsPerElement;
-                uint32 _Pad0;
-                uint32 _Pad1;
-                uint32 _Pad2;
-            } PC = {};
-            static_assert(sizeof(FCopySlotsPC) == 64, "FCopySlotsPC must match CopyBufferSlots.slang.");
-            const uint32 NumSlots = (uint32)Upload.DirtySlots.size();
+                const uint64 First = Math::Min<uint64>((uint64)Range.x * sizeof(FTransform3x4), Bytes);
+                const uint64 Size  = Math::Min<uint64>((uint64)Range.y * sizeof(FTransform3x4), Bytes - First);
+                if (Size != 0)
+                {
+                    RHI::CmdMemcpy(CL, { PrevRetainedTransformBuffer.Gpu + First, Size }, { RetainedTransformBuffer.Gpu + First, Size });
+                }
+            }
+            Barriers::TransferToCompute(CL);
+        }
+
+        static_assert(sizeof(FTransform3x4) % 16 == 0, "CopyBufferSlots moves whole 16-byte words.");
+        constexpr uint32 kWordsPerTransform = sizeof(FTransform3x4) / 16;
+
+        struct FCopySlotsPC
+        {
+            RHI::TGPUSpan<FVector4> Source;
+            RHI::TGPUSpan<FVector4> Dest;
+            RHI::TGPUSpan<uint32>   Slots;
+            uint32 WordsPerElement;
+            uint32 _Pad0;
+            uint32 _Pad1;
+            uint32 _Pad2;
+        };
+        static_assert(sizeof(FCopySlotsPC) == 64, "FCopySlotsPC must match CopyBufferSlots.slang.");
+
+        // The shader drops kNoStreamSlot entries, since their word index lands past the end of the buffer.
+        const auto CopySlots = [&](const RHI::TGPUSpan<uint32>& Slots)
+        {
+            if (Slots.IsEmpty())
+            {
+                return;
+            }
+            FCopySlotsPC PC = {};
             PC.Source          = RHI::TGPUSpan<FVector4>::FromAddress(RetainedTransformBuffer.Gpu, (uint32)(Bytes / 16));
             PC.Dest            = RHI::TGPUSpan<FVector4>::FromAddress(PrevRetainedTransformBuffer.Gpu, (uint32)(Bytes / 16));
-            PC.Slots           = RHI::CopyTransientArray(Upload.DirtySlots.data(), NumSlots);
+            PC.Slots           = Slots;
             PC.WordsPerElement = kWordsPerTransform;
 
-            const uint32 Groups = RenderUtils::GetGroupCount(NumSlots * kWordsPerTransform, 64u);
+            const uint32 Groups = RenderUtils::GetGroupCount(Slots.Count * kWordsPerTransform, 64u);
             DispatchCompute(CL, CopyShader, PC, Math::Min(Groups, (uint32)MAX_DISPATCH_AXIS), RenderUtils::GetGroupCount(Groups, (uint32)MAX_DISPATCH_AXIS), 1u);
+        };
+
+        if (!Upload.DirtySlots.IsEmpty())
+        {
+            CopySlots(RHI::CopyTransientArray(Upload.DirtySlots.GetData(), (uint32)Upload.DirtySlots.Num()));
+        }
+
+        if (Upload.StreamCount > 0u && Upload.StreamSlots)
+        {
+            CopySlots(RHI::TGPUSpan<uint32>(Upload.StreamSlots));
         }
 
         bPrevMotionStateValid = true;
@@ -1159,7 +1199,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FData
@@ -1261,7 +1301,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FData
@@ -1314,7 +1354,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = VertexShader;
         Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FData

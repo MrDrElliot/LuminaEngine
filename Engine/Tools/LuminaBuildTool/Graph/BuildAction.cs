@@ -73,6 +73,9 @@ public sealed class BuildAction
 
     public string? ResponseFileContents { get; set; }
 
+    /// <summary>Text piped to the tool's standard input, part of the command key so a change reruns the action.</summary>
+    public string? StandardInput { get; set; }
+
     /// <summary>Extra environment for the process, merged over the inherited environment.</summary>
     public Dictionary<string, string>? EnvironmentOverrides { get; set; }
 
@@ -101,7 +104,7 @@ public sealed class BuildAction
     /// <summary>Identity of the command being run.</summary>
     public string GetCommandKey()
     {
-        return ContentHash.OfStrings(new[]
+        List<string> Parts = new()
         {
             ToolPath,
             Arguments,
@@ -109,7 +112,15 @@ public sealed class BuildAction
             WorkingDirectory,
             ToolchainIdentity,
             Operation?.GetIdentity() ?? string.Empty,
-        });
+        };
+
+        // Appended only when present, so actions without input keep the keys every existing build recorded.
+        if (StandardInput is not null)
+        {
+            Parts.Add(StandardInput);
+        }
+
+        return ContentHash.OfStrings(Parts);
     }
 
     public override string ToString() => $"{Type} {StatusText}";

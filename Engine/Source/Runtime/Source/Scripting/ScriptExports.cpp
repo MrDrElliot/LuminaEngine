@@ -27,19 +27,19 @@ namespace Lumina::Scripting
                 return;
             }
         }
-        Entries.push_back(FScriptExportMetaArg{ Key, Value });
+        Entries.Emplace(Key, Value);
     }
 
     bool FScriptExportMeta::GetNumber(const FName& Key, double& OutValue) const
     {
         const FString* Value = Find(Key);
-        if (!Value || Value->empty())
+        if (!Value || Value->IsEmpty())
         {
             return false;
         }
         char* End = nullptr;
-        const double Parsed = std::strtod(Value->c_str(), &End);
-        if (End == Value->c_str())
+        const double Parsed = std::strtod(*(*Value), &End);
+        if (End == *(*Value))
         {
             return false;
         }

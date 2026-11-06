@@ -21,19 +21,19 @@ namespace Lumina
                 
                 int64 EnumValue = 0;
 
-                FString Str(BitfieldString.c_str());
+                FString Str(*BitfieldString);
                 FString Delimiter(" | ");
-                size_t Start = 0;
-                size_t End = 0;
+                int32 Start = 0;
+                int32 End = 0;
 
-                while ((End = Str.find(Delimiter, Start)) != FString::npos)
+                while ((End = Str.Find(Delimiter, Start)) != Constants::kIndexNone)
                 {
-                    FName Token(Str.substr(Start, End - Start).c_str());
+                    FName Token(*Str.Mid(Start, End - Start));
                     EnumValue |= (int64)Enum->GetEnumValueByName(Token);
-                    Start = End + Delimiter.size();
+                    Start = End + Delimiter.Len();
                 }
 
-                FName Token(Str.substr(Start).c_str());
+                FName Token(*Str.Mid(Start));
                 EnumValue |= (int64)Enum->GetEnumValueByName(Token);
 
                 InnerProperty->SetIntPropertyValue(Value, EnumValue);
@@ -82,17 +82,17 @@ namespace Lumina
             int64 EnumValue = 0;
             if (bIsBitmaskEnum)
             {
-                FString Str(EnumName.c_str());
+                FString Str(*EnumName);
                 FString Delimiter(" | ");
-                size_t Start = 0;
-                size_t End = 0;
-                while ((End = Str.find(Delimiter, Start)) != FString::npos)
+                int32 Start = 0;
+                int32 End = 0;
+                while ((End = Str.Find(Delimiter, Start)) != Constants::kIndexNone)
                 {
-                    FName Token(Str.substr(Start, End - Start).c_str());
+                    FName Token(*Str.Mid(Start, End - Start));
                     EnumValue |= (int64)Enum->GetEnumValueByName(Token);
-                    Start = End + Delimiter.size();
+                    Start = End + Delimiter.Len();
                 }
-                FName Token(Str.substr(Start).c_str());
+                FName Token(*Str.Mid(Start));
                 EnumValue |= (int64)Enum->GetEnumValueByName(Token);
             }
             else

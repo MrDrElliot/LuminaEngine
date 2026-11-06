@@ -23,7 +23,7 @@ namespace Lumina
     void FPluginManager::DiscoverEnginePlugins()
     {
         const FString& EngineDir = Paths::GetEngineDirectory();
-        if (EngineDir.empty())
+        if (EngineDir.IsEmpty())
         {
             return;
         }
@@ -34,11 +34,11 @@ namespace Lumina
 
     void FPluginManager::DiscoverProjectPlugins(FStringView ProjectDir)
     {
-        if (ProjectDir.empty() || FStringView(ProjectDirectory) == ProjectDir)
+        if (ProjectDir.IsEmpty() || FStringView(ProjectDirectory) == ProjectDir)
         {
             return;
         }
-        ProjectDirectory.assign(ProjectDir.data(), ProjectDir.size());
+        ProjectDirectory = FStringView(ProjectDir.GetData(), ProjectDir.Len());
         FString Root = ProjectDirectory;
         Root += "/Plugins";
         DiscoverDirectory(Root, /*bIsEngine*/false);
@@ -59,12 +59,12 @@ namespace Lumina
                 return;
             }
 
-            const FString PluginDir(Entry.FullPath.data(), Entry.FullPath.size());
+            const FString PluginDir(Entry.FullPath.GetData(), Entry.FullPath.Len());
 
             FString Conventional = PluginDir;
-            Conventional.push_back('/');
-            Conventional.append(Entry.Name.data(), Entry.Name.size());
-            Conventional.append(".lplugin");
+            Conventional.AppendChar('/');
+            Conventional.Append(Entry.Name.GetData(), Entry.Name.Len());
+            Conventional.Append(".lplugin");
 
             FString Descriptor;
 
@@ -81,7 +81,7 @@ namespace Lumina
                         return Filesystem::EVisit::Continue;
                     }
 
-                    Descriptor.assign(Candidate.FullPath.data(), Candidate.FullPath.size());
+                    Descriptor = FStringView(Candidate.FullPath.GetData(), Candidate.FullPath.Len());
 
                     // Warn so a misnamed descriptor surfaces instead of "first .lplugin wins" silently.
                     LOG_WARN("[PluginManager] {} contains a .lplugin not matching the folder name; using {} (rename to {})",
@@ -91,7 +91,7 @@ namespace Lumina
                 });
             }
 
-            if (Descriptor.empty())
+            if (Descriptor.IsEmpty())
             {
                 return;
             }
@@ -112,7 +112,7 @@ namespace Lumina
 
             // On a duplicate name the first wins and the later ones are logged.
             FName Key(Parsed.Name);
-            if (PluginLookup.find(Key) != PluginLookup.end())
+            if (PluginLookup.Contains(Key))
             {
                 LOG_WARN("[PluginManager] Duplicate plugin name '{}' at {} ignored (already registered)",
                     Parsed.Name, DescriptorPath);
@@ -120,7 +120,7 @@ namespace Lumina
             }
 
             LOG_INFO("[PluginManager] Discovered {} plugin '{}' ({} modules)",
-                bIsEngine ? "engine" : "project", Parsed.Name, Parsed.Modules.size());
+                bIsEngine ? "engine" : "project", Parsed.Name, Parsed.Modules.Num());
 
             // Nothing else puts a plugin's Binaries directory on the search path for a dependent DLL.
             FString BinariesDir = PluginDirStr;
@@ -134,8 +134,8 @@ namespace Lumina
 
             TUniquePtr<FPlugin> Owned = MakeUnique<FPlugin>(Move(Parsed), Move(PluginDirStr), Move(DescriptorPath));
             FPlugin* Raw = Owned.get();
-            OwnedPlugins.emplace_back(Move(Owned));
-            PluginLookup.emplace(Key, Raw);
+            OwnedPlugins.Emplace(Move(Owned));
+            PluginLookup.TryAdd(Key, Raw);
             bLoadOrderDirty = true;
         });
     }
@@ -176,7 +176,7 @@ namespace Lumina
             }
         #endif
 
-        if (!Module.SupportedPlatforms.empty())
+        if (!Module.SupportedPlatforms.IsEmpty())
         {
             bool bFound = false;
             for (const FString& P : Module.SupportedPlatforms)
@@ -203,7 +203,7 @@ namespace Lumina
                 return false;
             }
         #endif
-        if (!Desc.SupportedPlatforms.empty())
+        if (!Desc.SupportedPlatforms.IsEmpty())
         {
             bool bFound = false;
             for (const FString& P : Desc.SupportedPlatforms)
@@ -226,98 +226,121 @@ namespace Lumina
     {
         // Iterates OwnedPlugins in insertion order rather than the lookup, so the order is reproducible.
         TVector<FPlugin*> Enabled;
-        Enabled.reserve(OwnedPlugins.size());
+        Enabled.Reserve(OwnedPlugins.Num());
+        THashSet<FPlugin*> Loadable;
         for (auto& Owned : OwnedPlugins)
         {
             FPlugin* P = Owned.get();
-            if (!P->IsEnabled())                  continue;
-            if (!IsPluginApplicable(P->GetDescriptor())) continue;
+            if (P->IsEnabled() && IsPluginApplicable(P->GetDescriptor()))
+            {
+                Enabled.Add(P);
+                Loadable.Add(P);
+            }
+        }
 
-            bool bMissingRequired = false;
-            for (const FPluginDependency& Dep : P->GetDescriptor().Dependencies)
+        // The dependency that is loading, at the version asked for, or null; so a skipped plugin also fails its dependents.
+        const auto Resolve = [this, &Loadable](const FPluginDependency& Dep) -> FPlugin*
+        {
+            FPlugin* DepPlugin = FindPlugin(Dep.Name);
+            return DepPlugin != nullptr && Loadable.Contains(DepPlugin) && DepPlugin->GetDescriptor().Version >= Dep.Version
+                ? DepPlugin : nullptr;
+        };
+
+        // Repeated until stable, so skipping one plugin also skips whatever required it; LuminaBuildTool prunes the same way.
+        for (bool bChanged = true; bChanged;)
+        {
+            bChanged = false;
+            Enabled.RemoveAll([&](FPlugin* P)
             {
-                FPlugin* DepPlugin = FindPlugin(Dep.Name);
-                if (!DepPlugin || !DepPlugin->IsEnabled())
+                for (const FPluginDependency& Dep : P->GetDescriptor().Dependencies)
                 {
-                    if (!Dep.bOptional)
+                    if (Dep.bOptional || Resolve(Dep) != nullptr)
                     {
-                        LOG_WARN("[PluginManager] Plugin '{}' requires '{}' which is missing or disabled; skipping",
-                            P->GetName(), Dep.Name);
-                        bMissingRequired = true;
-                        break;
+                        continue;
                     }
+                    FPlugin* Found = FindPlugin(Dep.Name);
+                    if (Found != nullptr && Loadable.Contains(Found))
+                    {
+                        LOG_WARN("[PluginManager] Plugin '{}' requires '{}' version {} but found version {}; skipping",
+                            P->GetName(), Dep.Name, Dep.Version, Found->GetDescriptor().Version);
+                    }
+                    else
+                    {
+                        LOG_WARN("[PluginManager] Plugin '{}' requires '{}' which is missing, disabled or not loading; skipping",
+                            P->GetName(), Dep.Name);
+                    }
+                    Loadable.Remove(P);
+                    bChanged = true;
+                    return true;
                 }
-            }
-            if (bMissingRequired)
-            {
-                continue;
-            }
-            Enabled.push_back(P);
+                return false;
+            });
         }
 
         THashMap<FPlugin*, int32> InDegree;
         THashMap<FPlugin*, TVector<FPlugin*>> Edges;
         for (FPlugin* P : Enabled)
         {
-            InDegree[P] = 0;
+            InDegree.Add(P, 0);
         }
         for (FPlugin* P : Enabled)
         {
             for (const FPluginDependency& Dep : P->GetDescriptor().Dependencies)
             {
-                FPlugin* DepPlugin = FindPlugin(Dep.Name);
-                if (!DepPlugin || !DepPlugin->IsEnabled())
+                if (FPlugin* DepPlugin = Resolve(Dep))
                 {
-                    continue;
+                    Edges.FindOrAdd(DepPlugin).Add(P);
+                    InDegree.FindChecked(P) += 1;
                 }
-                Edges[DepPlugin].push_back(P);
-                InDegree[P] += 1;
             }
         }
 
         TVector<FPlugin*> Result;
-        Result.reserve(Enabled.size());
+        Result.Reserve(Enabled.Num());
 
         // Seeded in Enabled order so zero-indegree siblings come out in discovery order.
         TVector<FPlugin*> Frontier;
-        Frontier.reserve(Enabled.size());
+        Frontier.Reserve(Enabled.Num());
         for (FPlugin* P : Enabled)
         {
-            if (InDegree[P] == 0)
+            if (InDegree.FindChecked(P) == 0)
             {
-                Frontier.push_back(P);
+                Frontier.Add(P);
             }
         }
-        size_t Head = 0;
-        while (Head < Frontier.size())
+        int32 Head = 0;
+        while (Head < Frontier.Num())
         {
             FPlugin* P = Frontier[Head++];
-            Result.push_back(P);
+            Result.Add(P);
             // Edges were built in Enabled order, so iterating push order keeps dependents stable.
-            for (FPlugin* Dependent : Edges[P])
+            if (const TVector<FPlugin*>* Dependents = Edges.Find(P))
             {
-                if (--InDegree[Dependent] == 0)
+                for (FPlugin* Dependent : *Dependents)
                 {
-                    Frontier.push_back(Dependent);
+                    if (--InDegree.FindChecked(Dependent) == 0)
+                    {
+                        Frontier.Add(Dependent);
+                    }
                 }
             }
         }
 
-        if (Result.size() != Enabled.size())
+        if (Result.Num() != Enabled.Num())
         {
             // On a cycle, leftovers are emitted in OwnedPlugins order and each is logged.
             THashSet<FPlugin*> Emitted;
-            Emitted.reserve(Result.size());
-            for (FPlugin* Q : Result) Emitted.insert(Q);
+            Emitted.Reserve(Result.Num());
+            for (FPlugin* Q : Result) Emitted.Add(Q);
 
             FString Names;
             for (FPlugin* P : Enabled)
             {
-                if (Emitted.find(P) == Emitted.end())
+                if (!Emitted.Contains(P))
                 {
-                    if (!Names.empty()) Names += ", ";
-                    Names.append(P->GetName().data(), P->GetName().size());
-                    Result.push_back(P);
+                    if (!Names.IsEmpty()) Names += ", ";
+                    Names.Append(P->GetName().GetData(), P->GetName().Len());
+                    Result.Add(P);
                 }
             }
             LOG_WARN("[PluginManager] Dependency cycle detected involving: {}, loading them in discovery order; resolve the cycle to silence this.",
@@ -351,7 +374,7 @@ namespace Lumina
             return;
         }
 
-        VFS::Mount<VFS::FNativeFileSystem>(FFixedString(Alias.c_str()), ContentDir);
+        VFS::Mount<VFS::FNativeFileSystem>(FFixedString(*Alias), ContentDir);
         Plugin.SetContentMounted(true);
 
         LOG_INFO("[PluginManager] Mounted plugin content {} -> {}", Alias, ContentDir);
@@ -387,7 +410,7 @@ namespace Lumina
             Loaded.Descriptor      = Module;
             Loaded.ModuleInterface = StaticIface;
             Loaded.bStartupCalled  = true;
-            Plugin.GetLoadedModules().emplace_back(Move(Loaded));
+            Plugin.GetLoadedModules().Emplace(Move(Loaded));
 
             // A boot milestone worth seeing in Shipping, so a plugin failing to load stays debuggable.
             LOG_DISPLAY("[PluginManager] Linked plugin '{}' static module '{}' (phase {})",
@@ -415,7 +438,7 @@ namespace Lumina
         Loaded.Descriptor      = Module;
         Loaded.ModuleInterface = Interface;
         Loaded.bStartupCalled  = true; // FModuleManager called StartupModule
-        Plugin.GetLoadedModules().emplace_back(Move(Loaded));
+        Plugin.GetLoadedModules().Emplace(Move(Loaded));
 
         // LOG_DISPLAY (not INFO) so this boot milestone survives Shipping.
         LOG_DISPLAY("[PluginManager] Loaded plugin '{}' module '{}' (phase {})",
@@ -447,11 +470,11 @@ namespace Lumina
                 const bool bLate = Module.LoadingPhase != Phase && PhaseFired[(int32)Module.LoadingPhase];
                 if (Module.LoadingPhase != Phase && !bLate)     continue;
                 if (!IsModuleApplicable(Module))                continue;
-                if (bLate && !AttemptedModules.insert(FName(Module.Name)).second)
+                if (bLate && !AttemptedModules.TryAdd(FName(Module.Name)))
                 {
                     continue;
                 }
-                AttemptedModules.insert(FName(Module.Name));
+                AttemptedModules.Emplace(Module.Name);
                 const bool bLoaded = Algo::AnyOf(Plugin->GetLoadedModules(),
                     [&Module](const FLoadedPluginModule& Existing) { return Existing.Descriptor.Name == Module.Name && Existing.bStartupCalled; });
                 if (bLate && !bLoaded)
@@ -475,37 +498,37 @@ namespace Lumina
             {
                 if (MIt->bStartupCalled)
                 {
-                    FModuleManager::Get().UnloadModule(FStringView(MIt->Descriptor.Name.c_str(), MIt->Descriptor.Name.size()));
+                    FModuleManager::Get().UnloadModule(FStringView(*MIt->Descriptor.Name, MIt->Descriptor.Name.Len()));
                 }
                 MIt->ModuleInterface = nullptr;
             }
-            Loaded.clear();
+            Loaded.Reset();
         }
-        CachedLoadOrder.clear();
+        CachedLoadOrder.Reset();
         bLoadOrderDirty = true;
     }
 
     FPlugin* FPluginManager::FindPlugin(FStringView Name)
     {
-        auto It = PluginLookup.find(FName(Name));
-        return It == PluginLookup.end() ? nullptr : It->second;
+        auto It = PluginLookup.Find(FName(Name));
+        return It == nullptr ? nullptr : (*It);
     }
 
     const FPlugin* FPluginManager::FindPlugin(FStringView Name) const
     {
-        auto It = PluginLookup.find(FName(Name));
-        return It == PluginLookup.end() ? nullptr : It->second;
+        auto It = PluginLookup.Find(FName(Name));
+        return It == nullptr ? nullptr : (*It);
     }
 
     TVector<FPlugin*> FPluginManager::GetEnabledPlugins()
     {
         TVector<FPlugin*> Result;
-        Result.reserve(OwnedPlugins.size());
+        Result.Reserve(OwnedPlugins.Num());
         for (auto& Owned : OwnedPlugins)
         {
             if (Owned->IsEnabled())
             {
-                Result.push_back(Owned.get());
+                Result.Add(Owned.get());
             }
         }
         return Result;
@@ -514,10 +537,10 @@ namespace Lumina
     TVector<const FPlugin*> FPluginManager::GetAllPlugins() const
     {
         TVector<const FPlugin*> Result;
-        Result.reserve(OwnedPlugins.size());
+        Result.Reserve(OwnedPlugins.Num());
         for (const auto& Owned : OwnedPlugins)
         {
-            Result.push_back(Owned.get());
+            Result.Add(Owned.get());
         }
         return Result;
     }

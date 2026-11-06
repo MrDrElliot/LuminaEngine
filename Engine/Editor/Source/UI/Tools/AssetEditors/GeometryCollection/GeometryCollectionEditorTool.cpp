@@ -18,13 +18,13 @@
 namespace Lumina
 {
     FGeometryCollectionEditorTool::FGeometryCollectionEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
     void FGeometryCollectionEditorTool::OnInitialize()
     {
-        CreateToolWindow(FractureWindowName.data(), [this](bool /*bFocused*/)
+        CreateToolWindow(FractureWindowName.GetData(), [this](bool /*bFocused*/)
         {
             DrawFractureWindow();
         });
@@ -99,8 +99,8 @@ namespace Lumina
                 }
             }
         }
-        PieceEntities.clear();
-        PieceMeshes.clear();
+        PieceEntities.Reset();
+        PieceMeshes.Reset();
     }
 
     void FGeometryCollectionEditorTool::RebuildPreview()
@@ -116,23 +116,23 @@ namespace Lumina
         }
 
         const int32 NumPieces = Collection->GetNumPieces();
-        PieceMeshes.reserve(NumPieces);
-        PieceEntities.reserve(NumPieces);
+        PieceMeshes.Reserve(NumPieces);
+        PieceEntities.Reserve(NumPieces);
 
         for (int32 i = 0; i < NumPieces; ++i)
         {
             CStaticMesh* PieceMesh = Fracture::BuildPieceMesh(Collection->GetPiece(i), Collection->Materials, "PreviewPiece");
-            PieceMeshes.push_back(PieceMesh);
+            PieceMeshes.Add(PieceMesh);
 
             if (PieceMesh == nullptr)
             {
-                PieceEntities.push_back(ECS::NullEntity);
+                PieceEntities.Add(ECS::NullEntity);
                 continue;
             }
 
             ECS::FEntity Entity = World->ConstructEntity("Piece");
             World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(PieceMesh);
-            PieceEntities.push_back(Entity);
+            PieceEntities.Add(Entity);
         }
 
         ApplyExplode();
@@ -147,7 +147,7 @@ namespace Lumina
         }
 
         const FVector3 Center = Collection->GetFractureData().SourceBounds.GetCenter();
-        const int32 Count = Math::Min((int32)PieceEntities.size(), Collection->GetNumPieces());
+        const int32 Count = Math::Min(PieceEntities.Num(), Collection->GetNumPieces());
 
         for (int32 i = 0; i < Count; ++i)
         {
@@ -181,8 +181,8 @@ namespace Lumina
         uint32 TotalTris  = 0;
         for (int32 i = 0; i < Collection->GetNumPieces(); ++i)
         {
-            TotalVerts += (uint32)Collection->GetPiece(i).Vertices.size();
-            TotalTris  += (uint32)Collection->GetPiece(i).Indices.size() / 3;
+            TotalVerts += (uint32)Collection->GetPiece(i).Vertices.Num();
+            TotalTris  += (uint32)Collection->GetPiece(i).Indices.Num() / 3;
         }
 
         ImGui::Text("Pieces: %d", Collection->GetNumPieces());
@@ -254,7 +254,7 @@ namespace Lumina
         ImGuiID LeftDockID = 0, RightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FractureWindowName.data()).c_str(), RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FractureWindowName.GetData()), RightDockID);
     }
 }

@@ -31,9 +31,9 @@ namespace
             Bone.InvBindMatrix  = FMatrix4::Identity();
             Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.0f, 0.25f, 0.0f), FQuat::Identity(), FVector3(1.0f));
 
-            Skeleton.BoneNameToIndex[Bone.Name] = (int32)Skeleton.Bones.size();
-            Parent = (int32)Skeleton.Bones.size();
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.BoneNameToIndex[Bone.Name] = Skeleton.Bones.Num();
+            Parent = Skeleton.Bones.Num();
+            Skeleton.Bones.Add(Bone);
         }
 
         Skeleton.BuildBindPoseCache();
@@ -97,7 +97,7 @@ namespace
         Channel.TargetPath = Path;
         for (uint32 i = 0; i < NumKeys; ++i)
         {
-            Channel.Timestamps.push_back(Duration * (float)i / (float)(NumKeys - 1));
+            Channel.Timestamps.Add(Duration * (float)i / (float)(NumKeys - 1));
         }
         return Channel;
     }
@@ -108,9 +108,9 @@ namespace
         for (uint32 i = 0; i < NumKeys; ++i)
         {
             const float Angle = Math::Radians(SweepDegrees) * (float)i / (float)(NumKeys - 1);
-            Channel.Rotations.push_back(FQuat(FVector3(Angle, Angle * 0.5f, -Angle * 0.25f)));
+            Channel.Rotations.Emplace(FVector3(Angle, Angle * 0.5f, -Angle * 0.25f));
         }
-        Resource.Channels.push_back(Channel);
+        Resource.Channels.Add(Channel);
     }
 
     void AddAdditiveTranslationSweep(FAnimationResource& Resource, const FName& Bone, float Duration, uint32 NumKeys, const FVector3& Travel)
@@ -118,9 +118,9 @@ namespace
         FAnimationChannel Channel = MakeAdditiveTestChannel(Bone, FAnimationChannel::ETargetPath::Translation, Duration, NumKeys);
         for (uint32 i = 0; i < NumKeys; ++i)
         {
-            Channel.Translations.push_back(Travel * ((float)i / (float)(NumKeys - 1)));
+            Channel.Translations.Add(Travel * ((float)i / (float)(NumKeys - 1)));
         }
-        Resource.Channels.push_back(Channel);
+        Resource.Channels.Add(Channel);
     }
 
     CAnimation* MakeAdditiveTestClip(float Duration, float SweepDegrees, const FVector3& Travel)

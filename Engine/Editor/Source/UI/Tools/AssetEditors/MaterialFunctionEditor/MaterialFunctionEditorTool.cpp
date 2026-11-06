@@ -34,7 +34,7 @@ namespace Lumina
     }
 
     FMaterialFunctionEditorTool::FMaterialFunctionEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset)
     {
     }
 
@@ -83,7 +83,7 @@ namespace Lumina
             // A function calling itself would reopen this same tab, which reads as the click doing nothing.
             if (Call->Function.Get() == Asset.Get())
             {
-                ImGuiX::Notifications::NotifyWarning("'{0}' is this function.", Call->Function->GetName().c_str());
+                ImGuiX::Notifications::NotifyWarning("'{0}' is this function.", *Call->Function->GetName());
                 return;
             }
 
@@ -140,7 +140,7 @@ namespace Lumina
         if (bHasErrors)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-            ImGui::TextWrapped("Last compile reported errors:\n%s", CompilationLog.c_str());
+            ImGui::TextWrapped("Last compile reported errors:\n%s", *CompilationLog);
             ImGui::PopStyleColor();
             ImGui::Separator();
         }
@@ -154,13 +154,13 @@ namespace Lumina
         ImGui::TextUnformatted("Inputs");
         ImGui::PopStyleColor();
         ImGui::Separator();
-        if (Fn->GetInputs().empty())
+        if (Fn->GetInputs().IsEmpty())
         {
             ImGui::TextDisabled("  (none)");
         }
         for (const SMaterialFunctionInput& In : Fn->GetInputs())
         {
-            ImGui::BulletText("%s : %s", In.Name.c_str(), ValueTypeName(In.Type));
+            ImGui::BulletText("%s : %s", *In.Name, ValueTypeName(In.Type));
         }
 
         ImGui::Spacing();
@@ -168,13 +168,13 @@ namespace Lumina
         ImGui::TextUnformatted("Outputs");
         ImGui::PopStyleColor();
         ImGui::Separator();
-        if (Fn->GetOutputs().empty())
+        if (Fn->GetOutputs().IsEmpty())
         {
             ImGui::TextDisabled("  (none)");
         }
         for (const SMaterialFunctionOutput& Out : Fn->GetOutputs())
         {
-            ImGui::BulletText("%s : %s", Out.Name.c_str(), ValueTypeName(Out.Type));
+            ImGui::BulletText("%s : %s", *Out.Name, ValueTypeName(Out.Type));
         }
     }
 
@@ -193,7 +193,7 @@ namespace Lumina
         NodeGraph->CompileForValidation(Compiler);
 
         bHasErrors = Compiler.HasErrors();
-        CompilationLog.clear();
+        CompilationLog.Reset();
         for (const EdNodeGraph::FError& Error : Compiler.GetErrors())
         {
             CompilationLog += "[" + Error.Name + "]: " + Error.Description + "\n";
@@ -205,11 +205,11 @@ namespace Lumina
     void FMaterialFunctionEditorTool::OnSave()
     {
         CompileAndSyncSignature();
-        const bool bHasErrors = !CompilationLog.empty();
+        const bool bHasErrors = !CompilationLog.IsEmpty();
         if (bHasErrors && Asset != nullptr)
         {
-            LOG_ERROR("Material function '{}' failed to compile:\n{}", Asset->GetName().c_str(), CompilationLog.c_str());
-            ImGuiX::Notifications::NotifyError("'{0}' has compile errors, so materials using it were not recompiled. See the Signature panel.", Asset->GetName().c_str());
+            LOG_ERROR("Material function '{}' failed to compile:\n{}", *Asset->GetName(), *CompilationLog);
+            ImGuiX::Notifications::NotifyError("'{0}' has compile errors, so materials using it were not recompiled. See the Signature panel.", *Asset->GetName());
         }
 
         FAssetEditorTool::OnSave();
@@ -227,9 +227,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.30f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(rightDockID, ImGuiDir_Down, 0.40f, &rightBottomDockID, &rightDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionGraphWindowName).c_str(),      leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionPropertiesWindowName).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionSignatureWindowName).c_str(),  rightBottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FunctionGraphWindowName),      leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FunctionPropertiesWindowName), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(FunctionSignatureWindowName),  rightBottomDockID);
     }
 
     CEdNodeGraph* FMaterialFunctionEditorTool::GetActiveNodeGraph()

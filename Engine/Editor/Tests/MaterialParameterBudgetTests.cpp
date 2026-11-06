@@ -35,7 +35,7 @@ TEST(MaterialParameterBudget, TheLastScalarThatFitsIsAccepted)
     }
 
     EXPECT_FALSE(Compiler.HasErrors());
-    EXPECT_EQ(ExportedParameters(Compiler).size(), (size_t)MAX_SCALARS);
+    EXPECT_EQ(ExportedParameters(Compiler).Num(), MAX_SCALARS);
 }
 
 TEST(MaterialParameterBudget, AScalarPastTheBudgetIsRefusedRatherThanClamped)
@@ -47,10 +47,10 @@ TEST(MaterialParameterBudget, AScalarPastTheBudgetIsRefusedRatherThanClamped)
     }
 
     EXPECT_TRUE(Compiler.HasErrors());
-    EXPECT_EQ(Compiler.GetErrors().size(), (size_t)4);
+    EXPECT_EQ(Compiler.GetErrors().Num(), 4);
 
     const TVector<SMaterialParameter> Params = ExportedParameters(Compiler);
-    EXPECT_EQ(Params.size(), (size_t)MAX_SCALARS);
+    EXPECT_EQ(Params.Num(), MAX_SCALARS);
     for (const SMaterialParameter& Param : Params)
     {
         EXPECT_LT(Param.Index, MAX_SCALARS);
@@ -84,7 +84,7 @@ TEST(MaterialParameterBudget, AVectorPastTheBudgetIsRefusedRatherThanClamped)
     EXPECT_TRUE(Compiler.HasErrors());
 
     const TVector<SMaterialParameter> Params = ExportedParameters(Compiler);
-    EXPECT_EQ(Params.size(), (size_t)MAX_VECTORS);
+    EXPECT_EQ(Params.Num(), MAX_VECTORS);
     for (const SMaterialParameter& Param : Params)
     {
         EXPECT_LT(Param.Index, MAX_VECTORS);
@@ -104,7 +104,7 @@ TEST(MaterialParameterBudget, ATexturePastTheBudgetBindsNoSlot)
     EXPECT_TRUE(Compiler.HasErrors());
 
     const TVector<SMaterialParameter> Params = ExportedParameters(Compiler);
-    EXPECT_EQ(Params.size(), (size_t)MAX_TEXTURES);
+    EXPECT_EQ(Params.Num(), MAX_TEXTURES);
     for (const SMaterialParameter& Param : Params)
     {
         EXPECT_LT(Param.Index, MAX_TEXTURES);
@@ -120,5 +120,5 @@ TEST(MaterialParameterBudget, ARepeatedParameterNameReusesItsSlot)
     }
 
     EXPECT_FALSE(Compiler.HasErrors());
-    EXPECT_EQ(ExportedParameters(Compiler).size(), (size_t)1);
+    EXPECT_EQ(ExportedParameters(Compiler).Num(), 1);
 }

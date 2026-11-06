@@ -15,7 +15,7 @@ namespace Lumina::ECS
 
     void FHierarchy::BuildSiblingIndices(TVector<uint32>& OutByEntityIndex) const
     {
-        OutByEntityIndex.assign(Nodes.size(), 0u);
+        OutByEntityIndex.Init(0u, Nodes.Num());
         for (const FHierarchyNode& Node : Nodes)
         {
             uint32 Index = 0;
@@ -56,9 +56,9 @@ namespace Lumina::ECS
     FHierarchyNode& FHierarchy::Touch(FEntity Entity)
     {
         const uint32 Index = Entity.GetIndex();
-        if (Index >= Nodes.size())
+        if (Index >= static_cast<uint32>(Nodes.Num()))
         {
-            Nodes.resize(Index + 1u);
+            Nodes.SetNum(Index + 1u);
         }
 
         FHierarchyNode& Node = Nodes[Index];
@@ -73,7 +73,7 @@ namespace Lumina::ECS
     FHierarchyNode* FHierarchy::Lookup(FEntity Entity)
     {
         const uint32 Index = Entity.GetIndex();
-        return !Entity.IsNull() && Index < Nodes.size() && Nodes[Index].Self == Entity ? &Nodes[Index] : nullptr;
+        return !Entity.IsNull() && Index < static_cast<uint32>(Nodes.Num()) && Nodes[Index].Self == Entity ? &Nodes[Index] : nullptr;
     }
 
     void FHierarchy::SetLinked(FHierarchyNode& Node, bool bWasLinked)
@@ -152,12 +152,12 @@ namespace Lumina::ECS
 
     void FHierarchy::Reset()
     {
-        Nodes.clear();
+        Nodes.Reset();
         LinkedCount = 0;
-        Order.clear();
-        SubtreeSize.clear();
-        ParentSlot.clear();
-        SlotByIndex.clear();
+        Order.Reset();
+        SubtreeSize.Reset();
+        ParentSlot.Reset();
+        SlotByIndex.Reset();
         bOrderDirty = false;
     }
 
@@ -170,9 +170,9 @@ namespace Lumina::ECS
         LUMINA_PROFILE_SCOPE();
         bOrderDirty = false;
 
-        Order.clear();
-        ParentSlot.clear();
-        SlotByIndex.assign(Nodes.size(), NoSlot);
+        Order.Reset();
+        ParentSlot.Reset();
+        SlotByIndex.Init(NoSlot, Nodes.Num());
 
         struct FPending
         {
@@ -188,27 +188,27 @@ namespace Lumina::ECS
                 continue;
             }
 
-            Pending.push_back({ Root.Self, NoSlot });
-            while (!Pending.empty())
+            Pending.Emplace(Root.Self, NoSlot);
+            while (!Pending.IsEmpty())
             {
-                const FPending Current = Pending.back();
-                Pending.pop_back();
+                const FPending Current = Pending.Last();
+                Pending.Pop();
 
-                const uint32 Slot = (uint32)Order.size();
+                const uint32 Slot = (uint32)Order.Num();
                 SlotByIndex[Current.Entity.GetIndex()] = Slot;
-                Order.push_back(Current.Entity);
-                ParentSlot.push_back(Current.ParentSlot);
+                Order.Add(Current.Entity);
+                ParentSlot.Add(Current.ParentSlot);
 
                 // Pushed last to first, so the first child is popped next and siblings keep their order.
                 for (FEntity Child = Nodes[Current.Entity.GetIndex()].Last; !Child.IsNull(); Child = Nodes[Child.GetIndex()].Prev)
                 {
-                    Pending.push_back({ Child, Slot });
+                    Pending.Emplace(Child, Slot);
                 }
             }
         }
 
-        SubtreeSize.assign(Order.size(), 1u);
-        for (size_t Slot = Order.size(); Slot-- > 0;)
+        SubtreeSize.Init(1u, Order.Num());
+        for (int32 Slot = Order.Num(); Slot-- > 0;)
         {
             if (ParentSlot[Slot] != NoSlot)
             {

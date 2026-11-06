@@ -205,6 +205,17 @@ A plugin is built when `EnabledByDefault` is set in its descriptor, or when a ta
 `EnabledPlugins`. `DisabledPlugins` overrides both. `EditorOnly` plugins and `Editor` host-type
 modules are dropped from Game targets. Standalone `Program` targets host no plugins at all.
 
+`Dependencies` lists other plugins, each as a bare name or as
+`{ "Name": "Networking", "Optional": true, "Version": 2 }`, where `Version` is the lowest one that
+satisfies it. A plugin whose required dependency is not enabled, or is older than asked for, is left
+out with a warning, and so is everything that depends on it; that is exactly what the engine's
+loader refuses to load. A module's own `SupportedPlatforms` narrows the plugin's.
+
+The tool and the engine read a descriptor by the same rules: strict JSON, exact key names, the same
+defaults, and an error for a missing `Name`, a field of the wrong type, or a module `Type` or
+`LoadingPhase` neither knows. `Engine/Source/Runtime/Tests/PluginDescriptorTests.cpp` holds the
+cases the two must agree on, with the result this tool produces for each.
+
 ## How incremental builds decide
 
 Every action declares its inputs and its outputs. An action reruns when:
@@ -266,7 +277,7 @@ Some sources can never be merged, and those are held back automatically rather t
 remembering to list them:
 
 - anything with `PerFileCompilerOptions`, which would otherwise silently lose the flag it asked
-  for (`JobScheduler.cpp` needs `/GT`, and losing it is a crash, not an error),
+  for (`ForkRuntime.cpp` asks for the initial-exec TLS model on its hot path),
 - the precompiled header source, which has to run `/Yc` in its own translation unit,
 - `PerImageSourceFiles`, which are per loaded image rather than per module,
 - the reflection shards, which are already generated as unity files.
@@ -466,8 +477,8 @@ literal `pch.h`, which only ever worked because Runtime happened to be on everyo
 
 `PerFileCompilerOptions` and `ExcludeFromUnity` are keyed by bare file name, so a rename would
 silently drop whatever was attached to the old one. The scanner fails the build when either names a
-file the module does not have. Silence is the wrong outcome here: `JobScheduler.cpp` losing `/GT`
-is a fiber-scheduler crash rather than a diagnostic.
+file the module does not have. Silence is the wrong outcome here: a dropped flag shows up later as a
+miscompile or a slowdown rather than a diagnostic.
 
 ## Current state
 

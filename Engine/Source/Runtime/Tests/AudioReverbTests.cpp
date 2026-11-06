@@ -25,12 +25,12 @@ namespace
     // The longest comb delay is over 1700 frames at 48 kHz, so the wet tail needs several blocks to appear.
     float RenderPeakOverBlocks(FAudioReverb& Reverb, const float* FirstInput, uint32 BlockFrames, uint32 Channels, uint32 Blocks)
     {
-        TVector<float> Out((size_t)BlockFrames * Channels, 0.0f);
+        TVector<float> Out(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(BlockFrames) * Channels), 0.0f);
 
         float Peak = 0.0f;
         for (uint32 Block = 0; Block < Blocks; ++Block)
         {
-            Reverb.Process(Block == 0 ? FirstInput : nullptr, Out.data(), BlockFrames);
+            Reverb.Process(Block == 0 ? FirstInput : nullptr, Out.GetData(), BlockFrames);
             Peak = Math::Max(Peak, ReverbPeakOf(Out));
         }
         return Peak;
@@ -61,7 +61,7 @@ TEST(AudioReverb, ProcessBeforeInitializeIsANoOp)
     FAudioReverb Reverb;
 
     TVector<float> Out(64, 1234.0f);
-    Reverb.Process(nullptr, Out.data(), 32);
+    Reverb.Process(nullptr, Out.GetData(), 32);
 
     // Untouched rather than zeroed, so a caller cannot mistake a dead reverb for silence.
     EXPECT_FLOAT_EQ(Out[0], 1234.0f);
@@ -113,7 +113,7 @@ TEST(AudioReverb, ImpulseProducesADecayingTail)
     Impulse[0] = 1.0f;
     Impulse[1] = 1.0f;
 
-    const float EarlyPeak = RenderPeakOverBlocks(Reverb, Impulse.data(), BlockFrames, Channels, 8);
+    const float EarlyPeak = RenderPeakOverBlocks(Reverb, Impulse.GetData(), BlockFrames, Channels, 8);
     EXPECT_GT(EarlyPeak, 0.0f);
 
     const float LatePeak = RenderPeakOverBlocks(Reverb, nullptr, BlockFrames, Channels, 400);
@@ -135,7 +135,7 @@ TEST(AudioReverb, ReinitializeResetsTheTail)
     Impulse[0] = 1.0f;
     Impulse[1] = 1.0f;
 
-    ASSERT_GT(RenderPeakOverBlocks(Reverb, Impulse.data(), BlockFrames, Channels, 8), 0.0f);
+    ASSERT_GT(RenderPeakOverBlocks(Reverb, Impulse.GetData(), BlockFrames, Channels, 8), 0.0f);
 
     Reverb.Shutdown();
     ASSERT_TRUE(Reverb.Initialize(Channels, 48000));

@@ -14,6 +14,7 @@ namespace Lumina
 {
     class CSkeleton;
     struct FSkeletonResource;
+    struct SFollowerPoseComponent;
     struct SSkeletalMeshComponent;
     struct SStaticMeshComponent;
 }
@@ -45,6 +46,50 @@ namespace Lumina::SkeletalUtils
 
     // The entity whose pose Follower copies, at the end of its leader chain, or null when it follows nothing or the chain loops.
     RUNTIME_API ECS::FEntity ResolvePoseLeader(const ECS::FRegistry& Registry, ECS::FEntity Follower);
+
+    // The same walk through a system's lookups: Links reaches SFollowerPoseComponent and Meshes SSkeletalMeshComponent.
+    template<typename TLinks, typename TMeshes, typename TIsValid>
+    ECS::FEntity ResolvePoseLeader(const TLinks& Links, const TMeshes& Meshes, const ECS::FHierarchy& Hierarchy, TIsValid&& IsValid, ECS::FEntity Follower)
+    {
+        // Deeper than any real outfit, and what stops a cycle.
+        constexpr int32 kMaxHops = 8;
+
+        ECS::FEntity Cursor = Follower;
+        for (int32 Hop = 0; Hop < kMaxHops; ++Hop)
+        {
+            const auto* Link = Links.template TryGet<SFollowerPoseComponent>(Cursor);
+            if (Link == nullptr)
+            {
+                return Cursor == Follower ? ECS::NullEntity : Cursor;
+            }
+
+            ECS::FEntity Next = Link->Leader;
+            if (Next == ECS::NullEntity)
+            {
+                // An unset leader is the nearest ancestor with a skeletal mesh, which is how a modular piece is usually attached.
+                for (ECS::FEntity Parent = Hierarchy.GetParent(Cursor); Parent != ECS::NullEntity; Parent = Hierarchy.GetParent(Parent))
+                {
+                    if (Meshes.template TryGet<SSkeletalMeshComponent>(Parent) != nullptr)
+                    {
+                        Next = Parent;
+                        break;
+                    }
+                }
+            }
+
+            // A chain that stops on another follower has no leader, since that follower's pose is written in the same pass.
+            if (Next == ECS::NullEntity || !IsValid(Next))
+            {
+                return ECS::NullEntity;
+            }
+            if (Next == Follower || Next == Cursor)
+            {
+                return ECS::NullEntity;
+            }
+            Cursor = Next;
+        }
+        return ECS::NullEntity;
+    }
 
     // World-space socket-or-bone transform on Entity (folds in the entity's world matrix).
     RUNTIME_API bool GetSocketWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);

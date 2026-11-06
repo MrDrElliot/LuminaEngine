@@ -47,7 +47,7 @@ namespace Lumina
     static const char* CustomCodeName              = "Custom Code";
 
     FMaterialEditorTool::FMaterialEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
         , MeshEntity()
         , DirectionalLightEntity()
         , CompilationResult()
@@ -196,12 +196,12 @@ namespace Lumina
         const EMaterialType MaterialType = MaterialInterface ? MaterialInterface->GetMaterialType() : EMaterialType::None;
 
         SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);
-        StaticMeshComponent.MaterialOverrides.clear();
+        StaticMeshComponent.MaterialOverrides.Reset();
 
         SCameraComponent* Camera = World->GetCamera()->GetActiveCamera();
         if (Camera)
         {
-            Camera->PostProcessMaterials.clear();
+            Camera->PostProcessMaterials.Reset();
         }
         
         // Both preview through something other than the mesh, so restoring it would occlude them.
@@ -232,12 +232,12 @@ namespace Lumina
         {
             if (Camera)
             {
-                Camera->PostProcessMaterials.push_back(MaterialInterface);
+                Camera->PostProcessMaterials.Add(MaterialInterface);
             }
         }
         else if (bLightFunction)
         {
-            StaticMeshComponent.MaterialOverrides.clear();
+            StaticMeshComponent.MaterialOverrides.Reset();
         }
         else if (MaterialType == EMaterialType::UI)
         {
@@ -249,15 +249,15 @@ namespace Lumina
             if (Data != nullptr)
             {
                 FString Body;
-                Body.append("<rml><head><style>"
+                Body.Append("<rml><head><style>"
                             "body{margin:0;padding:0;width:100%;height:100%;background-color:#000000;"
                             "display:flex;align-items:center;justify-content:center;}"
                             "img{width:75%;height:75%;}"
                             "</style></head>");
-                Body.append("<body><img src=\"material:");
-                Body.append(Data->Path.c_str());
-                Body.append("\"/></body></rml>");
-                RmlUi::SetWorldInlineDocument(World.Get(), FStringView(Body.c_str(), Body.size()), FStringView("material_preview.rml"));
+                Body.Append("<body><img src=\"material:");
+                Body.Append(*Data->Path);
+                Body.Append("\"/></body></rml>");
+                RmlUi::SetWorldInlineDocument(World.Get(), FStringView(*Body, Body.Len()), FStringView("material_preview.rml"));
             }
             else
             {
@@ -266,12 +266,14 @@ namespace Lumina
         }
         else if (MaterialType == EMaterialType::Decal || MaterialType == EMaterialType::Particle)
         {
-            StaticMeshComponent.MaterialOverrides.clear();
+            StaticMeshComponent.MaterialOverrides.Reset();
         }
         else
         {
-            StaticMeshComponent.MaterialOverrides.push_back(bShowingPinPreview ? ViewportPreview.GetMaterial() : MaterialInterface);
+            StaticMeshComponent.MaterialOverrides.Add(bShowingPinPreview ? ViewportPreview.GetMaterial() : MaterialInterface);
         }
+
+        StaticMeshComponent.MarkRenderStateDirty();
     }
 
     CParticleSystem* FMaterialEditorTool::GetOrCreatePreviewParticleSystem(CMaterialInterface* PreviewMaterial)
@@ -346,7 +348,6 @@ namespace Lumina
 
         if (World != nullptr && World->GetRenderer() != nullptr)
         {
-            World->GetRenderSettings().bDrawBillboards = false;
             bWorldGridEnabled = false;
         }
 
@@ -434,12 +435,12 @@ namespace Lumina
         const CEdNodeGraphPin* PreviewPin = NodeGraph->PreviewPinID != 0 ? NodeGraph->FindPinByGUID(NodeGraph->PreviewPinID) : nullptr;
         if (PreviewPin != nullptr)
         {
-            const FString PinName = PreviewPin->GetPinName().empty() ? FString() : FString(".") + PreviewPin->GetPinName();
+            const FString PinName = PreviewPin->GetPinName().IsEmpty() ? FString() : FString(".") + PreviewPin->GetPinName();
             const FString Label   = Lumina::Format(LE_ICON_EYE " {}{}{}  " LE_ICON_CLOSE, PreviewPin->GetOwningNode()->GetNodeTitleText(), PinName,
                 ViewportPreview.IsCompiling() ? " (compiling)" : "");
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::WithAlpha(EditorColors::Accent(), 0.35f));
-            if (ImGui::Button(Label.c_str()))
+            if (ImGui::Button(*Label))
             {
                 NodeGraph->PreviewPinID = 0;
             }
@@ -568,7 +569,7 @@ namespace Lumina
         if (CompilationResult.bIsError)
         {
             ImGui::Text(LE_ICON_ALERT " Material failed to compile (%d error%s), so it and every instance of it render nothing.",
-                static_cast<int>(CompilationResult.Errors.size()), CompilationResult.Errors.size() == 1 ? "" : "s");
+                CompilationResult.Errors.Num(), CompilationResult.Errors.Num() == 1 ? "" : "s");
         }
         else
         {
@@ -621,9 +622,9 @@ namespace Lumina
                 Hash *= 1099511628211ull;
             };
 
-            for (const SCustomSlangPin& Pin : Node->Inputs)  { Mix(Pin.Name.c_str()); }
+            for (const SCustomSlangPin& Pin : Node->Inputs)  { Mix(*Pin.Name); }
             Mix("|");
-            for (const SCustomSlangPin& Pin : Node->Outputs) { Mix(Pin.Name.c_str()); }
+            for (const SCustomSlangPin& Pin : Node->Outputs) { Mix(*Pin.Name); }
             return Hash;
         }
     }
@@ -641,11 +642,11 @@ namespace Lumina
         {
             for (const SCustomSlangPin& Pin : Node->Inputs)
             {
-                Symbols.push_back({ FString(Pin.Name.c_str()), "input pin" });
+                Symbols.Emplace(FString(*Pin.Name), "input pin");
             }
             for (const SCustomSlangPin& Pin : Node->Outputs)
             {
-                Symbols.push_back({ FString(Pin.Name.c_str()), "output pin, assign it" });
+                Symbols.Emplace(FString(*Pin.Name), "output pin, assign it");
             }
         }
         CodeEditorLanguage.SetContextSymbols(Move(Symbols));
@@ -695,27 +696,27 @@ namespace Lumina
 
         // What the body can actually read and must assign.
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(EditorColors::Accent(), "%s", Node->Title.c_str());
+        ImGui::TextColored(EditorColors::Accent(), "%s", *Node->Title);
         ImGui::SameLine(0.0f, 12.0f);
 
         FFixedString Signature;
         for (const SCustomSlangPin& In : Node->Inputs)
         {
-            Signature += (Signature.empty() ? "in: " : ", ");
-            Signature += In.Name.c_str();
+            Signature += (Signature.IsEmpty() ? "in: " : ", ");
+            Signature += *In.Name;
         }
-        if (!Node->Outputs.empty())
+        if (!Node->Outputs.IsEmpty())
         {
-            Signature += Signature.empty() ? "out: " : "  |  out: ";
+            Signature += Signature.IsEmpty() ? "out: " : "  |  out: ";
             bool bFirst = true;
             for (const SCustomSlangPin& Out : Node->Outputs)
             {
                 if (!bFirst) { Signature += ", "; }
-                Signature += Out.Name.c_str();
+                Signature += *Out.Name;
                 bFirst = false;
             }
         }
-        ImGui::TextColored(EditorColors::TextDim(), "%s", Signature.empty() ? "no pins declared" : Signature.c_str());
+        ImGui::TextColored(EditorColors::TextDim(), "%s", Signature.IsEmpty() ? "no pins declared" : *Signature);
 
         // Live validation, so a stray brace is caught here rather than as a wall of shader errors.
         TVector<FString> Problems;
@@ -724,7 +725,7 @@ namespace Lumina
         {
             for (const FString& Problem : Problems)
             {
-                ImGui::TextColored(EditorColors::Warning(), LE_ICON_EXCLAMATION_THICK " %s", Problem.c_str());
+                ImGui::TextColored(EditorColors::Warning(), LE_ICON_EXCLAMATION_THICK " %s", *Problem);
             }
         }
 
@@ -739,7 +740,7 @@ namespace Lumina
             CodeEditor.OpenFind(false);
         }
         const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
-        ImGui::SetItemTooltip("Find (%s), or find and replace (%s)", Keys.Find.GetLabel().c_str(), Keys.Replace.GetLabel().c_str());
+        ImGui::SetItemTooltip("Find (%s), or find and replace (%s)", *Keys.Find.GetLabel(), *Keys.Replace.GetLabel());
 
         ImGui::SameLine();
         if (ImGui::SmallButton(LE_ICON_CODE_BRACES " View"))
@@ -766,15 +767,15 @@ namespace Lumina
         const FCodePosition Cursor = CodeEditor.GetCursor();
         FFixedString Status;
         FormatTo(Status, "{}  |  Ln {}, Col {}  |  {} lines",
-            FString(CodeEditorLanguage.GetName()).c_str(), Cursor.Line + 1, Cursor.Column + 1, CodeEditor.GetLineCount());
+            *FString(CodeEditorLanguage.GetName()), Cursor.Line + 1, Cursor.Column + 1, CodeEditor.GetLineCount());
 
-        const float StatusWidth = ImGui::CalcTextSize(Status.c_str()).x;
+        const float StatusWidth = ImGui::CalcTextSize(*Status).x;
         const float StatusX     = ToolbarWidth - StatusWidth;
         // A narrow panel would push the status left of the buttons and overlap them; let it wrap instead.
         if (StatusX > 0.0f)
         {
             ImGui::SameLine(StatusX);
-            ImGui::TextColored(EditorColors::TextDim(), "%s", Status.c_str());
+            ImGui::TextColored(EditorColors::TextDim(), "%s", *Status);
         }
 
         CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail());
@@ -868,9 +869,9 @@ namespace Lumina
             FString Lower = Name;
             for (char& C : Lower)
             {
-                C = (char)Lumina::Containers::FoldAscii(C);
+                C = Lumina::Containers::FoldAscii(C);
             }
-            return Lower.find("register") != FString::npos;
+            return Lower.Find("register") != Constants::kIndexNone;
         }
     }
 
@@ -949,11 +950,11 @@ namespace Lumina
                 const FString Label = FString("  ") + Stat.Stage + " / " + Stat.Name;
                 if (Stat.bIsFloat)
                 {
-                    Row(Label.c_str(), "%.2f", Stat.Value, ValueColor);
+                    Row(*Label, "%.2f", Stat.Value, ValueColor);
                 }
                 else
                 {
-                    Row(Label.c_str(), "%lld", (long long)Stat.Value, ValueColor);
+                    Row(*Label, "%lld", (long long)Stat.Value, ValueColor);
                 }
 
                 // Only for a fragment stage, since the deferred or forward PS is the shader a material controls.
@@ -1012,7 +1013,7 @@ namespace Lumina
         constexpr ImVec4 NodeColor(1.00f, 0.85f, 0.55f, 1.0f);
         constexpr ImVec4 HintColor(0.65f, 0.65f, 0.70f, 1.0f);
 
-        for (size_t i = 0; i < Diagnostics.size(); ++i)
+        for (int32 i = 0; i < Diagnostics.Num(); ++i)
         {
             const FCompilationError& Diag = Diagnostics[i];
 
@@ -1024,19 +1025,19 @@ namespace Lumina
                 ImGuiWindowFlags_NoScrollbar);
 
             ImGui::PushStyleColor(ImGuiCol_Text, TitleColor);
-            ImGui::Text("[%s]", Diag.Title.c_str());
+            ImGui::Text("[%s]", *Diag.Title);
             ImGui::PopStyleColor();
 
             if (Diag.Node != nullptr)
             {
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Text, NodeColor);
-                ImGui::Text("%s", Diag.Node->GetNodeFullName().c_str());
+                ImGui::Text("%s", *Diag.Node->GetNodeFullName());
                 ImGui::PopStyleColor();
             }
 
             ImGui::PushStyleColor(ImGuiCol_Text, BodyColor);
-            ImGui::TextWrapped("%s", Diag.Description.c_str());
+            ImGui::TextWrapped("%s", *Diag.Description);
             ImGui::PopStyleColor();
 
             if (Diag.Node != nullptr)
@@ -1072,8 +1073,8 @@ namespace Lumina
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
             ImGui::Text("Compilation failed (%d error%s)",
-                static_cast<int>(CompilationResult.Errors.size()),
-                CompilationResult.Errors.size() == 1 ? "" : "s");
+                CompilationResult.Errors.Num(),
+                CompilationResult.Errors.Num() == 1 ? "" : "s");
             ImGui::PopStyleColor();
             ImGui::Separator();
             ImGui::Spacing();
@@ -1081,12 +1082,12 @@ namespace Lumina
             DrawDiagnosticRows(CompilationResult.Errors, /*bIsError*/ true);
 
             // Dropping them would make warnings appear only once the error is fixed, reading as caused by it.
-            if (!CompilationResult.Warnings.empty())
+            if (!CompilationResult.Warnings.IsEmpty())
             {
                 ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.72f, 0.30f, 1.0f));
-                ImGui::Text("%d warning%s", static_cast<int>(CompilationResult.Warnings.size()),
-                    CompilationResult.Warnings.size() == 1 ? "" : "s");
+                ImGui::Text("%d warning%s", CompilationResult.Warnings.Num(),
+                    CompilationResult.Warnings.Num() == 1 ? "" : "s");
                 ImGui::PopStyleColor();
                 ImGui::Separator();
                 ImGui::Spacing();
@@ -1128,11 +1129,11 @@ namespace Lumina
         const ImVec4 HeaderColor(0.70f, 0.85f, 1.00f, 1.0f);
 
         // These describe a material that compiled and renders, so nothing lower would ever be scrolled to.
-        if (!CompilationResult.Warnings.empty())
+        if (!CompilationResult.Warnings.IsEmpty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.72f, 0.30f, 1.0f));
-            ImGui::Text("%d warning%s", static_cast<int>(CompilationResult.Warnings.size()),
-                CompilationResult.Warnings.size() == 1 ? "" : "s");
+            ImGui::Text("%d warning%s", CompilationResult.Warnings.Num(),
+                CompilationResult.Warnings.Num() == 1 ? "" : "s");
             ImGui::PopStyleColor();
             ImGui::Separator();
             ImGui::Spacing();
@@ -1218,20 +1219,20 @@ namespace Lumina
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
             ImGui::BeginChild("##hlsl_pixel", ImVec2(0, 320), true, ImGuiWindowFlags_HorizontalScrollbar);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
-            ImGui::TextUnformatted(Tree.c_str());
+            ImGui::TextUnformatted(*Tree);
             ImGui::PopStyleColor();
             ImGui::EndChild();
             ImGui::PopStyleColor();
         }
 
-        if (ShaderStats.bUsesVertexStage && !VertexTree.empty())
+        if (ShaderStats.bUsesVertexStage && !VertexTree.IsEmpty())
         {
             if (ImGui::CollapsingHeader("Generated Vertex Shader (HLSL)"))
             {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
                 ImGui::BeginChild("##hlsl_vertex", ImVec2(0, 320), true, ImGuiWindowFlags_HorizontalScrollbar);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
-                ImGui::TextUnformatted(VertexTree.c_str());
+                ImGui::TextUnformatted(*VertexTree);
                 ImGui::PopStyleColor();
                 ImGui::EndChild();
                 ImGui::PopStyleColor();
@@ -1270,7 +1271,7 @@ namespace Lumina
         NodeGraph->FocusNode(Node);
 
         // The jump is invisible when the graph is tabbed behind the code editor.
-        ImGui::SetWindowFocus(GetToolWindowName(MaterialGraphName).c_str());
+        ImGui::SetWindowFocus(*GetToolWindowName(MaterialGraphName));
     }
 
     void FMaterialEditorTool::Compile(bool bNotifyResult)
@@ -1285,7 +1286,7 @@ namespace Lumina
         ShaderStats       = CompileResult.Stats;
         bGLSLPreviewDirty = true;
 
-        const FString MaterialName = Material != nullptr ? FString(Material->GetName().c_str()) : FString("<unknown>");
+        const FString MaterialName = Material != nullptr ? FString(*Material->GetName()) : FString("<unknown>");
 
         // The shader stats tab is rarely the focused one while iterating, so every finding also goes to the console.
         auto DiagnosticSource = [&MaterialName](const EdNodeGraph::FError& Diag)
@@ -1303,13 +1304,13 @@ namespace Lumina
         {
             CompilationResult.CompilationLog += "WARNING - [" + Warning.Name + "]: " + Warning.Description + "\n";
 
-            LOG_WARN("Material '{0}' - [{1}] {2}", DiagnosticSource(Warning).c_str(), Warning.Name.c_str(), Warning.Description.c_str());
+            LOG_WARN("Material '{0}' - [{1}] {2}", *DiagnosticSource(Warning), *Warning.Name, *Warning.Description);
 
             FCompilationError Structured;
             Structured.Title       = Warning.Name;
             Structured.Description = Warning.Description;
             Structured.Node        = Warning.Node;
-            CompilationResult.Warnings.push_back(Move(Structured));
+            CompilationResult.Warnings.Add(Move(Structured));
         }
 
         if (!CompileResult.bSuccess)
@@ -1318,13 +1319,13 @@ namespace Lumina
             {
                 CompilationResult.CompilationLog += "ERROR - [" + Error.Name + "]: " + Error.Description + "\n";
 
-                LOG_ERROR("Material '{0}' - [{1}] {2}", DiagnosticSource(Error).c_str(), Error.Name.c_str(), Error.Description.c_str());
+                LOG_ERROR("Material '{0}' - [{1}] {2}", *DiagnosticSource(Error), *Error.Name, *Error.Description);
 
                 FCompilationError Structured;
                 Structured.Title       = Error.Name;
                 Structured.Description = Error.Description;
                 Structured.Node        = Error.Node;
-                CompilationResult.Errors.push_back(Move(Structured));
+                CompilationResult.Errors.Add(Move(Structured));
             }
 
             CompilationResult.bIsError = true;
@@ -1340,7 +1341,7 @@ namespace Lumina
         VertexTree = CompileResult.VertexSource;
 
         // ReplacementStart/End power the GLSL preview highlight band; recompute against the pixel shader tree.
-        ReplacementStart = Tree.find("$MATERIAL_INPUTS");
+        ReplacementStart = Tree.Find("$MATERIAL_INPUTS");
         ReplacementEnd   = ReplacementStart;
 
         CompilationResult.CompilationLog = "Generated GLSL: \n \n \n";
@@ -1362,15 +1363,15 @@ namespace Lumina
         if (CompilationResult.bIsError)
         {
             ImGuiX::Notifications::NotifyError("Material failed to compile: {0} error(s). See the console or the Shader Stats tab.",
-                (SIZE_T)CompilationResult.Errors.size());
+                (SIZE_T)CompilationResult.Errors.Num());
         }
-        else if (CompilationResult.Warnings.empty())
+        else if (CompilationResult.Warnings.IsEmpty())
         {
             ImGuiX::Notifications::NotifySuccess("Material compiled.");
         }
         else
         {
-            ImGuiX::Notifications::NotifyWarning("Material compiled with {0} warnings.", (SIZE_T)CompilationResult.Warnings.size());
+            ImGuiX::Notifications::NotifyWarning("Material compiled with {0} warnings.", (SIZE_T)CompilationResult.Warnings.Num());
         }
     }
 
@@ -1407,12 +1408,12 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(rightDockID, ImGuiDir_Down, 0.3f, &rightBottomDockID, &rightDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialGraphName).c_str(),       leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),      rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ShaderStatsName).c_str(),         rightBottomDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialPropertiesName).c_str(),  rightBottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MaterialGraphName),       leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName),      rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ShaderStatsName),         rightBottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MaterialPropertiesName),  rightBottomDockID);
         // Tabbed behind the graph, since editing a node's code is the same task as editing the graph.
-        ImGui::DockBuilderDockWindow(GetToolWindowName(CustomCodeName).c_str(),          leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(CustomCodeName),          leftDockID);
     }
 
     CEdNodeGraph* FMaterialEditorTool::GetActiveNodeGraph()

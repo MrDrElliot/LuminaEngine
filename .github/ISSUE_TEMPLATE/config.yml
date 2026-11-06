@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.gg/xQSB7CRzQE
+    about: Ask how to do something, or get help with your project, on the Lumina Discord.
+  - name: Documentation
+    url: https://luminagameengine.com/getting-started/introduction/
+    about: Guides for installing, building and using the engine.

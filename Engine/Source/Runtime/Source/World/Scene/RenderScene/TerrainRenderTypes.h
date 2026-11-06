@@ -149,6 +149,10 @@ namespace Lumina
         // The scatter parks its cursor at capacity when the budget runs out, so a read of exactly capacity means blades were cut.
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight> CursorReadback = {};
 
+        // The retained block this state last scattered into; a different one may still hold another species' blades.
+        uint32 BoundSlotBase = Constants::kIndexNoneU32;
+        uint32 BoundCapacity = 0;
+
         bool bWarnedGridCap   = false;
         bool bWarnedOverBudget = false;
     };

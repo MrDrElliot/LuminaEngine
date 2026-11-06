@@ -8,8 +8,8 @@ namespace Lumina
 {
     FNetArchive::FNetArchive(TVector<uint8>& OutBytes)
         : WriteBytes(&OutBytes)
-        , BitCursor(static_cast<int64>(OutBytes.size()) * 8)
-        , TotalBits(static_cast<int64>(OutBytes.size()) * 8)
+        , BitCursor(static_cast<int64>(OutBytes.Num()) * 8)
+        , TotalBits(static_cast<int64>(OutBytes.Num()) * 8)
     {
         SetFlag(EArchiverFlags::Writing);
     }
@@ -25,17 +25,17 @@ namespace Lumina
     {
         const int64 ByteIndex = BitCursor >> 3;
         const int64 BitIndex  = BitCursor & 7;
-        if (static_cast<int64>(WriteBytes->size()) <= ByteIndex)
+        if (WriteBytes->Num() <= ByteIndex)
         {
-            WriteBytes->resize(static_cast<size_t>(ByteIndex) + 1, 0);
+            WriteBytes->SetNum(IntCastChecked<int32>(ByteIndex + 1), 0);
         }
         if (Bit)
         {
-            (*WriteBytes)[ByteIndex] |= static_cast<uint8>(1u << BitIndex);
+            (*WriteBytes)[static_cast<int32>(ByteIndex)] |= static_cast<uint8>(1u << BitIndex);
         }
         else
         {
-            (*WriteBytes)[ByteIndex] &= static_cast<uint8>(~(1u << BitIndex));
+            (*WriteBytes)[static_cast<int32>(ByteIndex)] &= static_cast<uint8>(~(1u << BitIndex));
         }
         ++BitCursor;
         TotalBits = Math::Max(BitCursor, TotalBits);
@@ -72,11 +72,11 @@ namespace Lumina
 
             if (IsWriting())
             {
-                if (static_cast<int64>(WriteBytes->size()) < ByteIndex + ByteCount)
+                if (WriteBytes->Num() < ByteIndex + ByteCount)
                 {
-                    WriteBytes->resize(static_cast<size_t>(ByteIndex + ByteCount), 0);
+                    WriteBytes->SetNum(IntCastChecked<int32>(ByteIndex + ByteCount), 0);
                 }
-                Memory::Memcpy(WriteBytes->data() + ByteIndex, Bytes, static_cast<size_t>(ByteCount));
+                Memory::Memcpy(WriteBytes->GetData() + ByteIndex, Bytes, static_cast<size_t>(ByteCount));
                 BitCursor += NumBits;
                 TotalBits = Math::Max(BitCursor, TotalBits);
             }

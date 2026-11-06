@@ -293,7 +293,7 @@ namespace Lumina
         for (int32 Line = 0; Line < Document.GetLineCount(); ++Line)
         {
             const FStringView Text = Document.GetLineView(Line);
-            MaxLineColumns = Math::Max(MaxLineColumns, CodeText::VisualColumn(Text, (int32)Text.size(), TabSize));
+            MaxLineColumns = Math::Max(MaxLineColumns, CodeText::VisualColumn(Text, Text.Len(), TabSize));
         }
     }
 
@@ -319,11 +319,11 @@ namespace Lumina
 
     void FCodeEditor::HandleCompletionKeys(bool& bConsumed)
     {
-        if (!Completion.bOpen || Completion.Visible.empty())
+        if (!Completion.bOpen || Completion.Visible.IsEmpty())
         {
             return;
         }
-        const int32 Count = (int32)Completion.Visible.size();
+        const int32 Count = Completion.Visible.Num();
         const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
         bConsumed = true;
         if (Keys.MoveUp.IsPressed())
@@ -476,10 +476,10 @@ namespace Lumina
             }
             else if (SnippetCurrent >= 0)
             {
-                SnippetStops.clear();
+                SnippetStops.Reset();
                 SnippetCurrent = -1;
             }
-            else if (Cursors.size() > 1)
+            else if (Cursors.Num() > 1)
             {
                 ClearExtraCursors();
             }
@@ -514,11 +514,11 @@ namespace Lumina
         TVector<FCodeColorSpan> Spans;
         Document.Highlight(*Language, Position.Line);
         const TVector<ECodeToken>& Tokens = Document.GetTokens(Position.Line);
-        if (Tokens.size() != Document.GetLine(Position.Line).size())
+        if (Tokens.Num() != Document.GetLine(Position.Line).Len())
         {
             return false;
         }
-        Language->GetColorSpans(Document.GetLineView(Position.Line), Tokens.data(), Spans);
+        Language->GetColorSpans(Document.GetLineView(Position.Line), Tokens.GetData(), Spans);
         for (const FCodeColorSpan& Span : Spans)
         {
             if (Span.Start <= Position.Column && Position.Column <= Span.End)
@@ -588,7 +588,7 @@ namespace Lumina
             else if (bOverGutter)
             {
                 const int32 Line = Position.Line;
-                const FCodePosition LineEnd = Line + 1 < Document.GetLineCount() ? FCodePosition{ Line + 1, 0 } : FCodePosition{ Line, (int32)Document.GetLine(Line).size() };
+                const FCodePosition LineEnd = Line + 1 < Document.GetLineCount() ? FCodePosition{ Line + 1, 0 } : FCodePosition{ Line, Document.GetLine(Line).Len() };
                 ClearExtraCursors();
                 if (Io.KeyShift)
                 {
@@ -608,10 +608,10 @@ namespace Lumina
                 const int32 Clicks = ImGui::GetMouseClickedCount(ImGuiMouseButton_Left);
                 if (Io.KeyAlt && !Io.KeyCtrl)
                 {
-                    FCursor& Added = Cursors.emplace_back();
+                    FCursor& Added = Cursors.EmplaceGetRef();
                     Added.Anchor = Position;
                     Added.Head = Position;
-                    MainCursor = (int32)Cursors.size() - 1;
+                    MainCursor = Cursors.Num() - 1;
                     NormalizeCursors();
                 }
                 else if (Io.KeyShift)
@@ -632,7 +632,7 @@ namespace Lumina
                 else if (Clicks >= 3)
                 {
                     ClearExtraCursors();
-                    const FCodePosition LineEnd = Position.Line + 1 < Document.GetLineCount() ? FCodePosition{ Position.Line + 1, 0 } : FCodePosition{ Position.Line, (int32)Document.GetLine(Position.Line).size() };
+                    const FCodePosition LineEnd = Position.Line + 1 < Document.GetLineCount() ? FCodePosition{ Position.Line + 1, 0 } : FCodePosition{ Position.Line, Document.GetLine(Position.Line).Len() };
                     MouseSelectOrigin = { { Position.Line, 0 }, LineEnd };
                     Cursors[0].Anchor = MouseSelectOrigin.Start;
                     Cursors[0].Head = MouseSelectOrigin.End;
@@ -688,7 +688,7 @@ namespace Lumina
                 }
                 else
                 {
-                    const FCodePosition LineEnd = Position.Line + 1 < Document.GetLineCount() ? FCodePosition{ Position.Line + 1, 0 } : FCodePosition{ Position.Line, (int32)Document.GetLine(Position.Line).size() };
+                    const FCodePosition LineEnd = Position.Line + 1 < Document.GetLineCount() ? FCodePosition{ Position.Line + 1, 0 } : FCodePosition{ Position.Line, Document.GetLine(Position.Line).Len() };
                     const bool bAbove = Position.Line < MouseSelectOrigin.Start.Line;
                     Main.Anchor = bAbove ? MouseSelectOrigin.End : MouseSelectOrigin.Start;
                     Main.Head = bAbove ? FCodePosition{ Position.Line, 0 } : LineEnd;
@@ -749,10 +749,10 @@ namespace Lumina
         HoverState.bQueried = true;
         HoverState.bValid = false;
         HoverState.Hover = {};
-        HoverState.DiagnosticText.clear();
+        HoverState.DiagnosticText.Reset();
         const FCodePosition Position = Document.Clamp(PositionAtScreen(Mouse, false));
         const FStringView Line = Document.GetLineView(Position.Line);
-        if (Position.Column >= (int32)Line.size())
+        if (Position.Column >= Line.Len())
         {
             return;
         }
@@ -769,7 +769,7 @@ namespace Lumina
                 const bool bWholeLine = Range.Start.Column == 0 && Range.End.Line > Range.Start.Line;
                 if (Range.Contains(Position) || (bWholeLine && Position.Line == Range.Start.Line))
                 {
-                    if (!HoverState.DiagnosticText.empty())
+                    if (!HoverState.DiagnosticText.IsEmpty())
                     {
                         HoverState.DiagnosticText += '\n';
                     }
@@ -782,7 +782,7 @@ namespace Lumina
         Consider(ExternalDiagnostics);
 
         const bool bHover = Language != nullptr && Language->GetHover(Document, Position, HoverState.Hover);
-        HoverState.bValid = bHover || !HoverState.DiagnosticText.empty();
+        HoverState.bValid = bHover || !HoverState.DiagnosticText.IsEmpty();
     }
 
     void FCodeEditor::DrawBackgrounds(ImDrawList* DrawList)
@@ -849,7 +849,7 @@ namespace Lumina
                     continue;
                 }
                 const int32 StartColumn = Line == Range.Start.Line ? Range.Start.Column : 0;
-                const int32 EndColumn = Line == Range.End.Line ? Range.End.Column : (int32)Document.GetLine(Line).size();
+                const int32 EndColumn = Line == Range.End.Line ? Range.End.Column : Document.GetLine(Line).Len();
                 const float Top = LineTop(Line);
                 const float X0 = ScreenAtPosition({ Line, StartColumn }).x;
                 float X1 = ScreenAtPosition({ Line, EndColumn }).x;
@@ -864,7 +864,7 @@ namespace Lumina
             }
         };
 
-        if (Find.bOpen && !Find.Matches.empty())
+        if (Find.bOpen && !Find.Matches.IsEmpty())
         {
             for (const FCodeRange& Match : Find.Matches)
             {
@@ -879,7 +879,7 @@ namespace Lumina
             }
         }
 
-        if (Settings.bHighlightOccurrences && Cursors.size() == 1)
+        if (Settings.bHighlightOccurrences && Cursors.Num() == 1)
         {
             const FCursor& Main = Cursors[0];
             FString Needle;
@@ -902,7 +902,7 @@ namespace Lumina
                     bWholeWord = true;
                 }
             }
-            if (!Needle.empty() && !CodeText::IsBlank(Needle.View()))
+            if (!Needle.IsEmpty() && !CodeText::IsBlank(Needle.View()))
             {
                 auto IsWord = [this](char C) { return Language != nullptr ? Language->IsWordChar(C) : (CodeText::IsAlpha(C) || CodeText::IsDigit(C) || C == '_'); };
                 for (int32 Line = Layout.FirstLine; Line <= Layout.LastLine; ++Line)
@@ -912,10 +912,10 @@ namespace Lumina
                         continue;
                     }
                     const FStringView Text = Document.GetLineView(Line);
-                    for (size_t Found = Text.find(Needle.View()); Found != FStringView::npos; Found = Text.find(Needle.View(), Found + 1))
+                    for (int32 Found = Text.Find(Needle.View()); Found != Constants::kIndexNone; Found = Text.Find(Needle.View(), Found + 1))
                     {
-                        const size_t End = Found + Needle.size();
-                        if (bWholeWord && ((Found > 0 && IsWord(Text[Found - 1])) || (End < Text.size() && IsWord(Text[End]))))
+                        const int32 End = Found + Needle.Len();
+                        if (bWholeWord && ((Found > 0 && IsWord(Text[Found - 1])) || (End < Text.Len() && IsWord(Text[End]))))
                         {
                             continue;
                         }
@@ -925,7 +925,7 @@ namespace Lumina
             }
         }
 
-        for (int32 i = SnippetCurrent + 1; SnippetCurrent >= 0 && i < (int32)SnippetStops.size(); ++i)
+        for (int32 i = SnippetCurrent + 1; SnippetCurrent >= 0 && i < SnippetStops.Num(); ++i)
         {
             const FCodeRange& Range = SnippetStops[i].Range;
             if (Range.Start.Line >= Layout.FirstLine && Range.Start.Line <= Layout.LastLine && !Range.IsEmpty())
@@ -944,7 +944,7 @@ namespace Lumina
             }
         }
 
-        if (Settings.bMatchBrackets && Cursors.size() == 1 && !Cursors[0].HasSelection())
+        if (Settings.bMatchBrackets && Cursors.Num() == 1 && !Cursors[0].HasSelection())
         {
             FCodePosition Open;
             FCodePosition Close;
@@ -983,10 +983,10 @@ namespace Lumina
             }
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            const bool bHasTokens = Language != nullptr && Tokens.size() == Text.size();
+            const bool bHasTokens = Language != nullptr && Tokens.Num() == Text.Len();
             const float Top = LineTop(Line);
             const float Y = Top + TextOffsetY;
-            const int32 Size = (int32)Text.size();
+            const int32 Size = Text.Len();
 
             // A collapsed block shows as its first line, an ellipsis and its closing line when that is only a brace.
             if (IsCollapsed(Line))
@@ -999,10 +999,10 @@ namespace Lumina
                     DrawList->AddRectFilled(Min, Max, EditorColors::ScaleAlpha(Palette.WordHighlight, 1.4f), 3.0f);
                     DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(Min.x + Layout.CharWidth * 0.5f, Y), Palette[ECodeToken::Comment], "...");
                     const FStringView Closing = Document.GetLineView(Math::Min(Fold->EndLine, Document.GetLineCount() - 1));
-                    const FStringView Trimmed = Closing.substr((size_t)CodeText::LeadingWhitespace(Closing));
-                    if (!Trimmed.empty() && Trimmed.size() <= 3 && Trimmed.front() == '}')
+                    const FStringView Trimmed = Closing.Mid((size_t)CodeText::LeadingWhitespace(Closing));
+                    if (!Trimmed.IsEmpty() && Trimmed.Len() <= 3 && Trimmed[0] == '}')
                     {
-                        DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(Max.x + Layout.CharWidth, Y), Palette[ECodeToken::Punctuation], Trimmed.data(), Trimmed.data() + Trimmed.size());
+                        DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(Max.x + Layout.CharWidth, Y), Palette[ECodeToken::Punctuation], Trimmed.GetData(), Trimmed.GetData() + Trimmed.Len());
                     }
                 }
             }
@@ -1063,14 +1063,14 @@ namespace Lumina
                 if (RunX + (Visual - RunVisual) * Layout.CharWidth >= ClipLeft)
                 {
                     const ImU32 Color = bHasTokens ? Palette[Token] : DefaultColor;
-                    DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(RunX, Y), Color, Text.data() + RunStart, Text.data() + i);
+                    DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(RunX, Y), Color, Text.GetData() + RunStart, Text.GetData() + i);
                 }
             }
 
             if (bHasTokens)
             {
-                ColorSpans.clear();
-                Language->GetColorSpans(Text, Tokens.data(), ColorSpans);
+                ColorSpans.Reset();
+                Language->GetColorSpans(Text, Tokens.GetData(), ColorSpans);
                 for (const FCodeColorSpan& Span : ColorSpans)
                 {
                     const float X0 = ScreenAtPosition({ Line, Span.Start }).x;
@@ -1121,8 +1121,8 @@ namespace Lumina
                     }
                     const FStringView Text = Document.GetLineView(Line);
                     int32 StartColumn = Line == Range.Start.Line ? Range.Start.Column : CodeText::LeadingWhitespace(Text);
-                    int32 EndColumn = Line == Range.End.Line ? Range.End.Column : (int32)Text.size();
-                    if (StartColumn == 0 && EndColumn == (int32)Text.size())
+                    int32 EndColumn = Line == Range.End.Line ? Range.End.Column : Text.Len();
+                    if (StartColumn == 0 && EndColumn == Text.Len())
                     {
                         StartColumn = CodeText::LeadingWhitespace(Text);
                     }
@@ -1164,7 +1164,7 @@ namespace Lumina
 
         const int32 Visible = Layout.LastLine - Layout.FirstLine + 1;
         TVector<int8> Severity;
-        Severity.resize(Math::Max(0, Visible), (int8)-1);
+        Severity.SetNum(Math::Max(0, Visible), (int8)-1);
         auto Mark = [&](const TVector<FCodeDiagnostic>& Diagnostics)
         {
             for (const FCodeDiagnostic& Diagnostic : Diagnostics)
@@ -1267,11 +1267,11 @@ namespace Lumina
         {
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
-            const bool bHasTokens = Language != nullptr && Tokens.size() == Text.size();
+            const bool bHasTokens = Language != nullptr && Tokens.Num() == Text.Len();
             const float Y = Min.y + (Line - First) * RowHeight;
             int32 Visual = 0;
             int32 i = 0;
-            while (i < (int32)Text.size() && Left + Visual * CellWidth < Max.x)
+            while (i < Text.Len() && Left + Visual * CellWidth < Max.x)
             {
                 if (Text[i] == ' ' || Text[i] == '\t')
                 {
@@ -1281,7 +1281,7 @@ namespace Lumina
                 }
                 const int32 RunVisual = Visual;
                 const ECodeToken Token = bHasTokens ? Tokens[i] : ECodeToken::Default;
-                while (i < (int32)Text.size() && Text[i] != ' ' && Text[i] != '\t' && (!bHasTokens || Tokens[i] == Token))
+                while (i < Text.Len() && Text[i] != ' ' && Text[i] != '\t' && (!bHasTokens || Tokens[i] == Token))
                 {
                     i = CodeText::NextCharStart(Text, i);
                     ++Visual;
@@ -1299,12 +1299,12 @@ namespace Lumina
     void FCodeEditor::DrawCompletionPopup()
     {
         bCompletionHovered = false;
-        if (!Completion.bOpen || Completion.Visible.empty())
+        if (!Completion.bOpen || Completion.Visible.IsEmpty())
         {
             return;
         }
 
-        const int32 Count = (int32)Completion.Visible.size();
+        const int32 Count = Completion.Visible.Num();
         const int32 Rows = Math::Min(MaxCompletionRows, Count);
         const float RowHeight = std::floor(Layout.FontSize * 1.55f);
         const float IconWidth = Layout.FontSize * 1.6f;
@@ -1315,8 +1315,8 @@ namespace Lumina
         for (int32 i = 0; i < Math::Min(Count, 200); ++i)
         {
             const FCodeCompletionItem& Item = Completion.Items[Completion.Visible[i].Item];
-            LabelWidth = Math::Max(LabelWidth, Item.Label.size() * Layout.CharWidth);
-            DetailWidth = Math::Max(DetailWidth, Math::Min(Item.Detail.size(), (size_t)40) * Layout.CharWidth);
+            LabelWidth = Math::Max(LabelWidth, Item.Label.Len() * Layout.CharWidth);
+            DetailWidth = Math::Max(DetailWidth, Math::Min(Item.Detail.Len(), 40) * Layout.CharWidth);
         }
         const float Width = Math::Clamp(IconWidth + LabelWidth + DetailWidth + Layout.CharWidth * 4.0f + Padding.x * 2.0f, 260.0f, 640.0f);
         const float Height = Rows * RowHeight + Padding.y * 2.0f;
@@ -1409,22 +1409,22 @@ namespace Lumina
                 }
 
                 const float LabelX = RowMin.x + IconWidth;
-                DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(LabelX, RowMin.y + TextY), Palette[ECodeToken::Default], Item.Label.c_str());
+                DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(LabelX, RowMin.y + TextY), Palette[ECodeToken::Default], *Item.Label);
                 for (const uint16 Match : Entry.Matches)
                 {
-                    if (Match < Item.Label.size())
+                    if (Match < Item.Label.Len())
                     {
-                        DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(LabelX + Match * Layout.CharWidth, RowMin.y + TextY), Palette.PopupMatch, Item.Label.c_str() + Match, Item.Label.c_str() + Match + 1);
+                        DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(LabelX + Match * Layout.CharWidth, RowMin.y + TextY), Palette.PopupMatch, *Item.Label + Match, *Item.Label + Match + 1);
                     }
                 }
 
-                if (!Item.Detail.empty())
+                if (!Item.Detail.IsEmpty())
                 {
-                    const float LabelEnd = LabelX + Item.Label.size() * Layout.CharWidth + Layout.CharWidth * 2.0f;
-                    const float DetailWidthNeeded = Item.Detail.size() * Layout.CharWidth;
+                    const float LabelEnd = LabelX + Item.Label.Len() * Layout.CharWidth + Layout.CharWidth * 2.0f;
+                    const float DetailWidthNeeded = Item.Detail.Len() * Layout.CharWidth;
                     const float DetailX = Math::Max(LabelEnd, RowMax.x - Layout.CharWidth - DetailWidthNeeded);
                     DrawList->PushClipRect(ImVec2(LabelEnd, RowMin.y), ImVec2(RowMax.x - Layout.CharWidth * 0.5f, RowMax.y), true);
-                    DrawList->AddText(Layout.Font, Layout.FontSize * 0.92f, ImVec2(DetailX, RowMin.y + TextY + Layout.FontSize * 0.04f), Palette.PopupDetail, Item.Detail.c_str());
+                    DrawList->AddText(Layout.Font, Layout.FontSize * 0.92f, ImVec2(DetailX, RowMin.y + TextY + Layout.FontSize * 0.04f), Palette.PopupDetail, *Item.Detail);
                     DrawList->PopClipRect();
                 }
             }
@@ -1440,7 +1440,7 @@ namespace Lumina
         ImGui::End();
 
         const FCodeCompletionItem& Selected = Completion.Items[Completion.Visible[Math::Clamp(Completion.Selected, 0, Count - 1)].Item];
-        if (!Selected.Documentation.empty())
+        if (!Selected.Documentation.IsEmpty())
         {
             const float DocWidth = 360.0f;
             ImVec2 DocPosition(ListMax.x + 4.0f, ListMin.y);
@@ -1456,18 +1456,18 @@ namespace Lumina
                 bCompletionHovered |= ImGui::IsWindowHovered();
                 ImGui::PushTextWrapPos(DocWidth - 20.0f);
                 ImGui::PushStyleColor(ImGuiCol_Text, KindColor(Palette, Selected.Kind));
-                ImGui::TextUnformatted(Selected.Label.c_str());
+                ImGui::TextUnformatted(*Selected.Label);
                 ImGui::PopStyleColor();
-                if (!Selected.Detail.empty())
+                if (!Selected.Detail.IsEmpty())
                 {
                     ImGui::PushStyleColor(ImGuiCol_Text, Palette.PopupDetail);
-                    ImGui::TextUnformatted(Selected.Detail.c_str());
+                    ImGui::TextUnformatted(*Selected.Detail);
                     ImGui::PopStyleColor();
                 }
                 ImGui::Spacing();
                 PushUIFont();
                 ImGui::PushStyleColor(ImGuiCol_Text, Palette[ECodeToken::Default]);
-                ImGui::TextUnformatted(Selected.Documentation.c_str());
+                ImGui::TextUnformatted(*Selected.Documentation);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
                 ImGui::PopTextWrapPos();
@@ -1488,7 +1488,7 @@ namespace Lumina
 
     void FCodeEditor::DrawSignaturePopup()
     {
-        if (!bSignatureOpen || !bFocused || Signature.Label.empty())
+        if (!bSignatureOpen || !bFocused || Signature.Label.IsEmpty())
         {
             return;
         }
@@ -1506,29 +1506,29 @@ namespace Lumina
         if (ImGui::Begin("##CodeEditorSignature", nullptr, Flags))
         {
             const FStringView Label = Signature.Label.View();
-            const bool bHasActive = Signature.ActiveParameter >= 0 && Signature.ActiveParameter < (int32)Signature.Parameters.size();
-            const FCodeSignature::FSpan Active = bHasActive ? Signature.Parameters[Signature.ActiveParameter] : FCodeSignature::FSpan{ (int32)Label.size(), (int32)Label.size() };
+            const bool bHasActive = Signature.ActiveParameter >= 0 && Signature.ActiveParameter < Signature.Parameters.Num();
+            const FCodeSignature::FSpan Active = bHasActive ? Signature.Parameters[Signature.ActiveParameter] : FCodeSignature::FSpan{ Label.Len(), Label.Len() };
             auto Segment = [](FStringView Text, ImU32 Color)
             {
-                if (Text.empty())
+                if (Text.IsEmpty())
                 {
                     return;
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, Color);
-                ImGui::TextUnformatted(Text.data(), Text.data() + Text.size());
+                ImGui::TextUnformatted(Text.GetData(), Text.GetData() + Text.Len());
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0.0f, 0.0f);
             };
-            Segment(Label.substr(0, Active.Start), Palette[ECodeToken::Default]);
-            Segment(Label.substr(Active.Start, Active.End - Active.Start), Palette.PopupMatch);
-            Segment(Label.substr(Active.End), Palette[ECodeToken::Default]);
+            Segment(Label.Mid(0, Active.Start), Palette[ECodeToken::Default]);
+            Segment(Label.Mid(Active.Start, Active.End - Active.Start), Palette.PopupMatch);
+            Segment(Label.Mid(Active.End), Palette[ECodeToken::Default]);
             ImGui::NewLine();
-            if (!Signature.Documentation.empty())
+            if (!Signature.Documentation.IsEmpty())
             {
                 PushUIFont();
                 ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
                 ImGui::PushStyleColor(ImGuiCol_Text, Palette.PopupDetail);
-                ImGui::TextUnformatted(Signature.Documentation.c_str());
+                ImGui::TextUnformatted(*Signature.Documentation);
                 ImGui::PopStyleColor();
                 ImGui::PopTextWrapPos();
                 ImGuiX::Font::PopFont();
@@ -1566,29 +1566,29 @@ namespace Lumina
                 ImGui::SameLine(0.0f, 8.0f);
                 ImGui::AlignTextToFramePadding();
             }
-            if (!Hover.Title.empty())
+            if (!Hover.Title.IsEmpty())
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, Palette[ECodeToken::Function]);
-                ImGui::TextUnformatted(Hover.Title.c_str());
+                ImGui::TextUnformatted(*Hover.Title);
                 ImGui::PopStyleColor();
             }
-            if (!Hover.Body.empty())
+            if (!Hover.Body.IsEmpty())
             {
                 PushUIFont();
                 ImGui::PushStyleColor(ImGuiCol_Text, Palette[ECodeToken::Default]);
-                ImGui::TextUnformatted(Hover.Body.c_str());
+                ImGui::TextUnformatted(*Hover.Body);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
             }
-            if (!HoverState.DiagnosticText.empty())
+            if (!HoverState.DiagnosticText.IsEmpty())
             {
-                if (!Hover.Title.empty() || !Hover.Body.empty())
+                if (!Hover.Title.IsEmpty() || !Hover.Body.IsEmpty())
                 {
                     ImGui::Separator();
                 }
                 PushUIFont();
                 ImGui::PushStyleColor(ImGuiCol_Text, HoverState.DiagnosticColor);
-                ImGui::TextUnformatted(HoverState.DiagnosticText.c_str());
+                ImGui::TextUnformatted(*HoverState.DiagnosticText);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
             }
@@ -1619,7 +1619,7 @@ namespace Lumina
             BeginEdit(EEditKind::Typing);
             ReplaceRange(ColorPick.Range, Text.View());
             EndEdit();
-            ColorPick.Range.End = { ColorPick.Range.Start.Line, ColorPick.Range.Start.Column + (int32)Text.size() };
+            ColorPick.Range.End = { ColorPick.Range.Start.Line, ColorPick.Range.Start.Column + Text.Len() };
         }
         ImGuiX::Font::PopFont();
         ImGui::EndPopup();
@@ -1637,7 +1637,7 @@ namespace Lumina
         const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
         auto Item = [](const char* Label, const SShortcut& Shortcut, bool bEnabled = true)
         {
-            return ImGui::MenuItem(Label, Shortcut.GetLabel().c_str(), false, bEnabled);
+            return ImGui::MenuItem(Label, *Shortcut.GetLabel(), false, bEnabled);
         };
         if (Item(LE_ICON_UNDO " Undo", Keys.Undo, CanUndo())) { Undo(); }
         if (Item(LE_ICON_REDO " Redo", Keys.Redo, CanRedo())) { Redo(); }
@@ -1664,8 +1664,8 @@ namespace Lumina
         if (Item(LE_ICON_LIGHTBULB_OUTLINE " Quick Fix", Keys.QuickFix, bEditable && Language != nullptr)) { ShowCodeActions(); }
         ImGui::Separator();
         if (Item(LE_ICON_FORMAT_ALIGN_LEFT " Format Document", Keys.FormatDocument, bEditable && Language != nullptr)) { FormatDocument(); }
-        if (ImGui::MenuItem(LE_ICON_UNFOLD_LESS_HORIZONTAL " Fold All", nullptr, false, !Folds.empty())) { FoldAll(); }
-        if (ImGui::MenuItem(LE_ICON_UNFOLD_MORE_HORIZONTAL " Unfold All", nullptr, false, !Collapsed.empty())) { UnfoldAll(); }
+        if (ImGui::MenuItem(LE_ICON_UNFOLD_LESS_HORIZONTAL " Fold All", nullptr, false, !Folds.IsEmpty())) { FoldAll(); }
+        if (ImGui::MenuItem(LE_ICON_UNFOLD_MORE_HORIZONTAL " Unfold All", nullptr, false, !Collapsed.IsEmpty())) { UnfoldAll(); }
         ImGuiX::Font::PopFont();
         ImGui::EndPopup();
     }
@@ -1684,14 +1684,14 @@ namespace Lumina
             return;
         }
         PushUIFont();
-        if (CodeActions.empty())
+        if (CodeActions.IsEmpty())
         {
             ImGui::TextDisabled("No quick fixes here");
         }
-        for (int32 Index = 0; Index < (int32)CodeActions.size(); ++Index)
+        for (int32 Index = 0; Index < CodeActions.Num(); ++Index)
         {
             ImGui::PushID(Index);
-            if (ImGui::MenuItem((FString(LE_ICON_LIGHTBULB_OUTLINE " ") + CodeActions[Index].Title).c_str()))
+            if (ImGui::MenuItem(*(FString(LE_ICON_LIGHTBULB_OUTLINE " ") + CodeActions[Index].Title)))
             {
                 const FCodeAction Chosen = CodeActions[Index];
                 ApplyEdits(Chosen.Edits);
@@ -1751,7 +1751,7 @@ namespace Lumina
             ImGui::SameLine();
             int32 Current = 0;
             const FCodeRange Selection = Cursors[MainCursor].GetRange();
-            for (int32 i = 0; i < (int32)Find.Matches.size(); ++i)
+            for (int32 i = 0; i < Find.Matches.Num(); ++i)
             {
                 if (Find.Matches[i] == Selection)
                 {
@@ -1763,13 +1763,13 @@ namespace Lumina
             {
                 ImGui::TextDisabled("              ");
             }
-            else if (Find.Matches.empty())
+            else if (Find.Matches.IsEmpty())
             {
                 ImGui::TextColored(EditorColors::Danger(), "No results");
             }
             else
             {
-                ImGui::TextDisabled("%d of %d", Current, (int32)Find.Matches.size());
+                ImGui::TextDisabled("%d of %d", Current, Find.Matches.Num());
             }
 
             ImGui::SameLine();
@@ -1798,7 +1798,7 @@ namespace Lumina
                 ImGui::SetNextItemWidth(Math::Max(80.0f, ImGui::GetContentRegionAvail().x - Trailing));
                 ImGui::InputTextWithHint("##replace", "Replace", Find.Replacement, sizeof(Find.Replacement));
                 ImGui::SameLine();
-                ImGui::BeginDisabled(Settings.bReadOnly || Find.Matches.empty());
+                ImGui::BeginDisabled(Settings.bReadOnly || Find.Matches.IsEmpty());
                 if (ImGui::Button("Replace"))
                 {
                     if (Current > 0)

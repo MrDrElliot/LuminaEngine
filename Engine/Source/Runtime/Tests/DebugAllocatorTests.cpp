@@ -282,7 +282,7 @@ TEST_F(FDebugAllocatorTest, ConcurrentChurnStaysConsistent)
     std::vector<std::thread> Threads;
     for (int Worker = 0; Worker < kThreads; ++Worker)
     {
-        Threads.emplace_back([Worker]
+        Threads.Emplace([Worker]
         {
             uint8* Held[16] = {};
             for (int Round = 0; Round < kRounds; ++Round)

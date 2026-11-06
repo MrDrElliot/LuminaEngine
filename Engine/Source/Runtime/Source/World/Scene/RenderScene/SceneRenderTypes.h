@@ -81,7 +81,7 @@ namespace Lumina
 {
 
     template<typename T>
-    using TRenderVector = TFixedVector<T, 100>;
+    using TRenderVector = TInlineVector<T, 100>;
 
     constexpr uint32 INVALID_MESH_RESOLVE_HANDLE = Constants::kIndexNoneU32;
 
@@ -277,7 +277,7 @@ namespace Lumina
         explicit operator bool() const { return IsValid(); }
 
         int32  GetResourceID() const { return SampledSlot == RHI::kInvalidHeapSlot ? -1 : (int32)SampledSlot; }
-        int32  GetMipUAVIndex(uint32 Mip) const { return Mip < (uint32)MipUAVSlots.size() ? (int32)MipUAVSlots[Mip] : -1; }
+        int32  GetMipUAVIndex(uint32 Mip) const { return Mip < (uint32)MipUAVSlots.Num() ? (int32)MipUAVSlots[Mip] : -1; }
         FUIntVector2 GetExtent() const { return FUIntVector2(Desc.Dimension.x, Desc.Dimension.y); }
         uint32 GetSizeX() const { return Desc.Dimension.x; }
         uint32 GetSizeY() const { return Desc.Dimension.y; }
@@ -296,7 +296,7 @@ namespace Lumina
         }
         if (bMipUAVs)
         {
-            Out.MipUAVSlots.resize(Desc.MipCount);
+            Out.MipUAVSlots.SetNum(Desc.MipCount);
             for (uint32 Mip = 0; Mip < Desc.MipCount; ++Mip)
             {
                 Out.MipUAVSlots[Mip] = RHI::HeapWriteRWTexture(RHI::GetGlobalHeap(), Out.Texture, Mip);
@@ -364,7 +364,7 @@ namespace Lumina
             MinLevel = Log2Floor(Config.MinTileResolution);
             MaxLevel = Log2Floor(Config.MaxTileResolution);
             NumLevels = (MaxLevel - MinLevel) + 1;
-            FreeLists.resize(NumLevels);
+            FreeLists.SetNum(NumLevels);
 
             FreeTiles();
         }
@@ -406,29 +406,29 @@ namespace Lumina
 
             for (uint32 Level = StartLevel; Level < NumLevels; ++Level)
             {
-                if (!FreeLists[Level].empty())
+                if (!FreeLists[Level].IsEmpty())
                 {
-                    FTileRect Rect = FreeLists[Level].back();
-                    FreeLists[Level].pop_back();
+                    FTileRect Rect = FreeLists[Level].Last();
+                    FreeLists[Level].Pop();
 
                     // Split down to StartLevel; return last quadrant, push siblings back.
                     while (Level > StartLevel)
                     {
                         const uint32 Half = Rect.Size / 2;
                         const uint32 ChildLevel = Level - 1;
-                        FreeLists[ChildLevel].push_back({ Rect.X + Half, Rect.Y,        Half });
-                        FreeLists[ChildLevel].push_back({ Rect.X,        Rect.Y + Half, Half });
-                        FreeLists[ChildLevel].push_back({ Rect.X + Half, Rect.Y + Half, Half });
+                        FreeLists[ChildLevel].Emplace(Rect.X + Half, Rect.Y,        Half);
+                        FreeLists[ChildLevel].Emplace(Rect.X,        Rect.Y + Half, Half);
+                        FreeLists[ChildLevel].Emplace(Rect.X + Half, Rect.Y + Half, Half);
                         Rect = { Rect.X, Rect.Y, Half };
                         --Level;
                     }
 
-                    const int32 Handle = (int32)Tiles.size();
+                    const int32 Handle = Tiles.Num();
                     const float InvAtlas = 1.0f / (float)Config.AtlasResolution;
                     FShadowTile Tile;
                     Tile.UVOffset = FVector2(Rect.X * InvAtlas, Rect.Y * InvAtlas);
                     Tile.UVScale  = FVector2(Rect.Size * InvAtlas);
-                    Tiles.push_back(Tile);
+                    Tiles.Add(Tile);
                     return Handle;
                 }
             }
@@ -438,10 +438,10 @@ namespace Lumina
         // Reseeds top-level free list with a grid of MaxTileResolution roots.
         void FreeTiles()
         {
-            Tiles.clear();
+            Tiles.Reset();
             for (TVector<FTileRect>& Q : FreeLists)
             {
-                Q.clear();   // keeps capacity -- avoids reallocating the free lists every frame
+                Q.Reset();   // keeps capacity -- avoids reallocating the free lists every frame
             }
 
             const uint32 RootSize = Config.MaxTileResolution;
@@ -449,7 +449,7 @@ namespace Lumina
             {
                 for (uint32 X = 0; X < Config.AtlasResolution; X += RootSize)
                 {
-                    FreeLists[NumLevels - 1].push_back({ X, Y, RootSize });
+                    FreeLists[NumLevels - 1].Emplace(X, Y, RootSize);
                 }
             }
         }

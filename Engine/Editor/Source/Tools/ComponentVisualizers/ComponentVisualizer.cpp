@@ -42,16 +42,16 @@ namespace Lumina
     {
         if (CStruct* SupportedType = Visualizer->GetSupportedComponentType())
         {
-            Visualizers.emplace(SupportedType, Visualizer);
+            Visualizers.TryAdd(SupportedType, Visualizer);
         }
     }
 
     CComponentVisualizer* CComponentVisualizerRegistry::GetComponentVisualizer(CStruct* Component)
     {
-        auto It = Visualizers.find(Component);
-        if (It != Visualizers.end())
+        auto It = Visualizers.Find(Component);
+        if (It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
         
         return nullptr;
@@ -211,7 +211,7 @@ namespace Lumina
             if (Settings.AttenuationSettings != nullptr && !Settings.bOverrideAttenuation)
             {
                 const FString AssetName = Settings.AttenuationSettings->GetName().ToString();
-                Context.Label(Center + Axis * Resolved.MaxDistance, kAudioAsset, "%s", AssetName.c_str());
+                Context.Label(Center + Axis * Resolved.MaxDistance, kAudioAsset, "%s", *AssetName);
                 return;
             }
 
@@ -414,7 +414,7 @@ namespace Lumina
 
     void CComponentVisualizer_PointLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SPointLightComponent& PointLight = Registry.Get<SPointLightComponent>(Entity);
+        const SPointLightComponent& PointLight = Registry.Get<ECS::Read<SPointLightComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         
         PDI->DrawSphere(Transform.GetWorldLocationCached(), PointLight.Attenuation, 
@@ -459,7 +459,7 @@ namespace Lumina
 
     void CComponentVisualizer_AreaLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SAreaLightComponent& Light     = Registry.Get<SAreaLightComponent>(Entity);
+        const SAreaLightComponent& Light     = Registry.Get<ECS::Read<SAreaLightComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         const FQuat    Rotation = Transform.GetWorldRotationCached();
         const FVector3 Center   = Transform.GetWorldLocationCached();
@@ -484,7 +484,7 @@ namespace Lumina
 
     void CComponentVisualizer_SpotLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SSpotLightComponent& SpotLight    = Registry.Get<SSpotLightComponent>(Entity);
+        const SSpotLightComponent& SpotLight    = Registry.Get<ECS::Read<SSpotLightComponent>>(Entity);
         const STransformComponent& Transform    = Registry.Get<STransformComponent>(Entity);
         FVector3 Forward                       = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
 
@@ -573,7 +573,7 @@ namespace Lumina
 
     void CComponentVisualizer_DirectionalLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const auto& Light       = Registry.Get<SDirectionalLightComponent>(Entity);
+        const auto& Light       = Registry.Get<ECS::Read<SDirectionalLightComponent>>(Entity);
         const auto& Transform   = Registry.Get<STransformComponent>(Entity);
         
         PDI->DrawArrow(Transform.GetWorldLocationCached(), -Light.Direction, 1.5f, FColor::Yellow, 4.0f);
@@ -922,7 +922,7 @@ namespace Lumina
 
     void CComponentVisualizer_Decal::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SDecalComponent& Decal         = Registry.Get<SDecalComponent>(Entity);
+        const SDecalComponent& Decal         = Registry.Get<ECS::Read<SDecalComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Location  = Transform.GetWorldLocationCached();
@@ -993,7 +993,7 @@ namespace Lumina
 
     void CComponentVisualizer_ReflectionProbe::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SReflectionProbeComponent& Probe = Registry.Get<SReflectionProbeComponent>(Entity);
+        const SReflectionProbeComponent& Probe = Registry.Get<ECS::Read<SReflectionProbeComponent>>(Entity);
         const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Location = Transform.GetWorldLocationCached();
@@ -1262,10 +1262,10 @@ namespace Lumina
 
     void CComponentVisualizer_Spline::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SSplineComponent&    Spline    = Registry.Get<SSplineComponent>(Entity);
+        const SSplineComponent&    Spline    = Registry.Get<ECS::Read<SSplineComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        if (!Spline.bDrawDebug || Spline.Points.empty())
+        if (!Spline.bDrawDebug || Spline.Points.IsEmpty())
         {
             return;
         }
@@ -1348,7 +1348,7 @@ namespace Lumina
             Source.bSpatialized, "Edit Audio Attenuation");
 
         const FString SoundName = Source.Sound.IsValid() ? Source.Sound->GetName().ToString() : FString("No Sound");
-        LabelAudioEmitter(Context, Center, SoundName.c_str(), Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+        LabelAudioEmitter(Context, Center, *SoundName, Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
     }
 
     CStruct* CComponentVisualizer_AudioVolume::GetSupportedComponentType() const
@@ -1388,7 +1388,7 @@ namespace Lumina
         const SAudioVolumeComponent& Volume = Context.Get<SAudioVolumeComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
         const FString SoundName = Volume.Sound.IsValid() ? Volume.Sound->GetName().ToString() : FString("No Sound");
-        LabelAudioEmitter(Context, Transform.GetWorldLocationCached(), SoundName.c_str(), Volume.Bus, Volume.Volume * Volume.Gain, false, Volume.bPlaying);
+        LabelAudioEmitter(Context, Transform.GetWorldLocationCached(), *SoundName, Volume.Bus, Volume.Volume * Volume.Gain, false, Volume.bPlaying);
     }
 
     CStruct* CComponentVisualizer_ProceduralAudio::GetSupportedComponentType() const
@@ -1416,7 +1416,7 @@ namespace Lumina
             Source.bSpatialized, "Edit Audio Attenuation");
 
         const FFixedString Name = FormatAs<FFixedString>("Procedural {} Hz", Source.SampleRate);
-        LabelAudioEmitter(Context, Center, Name.c_str(), Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+        LabelAudioEmitter(Context, Center, *Name, Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
     }
 
     CStruct* CComponentVisualizer_AudioListener::GetSupportedComponentType() const
@@ -1477,7 +1477,7 @@ namespace Lumina
 
         if (Context.BeginPanel("##SplinePoint", Anchor))
         {
-            const bool bHasPoint = PointIndex >= 0 && PointIndex < (int32)Spline.Points.size();
+            const bool bHasPoint = PointIndex >= 0 && PointIndex < Spline.Points.Num();
 
             if (bHasPoint)
             {
@@ -1489,7 +1489,7 @@ namespace Lumina
             }
 
             ImGui::SameLine();
-            ImGui::TextDisabled("of %d", (int32)Spline.Points.size());
+            ImGui::TextDisabled("of %d", Spline.Points.Num());
             ImGui::Separator();
 
             if (ImGui::SmallButton(LE_ICON_VECTOR_POINT_PLUS " Add"))
@@ -1497,15 +1497,15 @@ namespace Lumina
                 Context.BeginEdit("Add Spline Point");
 
                 SSplinePoint NewPoint;
-                if (!Spline.Points.empty())
+                if (!Spline.Points.IsEmpty())
                 {
                     // Continues the curve so a new point lands somewhere visible rather than on the last.
-                    const SSplinePoint& Last = Spline.Points.back();
+                    const SSplinePoint& Last = Spline.Points.Last();
                     FVector3 Direction = Last.LeaveTangent;
                     if (Math::LengthSquared(Direction) <= 1.0e-6f)
                     {
-                        Direction = (Spline.Points.size() >= 2)
-                                  ? (Last.Location - Spline.Points[Spline.Points.size() - 2].Location)
+                        Direction = (Spline.Points.Num() >= 2)
+                                  ? (Last.Location - Spline.Points[Spline.Points.Num() - 2].Location)
                                   : FVector3(0.0f, 0.0f, 1.0f);
                     }
                     if (Math::LengthSquared(Direction) <= 1.0e-6f)
@@ -1518,9 +1518,9 @@ namespace Lumina
                     NewPoint.Roll = Last.Roll;
                 }
 
-                Spline.Points.push_back(NewPoint);
+                Spline.Points.Add(NewPoint);
                 Spline.UpdateTangents();
-                Context.SelectSubElement(PackSplineHandle((int32)Spline.Points.size() - 1, ESplineHandle::Point));
+                Context.SelectSubElement(PackSplineHandle(Spline.Points.Num() - 1, ESplineHandle::Point));
 
                 Context.MarkDirty();
                 Context.EndEdit();
@@ -1533,7 +1533,7 @@ namespace Lumina
             {
                 Context.BeginEdit("Delete Spline Point");
 
-                Spline.Points.erase(Spline.Points.begin() + PointIndex);
+                Spline.Points.RemoveAt(PointIndex);
                 Spline.UpdateTangents();
                 Context.ClearSubElementSelection();
 
@@ -1625,7 +1625,7 @@ namespace Lumina
         auto ToWorld = [&](const FVector3& Local) { return FVector3(LocalToWorld * FVector4(Local, 1.0f)); };
         auto ToLocal = [&](const FVector3& World) { return FVector3(WorldToLocal * FVector4(World, 1.0f)); };
 
-        const int32 NumPoints = (int32)Spline.Points.size();
+        const int32 NumPoints = Spline.Points.Num();
 
         // A point removed from the details panel or by undo can leave the selection past the end.
         int32 Selected = Context.GetSelectedSubElement();
@@ -1744,7 +1744,7 @@ namespace Lumina
                 const int32 Segment = Math::Clamp((int32)Math::Floor(BestKey), 0, NumSegments - 1);
                 const int32 InsertAt = Segment + 1;
 
-                Spline.Points.insert(Spline.Points.begin() + InsertAt, NewPoint);
+                Spline.Points.Insert(NewPoint, InsertAt);
                 Spline.UpdateTangents();
                 Context.SelectSubElement(PackSplineHandle(InsertAt, ESplineHandle::Point));
 
@@ -1764,7 +1764,7 @@ namespace Lumina
         {
             Context.BeginEdit("Delete Spline Point");
 
-            Spline.Points.erase(Spline.Points.begin() + SelectedPoint);
+            Spline.Points.RemoveAt(SelectedPoint);
             Spline.UpdateTangents();
             Context.ClearSubElementSelection();
 

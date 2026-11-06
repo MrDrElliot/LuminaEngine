@@ -46,9 +46,9 @@ namespace Umbral
         void PlaySound(ECS::FRegistry& Registry, ESound Sound, float Pitch = 1.0f, float Volume = 1.0f, float Pan = 0.0f)
         {
             FSoundQueue& Queue = Registry.GetSingleton<FSoundQueue>();
-            if (Queue.Pending.size() < 64)
+            if (Queue.Pending.Num() < 64)
             {
-                Queue.Pending.push_back(FSoundRequest{ Sound, Pitch, Volume, Pan });
+                Queue.Pending.Emplace(Sound, Pitch, Volume, Pan);
             }
         }
 
@@ -65,7 +65,7 @@ namespace Umbral
 
         int32 CountParticles(ECS::FRegistry& Registry)
         {
-            return int32(Registry.View<FParticle>().NumCandidates());
+            return Registry.View<FParticle>().NumCandidates();
         }
 
         void SpawnParticle(ECS::FRegistry& Registry, const FVector2& Position, const FVector2& Velocity,
@@ -281,7 +281,7 @@ namespace Umbral
             TVector<ECS::FEntity> Doomed;
             for (const ECS::FEntity Entity : Registry.View<TComponent>())
             {
-                Doomed.push_back(Entity);
+                Doomed.Add(Entity);
             }
             for (const ECS::FEntity Entity : Doomed)
             {
@@ -503,9 +503,9 @@ namespace Umbral
         Swarm.BuildGrid();
         Swarm.Advance(Delta, Player.Position);
 
-        Volumes.clear();
-        Deaths.clear();
-        DeathColors.clear();
+        Volumes.Reset();
+        Deaths.Reset();
+        DeathColors.Reset();
 
         //~ Weapons
 
@@ -524,7 +524,7 @@ namespace Umbral
                     Player.Position.x + Math::Cos(Angle) * Orbit,
                     Player.Position.y + Math::Sin(Angle) * Orbit,
                 };
-                Volumes.push_back(FDamageVolume{ Spot, 46.0f, Damage, 260.0f });
+                Volumes.Emplace(Spot, 46.0f, Damage, 260.0f);
             }
         }
 
@@ -629,7 +629,7 @@ namespace Umbral
                         break;
                     }
 
-                    Volumes.push_back(FDamageVolume{ Hit, 62.0f, Damage, 120.0f, 0.0f, 0.0f });
+                    Volumes.Emplace(Hit, 62.0f, Damage, 120.0f, 0.0f, 0.0f);
                     SpawnArc(Registry, From, Hit);
                     From = Hit;
                 }
@@ -641,9 +641,9 @@ namespace Umbral
         if (GloomLevel > 0)
         {
             const float Radius = 240.0f + float(GloomLevel) * 26.0f;
-            Volumes.push_back(FDamageVolume{ Player.Position, Radius,
+            Volumes.Emplace(Player.Position, Radius,
                 (6.0f + float(GloomLevel) * 4.0f) * Delta, 0.0f, 0.0f,
-                Math::Min(0.06f + float(GloomLevel) * 0.012f, 0.16f) });
+                Math::Min(0.06f + float(GloomLevel) * 0.012f, 0.16f));
         }
 
         //~ Projectiles
@@ -656,7 +656,7 @@ namespace Umbral
                 Projectile.Life -= Delta;
                 if (Projectile.Life <= 0.0f || Projectile.Pierce <= 0)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -673,7 +673,7 @@ namespace Umbral
                 Body.Position += Projectile.Velocity * Delta;
                 Body.Rotation = Math::Atan2(Projectile.Velocity.y, Projectile.Velocity.x);
 
-                Volumes.push_back(FDamageVolume{ Body.Position, Projectile.Radius, Projectile.Damage, 340.0f });
+                Volumes.Emplace(Body.Position, Projectile.Radius, Projectile.Damage, 340.0f);
                 Projectile.Pierce -= Swarm.CountNear(Body.Position, Projectile.Radius) > 0 ? 1 : 0;
             }
 
@@ -693,7 +693,7 @@ namespace Umbral
                 Nova.Age += Delta;
                 if (Nova.Age >= Nova.Duration)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
@@ -703,7 +703,7 @@ namespace Umbral
                 Light.Radius = Radius * 1.3f;
                 Light.Energy = 1.6f * (1.0f - Alpha);
 
-                Volumes.push_back(FDamageVolume{ Body.Position, Radius, Nova.Damage * Delta * 6.0f, 700.0f });
+                Volumes.Emplace(Body.Position, Radius, Nova.Damage * Delta * 6.0f, 700.0f);
             }
 
             for (auto [Entity, Body, Pyre, Light] : Registry.View<FBody, FPyre, FLight>().Each())
@@ -711,13 +711,13 @@ namespace Umbral
                 Pyre.Age += Delta;
                 if (Pyre.Age >= Pyre.Duration)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     continue;
                 }
 
                 const float Flicker = 0.85f + 0.15f * Math::Sin(Run.Elapsed * 14.0f + Pyre.Radius);
                 Light.Energy = 1.1f * Flicker * (1.0f - Pyre.Age / Pyre.Duration);
-                Volumes.push_back(FDamageVolume{ Body.Position, Pyre.Radius, Pyre.Damage * Delta, 0.0f });
+                Volumes.Emplace(Body.Position, Pyre.Radius, Pyre.Damage * Delta, 0.0f);
             }
 
             for (const ECS::FEntity Entity : Doomed)
@@ -736,7 +736,7 @@ namespace Umbral
 
                 if (Maw.Age >= Maw.Duration)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     SpawnBurst(Registry, Body.Position, { 0.70f, 0.24f, 1.10f, 1.0f }, 40, 200.0f, 900.0f);
                     AddTrauma(Registry, 0.28f);
                     continue;
@@ -749,8 +749,8 @@ namespace Umbral
                 Light.Energy = 1.4f * Swell;
                 Light.Radius = Maw.Radius * 1.4f;
 
-                Volumes.push_back(FDamageVolume{ Body.Position, Maw.Radius, Maw.Damage * Delta, 0.0f,
-                    Maw.Pull * Delta * Swell, 0.0f });
+                Volumes.Emplace(Body.Position, Maw.Radius, Maw.Damage * Delta, 0.0f,
+                    Maw.Pull * Delta * Swell, 0.0f);
 
                 if (CountParticles(Registry) < kMaxParticles - 4)
                 {
@@ -767,7 +767,7 @@ namespace Umbral
                 Arc.Age += Delta;
                 if (Arc.Age >= Arc.Life)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                 }
             }
 
@@ -780,7 +780,7 @@ namespace Umbral
         //~ Damage resolution
 
         int64 Kills = 0;
-        const float Souls = Swarm.ApplyDamage(TSpan<const FDamageVolume>(Volumes.data(), Volumes.size()),
+        const float Souls = Swarm.ApplyDamage(TSpan<const FDamageVolume>(Volumes.GetData(), Volumes.Num()),
             Deaths, DeathColors, Kills);
 
         Swarm.Compact();
@@ -790,7 +790,7 @@ namespace Umbral
         Run.Kills += Kills;
         Run.BestKills = Math::Max(Run.BestKills, Run.Kills);
 
-        for (size_t Index = 0; Index < Deaths.size(); ++Index)
+        for (int32 Index = 0; Index < Deaths.Num(); ++Index)
         {
             SpawnBurst(Registry, Deaths[Index], DeathColors[Index], 5, 60.0f, 320.0f);
             if (Index % 3 == 0)
@@ -826,7 +826,7 @@ namespace Umbral
 
                 if (Distance < 34.0f || Mote.Age > 26.0f)
                 {
-                    Doomed.push_back(Entity);
+                    Doomed.Add(Entity);
                     Run.Souls += Mote.Value;
                 }
             }
@@ -836,7 +836,7 @@ namespace Umbral
                 Registry.Destroy(Entity);
             }
 
-            if (!Doomed.empty())
+            if (!Doomed.IsEmpty())
             {
                 PlaySound(Registry, ESound::SoulPickup, Rng.Range(1.0f, 1.35f), 0.4f);
             }
@@ -917,7 +917,7 @@ namespace Umbral
             Particle.Life -= Delta;
             if (Particle.Life <= 0.0f)
             {
-                Doomed.push_back(Entity);
+                Doomed.Add(Entity);
                 continue;
             }
 
@@ -939,7 +939,7 @@ namespace Umbral
             Number.Position.y -= 60.0f * Delta;
             if (Number.Age > 0.8f)
             {
-                Doomed.push_back(Entity);
+                Doomed.Add(Entity);
             }
         }
 

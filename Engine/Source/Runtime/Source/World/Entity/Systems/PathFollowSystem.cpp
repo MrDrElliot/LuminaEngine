@@ -18,30 +18,26 @@
 
 namespace Lumina
 {
-    // STransformComponent is READ-only here, so this batches in parallel with other readers.
     void SPathFollowSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SPathFollowComponent, SCharacterControllerComponent, SRVOAgentComponent, SVehicleComponent>();
-        Reads<STransformComponent, SNavMeshComponent,
-              SCharacterMovementComponent, SystemResource::Significance>();
     }
 
-    namespace
+    namespace PathFollowSystemInternal
     {
         void StorePath(SPathFollowComponent& Comp, const FNavPath& Path, const FVector3& AgentPos)
         {
-            const int32 N = (int32)std::min<size_t>(Path.Corners.size(), (size_t)SPathFollowComponent::MaxCorners);
+            const int32 N = Math::Min(Path.Corners.Num(), SPathFollowComponent::MaxCorners);
             for (int32 i = 0; i < N; ++i)
             {
                 Comp.PathCorners[i] = Path.Corners[i];
-                Comp.PathCornerFlags[i] = i < (int32)Path.CornerFlags.size() ? Path.CornerFlags[i] : 0;
+                Comp.PathCornerFlags[i] = i < Path.CornerFlags.Num() ? Path.CornerFlags[i] : 0;
             }
             Comp.CornerCount = N;
             Comp.CurrentCorner = 0;
             Comp.PathEpoch = Path.Epoch;
             Comp.bPathPartial = Path.bPartial;
-            Comp.bPathTruncated = Path.bTruncated || (int32)Path.Corners.size() > N;
+            Comp.bPathTruncated = Path.bTruncated || Path.Corners.Num() > N;
 
             // A search that ran out of nodes before leaving the agent's feet is an unreachable goal, and repathing from there would loop forever.
             if (Comp.bPathTruncated && N > 0)
@@ -56,7 +52,8 @@ namespace Lumina
         }
 
         // Caller must flush dirty transforms before calling from a parallel body.
-        bool ResolveGoal(const SSystemContext& Context, SPathFollowComponent& Comp, FVector3& OutGoal)
+        template<typename TTransforms>
+        bool ResolveGoal(const SSystemContext& Context, const TTransforms& Transforms, SPathFollowComponent& Comp, FVector3& OutGoal)
         {
             if (Comp.TargetEntity != ECS::NullEntity)
             {
@@ -66,34 +63,13 @@ namespace Lumina
                     Comp.TargetEntity = ECS::NullEntity;
                     return false;
                 }
-                if (auto* T = Context.TryGet<STransformComponent>(Comp.TargetEntity))
+                if (const STransformComponent* T = Transforms.template TryGet<STransformComponent>(Comp.TargetEntity))
                 {
                     Comp.TargetLocation = T->GetWorldLocationCached();
                 }
             }
             OutGoal = Comp.TargetLocation;
             return true;
-        }
-
-        struct FAgentMesh
-        {
-            FName       Agent;
-            FNavMesh*   Mesh = nullptr;
-        };
-
-        // Resolved once per tick from a handful of volumes, since followers query it from a parallel loop.
-        FNavMesh* MeshForAgent(const TVector<FAgentMesh>& Meshes, FName Agent)
-        {
-            FNavMesh* Fallback = nullptr;
-            for (const FAgentMesh& Entry : Meshes)
-            {
-                if (Entry.Agent == Agent)
-                {
-                    return Entry.Mesh;
-                }
-                Fallback = Fallback != nullptr ? Fallback : Entry.Mesh;
-            }
-            return Agent.IsNone() ? Fallback : nullptr;
         }
 
         void ReleaseVehicle(SPathFollowComponent& Comp, SVehicleComponent* Vehicle)
@@ -168,51 +144,54 @@ namespace Lumina
         }
     }
 
+    // Resolved once per tick from a handful of volumes, since followers query it from a parallel loop.
+    FNavMesh* SPathFollowSystem::MeshForAgent(const TVector<FAgentMesh>& Meshes, FName Agent)
+    {
+        FNavMesh* Fallback = nullptr;
+        for (const FAgentMesh& Entry : Meshes)
+        {
+            if (Entry.Agent == Agent)
+            {
+                return Entry.Mesh;
+            }
+            Fallback = Fallback != nullptr ? Fallback : Entry.Mesh;
+        }
+        return Agent.IsNone() ? Fallback : nullptr;
+    }
+
+    bool SPathFollowSystem::HasWork(const SSystemContext&)
+    {
+        return AnyQueryHasRows(Followers);
+    }
+
     void SPathFollowSystem::OnUpdate(const SSystemContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-        
         constexpr FVector3 Lift(0.0f, 0.1f, 0.0f);
         constexpr FVector4 PathColor(0.4f, 0.8f, 1.0f, 1.0f);
         constexpr FVector4 ActiveSegmentColor(1.0f, 0.95f, 0.2f, 1.0f);
         constexpr FVector4 GoalColor(1.0f, 0.4f, 0.4f, 1.0f);
 
-        const float DeltaTime = (float)Context.GetDeltaTime();
-        auto View = Context.CreateView<SPathFollowComponent>();
-        auto Handle = View.GetDriver();
-        if (Handle->IsEmpty())
-        {
-            return;
-        }
-        
-        TVector<FAgentMesh> AgentMeshes;
-        Context.CreateView<SNavMeshComponent>().ForEach([&](const SNavMeshComponent& Volume)
+        const float DeltaTime = Context.GetDeltaTime();
+
+        AgentMeshes.Reset();
+        NavMeshes.ForEach([&](const SNavMeshComponent& Volume)
         {
             if (Volume.Runtime.Mesh && Volume.Runtime.Mesh->IsReady())
             {
-                AgentMeshes.push_back({ Volume.Agent, Volume.Runtime.Mesh.get() });
+                AgentMeshes.Emplace(Volume.Agent, Volume.Runtime.Mesh.get());
             }
         });
 
-        auto TransformStorage = Context.GetRegistry().GetStorage<STransformComponent>();
-        auto AvoidanceStorage = Context.GetRegistry().GetStorage<SRVOAgentComponent>();
-        auto MovementStorage  = Context.GetRegistry().GetStorage<SCharacterMovementComponent>();
-        auto VehicleStorage   = Context.GetRegistry().GetStorage<SVehicleComponent>();
-        const FSignificanceState* SignificanceState = Significance::GetState(Context);
-        auto PathStorage = Context.GetRegistry().GetStorage<SPathFollowComponent>();
+        const FSignificanceState* Scores = &SignificanceState.Get();
 
         // Everything up to the repath decision. False when the follower is already settled for this tick.
-        const auto Prepare = [&](ECS::FEntity Entity, SPathFollowComponent& Comp, FVector3& OutGoal, FVector3& OutAgentPos, bool& bOutNeedRepath) -> bool
+        const auto Prepare = [&](ECS::FEntity Entity, SPathFollowComponent& Comp, const STransformComponent& Xform, SVehicleComponent* Vehicle, SRVOAgentComponent* Avoidance, FVector3& OutGoal, FVector3& OutAgentPos, bool& bOutNeedRepath) -> bool
         {
-            STransformComponent&  Xform = TransformStorage.Get(Entity);
-            SVehicleComponent* Vehicle = VehicleStorage.TryGet(Entity);
             FNavMesh* const NavMesh = MeshForAgent(AgentMeshes, Comp.NavAgent);
 
             Comp.TimeSinceLastPath += DeltaTime;
 
             // Cleared up front so every early return below leaves the agent stopped, not coasting.
-            SRVOAgentComponent* Avoidance = AvoidanceStorage.TryGet(Entity);
             if (Avoidance != nullptr)
             {
                 Avoidance->PreferredVelocity = FVector3(0.0f);
@@ -222,23 +201,23 @@ namespace Lumina
             {
                 Comp.CornerCount = 0;
                 Comp.Status = EPathFollowStatus::None;
-                ReleaseVehicle(Comp, Vehicle);
+                PathFollowSystemInternal::ReleaseVehicle(Comp, Vehicle);
                 return false;
             }
 
             FVector3 Goal;
-            if (!ResolveGoal(Context, Comp, Goal))
+            if (!PathFollowSystemInternal::ResolveGoal(Context, Transforms, Comp, Goal))
             {
                 Comp.CornerCount = 0;
                 Comp.Status = EPathFollowStatus::None;
-                ReleaseVehicle(Comp, Vehicle);
+                PathFollowSystemInternal::ReleaseVehicle(Comp, Vehicle);
                 return false;
             }
 
             const FVector3 AgentPos = Xform.GetWorldLocationCached();
 
             const bool bMovedTarget = Math::Length(Goal - Comp.PathSourceTarget) > Comp.RepathDistance;
-            const float RepathInterval = Significance::ScaleInterval(SignificanceState, Entity, Comp.RepathInterval);
+            const float RepathInterval = Significance::ScaleInterval(Scores, Entity, Comp.RepathInterval);
             const bool bIntervalElapsed = Comp.TimeSinceLastPath > RepathInterval;
 
             // The epoch is mesh-wide, so one streamed tile would otherwise repath every agent alive.
@@ -268,12 +247,10 @@ namespace Lumina
         };
 
         // The path query when one is owed, then the corner walk and the steering it produces.
-        const auto Follow = [&](ECS::FEntity Entity, SPathFollowComponent& Comp, const FVector3& Goal, const FVector3& AgentPos, bool bNeedRepath)
+        const auto Follow = [&](SPathFollowComponent& Comp, const STransformComponent& Xform, SVehicleComponent* Vehicle, SRVOAgentComponent* Avoidance,
+            SCharacterControllerComponent* Controller, const SCharacterMovementComponent* Movement, const FVector3& Goal, const FVector3& AgentPos, bool bNeedRepath)
         {
-            STransformComponent&  Xform = TransformStorage.Get(Entity);
-            SVehicleComponent* Vehicle = VehicleStorage.TryGet(Entity);
             FNavMesh* const NavMesh = MeshForAgent(AgentMeshes, Comp.NavAgent);
-            SRVOAgentComponent* Avoidance = AvoidanceStorage.TryGet(Entity);
 
             if (bNeedRepath)
             {
@@ -291,7 +268,7 @@ namespace Lumina
 
                 if (bFound)
                 {
-                    StorePath(Comp, Path, AgentPos);
+                    PathFollowSystemInternal::StorePath(Comp, Path, AgentPos);
                     Comp.PathSourceTarget = Goal;
                     Comp.bPathDirty = false;
                     Comp.TimeSinceLastPath = 0.0f;
@@ -312,7 +289,7 @@ namespace Lumina
                     }
                     if (Comp.CornerCount == 0)
                     {
-                        ReleaseVehicle(Comp, Vehicle);
+                        PathFollowSystemInternal::ReleaseVehicle(Comp, Vehicle);
                         return;
                     }
                 }
@@ -342,7 +319,7 @@ namespace Lumina
                 {
                     Comp.Status = Comp.bPathPartial ? EPathFollowStatus::Failed : EPathFollowStatus::Reached;
                 }
-                ReleaseVehicle(Comp, Vehicle);
+                PathFollowSystemInternal::ReleaseVehicle(Comp, Vehicle);
                 return;
             }
 
@@ -356,7 +333,7 @@ namespace Lumina
             FVector3 Move = (Flat / Len) * Comp.Speed;
 
             // Judged on real displacement, since a walker pinned by something the navmesh cannot see still wants full speed.
-            const SCharacterMovementComponent* Walker = Vehicle == nullptr ? MovementStorage.TryGet(Entity) : nullptr;
+            const SCharacterMovementComponent* Walker = Vehicle == nullptr ? Movement : nullptr;
             if (Walker != nullptr && Comp.StuckTimeout > 0.0f && Comp.Speed > 0.05f)
             {
                 if (Comp.SidestepTime > 0.0f)
@@ -399,21 +376,20 @@ namespace Lumina
                 {
                     const FVector3 Final = Comp.PathCorners[Comp.CornerCount - 1] - AgentPos;
                     const float GoalDistance = Comp.bPathTruncated ? FLT_MAX : Math::Length(FVector3(Final.x, 0.0f, Final.z));
-                    DriveVehicle(Comp, *Vehicle, Xform.GetWorldTransformCached().GetForward(), Flat / Len, GoalDistance, DeltaTime);
+                    PathFollowSystemInternal::DriveVehicle(Comp, *Vehicle, Xform.GetWorldTransformCached().GetForward(), Flat / Len, GoalDistance, DeltaTime);
                 }
                 // An avoidance agent consumes the desired velocity instead, and drives the controller itself.
                 else if (Avoidance != nullptr)
                 {
-                    const SCharacterMovementComponent* Movement = MovementStorage.TryGet(Entity);
                     const float Speed = Avoidance->MaxSpeed > 0.0f
                         ? Avoidance->MaxSpeed
                         : (Movement != nullptr ? Movement->MoveSpeed : 1.0f);
 
                     Avoidance->PreferredVelocity = Move * Speed;
                 }
-                else if (auto* CC = Context.TryGet<SCharacterControllerComponent>(Entity))
+                else if (Controller != nullptr)
                 {
-                    CC->AddWorldMovementInput(Move);
+                    Controller->AddWorldMovementInput(Move);
                 }
             }
 
@@ -437,47 +413,46 @@ namespace Lumina
             Context.DrawDebugLine(Goal - FVector3(0, 0, CrossSize), Goal + FVector3(0, 0, CrossSize), GoalColor, 1.5f, -1.0f);
         };
 
-        const uint32 ThreadSlots = Math::Max(GTaskSystem->GetNumTaskThreads(), 1u);
-        if ((uint32)RepathBuckets.size() < ThreadSlots)
+        const uint32 ThreadSlots = Math::Max(Jobs::GetNumThreadSlots(), 1u);
+        if ((uint32)RepathBuckets.Num() < ThreadSlots)
         {
-            RepathBuckets.resize(ThreadSlots);
+            RepathBuckets.SetNum(ThreadSlots);
         }
         for (FRepathBucket& Bucket : RepathBuckets)
         {
-            Bucket.Requests.clear();
+            Bucket.Requests.Reset();
         }
 
         // A path query costs as much as hundreds of plain followers, so queries are set aside rather than run inside a chunk.
-        Task::ParallelFor((uint32)View.NumDenseSlots(), [&](const Task::FParallelRange& Range)
+        Followers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SPathFollowComponent> CompMut, const STransformComponent& Xform, SVehicleComponent* Vehicle, SRVOAgentComponent* Avoidance,
+            SCharacterControllerComponent* Controller, const SCharacterMovementComponent* Movement)
         {
-            View.ForEachInRange(Range.Start, Range.End, [&](ECS::FEntity Entity, SPathFollowComponent& Comp)
+            SPathFollowComponent& Comp = CompMut.GetMut();
+            FVector3 Goal;
+            FVector3 AgentPos;
+            bool bNeedRepath = false;
+            if (!Prepare(Entity, Comp, Xform, Vehicle, Avoidance, Goal, AgentPos, bNeedRepath))
             {
-                FVector3 Goal;
-                FVector3 AgentPos;
-                bool bNeedRepath = false;
-                if (!Prepare(Entity, Comp, Goal, AgentPos, bNeedRepath))
-                {
-                    return;
-                }
-                if (bNeedRepath)
-                {
-                    RepathBuckets[Range.Thread].Requests.push_back({ Entity, Goal, AgentPos });
-                    return;
-                }
-                Follow(Entity, Comp, Goal, AgentPos, false);
-            });
+                return;
+            }
+            if (bNeedRepath)
+            {
+                RepathBuckets[Jobs::GetThreadSlot()].Requests.Emplace(Entity, Goal, AgentPos);
+                return;
+            }
+            Follow(Comp, Xform, Vehicle, Avoidance, Controller, Movement, Goal, AgentPos, false);
         }, 64);
 
-        RepathQueue.clear();
+        RepathQueue.Reset();
         for (const FRepathBucket& Bucket : RepathBuckets)
         {
-            RepathQueue.insert(RepathQueue.end(), Bucket.Requests.begin(), Bucket.Requests.end());
+            RepathQueue.Append(Bucket.Requests);
         }
 
         // A burst of repaths, a crowd spawning or a tile under it rebaking, is served round robin over several ticks.
         const uint32 Budget = (uint32)Math::Max(0, GetDefault<CNavigationSettings>()->MaxRepathsPerTick);
-        const uint32 Served = Budget == 0 ? (uint32)RepathQueue.size() : Math::Min(Budget, (uint32)RepathQueue.size());
-        if (Served < (uint32)RepathQueue.size())
+        const uint32 Served = Budget == 0 ? (uint32)RepathQueue.Num() : Math::Min(Budget, (uint32)RepathQueue.Num());
+        if (Served < (uint32)RepathQueue.Num())
         {
             Algo::Sort(RepathQueue, [](const FRepathRequest& A, const FRepathRequest& B) { return A.Entity.GetIndex() < B.Entity.GetIndex(); });
             const auto Resume = Algo::FindIf(RepathQueue, [this](const FRepathRequest& Request) { return Request.Entity.GetIndex() > RepathCursor; });
@@ -486,16 +461,21 @@ namespace Lumina
         }
 
         // One query per grab, so a burst of retargets spreads across every worker instead of piling onto a few chunks.
-        Task::ParallelFor((uint32)RepathQueue.size(), [&](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RepathQueue.Num(), [&](const Jobs::FParallelRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
                 const FRepathRequest& Request = RepathQueue[i];
-                SPathFollowComponent& Comp = PathStorage.Get(Request.Entity);
+                SPathFollowComponent& Comp = Followers.Get<SPathFollowComponent>(Request.Entity);
                 // Still owed a path, it walks the corners it has, and one without any waits where it stands.
                 if (i < Served || Comp.CornerCount > 0)
                 {
-                    Follow(Request.Entity, Comp, Request.Goal, Request.AgentPos, i < Served);
+                    Follow(Comp, Followers.Get<STransformComponent>(Request.Entity),
+                        Followers.TryGet<SVehicleComponent>(Request.Entity),
+                        Followers.TryGet<SRVOAgentComponent>(Request.Entity),
+                        Followers.TryGet<SCharacterControllerComponent>(Request.Entity),
+                        Followers.TryGet<SCharacterMovementComponent>(Request.Entity),
+                        Request.Goal, Request.AgentPos, i < Served);
                 }
             }
         }, 1);

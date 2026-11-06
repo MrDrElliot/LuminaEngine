@@ -5,7 +5,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Renderer/RHI.h"
 #include "Renderer/Vertex.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 
 namespace Lumina
 {
@@ -54,15 +54,14 @@ namespace Lumina
 
         void BeginFrame();
 
-        /** Close the write window and report what to draw. Vertices is 0 when the channel is empty. */
+        // Vertices is 0 when the channel is empty.
         FDrawRange Snapshot(EChannel Channel);
 
         void CloseFrame();
 
-        /** Verts actually requested last frame, whether or not they fit. Editor stats. */
+        // Counts verts requested last frame, whether or not they fit.
         uint32 GetLastDemand(EChannel Channel) const { return Channels[Channel].LastDemand; }
 
-        /** Bytes of CPU-visible VRAM this renderer is holding across all slots and channels. */
         uint64 GetResidentBytes() const;
 
         //~ Producers ------------------------------------------------------------------------
@@ -71,8 +70,8 @@ namespace Lumina
         {
             FChannel& Ch = Channels[Channel];
 
-            const uint32 ThreadSlot = Jobs::GetWorkerIndex();
-            if (ThreadSlot >= Ch.Reservations.size())
+            const uint32 ThreadSlot = Jobs::GetThreadSlot();
+            if (ThreadSlot >= static_cast<uint32>(Ch.Reservations.Num()))
             {
                 return;
             }
@@ -99,10 +98,8 @@ namespace Lumina
 
         FSimpleElementVertex* AllocLines(uint32 LineCount, EChannel Channel = DepthTested);
 
-        /** 12 edges of an oriented box. */
         void Box(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, uint32 PackedColor, EChannel Channel = DepthTested);
 
-        /** Three axis-aligned rings. */
         void Sphere(const FVector3& Center, float Radius, uint32 PackedColor, uint8 Segments = 16, EChannel Channel = DepthTested);
 
     private:

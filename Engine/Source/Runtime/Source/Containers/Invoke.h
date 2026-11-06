@@ -72,6 +72,13 @@ namespace Lumina::Containers
 
     template <typename TCallable, typename... TArgs>
     using TInvokeResult = std::invoke_result_t<TCallable, TArgs...>;
+
+    namespace Private
+    {
+        // How a type-erased thunk takes an argument: a scalar in a register, anything else by reference.
+        template <typename T>
+        using TThunkArg = std::conditional_t<std::is_scalar_v<T>, T, T&&>;
+    }
 }
 
 namespace Lumina

@@ -4,17 +4,17 @@ namespace LuminaSharp;
 
 #pragma warning disable CS0649 // fields are populated by overlaying native memory, not managed assignment
 
-// Mirror of native Lumina::FVectorOps. Size is a plain read on every table, so it skips the GC transition.
+// Mirror of native Lumina::FVectorOps. Num is a plain read on every table, so it skips the GC transition.
 internal unsafe struct VectorOps
 {
-    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, nuint> Size;
-    public delegate* unmanaged[Cdecl]<void*, void*> Data;
-    public delegate* unmanaged[Cdecl]<void*, void*, void> PushBack;
-    public delegate* unmanaged[Cdecl]<void*, nuint, void> RemoveAt;
-    public delegate* unmanaged[Cdecl]<void*, void> Clear;
-    public delegate* unmanaged[Cdecl]<void*, nuint, void> Resize;
-    public delegate* unmanaged[Cdecl]<void*, nuint, void> Reserve;
-    public delegate* unmanaged[Cdecl]<void*, nuint, nuint, void> Swap;
+    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, int> Num;
+    public delegate* unmanaged[Cdecl]<void*, void*> GetData;
+    public delegate* unmanaged[Cdecl]<void*, void*, void> Add;
+    public delegate* unmanaged[Cdecl]<void*, int, void> RemoveAt;
+    public delegate* unmanaged[Cdecl]<void*, void> Reset;
+    public delegate* unmanaged[Cdecl]<void*, int, void> SetNum;
+    public delegate* unmanaged[Cdecl]<void*, int, void> Reserve;
+    public delegate* unmanaged[Cdecl]<void*, int, int, void> Swap;
     public uint ElementSize;
     public void* ConstructContainer;
     public void* DestructContainer;
@@ -28,23 +28,23 @@ internal unsafe struct VectorOps
 // Mirror of native Lumina::FMapOps, where a C++ bool return is one byte.
 internal unsafe struct MapOps
 {
-    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, nuint> Size;
-    public delegate* unmanaged[Cdecl]<void*, void*, void*, void*> Insert;
+    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, int> Num;
+    public delegate* unmanaged[Cdecl]<void*, void*, void*, void*> Add;
     public delegate* unmanaged[Cdecl]<void*, void*, void*> Find;
-    public delegate* unmanaged[Cdecl]<void*, void*, byte> RemoveByKey;
-    public delegate* unmanaged[Cdecl]<void*, void> Clear;
-    public delegate* unmanaged[Cdecl]<void*, nuint, void> Reserve;
+    public delegate* unmanaged[Cdecl]<void*, void*, byte> Remove;
+    public delegate* unmanaged[Cdecl]<void*, void> Reset;
+    public delegate* unmanaged[Cdecl]<void*, int, void> Reserve;
     public delegate* unmanaged[Cdecl]<void*, void*, void*, void> ForEach;
     public delegate* unmanaged[Cdecl]<void*, void*, void> ConstructKey;
     public delegate* unmanaged[Cdecl]<void*, void*, void> DestructKey;
-    public delegate* unmanaged[Cdecl]<void*, nuint, void**, void**, void> At;
+    public delegate* unmanaged[Cdecl]<void*, int, void**, void**, void> At;
     public uint KeySize;
     public uint ValueSize;
     public void* ConstructContainer;
     public void* DestructContainer;
     public void* ContainerContext;
     public uint ContainerSize;
-    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, nuint*, void**, void**, byte> Next;
+    public delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, int*, void**, void**, byte> Next;
 }
 
 #pragma warning restore CS0649

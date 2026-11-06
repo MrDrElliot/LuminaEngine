@@ -30,7 +30,7 @@ namespace Lumina
             // Scatters the interleaved build array into the resource's structure-of-arrays streams.
             TVector<FSourceVertex> GeneratedVerts;
             Generate(GeneratedVerts, Resource->Indices);
-            Resource->ReserveVertices(GeneratedVerts.size());
+            Resource->ReserveVertices(GeneratedVerts.Num());
             for (const FSourceVertex& V : GeneratedVerts)
             {
                 Resource->AppendVertex(V);
@@ -38,13 +38,13 @@ namespace Lumina
 
             FGeometrySurface Surface;
             Surface.ID = SurfaceID;
-            Surface.IndexCount = (uint32)Resource->Indices.size();
+            Surface.IndexCount = (uint32)Resource->Indices.Num();
             Surface.StartIndex = 0;
             Surface.MaterialIndex = 0;
-            Resource->GeometrySurfaces.push_back(Surface);
+            Resource->GeometrySurfaces.Add(Surface);
 
             OutMesh = NewObject<CStaticMesh>(TransientPackage, ObjectName, FGuid::NewDeterministic(DeterministicTag));
-            OutMesh->Materials.resize(1);
+            OutMesh->Materials.SetNum(1);
             OutMesh->SetMeshResource(Move(Resource));
         };
 

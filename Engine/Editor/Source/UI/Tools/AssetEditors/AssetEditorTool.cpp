@@ -226,7 +226,7 @@ namespace Lumina
                 return;
             }
             FObjectSnapshotCommand::Capture(Asset.Get(), AssetUndoImage, MakeAssetUndoSerializer());
-            AssetUndoReferenced.clear();
+            AssetUndoReferenced.Reset();
             FObjectSnapshotCommand::CollectReferenced(Asset.Get(), AssetUndoReferenced);
             AssetUndoGeneration = Generation;
             bAssetUndoImageStale = false;
@@ -254,21 +254,21 @@ namespace Lumina
 
         // Two images per step of an asset this size would make the history cost more than the asset.
         constexpr SIZE_T MaxAutomaticUndoBytes = 16ull * 1024 * 1024;
-        if (Current.size() > MaxAutomaticUndoBytes)
+        if (static_cast<size_t>(Current.Num()) > MaxAutomaticUndoBytes)
         {
-            LOG_WARN("'{}' is too large to snapshot for undo, so edits made outside its details panel are not undoable.", Asset->GetName().c_str());
+            LOG_WARN("'{}' is too large to snapshot for undo, so edits made outside its details panel are not undoable.", *Asset->GetName());
             bAutoAssetUndoOff = true;
-            AssetUndoImage.clear();
+            AssetUndoImage.Reset();
             return;
         }
 
-        const FName Label(Format("Edit {}", Asset->GetName().c_str()).c_str());
+        const FName Label(*Format("Edit {}", *Asset->GetName()));
         Manager.BeginTransaction(Label);
         Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Label, Move(AssetUndoImage), Current, MakeAssetUndoSerializer(), Move(AssetUndoReferenced)));
         Manager.CommitTransaction();
 
         AssetUndoImage = Move(Current);
-        AssetUndoReferenced.clear();
+        AssetUndoReferenced.Reset();
         FObjectSnapshotCommand::CollectReferenced(Asset.Get(), AssetUndoReferenced);
         bAssetUndoImageStale = false;
     }
@@ -312,8 +312,8 @@ namespace Lumina
             if (CachedWindowNameSource != Name)
             {
                 CachedWindowNameSource = Name;
-                CachedWindowName = Format("{0} {1}###{2}",
-                    GetTitlebarIcon(), Name.c_str(), Asset->GetGUID().ToShortString().c_str()).c_str();
+                CachedWindowName = *Format("{0} {1}###{2}",
+                    GetTitlebarIcon(), *Name, *Asset->GetGUID().ToShortString());
             }
             return CachedWindowName;
         }
@@ -351,7 +351,7 @@ namespace Lumina
             return;
         }
 
-        if (!ToolContext->ConfirmWritable({ FString(Package->GetPackagePath().c_str()) }, [this] { OnSave(); }))
+        if (!ToolContext->ConfirmWritable({ FString(*Package->GetPackagePath()) }, [this] { OnSave(); }))
         {
             return;
         }
@@ -370,11 +370,11 @@ namespace Lumina
         {
             FAssetRegistry::Get().AssetSaved(Asset.Get());
             FCoreEditorDelegates::OnAssetSaved.Broadcast(Asset.Get());
-            ImGuiX::Notifications::NotifySuccess("Successfully saved package: \"{0}\"", Asset->GetName().c_str());
+            ImGuiX::Notifications::NotifySuccess("Successfully saved package: \"{0}\"", *Asset->GetName());
         }
         else
         {
-            ImGuiX::Notifications::NotifyError("Failed to save package: \"{0}\"", Asset->GetName().c_str());
+            ImGuiX::Notifications::NotifyError("Failed to save package: \"{0}\"", *Asset->GetName());
         }
     }
 

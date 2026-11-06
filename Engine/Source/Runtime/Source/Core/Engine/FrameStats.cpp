@@ -17,7 +17,7 @@ namespace Lumina::FrameStats
         };
 
         // A quarter million frames is over twenty minutes at 165 Hz, and beyond it the oldest half is dropped.
-        constexpr size_t MaxSamples = 1u << 18;
+        constexpr int32 MaxSamples = 1 << 18;
 
         FMutex          Mutex;
         TVector<FSample> Samples;
@@ -30,11 +30,11 @@ namespace Lumina::FrameStats
         FScopeLock Lock(Mutex);
         if (LastFrameSeconds > 0.0)
         {
-            if (Samples.size() >= MaxSamples)
+            if (Samples.Num() >= MaxSamples)
             {
-                Samples.erase(Samples.begin(), Samples.begin() + MaxSamples / 2);
+                Samples.RemoveAt(0, MaxSamples / 2);
             }
-            Samples.push_back(FSample{ NowSeconds, (float)((NowSeconds - LastFrameSeconds) * 1000.0) });
+            Samples.Emplace(NowSeconds, (float)((NowSeconds - LastFrameSeconds) * 1000.0));
         }
         else
         {
@@ -46,11 +46,11 @@ namespace Lumina::FrameStats
     void Reset()
     {
         FScopeLock Lock(Mutex);
-        Samples.clear();
+        Samples.Reset();
         WindowStartSeconds = LastFrameSeconds;
     }
 
-    FSummary Summarize(uint32 WorstCount, double SinceSeconds)
+    FSummary Summarize(int32 WorstCount, double SinceSeconds)
     {
         TVector<FSample> Copy;
         FSummary Summary;
@@ -62,21 +62,21 @@ namespace Lumina::FrameStats
 
         if (SinceSeconds > 0.0)
         {
-            Copy.erase(std::remove_if(Copy.begin(), Copy.end(), [SinceSeconds](const FSample& Sample) { return Sample.TimeSeconds < SinceSeconds; }), Copy.end());
+            Copy.RemoveAll([SinceSeconds](const FSample& Sample) { return Sample.TimeSeconds < SinceSeconds; });
         }
 
-        Summary.Frames = Copy.size();
-        if (Copy.empty())
+        Summary.Frames = Copy.Num();
+        if (Copy.IsEmpty())
         {
             return Summary;
         }
 
         TVector<float> Sorted;
-        Sorted.reserve(Copy.size());
+        Sorted.Reserve(Copy.Num());
         double Total = 0.0;
         for (const FSample& Sample : Copy)
         {
-            Sorted.push_back(Sample.FrameMs);
+            Sorted.Add(Sample.FrameMs);
             Total += Sample.FrameMs;
             Summary.Over33Ms  += Sample.FrameMs > 33.3f ? 1u : 0u;
             Summary.Over50Ms  += Sample.FrameMs > 50.0f ? 1u : 0u;
@@ -87,26 +87,26 @@ namespace Lumina::FrameStats
 
         auto Percentile = [&Sorted](float Fraction)
         {
-            const size_t Index = Math::Min(Sorted.size() - 1, (size_t)(Fraction * (float)(Sorted.size() - 1) + 0.5f));
+            const int32 Index = Math::Min(Sorted.Num() - 1, static_cast<int32>(Fraction * static_cast<float>(Sorted.Num() - 1) + 0.5f));
             return Sorted[Index];
         };
-        Summary.MeanMs = (float)(Total / (double)Copy.size());
+        Summary.MeanMs = (float)(Total / (double)Copy.Num());
         Summary.P50Ms = Percentile(0.50f);
         Summary.P95Ms = Percentile(0.95f);
         Summary.P99Ms = Percentile(0.99f);
-        Summary.MaxMs = Sorted.back();
+        Summary.MaxMs = Sorted.Last();
 
-        TVector<size_t> Order(Copy.size());
-        for (size_t Index = 0; Index < Copy.size(); ++Index)
+        TVector<int32> Order(Copy.Num());
+        for (int32 Index = 0; Index < Copy.Num(); ++Index)
         {
             Order[Index] = Index;
         }
-        Algo::Sort(Order, [&Copy](size_t A, size_t B) { return Copy[A].FrameMs > Copy[B].FrameMs; });
-        const size_t Count = Math::Min((size_t)WorstCount, Order.size());
-        for (size_t Rank = 0; Rank < Count; ++Rank)
+        Algo::Sort(Order, [&Copy](int32 A, int32 B) { return Copy[A].FrameMs > Copy[B].FrameMs; });
+        const int32 Count = Math::Min(WorstCount, Order.Num());
+        for (int32 Rank = 0; Rank < Count; ++Rank)
         {
             const FSample& Sample = Copy[Order[Rank]];
-            Summary.Worst.push_back(FHitch{ Sample.TimeSeconds, Sample.FrameMs });
+            Summary.Worst.Emplace(Sample.TimeSeconds, Sample.FrameMs);
         }
         return Summary;
     }

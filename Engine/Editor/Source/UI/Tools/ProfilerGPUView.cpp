@@ -38,10 +38,11 @@ namespace Lumina
         {
             SmoothTowards(Profiler.GetLatest());
             const TSpan<const float> History = Profiler.GetFrameHistory();
-            GPUHistory.assign(History.begin(), History.end());
+            GPUHistory.Reset();
+            GPUHistory.Append(History.begin(), History.end());
         }
 
-        if (GPUFrame.Scopes.empty())
+        if (GPUFrame.Scopes.IsEmpty())
         {
             ImGui::TextDisabled("Waiting for a resolved frame.");
             return;
@@ -61,9 +62,9 @@ namespace Lumina
         const double Take = 1.0 - Keep;
 
         GPUFrame.FrameNumber = Live.FrameNumber;
-        GPUFrame.Scopes.resize(Live.Scopes.size());
+        GPUFrame.Scopes.SetNum(Live.Scopes.Num());
 
-        for (size_t Index = 0; Index < Live.Scopes.size(); ++Index)
+        for (int32 Index = 0; Index < Live.Scopes.Num(); ++Index)
         {
             const FGPUProfileScope& In = Live.Scopes[Index];
             FGPUProfileScope& Out = GPUFrame.Scopes[Index];
@@ -92,21 +93,21 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
-        ImGui::Text("%d passes", (int)GPUFrame.Scopes.size());
+        ImGui::Text("%d passes", GPUFrame.Scopes.Num());
 
-        if (SelectedScope >= 0 && SelectedScope < (int32)GPUFrame.Scopes.size())
+        if (SelectedScope >= 0 && SelectedScope < GPUFrame.Scopes.Num())
         {
             const FGPUProfileScope& Scope = GPUFrame.Scopes[SelectedScope];
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            ImGui::Text("Selected: %s (%.3f ms)", Scope.Name.c_str(), Scope.DurationMs());
+            ImGui::Text("Selected: %s (%.3f ms)", *Scope.Name, Scope.DurationMs());
         }
     }
 
     void FProfilerEditorTool::DrawGPUFrameGraph()
     {
-        if (GPUHistory.empty())
+        if (GPUHistory.IsEmpty())
         {
             return;
         }
@@ -125,7 +126,7 @@ namespace Lumina
 
         char Overlay[64];
         snprintf(Overlay, sizeof(Overlay), "peak %.2f ms", Peak);
-        ImGui::PlotLines("##gpuhistory", GPUHistory.data(), (int)GPUHistory.size(), 0,
+        ImGui::PlotLines("##gpuhistory", GPUHistory.GetData(), GPUHistory.Num(), 0,
             Overlay, 0.0f, Ceiling, ImVec2(-1.0f, 60.0f));
     }
 
@@ -174,7 +175,7 @@ namespace Lumina
         const FGPUProfileScope* Hovered = nullptr;
         int32 HoveredIndex = Constants::kIndexNone;
 
-        for (int32 Index = 0; Index < (int32)GPUFrame.Scopes.size(); ++Index)
+        for (int32 Index = 0; Index < GPUFrame.Scopes.Num(); ++Index)
         {
             const FGPUProfileScope& Scope = GPUFrame.Scopes[Index];
 
@@ -200,7 +201,7 @@ namespace Lumina
                 HoveredIndex = Index;
             }
 
-            const ImU32 Base = ProfilerView::ScopeColor(Scope.Name.c_str());
+            const ImU32 Base = ProfilerView::ScopeColor(*Scope.Name);
             DL->AddRectFilled(Min, Max, bHover ? Base : ProfilerView::DimColor(Base, 0.82f), 2.0f);
 
             if (Index == SelectedScope)
@@ -212,7 +213,7 @@ namespace Lumina
             {
                 const float TextY = Min.y + ((Max.y - Min.y) - TextHeight) * 0.5f;
                 DL->PushClipRect(Min, Max, true);
-                DL->AddText(ImVec2(Min.x + 5.0f, TextY), IM_COL32(16, 16, 18, 240), Scope.Name.c_str());
+                DL->AddText(ImVec2(Min.x + 5.0f, TextY), IM_COL32(16, 16, 18, 240), *Scope.Name);
                 DL->PopClipRect();
             }
         }
@@ -223,7 +224,7 @@ namespace Lumina
         {
             const double Share = (Hovered->DurationMs() / FrameMs) * 100.0;
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted(Hovered->Name.c_str());
+            ImGui::TextUnformatted(*Hovered->Name);
             ImGui::Separator();
             ImGui::Text("Duration  %.3f ms", Hovered->DurationMs());
             ImGui::Text("Share     %.1f%% of frame", Share);

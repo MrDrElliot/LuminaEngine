@@ -12,9 +12,11 @@ namespace Lumina::VFS
 
         FPakFileSystem(const FFixedString& InAliasPath, TSharedPtr<FPakArchive> InArchive);
 
+        using IFileSystem::ReadFile;
+
         bool ReadFile(TVector<uint8>& Result, FStringView Path) override;
         bool ReadFile(FString& OutString, FStringView Path) override;
-        bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size) override;
+        bool ReadFileRange(TVector<uint8>& Result, FStringView Path, int64 Offset, int64 Size) override;
 
         // Read-only, these always return false.
         bool WriteFile(FStringView Path, FStringView Data) override            { return false; }
@@ -27,7 +29,7 @@ namespace Lumina::VFS
         bool Exists(FStringView Path) const override;
         bool IsDirectory(FStringView Path) const override;
         bool IsEmpty(FStringView Path) const override;
-        size_t Size(FStringView Path) const override;
+        int64 Size(FStringView Path) const override;
 
         void PlatformOpen(FStringView Path) const override                     {}
 

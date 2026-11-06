@@ -21,7 +21,7 @@ namespace Lumina
         struct FOpenedFile
         {
             TVector<uint8> Bytes;
-            size_t         Cursor = 0;
+            int32          Cursor = 0;
         };
 
         struct FReadStyleSheet
@@ -37,13 +37,13 @@ namespace Lumina
         int64 WriteTimeOf(FStringView VirtualPath)
         {
             const FPathString Physical = VFS::ResolvePath(VirtualPath);
-            return Physical.empty() ? 0 : Filesystem::LastWriteTime(Physical);
+            return Physical.IsEmpty() ? 0 : Filesystem::LastWriteTime(Physical);
         }
 
         void NoteStyleSheetRead(FStringView VirtualPath)
         {
             constexpr FStringView Extension(".rcss");
-            if (VirtualPath.size() < Extension.size() || VirtualPath.substr(VirtualPath.size() - Extension.size()) != Extension)
+            if (VirtualPath.Len() < Extension.Len() || VirtualPath.Mid(VirtualPath.Len() - Extension.Len()) != Extension)
             {
                 return;
             }
@@ -51,27 +51,27 @@ namespace Lumina
             FScopeLock Lock(StyleSheetMutex);
             for (FReadStyleSheet& Sheet : ReadStyleSheets)
             {
-                if (FStringView(Sheet.Path.c_str(), Sheet.Path.size()) == VirtualPath)
+                if (FStringView(*Sheet.Path, Sheet.Path.Len()) == VirtualPath)
                 {
                     Sheet.WriteTime = WriteTime;
                     return;
                 }
             }
-            ReadStyleSheets.push_back(FReadStyleSheet{ FString(VirtualPath.data(), VirtualPath.size()), WriteTime });
+            ReadStyleSheets.Emplace(FString(VirtualPath.GetData(), VirtualPath.Len()), WriteTime);
         }
 
         // A path naming a CFont asset is resolved through the asset system, not read raw off the VFS.
         bool TryReadFontAsset(const Rml::String& RawPath, TVector<uint8>& OutBytes)
         {
-            FString Path(RawPath.c_str(), RawPath.size());
+            FString Path(RawPath.c_str(), IntCastChecked<int32>(RawPath.size()));
 
             // RmlUi strips the leading slash off absolute paths; asset paths keep it.
-            if (!Path.empty() && Path[0] != '/')
+            if (!Path.IsEmpty() && Path[0] != '/')
             {
                 Path = "/" + Path;
             }
 
-            const FStringView PathView(Path.c_str(), Path.size());
+            const FStringView PathView(*Path, Path.Len());
             const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(PathView);
             if (Data == nullptr || Data->AssetClass != CFont::StaticClass()->GetName())
             {
@@ -91,19 +91,19 @@ namespace Lumina
 
     Rml::FileHandle FRmlUiFileInterface::Open(const Rml::String& Path)
     {
-        FStringView Source(Path.c_str(), Path.size());
+        FStringView Source(Path.c_str(), IntCastChecked<int32>(Path.size()));
 
         TVector<uint8> Bytes;
         if (!TryReadFontAsset(Path, Bytes) && !VFS::ReadFile(Bytes, Source))
         {
             // Fall back to virtual-path resolver for absolute editor paths.
             const FFixedString Resolved = VFS::ResolveToVirtualPath(Source);
-            if (!VFS::ReadFile(Bytes, FStringView(Resolved.c_str(), Resolved.size())))
+            if (!VFS::ReadFile(Bytes, FStringView(*Resolved, Resolved.Len())))
             {
                 LOG_WARN("[RmlUi] FileInterface::Open: '{}' not found.", Path.c_str());
                 return 0;
             }
-            NoteStyleSheetRead(FStringView(Resolved.c_str(), Resolved.size()));
+            NoteStyleSheetRead(FStringView(*Resolved, Resolved.Len()));
         }
         else
         {
@@ -122,7 +122,7 @@ namespace Lumina
         bool bChanged = false;
         for (const FReadStyleSheet& Sheet : ReadStyleSheets)
         {
-            if (WriteTimeOf(FStringView(Sheet.Path.c_str(), Sheet.Path.size())) != Sheet.WriteTime)
+            if (WriteTimeOf(FStringView(*Sheet.Path, Sheet.Path.Len())) != Sheet.WriteTime)
             {
                 bChanged = true;
                 break;
@@ -131,7 +131,7 @@ namespace Lumina
         // Every sheet is parsed again after a cache clear, which records its new time.
         if (bChanged)
         {
-            ReadStyleSheets.clear();
+            ReadStyleSheets.Reset();
         }
         return bChanged;
     }
@@ -148,12 +148,12 @@ namespace Lumina
         {
             return 0;
         }
-        const size_t Remaining = (File->Cursor < File->Bytes.size()) ? (File->Bytes.size() - File->Cursor) : 0;
+        const size_t Remaining = static_cast<size_t>(File->Bytes.Num() - File->Cursor);
         const size_t ToCopy = (Size < Remaining) ? Size : Remaining;
         if (ToCopy > 0)
         {
-            std::memcpy(Buffer, File->Bytes.data() + File->Cursor, ToCopy);
-            File->Cursor += ToCopy;
+            std::memcpy(Buffer, File->Bytes.GetData() + File->Cursor, ToCopy);
+            File->Cursor += static_cast<int32>(ToCopy);
         }
         return ToCopy;
     }
@@ -165,19 +165,19 @@ namespace Lumina
         {
             return false;
         }
-        size_t NewCursor = 0;
+        int64 NewCursor = 0;
         switch (Origin)
         {
-        case SEEK_SET: NewCursor = size_t(Offset); break;
-        case SEEK_CUR: NewCursor = File->Cursor + size_t(Offset); break;
-        case SEEK_END: NewCursor = File->Bytes.size() + size_t(Offset); break;
+        case SEEK_SET: NewCursor = Offset; break;
+        case SEEK_CUR: NewCursor = File->Cursor + static_cast<int64>(Offset); break;
+        case SEEK_END: NewCursor = File->Bytes.Num() + static_cast<int64>(Offset); break;
         default:       return false;
         }
-        if (NewCursor > File->Bytes.size())
+        if (NewCursor < 0 || NewCursor > File->Bytes.Num())
         {
             return false;
         }
-        File->Cursor = NewCursor;
+        File->Cursor = static_cast<int32>(NewCursor);
         return true;
     }
 
@@ -190,23 +190,23 @@ namespace Lumina
     size_t FRmlUiFileInterface::Length(Rml::FileHandle Handle)
     {
         FOpenedFile* File = reinterpret_cast<FOpenedFile*>(Handle);
-        return File ? File->Bytes.size() : 0;
+        return File ? File->Bytes.Num() : 0;
     }
 
     bool FRmlUiFileInterface::LoadFile(const Rml::String& Path, Rml::String& OutData)
     {
         // Routes through VFS so PAK mounts work.
-        FStringView Source(Path.c_str(), Path.size());
+        FStringView Source(Path.c_str(), IntCastChecked<int32>(Path.size()));
         TVector<uint8> Bytes;
         if (!TryReadFontAsset(Path, Bytes) && !VFS::ReadFile(Bytes, Source))
         {
             const FFixedString Resolved = VFS::ResolveToVirtualPath(Source);
-            if (!VFS::ReadFile(Bytes, FStringView(Resolved.c_str(), Resolved.size())))
+            if (!VFS::ReadFile(Bytes, FStringView(*Resolved, Resolved.Len())))
             {
                 return false;
             }
         }
-        OutData.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
+        OutData.assign(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
         return true;
     }
 }

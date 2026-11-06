@@ -58,16 +58,16 @@ namespace Lumina::SlowTaskModal
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
             const float TitleOffset = (SpinnerRadius * 2.0f - ImGui::GetTextLineHeight()) * 0.5f;
             ImGui::SetCursorPosY(RowStartY + ImMax(0.0f, TitleOffset));
-            ImGui::TextUnformatted(Task.Title.c_str());
+            ImGui::TextUnformatted(*Task.Title);
             ImGuiX::Font::PopFont();
 
             // Message, indented to sit under the title.
-            if (!Task.Message.empty())
+            if (!Task.Message.IsEmpty())
             {
                 ImGui::SetCursorPosY(RowStartY + SpinnerRadius * 2.0f + 4.0f);
                 ImGui::Indent(TextIndent);
                 ImGui::PushStyleColor(ImGuiCol_Text, GMutedText);
-                ImGui::TextUnformatted(Task.Message.c_str());
+                ImGui::TextUnformatted(*Task.Message);
                 ImGui::PopStyleColor();
                 ImGui::Unindent(TextIndent);
             }
@@ -85,7 +85,7 @@ namespace Lumina::SlowTaskModal
             ImGui::PushStyleColor(ImGuiCol_FrameBg, GAccentTrack);
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, BarPaddingY));
-            ImGui::ProgressBar(Task.Fraction, ImVec2(-FLT_MIN, BarHeight), Overlay.c_str());
+            ImGui::ProgressBar(Task.Fraction, ImVec2(-FLT_MIN, BarHeight), *Overlay);
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(2);
         }
@@ -95,7 +95,7 @@ namespace Lumina::SlowTaskModal
     {
         TVector<FSlowTaskProgress> Tasks = SlowTasks::GetSnapshot();
 
-        const bool bWantOpen = !Tasks.empty();
+        const bool bWantOpen = !Tasks.IsEmpty();
         const bool bIsOpen   = ImGui::IsPopupOpen(GPopupID);
 
         if (bWantOpen && !bIsOpen)
@@ -134,7 +134,7 @@ namespace Lumina::SlowTaskModal
             ImGui::PopStyleColor();
             ImGui::Spacing();
 
-            for (size_t i = 0; i < Tasks.size(); ++i)
+            for (int32 i = 0; i < Tasks.Num(); ++i)
             {
                 if (i > 0)
                 {

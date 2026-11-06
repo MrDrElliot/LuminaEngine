@@ -65,7 +65,7 @@ namespace Grain
         RandomState = Seed | 1u;
 
         Models.Build();
-        Entities.assign(size_t(kMaxEntities), FEntity{});
+        Entities.Init(FEntity{}, size_t(kMaxEntities));
 
         SpawnPlayer();
         PlaceBeacons();
@@ -402,13 +402,13 @@ namespace Grain
         UpdateSpawning(Delta);
         UpdateCamera(Delta);
 
-        for (size_t i = 0; i < Floaters.size();)
+        for (int32 i = 0; i < Floaters.Num();)
         {
             Floaters[i].Age += Delta;
             if (Floaters[i].Age >= Floaters[i].Life)
             {
-                Floaters[i] = Floaters.back();
-                Floaters.pop_back();
+                Floaters[i] = Floaters.Last();
+                Floaters.Pop();
                 continue;
             }
             ++i;
@@ -1217,7 +1217,7 @@ namespace Grain
             Player.Health = Player.MaxHealth;
             Player.Focus = Player.MaxFocus;
 
-            Say(FString("Level ") .append(Format("{}", Player.Level)).c_str(), 3.0f);
+            Say(*FString("Level ") .Append(Format("{}", Player.Level)), 3.0f);
             SpawnSpark(Player.Body.Position, { 2.2f, 1.9f, 0.7f }, 22);
         }
     }
@@ -1244,41 +1244,41 @@ namespace Grain
 
     void FGame::Floater(const FVector3& World, const FString& Text, const FVector3& Color)
     {
-        if (Floaters.size() >= 48)
+        if (Floaters.Num() >= 48)
         {
-            Floaters.erase(Floaters.begin());
+            Floaters.RemoveAt(0);
         }
 
         FFloatingText Entry;
         Entry.World = World;
         Entry.Text = Text;
         Entry.Color = Color;
-        Floaters.push_back(Move(Entry));
+        Floaters.Add(Move(Entry));
     }
 
     void FGame::RefreshObjectives()
     {
-        Objectives.clear();
+        Objectives.Reset();
 
         FObjective Light;
         Light.Text = "Light the beacons";
         Light.Progress = BeaconsLit;
         Light.Target = Math::Max(TotalBeacons, 1);
         Light.bComplete = BeaconsLit >= TotalBeacons;
-        Objectives.push_back(Move(Light));
+        Objectives.Add(Move(Light));
 
         FObjective Collect;
         Collect.Text = "Carry crystal shards";
         Collect.Progress = Player.Shards;
         Collect.Target = 4;
         Collect.bComplete = Player.Shards >= 4;
-        Objectives.push_back(Move(Collect));
+        Objectives.Add(Move(Collect));
 
         FObjective Cull;
         Cull.Text = "Clear the husks";
         Cull.Progress = Player.Kills;
         Cull.Target = 12;
         Cull.bComplete = Player.Kills >= 12;
-        Objectives.push_back(Move(Cull));
+        Objectives.Add(Move(Cull));
     }
 }

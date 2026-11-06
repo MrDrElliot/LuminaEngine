@@ -23,19 +23,19 @@ namespace Lumina::Physics::CollisionGen
             for (uint32 i = 0; i < Count; ++i)
             {
                 const FMeshlet& M = MD.Meshlets[Offset + i];
-                const uint32 BaseVertex = (uint32)OutPositions.size();
+                const uint32 BaseVertex = (uint32)OutPositions.Num();
 
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    OutPositions.push_back(GetMeshletVertexPosition(MD, M, v, false));
+                    OutPositions.Add(GetMeshletVertexPosition(MD, M, v, false));
                 }
 
                 for (uint32 t = 0; t < M.TriangleCount; ++t)
                 {
                     const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                    OutIndices.push_back(BaseVertex + ((Packed      ) & 0xFFu));
-                    OutIndices.push_back(BaseVertex + ((Packed >>  8) & 0xFFu));
-                    OutIndices.push_back(BaseVertex + ((Packed >> 16) & 0xFFu));
+                    OutIndices.Add(BaseVertex + ((Packed      ) & 0xFFu));
+                    OutIndices.Add(BaseVertex + ((Packed >>  8) & 0xFFu));
+                    OutIndices.Add(BaseVertex + ((Packed >> 16) & 0xFFu));
                 }
             }
         }
@@ -59,8 +59,8 @@ namespace Lumina::Physics::CollisionGen
 
     bool GatherMeshGeometry(const CStaticMesh* Mesh, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
     {
-        OutPositions.clear();
-        OutIndices.clear();
+        OutPositions.Reset();
+        OutIndices.Reset();
 
         const FMeshResource* Resource = ResolveResource(Mesh);
         if (Resource == nullptr)
@@ -73,7 +73,7 @@ namespace Lumina::Physics::CollisionGen
             AppendSurface(*Resource, Surface, OutPositions, OutIndices);
         }
 
-        return !OutPositions.empty() && OutIndices.size() >= 3;
+        return !OutPositions.IsEmpty() && OutIndices.Num() >= 3;
     }
 
     namespace
@@ -81,7 +81,7 @@ namespace Lumina::Physics::CollisionGen
         bool GatherMeshBounds(const CStaticMesh* Mesh, TVector<FVector3>& OutPositions, FVector3& OutMin, FVector3& OutMax)
         {
             TVector<uint32> Indices;
-            if (!GatherMeshGeometry(Mesh, OutPositions, Indices) || OutPositions.empty())
+            if (!GatherMeshGeometry(Mesh, OutPositions, Indices) || OutPositions.IsEmpty())
             {
                 return false;
             }
@@ -115,7 +115,7 @@ namespace Lumina::Physics::CollisionGen
 
         OutCollision.Clear();
 
-        SCollisionPrimitive& Primitive = OutCollision.Primitives.emplace_back();
+        SCollisionPrimitive& Primitive = OutCollision.Primitives.EmplaceGetRef();
         Primitive.Type = ECollisionPrimitiveType::ConvexHull;
         Primitive.HullPoints = Move(Hull);
 
@@ -139,7 +139,7 @@ namespace Lumina::Physics::CollisionGen
             TVector<uint32> Indices;
             AppendSurface(*Resource, Surface, Positions, Indices);
 
-            if (Positions.empty())
+            if (Positions.IsEmpty())
             {
                 continue;
             }
@@ -151,12 +151,12 @@ namespace Lumina::Physics::CollisionGen
                 continue;
             }
 
-            SCollisionPrimitive& Primitive = Generated.emplace_back();
+            SCollisionPrimitive& Primitive = Generated.EmplaceGetRef();
             Primitive.Type = ECollisionPrimitiveType::ConvexHull;
             Primitive.HullPoints = Move(Hull);
         }
 
-        if (Generated.empty())
+        if (Generated.IsEmpty())
         {
             return false;
         }
@@ -196,7 +196,7 @@ namespace Lumina::Physics::CollisionGen
 
         OutCollision.Clear();
 
-        SCollisionPrimitive& Primitive = OutCollision.Primitives.emplace_back();
+        SCollisionPrimitive& Primitive = OutCollision.Primitives.EmplaceGetRef();
         Primitive.Type = ECollisionPrimitiveType::Box;
         Primitive.Center = (Min + Max) * 0.5f;
         Primitive.HalfExtent = (Max - Min) * 0.5f;
@@ -225,7 +225,7 @@ namespace Lumina::Physics::CollisionGen
 
         OutCollision.Clear();
 
-        SCollisionPrimitive& Primitive = OutCollision.Primitives.emplace_back();
+        SCollisionPrimitive& Primitive = OutCollision.Primitives.EmplaceGetRef();
         Primitive.Type = ECollisionPrimitiveType::Sphere;
         Primitive.Center = Center;
         Primitive.Radius = Math::Max(Math::Sqrt(RadiusSq), 0.001f);
@@ -235,7 +235,7 @@ namespace Lumina::Physics::CollisionGen
 
     bool FitCapsule(const TVector<FVector3>& Points, SCollisionPrimitive& OutPrimitive)
     {
-        if (Points.empty())
+        if (Points.IsEmpty())
         {
             return false;
         }
@@ -291,7 +291,7 @@ namespace Lumina::Physics::CollisionGen
         }
 
         OutCollision.Clear();
-        OutCollision.Primitives.push_back(Capsule);
+        OutCollision.Primitives.Add(Capsule);
         return true;
     }
 
@@ -307,5 +307,11 @@ namespace Lumina::Physics::CollisionGen
         case ECollisionGenerator::TriangleMesh:    return GenerateTriangleMesh(Mesh, OutCollision);
         }
         return false;
+    }
+
+    bool IsConcaveMeshCollider(const CStaticMesh& Mesh, bool bConvex)
+    {
+        const SMeshCollision* Collision = Mesh.GetCollision();
+        return Collision != nullptr ? Collision->IsConcave() : !bConvex;
     }
 }

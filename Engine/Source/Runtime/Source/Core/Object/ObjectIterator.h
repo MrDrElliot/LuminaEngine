@@ -28,14 +28,14 @@ namespace Lumina
                 {
                     if (Object->IsA<T>())
                     {
-                        AllObjects.push_back(Object);
+                        AllObjects.Add(Object);
                     }
                 }
                 else
                 {
                     if (Object->GetClass() == T::StaticClass())
                     {
-                        AllObjects.push_back(Object);
+                        AllObjects.Add(Object);
                     }
                 }
             });
@@ -57,20 +57,20 @@ namespace Lumina
 
         explicit operator bool() const
         {
-            return Index < AllObjects.size();
+            return Index < AllObjects.Num();
         }
 
     private:
         void AdvanceToNextValid()
         {
-            while (Index < AllObjects.size() && AllObjects[Index] == nullptr)
+            while (Index < AllObjects.Num() && AllObjects[Index] == nullptr)
             {
                 ++Index;
             }
         }
 
-        TFixedVector<CObjectBase*, 10> AllObjects;
-        size_t Index;
+        TInlineVector<CObjectBase*, 10> AllObjects;
+        int32 Index;
     };
 }
 

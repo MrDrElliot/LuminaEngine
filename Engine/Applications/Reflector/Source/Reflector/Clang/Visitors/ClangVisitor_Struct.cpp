@@ -811,6 +811,51 @@ namespace Lumina::Reflection::Visitor
 		return Search.bFound;
 	}
 
+	// The marker every world resource derives from, which is not a reflected parent of its own.
+	static bool IsResourceMarker(CXType Type)
+	{
+		return ClangUtils::GetString(clang_getTypeSpelling(clang_getCanonicalType(Type))) == "Lumina::ECS::FResource";
+	}
+
+	static bool DerivesFromResource(CXType RecordType, int Depth = 0)
+	{
+		if (Depth > 16)
+		{
+			return false;
+		}
+		if (IsResourceMarker(RecordType))
+		{
+			return true;
+		}
+
+		const CXCursor Declaration = clang_getTypeDeclaration(clang_getCanonicalType(RecordType));
+		if (clang_Cursor_isNull(Declaration) != 0)
+		{
+			return false;
+		}
+
+		struct FSearch
+		{
+			bool bFound = false;
+			int  Depth  = 0;
+		};
+
+		FSearch Search{ false, Depth };
+		clang_visitChildren(Declaration, [](CXCursor Cursor, CXCursor, CXClientData Data) -> CXChildVisitResult
+		{
+			FSearch* State = static_cast<FSearch*>(Data);
+			if (clang_getCursorKind(Cursor) == CXCursor_CXXBaseSpecifier
+				&& DerivesFromResource(clang_getCursorType(Cursor), State->Depth + 1))
+			{
+				State->bFound = true;
+				return CXChildVisit_Break;
+			}
+			return CXChildVisit_Continue;
+		}, &Search);
+
+		return Search.bFound;
+	}
+
 	// Kinds a call frame can hold today.
 	//
 	// Containers and maps are out because their inners are created through the same factory, which attaches
@@ -1150,7 +1195,7 @@ namespace Lumina::Reflection::Visitor
 		{
 		case(CXCursor_CXXBaseSpecifier):
 		{
-			if (Type->Parent.empty())
+			if (Type->Parent.empty() && !IsResourceMarker(clang_getCursorType(Cursor)))
 			{
 				Type->Parent = ClangUtils::CursorDisplayName(Cursor).Get();
 			}
@@ -1403,6 +1448,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->GeneratedBodyLineNumber = GeneratedBody.LineNumber;
 		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
+		ReflectedStruct->bIsResource = DerivesFromResource(clang_getCursorType(Cursor));
 		RecordNativeLayout(ReflectedStruct, clang_getCursorType(Cursor));
 
 		if (!Context->CurrentNamespace.empty())

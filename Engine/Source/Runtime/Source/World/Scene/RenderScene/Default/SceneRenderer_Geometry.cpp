@@ -6,7 +6,7 @@ namespace Lumina
     void FDefaultSceneRenderer::TexturePaintPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        if (Frame.Extracts.PaintOps.empty())
+        if (Frame.Extracts.PaintOps.IsEmpty())
         {
             return;
         }
@@ -161,7 +161,7 @@ namespace Lumina
                 Key.TriCullMode      = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface)
                                              | ((FrameSettings.bWireframe || Key.SampleCount > 1) ? 0u : (uint32)TriCull_SmallPrim));
                 Key.DepthFormat      = EFormat::D32;
-                Key.ColorTargets.push_back({ VisFormat, {} });
+                Key.ColorTargets.Add({ VisFormat, {} });
                 return true;
             },
             [&](const FMeshDrawCommand& Batch)
@@ -195,7 +195,7 @@ namespace Lumina
         }
 
         // With nothing to draw the pass still opens when it clears, since the targets are read regardless.
-        bool bHasDraws = !DrawCommands.empty();
+        bool bHasDraws = !DrawCommands.IsEmpty();
         if (!bHasDraws && !bClear)
         {
             return;
@@ -204,7 +204,7 @@ namespace Lumina
         // A single-phase view is drawn in full by Early, so skipping Late collapses the frame.
         if (Phase == ECullPhase::Late)
         {
-            if (ViewIndex >= Frame.Views.CullViews.size() ||
+            if (ViewIndex >= static_cast<uint32>(Frame.Views.CullViews.Num()) ||
                 (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) == 0u)
             {
                 return;
@@ -213,11 +213,10 @@ namespace Lumina
 
         if (const char* MissingBuffer = FindMissingMeshletDrawBuffer(); bHasDraws && MissingBuffer != nullptr)
         {
-            static FName LastMissing;
             const FName Missing(MissingBuffer);
-            if (Missing != LastMissing)
+            if (Missing != LastMissingMeshletDrawBuffer)
             {
-                LastMissing = Missing;
+                LastMissingMeshletDrawBuffer = Missing;
                 LOG_ERROR("VisBuffer: '{}' has no device address this frame; skipping the draws. "
                           "Drawing would page-fault the GPU inside the mesh shader.", MissingBuffer);
             }
@@ -301,7 +300,7 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Custom Depth Pass", tracy::Color::Red);
 
-        const bool bHasDraws = !Frame.Geometry.DrawCommands.empty() && FindMissingMeshletDrawBuffer() == nullptr
+        const bool bHasDraws = !Frame.Geometry.DrawCommands.IsEmpty() && FindMissingMeshletDrawBuffer() == nullptr
                             && GetVisBufferPixelShader() != nullptr;
 
         RHI::CmdBarrier(CL,
@@ -359,7 +358,7 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS = FullscreenVS;
         Key.PS = ResolvePS;
-        Key.ColorTargets.push_back({ StencilRT.Desc.Format, {} });
+        Key.ColorTargets.Add({ StencilRT.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FCustomStencilResolvePC
@@ -429,21 +428,21 @@ namespace Lumina
         // Consecutive views sit one view of indirect slots apart only while each slice holds a single sub-draw.
         const uint32 ViewsPerDraw = Math::Min(RHI::GetMaxViewports(), kMaxShadowViewportsPerDraw);
         // The vertex path writes no viewport index, so it draws its views one at a time.
-        if (!CVarMultiViewShadowDraws.GetValue() || !RHI::SupportsMeshShaders() || Run.Views.empty() || !Run.bContiguous
+        if (!CVarMultiViewShadowDraws.GetValue() || !RHI::SupportsMeshShaders() || Run.Views.IsEmpty() || !Run.bContiguous
             || MeshSubDrawsPerSlice != 1u || ViewsPerDraw < 2u)
         {
             return false;
         }
 
         const FFrameData& Frame = *RenderFrame;
-        const uint32 NumViews  = (uint32)Run.Views.size();
+        const uint32 NumViews  = (uint32)Run.Views.Num();
         const uint32 NumGroups = (NumViews + ViewsPerDraw - 1u) / ViewsPerDraw;
-        const RHI::TGPUSpan<FShadowRasterViewGPU> AllViews = RHI::CopyTransientArray(Run.Views.data(), Run.Views.size());
+        const RHI::TGPUSpan<FShadowRasterViewGPU> AllViews = RHI::CopyTransientArray(Run.Views.GetData(), Run.Views.Num());
 
         const auto SetGroupViewports = [&](uint32 First)
         {
             const uint32 Count = Math::Min(ViewsPerDraw, NumViews - First);
-            RHI::CmdSetViewportArray(CL, TSpan<const RHI::FRect>(Run.Tiles.data() + First, Count));
+            RHI::CmdSetViewportArray(CL, TSpan<const RHI::FRect>(Run.Tiles.GetData() + First, Count));
         };
 
         // Batch-outer keeps one pipeline bind per batch, and the viewports only change between groups when there are several.
@@ -517,7 +516,7 @@ namespace Lumina
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
 
-        if (PackedShadows[(uint32)ELightType::Point].empty())
+        if (PackedShadows[(uint32)ELightType::Point].IsEmpty())
         {
             return;
         }
@@ -548,8 +547,9 @@ namespace Lumina
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
         RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
-        FShadowViewRun Run;
-        for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+        FShadowViewRun& Run = ShadowViewRunScratch;
+        Run.Reset();
+        for (int32 LightIdx = 0; LightIdx < PointShadows.Num(); ++LightIdx)
         {
             uint32 FaceView = PointShadowCullViewBases[LightIdx];
             if (FaceView == Constants::kIndexNoneU32)
@@ -570,13 +570,13 @@ namespace Lumina
 
         // Empty when one draw per batch already covered every view.
         const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, PixelShader)
-            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.GetData(), OpaqueDrawList.Num());
         for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
 
-            for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+            for (int32 LightIdx = 0; LightIdx < PointShadows.Num(); ++LightIdx)
             {
                 const FLightShadow& LightShadow = PointShadows[LightIdx];
                 const uint32 ViewBase = PointShadowCullViewBases[LightIdx];
@@ -615,7 +615,7 @@ namespace Lumina
         if (bShadowCallbacks)
         {
             const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
-            for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+            for (int32 LightIdx = 0; LightIdx < PointShadows.Num(); ++LightIdx)
             {
                 if (PointShadowCullViewBases[LightIdx] == Constants::kIndexNoneU32)
                 {
@@ -654,7 +654,7 @@ namespace Lumina
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
 
-        if (PackedShadows[(uint32)ELightType::Spot].empty())
+        if (PackedShadows[(uint32)ELightType::Spot].IsEmpty())
         {
             return;
         }
@@ -686,8 +686,9 @@ namespace Lumina
 
         const TVector<FLightShadow>& SpotShadows = PackedShadows[(uint32)ELightType::Spot];
 
-        FShadowViewRun Run;
-        for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+        FShadowViewRun& Run = ShadowViewRunScratch;
+        Run.Reset();
+        for (int32 SpotIdx = 0; SpotIdx < SpotShadows.Num(); ++SpotIdx)
         {
             if (SpotShadowCullViewBases[SpotIdx] != Constants::kIndexNoneU32)
             {
@@ -698,13 +699,13 @@ namespace Lumina
 
         // Empty when one draw per batch already covered every view.
         const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, PixelShader)
-            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.GetData(), OpaqueDrawList.Num());
         for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
 
-            for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+            for (int32 SpotIdx = 0; SpotIdx < SpotShadows.Num(); ++SpotIdx)
             {
                 const FLightShadow& Shadow  = SpotShadows[SpotIdx];
                 const uint32 ViewIndex      = SpotShadowCullViewBases[SpotIdx];
@@ -732,7 +733,7 @@ namespace Lumina
         if (bShadowCallbacks)
         {
             const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
-            for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+            for (int32 SpotIdx = 0; SpotIdx < SpotShadows.Num(); ++SpotIdx)
             {
                 if (SpotShadowCullViewBases[SpotIdx] == Constants::kIndexNoneU32)
                 {
@@ -796,7 +797,8 @@ namespace Lumina
         const int32 SunShadowDataIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
         const uint32 NumCascadeViews = Frame.Views.NumCascadeViews;
 
-        FShadowViewRun Run;
+        FShadowViewRun& Run = ShadowViewRunScratch;
+        Run.Reset();
         for (uint32 c = 0; c < NumCascadeViews; ++c)
         {
             const RHI::FRect TileRect{ GCSMCascadeOriginX((int)c), GCSMCascadeOriginX((int)c) + GCSMCascadeSize,
@@ -806,7 +808,7 @@ namespace Lumina
 
         // Empty when one draw per batch already covered every view.
         const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, FShaderH{})
-            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.GetData(), OpaqueDrawList.Num());
         for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
@@ -859,7 +861,7 @@ namespace Lumina
         const TVector<FGPUDecal>& Decals = Frame.Primitives.DecalExtracts;
 
         // With no decals the DBuffers do not exist and the base pass publishes the sentinel.
-        if (Decals.empty())
+        if (Decals.IsEmpty())
         {
             return;
         }
@@ -923,7 +925,7 @@ namespace Lumina
         static_assert(sizeof(FDecalPushConstants) == 24, "FDecalPushConstants must match the slang pass block.");
 
         FDecalPushConstants PC = {};
-        PC.Decals = RHI::CopyTransientArray(Decals.data(), Decals.size());
+        PC.Decals = RHI::CopyTransientArray(Decals.GetData(), Decals.Num());
         PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
 
         // One instanced draw per shader batch.
@@ -939,10 +941,10 @@ namespace Lumina
             FGraphicsPipelineKey Key;
             Key.VS = VS;
             Key.PS = PS;
-            Key.ColorTargets.push_back({ DBufferA.Desc.Format, DecalBlend });
-            Key.ColorTargets.push_back({ DBufferB.Desc.Format, DecalBlend });
-            Key.ColorTargets.push_back({ DBufferC.Desc.Format, DecalBlend });
-            Key.ColorTargets.push_back({ DBufferD.Desc.Format, EmissionBlend });
+            Key.ColorTargets.Emplace(DBufferA.Desc.Format, DecalBlend);
+            Key.ColorTargets.Emplace(DBufferB.Desc.Format, DecalBlend);
+            Key.ColorTargets.Emplace(DBufferC.Desc.Format, DecalBlend);
+            Key.ColorTargets.Emplace(DBufferD.Desc.Format, EmissionBlend);
             const RHI::FPipelineH Pipeline = FindPipeline(Key);
             if (!Pipeline)
             {
@@ -978,15 +980,30 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::TerrainUpdatePass(RHI::FCmdListH CL)
+    namespace GeometryInternal
     {
-        LUMINA_PROFILE_SECTION_COLORED("Terrain Update", tracy::Color::SeaGreen);
+        void RetireGrassState(FGrassGPUState& State)
+        {
+            if (State.PrevCursorBuffer.Gpu != 0)
+            {
+                RHI::Retire(State.PrevCursorBuffer);
+                State.PrevCursorBuffer = {};
+            }
+            for (RHI::FGPUAllocation& Readback : State.CursorReadback)
+            {
+                if (Readback.Gpu != 0)
+                {
+                    RHI::Retire(Readback);
+                    Readback = {};
+                }
+            }
+        }
+    }
 
-        static const FShaderH NormalShader = FShaderLibrary::Get("TerrainNormalCompute.slang");
-
+    void FDefaultSceneRenderer::PruneTerrainStates()
+    {
         const FFrameData& Frame = *RenderFrame;
-
-        if (!TerrainGPUStates.empty())
+        if (!TerrainGPUStates.IsEmpty())
         {
             const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveTerrainEntities;
             auto IsLive = [&](ECS::FEntity E)
@@ -996,9 +1013,9 @@ namespace Lumina
 
             for (auto It = TerrainGPUStates.begin(); It != TerrainGPUStates.end();)
             {
-                if (!IsLive(It->first))
+                if (!IsLive(It->Key))
                 {
-                    FTerrainGPUState& Dead = It->second;
+                    FTerrainGPUState& Dead = It->Value;
                     RetireSceneImage(Dead.HeightmapTexture);
                     RetireSceneImage(Dead.NormalTexture);
                     RetireSceneImage(Dead.LayerWeightTexture);
@@ -1006,7 +1023,23 @@ namespace Lumina
                     if (Dead.MeshletInfoBuffer)    { DeferFree(Dead.MeshletInfoBuffer); }
                     if (Dead.VisibleMeshletBuffer) { DeferFree(Dead.VisibleMeshletBuffer); }
                     if (Dead.IndirectDrawBuffer)   { DeferFree(Dead.IndirectDrawBuffer); }
-                    It = TerrainGPUStates.erase(It);
+                    It = TerrainGPUStates.Remove(It);
+                }
+                else
+                {
+                    ++It;
+                }
+            }
+
+            for (auto It = GrassGPUStates.begin(); It != GrassGPUStates.end();)
+            {
+                if (!IsLive(It->Key))
+                {
+                    for (FGrassGPUState& Dead : It->Value)
+                    {
+                        GeometryInternal::RetireGrassState(Dead);
+                    }
+                    It = GrassGPUStates.Remove(It);
                 }
                 else
                 {
@@ -1014,8 +1047,34 @@ namespace Lumina
                 }
             }
         }
+    }
+
+    void FDefaultSceneRenderer::TerrainUpdatePass(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Terrain Update", tracy::Color::SeaGreen);
+
+        static const FShaderH NormalShader = FShaderLibrary::Get("TerrainNormalCompute.slang");
+
+        const FFrameData& Frame = *RenderFrame;
+
+        PruneTerrainStates();
 
         bool bAnyUpload = false;
+
+        // Last frame's terrain passes and this frame's grass scatter may still read what the uploads below overwrite.
+        bool bUploadBarrierIssued = false;
+        auto BeginUpload = [&]()
+        {
+            if (!bUploadBarrierIssued)
+            {
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EAccessFlags::None,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
+                bUploadBarrierIssued = true;
+            }
+            bAnyUpload = true;
+        };
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
@@ -1027,7 +1086,7 @@ namespace Lumina
             FTerrainGPUState& State = TerrainGPUStates[TerrainItem.Entity];
             const uint32 Res        = (uint32)TerrainItem.Resolution;
             const uint32 LayerCount = (uint32)Math::Max(TerrainItem.LayerCount, 1);
-            const size_t SlicePixels = size_t(Res) * size_t(Res);
+            const int32 SlicePixels = static_cast<int32>(Res * Res);
 
             const bool bRealloc = State.AllocatedResolution != Res || State.AllocatedLayerCount != LayerCount;
             if (bRealloc)
@@ -1056,11 +1115,11 @@ namespace Lumina
             FIntVector2 RectMin = FIntVector2(0);
             FIntVector2 RectMax = FIntVector2(ResI - 1);
 
-            if (TerrainItem.HeightUpload == 1 && TerrainItem.HeightBytes.size() == SlicePixels)
+            if (TerrainItem.HeightUpload == 1 && TerrainItem.HeightBytes.Num() == SlicePixels)
             {
-                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
+                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.GetData(), TerrainItem.HeightBytes.Num());
+                BeginUpload();
                 RHI::CmdCopyMemoryToTexture(CL, Src, Res, State.HeightmapTexture.Texture);
-                bAnyUpload = true;
             }
             else if (TerrainItem.HeightUpload == 2)
             {
@@ -1069,20 +1128,20 @@ namespace Lumina
                 const uint32 RegionW = uint32(RectMax.x - RectMin.x + 1);
                 const uint32 RegionH = uint32(RectMax.y - RectMin.y + 1);
                 // Snapshot rect is tightly packed, so the source row pitch is RegionW, not Res.
-                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
+                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.GetData(), TerrainItem.HeightBytes.Num());
 
                 RHI::FTextureSlice Slice;
                 Slice.Offset = FUIntVector3((uint32)RectMin.x, (uint32)RectMin.y, 0);
                 Slice.Extent = FUIntVector3(RegionW, RegionH, 1);
+                BeginUpload();
                 RHI::CmdCopyMemoryToTexture(CL, Src, RegionW, State.HeightmapTexture.Texture, Slice);
-                bAnyUpload = true;
             }
 
             // Weights upload as whole slices, packed ascending in the snapshot.
-            if (TerrainItem.WeightUpload != 0 && !TerrainItem.WeightBytes.empty())
+            if (TerrainItem.WeightUpload != 0 && !TerrainItem.WeightBytes.IsEmpty())
             {
-                const uint8* Cursor = TerrainItem.WeightBytes.data();
-                const uint8* End    = Cursor + TerrainItem.WeightBytes.size();
+                const uint8* Cursor = TerrainItem.WeightBytes.GetData();
+                const uint8* End    = Cursor + TerrainItem.WeightBytes.Num();
                 for (uint32 L = 0; L < LayerCount; ++L)
                 {
                     if ((TerrainItem.WeightSliceMask & (1u << L)) == 0u)
@@ -1097,9 +1156,9 @@ namespace Lumina
 
                     RHI::FTextureSlice Slice;
                     Slice.Layer = L;
+                    BeginUpload();
                     RHI::CmdCopyMemoryToTexture(CL, Src, Res, State.LayerWeightTexture.Texture, Slice);
                     Cursor += SlicePixels;
-                    bAnyUpload = true;
                 }
             }
 
@@ -1150,8 +1209,8 @@ namespace Lumina
 
             if (TerrainItem.bGeometryRebuilt)
             {
-                const uint32 ChunkCount   = (uint32)TerrainItem.Chunks.size();
-                const uint32 MeshletCount = (uint32)TerrainItem.Meshlets.size();
+                const uint32 ChunkCount   = (uint32)TerrainItem.Chunks.Num();
+                const uint32 MeshletCount = (uint32)TerrainItem.Meshlets.Num();
 
                 if (ChunkCount > 0 && MeshletCount > 0)
                 {
@@ -1172,9 +1231,9 @@ namespace Lumina
                     AllocSSBO(State.VisibleMeshletBuffer, uint64(MeshletCount) * sizeof(FTerrainVisibleMeshlet), "Terrain.VisibleMeshlets");
                     AllocSSBO(State.IndirectDrawBuffer,   sizeof(RHI::FDrawIndirectArguments),                   "Terrain.IndirectDraw");
 
-                    WriteBuffer(CL, State.ChunkInfoBuffer.Gpu,   TerrainItem.Chunks.data(),   ChunkCount * sizeof(FTerrainChunkInfo));
-                    WriteBuffer(CL, State.MeshletInfoBuffer.Gpu, TerrainItem.Meshlets.data(), MeshletCount * sizeof(FTerrainMeshletInfo));
-                    bAnyUpload = true;
+                    BeginUpload();
+                    WriteBuffer(CL, State.ChunkInfoBuffer.Gpu,   TerrainItem.Chunks.GetData(),   ChunkCount * sizeof(FTerrainChunkInfo));
+                    WriteBuffer(CL, State.MeshletInfoBuffer.Gpu, TerrainItem.Meshlets.GetData(), MeshletCount * sizeof(FTerrainMeshletInfo));
 
                     State.AllocatedChunkCount   = ChunkCount;
                     State.AllocatedMeshletCount = MeshletCount;
@@ -1194,7 +1253,7 @@ namespace Lumina
     void FDefaultSceneRenderer::TerrainCullPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        if (Frame.Extracts.TerrainExtracts.empty())
+        if (Frame.Extracts.TerrainExtracts.IsEmpty())
         {
             return;
         }
@@ -1208,15 +1267,15 @@ namespace Lumina
         }
 
         // A world split into many terrains used to pay two pipeline barriers per terrain, which serialized the GPU.
-        TFixedVector<FTerrainGPUState*, 64> Visible;
+        TInlineVector<FTerrainGPUState*, 64> Visible;
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
-            auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
-            if (TerrainStateIt == TerrainGPUStates.end())
+            auto TerrainStateIt = TerrainGPUStates.Find(TerrainItem.Entity);
+            if (TerrainStateIt == nullptr)
             {
                 continue;
             }
-            FTerrainGPUState& State = TerrainStateIt->second;
+            FTerrainGPUState& State = (*TerrainStateIt);
             if (!State.ChunkInfoBuffer || !State.MeshletInfoBuffer || !State.VisibleMeshletBuffer || !State.IndirectDrawBuffer)
             {
                 continue;
@@ -1225,9 +1284,9 @@ namespace Lumina
             {
                 continue;
             }
-            Visible.push_back(&State);
+            Visible.Add(&State);
         }
-        if (Visible.empty())
+        if (Visible.IsEmpty())
         {
             return;
         }
@@ -1280,7 +1339,23 @@ namespace Lumina
         SAABB Bounds;
         Bounds.Min = FVector3(Origin.x - HalfSize, Origin.y, Origin.z - HalfSize);
         Bounds.Max = FVector3(Origin.x + HalfSize, Origin.y + Terrain.MaxHeight, Origin.z + HalfSize);
-        return Frame.CameraFrustum.IsInside(Bounds);
+        if (CurrentView == nullptr || CurrentView->bIsPrimary)
+        {
+            return Frame.CameraFrustum.IsInside(Bounds);
+        }
+
+        if (CurrentCameraEarlyView >= (uint32)Frame.Views.CullViews.Num())
+        {
+            return true;
+        }
+        const FCullView& View = Frame.Views.CullViews[CurrentCameraEarlyView];
+        FFrustum ViewFrustum;
+        for (int32 Plane = 0; Plane < FFrustum::NUM; ++Plane)
+        {
+            ViewFrustum.Planes[Plane] = View.FrustumPlanes[Plane];
+        }
+        ViewFrustum.RebuildSoA();
+        return ViewFrustum.IsInside(Bounds);
     }
 
     // Matches FGrassRetirePushConstants in GrassRetire.slang.
@@ -1347,7 +1422,11 @@ namespace Lumina
     void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        if (Frame.Extracts.TerrainExtracts.empty())
+
+        // Before any early out, so a block whose species left last frame is freed even on a frame that scatters nothing.
+        ScenePrimitives.ReleaseUnseenGrassSpecies();
+
+        if (Frame.Extracts.TerrainExtracts.IsEmpty())
         {
             return;
         }
@@ -1373,39 +1452,39 @@ namespace Lumina
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
-            if (TerrainItem.Grass.empty() || TerrainItem.GrassMaxInstances == 0u)
+            if (TerrainItem.Grass.IsEmpty() || TerrainItem.GrassMaxInstances == 0u)
             {
                 continue;
             }
 
-            auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
-            if (TerrainStateIt == TerrainGPUStates.end())
+            const FTerrainGPUState* TerrainState = TerrainGPUStates.Find(TerrainItem.Entity);
+            if (TerrainState == nullptr || !TerrainState->HeightmapTexture || !TerrainState->NormalTexture || !TerrainState->LayerWeightTexture)
             {
+                ScenePrimitives.KeepGrassSpecies(TerrainItem.Entity);
                 continue;
             }
+            const FTerrainGPUState& Terrain = *TerrainState;
 
-            const FTerrainGPUState& Terrain = TerrainStateIt->second;
-            if (!Terrain.HeightmapTexture || !Terrain.NormalTexture || !Terrain.LayerWeightTexture)
+            TVector<FGrassGPUState>& States = GrassGPUStates.FindOrAdd(TerrainItem.Entity);
+            for (int32 Removed = TerrainItem.Grass.Num(); Removed < States.Num(); ++Removed)
             {
-                continue;
+                GeometryInternal::RetireGrassState(States[Removed]);
             }
-
-            TVector<FGrassGPUState>& States = GrassGPUStates[TerrainItem.Entity];
-            States.resize(TerrainItem.Grass.size());
+            States.SetNum(TerrainItem.Grass.Num());
 
             // One scratch cursor per species, in extract order, matching what BeginFrameScratch sized.
             const uint32 FirstCursor = GrassCursorCursor;
-            GrassCursorCursor += (uint32)TerrainItem.Grass.size();
+            GrassCursorCursor += (uint32)TerrainItem.Grass.Num();
 
             const FVector3 Origin = FVector3(TerrainItem.WorldMatrix[3]);
 
-            for (SIZE_T Index = 0; Index < TerrainItem.Grass.size(); ++Index)
+            for (int32 Index = 0; Index < TerrainItem.Grass.Num(); ++Index)
             {
                 const FFrameData::FGrassSpeciesExtract& Species = TerrainItem.Grass[Index];
                 FGrassGPUState& State = States[Index];
 
                 const FScenePrimitiveSet::FGrassSpeciesBinding Binding =
-                    ScenePrimitives.AcquireGrassSpecies(Species.Mesh, Species.ResolveHandle, TerrainItem.GrassMaxInstances);
+                    ScenePrimitives.AcquireGrassSpecies({ TerrainItem.Entity, Species.Type, Species.LayerIndex, Species.Occurrence }, Species.Mesh, Species.ResolveHandle, TerrainItem.GrassMaxInstances);
                 if (!Binding.bValid)
                 {
                     continue;
@@ -1460,12 +1539,15 @@ namespace Lumina
                 if (!State.PrevCursorBuffer)
                 {
                     State.PrevCursorBuffer = CreateSceneBuffer(sizeof(uint32), "Grass.PrevCursor");
-                    if (State.PrevCursorBuffer)
-                    {
-                        // A fresh block has no live tail, so the first retire has nothing to walk.
-                        RHI::CmdMemset(CL, { State.PrevCursorBuffer.Gpu, sizeof(uint32) }, 0u);
-                        Barriers::TransferToCompute(CL);
-                    }
+                }
+
+                // A block new to this state may hold another species' blades, so its first retire walks all of it.
+                if (State.PrevCursorBuffer && (State.BoundSlotBase != Binding.InstanceSlotBase || State.BoundCapacity != Binding.Capacity))
+                {
+                    RHI::CmdMemset(CL, { State.PrevCursorBuffer.Gpu, sizeof(uint32) }, Binding.Capacity);
+                    Barriers::TransferToCompute(CL);
+                    State.BoundSlotBase = Binding.InstanceSlotBase;
+                    State.BoundCapacity = Binding.Capacity;
                 }
                 if (!State.PrevCursorBuffer)
                 {
@@ -1476,7 +1558,7 @@ namespace Lumina
                 const RHI::FGPURange Cursor = GetGrassCursor(FirstCursor + (uint32)Index);
 
                 // Whatever the scatter leaves past its cursor is retired afterward, not zeroed in advance.
-                FGrassRetireItem& Retire = GrassRetireScratch.emplace_back();
+                FGrassRetireItem& Retire = GrassRetireScratch.EmplaceGetRef();
                 Retire.SlotBase   = Binding.InstanceSlotBase;
                 Retire.Capacity   = Binding.Capacity;
                 Retire.Cursor     = Cursor;
@@ -1526,7 +1608,7 @@ namespace Lumina
                 Push.SurfaceDescIndex   = Binding.SurfaceDescIndex;
                 Push.MeshletHeaderSlot  = Binding.MeshletHeaderSlot;
                 Push.MaterialIndex      = Binding.MaterialIndex;
-                Push.EntityID           = (uint32)TerrainItem.Entity.GetPacked();
+                Push.EntityID           = TerrainItem.Entity.GetPacked();
                 Push.MeshBoundsRadius   = Binding.MeshBoundsRadius;
                 Push.MaxDrawDistance    = Radius;
                 Push.TerrainOriginX     = Origin.x;
@@ -1551,49 +1633,56 @@ namespace Lumina
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
-        if (!GrassRetireScratch.empty())
-        {
-            static const FShaderH RetireShader = FShaderLibrary::Get("GrassRetire.slang");
-            if (RetireShader)
-            {
-                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(RetireShader));
-                for (const FGrassRetireItem& Item : GrassRetireScratch)
-                {
-                    FGrassRetirePushConstants Push{};
-                    // Sliced like the scatter's span, so the clamp to the allocation is the same one.
-                    Push.CullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(RetainedCullEntryBuffer, Item.SlotBase, Item.Capacity);
-                    Push.Cursor      = { Item.Cursor };
-                    Push.PrevCursor  = { Item.PrevCursor };
-                    RHI::CmdDispatch(CL, MakeArgs(Push), (Item.Capacity + 63u) / 64u, 1u, 1u);
-                }
+        RetireGrassBlades(CL);
+    }
 
-                // Four bytes each, kept on the GPU for the retire and copied out for the budget warning.
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                    RHI::EStageFlags::Transfer,
-                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-                for (const FGrassRetireItem& Item : GrassRetireScratch)
-                {
-                    RHI::CmdMemcpy(CL, { Item.PrevCursor.Gpu, sizeof(uint32) }, Item.Cursor);
-                    if (Item.CursorReadback.Gpu != 0)
-                    {
-                        RHI::CmdMemcpy(CL, { Item.CursorReadback.Gpu, sizeof(uint32) }, Item.Cursor);
-                    }
-                }
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Compute,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-            }
-            GrassRetireScratch.clear();
+    void FDefaultSceneRenderer::RetireGrassBlades(RHI::FCmdListH CL)
+    {
+        if (GrassRetireScratch.IsEmpty())
+        {
+            return;
         }
+
+        static const FShaderH RetireShader = FShaderLibrary::Get("GrassRetire.slang");
+        if (RetireShader)
+        {
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(RetireShader));
+            for (const FGrassRetireItem& Item : GrassRetireScratch)
+            {
+                FGrassRetirePushConstants Push{};
+                // Sliced like the scatter's span, so the clamp to the allocation is the same one.
+                Push.CullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(RetainedCullEntryBuffer, Item.SlotBase, Item.Capacity);
+                Push.Cursor      = { Item.Cursor };
+                Push.PrevCursor  = { Item.PrevCursor };
+                RHI::CmdDispatch(CL, MakeArgs(Push), (Item.Capacity + 63u) / 64u, 1u, 1u);
+            }
+
+            // Four bytes each, kept on the GPU for the retire and copied out for the budget warning.
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+            for (const FGrassRetireItem& Item : GrassRetireScratch)
+            {
+                RHI::CmdMemcpy(CL, { Item.PrevCursor.Gpu, sizeof(uint32) }, Item.Cursor);
+                if (Item.CursorReadback.Gpu != 0)
+                {
+                    RHI::CmdMemcpy(CL, { Item.CursorReadback.Gpu, sizeof(uint32) }, Item.Cursor);
+                }
+            }
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
+        GrassRetireScratch.Reset();
     }
 
     bool FDefaultSceneRenderer::TerrainDepthPrePass(RHI::FCmdListH CL, bool bClear)
     {
         const FFrameData& Frame = *RenderFrame;
 
-        if (Frame.Extracts.TerrainExtracts.empty())
+        if (Frame.Extracts.TerrainExtracts.IsEmpty())
         {
             return false;
         }
@@ -1620,12 +1709,12 @@ namespace Lumina
                 continue;
             }
 
-            auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
-            if (TerrainStateIt == TerrainGPUStates.end())
+            auto TerrainStateIt = TerrainGPUStates.Find(TerrainItem.Entity);
+            if (TerrainStateIt == nullptr)
             {
                 continue;
             }
-            FTerrainGPUState& State = TerrainStateIt->second;
+            FTerrainGPUState& State = (*TerrainStateIt);
             if (!State.HeightmapTexture || !State.NormalTexture || !State.LayerWeightTexture)
             {
                 continue;
@@ -1709,7 +1798,7 @@ namespace Lumina
             Key.DepthFormat = EFormat::D32;
             if (StampPS != nullptr)
             {
-                Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
+                Key.ColorTargets.Add({ VisRT.Desc.Format, {} });
             }
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
@@ -1738,7 +1827,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands = Frame.Geometry.DrawCommands;
 
-        if (Frame.Extracts.TerrainExtracts.empty())
+        if (Frame.Extracts.TerrainExtracts.IsEmpty())
         {
             return;
         }
@@ -1754,12 +1843,12 @@ namespace Lumina
                 continue;
             }
 
-            auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
-            if (TerrainStateIt == TerrainGPUStates.end())
+            auto TerrainStateIt = TerrainGPUStates.Find(TerrainItem.Entity);
+            if (TerrainStateIt == nullptr)
             {
                 continue;
             }
-            FTerrainGPUState& State = TerrainStateIt->second;
+            FTerrainGPUState& State = (*TerrainStateIt);
             if (!State.HeightmapTexture || !State.NormalTexture || !State.LayerWeightTexture)
             {
                 continue;
@@ -1804,7 +1893,7 @@ namespace Lumina
             RenderParams.MeshletsPerChunkSide = MeshletsPerChunkSide;
             RenderParams.MeshletQuadSide      = GTerrainMeshletQuads;
 
-            const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment || bSceneColorClearedForCallbacks;
+            const bool bHDRWasWritten = !DrawCommands.IsEmpty() || FrameFlags.bHasEnvironment || bSceneColorClearedForCallbacks;
             const FSceneImage& ColorRT  = GetNamedImage(ENamedImage::HDR);
             const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
 
@@ -1817,7 +1906,7 @@ namespace Lumina
             const FSceneImage& PickerRT = GetNamedImage(ENamedImage::Picker);
             // Deferred clears the picker when meshes exist; terrain-only scenes never ran it (early-out).
             Colors[1].Texture        = PickerRT.Texture;
-            Colors[1].LoadOp         = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+            Colors[1].LoadOp         = DrawCommands.IsEmpty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
             Colors[1].StoreOp        = RHI::EStoreOp::Store;
             NumColors = 2;
             #endif
@@ -1854,9 +1943,9 @@ namespace Lumina
             TerrainDepth.DepthMode = TerrainItem.bMasked ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write) : RHI::EDepthFlags::Read;
             TerrainDepth.DepthTest = RHI::EOp::GreaterEqual;
             RHI::CmdSetDepthStencil(CL, TerrainDepth);
-            Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
+            Key.ColorTargets.Add({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
-            Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });
+            Key.ColorTargets.Add({ PickerRT.Desc.Format, {} });
             #endif
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 

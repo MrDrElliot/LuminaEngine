@@ -109,15 +109,15 @@ namespace Grain
 
     void FVoxelWorld::BuildHeightfield()
     {
-        Columns.resize(size_t(kWorldVoxelsX) * size_t(kWorldVoxelsZ));
+        Columns.SetNum(kWorldVoxelsX * kWorldVoxelsZ);
 
         const uint32 LocalSeed = Seed;
 
-        Task::ParallelFor(uint32(kWorldVoxelsZ), [this, LocalSeed](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this, LocalSeed](const Jobs::FParallelRange& Range)
         {
             for (uint32 Z = Range.Start; Z < Range.End; ++Z)
             {
-                FSurface* Row = Columns.data() + size_t(Z) * size_t(kWorldVoxelsX);
+                FSurface* Row = Columns.GetData() + Z * kWorldVoxelsX;
                 for (int32 X = 0; X < kWorldVoxelsX; ++X)
                 {
                     Row[X].Height = TerrainHeight(float(X) * kVoxelSize, float(Z) * kVoxelSize, LocalSeed);
@@ -126,23 +126,23 @@ namespace Grain
         }, 8);
 
         // Slope needs both neighbors, so surface materials are a second pass over the finished heights.
-        Task::ParallelFor(uint32(kWorldVoxelsZ), [this](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this](const Jobs::FParallelRange& Range)
         {
             for (uint32 Z = Range.Start; Z < Range.End; ++Z)
             {
-                const size_t RowBase = size_t(Z) * size_t(kWorldVoxelsX);
-                const size_t RowPrev = size_t(Math::Max(int32(Z) - 4, 0)) * size_t(kWorldVoxelsX);
-                const size_t RowNext = size_t(Math::Min(int32(Z) + 4, kWorldVoxelsZ - 1)) * size_t(kWorldVoxelsX);
+                const int32 RowBase = Z * kWorldVoxelsX;
+                const int32 RowPrev = Math::Max(int32(Z) - 4, 0) * kWorldVoxelsX;
+                const int32 RowNext = Math::Min(int32(Z) + 4, kWorldVoxelsZ - 1) * kWorldVoxelsX;
 
                 for (int32 X = 0; X < kWorldVoxelsX; ++X)
                 {
-                    FSurface& Out = Columns[RowBase + size_t(X)];
+                    FSurface& Out = Columns[RowBase + X];
 
                     const int32 XPrev = Math::Max(X - 4, 0);
                     const int32 XNext = Math::Min(X + 4, kWorldVoxelsX - 1);
 
-                    const float DX = Columns[RowBase + size_t(XNext)].Height - Columns[RowBase + size_t(XPrev)].Height;
-                    const float DZ = Columns[RowNext + size_t(X)].Height - Columns[RowPrev + size_t(X)].Height;
+                    const float DX = Columns[RowBase + XNext].Height - Columns[RowBase + XPrev].Height;
+                    const float DZ = Columns[RowNext + X].Height - Columns[RowPrev + X].Height;
 
                     const float Slope  = Math::Sqrt(DX * DX + DZ * DZ) / (8.0f * kVoxelSize);
                     const float Height = Out.Height;
@@ -194,10 +194,10 @@ namespace Grain
                 MinH, MaxH, Tally[1], Tally[2], Tally[3], Tally[4], Tally[5], Tally[6], Tally[12]);
         }
 
-        CoarseMin.assign(size_t(kCoarseX) * size_t(kCoarseZ), 0.0f);
-        CoarseMax.assign(size_t(kCoarseX) * size_t(kCoarseZ), 0.0f);
+        CoarseMin.Init(0.0f, kCoarseX * kCoarseZ);
+        CoarseMax.Init(0.0f, kCoarseX * kCoarseZ);
 
-        Task::ParallelFor(uint32(kCoarseZ), [this](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kCoarseZ), [this](const Jobs::FParallelRange& Range)
         {
             for (uint32 CZ = Range.Start; CZ < Range.End; ++CZ)
             {
@@ -208,17 +208,17 @@ namespace Grain
 
                     for (int32 Z = 0; Z < kCoarseVoxels; ++Z)
                     {
-                        const size_t RowBase = size_t(int32(CZ) * kCoarseVoxels + Z) * size_t(kWorldVoxelsX);
+                        const int32 RowBase = (int32(CZ) * kCoarseVoxels + Z) * kWorldVoxelsX;
                         for (int32 X = 0; X < kCoarseVoxels; ++X)
                         {
-                            const float H = Columns[RowBase + size_t(CX * kCoarseVoxels + X)].Height;
+                            const float H = Columns[RowBase + (CX * kCoarseVoxels + X)].Height;
                             MinH = Math::Min(MinH, H);
                             MaxH = Math::Max(MaxH, H);
                         }
                     }
 
-                    CoarseMin[size_t(CZ) * size_t(kCoarseX) + size_t(CX)] = MinH;
-                    CoarseMax[size_t(CZ) * size_t(kCoarseX) + size_t(CX)] = MaxH;
+                    CoarseMin[CZ * kCoarseX + CX] = MinH;
+                    CoarseMax[CZ * kCoarseX + CX] = MaxH;
                 }
             }
         }, 1);
@@ -226,7 +226,7 @@ namespace Grain
 
     void FVoxelWorld::ScatterTrees()
     {
-        Trees.assign(size_t(kTreeCellsX) * size_t(kTreeCellsZ), FTree{});
+        Trees.Init(FTree{}, kTreeCellsX * kTreeCellsZ);
 
         for (int32 CZ = 0; CZ < kTreeCellsZ; ++CZ)
         {
@@ -249,7 +249,7 @@ namespace Grain
                     continue;
                 }
 
-                FTree& Tree = Trees[size_t(CZ) * size_t(kTreeCellsX) + size_t(CX)];
+                FTree& Tree = Trees[CZ * kTreeCellsX + CX];
                 Tree.VoxelX = VX;
                 Tree.VoxelZ = VZ;
                 Tree.BaseY  = int32(Column.Height / kVoxelSize);
@@ -264,12 +264,12 @@ namespace Grain
     {
         const int32 CX = Math::Clamp(X, 0, kWorldVoxelsX - 1);
         const int32 CZ = Math::Clamp(Z, 0, kWorldVoxelsZ - 1);
-        return Columns[size_t(CZ) * size_t(kWorldVoxelsX) + size_t(CX)];
+        return Columns[CZ * kWorldVoxelsX + CX];
     }
 
     float FVoxelWorld::SampleHeight(float WorldX, float WorldZ) const
     {
-        if (Columns.empty())
+        if (Columns.IsEmpty())
         {
             return kSeaLevel;
         }
@@ -365,7 +365,7 @@ namespace Grain
                     continue;
                 }
 
-                const FTree& Tree = Trees[size_t(CZ) * size_t(kTreeCellsX) + size_t(CX)];
+                const FTree& Tree = Trees[CZ * kTreeCellsX + CX];
                 if (!Tree.bValid)
                 {
                     continue;
@@ -521,11 +521,11 @@ namespace Grain
             Counts[Best] = 0;
         }
 
-        const uint32 NodeIndex = uint32(Buffer.Nodes.size());
-        Buffer.Nodes.emplace_back();
-        Buffer.Masks.resize(Buffer.Masks.size() + size_t(kMaskWords));
+        const uint32 NodeIndex = uint32(Buffer.Nodes.Num());
+        Buffer.Nodes.Emplace();
+        Buffer.Masks.SetNum(Buffer.Masks.Num() + kMaskWords);
 
-        uint32* NodeMask = Buffer.Masks.data() + size_t(NodeIndex) * size_t(kMaskWords);
+        uint32* NodeMask = Buffer.Masks.GetData() + NodeIndex * kMaskWords;
         for (int32 i = 0; i < kMaskWords; ++i)
         {
             NodeMask[i] = Mask[i];
@@ -553,11 +553,11 @@ namespace Grain
 
         Node.Palette = uint32(Palette[0]) | (uint32(Palette[1]) << 8)
                      | (uint32(Palette[2]) << 16) | (uint32(Palette[3]) << 24);
-        Node.PayloadBase = uint32(Buffer.Payload.size());
+        Node.PayloadBase = uint32(Buffer.Payload.Num());
 
         constexpr int32 kPayloadWords = kNodeSlots / 16;
-        Buffer.Payload.resize(Buffer.Payload.size() + size_t(kPayloadWords), 0u);
-        uint32* Words = Buffer.Payload.data() + size_t(Node.PayloadBase);
+        Buffer.Payload.SetNum(Buffer.Payload.Num() + kPayloadWords, 0u);
+        uint32* Words = Buffer.Payload.GetData() + Node.PayloadBase;
 
         for (int32 Slot = 0; Slot < kNodeSlots; ++Slot)
         {
@@ -601,8 +601,8 @@ namespace Grain
         {
             for (int32 CX = CoarseX0; CX <= CoarseX1; ++CX)
             {
-                MinH = Math::Min(MinH, CoarseMin[size_t(CZ) * size_t(kCoarseX) + size_t(CX)]);
-                MaxH = Math::Max(MaxH, CoarseMax[size_t(CZ) * size_t(kCoarseX) + size_t(CX)]);
+                MinH = Math::Min(MinH, CoarseMin[CZ * kCoarseX + CX]);
+                MaxH = Math::Max(MaxH, CoarseMax[CZ * kCoarseX + CX]);
             }
         }
 
@@ -617,9 +617,9 @@ namespace Grain
         // Everything below the deepest cave is one material, so the whole subtree collapses into one node.
         if (NodeTop < MinH - kCaveBottomDepth)
         {
-            const uint32 SolidIndex = uint32(Buffer.Nodes.size());
-            Buffer.Nodes.emplace_back();
-            Buffer.Masks.resize(Buffer.Masks.size() + size_t(kMaskWords), 0xFFFFFFFFu);
+            const uint32 SolidIndex = uint32(Buffer.Nodes.Num());
+            Buffer.Nodes.Emplace();
+            Buffer.Masks.SetNum(Buffer.Masks.Num() + kMaskWords, 0xFFFFFFFFu);
 
             Buffer.Nodes[SolidIndex].Flags   = kFlagPresent | kFlagSolid | kFlagUniform;
             Buffer.Nodes[SolidIndex].Palette = uint32(EMaterial::Stone);
@@ -632,7 +632,7 @@ namespace Grain
         uint32 Present = 0;
 
         // A run of children that all collapse can be truncated, because a solid child appends one record.
-        const size_t NodesBefore = Buffer.Nodes.size();
+        const int32 NodesBefore = Buffer.Nodes.Num();
         bool bAllSolid = true;
         uint32 SharedMaterial = ~0u;
 
@@ -687,13 +687,13 @@ namespace Grain
         // Uniform rock under the cave floor collapses all the way up, which is most of the world by volume.
         if (bAllSolid && Present == uint32(kNodeSlots))
         {
-            Buffer.Nodes.resize(NodesBefore);
-            Buffer.Masks.resize(NodesBefore * size_t(kMaskWords));
+            Buffer.Nodes.SetNum(NodesBefore);
+            Buffer.Masks.SetNum(NodesBefore * kMaskWords);
             Buffer.SolidNodes -= kNodeSlots;
 
-            const uint32 CollapsedIndex = uint32(Buffer.Nodes.size());
-            Buffer.Nodes.emplace_back();
-            Buffer.Masks.resize(Buffer.Masks.size() + size_t(kMaskWords), 0xFFFFFFFFu);
+            const uint32 CollapsedIndex = uint32(Buffer.Nodes.Num());
+            Buffer.Nodes.Emplace();
+            Buffer.Masks.SetNum(Buffer.Masks.Num() + kMaskWords, 0xFFFFFFFFu);
 
             Buffer.Nodes[CollapsedIndex].Flags   = kFlagPresent | kFlagSolid | kFlagUniform;
             Buffer.Nodes[CollapsedIndex].Palette = SharedMaterial;
@@ -702,12 +702,12 @@ namespace Grain
         }
 
         // Child records stay wherever the recursion put them, so the parent points at a compacted index run.
-        const uint32 ChildBase = uint32(Buffer.ChildIndices.size());
+        const uint32 ChildBase = uint32(Buffer.ChildIndices.Num());
         for (int32 Slot = 0; Slot < kNodeSlots; ++Slot)
         {
             if (ChildIndex[Slot] != ~0u)
             {
-                Buffer.ChildIndices.push_back(ChildIndex[Slot]);
+                Buffer.ChildIndices.Add(ChildIndex[Slot]);
             }
         }
 
@@ -732,15 +732,15 @@ namespace Grain
             }
         }
 
-        const uint32 NodeIndex = uint32(Buffer.Nodes.size());
-        Buffer.Nodes.emplace_back();
-        Buffer.Masks.resize(Buffer.Masks.size() + size_t(kMaskWords));
+        const uint32 NodeIndex = uint32(Buffer.Nodes.Num());
+        Buffer.Nodes.Emplace();
+        Buffer.Masks.SetNum(Buffer.Masks.Num() + kMaskWords);
 
         Buffer.Nodes[NodeIndex].ChildBase = ChildBase;
         Buffer.Nodes[NodeIndex].Palette   = Dominant;
         Buffer.Nodes[NodeIndex].Flags     = kFlagPresent;
 
-        uint32* NodeMask = Buffer.Masks.data() + size_t(NodeIndex) * size_t(kMaskWords);
+        uint32* NodeMask = Buffer.Masks.GetData() + NodeIndex * kMaskWords;
         for (int32 i = 0; i < kMaskWords; ++i)
         {
             NodeMask[i] = Mask[i];
@@ -752,34 +752,34 @@ namespace Grain
 
     void FVoxelWorld::Merge(TVector<FBuildBuffer>& Buffers, const TVector<uint32>& RootLocal)
     {
-        Nodes.assign(size_t(kRootCount), FVoxNode{});
-        Masks.assign(size_t(kRootCount) * size_t(kMaskWords), 0u);
-        ChildIndices.clear();
-        Payload.clear();
+        Nodes.Init(FVoxNode{}, kRootCount);
+        Masks.Init(0u, kRootCount * kMaskWords);
+        ChildIndices.Reset();
+        Payload.Reset();
 
         for (int32 Root = 0; Root < kRootCount; ++Root)
         {
-            FBuildBuffer& Buffer = Buffers[size_t(Root)];
+            FBuildBuffer& Buffer = Buffers[Root];
 
             Stats.LeafNodes    += Buffer.LeafNodes;
             Stats.MidNodes     += Buffer.MidNodes;
             Stats.SolidNodes   += Buffer.SolidNodes;
             Stats.PaletteNodes += Buffer.PaletteNodes;
 
-            if (RootLocal[size_t(Root)] == ~0u)
+            if (RootLocal[Root] == ~0u)
             {
                 continue;
             }
 
-            const uint32 NodeOffset    = uint32(Nodes.size());
-            const uint32 ChildOffset   = uint32(ChildIndices.size());
-            const uint32 PayloadOffset = uint32(Payload.size());
+            const uint32 NodeOffset    = uint32(Nodes.Num());
+            const uint32 ChildOffset   = uint32(ChildIndices.Num());
+            const uint32 PayloadOffset = uint32(Payload.Num());
 
             for (uint32 Index : Buffer.ChildIndices)
             {
-                ChildIndices.push_back(Index + NodeOffset);
+                ChildIndices.Add(Index + NodeOffset);
             }
-            Payload.insert(Payload.end(), Buffer.Payload.begin(), Buffer.Payload.end());
+            Payload.Append(Buffer.Payload);
 
             for (FVoxNode Node : Buffer.Nodes)
             {
@@ -794,17 +794,17 @@ namespace Grain
                 {
                     Node.ChildBase += ChildOffset;
                 }
-                Nodes.push_back(Node);
+                Nodes.Add(Node);
             }
 
-            Masks.insert(Masks.end(), Buffer.Masks.begin(), Buffer.Masks.end());
+            Masks.Append(Buffer.Masks);
 
             // The root slot holds a copy of its own subtree root, so the shader can index the grid directly.
-            const uint32 LocalRoot = RootLocal[size_t(Root)];
-            Nodes[size_t(Root)] = Nodes[size_t(NodeOffset + LocalRoot)];
+            const uint32 LocalRoot = RootLocal[Root];
+            Nodes[Root] = Nodes[NodeOffset + LocalRoot];
 
-            const uint32* Source = Masks.data() + size_t(NodeOffset + LocalRoot) * size_t(kMaskWords);
-            uint32* Dest = Masks.data() + size_t(Root) * size_t(kMaskWords);
+            const uint32* Source = Masks.GetData() + (NodeOffset + LocalRoot) * kMaskWords;
+            uint32* Dest = Masks.GetData() + Root * kMaskWords;
             for (int32 i = 0; i < kMaskWords; ++i)
             {
                 Dest[i] = Source[i];
@@ -814,19 +814,18 @@ namespace Grain
         }
     }
 
-    // Derived from the finished masks rather than threaded through the build, and only interior nodes
-    // are ever indexed by rank, so digging out voxel bits never invalidates it.
+    // Derived from the finished masks, and only interior nodes are indexed by rank, so digging out voxel bits never invalidates it.
     void FVoxelWorld::BuildRankPrefix()
     {
-        const size_t NodeCount = Nodes.size();
-        Prefix.assign(NodeCount * 8, 0u);
+        const int32 NodeCount = Nodes.Num();
+        Prefix.Init(0u, NodeCount * 8);
 
-        Task::ParallelFor(uint32(NodeCount), [this](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(NodeCount), [this](const Jobs::FParallelRange& Range)
         {
             for (uint32 Node = Range.Start; Node < Range.End; ++Node)
             {
-                const uint32* Words = Masks.data() + size_t(Node) * size_t(kMaskWords);
-                uint32* Out = Prefix.data() + size_t(Node) * 8;
+                const uint32* Words = Masks.GetData() + Node * kMaskWords;
+                uint32* Out = Prefix.GetData() + Node * 8;
 
                 uint32 Running = 0;
                 for (int32 Word = 0; Word < kMaskWords; ++Word)
@@ -850,12 +849,12 @@ namespace Grain
         const double Heightfield = PlatformTime::Seconds();
 
         TVector<FBuildBuffer> Buffers;
-        Buffers.resize(size_t(kRootCount));
+        Buffers.SetNum(kRootCount);
 
         TVector<uint32> RootLocal;
-        RootLocal.assign(size_t(kRootCount), ~0u);
+        RootLocal.Init(~0u, kRootCount);
 
-        Task::ParallelFor(uint32(kRootCount), [this, &Buffers, &RootLocal](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kRootCount), [this, &Buffers, &RootLocal](const Jobs::FParallelRange& Range)
         {
             for (uint32 Root = Range.Start; Root < Range.End; ++Root)
             {
@@ -871,10 +870,10 @@ namespace Grain
         Merge(Buffers, RootLocal);
         BuildRankPrefix();
 
-        Stats.NodeBytes    = Nodes.size() * sizeof(FVoxNode);
-        Stats.MaskBytes    = Masks.size() * sizeof(uint32);
-        Stats.ChildBytes   = ChildIndices.size() * sizeof(uint32);
-        Stats.PayloadBytes = Payload.size() * sizeof(uint32);
+        Stats.NodeBytes    = Nodes.Num() * sizeof(FVoxNode);
+        Stats.MaskBytes    = Masks.Num() * sizeof(uint32);
+        Stats.ChildBytes   = ChildIndices.Num() * sizeof(uint32);
+        Stats.PayloadBytes = Payload.Num() * sizeof(uint32);
         Stats.BuildSeconds = PlatformTime::Seconds() - Started;
 
         LOG_INFO("Grain: world {} x {} x {} voxels at {:.1f} cm.",
@@ -884,7 +883,7 @@ namespace Grain
             Stats.LeafNodes, Stats.MidNodes, Stats.SolidNodes, Stats.PaletteNodes);
         LOG_INFO("Grain: {:.1f} MB nodes, {:.1f} MB masks, {:.1f} MB rank, {:.1f} MB child, {:.1f} MB payload.",
             double(Stats.NodeBytes) / 1048576.0, double(Stats.MaskBytes) / 1048576.0,
-            double(Prefix.size() * sizeof(uint32)) / 1048576.0,
+            double(Prefix.Num() * sizeof(uint32)) / 1048576.0,
             double(Stats.ChildBytes) / 1048576.0, double(Stats.PayloadBytes) / 1048576.0);
     }
 
@@ -895,7 +894,7 @@ namespace Grain
             return false;
         }
 
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return false;
         }
@@ -930,7 +929,7 @@ namespace Grain
             const int32 LocalZ = (Z - BaseZ) / ChildSize;
             const uint32 Slot = SlotIndex(LocalX, LocalY, LocalZ);
 
-            const uint32* Mask = Masks.data() + size_t(NodeIndex) * size_t(kMaskWords);
+            const uint32* Mask = Masks.GetData() + NodeIndex * kMaskWords;
             if (!TestBit(Mask, Slot))
             {
                 return false;
@@ -956,7 +955,7 @@ namespace Grain
     bool FVoxelWorld::FindLeafNode(int32 X, int32 Y, int32 Z, uint32& OutNode, int32 OutBase[3]) const
     {
         if (X < 0 || Y < 0 || Z < 0 || X >= kWorldVoxelsX || Y >= kWorldVoxelsY || Z >= kWorldVoxelsZ
-            || Nodes.empty())
+            || Nodes.IsEmpty())
         {
             return false;
         }
@@ -1000,7 +999,7 @@ namespace Grain
             const int32 LocalZ = (Z - BaseZ) / ChildSize;
             const uint32 Slot = SlotIndex(LocalX, LocalY, LocalZ);
 
-            const uint32* Mask = Masks.data() + size_t(NodeIndex) * size_t(kMaskWords);
+            const uint32* Mask = Masks.GetData() + NodeIndex * kMaskWords;
             if (!TestBit(Mask, Slot))
             {
                 return false;
@@ -1062,7 +1061,7 @@ namespace Grain
         }
 
         const int32 ChildSize = NodeSize >> 3;
-        const uint32* Mask = Masks.data() + size_t(NodeIndex) * size_t(kMaskWords);
+        const uint32* Mask = Masks.GetData() + NodeIndex * kMaskWords;
         const bool bLeaf = (Node.Flags & kFlagLeaf) != 0u;
 
         int32 Low[3];
@@ -1111,7 +1110,7 @@ namespace Grain
 
     bool FVoxelWorld::OverlapsBox(const int32 Min[3], const int32 Max[3]) const
     {
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return false;
         }
@@ -1155,7 +1154,7 @@ namespace Grain
 
     void FVoxelWorld::CarveSphere(const FVector3& Center, float Radius)
     {
-        if (Nodes.empty() || Radius <= 0.0f)
+        if (Nodes.IsEmpty() || Radius <= 0.0f)
         {
             return;
         }
@@ -1191,7 +1190,7 @@ namespace Grain
                         continue;
                     }
 
-                    uint32* Mask = Masks.data() + size_t(LeafNode) * size_t(kMaskWords);
+                    uint32* Mask = Masks.GetData() + LeafNode * kMaskWords;
                     bool bCleared = false;
 
                     for (int32 Y = 0; Y < kNodeSide; ++Y)
@@ -1227,25 +1226,25 @@ namespace Grain
 
     bool FVoxelWorld::Upload()
     {
-        if (Nodes.empty())
+        if (Nodes.IsEmpty())
         {
             return false;
         }
 
-        if (ChildIndices.empty())
+        if (ChildIndices.IsEmpty())
         {
-            ChildIndices.push_back(0u);
+            ChildIndices.Add(0u);
         }
-        if (Payload.empty())
+        if (Payload.IsEmpty())
         {
-            Payload.push_back(0u);
+            Payload.Add(0u);
         }
 
-        NodeAlloc    = RHI::Malloc(Nodes.size() * sizeof(FVoxNode), RHI::EMemoryType::Default);
-        MaskAlloc    = RHI::Malloc(Masks.size() * sizeof(uint32), RHI::EMemoryType::Default);
-        PrefixAlloc  = RHI::Malloc(Prefix.size() * sizeof(uint32), RHI::EMemoryType::Default);
-        ChildAlloc   = RHI::Malloc(ChildIndices.size() * sizeof(uint32), RHI::EMemoryType::Default);
-        PayloadAlloc = RHI::Malloc(Payload.size() * sizeof(uint32), RHI::EMemoryType::Default);
+        NodeAlloc    = RHI::Malloc(Nodes.Num() * sizeof(FVoxNode), RHI::EMemoryType::Default);
+        MaskAlloc    = RHI::Malloc(Masks.Num() * sizeof(uint32), RHI::EMemoryType::Default);
+        PrefixAlloc  = RHI::Malloc(Prefix.Num() * sizeof(uint32), RHI::EMemoryType::Default);
+        ChildAlloc   = RHI::Malloc(ChildIndices.Num() * sizeof(uint32), RHI::EMemoryType::Default);
+        PayloadAlloc = RHI::Malloc(Payload.Num() * sizeof(uint32), RHI::EMemoryType::Default);
 
         if (NodeAlloc.Gpu == 0 || MaskAlloc.Gpu == 0 || PrefixAlloc.Gpu == 0
             || ChildAlloc.Gpu == 0 || PayloadAlloc.Gpu == 0)
@@ -1273,16 +1272,16 @@ namespace Grain
 
             std::memcpy(Source.Cpu, Data, size_t(Size));
             RHI::CmdMemcpy(CL, { Dest.Gpu, size_t(Size) }, { Source.Gpu, size_t(Size) });
-            Staging.push_back(Source);
+            Staging.Add(Source);
             return true;
         };
 
         const bool bStaged =
-            Stage(NodeAlloc, Nodes.data(), Nodes.size() * sizeof(FVoxNode)) &&
-            Stage(MaskAlloc, Masks.data(), Masks.size() * sizeof(uint32)) &&
-            Stage(PrefixAlloc, Prefix.data(), Prefix.size() * sizeof(uint32)) &&
-            Stage(ChildAlloc, ChildIndices.data(), ChildIndices.size() * sizeof(uint32)) &&
-            Stage(PayloadAlloc, Payload.data(), Payload.size() * sizeof(uint32));
+            Stage(NodeAlloc, Nodes.GetData(), Nodes.Num() * sizeof(FVoxNode)) &&
+            Stage(MaskAlloc, Masks.GetData(), Masks.Num() * sizeof(uint32)) &&
+            Stage(PrefixAlloc, Prefix.GetData(), Prefix.Num() * sizeof(uint32)) &&
+            Stage(ChildAlloc, ChildIndices.GetData(), ChildIndices.Num() * sizeof(uint32)) &&
+            Stage(PayloadAlloc, Payload.GetData(), Payload.Num() * sizeof(uint32));
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,

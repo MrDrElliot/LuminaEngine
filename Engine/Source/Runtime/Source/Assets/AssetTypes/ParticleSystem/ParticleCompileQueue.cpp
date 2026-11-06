@@ -10,22 +10,22 @@ namespace Lumina
     void FParticleCompileQueue::QueueRecompile(CParticleSystem* System)
     {
         FScopeLock Lock(Mutex);
-        if (Queued.insert(System).second)
+        if (Queued.TryAdd(System))
         {
-            Recompiles.push_back(System);
+            Recompiles.Add(System);
         }
     }
 
     TStrongObjectPtr<CParticleSystem> FParticleCompileQueue::PopRecompile()
     {
         FScopeLock Lock(Mutex);
-        if (Recompiles.empty())
+        if (Recompiles.IsEmpty())
         {
             return nullptr;
         }
-        TStrongObjectPtr<CParticleSystem> System = Move(Recompiles.back());
-        Recompiles.pop_back();
-        Queued.erase(System.Get());
+        TStrongObjectPtr<CParticleSystem> System = Move(Recompiles.Last());
+        Recompiles.Pop();
+        Queued.Remove(System.Get());
         return System;
     }
 }

@@ -6,9 +6,11 @@
 #include "Core/Serialization/NetArchive.h"
 #include "Log/Log.h"
 #include "Memory/Memcpy.h"
+#include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/PropertyFlags.h"
 #include "Core/Versioning/CoreVersion.h"
+#include "Scripting/ScriptStruct.h"
 
 namespace Lumina::ArrayPropertyInternal
 {
@@ -61,7 +63,7 @@ namespace Lumina::ArrayPropertyInternal
     }
 
     // True when the elements were saved as another kind and have been converted or dropped, rather than read as this one.
-    bool ReadRetypedElements(FArchive& Ar, const FArrayProperty& Array, void* Value, SIZE_T Count, SIZE_T SerializedSize, bool bKindRecorded, EPropertyTypeFlags SerializedKind)
+    bool ReadRetypedElements(FArchive& Ar, const FArrayProperty& Array, void* Value, int32 Count, SIZE_T SerializedSize, bool bKindRecorded, EPropertyTypeFlags SerializedKind)
     {
         const FProperty* Inner = Array.GetInternalProperty();
         const EPropertyTypeFlags CurrentKind = Inner->GetType();
@@ -80,14 +82,14 @@ namespace Lumina::ArrayPropertyInternal
             return false;
         }
 
-        Array.Resize(Value, 0);
+        Array.SetNum(Value, 0);
 
         if (IsPropertyNumeric(OldKind) && IsPropertyNumeric(CurrentKind) && GetNumericSize(OldKind) == SerializedSize)
         {
-            Array.Resize(Value, Count);
+            Array.SetNum(Value, Count);
             uint8 Scratch[8] = {};
-            SIZE_T Lost = 0;
-            for (SIZE_T Index = 0; Index < Count && !Ar.HasError(); ++Index)
+            int32 Lost = 0;
+            for (int32 Index = 0; Index < Count && !Ar.HasError(); ++Index)
             {
                 Ar.Serialize(Scratch, static_cast<int64>(SerializedSize));
                 FNumericValue Number;
@@ -128,7 +130,7 @@ namespace Lumina
 
         struct FPlainField
         {
-            TFixedVector<FName, 4> Path;
+            TInlineVector<FName, 4> Path;
             EPropertyTypeFlags     Type = EPropertyTypeFlags::None;
             uint32                 Offset = 0;
             uint32                 Size = 0;
@@ -155,7 +157,7 @@ namespace Lumina
         }
 
         // Every leaf of a struct made only of numbers, or false when any field needs its own serializer.
-        bool CollectPlainFields(const CStruct* Struct, uint32 BaseOffset, TFixedVector<FName, 4>& Path, TVector<FPlainField>& Out)
+        bool CollectPlainFields(const CStruct* Struct, uint32 BaseOffset, TInlineVector<FName, 4>& Path, TVector<FPlainField>& Out)
         {
             if (Struct == nullptr || (Struct->GetStructOps() != nullptr && Struct->GetStructOps()->HasSerializer()))
             {
@@ -164,18 +166,18 @@ namespace Lumina
 
             for (FProperty* Property : Struct->GetProperties())
             {
-                if (!Property->ShouldSerialize() || Property->IsEditorOnly() || Path.size() >= MaxPlainFieldDepth)
+                if (!Property->ShouldSerialize() || Property->IsEditorOnly() || Path.Num() >= MaxPlainFieldDepth)
                 {
                     return false;
                 }
 
-                Path.push_back(Property->GetPropertyName());
+                Path.Add(Property->GetPropertyName());
                 const uint32 Offset = BaseOffset + Property->Offset;
                 bool bPlain = true;
 
                 if (IsPlainNumeric(Property->GetType()))
                 {
-                    Out.push_back(FPlainField{ Path, Property->GetType(), Offset, (uint32)Property->GetElementSize() });
+                    Out.Emplace(Path, Property->GetType(), Offset, (uint32)Property->GetElementSize());
                 }
                 else if (Property->GetType() == EPropertyTypeFlags::Struct)
                 {
@@ -186,8 +188,8 @@ namespace Lumina
                     bPlain = false;
                 }
 
-                Path.pop_back();
-                if (!bPlain || Out.size() > MaxPlainFields)
+                Path.Pop();
+                if (!bPlain || static_cast<uint32>(Out.Num()) > MaxPlainFields)
                 {
                     return false;
                 }
@@ -200,10 +202,29 @@ namespace Lumina
             return (Inner != nullptr && Inner->GetType() == EPropertyTypeFlags::Struct) ? static_cast<const FStructProperty*>(Inner)->GetStruct() : nullptr;
         }
 
+        // A raw read covers every byte of an element, so it needs a type with nothing unreflected that could own memory.
+        bool IsOverwritableStruct(const CStruct* Struct)
+        {
+            const CScriptStruct* Script = Struct != nullptr ? Cast<CScriptStruct>(Struct) : nullptr;
+            if (Script == nullptr || Script->GetNativeBase() != nullptr)
+            {
+                return false;
+            }
+            for (FProperty* Property : Script->GetProperties())
+            {
+                if (Property->GetType() == EPropertyTypeFlags::Struct && !Property->IsTrivial()
+                    && !IsOverwritableStruct(static_cast<const FStructProperty*>(Property)->GetStruct()))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool BuildPlainLayout(const FProperty* Inner, SIZE_T Stride, TVector<FPlainField>& Out)
         {
-            TFixedVector<FName, 4> Path;
-            if (!CollectPlainFields(GetPlainElementStruct(Inner), 0, Path, Out) || Out.empty())
+            TInlineVector<FName, 4> Path;
+            if (!CollectPlainFields(GetPlainElementStruct(Inner), 0, Path, Out) || Out.IsEmpty())
             {
                 return false;
             }
@@ -221,7 +242,7 @@ namespace Lumina
         bool ResolvePlainField(const CStruct* Struct, const FPlainField& Saved, uint32& OutOffset, EPropertyTypeFlags& OutType, uint32& OutSize)
         {
             uint32 Offset = 0;
-            for (size_t Depth = 0; Depth < Saved.Path.size(); ++Depth)
+            for (int32 Depth = 0; Depth < Saved.Path.Num(); ++Depth)
             {
                 FProperty* Property = Struct != nullptr ? Struct->GetProperty(Saved.Path[Depth]) : nullptr;
                 if (Property == nullptr)
@@ -230,7 +251,7 @@ namespace Lumina
                 }
                 Offset += Property->Offset;
 
-                if (Depth + 1 == Saved.Path.size())
+                if (Depth + 1 == Saved.Path.Num())
                 {
                     if (!IsPlainNumeric(Property->GetType()))
                     {
@@ -299,17 +320,17 @@ namespace Lumina
 
         bool SameLayout(const TVector<FPlainField>& A, const TVector<FPlainField>& B)
         {
-            if (A.size() != B.size())
+            if (A.Num() != B.Num())
             {
                 return false;
             }
-            for (size_t i = 0; i < A.size(); ++i)
+            for (int32 i = 0; i < A.Num(); ++i)
             {
-                if (A[i].Type != B[i].Type || A[i].Offset != B[i].Offset || A[i].Size != B[i].Size || A[i].Path.size() != B[i].Path.size())
+                if (A[i].Type != B[i].Type || A[i].Offset != B[i].Offset || A[i].Size != B[i].Size || A[i].Path.Num() != B[i].Path.Num())
                 {
                     return false;
                 }
-                for (size_t Depth = 0; Depth < A[i].Path.size(); ++Depth)
+                for (int32 Depth = 0; Depth < A[i].Path.Num(); ++Depth)
                 {
                     if (A[i].Path[Depth] != B[i].Path[Depth])
                     {
@@ -335,17 +356,18 @@ namespace Lumina
         // Padding bytes are zeroed on the way out, so saving the same data twice writes the same file.
         void WritePlainStructs(FArchive& Ar, const FArrayProperty& Array, void* Value, TVector<FPlainField>& Layout)
         {
-            SIZE_T Count = Array.GetNum(Value);
+            const int32 Count = Array.Num(Value);
             const SIZE_T Stride = Array.GetOps()->ElementSize;
+            uint64 SerializedCount = Count;
             SIZE_T FlaggedStride = Stride | PlainStructArrayFlag;
-            Ar << Count;
+            Ar << SerializedCount;
             Ar << FlaggedStride;
 
-            uint32 NumFields = (uint32)Layout.size();
+            uint32 NumFields = (uint32)Layout.Num();
             Ar << NumFields;
             for (FPlainField& Field : Layout)
             {
-                uint8 Depth = (uint8)Field.Path.size();
+                uint8 Depth = (uint8)Field.Path.Num();
                 Ar << Depth;
                 for (FName& Segment : Field.Path)
                 {
@@ -357,12 +379,12 @@ namespace Lumina
                 Ar << Field.Size;
             }
 
-            TVector<uint8> Covered(Stride, 0);
+            TVector<uint8> Covered(IntCastChecked<int32>(Stride), 0);
             for (const FPlainField& Field : Layout)
             {
-                memset(Covered.data() + Field.Offset, 1, Field.Size);
+                memset(Covered.GetData() + Field.Offset, 1, Field.Size);
             }
-            TFixedVector<FByteRange, 8> Gaps;
+            TInlineVector<FByteRange, 8> Gaps;
             for (uint32 Byte = 0; Byte < (uint32)Stride; )
             {
                 if (Covered[Byte])
@@ -375,35 +397,35 @@ namespace Lumina
                 {
                     ++Byte;
                 }
-                Gaps.push_back({ Start, Byte - Start });
+                Gaps.Emplace(Start, Byte - Start);
             }
 
             uint8* Data = static_cast<uint8*>(Array.GetAt(Value, 0));
-            if (Gaps.empty())
+            if (Gaps.IsEmpty())
             {
                 Ar.Serialize(Data, static_cast<int64>(Count * Stride));
                 return;
             }
 
-            const SIZE_T PerChunk = Stride < PlainChunkBytes ? PlainChunkBytes / Stride : 1;
-            TVector<uint8> Chunk(PerChunk * Stride);
-            for (SIZE_T First = 0; First < Count; First += PerChunk)
+            const int32 PerChunk = Stride < PlainChunkBytes ? static_cast<int32>(PlainChunkBytes / Stride) : 1;
+            TVector<uint8> Chunk(IntCastChecked<int32>(PerChunk * Stride));
+            for (int32 First = 0; First < Count; First += PerChunk)
             {
-                const SIZE_T Num = (Count - First) < PerChunk ? (Count - First) : PerChunk;
-                memcpy(Chunk.data(), Data + First * Stride, Num * Stride);
-                for (SIZE_T Element = 0; Element < Num; ++Element)
+                const int32 Num = Math::Min(Count - First, PerChunk);
+                memcpy(Chunk.GetData(), Data + First * Stride, Num * Stride);
+                for (int32 Element = 0; Element < Num; ++Element)
                 {
-                    uint8* Bytes = Chunk.data() + Element * Stride;
+                    uint8* Bytes = Chunk.GetData() + Element * Stride;
                     for (const FByteRange& Gap : Gaps)
                     {
                         memset(Bytes + Gap.Start, 0, Gap.Length);
                     }
                 }
-                Ar.Serialize(Chunk.data(), static_cast<int64>(Num * Stride));
+                Ar.Serialize(Chunk.GetData(), static_cast<int64>(Num * Stride));
             }
         }
 
-        void ReadPlainStructs(FArchive& Ar, const FArrayProperty& Array, void* Value, SIZE_T Count, SIZE_T SavedStride)
+        void ReadPlainStructs(FArchive& Ar, const FArrayProperty& Array, void* Value, int32 Count, SIZE_T SavedStride)
         {
             uint32 NumFields = 0;
             Ar << NumFields;
@@ -424,7 +446,7 @@ namespace Lumina
                     Ar.SetHasError(true);
                     break;
                 }
-                Field.Path.resize(Depth);
+                Field.Path.SetNum(Depth);
                 for (FName& Segment : Field.Path)
                 {
                     Ar << Segment;
@@ -458,12 +480,12 @@ namespace Lumina
             if (Struct == nullptr)
             {
                 LOG_WARN("Array property '{}' no longer holds structs, skipping its {} saved elements.", Array.Name, Count);
-                Array.Resize(Value, 0);
+                Array.SetNum(Value, 0);
                 SkipBytes(Ar, Count * SavedStride);
                 return;
             }
 
-            Array.Resize(Value, Count);
+            Array.SetNum(Value, Count);
             if (Count == 0)
             {
                 return;
@@ -471,38 +493,39 @@ namespace Lumina
 
             const SIZE_T Stride = Array.GetOps()->ElementSize;
             TVector<FPlainField> Current;
-            if (SavedStride == Stride && BuildPlainLayout(Inner, Stride, Current) && SameLayout(Saved, Current))
+            if (SavedStride == Stride && BuildPlainLayout(Inner, Stride, Current) && SameLayout(Saved, Current)
+                && (Inner->IsTrivial() || IsOverwritableStruct(GetPlainElementStruct(Inner))))
             {
                 Ar.Serialize(Array.GetAt(Value, 0), static_cast<int64>(Count * Stride));
                 return;
             }
 
             TVector<FPlainFieldMap> Maps;
-            Maps.reserve(Saved.size());
+            Maps.Reserve(Saved.Num());
             for (const FPlainField& Field : Saved)
             {
                 FPlainFieldMap Map{ Field.Offset, 0, Field.Type, EPropertyTypeFlags::None, Field.Size };
                 uint32 ToSize = 0;
                 if (ResolvePlainField(Struct, Field, Map.To, Map.ToType, ToSize) && (SIZE_T)Map.To + ToSize <= Stride)
                 {
-                    Maps.push_back(Map);
+                    Maps.Add(Map);
                 }
                 else
                 {
-                    LOG_WARN("Array property '{}' dropped saved field '{}', which the struct no longer has.", Array.Name, Field.Path.back());
+                    LOG_WARN("Array property '{}' dropped saved field '{}', which the struct no longer has.", Array.Name, Field.Path.Last());
                 }
             }
 
             uint8* Data = static_cast<uint8*>(Array.GetAt(Value, 0));
-            const SIZE_T PerChunk = SavedStride < PlainChunkBytes ? PlainChunkBytes / SavedStride : 1;
-            TVector<uint8> Chunk(PerChunk * SavedStride);
-            for (SIZE_T First = 0; First < Count && !Ar.HasError(); First += PerChunk)
+            const int32 PerChunk = SavedStride < PlainChunkBytes ? static_cast<int32>(PlainChunkBytes / SavedStride) : 1;
+            TVector<uint8> Chunk(IntCastChecked<int32>(PerChunk * SavedStride));
+            for (int32 First = 0; First < Count && !Ar.HasError(); First += PerChunk)
             {
-                const SIZE_T Num = (Count - First) < PerChunk ? (Count - First) : PerChunk;
-                Ar.Serialize(Chunk.data(), static_cast<int64>(Num * SavedStride));
-                for (SIZE_T Element = 0; Element < Num; ++Element)
+                const int32 Num = Math::Min(Count - First, PerChunk);
+                Ar.Serialize(Chunk.GetData(), static_cast<int64>(Num * SavedStride));
+                for (int32 Element = 0; Element < Num; ++Element)
                 {
-                    const uint8* Source = Chunk.data() + Element * SavedStride;
+                    const uint8* Source = Chunk.GetData() + Element * SavedStride;
                     uint8* Dest = Data + (First + Element) * Stride;
                     for (const FPlainFieldMap& Map : Maps)
                     {
@@ -524,19 +547,27 @@ namespace Lumina
     {
         if (Ar.IsWriting())
         {
-            uint32 Num = static_cast<uint32>(GetNum(Value));
-            Ar.SerializeBits(&Num, 32);
-            for (uint32 i = 0; i < Num; ++i)
+            const int32 Count = Num(Value);
+            uint32 WireCount = static_cast<uint32>(Count);
+            Ar.SerializeBits(&WireCount, 32);
+            for (int32 i = 0; i < Count; ++i)
             {
                 Inner->NetSerialize(Ar, GetAt(Value, i));
             }
         }
         else
         {
-            uint32 Num = 0;
-            Ar.SerializeBits(&Num, 32);
-            Resize(Value, Num);
-            for (uint32 i = 0; i < Num && !Ar.HasError(); ++i)
+            uint32 WireCount = 0;
+            Ar.SerializeBits(&WireCount, 32);
+            if (!Ar.CanHoldCount(WireCount))
+            {
+                LOG_ERROR("Array property '{}' was sent {} elements, more than the packet holds; failing the archive.", Name, WireCount);
+                Ar.SetHasError(true);
+                return;
+            }
+            const int32 Count = static_cast<int32>(WireCount);
+            SetNum(Value, Count);
+            for (int32 i = 0; i < Count && !Ar.HasError(); ++i)
             {
                 Inner->NetSerialize(Ar, GetAt(Value, i));
             }
@@ -546,7 +577,7 @@ namespace Lumina
     void FArrayProperty::Serialize(FArchive& Ar, void* Value)
     {
         // A struct of plain numbers writes its schema once, which is what keeps a million-element array cheap.
-        if (Ar.IsWriting() && GetNum(Value) != 0)
+        if (Ar.IsWriting() && Num(Value) != 0)
         {
             TVector<FPlainField> Layout;
             if (BuildPlainLayout(Inner, Ops->ElementSize, Layout))
@@ -556,29 +587,31 @@ namespace Lumina
             }
         }
 
-        SIZE_T ElementCount = GetNum(Value);
-        Ar << ElementCount;
-        
+        uint64 SerializedCount = Num(Value);
+        Ar << SerializedCount;
+
         size_t SerializedInnerElementSize = Inner->GetElementSize();
         Ar << SerializedInnerElementSize;
 
         const size_t CurrentInnerElementSize = Inner->GetElementSize();
 
         // Checked before anything derived from the count is trusted, including the skip below.
-        if (ElementCount > TNumericLimits<uint32>::Max())
+        if (SerializedCount > static_cast<uint64>(TNumericLimits<int32>::Max()))
         {
             // Failing the archive stops the cascade at the first real symptom instead of misaligning the rest.
-            LOG_ERROR("Array property '{}' tried to serialize {} elements; failing the archive.", Name, ElementCount);
+            LOG_ERROR("Array property '{}' tried to serialize {} elements; failing the archive.", Name, SerializedCount);
             Ar.SetHasError(true);
             return;
         }
 
-        if (!Ar.CanHoldCount(ElementCount))
+        if (!Ar.CanHoldCount(SerializedCount))
         {
-            LOG_ERROR("Array property '{}' claims {} elements, more than the archive has left; failing the archive.", Name, ElementCount);
+            LOG_ERROR("Array property '{}' claims {} elements, more than the archive has left; failing the archive.", Name, SerializedCount);
             Ar.SetHasError(true);
             return;
         }
+
+        const int32 ElementCount = static_cast<int32>(SerializedCount);
 
         if (Ar.IsReading() && (SerializedInnerElementSize & PlainStructArrayFlag) != 0)
         {
@@ -604,7 +637,7 @@ namespace Lumina
             LOG_ERROR("Inner element size changed for array '{}' (inner '{}'), skipping it: Current=({}) Serialized=({})", Name, Inner->Name, CurrentInnerElementSize, SerializedInnerElementSize);
 
             // Chunked through Serialize rather than Seek, since Seek is a no-op on the base archive.
-            Resize(Value, 0);
+            SetNum(Value, 0);
 
             SIZE_T Remaining = ElementCount * SerializedInnerElementSize;
             uint8 Scratch[1024];
@@ -628,23 +661,23 @@ namespace Lumina
             }
             else
             {
-                for (SIZE_T i = 0; i < ElementCount; i++)
+                for (int32 i = 0; i < ElementCount; ++i)
                 {
                     Inner->Serialize(Ar, GetAt(Value, i));
-                }   
+                }
             }
         }
         else
         {
             if (Inner->IsTrivial() && ElementCount)
             {
-                Resize(Value, ElementCount);
+                SetNum(Value, ElementCount);
                 Ar.Serialize(GetAt(Value, 0), static_cast<int64>(ElementCount * InnerElementSize));
             }
             else
             {
-                Resize(Value, ElementCount);
-                for (SIZE_T i = 0; i < ElementCount; ++i)
+                SetNum(Value, ElementCount);
+                for (int32 i = 0; i < ElementCount; ++i)
                 {
                     Inner->Serialize(Ar, GetAt(Value, i));
                 }
@@ -654,17 +687,17 @@ namespace Lumina
 
     void FArrayProperty::SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults)
     {
-        int32 NumElements = (int32)GetNum(Value);
+        int32 NumElements = Num(Value);
         FArchiveArray Array = Slot.EnterArray(NumElements);
 
         if (Slot.GetArchiver().IsReading())
         {
-            Resize(Value, (size_t)NumElements);
+            SetNum(Value, NumElements);
         }
 
         for (int32 i = 0; i < NumElements; ++i)
         {
-            Inner->SerializeItem(Array.EnterElement(), GetAt(Value, (size_t)i));
+            Inner->SerializeItem(Array.EnterElement(), GetAt(Value, i));
         }
     }
 
@@ -677,8 +710,8 @@ namespace Lumina
 
     bool FArrayProperty::Identical(const void* ValueA, const void* ValueB) const
     {
-        const SIZE_T NumA = GetNum(ValueA);
-        const SIZE_T NumB = GetNum(ValueB);
+        const int32 NumA = Num(ValueA);
+        const int32 NumB = Num(ValueB);
         if (NumA != NumB)
         {
             return false;
@@ -691,10 +724,10 @@ namespace Lumina
         // A plain element already compares byte-wise, so the whole buffer compares in one pass.
         if (HasPlainElements())
         {
-            return Memory::Memcmp(Ops->Data(const_cast<void*>(ValueA)), Ops->Data(const_cast<void*>(ValueB)), NumA * Ops->ElementSize) == 0;
+            return Memory::Memcmp(Ops->GetData(const_cast<void*>(ValueA)), Ops->GetData(const_cast<void*>(ValueB)), static_cast<SIZE_T>(NumA) * Ops->ElementSize) == 0;
         }
 
-        for (SIZE_T i = 0; i < NumA; ++i)
+        for (int32 i = 0; i < NumA; ++i)
         {
             const void* ElemA = GetAt(const_cast<void*>(ValueA), i);
             const void* ElemB = GetAt(const_cast<void*>(ValueB), i);
@@ -708,14 +741,14 @@ namespace Lumina
 
     void FArrayProperty::CopyCompleteValue(void* Dst, const void* Src) const
     {
-        const SIZE_T SrcCount = GetNum(Src);
-        Resize(Dst, SrcCount);
+        const int32 SrcCount = Num(Src);
+        SetNum(Dst, SrcCount);
         if (SrcCount > 0 && HasPlainElements())
         {
-            Memory::Memcpy(Ops->Data(Dst), Ops->Data(const_cast<void*>(Src)), SrcCount * Ops->ElementSize);
+            Memory::Memcpy(Ops->GetData(Dst), Ops->GetData(const_cast<void*>(Src)), static_cast<SIZE_T>(SrcCount) * Ops->ElementSize);
             return;
         }
-        for (SIZE_T i = 0; i < SrcCount; ++i)
+        for (int32 i = 0; i < SrcCount; ++i)
         {
             void* DstElem = GetAt(Dst, i);
             const void* SrcElem = GetAt(const_cast<void*>(Src), i);

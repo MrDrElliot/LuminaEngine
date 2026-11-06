@@ -31,7 +31,7 @@ namespace
 
         void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const override
         {
-            Calls->push_back({ Entity.Value, Id });
+            Calls->Emplace(Entity.Value, Id);
 
             // A structural write the animation system never declares, which is the case the queue exists for.
             FNotified* Notified = Registry.TryGet<FNotified>(Entity);
@@ -49,9 +49,9 @@ namespace
     {
         TVector<FCall>* Calls = nullptr;
 
-        void NotifyBegin(ECS::FRegistry&, ECS::FEntity Entity) const override { Calls->push_back({ Entity.Value, 0, 0.0f, EAnimNotifyEventType::Begin }); }
-        void NotifyTick(ECS::FRegistry&, ECS::FEntity Entity, float Alpha) const override { Calls->push_back({ Entity.Value, 0, Alpha, EAnimNotifyEventType::Tick }); }
-        void NotifyEnd(ECS::FRegistry&, ECS::FEntity Entity) const override { Calls->push_back({ Entity.Value, 0, 1.0f, EAnimNotifyEventType::End }); }
+        void NotifyBegin(ECS::FRegistry&, ECS::FEntity Entity) const override { Calls->Emplace(Entity.Value, 0, 0.0f, EAnimNotifyEventType::Begin); }
+        void NotifyTick(ECS::FRegistry&, ECS::FEntity Entity, float Alpha) const override { Calls->Emplace(Entity.Value, 0, Alpha, EAnimNotifyEventType::Tick); }
+        void NotifyEnd(ECS::FRegistry&, ECS::FEntity Entity) const override { Calls->Emplace(Entity.Value, 0, 1.0f, EAnimNotifyEventType::End); }
     };
 
     FAnimNotifyEvent Trigger(const SAnimNotify* Notify)
@@ -86,12 +86,12 @@ TEST(AnimNotifyQueue, HandlersRunAtTheFlushInEntityOrder)
     Queue.Record(A, EAnimNotifyPass::Simple, { Trigger(&Third) });
     Queue.Submit(Bus);
 
-    EXPECT_TRUE(Calls.empty());
+    EXPECT_TRUE(Calls.IsEmpty());
     EXPECT_TRUE(Bus.HasPending());
 
     Bus.Flush();
 
-    ASSERT_EQ(Calls.size(), 3u);
+    ASSERT_EQ(Calls.Num(), 3);
     EXPECT_EQ(Calls[0].Entity, A.Value);
     EXPECT_EQ(Calls[0].Id, 3);
     EXPECT_EQ(Calls[1].Entity, B.Value);
@@ -122,7 +122,7 @@ TEST(AnimNotifyQueue, SimplePassRunsBeforeGraphPass)
     Queue.Submit(Bus);
     Bus.Flush();
 
-    ASSERT_EQ(Calls.size(), 2u);
+    ASSERT_EQ(Calls.Num(), 2);
     EXPECT_EQ(Calls[0].Id, 0);
     EXPECT_EQ(Calls[0].Entity, B.Value);
     EXPECT_EQ(Calls[1].Id, 1);
@@ -147,16 +147,16 @@ TEST(AnimNotifyQueue, ManyWorkersRecordAndOneFlushRunsEveryHandlerOnce)
         Entities[Index] = Registry.Create();
     }
 
-    Task::ParallelFor(Count, [&](uint32 Index)
+    Jobs::ParallelFor(Count, [&](uint32 Index)
     {
         Queue.Record(Entities[Index], EAnimNotifyPass::Simple, { Trigger(&First), Trigger(&Second) });
     }, 16);
 
     Queue.Submit(Bus);
-    EXPECT_TRUE(Calls.empty());
+    EXPECT_TRUE(Calls.IsEmpty());
     Bus.Flush();
 
-    ASSERT_EQ(Calls.size(), static_cast<SIZE_T>(Count) * 2);
+    ASSERT_EQ(Calls.Num(), static_cast<SIZE_T>(Count) * 2);
     for (uint32 Index = 0; Index < Count; ++Index)
     {
         ASSERT_EQ(Calls[Index * 2].Entity, Calls[Index * 2 + 1].Entity);
@@ -194,7 +194,7 @@ TEST(AnimNotifyQueue, EntityDestroyedByAnEarlierHandlerGetsNoMoreCallbacks)
     Bus.Flush();
 
     EXPECT_FALSE(Registry.IsValid(A));
-    ASSERT_EQ(Calls.size(), 2u);
+    ASSERT_EQ(Calls.Num(), 2);
     EXPECT_EQ(Calls[0].Entity, A.Value);
     EXPECT_EQ(Calls[0].Id, 1);
     EXPECT_EQ(Calls[1].Entity, B.Value);
@@ -228,7 +228,7 @@ TEST(AnimNotifyQueue, NotifyStateCallbacksKeepTheirTypeAndAlpha)
     Queue.Submit(Bus);
     Bus.Flush();
 
-    ASSERT_EQ(Calls.size(), 3u);
+    ASSERT_EQ(Calls.Num(), 3);
     EXPECT_EQ(Calls[0].Type, EAnimNotifyEventType::Begin);
     EXPECT_EQ(Calls[1].Type, EAnimNotifyEventType::Tick);
     EXPECT_FLOAT_EQ(Calls[1].Alpha, 0.25f);
@@ -250,6 +250,6 @@ TEST(AnimNotifyQueue, DiscardedBatchRunsNoHandlers)
     Queue.Submit(Bus);
     Bus.Discard();
 
-    EXPECT_TRUE(Calls.empty());
+    EXPECT_TRUE(Calls.IsEmpty());
     EXPECT_FALSE(Bus.HasPending());
 }

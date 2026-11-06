@@ -163,7 +163,7 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API void SetMovedTransformInterest(ECS::FRegistry& Registry, uint32 Consumer, ECS::FEntity Entity, bool bInterested);
 	RUNTIME_API void RemoveMovedTransformConsumer(ECS::FRegistry& Registry, uint32 Consumer);
 
-	// Appends every entity moved since this consumer last drained. Game thread. False when none.
+	// Appends every entity moved since this consumer last drained, false when none. Only while no system writes transforms, since a setter racing the epoch bump loses its publish.
 	RUNTIME_API bool DrainMovedTransforms(ECS::FRegistry& Registry, uint32 Consumer, TVector<ECS::FEntity>& Out);
 
 	// Reports an entity whose drawn pose changed while its transform did not.

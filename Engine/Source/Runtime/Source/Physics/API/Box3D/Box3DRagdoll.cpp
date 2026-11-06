@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/Entity/Systems/SystemAccess.h"
 #include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
@@ -72,8 +73,9 @@ namespace Lumina::Physics
 
     TSharedPtr<FPhysicsRagdollHandle> FBox3DPhysicsScene::CreateRagdoll(const FRagdollDesc& Desc)
     {
+        ValidateNotInParallelSystem("CreateRagdoll");
         if (Desc.Skeleton == nullptr || Desc.ComponentBoneGlobals == nullptr
-            || Desc.Skeleton->GetNumBones() == 0 || Desc.ComponentBoneGlobals->size() != Desc.Skeleton->Bones.size())
+            || Desc.Skeleton->GetNumBones() == 0 || Desc.ComponentBoneGlobals->Num() != Desc.Skeleton->Bones.Num())
         {
             return nullptr;
         }
@@ -94,8 +96,8 @@ namespace Lumina::Physics
         }
         Request.Handle = MakeShared<FPhysicsRagdollHandle>();
         auto Handle = Request.Handle;
-        OwnedRagdolls.push_back({ Desc.Entity, Handle });
-        PendingRagdolls.push_back(Move(Request));
+        OwnedRagdolls.Emplace(Desc.Entity, Handle);
+        PendingRagdolls.Add(Move(Request));
         return Handle;
     }
 
@@ -112,7 +114,7 @@ namespace Lumina::Physics
 
         const TVector<FMatrix4>& Globals = Request.Globals;
         const int32 NumBones = Skeleton->GetNumBones();
-        if ((int32)Globals.size() != NumBones || NumBones == 0)
+        if (Globals.Num() != NumBones || NumBones == 0)
         {
             return nullptr;
         }
@@ -128,15 +130,15 @@ namespace Lumina::Physics
             AnimPose::DecomposeTRS(Desc.EntityToWorld * Globals[BoneIndex], OutPos, OutRot, Scale);
         };
 
-        if (!Request.Bodies.empty())
+        if (!Request.Bodies.IsEmpty())
         {
             TVector<int32> Order;
-            Order.reserve(Request.Bodies.size());
-            for (int32 i = 0; i < (int32)Request.Bodies.size(); ++i)
+            Order.Reserve(Request.Bodies.Num());
+            for (int32 i = 0; i < Request.Bodies.Num(); ++i)
             {
                 if (Skeleton->FindBoneIndex(Request.Bodies[i].BoneName) != Constants::kIndexNone)
                 {
-                    Order.push_back(i);
+                    Order.Add(i);
                 }
             }
 
@@ -182,8 +184,8 @@ namespace Lumina::Physics
                     }
                 }
 
-                BoneToBody[BoneIndex] = (int32)Defs.size();
-                Defs.push_back(Move(Def));
+                BoneToBody[BoneIndex] = Defs.Num();
+                Defs.Add(Move(Def));
             }
         }
         else
@@ -202,14 +204,14 @@ namespace Lumina::Physics
                 const TVector<int32> Children = Skeleton->GetChildBones(BoneIndex);
                 bool bBuilt = false;
 
-                if (!Children.empty())
+                if (!Children.IsEmpty())
                 {
                     FVector3 ChildAvg(0.0f);
                     for (int32 C : Children)
                     {
                         ChildAvg += FVector3(Globals[C][3]);
                     }
-                    ChildAvg /= (float)Children.size();
+                    ChildAvg /= (float)Children.Num();
 
                     const FVector3 DirC = ChildAvg - BonePos;
                     const float Length = Math::Length(DirC);
@@ -229,12 +231,12 @@ namespace Lumina::Physics
                     Def.Shape = MakeSphereShape(FVector3(0.0f), 0.03f);
                 }
 
-                BoneToBody[BoneIndex] = (int32)Defs.size();
-                Defs.push_back(Move(Def));
+                BoneToBody[BoneIndex] = Defs.Num();
+                Defs.Add(Move(Def));
             }
         }
 
-        if (Defs.empty())
+        if (Defs.IsEmpty())
         {
             return nullptr;
         }
@@ -244,10 +246,10 @@ namespace Lumina::Physics
             int32 Parent = Skeleton->GetBone(Def.BoneIndex).ParentIndex;
             while (Parent >= 0)
             {
-                auto It = BoneToBody.find(Parent);
-                if (It != BoneToBody.end())
+                auto It = BoneToBody.Find(Parent);
+                if (It != nullptr)
                 {
-                    Def.ParentBodyIndex = It->second;
+                    Def.ParentBodyIndex = (*It);
                     break;
                 }
                 Parent = Skeleton->GetBone(Parent).ParentIndex;
@@ -255,11 +257,11 @@ namespace Lumina::Physics
         }
 
         TSharedPtr<FPhysicsRagdollHandle> Handle = Request.Handle;
-        if (BodyHandles.size() - FreeBodyHandles.size() + Defs.size() > MaxBodies) { return nullptr; }
+        if (static_cast<uint32>(BodyHandles.Num() - FreeBodyHandles.Num() + Defs.Num()) > MaxBodies) { return nullptr; }
         Handle->WorldId = WorldId;
-        Handle->Bodies.reserve(Defs.size());
-        Handle->BodyHandles.reserve(Defs.size());
-        Handle->JointToBone.reserve(Defs.size());
+        Handle->Bodies.Reserve(Defs.Num());
+        Handle->BodyHandles.Reserve(Defs.Num());
+        Handle->JointToBone.Reserve(Defs.Num());
 
         b3ShapeDef ShapeDef = b3DefaultShapeDef();
         ShapeDef.filter = Box3DUtils::MakeShapeFilter(Profile);
@@ -304,20 +306,20 @@ namespace Lumina::Physics
                 b3Body_SetMassData(BodyId, MassData);
             }
 
-            Handle->Bodies.push_back(BodyId);
-            Handle->BodyHandles.push_back(BodyHandle);
-            Handle->JointToBone.push_back(Def.BoneIndex);
+            Handle->Bodies.Add(BodyId);
+            Handle->BodyHandles.Add(BodyHandle);
+            Handle->JointToBone.Add(Def.BoneIndex);
         }
 
-        if (Handle->Bodies.empty())
+        if (Handle->Bodies.IsEmpty())
         {
             return nullptr;
         }
 
-        for (int32 i = 0; i < (int32)Defs.size(); ++i)
+        for (int32 i = 0; i < Defs.Num(); ++i)
         {
             const FRagdollBodyDef& Def = Defs[i];
-            if (Def.ParentBodyIndex < 0 || i >= (int32)Handle->Bodies.size() || Def.ParentBodyIndex >= (int32)Handle->Bodies.size())
+            if (Def.ParentBodyIndex < 0 || i >= Handle->Bodies.Num() || Def.ParentBodyIndex >= Handle->Bodies.Num())
             {
                 continue;
             }
@@ -345,7 +347,7 @@ namespace Lumina::Physics
             float Swing1 = Def.Swing1Deg;
             float Swing2 = Def.Swing2Deg;
 
-            if (!Request.Constraints.empty())
+            if (!Request.Constraints.IsEmpty())
             {
                 const FName ChildBone = Skeleton->GetBone(Def.BoneIndex).Name;
                 for (const SPhysicsConstraintSetup& C : Request.Constraints)
@@ -397,14 +399,14 @@ namespace Lumina::Physics
             const b3JointId JointId = b3CreateSphericalJoint(WorldId, &JointDef);
             if (b3Joint_IsValid(JointId))
             {
-                Handle->Joints.push_back(JointId);
+                Handle->Joints.Add(JointId);
             }
         }
 
-        const int32 NumBodies = (int32)Handle->Bodies.size();
-        Handle->ParentBody.resize(NumBodies, -1);
+        const int32 NumBodies = Handle->Bodies.Num();
+        Handle->ParentBody.SetNum(NumBodies, -1);
         TVector<float> SubtreeMass;
-        SubtreeMass.resize(NumBodies, 0.0f);
+        SubtreeMass.SetNum(NumBodies, 0.0f);
         float TotalMass = 0.0f;
         for (int32 i = 0; i < NumBodies; ++i)
         {
@@ -455,9 +457,9 @@ namespace Lumina::Physics
             {
                 continue;
             }
-            Handle->Joints.push_back(MuscleId);
+            Handle->Joints.Add(MuscleId);
 
-            FRagdollMuscle& Muscle = Handle->Muscles.emplace_back();
+            FRagdollMuscle& Muscle = Handle->Muscles.EmplaceGetRef();
             Muscle.Joint = MuscleId;
             Muscle.Body = i;
             Muscle.ParentBody = Parent;
@@ -467,9 +469,9 @@ namespace Lumina::Physics
         }
 
         // Limbs that are not directly jointed still must not collide, which is what a filter joint is for.
-        for (int32 i = 0; i < (int32)Handle->Bodies.size(); ++i)
+        for (int32 i = 0; i < Handle->Bodies.Num(); ++i)
         {
-            for (int32 j = i + 1; j < (int32)Handle->Bodies.size(); ++j)
+            for (int32 j = i + 1; j < Handle->Bodies.Num(); ++j)
             {
                 b3FilterJointDef FilterDef = b3DefaultFilterJointDef();
                 FilterDef.base.bodyIdA = Handle->Bodies[i];
@@ -478,7 +480,7 @@ namespace Lumina::Physics
                 const b3JointId FilterId = b3CreateFilterJoint(WorldId, &FilterDef);
                 if (b3Joint_IsValid(FilterId))
                 {
-                    Handle->Joints.push_back(FilterId);
+                    Handle->Joints.Add(FilterId);
                 }
             }
         }
@@ -531,7 +533,7 @@ namespace Lumina::Physics
         for (int32 BoneIndex = Ragdoll->Skeleton->FindBoneIndex(Bone); Ragdoll->Skeleton->IsBoneIndexValid(BoneIndex);
              BoneIndex = Ragdoll->Skeleton->GetBone(BoneIndex).ParentIndex)
         {
-            for (size_t Part = 0; Part < Ragdoll->JointToBone.size() && Part < Ragdoll->BodyHandles.size(); ++Part)
+            for (int32 Part = 0; Part < Ragdoll->JointToBone.Num() && Part < Ragdoll->BodyHandles.Num(); ++Part)
             {
                 if (Ragdoll->JointToBone[Part] == BoneIndex)
                 {
@@ -552,23 +554,23 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        if (Handle.Bodies.empty() || Skeleton == nullptr)
+        if (Handle.Bodies.IsEmpty() || Skeleton == nullptr)
         {
             return;
         }
 
         const int32 NumBones = Skeleton->GetNumBones();
-        OutBoneTransforms.resize(NumBones);
+        OutBoneTransforms.SetNum(NumBones);
 
         TVector<FMatrix4> ComponentGlobals;
-        ComponentGlobals.resize(NumBones);
+        ComponentGlobals.SetNum(NumBones);
         TVector<uint8> Mapped;
-        Mapped.resize(NumBones, 0);
+        Mapped.SetNum(NumBones, 0);
 
-        for (int32 j = 0; j < (int32)Handle.JointToBone.size(); ++j)
+        for (int32 j = 0; j < Handle.JointToBone.Num(); ++j)
         {
             const int32 BoneIndex = Handle.JointToBone[j];
-            if (!Skeleton->IsBoneIndexValid(BoneIndex) || j >= (int32)Handle.Bodies.size())
+            if (!Skeleton->IsBoneIndexValid(BoneIndex) || j >= Handle.Bodies.Num())
             {
                 continue;
             }
@@ -600,6 +602,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::DestroyRagdoll(const TSharedPtr<FPhysicsRagdollHandle>& Handle)
     {
+        ValidateNotInParallelSystem("DestroyRagdoll");
         if (!Handle)
         {
             return;
@@ -613,7 +616,7 @@ namespace Lumina::Physics
         OutPosition = FVector3(0.0f);
         OutRotation = FQuat::Identity();
 
-        if (Handle.Bodies.empty() || !b3Body_IsValid(Handle.Bodies[0]))
+        if (Handle.Bodies.IsEmpty() || !b3Body_IsValid(Handle.Bodies[0]))
         {
             return;
         }

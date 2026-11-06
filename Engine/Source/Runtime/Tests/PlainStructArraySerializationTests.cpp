@@ -67,7 +67,7 @@ TEST(PlainStructArraySerialization, RoundTripsThroughTheSchemaFormat)
     TVector<SFoliageInstance> Source;
     for (uint32 i = 0; i < Count; ++i)
     {
-        Source.push_back(MakeInstance(i));
+        Source.Add(MakeInstance(i));
     }
 
     TVector<uint8> Bytes;
@@ -75,13 +75,13 @@ TEST(PlainStructArraySerialization, RoundTripsThroughTheSchemaFormat)
     Property->Serialize(Writer, &Source);
 
     // A tag per field per element would be several times this, so staying under it proves the schema path ran.
-    EXPECT_LT(Bytes.size(), (size_t)Count * sizeof(SFoliageInstance) + 4096);
+    EXPECT_LT(Bytes.Num(), (size_t)Count * sizeof(SFoliageInstance) + 4096);
 
     TVector<SFoliageInstance> Loaded;
     FMemoryReader Reader(Bytes);
     Property->Serialize(Reader, &Loaded);
     ASSERT_FALSE(Reader.HasError());
-    ASSERT_EQ(Loaded.size(), (size_t)Count);
+    ASSERT_EQ(Loaded.Num(), Count);
     for (uint32 i = 0; i < Count; ++i)
     {
         ExpectSame(Loaded[i], Source[i]);
@@ -97,7 +97,7 @@ TEST(PlainStructArraySerialization, StillReadsTheTaggedFormat)
 
     TVector<uint8> Bytes;
     FMemoryWriter Writer(Bytes);
-    SIZE_T Count = Source.size();
+    SIZE_T Count = Source.Num();
     SIZE_T ElementSize = Property->GetInternalProperty()->GetElementSize();
     Writer << Count;
     Writer << ElementSize;
@@ -112,7 +112,7 @@ TEST(PlainStructArraySerialization, StillReadsTheTaggedFormat)
     Reader.SetFileVersion(static_cast<int32>(ELuminaEngineVersion::ARRAY_ELEMENT_KIND) - 1);
     Property->Serialize(Reader, &Loaded);
     ASSERT_FALSE(Reader.HasError());
-    ASSERT_EQ(Loaded.size(), Source.size());
+    ASSERT_EQ(Loaded.Num(), Source.Num());
     ExpectSame(Loaded[0], Source[0]);
     ExpectSame(Loaded[1], Source[1]);
 }
@@ -156,7 +156,7 @@ TEST(PlainStructArraySerialization, RemapsAnOlderLayoutByFieldName)
     FMemoryReader Reader(Bytes);
     Property->Serialize(Reader, &Loaded);
     ASSERT_FALSE(Reader.HasError());
-    ASSERT_EQ(Loaded.size(), 2u);
+    ASSERT_EQ(Loaded.Num(), 2);
 
     EXPECT_EQ(Loaded[0].TypeIndex, 5);
     EXPECT_EQ(Loaded[1].TypeIndex, -2);

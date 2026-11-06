@@ -45,7 +45,7 @@ namespace Lumina
                 }
 
                 CMaterialFunction* Function = Call->Function.Get();
-                if (Function == nullptr || !VisitedFunctions.insert(Function->GetGUID()).second)
+                if (Function == nullptr || !VisitedFunctions.TryAdd(Function->GetGUID()))
                 {
                     continue;
                 }
@@ -61,11 +61,10 @@ namespace Lumina
             }
         }
 
-        // GrassOutput nodes sit outside the emit closure, so the only way their data reaches the asset is
-        // a direct scan of the graph. Assign rather than merge: a removed node must drop its species.
+        // GrassOutput nodes sit outside the emit closure, so they are scanned directly; assign rather than merge so a removed node drops its species.
         void CollectGrassOutputs(CMaterial* Material, CMaterialNodeGraph* Graph)
         {
-            Material->GrassOutputs.clear();
+            Material->GrassOutputs.Reset();
 
             if (Graph == nullptr)
             {
@@ -96,7 +95,7 @@ namespace Lumina
                     Output.GrassType    = Entry.GrassType;
                     Output.LayerIndex   = Entry.LayerIndex;
                     Output.DensityScale = Entry.DensityScale;
-                    Material->GrassOutputs.push_back(Output);
+                    Material->GrassOutputs.Add(Output);
                 }
             }
         }
@@ -152,23 +151,23 @@ namespace Lumina
         {
             FMaskedInterpolants IO;
             const FStringView Source = PixelGraph.View();
-            size_t i = 0;
+            int32 i = 0;
 
-            auto NextIdentifier = [&](size_t& Pos) -> FStringView
+            auto NextIdentifier = [&](int32& Pos) -> FStringView
             {
-                while (Pos < Source.size() && Source[Pos] == ' ')
+                while (Pos < Source.Len() && Source[Pos] == ' ')
                 {
                     ++Pos;
                 }
-                const size_t Begin = Pos;
-                while (Pos < Source.size() && IsIdentifierChar(Source[Pos], Pos == Begin))
+                const int32 Begin = Pos;
+                while (Pos < Source.Len() && IsIdentifierChar(Source[Pos], Pos == Begin))
                 {
                     ++Pos;
                 }
-                return FStringView(Source.data() + Begin, Pos - Begin);
+                return FStringView(Source.GetData() + Begin, Pos - Begin);
             };
 
-            while (i < Source.size())
+            while (i < Source.Len())
             {
                 if (!IsIdentifierChar(Source[i], true) || (i > 0 && IsIdentifierChar(Source[i - 1], false)))
                 {
@@ -179,12 +178,12 @@ namespace Lumina
                 const FStringView Token = NextIdentifier(i);
                 if (Token == "Input")
                 {
-                    size_t Pos = i;
-                    while (Pos < Source.size() && Source[Pos] == ' ')
+                    int32 Pos = i;
+                    while (Pos < Source.Len() && Source[Pos] == ' ')
                     {
                         ++Pos;
                     }
-                    if (Pos >= Source.size() || Source[Pos] != '.')
+                    if (Pos >= Source.Len() || Source[Pos] != '.')
                     {
                         IO.bFull = true;
                         continue;
@@ -240,28 +239,28 @@ namespace Lumina
         {
             if (IO.bFull)
             {
-                Out.emplace_back("MASKED_IO_FULL");
+                Out.Emplace("MASKED_IO_FULL");
                 for (const char* Define : { "MASKED_IO_UV1", "MASKED_IO_COLOR", "MASKED_IO_NORMAL", "MASKED_IO_TANGENT",
                                             "MASKED_IO_VIEW_POS", "MASKED_IO_WORLD_NO_WPO", "MASKED_IO_INSTANCE" })
                 {
-                    Out.emplace_back(Define);
+                    Out.Emplace(Define);
                 }
                 return;
             }
 
-            if (IO.bUV1)                    { Out.emplace_back("MASKED_IO_UV1"); }
-            if (IO.bColor)                  { Out.emplace_back("MASKED_IO_COLOR"); }
-            if (IO.bNormal)                 { Out.emplace_back("MASKED_IO_NORMAL"); }
-            if (IO.bTangent)                { Out.emplace_back("MASKED_IO_TANGENT"); }
-            if (IO.bViewPos && bShadowLane) { Out.emplace_back("MASKED_IO_VIEW_POS"); }
-            if (IO.bWorldNoWPO)             { Out.emplace_back("MASKED_IO_WORLD_NO_WPO"); }
-            if (IO.bInstance)               { Out.emplace_back("MASKED_IO_INSTANCE"); }
+            if (IO.bUV1)                    { Out.Emplace("MASKED_IO_UV1"); }
+            if (IO.bColor)                  { Out.Emplace("MASKED_IO_COLOR"); }
+            if (IO.bNormal)                 { Out.Emplace("MASKED_IO_NORMAL"); }
+            if (IO.bTangent)                { Out.Emplace("MASKED_IO_TANGENT"); }
+            if (IO.bViewPos && bShadowLane) { Out.Emplace("MASKED_IO_VIEW_POS"); }
+            if (IO.bWorldNoWPO)             { Out.Emplace("MASKED_IO_WORLD_NO_WPO"); }
+            if (IO.bInstance)               { Out.Emplace("MASKED_IO_INSTANCE"); }
         }
     }
 
     bool MakeMaterialPermutationTarget(const CMaterial* Material, uint64 Key, FMaterialCompileTarget& OutTarget)
     {
-        if (Material == nullptr || Material->StaticSwitches.empty())
+        if (Material == nullptr || Material->StaticSwitches.IsEmpty())
         {
             return false;
         }
@@ -269,7 +268,7 @@ namespace Lumina
         OutTarget.bPermutation = true;
         OutTarget.Key          = Key;
         OutTarget.Generation   = Material->GetPermutationGeneration();
-        OutTarget.StaticSwitchOverrides.clear();
+        OutTarget.StaticSwitchOverrides.Reset();
 
         for (const SMaterialStaticSwitch& Switch : Material->StaticSwitches)
         {
@@ -280,7 +279,7 @@ namespace Lumina
     }
 
     bool BeginMaterialGraphCompile(CMaterial* Material, CMaterialNodeGraph* Graph, FMaterialCompiler& Compiler,
-        FMaterialGraphCompileResult& Result, const FMaterialCompileTarget& Target, ETaskPriority Priority)
+        FMaterialGraphCompileResult& Result, const FMaterialCompileTarget& Target, Jobs::EJobPriority Priority)
     {
         if (Material == nullptr || Graph == nullptr)
         {
@@ -299,11 +298,11 @@ namespace Lumina
 
             // Resolved first, or a null slot fails to dedupe and binds its texture a second time.
             TVector<TStrongObjectPtr<CTexture>> Resolved;
-            Resolved.reserve(Material->Textures.size());
-            for (uint32 i = 0; i < (uint32)Material->Textures.size(); ++i)
+            Resolved.Reserve(Material->Textures.Num());
+            for (int32 i = 0; i < Material->Textures.Num(); ++i)
             {
                 Material->ResolveTextureSlot(i);
-                Resolved.push_back(i < (uint32)Material->ResolvedTextures.size() ? Material->ResolvedTextures[i] : nullptr);
+                Resolved.Add(i < Material->ResolvedTextures.Num() ? Material->ResolvedTextures[i] : nullptr);
             }
             Compiler.SeedManifest(Material->Parameters, *Material->GetMaterialUniforms(), Resolved,
                 Material->ParameterCollections);
@@ -362,25 +361,25 @@ namespace Lumina
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
 
         // Crash-dump-friendly shader names, the material name plus its stage.
-        const FString MatName = Material->GetName().c_str();
+        const FString MatName = *Material->GetName();
 
         FShaderCompileOptions Options;
         Options.DebugName = MatName + " [PS]";
         if (Material->IsOITResolved())
         {
-            Options.MacroDefinitions.emplace_back("TRANSLUCENT");
+            Options.MacroDefinitions.Emplace("TRANSLUCENT");
         }
         if (Material->GetBlendMode() == EBlendMode::AlphaComposite)
         {
-            Options.MacroDefinitions.emplace_back("ALPHA_COMPOSITE");
+            Options.MacroDefinitions.Emplace("ALPHA_COMPOSITE");
         }
         if (Material->GetBlendMode() == EBlendMode::Modulate)
         {
-            Options.MacroDefinitions.emplace_back("MODULATE");
+            Options.MacroDefinitions.Emplace("MODULATE");
         }
         if (Material->GetBlendMode() == EBlendMode::Masked)
         {
-            Options.MacroDefinitions.emplace_back("MASKED");
+            Options.MacroDefinitions.Emplace("MASKED");
         }
         // Every model reaches the shader through runtime flags, so an instance can override back to Lit.
 
@@ -400,7 +399,7 @@ namespace Lumina
 
             auto Commit = [Material, Stage, bPermutation, TargetKey, TargetGen, Log](const FShaderHeader& Header)
             {
-                const TSpan<const uint32> Spirv(Header.Binaries.data(), Header.Binaries.size());
+                const TSpan<const uint32> Spirv(Header.Binaries.GetData(), Header.Binaries.Num());
                 if (bPermutation)
                 {
                     Material->CommitPermutationStageIfCurrent(TargetKey, TargetGen, Stage, Spirv);
@@ -472,7 +471,7 @@ namespace Lumina
                 CompileOptions.DebugName = MatName + " [" + Geo.Tag + "]";
                 if (Geo.Define != nullptr)
                 {
-                    CompileOptions.MacroDefinitions.emplace_back(Geo.Define);
+                    CompileOptions.MacroDefinitions.Emplace(Geo.Define);
                 }
                 DispatchGeometryStage(*Geo.Source, CompileOptions, Geo.Stage);
             }
@@ -483,7 +482,7 @@ namespace Lumina
                 const FMaskedInterpolants MaskedIO = ScanMaskedInterpolants(Compiler.GetPixelGraphSource());
 
                 FShaderCompileOptions VisMaskedOptions; VisMaskedOptions.DebugName = MatName + " [VBMM]";
-                VisMaskedOptions.MacroDefinitions.emplace_back("VISBUFFER_MASKED_GEOM");
+                VisMaskedOptions.MacroDefinitions.Emplace("VISBUFFER_MASKED_GEOM");
                 AddMaskedInterpolantDefines(MaskedIO, false, VisMaskedOptions.MacroDefinitions);
                 DispatchGeometryStage(VisSource, VisMaskedOptions, EMaterialShaderStage::VisBufferMeshMasked);
 
@@ -494,13 +493,13 @@ namespace Lumina
                 // The vertex path hands VisID over as a varying, since it cannot write a primitive ID.
                 FShaderCompileOptions MaskedPSVertexOptions = MaskedPSOptions;
                 MaskedPSVertexOptions.DebugName += " [vertex path]";
-                MaskedPSVertexOptions.MacroDefinitions.emplace_back("MESHLET_VERTEX_PATH");
+                MaskedPSVertexOptions.MacroDefinitions.Emplace("MESHLET_VERTEX_PATH");
                 DispatchStage(MaskedPSSource, Move(MaskedPSVertexOptions), EMaterialShaderStage::MaskedVisBufferPixelVertex);
                 DispatchStage(MaskedPSSource, Move(MaskedPSOptions), EMaterialShaderStage::MaskedVisBufferPixel);
 
                 // The shadow lane too, so a cut-out casts its own silhouette and not its quad.
                 FShaderCompileOptions ShadowMaskedOptions; ShadowMaskedOptions.DebugName = MatName + " [MSSM]";
-                ShadowMaskedOptions.MacroDefinitions.emplace_back("MESHLET_MESH_MASKED_SHADOW");
+                ShadowMaskedOptions.MacroDefinitions.Emplace("MESHLET_MESH_MASKED_SHADOW");
                 AddMaskedInterpolantDefines(MaskedIO, true, ShadowMaskedOptions.MacroDefinitions);
                 DispatchGeometryStage(MeshSource, ShadowMaskedOptions, EMaterialShaderStage::MeshShadowMasked);
 
@@ -552,14 +551,14 @@ namespace Lumina
 
             // A stage this compile sent out that never came back failed, even with the previous compile's bytecode still loaded.
             const bool bFailedThisCompile = (Dispatched & Bit) != 0u && (Committed & Bit) == 0u;
-            if (!Binaries.empty() && !bFailedThisCompile)
+            if (!Binaries.IsEmpty() && !bFailedThisCompile)
             {
                 return false;
             }
             EdNodeGraph::FError Error;
             Error.Name        = "Shader Stage Failed";
             Error.Description  = FString("The ") + StageDisplayName(Stage) + " shader stage produced no output (compile failed).";
-            Result.Errors.push_back(Error);
+            Result.Errors.Add(Error);
             return true;
         };
 
@@ -596,17 +595,17 @@ namespace Lumina
             TVector<TStrongObjectPtr<CTexture>> BoundTextures;
             Compiler.GetBoundTextures(BoundTextures);
 
-            Material->Textures.clear();
-            Material->Textures.reserve(BoundTextures.size());
-            Material->ResolvedTextures.clear();
-            Material->ResolvedTextures.reserve(BoundTextures.size());
+            Material->Textures.Reset();
+            Material->Textures.Reserve(BoundTextures.Num());
+            Material->ResolvedTextures.Reset();
+            Material->ResolvedTextures.Reserve(BoundTextures.Num());
 
             for (const TStrongObjectPtr<CTexture>& Texture : BoundTextures)
             {
                 if (Texture == nullptr)
                 {
-                    Material->Textures.emplace_back();
-                    Material->ResolvedTextures.emplace_back();
+                    Material->Textures.Emplace();
+                    Material->ResolvedTextures.Emplace();
                     continue;
                 }
 
@@ -616,27 +615,27 @@ namespace Lumina
                 FStringView Path;
                 if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Guid))
                 {
-                    Path = FStringView(Data->Path.c_str(), Data->Path.size());
+                    Path = FStringView(*Data->Path, Data->Path.Len());
                 }
 
                 FFixedString PackagePath;
-                if (Path.empty() && Texture->GetPackage() != nullptr)
+                if (Path.IsEmpty() && Texture->GetPackage() != nullptr)
                 {
                     PackagePath = Texture->GetPackage()->GetPackagePath();
-                    Path = FStringView(PackagePath.c_str(), PackagePath.size());
+                    Path = FStringView(*PackagePath, PackagePath.Len());
                 }
 
-                if (Path.empty())
+                if (Path.IsEmpty())
                 {
                     LOG_WARN("Material '{}': texture '{}' has no resolvable asset path; its slot will "
                              "fall back to the placeholder on any future load.",
                              Material->GetName(), Texture->GetName());
                 }
 
-                Material->Textures.emplace_back(FSoftObjectPath(Path, Guid));
+                Material->Textures.Emplace(FSoftObjectPath(Path, Guid));
 
                 // Round-tripping an already-resident texture through the asset manager rendered it magenta.
-                Material->ResolvedTextures.emplace_back(Texture);
+                Material->ResolvedTextures.Emplace(Texture);
             }
         }
 
@@ -644,7 +643,7 @@ namespace Lumina
         Compiler.GetBoundCollections(Material->ParameterCollections);
 
         Memory::Memzero(Material->GetMaterialUniforms(), sizeof(FMaterialUniforms));
-        Material->Parameters.clear();
+        Material->Parameters.Reset();
         Compiler.GetParameters(Material->Parameters, *Material->GetMaterialUniforms());
 
         // A permutation never reaches a switch nested under a dropped branch, so it must not renumber.
@@ -732,18 +731,18 @@ namespace Lumina
 
         TVector<FGuid> Functions;
         THashSet<FGuid> SeenFunctions;
-        Functions.push_back(FunctionGUID);
-        SeenFunctions.insert(FunctionGUID);
+        Functions.Add(FunctionGUID);
+        SeenFunctions.Add(FunctionGUID);
 
-        for (size_t Index = 0; Index < Functions.size(); ++Index)
+        for (int32 Index = 0; Index < Functions.Num(); ++Index)
         {
             for (const FAssetData* Referencer : Registry.GetReferencersOf(Functions[Index]))
             {
                 if (Referencer->AssetClass == FunctionClass)
                 {
-                    if (SeenFunctions.insert(Referencer->AssetGUID).second)
+                    if (SeenFunctions.TryAdd(Referencer->AssetGUID))
                     {
-                        Functions.push_back(Referencer->AssetGUID);
+                        Functions.Add(Referencer->AssetGUID);
                     }
                 }
                 else if (Referencer->AssetClass == MaterialClass)
@@ -771,7 +770,7 @@ namespace Lumina
         const FMaterialGraphCompileResult Result = CompileMaterialGraph(Material, Graph);
         if (!Result.bSuccess)
         {
-            OutError = Lumina::Format("its graph failed to compile with {} error(s)", Result.Errors.size());
+            OutError = Lumina::Format("its graph failed to compile with {} error(s)", Result.Errors.Num());
             return false;
         }
         return true;
@@ -781,7 +780,7 @@ namespace Lumina
     {
         if (Material == nullptr)
         {
-            return (uint32)Keys.size();
+            return (uint32)Keys.Num();
         }
 
         struct FPermutationCompile
@@ -809,7 +808,7 @@ namespace Lumina
                 ++Failed;
                 continue;
             }
-            Compiles.push_back(Move(Compile));
+            Compiles.Add(Move(Compile));
         }
 
         // Every permutation is dispatched before the first wait, so their stages share the workers.

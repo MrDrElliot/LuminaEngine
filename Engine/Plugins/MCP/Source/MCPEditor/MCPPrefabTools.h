@@ -3,25 +3,32 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
-#include "MCPAssetTools.h"
+#include "MCPToolTypes.h"
 
 #include "MCPPrefabTools.generated.h"
 
 namespace Lumina
 {
     REFLECT()
+    enum class EPrefabInstanceAction : uint8
+    {
+        Resync,
+        Detach,
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SListPrefabsParams
     {
         GENERATED_BODY()
 
-        /** Only prefabs whose name or path contains this. Empty lists them all. */
+        // Only prefabs whose name or path contains this. Empty lists all.
         PROPERTY()
         FString Contains;
 
         PROPERTY()
         int32 Limit = 50;
 
-        /** How many matches to skip first, so a list longer than Limit can be paged. */
+        // Matches to skip first, to page past Limit.
         PROPERTY()
         int32 Offset = 0;
     };
@@ -34,7 +41,7 @@ namespace Lumina
         PROPERTY()
         TVector<SAssetInfo> Results;
 
-        /** Total matches before Limit, so a caller knows to page. */
+        // How many matched before Limit was applied.
         PROPERTY()
         int32 Matched = 0;
     };
@@ -44,7 +51,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID of the prefab, from prefab.list. */
+        // Prefab GUID, from prefab.list.
         PROPERTY()
         FString Asset;
     };
@@ -72,14 +79,14 @@ namespace Lumina
         PROPERTY()
         FString StableID;
 
-        /** Empty for a root. */
+        // Empty for a root.
         PROPERTY()
         FString ParentStableID;
 
         PROPERTY()
         TVector<FString> Components;
 
-        /** Class names of the entity scripts, then of any held while their class is not loaded. */
+        // Class names of the entity scripts, then of any held while their class is not loaded.
         PROPERTY()
         TVector<FString> Scripts;
     };
@@ -101,32 +108,17 @@ namespace Lumina
         PROPERTY()
         int32 EntityCount = 0;
 
-        /** Entities with no parent inside the prefab; usually one. */
+        // Entities with no parent inside the prefab; usually one.
         PROPERTY()
         TVector<SPrefabEntityInfo> RootEntities;
 
-        /** GUID of the prefab this one is a variant of, or empty. */
+        // GUID of the prefab this one is a variant of, or empty.
         PROPERTY()
         FString ParentPrefab;
 
-        /** Every entity, in no particular order. */
+        // Every entity, in no particular order.
         PROPERTY()
         TVector<SPrefabNodeInfo> Nodes;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SVector3Param
-    {
-        GENERATED_BODY()
-
-        PROPERTY()
-        float X = 0.0f;
-
-        PROPERTY()
-        float Y = 0.0f;
-
-        PROPERTY()
-        float Z = 0.0f;
     };
 
     REFLECT()
@@ -134,26 +126,26 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID of the prefab, from prefab.list. */
+        // Prefab GUID, from prefab.list.
         PROPERTY()
         FString Asset;
 
         PROPERTY()
         SVector3Param Position;
 
-        /** Euler angles in degrees. */
+        // Euler angles in degrees.
         PROPERTY()
         SVector3Param Rotation;
 
-        /** Uniform scale; 1 keeps the prefab's own. */
+        // Uniform scale; 1 keeps the prefab's own.
         PROPERTY()
         float Scale = 1.0f;
 
-        /** Entity id to parent the instance under, or empty for the world root. */
+        // Entity id to parent the instance under, or empty for the world root.
         PROPERTY()
         FString Parent;
 
-        /** Name for the spawned root; empty keeps the prefab's. */
+        // Name for the spawned root; empty keeps the prefab's.
         PROPERTY()
         FString Name;
     };
@@ -163,7 +155,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Id of the spawned root, for every other entity tool. */
+        // Id of the spawned root.
         PROPERTY()
         FString Entity;
 
@@ -176,11 +168,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** GUID of the prefab to overwrite, from prefab.list. */
+        // GUID of the prefab to overwrite.
         PROPERTY()
         FString Asset;
 
-        /** Root of the placed instance to capture, from scene.list_entities or prefab.spawn. */
+        // Root of the placed instance to capture.
         PROPERTY()
         FString Entity;
     };
@@ -198,19 +190,29 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SCreateVariantParams
+    struct MCPEDITOR_API SCreatePrefabParams
     {
         GENERATED_BODY()
 
+        // World entities to capture; nested picks fold into their selected ancestor. Ignored with VariantOf.
         PROPERTY()
-        FString Asset;
+        TVector<FString> Entities;
 
+        // Content folder for a new prefab, /Game/Content by default. Ignored with VariantOf.
+        PROPERTY()
+        FString Folder;
+
+        // Asset name. For a variant, empty means the parent's name plus _Variant.
         PROPERTY()
         FString Name;
+
+        // GUID of a prefab to create a variant of, saved beside it.
+        PROPERTY()
+        FString VariantOf;
     };
 
     REFLECT()
-    struct MCPEDITOR_API SCreateVariantResult
+    struct MCPEDITOR_API SCreatePrefabResult
     {
         GENERATED_BODY()
 
@@ -226,7 +228,10 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Root of a placed instance. */
+        PROPERTY()
+        EPrefabInstanceAction Action = EPrefabInstanceAction::Resync;
+
+        // Root of a placed instance.
         PROPERTY()
         FString Entity;
     };
@@ -238,22 +243,6 @@ namespace Lumina
 
         PROPERTY()
         bool bDone = false;
-    };
-
-    REFLECT()
-    struct MCPEDITOR_API SCreatePrefabFromEntitiesParams
-    {
-        GENERATED_BODY()
-
-        /** World entities to capture; nested picks fold into their selected ancestor. */
-        PROPERTY()
-        TVector<FString> Entities;
-
-        PROPERTY()
-        FString Folder;
-
-        PROPERTY()
-        FString Name;
     };
 
     namespace MCP

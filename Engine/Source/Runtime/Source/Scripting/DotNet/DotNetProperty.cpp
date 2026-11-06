@@ -35,19 +35,19 @@ namespace
     // The caller sizes its buffer from the length returned here, so a reserved terminator costs a character.
     int32 CopyOut(FStringView Text, char* Buf, int Cap)
     {
-        const int32 Length = (int32)Text.size();
+        const int32 Length = Text.Len();
         if (Buf != nullptr && Cap > 0 && Length > 0)
         {
-            Memory::Memcpy(Buf, Text.data(), (size_t)Math::Min(Length, Cap));
+            Memory::Memcpy(Buf, Text.GetData(), (size_t)Math::Min(Length, Cap));
         }
         return Length;
     }
 
-    // c_str hands back a ring-buffer pointer, so the copy happens before anything can intern a name.
+    // operator* hands back a ring-buffer pointer, so the copy happens before anything can intern a name.
     int32 CopyOut(const FName& Name, char* Buf, int Cap)
     {
-        const char* Text = Name.c_str();
-        return CopyOut(Text != nullptr ? FStringView(Text, Name.length()) : FStringView(), Buf, Cap);
+        const char* Text = *Name;
+        return CopyOut(Text != nullptr ? FStringView(Text, Name.Len()) : FStringView(), Buf, Cap);
     }
 
     const CStruct* FindReflectedType(const char* Type, int TLen)
@@ -184,7 +184,7 @@ LUMINA_DOTNET_EXPORT(void*, NewObject)(void* Class, void* Package, const char* N
 
 LUMINA_DOTNET_EXPORT(int32, FunctionParamCount)(const void* Function)
 {
-    return Function ? (int32)static_cast<const FFunction*>(Function)->GetArguments().size() : 0;
+    return Function ? static_cast<const FFunction*>(Function)->GetArguments().Num() : 0;
 }
 
 LUMINA_DOTNET_EXPORT(const void*, FunctionParamAt)(const void* Function, int32 Index)
@@ -194,7 +194,7 @@ LUMINA_DOTNET_EXPORT(const void*, FunctionParamAt)(const void* Function, int32 I
         return nullptr;
     }
     const TSpan<FProperty* const> Arguments = static_cast<const FFunction*>(Function)->GetArguments();
-    return Cmp::Less(Index, Arguments.size()) ? Arguments[Index] : nullptr;
+    return Cmp::Less(Index, Arguments.Num()) ? Arguments[Index] : nullptr;
 }
 
 LUMINA_DOTNET_EXPORT(const void*, FunctionReturnParam)(const void* Function)
@@ -508,11 +508,11 @@ LUMINA_DOTNET_EXPORT(void, StringAssign)(void* StringPtr, const char* Utf8, int 
     FString& Value = *static_cast<FString*>(StringPtr);
     if (Len > 0)
     {
-        Value.assign(Utf8, (size_t)Len);
+        Value = FStringView(Utf8, (size_t)Len);
     }
     else
     {
-        Value.clear();
+        Value.Reset();
     }
 }
 
@@ -567,13 +567,13 @@ LUMINA_DOTNET_EXPORT(uint64, DelegateBind)(void* DelegatePtr, uint64 Callback)
 LUMINA_DOTNET_EXPORT(int32, DelegateArgCount)(void* PropertyPtr)
 {
     const FDelegateProperty* Delegate = static_cast<const FDelegateProperty*>(PropertyPtr);
-    return Delegate != nullptr ? (int32)Delegate->GetNumArgs() : 0;
+    return Delegate != nullptr ? Delegate->GetNumArgs() : 0;
 }
 
 LUMINA_DOTNET_EXPORT(void*, DelegateArgProperty)(void* PropertyPtr, int32 Index)
 {
     const FDelegateProperty* Delegate = static_cast<const FDelegateProperty*>(PropertyPtr);
-    if (Delegate == nullptr || Index < 0 || (size_t)Index >= Delegate->GetNumArgs())
+    if (Delegate == nullptr || Index < 0 || Index >= Delegate->GetNumArgs())
     {
         return nullptr;
     }

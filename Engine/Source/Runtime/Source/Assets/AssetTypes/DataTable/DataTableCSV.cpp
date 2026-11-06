@@ -27,8 +27,8 @@ namespace Lumina::DataTableCSV
 
             auto EndField = [&]()
             {
-                Current.push_back(Field);
-                Field.clear();
+                Current.Add(Field);
+                Field.Reset();
                 bFieldStarted = false;
             };
 
@@ -37,16 +37,16 @@ namespace Lumina::DataTableCSV
                 EndField();
 
                 // A line that is entirely empty is a blank separator, not a record of one empty field.
-                const bool bBlank = Current.size() == 1 && Current[0].empty();
+                const bool bBlank = Current.Num() == 1 && Current[0].IsEmpty();
                 if (!bBlank)
                 {
-                    Records.push_back(Current);
+                    Records.Add(Current);
                 }
-                Current.clear();
+                Current.Reset();
             };
 
-            const size_t Length = Text.size();
-            for (size_t i = 0; i < Length; ++i)
+            const int32 Length = Text.Len();
+            for (int32 i = 0; i < Length; ++i)
             {
                 const char C = Text[i];
 
@@ -57,7 +57,7 @@ namespace Lumina::DataTableCSV
                         // "" inside a quoted field is a literal quote; a lone " closes the field.
                         if (i + 1 < Length && Text[i + 1] == '"')
                         {
-                            Field.push_back('"');
+                            Field.AppendChar('"');
                             ++i;
                         }
                         else
@@ -67,7 +67,7 @@ namespace Lumina::DataTableCSV
                     }
                     else
                     {
-                        Field.push_back(C);
+                        Field.AppendChar(C);
                     }
                     continue;
                 }
@@ -83,7 +83,7 @@ namespace Lumina::DataTableCSV
                     }
                     else
                     {
-                        Field.push_back(C);
+                        Field.AppendChar(C);
                     }
                     break;
 
@@ -105,14 +105,14 @@ namespace Lumina::DataTableCSV
                     break;
 
                 default:
-                    Field.push_back(C);
+                    Field.AppendChar(C);
                     bFieldStarted = true;
                     break;
                 }
             }
 
             // Trailing content with no final newline is still a record.
-            if (!Field.empty() || !Current.empty())
+            if (!Field.IsEmpty() || !Current.IsEmpty())
             {
                 EndRecord();
             }
@@ -122,11 +122,11 @@ namespace Lumina::DataTableCSV
 
         FString Trim(const FString& In)
         {
-            size_t Begin = 0;
-            size_t End = In.size();
+            int32 Begin = 0;
+            int32 End = In.Len();
             while (Begin < End && (In[Begin] == ' ' || In[Begin] == '\t')) { ++Begin; }
             while (End > Begin && (In[End - 1] == ' ' || In[End - 1] == '\t')) { --End; }
-            return FString(In.data() + Begin, End - Begin);
+            return FString(In.GetData() + Begin, End - Begin);
         }
 
         // Quotes only when it has to, so a file of plain values stays diffable.
@@ -148,17 +148,17 @@ namespace Lumina::DataTableCSV
             }
 
             FString Out;
-            Out.reserve(In.size() + 2);
-            Out.push_back('"');
+            Out.Reserve(In.Len() + 2);
+            Out.AppendChar('"');
             for (const char C : In)
             {
                 if (C == '"')
                 {
-                    Out.push_back('"');
+                    Out.AppendChar('"');
                 }
-                Out.push_back(C);
+                Out.AppendChar(C);
             }
-            Out.push_back('"');
+            Out.AppendChar('"');
             return Out;
         }
 
@@ -176,7 +176,7 @@ namespace Lumina::DataTableCSV
             {
                 if (Reflection::IsTextConvertible(Property))
                 {
-                    Out.push_back(Property);
+                    Out.Add(Property);
                 }
             });
         }
@@ -199,12 +199,12 @@ namespace Lumina::DataTableCSV
         }
 
         const TVector<FCSVRecord> Records = ParseRecords(Text);
-        if (Records.empty())
+        if (Records.IsEmpty())
         {
             Result.FailureReason = "The file is empty.";
             return Result;
         }
-        if (Records.size() < 2)
+        if (Records.Num() < 2)
         {
             Result.FailureReason = "The file has a header but no data rows.";
             return Result;
@@ -213,14 +213,14 @@ namespace Lumina::DataTableCSV
         // Column 0 is the row name whatever it is called, since a name is structural rather than a field.
         const FCSVRecord& Header = Records[0];
         TVector<FProperty*> ColumnProperties;
-        ColumnProperties.reserve(Header.size());
-        ColumnProperties.push_back(nullptr);
+        ColumnProperties.Reserve(Header.Num());
+        ColumnProperties.Add(nullptr);
 
         THashSet<FName> MatchedProperties;
-        for (size_t Col = 1; Col < Header.size(); ++Col)
+        for (int32 Col = 1; Col < Header.Num(); ++Col)
         {
             const FString ColumnName = Trim(Header[Col]);
-            FProperty* Property = ColumnName.empty() ? nullptr : RowStruct->GetProperty(FName(ColumnName));
+            FProperty* Property = ColumnName.IsEmpty() ? nullptr : RowStruct->GetProperty(FName(ColumnName));
 
             if (Property != nullptr && !Reflection::IsTextConvertible(Property))
             {
@@ -230,71 +230,71 @@ namespace Lumina::DataTableCSV
 
             if (Property == nullptr)
             {
-                if (!ColumnName.empty())
+                if (!ColumnName.IsEmpty())
                 {
-                    Result.UnknownColumns.push_back(ColumnName);
+                    Result.UnknownColumns.Add(ColumnName);
                 }
             }
             else
             {
-                MatchedProperties.insert(Property->GetPropertyName());
+                MatchedProperties.Add(Property->GetPropertyName());
             }
 
-            ColumnProperties.push_back(Property);
+            ColumnProperties.Add(Property);
         }
 
         TVector<FProperty*> AllColumns;
         GatherColumns(RowStruct, AllColumns);
         for (FProperty* Property : AllColumns)
         {
-            if (MatchedProperties.find(Property->GetPropertyName()) == MatchedProperties.end())
+            if (!MatchedProperties.Contains(Property->GetPropertyName()))
             {
-                Result.MissingColumns.push_back(Property->GetPropertyName().ToString());
+                Result.MissingColumns.Add(Property->GetPropertyName().ToString());
             }
         }
 
         // A parse that dies partway must not leave the asset holding half of two files.
         TVector<SDataTableRow> NewRows;
-        NewRows.reserve(Records.size() - 1);
+        NewRows.Reserve(Records.Num() - 1);
         THashSet<FName> SeenNames;
 
-        for (size_t RecordIndex = 1; RecordIndex < Records.size(); ++RecordIndex)
+        for (int32 RecordIndex = 1; RecordIndex < Records.Num(); ++RecordIndex)
         {
             const FCSVRecord& Record = Records[RecordIndex];
 
-            const FString RawName = Record.empty() ? FString() : Trim(Record[0]);
-            if (RawName.empty())
+            const FString RawName = Record.IsEmpty() ? FString() : Trim(Record[0]);
+            if (RawName.IsEmpty())
             {
                 ++Result.RowsSkipped;
-                if ((int32)Result.Errors.size() < GMaxReportedErrors)
+                if (Result.Errors.Num() < GMaxReportedErrors)
                 {
-                    Result.Errors.push_back(Format("Line {}: the row name is empty.", (int32)RecordIndex + 1));
+                    Result.Errors.Add(Format("Line {}: the row name is empty.", (int32)RecordIndex + 1));
                 }
                 continue;
             }
 
             const FName RowName(RawName);
-            if (SeenNames.find(RowName) != SeenNames.end())
+            if (SeenNames.Contains(RowName))
             {
                 // A duplicate key means the file is wrong, and keeping the last one hides which value won.
                 ++Result.RowsSkipped;
-                if ((int32)Result.Errors.size() < GMaxReportedErrors)
+                if (Result.Errors.Num() < GMaxReportedErrors)
                 {
-                    Result.Errors.push_back(Format("Line {}: duplicate row name '{}'.", (int32)RecordIndex + 1, RawName));
+                    Result.Errors.Add(Format("Line {}: duplicate row name '{}'.", (int32)RecordIndex + 1, RawName));
                 }
                 continue;
             }
-            SeenNames.insert(RowName);
+            SeenNames.Add(RowName);
 
-            SDataTableRow& Row = NewRows.emplace_back();
+            SDataTableRow& Row = NewRows.EmplaceGetRef();
             Row.Name = RowName;
             Row.Value.InitializeAs(RowStruct);
 
             void* RowMemory = Row.Value.GetMutableMemory();
 
             // Short rows are legal, and the absent columns keep the struct's defaults.
-            const size_t CellCount = Math::Min(Record.size(), ColumnProperties.size());
-            for (size_t Col = 1; Col < CellCount; ++Col)
+            const int32 CellCount = Math::Min(Record.Num(), ColumnProperties.Num());
+            for (int32 Col = 1; Col < CellCount; ++Col)
             {
                 FProperty* Property = ColumnProperties[Col];
                 if (Property == nullptr)
@@ -305,9 +305,9 @@ namespace Lumina::DataTableCSV
                 const FString Cell = Trim(Record[Col]);
                 if (!Reflection::FromText(Property, RowMemory, Cell))
                 {
-                    if ((int32)Result.Errors.size() < GMaxReportedErrors)
+                    if (Result.Errors.Num() < GMaxReportedErrors)
                     {
-                        Result.Errors.push_back(Format("Line {}, column '{}': cannot read '{}'.",
+                        Result.Errors.Add(Format("Line {}, column '{}': cannot read '{}'.",
                             (int32)RecordIndex + 1,
                             Property->GetPropertyName().ToString(),
                             Cell));

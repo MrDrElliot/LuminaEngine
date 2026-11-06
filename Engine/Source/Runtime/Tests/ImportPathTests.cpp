@@ -10,7 +10,7 @@ namespace
     // Unique per test, so a leftover reservation from another case cannot change the answer.
     FFixedString TestPath(const char* Name)
     {
-        return FFixedString("/Game/ImportPathTests/").append(Name);
+        return FFixedString("/Game/ImportPathTests/").Append(Name);
     }
 }
 
@@ -37,7 +37,7 @@ TEST(ImportPaths, AReservedNameIsNotHandedOutTwice)
 
     const FFixedString Second = Import::PathReservations::Reserve(Path);
     EXPECT_NE(Second, First);
-    EXPECT_EQ(Second, FFixedString(Path).append("_1"));
+    EXPECT_EQ(Second, FFixedString(Path).Append("_1"));
 
     Import::PathReservations::Release(First);
     Import::PathReservations::Release(Second);
@@ -60,7 +60,7 @@ TEST(ImportPaths, ReleasingANameLetsTheNextCallerTakeIt)
 TEST(ImportPaths, AnEmptyPathIsNeverFreeAndNeverReserves)
 {
     EXPECT_FALSE(Import::PathReservations::IsFree(FStringView()));
-    EXPECT_TRUE(Import::PathReservations::Reserve(FStringView()).empty());
+    EXPECT_TRUE(Import::PathReservations::Reserve(FStringView()).IsEmpty());
 }
 
 TEST(ImportPaths, AScopedReservationReleasesUnlessCommitted)
@@ -92,7 +92,7 @@ TEST(ImportPaths, ReleasingThePackageFileFreesTheName)
     Import::PathReservations::Release(Path);
 
     ASSERT_EQ(Import::PathReservations::Reserve(Path), Path);
-    Import::PathReservations::Release(FFixedString(Path).append(".lasset"));
+    Import::PathReservations::Release(FFixedString(Path).Append(".lasset"));
 
     EXPECT_TRUE(Import::PathReservations::IsFree(Path));
 }
@@ -127,7 +127,7 @@ TEST(ImportPaths, FindingAFreeNameDoesNotReserveIt)
     EXPECT_TRUE(Import::PathReservations::IsFree(Path));
 
     ASSERT_EQ(Import::PathReservations::Reserve(Path), Path);
-    EXPECT_EQ(Import::PathReservations::FindFree(Path), FFixedString(Path).append("_1"));
+    EXPECT_EQ(Import::PathReservations::FindFree(Path), FFixedString(Path).Append("_1"));
 
     Import::PathReservations::Release(Path);
 }

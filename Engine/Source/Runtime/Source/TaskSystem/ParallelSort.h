@@ -2,26 +2,62 @@
 
 #include "Containers/Algorithm.h"
 #include "Containers/ContainerAllocator.h"
-#include "TaskSystem/TaskSystem.h"
+#include "Core/Profiler/Profile.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
+
+#include <iterator>
 
 namespace Lumina::Task
 {
     namespace Private
     {
-        // Below this the fan-out and the scratch buffer cost more than the parallelism returns.
         inline constexpr size_t kParallelSortThreshold = 4096;
+        inline constexpr size_t kParallelSortLeaf      = 2048;
 
-        // Keeps every chunk worth a job; a smaller one is cheaper sorted alongside its neighbor.
-        inline constexpr size_t kParallelSortMinChunk = 2048;
+        template<typename TIt, typename TPredicate>
+        Jobs::TTask<void> SortRun(TIt First, size_t Count, std::iter_value_t<TIt>* Buffer, const TPredicate* Pred, bool bResultInBuffer)
+        {
+            using FValue = std::iter_value_t<TIt>;
 
-        inline constexpr uint32 kParallelSortMaxChunks = 64;
+            TPredicate Local = *Pred;
+
+            if (Count <= kParallelSortLeaf)
+            {
+                Algo::Sort(First, First + Count, Local);
+                if (bResultInBuffer)
+                {
+                    for (size_t Index = 0; Index < Count; ++Index)
+                    {
+                        ::new (Buffer + Index) FValue(std::move(First[Index]));
+                    }
+                }
+                co_return;
+            }
+
+            const size_t Half = Count / 2;
+            co_await Jobs::Fork(SortRun<TIt, TPredicate>(First, Half, Buffer, Pred, !bResultInBuffer));
+            co_await Jobs::Call(SortRun<TIt, TPredicate>(First + Half, Count - Half, Buffer + Half, Pred, !bResultInBuffer));
+            co_await Jobs::Join();
+
+            if (bResultInBuffer)
+            {
+                Algo::Private::MergeRuns<true>(First, First + Half, First + Count, Buffer, Local);
+                co_return;
+            }
+
+            Algo::Private::MergeRuns<false>(Buffer, Buffer + Half, Buffer + Count, First, Local);
+            for (size_t Index = 0; Index < Count; ++Index)
+            {
+                Buffer[Index].~FValue();
+            }
+        }
     }
 
-    /** Sorts each chunk on the job system, then merges the chunks back in parallel rounds. */
+    // Splits the range recursively, sorts the leaves in parallel, then merges back up through a scratch buffer.
     template <typename TIt, typename TPredicate = Algo::FLess>
     void ParallelSort(TIt First, TIt Last, TPredicate Pred = {})
     {
-        using FValue = typename std::iterator_traits<TIt>::value_type;
+        using FValue = std::iter_value_t<TIt>;
 
         const size_t Count = static_cast<size_t>(Last - First);
         if (Count < 2)
@@ -29,20 +65,7 @@ namespace Lumina::Task
             return;
         }
 
-        uint32 ChunkCount = GTaskSystem != nullptr ? Jobs::GetNumWorkers() : 0u;
-        const size_t UsefulChunks = Count / Private::kParallelSortMinChunk;
-
-        if (ChunkCount > Private::kParallelSortMaxChunks)
-        {
-            ChunkCount = Private::kParallelSortMaxChunks;
-        }
-
-        if (static_cast<size_t>(ChunkCount) > UsefulChunks)
-        {
-            ChunkCount = static_cast<uint32>(UsefulChunks);
-        }
-
-        if (Count < Private::kParallelSortThreshold || ChunkCount < 2)
+        if (Count < Private::kParallelSortThreshold || !Jobs::IsRuntimeRunning() || Jobs::GetNumWorkers() == 0)
         {
             Algo::Sort(First, Last, Pred);
             return;
@@ -50,67 +73,8 @@ namespace Lumina::Task
 
         LUMINA_PROFILE_SECTION("Task::ParallelSort");
 
-        const auto ChunkBegin = [Count, ChunkCount](uint32 Index) -> size_t
-        {
-            const uint32 Clamped = Index < ChunkCount ? Index : ChunkCount;
-            return (Count * Clamped) / ChunkCount;
-        };
-
-        ParallelFor(ChunkCount, [First, &ChunkBegin, &Pred](uint32 Index)
-        {
-            TPredicate Local = Pred;
-            Algo::Sort(First + ChunkBegin(Index), First + ChunkBegin(Index + 1), Local);
-        }, 1);
-
-        FValue* const Buffer = static_cast<FValue*>(
-            FHeapAllocator::Allocate(sizeof(FValue) * Count, alignof(FValue)));
-
-        bool bLivesInBuffer = false;
-        for (uint32 Width = 1; Width < ChunkCount; Width *= 2)
-        {
-            const uint32 Tasks = (ChunkCount + 2 * Width - 1) / (2 * Width);
-            const bool bFromBuffer = bLivesInBuffer;
-
-            ParallelFor(Tasks, [=, &ChunkBegin, &Pred](uint32 Index)
-            {
-                const size_t LeftBegin = ChunkBegin(Index * 2 * Width);
-                const size_t Middle    = ChunkBegin(Index * 2 * Width + Width);
-                const size_t RightEnd  = ChunkBegin((Index + 1) * 2 * Width);
-
-                TPredicate Local = Pred;
-
-                if (bFromBuffer)
-                {
-                    Algo::Private::MergeRuns<false>(Buffer + LeftBegin, Buffer + Middle, Buffer + RightEnd,
-                                                    First + LeftBegin, Local);
-                }
-                else
-                {
-                    Algo::Private::MergeRuns<true>(First + LeftBegin, First + Middle, First + RightEnd,
-                                                   Buffer + LeftBegin, Local);
-                }
-            }, 1);
-
-            if (bFromBuffer)
-            {
-                for (size_t Index = 0; Index < Count; ++Index)
-                {
-                    Buffer[Index].~FValue();
-                }
-            }
-
-            bLivesInBuffer = !bLivesInBuffer;
-        }
-
-        if (bLivesInBuffer)
-        {
-            for (size_t Index = 0; Index < Count; ++Index)
-            {
-                First[Index] = std::move(Buffer[Index]);
-                Buffer[Index].~FValue();
-            }
-        }
-
+        FValue* const Buffer = static_cast<FValue*>(FHeapAllocator::Allocate(sizeof(FValue) * Count, alignof(FValue)));
+        Jobs::SyncWait(Jobs::EJobPriority::Normal, &Private::SortRun<TIt, TPredicate>, First, Count, Buffer, &Pred, false);
         FHeapAllocator::Deallocate(Buffer, sizeof(FValue) * Count, alignof(FValue));
     }
 }

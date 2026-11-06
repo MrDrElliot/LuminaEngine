@@ -21,7 +21,7 @@ namespace Lumina
         void   Clear();
 
         NODISCARD uint32 Num() const { return Count; }
-        NODISCARD uint32 NumNodes() const { return (uint32)Nodes.size(); }
+        NODISCARD uint32 NumNodes() const { return (uint32)Nodes.Num(); }
 
         // Visit(Payload, Min, Max) for every element whose box touches the query box.
         template<typename FnVisit>
@@ -52,7 +52,7 @@ namespace Lumina
                 {
                     const FNode& C = Nodes[Child];
                     const float Reach = C.HalfSize * 2.0f;
-                    const bool bOccupied = !C.Elements.empty() || C.FirstChild != kNone;
+                    const bool bOccupied = !C.Elements.IsEmpty() || C.FirstChild != kNone;
                     if (bOccupied &&
                         C.Center.x - Reach <= Max.x && C.Center.x + Reach >= Min.x &&
                         C.Center.y - Reach <= Max.y && C.Center.y + Reach >= Min.y &&

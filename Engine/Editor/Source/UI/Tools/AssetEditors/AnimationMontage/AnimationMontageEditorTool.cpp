@@ -28,7 +28,7 @@ namespace Lumina
     static const char* MontageTimelineName = "MontageTimeline";
 
     FAnimationMontageEditorTool::FAnimationMontageEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
     {
     }
 
@@ -68,6 +68,7 @@ namespace Lumina
     void FAnimationMontageEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -130,11 +131,6 @@ namespace Lumina
         {
             CreatePreviewEntity();
         }
-
-        if (World && World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
     }
 
     void FAnimationMontageEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
@@ -184,27 +180,27 @@ namespace Lumina
 
     void FAnimationMontageEditorTool::AppendSegment(CAnimationMontage* Montage, int32 TrackIndex, CAnimation* Animation, float StartTime)
     {
-        if (Animation == nullptr || TrackIndex < 0 || TrackIndex >= (int32)Montage->SlotTracks.size())
+        if (Animation == nullptr || TrackIndex < 0 || TrackIndex >= Montage->SlotTracks.Num())
         {
             return;
         }
 
         SAnimMontageSlotTrack& Track = Montage->SlotTracks[TrackIndex];
 
-        SAnimMontageSegment& Segment = Track.Segments.emplace_back();
+        SAnimMontageSegment& Segment = Track.Segments.EmplaceGetRef();
         Segment.Animation = Animation;
         Segment.StartTime = Math::Max(StartTime, 0.0f);
 
         SelectedKind  = ESelectionKind::Segment;
         SelectedTrack = TrackIndex;
-        SelectedIndex = (int32)Track.Segments.size() - 1;
+        SelectedIndex = Track.Segments.Num() - 1;
 
         MarkMontageDirty();
     }
 
     void FAnimationMontageEditorTool::ReflowTrack(CAnimationMontage* Montage, int32 TrackIndex)
     {
-        if (TrackIndex < 0 || TrackIndex >= (int32)Montage->SlotTracks.size())
+        if (TrackIndex < 0 || TrackIndex >= Montage->SlotTracks.Num())
         {
             return;
         }
@@ -230,12 +226,12 @@ namespace Lumina
         {
         case ESelectionKind::Segment:
         {
-            if (SelectedTrack >= 0 && SelectedTrack < (int32)Montage->SlotTracks.size())
+            if (SelectedTrack >= 0 && SelectedTrack < Montage->SlotTracks.Num())
             {
                 SAnimMontageSlotTrack& Track = Montage->SlotTracks[SelectedTrack];
-                if (SelectedIndex >= 0 && SelectedIndex < (int32)Track.Segments.size())
+                if (SelectedIndex >= 0 && SelectedIndex < Track.Segments.Num())
                 {
-                    Track.Segments.erase(Track.Segments.begin() + SelectedIndex);
+                    Track.Segments.RemoveAt(SelectedIndex);
                     MarkMontageDirty();
                 }
             }
@@ -243,10 +239,10 @@ namespace Lumina
         }
         case ESelectionKind::Section:
         {
-            if (SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Sections.size())
+            if (SelectedIndex >= 0 && SelectedIndex < Montage->Sections.Num())
             {
                 const FName Removed = Montage->Sections[SelectedIndex].Name;
-                Montage->Sections.erase(Montage->Sections.begin() + SelectedIndex);
+                Montage->Sections.RemoveAt(SelectedIndex);
                 for (SAnimMontageSection& Other : Montage->Sections)
                 {
                     if (Other.NextSection == Removed)
@@ -260,18 +256,18 @@ namespace Lumina
         }
         case ESelectionKind::Notify:
         {
-            if (SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Notifies.size())
+            if (SelectedIndex >= 0 && SelectedIndex < Montage->Notifies.Num())
             {
-                Montage->Notifies.erase(Montage->Notifies.begin() + SelectedIndex);
+                Montage->Notifies.RemoveAt(SelectedIndex);
                 MarkMontageDirty();
             }
             break;
         }
         case ESelectionKind::NotifyState:
         {
-            if (SelectedIndex >= 0 && SelectedIndex < (int32)Montage->NotifyStates.size())
+            if (SelectedIndex >= 0 && SelectedIndex < Montage->NotifyStates.Num())
             {
-                Montage->NotifyStates.erase(Montage->NotifyStates.begin() + SelectedIndex);
+                Montage->NotifyStates.RemoveAt(SelectedIndex);
                 MarkMontageDirty();
             }
             break;
@@ -294,7 +290,7 @@ namespace Lumina
         AnimComp->bPlaying = false;
         AnimComp->bLooping = false;
 
-        if (PreviewTrack < 0 || PreviewTrack >= (int32)Montage->SlotTracks.size())
+        if (PreviewTrack < 0 || PreviewTrack >= Montage->SlotTracks.Num())
         {
             return;
         }
@@ -361,9 +357,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.25f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Down, 0.42f, &bottomDockID, &leftDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MontageDetailsName).c_str(), rightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MontageTimelineName).c_str(), bottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MontageDetailsName), rightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(MontageTimelineName), bottomDockID);
     }
 
     void FAnimationMontageEditorTool::DrawTimeline()
@@ -376,9 +372,9 @@ namespace Lumina
 
         Montage->EnsureNotifyTracks();
 
-        if (Montage->SlotTracks.empty())
+        if (Montage->SlotTracks.IsEmpty())
         {
-            SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
+            SAnimMontageSlotTrack& Track = Montage->SlotTracks.EmplaceGetRef();
             Track.SlotName = "DefaultSlot";
             MarkMontageDirty();
         }
@@ -464,10 +460,10 @@ namespace Lumina
         const int Frame      = (int)roundf(Playhead * (float)FrameRate);
         const int TotalFrame = (int)roundf(Duration * (float)FrameRate);
         const FString Readout = Format("{:.3f}s / {:.3f}s   (frame {}/{})", Playhead, Duration, Frame, TotalFrame);
-        const float TextW = ImGui::CalcTextSize(Readout.c_str()).x;
+        const float TextW = ImGui::CalcTextSize(*Readout).x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(Math::Max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - TextW - 16.0f));
-        ImGui::TextUnformatted(Readout.c_str());
+        ImGui::TextUnformatted(*Readout);
     }
 
     void FAnimationMontageEditorTool::DrawSlotTracks(CAnimationMontage* Montage, float Duration)
@@ -479,8 +475,8 @@ namespace Lumina
         const ImVec2 CanvasSize = ImGui::GetContentRegionAvail();
         const float  CanvasY1   = CanvasPos.y + CanvasSize.y;
 
-        const int32 NumSlots  = (int32)Montage->SlotTracks.size();
-        const int32 NumLanes  = (int32)Montage->NotifyTracks.size();
+        const int32 NumSlots  = Montage->SlotTracks.Num();
+        const int32 NumLanes  = Montage->NotifyTracks.Num();
         constexpr float SectionRowH = 34.0f;
         constexpr float SlotRowH    = 44.0f;
         const float NotifyRowH = Timeline::TrackHeight;
@@ -569,33 +565,33 @@ namespace Lumina
             const FName Track = (Lane >= 0 && Lane < NumLanes) ? Montage->NotifyTracks[Lane] : FName("Notifies");
             if (bState)
             {
-                SAnimMontageNotifyState& State = Montage->NotifyStates.emplace_back();
+                SAnimMontageNotifyState& State = Montage->NotifyStates.EmplaceGetRef();
                 State.Name      = "NewNotifyState";
                 State.Track     = Track;
                 State.StartTime = Time;
                 State.EndTime   = Math::Min(Time + Math::Max(Duration * 0.1f, 0.1f), Duration);
                 SelectedKind  = ESelectionKind::NotifyState;
-                SelectedIndex = (int32)Montage->NotifyStates.size() - 1;
+                SelectedIndex = Montage->NotifyStates.Num() - 1;
             }
             else
             {
-                SAnimMontageNotify& Notify = Montage->Notifies.emplace_back();
+                SAnimMontageNotify& Notify = Montage->Notifies.EmplaceGetRef();
                 Notify.Name  = "NewNotify";
                 Notify.Time  = Time;
                 Notify.Track = Track;
                 SelectedKind  = ESelectionKind::Notify;
-                SelectedIndex = (int32)Montage->Notifies.size() - 1;
+                SelectedIndex = Montage->Notifies.Num() - 1;
             }
             MarkMontageDirty();
         };
 
         auto AddSectionAt = [&](float Time)
         {
-            SAnimMontageSection& Section = Montage->Sections.emplace_back();
-            Section.Name = FName(Format("Section{}", (int)Montage->Sections.size()).c_str());
+            SAnimMontageSection& Section = Montage->Sections.EmplaceGetRef();
+            Section.Name = FName(*Format("Section{}", Montage->Sections.Num()));
             Section.StartTime = Time;
             SelectedKind  = ESelectionKind::Section;
-            SelectedIndex = (int32)Montage->Sections.size() - 1;
+            SelectedIndex = Montage->Sections.Num() - 1;
             MarkMontageDirty();
         };
 
@@ -613,8 +609,8 @@ namespace Lumina
             const float AtTime = SnapTime(Playhead, Duration);
             if (ImGui::MenuItem(LE_ICON_ANIMATION " Slot Track"))
             {
-                SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
-                Track.SlotName = FName(Format("Slot {}", (int)Montage->SlotTracks.size()).c_str());
+                SAnimMontageSlotTrack& Track = Montage->SlotTracks.EmplaceGetRef();
+                Track.SlotName = FName(*Format("Slot {}", Montage->SlotTracks.Num()));
                 MarkMontageDirty();
             }
             if (ImGui::MenuItem(LE_ICON_BOOKMARK " Section at Playhead"))
@@ -623,7 +619,7 @@ namespace Lumina
             }
             if (ImGui::MenuItem(LE_ICON_BELL_RING " Notify Track"))
             {
-                Montage->NotifyTracks.push_back(FName(Format("Track {}", NumLanes).c_str()));
+                Montage->NotifyTracks.Emplace(*Format("Track {}", NumLanes));
                 MarkMontageDirty();
             }
             ImGui::Separator();
@@ -651,7 +647,7 @@ namespace Lumina
             }
             DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f), Timeline::SeparatorColor);
             Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, SectionY0), ImVec2(LaneX0, RowY1), FVector4(0.62f, 0.5f, 0.9f, 1.0f),
-                                      LE_ICON_BOOKMARK, "Sections", (int32)Montage->Sections.size(), false, bSectionRowHovered && Mouse.x < LaneX0);
+                                      LE_ICON_BOOKMARK, "Sections", Montage->Sections.Num(), false, bSectionRowHovered && Mouse.x < LaneX0);
         }
 
         for (int32 t = 0; t < NumSlots; ++t)
@@ -674,7 +670,7 @@ namespace Lumina
             DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f),
                               t == NumSlots - 1 ? Timeline::SeparatorColor : Timeline::RowLineColor);
             Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, RowY0), ImVec2(LaneX0, RowY1), SlotColor,
-                                      bPreview ? LE_ICON_EYE : nullptr, Track.SlotName.c_str(), (int32)Track.Segments.size(), bPreview, bHovered && Mouse.x < LaneX0);
+                                      bPreview ? LE_ICON_EYE : nullptr, *Track.SlotName, Track.Segments.Num(), bPreview, bHovered && Mouse.x < LaneX0);
 
             ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x, RowY0));
             ImGui::PushID(t);
@@ -689,7 +685,7 @@ namespace Lumina
                 static char RenameBuf[128];
                 if (ImGui::IsWindowAppearing())
                 {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", Track.SlotName.c_str());
+                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Track.SlotName);
                 }
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("Slot Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
@@ -704,7 +700,7 @@ namespace Lumina
                 }
                 if (NumSlots > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Slot"))
                 {
-                    Montage->SlotTracks.erase(Montage->SlotTracks.begin() + t);
+                    Montage->SlotTracks.RemoveAt(t);
                     PreviewTrack = 0;
                     ClearSelection();
                     MarkMontageDirty();
@@ -749,7 +745,7 @@ namespace Lumina
             }
             DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f), Timeline::RowLineColor);
             Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, RowY0), ImVec2(LaneX0, RowY1), LaneColor, nullptr,
-                                      Montage->NotifyTracks[n].c_str(), LaneCounts[n], bSelectedLane, bHovered && Mouse.x < LaneX0);
+                                      *Montage->NotifyTracks[n], LaneCounts[n], bSelectedLane, bHovered && Mouse.x < LaneX0);
 
             ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x, RowY0));
             ImGui::PushID(2000 + n);
@@ -763,7 +759,7 @@ namespace Lumina
                 static char RenameBuf[128];
                 if (ImGui::IsWindowAppearing())
                 {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", Montage->NotifyTracks[n].c_str());
+                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Montage->NotifyTracks[n]);
                 }
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
@@ -788,9 +784,9 @@ namespace Lumina
                 if (NumLanes > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Track"))
                 {
                     const FName Removed = Montage->NotifyTracks[n];
-                    Montage->NotifyTracks.erase(Montage->NotifyTracks.begin() + n);
-                    Montage->Notifies.erase(Algo::RemoveIf(Montage->Notifies, [&](const SAnimMontageNotify& N) { return N.Track == Removed; }), Montage->Notifies.end());
-                    Montage->NotifyStates.erase(Algo::RemoveIf(Montage->NotifyStates, [&](const SAnimMontageNotifyState& S) { return S.Track == Removed; }), Montage->NotifyStates.end());
+                    Montage->NotifyTracks.RemoveAt(n);
+                    Montage->Notifies.RemoveAll([&](const SAnimMontageNotify& N) { return N.Track == Removed; });
+                    Montage->NotifyStates.RemoveAll([&](const SAnimMontageNotifyState& S) { return S.Track == Removed; });
                     SelectedNotifyTrack = 0;
                     ClearSelection();
                     MarkMontageDirty();
@@ -826,12 +822,12 @@ namespace Lumina
         DrawList->PushClipRect(ImVec2(LaneX0, TrackAreaY0), ImVec2(LaneX1, CanvasY1), true);
         bool bItemHovered = false;
 
-        for (int32 i = 0; i < (int32)Montage->Sections.size(); ++i)
+        for (int32 i = 0; i < Montage->Sections.Num(); ++i)
         {
             const SAnimMontageSection& Section = Montage->Sections[i];
             const float X0 = View.TimeToX(Section.StartTime);
             const float X1 = Math::Max(View.TimeToX(Montage->GetSectionEndTime(i)), X0 + 4.0f);
-            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, SectionY0 - 3.0f, SectionY0 + SectionRowH + 3.0f, Section.Name.c_str());
+            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, SectionY0 - 3.0f, SectionY0 + SectionRowH + 3.0f, *Section.Name);
 
             const bool bHover = bLanesHovered && Mouse.x >= X0 && Mouse.x <= X1 && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
             const bool bSel   = (SelectedKind == ESelectionKind::Section && SelectedIndex == i);
@@ -848,9 +844,9 @@ namespace Lumina
             }
             else
             {
-                Detail = FormatAs<FFixedString>("{} {}", LE_ICON_ARROW_RIGHT, Section.NextSection.c_str());
+                Detail = FormatAs<FFixedString>("{} {}", LE_ICON_ARROW_RIGHT, *Section.NextSection);
             }
-            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(i + 4), Section.Name.c_str(), Detail.c_str(), bSel, bHover, false, false);
+            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(i + 4), *Section.Name, *Detail, bSel, bHover, false, false);
 
             if (bHover && DragMode == EDragMode::None)
             {
@@ -880,10 +876,10 @@ namespace Lumina
             const float RowY1 = RowY0 + SlotRowH;
             if (RowY1 <= TrackAreaY0 || RowY0 >= CanvasY1) continue;
 
-            for (int32 s = 0; s < (int32)Track.Segments.size(); ++s)
+            for (int32 s = 0; s < Track.Segments.Num(); ++s)
             {
                 SAnimMontageSegment& Segment = Track.Segments[s];
-                const char* ClipName = Segment.Animation.IsValid() ? Segment.Animation->GetName().c_str() : "<empty>";
+                const char* ClipName = Segment.Animation.IsValid() ? *Segment.Animation->GetName() : "<empty>";
                 const float X0 = View.TimeToX(Segment.StartTime);
                 const float X1 = Math::Max(View.TimeToX(Segment.GetEndTime()), X0 + 4.0f);
                 const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, RowY0, RowY1, ClipName);
@@ -903,10 +899,10 @@ namespace Lumina
                 }
                 if (Loops > 1)
                 {
-                    Detail += FormatAs<FFixedString>("{}{} loops", Detail.empty() ? "" : "  ", Loops);
+                    Detail += FormatAs<FFixedString>("{}{} loops", Detail.IsEmpty() ? "" : "  ", Loops);
                 }
 
-                Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(t + 1), ClipName, Detail.empty() ? nullptr : Detail.c_str(),
+                Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(t + 1), ClipName, Detail.IsEmpty() ? nullptr : *Detail,
                                     bSel, bHover, false, bOverRight || (bDragged && DragMode == EDragMode::ResizeEnd));
 
                 for (int32 L = 1; L < Loops; ++L)
@@ -949,7 +945,7 @@ namespace Lumina
                 }
             }
 
-            if (HoveredSlot == t && bLanesHovered && Track.Segments.empty() && DragMode == EDragMode::None)
+            if (HoveredSlot == t && bLanesHovered && Track.Segments.IsEmpty() && DragMode == EDragMode::None)
             {
                 const char* Hint = "Drop an animation from the Content Browser here";
                 const ImVec2 HintSize = ImGui::CalcTextSize(Hint);
@@ -960,7 +956,7 @@ namespace Lumina
         TVector<TVector<ImVec2>> LaneLabels(NumLanes);
         TVector<TVector<ImVec2>> LaneBars(NumLanes);
 
-        for (int32 i = 0; i < (int32)Montage->NotifyStates.size(); ++i)
+        for (int32 i = 0; i < Montage->NotifyStates.Num(); ++i)
         {
             SAnimMontageNotifyState& State = Montage->NotifyStates[i];
             const int32 Lane = LaneOf(State.Track);
@@ -972,9 +968,9 @@ namespace Lumina
 
             const float X0 = View.TimeToX(State.StartTime);
             const float X1 = Math::Max(View.TimeToX(State.EndTime), X0 + 4.0f);
-            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, RowY0, RowY1, State.Name.c_str());
-            LaneLabels[Lane].push_back(Timeline::RangeLabelSpan(Bar, X0, X1, State.Name.c_str()));
-            LaneBars[Lane].push_back(ImVec2(X0, X1));
+            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, RowY0, RowY1, *State.Name);
+            LaneLabels[Lane].Add(Timeline::RangeLabelSpan(Bar, X0, X1, *State.Name));
+            LaneBars[Lane].Add(ImVec2(X0, X1));
             const bool bOverTag = !Bar.bNameInside && Mouse.x >= Bar.Tag0.x && Mouse.x <= Bar.Tag1.x && Mouse.y >= Bar.Tag0.y && Mouse.y <= Bar.Tag1.y;
 
             const bool bOverLeft  = bLanesHovered && fabsf(Mouse.x - X0) <= 5.0f && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
@@ -987,7 +983,7 @@ namespace Lumina
 
             char DurationText[24];
             snprintf(DurationText, sizeof(DurationText), "%.2fs", State.EndTime - State.StartTime);
-            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(Lane), State.Name.c_str(), DurationText, bSel, bHover,
+            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(Lane), *State.Name, DurationText, bSel, bHover,
                                 bOverLeft || (bDragged && DragMode == EDragMode::ResizeStart),
                                 bOverRight || (bDragged && DragMode == EDragMode::ResizeEnd));
 
@@ -1018,7 +1014,7 @@ namespace Lumina
             }
         }
 
-        for (int32 i = 0; i < (int32)Montage->Notifies.size(); ++i)
+        for (int32 i = 0; i < Montage->Notifies.Num(); ++i)
         {
             SAnimMontageNotify& Notify = Montage->Notifies[i];
             const int32 Lane = LaneOf(Notify.Track);
@@ -1029,22 +1025,22 @@ namespace Lumina
             if (RowY1 <= TrackAreaY0 || RowY0 >= CanvasY1) continue;
 
             const float X = View.TimeToX(Notify.Time);
-            const Timeline::FPointGeometry Point = Timeline::GetPointGeometry(X, RowY0, RowY1, Notify.Name.c_str(), Timeline::Overlaps(LaneBars[Lane], X - 1.0f, X + 1.0f));
+            const Timeline::FPointGeometry Point = Timeline::GetPointGeometry(X, RowY0, RowY1, *Notify.Name, Timeline::Overlaps(LaneBars[Lane], X - 1.0f, X + 1.0f));
             const bool bSel  = (SelectedKind == ESelectionKind::Notify && SelectedIndex == i);
             const bool bShowTag = bSel || !Timeline::Overlaps(LaneLabels[Lane], Point.Tag0.x, Point.Tag1.x);
             if (bShowTag)
             {
-                LaneLabels[Lane].push_back(ImVec2(Point.Tag0.x, Point.Tag1.x));
+                LaneLabels[Lane].Add(ImVec2(Point.Tag0.x, Point.Tag1.x));
             }
             const bool bOver = bLanesHovered && Timeline::HitPoint(Point, X, Mouse, bShowTag);
             bItemHovered |= bOver;
 
-            Timeline::DrawPoint(DrawList, Point, X, RowY0, RowY1, Timeline::PaletteColor(Lane), Notify.Name.c_str(), bSel, bOver, 0.0f, bShowTag);
+            Timeline::DrawPoint(DrawList, Point, X, RowY0, RowY1, Timeline::PaletteColor(Lane), *Notify.Name, bSel, bOver, 0.0f, bShowTag);
 
             if (bOver && DragMode == EDragMode::None)
             {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                ImGui::SetTooltip("%s  %.3fs (frame %d)", Notify.Name.c_str(), Notify.Time, (int)roundf(Notify.Time * (float)FrameRate));
+                ImGui::SetTooltip("%s  %.3fs (frame %d)", *Notify.Name, Notify.Time, (int)roundf(Notify.Time * (float)FrameRate));
             }
             if (DragMode == EDragMode::None && bOver && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -1089,7 +1085,7 @@ namespace Lumina
 
         if (ImGui::BeginPopup("section_ctx"))
         {
-            if (SelectedKind == ESelectionKind::Section && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Sections.size())
+            if (SelectedKind == ESelectionKind::Section && SelectedIndex >= 0 && SelectedIndex < Montage->Sections.Num())
             {
                 SAnimMontageSection& Section = Montage->Sections[SelectedIndex];
                 if (ImGui::BeginMenu(LE_ICON_ARROW_RIGHT " Next Section"))
@@ -1101,7 +1097,7 @@ namespace Lumina
                     }
                     for (const SAnimMontageSection& Other : Montage->Sections)
                     {
-                        if (ImGui::MenuItem(Other.Name.c_str(), nullptr, Other.Name == Section.NextSection))
+                        if (ImGui::MenuItem(*Other.Name, nullptr, Other.Name == Section.NextSection))
                         {
                             Section.NextSection = Other.Name;
                             MarkMontageDirty();
@@ -1140,11 +1136,11 @@ namespace Lumina
             if (ImGui::MenuItem(LE_ICON_MAP_MARKER " Move to playhead"))
             {
                 const float AtTime = SnapTime(Playhead, Duration);
-                if (SelectedKind == ESelectionKind::Notify && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Notifies.size())
+                if (SelectedKind == ESelectionKind::Notify && SelectedIndex >= 0 && SelectedIndex < Montage->Notifies.Num())
                 {
                     Montage->Notifies[SelectedIndex].Time = AtTime;
                 }
-                else if (SelectedKind == ESelectionKind::NotifyState && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->NotifyStates.size())
+                else if (SelectedKind == ESelectionKind::NotifyState && SelectedIndex >= 0 && SelectedIndex < Montage->NotifyStates.Num())
                 {
                     SAnimMontageNotifyState& State = Montage->NotifyStates[SelectedIndex];
                     const float Len = State.EndTime - State.StartTime;
@@ -1206,10 +1202,10 @@ namespace Lumina
                     Playhead = SnapTime(RawT, Duration);
                 }
                 else if (bMoved && DragKind == ESelectionKind::Segment &&
-                         DragTrack >= 0 && DragTrack < (int32)Montage->SlotTracks.size())
+                         DragTrack >= 0 && DragTrack < Montage->SlotTracks.Num())
                 {
                     SAnimMontageSlotTrack& Track = Montage->SlotTracks[DragTrack];
-                    if (DragIndex >= 0 && DragIndex < (int32)Track.Segments.size())
+                    if (DragIndex >= 0 && DragIndex < Track.Segments.Num())
                     {
                         SAnimMontageSegment& Segment = Track.Segments[DragIndex];
                         if (DragMode == EDragMode::ResizeEnd)
@@ -1228,20 +1224,20 @@ namespace Lumina
                         MarkMontageDirty();
                     }
                 }
-                else if (bMoved && DragKind == ESelectionKind::Section && DragIndex >= 0 && DragIndex < (int32)Montage->Sections.size())
+                else if (bMoved && DragKind == ESelectionKind::Section && DragIndex >= 0 && DragIndex < Montage->Sections.Num())
                 {
                     Montage->Sections[DragIndex].StartTime = SnapTime(RawT - DragGrabOffset, Duration);
                     MarkMontageDirty();
                     ImGui::SetTooltip("%.3fs (frame %d)", Montage->Sections[DragIndex].StartTime, (int)roundf(Montage->Sections[DragIndex].StartTime * (float)FrameRate));
                 }
-                else if (bMoved && DragKind == ESelectionKind::Notify && DragIndex >= 0 && DragIndex < (int32)Montage->Notifies.size())
+                else if (bMoved && DragKind == ESelectionKind::Notify && DragIndex >= 0 && DragIndex < Montage->Notifies.Num())
                 {
                     SAnimMontageNotify& Notify = Montage->Notifies[DragIndex];
                     Notify.Time = SnapTime(RawT - DragGrabOffset, Duration);
                     MarkMontageDirty();
                     ImGui::SetTooltip("%.3fs (frame %d)", Notify.Time, (int)roundf(Notify.Time * (float)FrameRate));
                 }
-                else if (bMoved && DragKind == ESelectionKind::NotifyState && DragIndex >= 0 && DragIndex < (int32)Montage->NotifyStates.size())
+                else if (bMoved && DragKind == ESelectionKind::NotifyState && DragIndex >= 0 && DragIndex < Montage->NotifyStates.Num())
                 {
                     SAnimMontageNotifyState& State = Montage->NotifyStates[DragIndex];
                     const float T = SnapTime(RawT, Duration);
@@ -1283,7 +1279,7 @@ namespace Lumina
             return;
         }
 
-        const int32 Count = (int32)Montage->Sections.size();
+        const int32 Count = Montage->Sections.Num();
         TVector<int32> Order(Count);
         for (int32 Index = 0; Index < Count; ++Index)
         {
@@ -1302,11 +1298,11 @@ namespace Lumina
         }
 
         TVector<SAnimMontageSection> Sorted;
-        Sorted.reserve(Count);
+        Sorted.Reserve(Count);
         int32 NewSelection = SelectedIndex;
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Sorted.push_back(Montage->Sections[Order[Index]]);
+            Sorted.Add(Montage->Sections[Order[Index]]);
             if (Order[Index] == SelectedIndex)
             {
                 NewSelection = Index;
@@ -1322,11 +1318,11 @@ namespace Lumina
     void FAnimationMontageEditorTool::NotifyTrackCombo(CAnimationMontage* Montage, FName& Track, const char* StrId)
     {
         ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f));
-        if (ImGui::BeginCombo(StrId, Track.c_str()))
+        if (ImGui::BeginCombo(StrId, *Track))
         {
             for (const FName& Lane : Montage->NotifyTracks)
             {
-                if (ImGui::Selectable(Lane.c_str(), Lane == Track))
+                if (ImGui::Selectable(*Lane, Lane == Track))
                 {
                     Track = Lane;
                     MarkMontageDirty();
@@ -1345,18 +1341,18 @@ namespace Lumina
         {
         case ESelectionKind::Segment:
         {
-            if (SelectedTrack < 0 || SelectedTrack >= (int32)Montage->SlotTracks.size())
+            if (SelectedTrack < 0 || SelectedTrack >= Montage->SlotTracks.Num())
             {
                 break;
             }
             SAnimMontageSlotTrack& Track = Montage->SlotTracks[SelectedTrack];
-            if (SelectedIndex < 0 || SelectedIndex >= (int32)Track.Segments.size())
+            if (SelectedIndex < 0 || SelectedIndex >= Track.Segments.Num())
             {
                 break;
             }
 
             SAnimMontageSegment& Segment = Track.Segments[SelectedIndex];
-            ImGui::TextDisabled(LE_ICON_ANIMATION " Segment on '%s'", Track.SlotName.c_str());
+            ImGui::TextDisabled(LE_ICON_ANIMATION " Segment on '%s'", *Track.SlotName);
 
             const float ClipDuration = Segment.Animation.IsValid() ? Segment.Animation->GetDuration() : 0.0f;
 
@@ -1376,7 +1372,7 @@ namespace Lumina
         }
         case ESelectionKind::Section:
         {
-            if (SelectedIndex < 0 || SelectedIndex >= (int32)Montage->Sections.size())
+            if (SelectedIndex < 0 || SelectedIndex >= Montage->Sections.Num())
             {
                 break;
             }
@@ -1384,7 +1380,7 @@ namespace Lumina
             SAnimMontageSection& Section = Montage->Sections[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BOOKMARK " Section");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", Section.Name.c_str());
+            snprintf(NameBuf, sizeof(NameBuf), "%s", *Section.Name);
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf)))
             {
@@ -1405,7 +1401,7 @@ namespace Lumina
             if (ImGui::DragFloat("Start##Sec", &Section.StartTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
 
             ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::BeginCombo("Next", Section.NextSection.IsNone() ? "<end montage>" : Section.NextSection.c_str()))
+            if (ImGui::BeginCombo("Next", Section.NextSection.IsNone() ? "<end montage>" : *Section.NextSection))
             {
                 if (ImGui::Selectable("<end montage>", Section.NextSection.IsNone()))
                 {
@@ -1414,7 +1410,7 @@ namespace Lumina
                 }
                 for (const SAnimMontageSection& Other : Montage->Sections)
                 {
-                    if (ImGui::Selectable(Other.Name.c_str(), Other.Name == Section.NextSection))
+                    if (ImGui::Selectable(*Other.Name, Other.Name == Section.NextSection))
                     {
                         Section.NextSection = Other.Name;
                         MarkMontageDirty();
@@ -1426,7 +1422,7 @@ namespace Lumina
         }
         case ESelectionKind::Notify:
         {
-            if (SelectedIndex < 0 || SelectedIndex >= (int32)Montage->Notifies.size())
+            if (SelectedIndex < 0 || SelectedIndex >= Montage->Notifies.Num())
             {
                 break;
             }
@@ -1434,7 +1430,7 @@ namespace Lumina
             SAnimMontageNotify& Notify = Montage->Notifies[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL " Notify");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", Notify.Name.c_str());
+            snprintf(NameBuf, sizeof(NameBuf), "%s", *Notify.Name);
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name##N", NameBuf, sizeof(NameBuf))) { Notify.Name = FName(NameBuf); MarkMontageDirty(); }
 
@@ -1445,14 +1441,14 @@ namespace Lumina
 
             if (ImGui::Button(LE_ICON_PLUS " Make Ranged"))
             {
-                SAnimMontageNotifyState& State = Montage->NotifyStates.emplace_back();
+                SAnimMontageNotifyState& State = Montage->NotifyStates.EmplaceGetRef();
                 State.Name      = Notify.Name;
                 State.Track     = Notify.Track;
                 State.StartTime = Notify.Time;
                 State.EndTime   = Math::Min(Notify.Time + Math::Max(Duration * 0.1f, 0.1f), Duration);
-                Montage->Notifies.erase(Montage->Notifies.begin() + SelectedIndex);
+                Montage->Notifies.RemoveAt(SelectedIndex);
                 SelectedKind  = ESelectionKind::NotifyState;
-                SelectedIndex = (int32)Montage->NotifyStates.size() - 1;
+                SelectedIndex = Montage->NotifyStates.Num() - 1;
                 MarkMontageDirty();
                 break;
             }
@@ -1467,7 +1463,7 @@ namespace Lumina
         }
         case ESelectionKind::NotifyState:
         {
-            if (SelectedIndex < 0 || SelectedIndex >= (int32)Montage->NotifyStates.size())
+            if (SelectedIndex < 0 || SelectedIndex >= Montage->NotifyStates.Num())
             {
                 break;
             }
@@ -1475,7 +1471,7 @@ namespace Lumina
             SAnimMontageNotifyState& State = Montage->NotifyStates[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " Notify State");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", State.Name.c_str());
+            snprintf(NameBuf, sizeof(NameBuf), "%s", *State.Name);
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name##NS", NameBuf, sizeof(NameBuf))) { State.Name = FName(NameBuf); MarkMontageDirty(); }
 

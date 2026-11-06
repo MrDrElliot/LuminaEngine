@@ -10,7 +10,7 @@ namespace
 {
     // A fixed container reflects as a TVector, so its type-erased table must still be its own.
     template <typename TContainer>
-    void ExerciseVectorOps(SIZE_T Count)
+    void ExerciseVectorOps(int32 Count)
     {
         const FVectorOps* Ops = GetVectorOpsFor<TContainer>();
         ASSERT_NE(Ops, nullptr);
@@ -18,38 +18,38 @@ namespace
 
         alignas(TContainer) uint8 Storage[sizeof(TContainer)];
         Ops->ConstructContainer(Storage, Ops->ContainerContext);
-        EXPECT_EQ(Ops->Size(Storage), 0u);
+        EXPECT_EQ(Ops->Num(Storage), 0);
 
-        for (SIZE_T i = 0; i < Count; ++i)
+        for (int32 i = 0; i < Count; ++i)
         {
-            const int32 Value = (int32)i;
-            Ops->PushBack(Storage, &Value);
+            const int32 Value = i;
+            Ops->Add(Storage, &Value);
         }
-        EXPECT_EQ(Ops->Size(Storage), Count);
+        EXPECT_EQ(Ops->Num(Storage), Count);
 
         // Data() must address the live storage, inline buffer or spilled heap block alike.
-        const int32* Data = static_cast<const int32*>(Ops->Data(Storage));
-        for (SIZE_T i = 0; i < Count; ++i)
+        const int32* Data = static_cast<const int32*>(Ops->GetData(Storage));
+        for (int32 i = 0; i < Count; ++i)
         {
-            EXPECT_EQ(Data[i], (int32)i);
+            EXPECT_EQ(Data[i], i);
         }
 
         Ops->Swap(Storage, 0, Count - 1);
-        Data = static_cast<const int32*>(Ops->Data(Storage));
-        EXPECT_EQ(Data[0], (int32)(Count - 1));
+        Data = static_cast<const int32*>(Ops->GetData(Storage));
+        EXPECT_EQ(Data[0], Count - 1);
         EXPECT_EQ(Data[Count - 1], 0);
 
         Ops->RemoveAt(Storage, 0);
-        EXPECT_EQ(Ops->Size(Storage), Count - 1);
+        EXPECT_EQ(Ops->Num(Storage), Count - 1);
 
-        Ops->Resize(Storage, Count);
-        EXPECT_EQ(Ops->Size(Storage), Count);
+        Ops->SetNum(Storage, Count);
+        EXPECT_EQ(Ops->Num(Storage), Count);
 
-        Ops->Clear(Storage);
-        EXPECT_EQ(Ops->Size(Storage), 0u);
+        Ops->Reset(Storage);
+        EXPECT_EQ(Ops->Num(Storage), 0);
 
-        Ops->PushBack(Storage, nullptr);
-        EXPECT_EQ(Ops->Size(Storage), 1u);
+        Ops->Add(Storage, nullptr);
+        EXPECT_EQ(Ops->Num(Storage), 1);
 
         Ops->DestructContainer(Storage, Ops->ContainerContext);
     }
@@ -62,18 +62,18 @@ TEST(ContainerOps, VectorOpsDriveAGrowableVector)
 
 TEST(ContainerOps, VectorOpsDriveAFixedVectorWithinCapacity)
 {
-    ExerciseVectorOps<TFixedVector<int32, 8>>(6);
+    ExerciseVectorOps<TInlineVector<int32, 8>>(6);
 }
 
 // Growing past the inline buffer needs the fixed container's own table, or it frees inline.
 TEST(ContainerOps, VectorOpsDriveAFixedVectorPastItsInlineCapacity)
 {
-    ExerciseVectorOps<TFixedVector<int32, 4>>(9);
+    ExerciseVectorOps<TInlineVector<int32, 4>>(9);
 }
 
 TEST(ContainerOps, FixedVectorOpsHandleNonTrivialElements)
 {
-    using ContainerType = TFixedVector<FString, 2>;
+    using ContainerType = TInlineVector<FString, 2>;
     const FVectorOps* Ops = GetVectorOpsFor<ContainerType>();
 
     alignas(ContainerType) uint8 Storage[sizeof(ContainerType)];
@@ -81,12 +81,12 @@ TEST(ContainerOps, FixedVectorOpsHandleNonTrivialElements)
 
     const FString First("inline");
     const FString Spilled("overflowed onto the heap, long enough to allocate");
-    Ops->PushBack(Storage, &First);
-    Ops->PushBack(Storage, &First);
-    Ops->PushBack(Storage, &Spilled);
+    Ops->Add(Storage, &First);
+    Ops->Add(Storage, &First);
+    Ops->Add(Storage, &Spilled);
 
-    EXPECT_EQ(Ops->Size(Storage), 3u);
-    const FString* Data = static_cast<const FString*>(Ops->Data(Storage));
+    EXPECT_EQ(Ops->Num(Storage), 3);
+    const FString* Data = static_cast<const FString*>(Ops->GetData(Storage));
     EXPECT_EQ(Data[0], First);
     EXPECT_EQ(Data[2], Spilled);
 
@@ -96,7 +96,7 @@ TEST(ContainerOps, FixedVectorOpsHandleNonTrivialElements)
 namespace
 {
     template <typename TContainer>
-    void ExerciseMapOps(SIZE_T Count)
+    void ExerciseMapOps(int32 Count)
     {
         const FMapOps* Ops = GetMapOpsFor<TContainer>();
         ASSERT_NE(Ops, nullptr);
@@ -105,28 +105,28 @@ namespace
 
         alignas(TContainer) uint8 Storage[sizeof(TContainer)];
         Ops->ConstructContainer(Storage, Ops->ContainerContext);
-        EXPECT_EQ(Ops->Size(Storage), 0u);
+        EXPECT_EQ(Ops->Num(Storage), 0);
 
-        for (SIZE_T i = 0; i < Count; ++i)
+        for (int32 i = 0; i < Count; ++i)
         {
-            const int32 Key = (int32)i;
-            const int32 Value = (int32)(i * 10);
-            Ops->Insert(Storage, &Key, &Value);
+            const int32 Key = i;
+            const int32 Value = i * 10;
+            Ops->Add(Storage, &Key, &Value);
         }
-        EXPECT_EQ(Ops->Size(Storage), Count);
+        EXPECT_EQ(Ops->Num(Storage), Count);
 
-        const int32 Probe = (int32)(Count - 1);
+        const int32 Probe = Count - 1;
         const void* Found = Ops->Find(Storage, &Probe);
         ASSERT_NE(Found, nullptr);
         EXPECT_EQ(*static_cast<const int32*>(Found), Probe * 10);
 
-        EXPECT_TRUE(Ops->RemoveByKey(Storage, &Probe));
-        EXPECT_EQ(Ops->Size(Storage), Count - 1);
+        EXPECT_TRUE(Ops->Remove(Storage, &Probe));
+        EXPECT_EQ(Ops->Num(Storage), Count - 1);
         EXPECT_EQ(Ops->Find(Storage, &Probe), nullptr);
 
         // Next resumes from its cursor, so a walk reaches every remaining pair once, skipping the erased slot.
-        SIZE_T Cursor = 0;
-        SIZE_T Visited = 0;
+        int32 Cursor = 0;
+        int32 Visited = 0;
         const void* Key = nullptr;
         void* Value = nullptr;
         while (Ops->Next(Storage, &Cursor, &Key, &Value))
@@ -136,8 +136,8 @@ namespace
         }
         EXPECT_EQ(Visited, Count - 1);
 
-        Ops->Clear(Storage);
-        EXPECT_EQ(Ops->Size(Storage), 0u);
+        Ops->Reset(Storage);
+        EXPECT_EQ(Ops->Num(Storage), 0);
 
         Ops->DestructContainer(Storage, Ops->ContainerContext);
     }
@@ -150,5 +150,5 @@ TEST(ContainerOps, MapOpsDriveAGrowableHashMap)
 
 TEST(ContainerOps, MapOpsDriveAFixedHashMapPastItsInlineCapacity)
 {
-    ExerciseMapOps<TFixedHashMap<int32, int32, 4>>(9);
+    ExerciseMapOps<TInlineHashMap<int32, int32, 4>>(9);
 }

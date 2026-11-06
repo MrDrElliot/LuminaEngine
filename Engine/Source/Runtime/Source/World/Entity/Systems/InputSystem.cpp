@@ -9,54 +9,35 @@
 
 namespace Lumina
 {
-    // Exclusive like STimerSystem, since dispatch runs user script code and calls into managed.
     void SInputSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
     }
 
-    void SInputSystem::OnUpdate(const SSystemContext& Context)
+    void SInputSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-
-        ECS::FRegistry& Registry = Context.GetRegistry();
-        
-        CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
-        CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
-        
-        const FInputContext* Ctx = Input::GetReceivingContext(World);
+        const FInputContext* Ctx = Input::GetReceivingContext(Context.GetWorld());
         if (Ctx == nullptr)
         {
             return;
         }
 
+        ECS::FRegistry& Registry = Context.GetRegistry();
         const TVector<SInputActionState>& States = Ctx->GetActionStates();
         const TVector<SInputEvent>& Events = Ctx->GetFrameEvents();
 
-        static thread_local TVector<int32> ChangedActionIndices;
-        ChangedActionIndices.clear();
-        for (int32 i = 0; i < (int32)States.size(); ++i)
+        ChangedActionIndices.Reset();
+        for (int32 i = 0; i < States.Num(); ++i)
         {
             const SInputActionState& State = States[i];
             if (State.IsPressed() || State.IsReleased() || State.X != 0.0f || State.Y != 0.0f)
             {
-                ChangedActionIndices.push_back(i);
+                ChangedActionIndices.Add(i);
             }
         }
 
         // Snapshot first, since a callback spawning an entity mutates the storage a live view walks.
-        static thread_local TVector<ECS::FEntity> Entities;
-        Entities.clear();
-
-        auto View = Registry.View<SInputComponent>();
-        Entities.reserve(View.Num());
-        for (ECS::FEntity Entity : View)
-        {
-            Entities.push_back(Entity);
-        }
-
-        for (ECS::FEntity Entity : Entities)
+        for (ECS::FEntity Entity : Listeners.Collect())
         {
             if (!Registry.IsValid(Entity))
             {
@@ -64,7 +45,7 @@ namespace Lumina
             }
 
             // Re-resolved per entity, since an earlier callback may have removed or disabled it.
-            const SInputComponent* InputComp = Registry.TryGet<SInputComponent>(Entity);
+            const SInputComponent* InputComp = Listeners.TryGet<SInputComponent>(Entity);
             if (InputComp == nullptr || !InputComp->bEnabled)
             {
                 continue;
@@ -75,7 +56,7 @@ namespace Lumina
                 EntityScripts::DispatchInput(Registry, Entity, Event);
             }
 
-            EntityScripts::DispatchActions(Registry, Entity, States.data(), (int32)States.size(), ChangedActionIndices);
+            EntityScripts::DispatchActions(Registry, Entity, States.GetData(), States.Num(), ChangedActionIndices);
         }
     }
 }

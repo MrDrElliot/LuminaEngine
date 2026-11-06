@@ -44,7 +44,7 @@ namespace Lumina
 
     int32 SSplineComponent::GetNumSegments() const
     {
-        const int32 NumPoints = static_cast<int32>(Points.size());
+        const int32 NumPoints = Points.Num();
         if (NumPoints < 2)
         {
             return 0;
@@ -55,7 +55,7 @@ namespace Lumina
 
     void SSplineComponent::UpdateTangents()
     {
-        const int32 NumPoints = static_cast<int32>(Points.size());
+        const int32 NumPoints = Points.Num();
         if (NumPoints < 2)
         {
             // A lone point has no direction to derive; leave whatever was authored.
@@ -112,14 +112,14 @@ namespace Lumina
         const int32 NumSegments = GetNumSegments();
         if (NumSegments == 0)
         {
-            return Points.empty() ? FVector3(0.0f) : Points[0].Location;
+            return Points.IsEmpty() ? FVector3(0.0f) : Points[0].Location;
         }
 
         const int32 Segment = Math::Clamp(static_cast<int32>(Math::Floor(Key)), 0, NumSegments - 1);
         const float t       = Math::Clamp(Key - static_cast<float>(Segment), 0.0f, 1.0f);
 
         const SSplinePoint& A = Points[Segment];
-        const SSplinePoint& B = Points[(Segment + 1) % static_cast<int32>(Points.size())];
+        const SSplinePoint& B = Points[(Segment + 1) % Points.Num()];
 
         return HermitePosition(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, t);
     }
@@ -136,7 +136,7 @@ namespace Lumina
         const float t       = Math::Clamp(Key - static_cast<float>(Segment), 0.0f, 1.0f);
 
         const SSplinePoint& A = Points[Segment];
-        const SSplinePoint& B = Points[(Segment + 1) % static_cast<int32>(Points.size())];
+        const SSplinePoint& B = Points[(Segment + 1) % Points.Num()];
 
         return HermiteDerivative(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, t);
     }
@@ -146,14 +146,14 @@ namespace Lumina
         const int32 NumSegments = GetNumSegments();
         if (NumSegments == 0)
         {
-            return Points.empty() ? FVector3(1.0f) : Points[0].Scale;
+            return Points.IsEmpty() ? FVector3(1.0f) : Points[0].Scale;
         }
 
         const int32 Segment = Math::Clamp(static_cast<int32>(Math::Floor(Key)), 0, NumSegments - 1);
         const float t       = Math::Clamp(Key - static_cast<float>(Segment), 0.0f, 1.0f);
 
         const SSplinePoint& A = Points[Segment];
-        const SSplinePoint& B = Points[(Segment + 1) % static_cast<int32>(Points.size())];
+        const SSplinePoint& B = Points[(Segment + 1) % Points.Num()];
 
         return LerpV(A.Scale, B.Scale, t);
     }
@@ -163,14 +163,14 @@ namespace Lumina
         const int32 NumSegments = GetNumSegments();
         if (NumSegments == 0)
         {
-            return Points.empty() ? 0.0f : Points[0].Roll;
+            return Points.IsEmpty() ? 0.0f : Points[0].Roll;
         }
 
         const int32 Segment = Math::Clamp(static_cast<int32>(Math::Floor(Key)), 0, NumSegments - 1);
         const float t       = Math::Clamp(Key - static_cast<float>(Segment), 0.0f, 1.0f);
 
         const SSplinePoint& A = Points[Segment];
-        const SSplinePoint& B = Points[(Segment + 1) % static_cast<int32>(Points.size())];
+        const SSplinePoint& B = Points[(Segment + 1) % Points.Num()];
 
         return A.Roll + (B.Roll - A.Roll) * t;
     }
@@ -215,13 +215,13 @@ namespace Lumina
 
     float BuildSplineSamples(const SSplineComponent& Spline, const FMatrix4& LocalToWorld, TVector<FSplineSample>& OutSamples)
     {
-        OutSamples.clear();
+        OutSamples.Reset();
 
         const int32 NumSegments = Spline.GetNumSegments();
         if (NumSegments == 0)
         {
             // A single point still has a defined zero-length sample, so shaders need no special case.
-            if (!Spline.Points.empty())
+            if (!Spline.Points.IsEmpty())
             {
                 FSplineSample Only;
                 Only.Position = FVector3(LocalToWorld * FVector4(Spline.Points[0].Location, 1.0f));
@@ -229,7 +229,7 @@ namespace Lumina
                 Only.Up       = Math::Normalize(Spline.DefaultUpVector);
                 Only.Roll     = Spline.Points[0].Roll;
                 Only.Scale    = Spline.Points[0].Scale;
-                OutSamples.push_back(Only);
+                OutSamples.Add(Only);
             }
             return 0.0f;
         }
@@ -241,7 +241,7 @@ namespace Lumina
         const float KeyRange   = static_cast<float>(NumSegments);
 
         TVector<FSplineSample> Dense;
-        Dense.reserve(DenseCount);
+        Dense.Reserve(DenseCount);
 
         float RunningLength = 0.0f;
         for (int32 i = 0; i < DenseCount; ++i)
@@ -259,25 +259,25 @@ namespace Lumina
 
             if (i > 0)
             {
-                RunningLength += Math::Distance(Dense.back().Position, Sample.Position);
+                RunningLength += Math::Distance(Dense.Last().Position, Sample.Position);
             }
             Sample.DistanceAlong = RunningLength;
 
-            Dense.push_back(Sample);
+            Dense.Add(Sample);
         }
 
         const float TotalLength = RunningLength;
 
         // Pass 2 resamples at a uniform distance step, so a shader turns distance into an index.
         const int32 OutCount = NumSegments * PerSegment + 1;
-        OutSamples.reserve(OutCount);
+        OutSamples.Reserve(OutCount);
 
         if (TotalLength <= 1.0e-6f)
         {
             // Degenerate spline still emits the full table so the GPU sample count matches the header.
             for (int32 i = 0; i < OutCount; ++i)
             {
-                OutSamples.push_back(Dense.front());
+                OutSamples.Add(Dense[0]);
             }
             return 0.0f;
         }
@@ -290,7 +290,7 @@ namespace Lumina
             const float Target = Math::Min(static_cast<float>(i) * Step, TotalLength);
 
             // Dense distances are monotonic, so the cursor only moves forward and the resample is O(n).
-            while (Cursor + 2 < static_cast<int32>(Dense.size()) && Dense[Cursor + 1].DistanceAlong < Target)
+            while (Cursor + 2 < Dense.Num() && Dense[Cursor + 1].DistanceAlong < Target)
             {
                 ++Cursor;
             }
@@ -310,7 +310,7 @@ namespace Lumina
             Sample.Roll          = A.Roll + (B.Roll - A.Roll) * Alpha;
             Sample.Scale         = LerpV(A.Scale, B.Scale, Alpha);
 
-            OutSamples.push_back(Sample);
+            OutSamples.Add(Sample);
         }
 
         return TotalLength;
@@ -318,12 +318,12 @@ namespace Lumina
 
     FSplineSample SampleSplineAtDistance(const TVector<FSplineSample>& Samples, float TotalLength, float Distance)
     {
-        if (Samples.empty())
+        if (Samples.IsEmpty())
         {
             return FSplineSample{};
         }
 
-        const int32 Count = static_cast<int32>(Samples.size());
+        const int32 Count = Samples.Num();
         if (Count == 1 || TotalLength <= 1.0e-6f)
         {
             return Samples[0];

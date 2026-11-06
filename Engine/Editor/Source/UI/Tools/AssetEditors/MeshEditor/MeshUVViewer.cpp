@@ -60,12 +60,12 @@ namespace Lumina
     void FMeshUVViewer::Invalidate()
     {
         CacheKey = FCacheKey();
-        Edges.clear();
+        Edges.Reset();
     }
 
     void FMeshUVViewer::RebuildEdges(const FMeshResource& Resource)
     {
-        Edges.clear();
+        Edges.Reset();
         TriangleCount = 0;
         OutsideTriangleCount = 0;
         bTruncated = false;
@@ -73,7 +73,7 @@ namespace Lumina
         const FMeshletData& MeshletData = Resource.MeshletData;
         const bool bSkinned = Resource.IsSkinnedMesh();
 
-        const size_t NumVertices = bSkinned ? MeshletData.MeshletSkinnedVertices.size() : MeshletData.VertexAttributes.size();
+        const size_t NumVertices = bSkinned ? MeshletData.MeshletSkinnedVertices.Num() : MeshletData.VertexAttributes.Num();
         if (NumVertices == 0)
         {
             return;
@@ -87,28 +87,28 @@ namespace Lumina
 
         // Keying on the PACKED uv pair makes the match exact and collapses meshlet-split duplicates.
         THashSet<uint64> SeenEdges;
-        SeenEdges.reserve(MaxEdges);
+        SeenEdges.Reserve(MaxEdges);
 
         auto AddEdge = [&](uint32 PackedA, uint32 PackedB, const ImVec2& A, const ImVec2& B, uint16 Surface)
         {
             const uint64 Low  = Math::Min(PackedA, PackedB);
             const uint64 High = Math::Max(PackedA, PackedB);
             const uint64 Key  = (High << 32) | Low;
-            if (!SeenEdges.insert(Key).second)
+            if (!SeenEdges.TryAdd(Key))
             {
                 return;
             }
 
-            FUVEdge& Edge = Edges.emplace_back();
+            FUVEdge& Edge = Edges.EmplaceGetRef();
             Edge.A = A;
             Edge.B = B;
             Edge.Surface = Surface;
             Edge.bOutside = IsOutsideTile(A) || IsOutsideTile(B);
         };
 
-        for (size_t SurfaceIndex = 0; SurfaceIndex < Resource.GeometrySurfaces.size(); ++SurfaceIndex)
+        for (int32 SurfaceIndex = 0; SurfaceIndex < Resource.GeometrySurfaces.Num(); ++SurfaceIndex)
         {
-            if (SurfaceFilter >= 0 && SurfaceIndex != (size_t)SurfaceFilter)
+            if (SurfaceFilter >= 0 && static_cast<size_t>(SurfaceIndex) != (size_t)SurfaceFilter)
             {
                 continue;
             }
@@ -122,8 +122,8 @@ namespace Lumina
 
             for (uint32 i = 0; i < MeshletCount && !bTruncated; ++i)
             {
-                const size_t MeshletIndex = MeshletOffset + i;
-                if (MeshletIndex >= MeshletData.Meshlets.size())
+                const int32 MeshletIndex = MeshletOffset + i;
+                if (MeshletIndex >= MeshletData.Meshlets.Num())
                 {
                     break;
                 }
@@ -132,8 +132,8 @@ namespace Lumina
 
                 for (uint32 t = 0; t < Meshlet.TriangleCount; ++t)
                 {
-                    const size_t PackedIndex = Meshlet.TriangleOffset + t;
-                    if (PackedIndex >= MeshletData.MeshletTriangles.size())
+                    const int32 PackedIndex = Meshlet.TriangleOffset + t;
+                    if (PackedIndex >= MeshletData.MeshletTriangles.Num())
                     {
                         break;
                     }
@@ -170,7 +170,7 @@ namespace Lumina
                     AddEdge(Packed1, Packed2, UV1, UV2, (uint16)SurfaceIndex);
                     AddEdge(Packed2, Packed0, UV2, UV0, (uint16)SurfaceIndex);
 
-                    if (Edges.size() >= MaxEdges)
+                    if (static_cast<uint32>(Edges.Num()) >= MaxEdges)
                     {
                         bTruncated = true;
                         break;
@@ -195,13 +195,13 @@ namespace Lumina
         ImGui::SetNextItemWidth(90.0f * Scale);
         FFixedString LODLabel;
         FormatTo(LODLabel, "LOD {}", LODIndex);
-        if (ImGui::BeginCombo("##UVLOD", LODLabel.c_str()))
+        if (ImGui::BeginCombo("##UVLOD", *LODLabel))
         {
             for (uint32 i = 0; i < MaxLODs; ++i)
             {
                 FFixedString Entry;
                 FormatTo(Entry, "LOD {}", i);
-                if (ImGui::Selectable(Entry.c_str(), (uint32)LODIndex == i))
+                if (ImGui::Selectable(*Entry, (uint32)LODIndex == i))
                 {
                     LODIndex = (int32)i;
                 }
@@ -215,7 +215,7 @@ namespace Lumina
         ImGui::SetNextItemWidth(180.0f * Scale);
         const char* SurfaceLabel = (SurfaceFilter < 0)
             ? "All Surfaces"
-            : Resource.GeometrySurfaces[SurfaceFilter].ID.c_str();
+            : *Resource.GeometrySurfaces[SurfaceFilter].ID;
         if (ImGui::BeginCombo("##UVSurface", SurfaceLabel))
         {
             if (ImGui::Selectable("All Surfaces", SurfaceFilter < 0))
@@ -223,10 +223,10 @@ namespace Lumina
                 SurfaceFilter = -1;
             }
 
-            for (size_t i = 0; i < Resource.GeometrySurfaces.size(); ++i)
+            for (int32 i = 0; i < Resource.GeometrySurfaces.Num(); ++i)
             {
                 ImGui::PushID((int)i);
-                if (ImGui::Selectable(Resource.GeometrySurfaces[i].ID.c_str(), SurfaceFilter == (int32)i))
+                if (ImGui::Selectable(*Resource.GeometrySurfaces[i].ID, SurfaceFilter == (int32)i))
                 {
                     SurfaceFilter = (int32)i;
                 }
@@ -378,22 +378,22 @@ namespace Lumina
             FFixedString Readout;
             FormatTo(Readout, "U {:.4f}   V {:.4f}", CursorUV.x, CursorUV.y);
 
-            const ImVec2 TextSize = ImGui::CalcTextSize(Readout.c_str());
+            const ImVec2 TextSize = ImGui::CalcTextSize(*Readout);
             const ImVec2 TextPos(CanvasRect.Min.x + 8.0f, CanvasRect.Max.y - TextSize.y - 8.0f);
             DrawList->AddRectFilled(ImVec2(TextPos.x - 4.0f, TextPos.y - 2.0f),
                                     ImVec2(TextPos.x + TextSize.x + 4.0f, TextPos.y + TextSize.y + 2.0f),
                                     IM_COL32(0, 0, 0, 160));
-            DrawList->AddText(TextPos, IM_COL32(230, 230, 235, 255), Readout.c_str());
+            DrawList->AddText(TextPos, IM_COL32(230, 230, 235, 255), *Readout);
         }
     }
 
     void FMeshUVViewer::Draw(const FMeshResource& Resource)
     {
         const bool bSkinned = Resource.IsSkinnedMesh();
-        const uint32 MeshletCount = (uint32)Resource.MeshletData.Meshlets.size();
+        const uint32 MeshletCount = (uint32)Resource.MeshletData.Meshlets.Num();
         const uint32 VertexCount  = (uint32)(bSkinned
-            ? Resource.MeshletData.MeshletSkinnedVertices.size()
-            : Resource.MeshletData.VertexAttributes.size());
+            ? Resource.MeshletData.MeshletSkinnedVertices.Num()
+            : Resource.MeshletData.VertexAttributes.Num());
 
         if (MeshletCount == 0 || VertexCount == 0)
         {
@@ -402,7 +402,7 @@ namespace Lumina
         }
 
         LODIndex = Math::Clamp(LODIndex, 0, (int32)GetMaxLODCount(Resource) - 1);
-        SurfaceFilter = Math::Min(SurfaceFilter, (int32)Resource.GeometrySurfaces.size() - 1);
+        SurfaceFilter = Math::Min(SurfaceFilter, Resource.GeometrySurfaces.Num() - 1);
 
         DrawToolbar(Resource);
 
@@ -418,11 +418,11 @@ namespace Lumina
         FFixedString Status;
         FormatTo(Status, "{} tris  |  {} edges  |  {} outside 0..1 ({:.1f}%)",
             TriangleCount,
-            (uint32)Edges.size(),
+            (uint32)Edges.Num(),
             OutsideTriangleCount,
             TriangleCount > 0 ? (100.0f * (float)OutsideTriangleCount / (float)TriangleCount) : 0.0f);
 
-        ImGui::TextColored(EditorColors::TextDim(), "%s", Status.c_str());
+        ImGui::TextColored(EditorColors::TextDim(), "%s", *Status);
 
         if (bTruncated)
         {

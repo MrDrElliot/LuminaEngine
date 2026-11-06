@@ -25,27 +25,27 @@ namespace
     // An axis-aligned ground quad at Y = Height, wound so its normal points up.
     void AddGroundQuad(FNavBuildInput& In, float MinX, float MinZ, float MaxX, float MaxZ, float Height)
     {
-        const uint32 Base = (uint32)In.Vertices.size();
-        In.Vertices.push_back(FVector3(MinX, Height, MinZ));
-        In.Vertices.push_back(FVector3(MinX, Height, MaxZ));
-        In.Vertices.push_back(FVector3(MaxX, Height, MaxZ));
-        In.Vertices.push_back(FVector3(MaxX, Height, MinZ));
+        const uint32 Base = (uint32)In.Vertices.Num();
+        In.Vertices.Emplace(MinX, Height, MinZ);
+        In.Vertices.Emplace(MinX, Height, MaxZ);
+        In.Vertices.Emplace(MaxX, Height, MaxZ);
+        In.Vertices.Emplace(MaxX, Height, MinZ);
 
-        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 1); In.Indices.push_back(Base + 2);
-        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 2); In.Indices.push_back(Base + 3);
+        In.Indices.Add(Base + 0); In.Indices.Add(Base + 1); In.Indices.Add(Base + 2);
+        In.Indices.Add(Base + 0); In.Indices.Add(Base + 2); In.Indices.Add(Base + 3);
     }
 
     // A quad rising along X from HeightAtMinX to HeightAtMaxX, wound like AddGroundQuad so its normal points up.
     void AddRampQuad(FNavBuildInput& In, float MinX, float MinZ, float MaxX, float MaxZ, float HeightAtMinX, float HeightAtMaxX)
     {
-        const uint32 Base = (uint32)In.Vertices.size();
-        In.Vertices.push_back(FVector3(MinX, HeightAtMinX, MinZ));
-        In.Vertices.push_back(FVector3(MinX, HeightAtMinX, MaxZ));
-        In.Vertices.push_back(FVector3(MaxX, HeightAtMaxX, MaxZ));
-        In.Vertices.push_back(FVector3(MaxX, HeightAtMaxX, MinZ));
+        const uint32 Base = (uint32)In.Vertices.Num();
+        In.Vertices.Emplace(MinX, HeightAtMinX, MinZ);
+        In.Vertices.Emplace(MinX, HeightAtMinX, MaxZ);
+        In.Vertices.Emplace(MaxX, HeightAtMaxX, MaxZ);
+        In.Vertices.Emplace(MaxX, HeightAtMaxX, MinZ);
 
-        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 1); In.Indices.push_back(Base + 2);
-        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 2); In.Indices.push_back(Base + 3);
+        In.Indices.Add(Base + 0); In.Indices.Add(Base + 1); In.Indices.Add(Base + 2);
+        In.Indices.Add(Base + 0); In.Indices.Add(Base + 2); In.Indices.Add(Base + 3);
     }
 
     void GrowBounds(FNavBuildInput& In, float Pad)
@@ -105,10 +105,10 @@ namespace
     FNavAreaVolume MakeBoxVolume(float MinX, float MinZ, float MaxX, float MaxZ, float MinY, float MaxY, uint8 Area)
     {
         FNavAreaVolume Volume;
-        Volume.Hull.push_back(FVector3(MinX, 0.0f, MinZ));
-        Volume.Hull.push_back(FVector3(MinX, 0.0f, MaxZ));
-        Volume.Hull.push_back(FVector3(MaxX, 0.0f, MaxZ));
-        Volume.Hull.push_back(FVector3(MaxX, 0.0f, MinZ));
+        Volume.Hull.Emplace(MinX, 0.0f, MinZ);
+        Volume.Hull.Emplace(MinX, 0.0f, MaxZ);
+        Volume.Hull.Emplace(MaxX, 0.0f, MaxZ);
+        Volume.Hull.Emplace(MaxX, 0.0f, MinZ);
         Volume.MinY = MinY;
         Volume.MaxY = MaxY;
         Volume.Area = Area;
@@ -200,7 +200,7 @@ TEST(NavMeshBuild, GroundPlaneBakesAndPathsAcross)
     EXPECT_TRUE(Path.bValid);
     EXPECT_FALSE(Path.bPartial);
     EXPECT_FALSE(Path.bTruncated);
-    EXPECT_GE(Path.Corners.size(), 2u);
+    EXPECT_GE(Path.Corners.Num(), 2);
 }
 
 namespace
@@ -293,7 +293,7 @@ TEST(NavMeshBuild, NullAreaVolumeSplitsThePlane)
 {
     FNavBuildInput In = MakeGroundPlane();
     // A carved strip all the way across, wider than the agent diameter, so no route survives.
-    In.AreaVolumes.push_back(MakeBoxVolume(-20.0f, -1.5f, 20.0f, 1.5f, -2.0f, 2.0f, (uint8)ENavArea::Null));
+    In.AreaVolumes.Add(MakeBoxVolume(-20.0f, -1.5f, 20.0f, 1.5f, -2.0f, 2.0f, (uint8)ENavArea::Null));
 
     TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
     ASSERT_NE(Mesh, nullptr);
@@ -313,7 +313,7 @@ TEST(NavMeshBuild, NullAreaVolumeSplitsThePlane)
 TEST(NavMeshBuild, AreaVolumeTagsPolysWithItsArea)
 {
     FNavBuildInput In = MakeGroundPlane();
-    In.AreaVolumes.push_back(MakeBoxVolume(-6.0f, -6.0f, 6.0f, 6.0f, -2.0f, 2.0f, (uint8)ENavArea::Water));
+    In.AreaVolumes.Add(MakeBoxVolume(-6.0f, -6.0f, 6.0f, 6.0f, -2.0f, 2.0f, (uint8)ENavArea::Water));
 
     TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
     ASSERT_NE(Mesh, nullptr);
@@ -338,7 +338,7 @@ TEST(NavMeshBuild, SeparatedIslandsHaveNoRouteWithoutALink)
 TEST(NavMeshBuild, OffMeshLinkBridgesSeparatedIslands)
 {
     FNavBuildInput In = MakeSeparatedIslands();
-    In.Links.push_back(MakeGapLink());
+    In.Links.Add(MakeGapLink());
 
     TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
     ASSERT_NE(Mesh, nullptr);
@@ -355,7 +355,7 @@ TEST(NavMeshBuild, OffMeshLinkBridgesSeparatedIslands)
 TEST(NavMeshBuild, OffMeshLinkIsSkippedWhenItsFlagIsExcluded)
 {
     FNavBuildInput In = MakeSeparatedIslands();
-    In.Links.push_back(MakeGapLink());
+    In.Links.Add(MakeGapLink());
 
     TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
     ASSERT_NE(Mesh, nullptr);
@@ -445,7 +445,7 @@ TEST(NavMeshBuild, TileBlobKeepsItsLinkArrayEightByteAligned)
     int32 Checked = 0;
     for (const SNavTileData& Tile : Out.Tiles)
     {
-        if (Tile.Blob.empty())
+        if (Tile.Blob.IsEmpty())
         {
             continue;
         }
@@ -465,9 +465,9 @@ TEST(NavMeshBuild, StaleTileBlobIsRejectedRatherThanRead)
     int32 Corrupted = 0;
     for (SNavTileData& Tile : Out.Tiles)
     {
-        if (!Tile.Blob.empty())
+        if (!Tile.Blob.IsEmpty())
         {
-            Tile.Blob.resize(Tile.Blob.size() - 4);
+            Tile.Blob.SetNum(Tile.Blob.Num() - 4);
             ++Corrupted;
         }
     }
@@ -491,7 +491,7 @@ TEST(NavMeshBuild, QueriesSurviveConcurrentRetiling)
     const SNavTileData* Victim = nullptr;
     for (const SNavTileData& Tile : Baked)
     {
-        if (!Tile.Blob.empty())
+        if (!Tile.Blob.IsEmpty())
         {
             Victim = &Tile;
             break;
@@ -523,8 +523,15 @@ TEST(NavMeshBuild, QueriesSurviveConcurrentRetiling)
     const uint64 StartEpoch = Mesh->GetTopologyEpoch();
     for (int32 i = 0; i < 400; ++i)
     {
+        const uint64 QueriesBefore = Queries.load(std::memory_order_relaxed);
         TVector<uint8> Copy = Victim->Blob;
         EXPECT_TRUE(Mesh->RebuildTile(Victim->X, Victim->Y, std::move(Copy)));
+
+        // Back-to-back swaps starve the readers on a loaded machine, leaving nothing to race against.
+        while (Queries.load(std::memory_order_relaxed) == QueriesBefore)
+        {
+            Threading::ThreadYield();
+        }
     }
 
     bStop.store(true, std::memory_order_release);
@@ -533,7 +540,6 @@ TEST(NavMeshBuild, QueriesSurviveConcurrentRetiling)
         Reader.Join();
     }
 
-    EXPECT_GT(Queries.load(std::memory_order_relaxed), 0u);
     EXPECT_GT(Mesh->GetTopologyEpoch(), StartEpoch);
 
     // Retiling in place must leave the mesh answering exactly as it did before.
@@ -559,7 +565,7 @@ TEST(NavMeshBuild, TilesPageOutAndBackIn)
     int32 Removed = 0;
     for (const SNavTileData& Tile : Baked)
     {
-        if (Tile.Blob.empty())
+        if (Tile.Blob.IsEmpty())
         {
             continue;
         }
@@ -573,7 +579,7 @@ TEST(NavMeshBuild, TilesPageOutAndBackIn)
 
     for (const SNavTileData& Tile : Baked)
     {
-        if (!Tile.Blob.empty())
+        if (!Tile.Blob.IsEmpty())
         {
             EXPECT_TRUE(Mesh->AddTile(Tile.X, Tile.Y, Tile.Blob));
         }
@@ -611,7 +617,7 @@ namespace
         }
         for (const SNavTileData& Tile : Fx.Out.Tiles)
         {
-            if (!Tile.Blob.empty())
+            if (!Tile.Blob.IsEmpty())
             {
                 ++Fx.NonEmpty;
             }
@@ -659,7 +665,7 @@ TEST(NavMeshStreaming, TilesFollowTheFocusPoint)
     const FNavTileStreamer::FSettings Settings = StreamSettings(8192, 10.0f);
 
     TVector<FVector3> Focus;
-    Focus.push_back(FVector3(-35.0f, 0.0f, -35.0f));
+    Focus.Emplace(-35.0f, 0.0f, -35.0f);
     const FNavTileStreamer::FStats Near = Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, Settings);
 
     EXPECT_GT(Near.Resident, 0);
@@ -694,7 +700,7 @@ TEST(NavMeshStreaming, BudgetClampsTheResidentSet)
     ASSERT_GT(Fx.NonEmpty, Budget);
 
     TVector<FVector3> Focus;
-    Focus.push_back(FVector3(0.0f, 0.0f, 0.0f));
+    Focus.Emplace(0.0f, 0.0f, 0.0f);
     const FNavTileStreamer::FStats Stats = Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, StreamSettings(Budget, 1000.0f));
 
     EXPECT_LE(Stats.Resident, Budget);
@@ -732,7 +738,7 @@ TEST(NavMeshStreaming, HysteresisStopsBoundaryThrash)
     Settings.KeepRadiusScale = 2.0f;
 
     TVector<FVector3> Focus;
-    Focus.push_back(FVector3(0.0f, 0.0f, 0.0f));
+    Focus.Emplace(0.0f, 0.0f, 0.0f);
     Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, Settings);
     const int32 Settled = Fx.Streamer.GetResidentCount();
     ASSERT_GT(Settled, 0);
@@ -753,22 +759,22 @@ TEST(NavMeshBuild, BatchRebakeReproducesTheFullBake)
 
     FNavBuildOutput Full;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(std::move(In), Full));
-    ASSERT_GT(Full.Tiles.size(), 2u);
+    ASSERT_GT(Full.Tiles.Num(), 2);
 
     TVector<FNavTileCoord> Coords;
     for (const SNavTileData& Tile : Full.Tiles)
     {
-        Coords.push_back(FNavTileCoord{ Tile.X, Tile.Y });
+        Coords.Emplace(Tile.X, Tile.Y);
     }
 
     FNavBuildOutput Layout = Full;
-    Layout.Tiles.clear();
+    Layout.Tiles.Reset();
 
     TVector<SNavTileData> Batch;
     NavMeshBuilder::BakeTiles(Copy, Layout, Coords, Batch);
-    ASSERT_EQ(Batch.size(), Full.Tiles.size());
+    ASSERT_EQ(Batch.Num(), Full.Tiles.Num());
 
-    for (size_t i = 0; i < Batch.size(); ++i)
+    for (int32 i = 0; i < Batch.Num(); ++i)
     {
         EXPECT_EQ(Batch[i].X, Full.Tiles[i].X);
         EXPECT_EQ(Batch[i].Y, Full.Tiles[i].Y);
@@ -785,18 +791,18 @@ TEST(NavMeshBuild, BatchRebakeIgnoresTilesItWasNotAskedFor)
     ASSERT_TRUE(NavMeshBuilder::BakeSync(std::move(In), Full));
 
     // One tile in the middle of the grid, so it has neighbours on every side to be confused with.
-    const SNavTileData& Target = Full.Tiles[Full.Tiles.size() / 2];
+    const SNavTileData& Target = Full.Tiles[Full.Tiles.Num() / 2];
 
     FNavBuildOutput Layout = Full;
-    Layout.Tiles.clear();
+    Layout.Tiles.Reset();
 
     TVector<FNavTileCoord> Coords;
-    Coords.push_back(FNavTileCoord{ Target.X, Target.Y });
+    Coords.Emplace(Target.X, Target.Y);
 
     TVector<SNavTileData> Batch;
     NavMeshBuilder::BakeTiles(Copy, Layout, Coords, Batch);
 
-    ASSERT_EQ(Batch.size(), 1u);
+    ASSERT_EQ(Batch.Num(), 1);
     EXPECT_EQ(Batch[0].X, Target.X);
     EXPECT_EQ(Batch[0].Y, Target.Y);
     EXPECT_EQ(Batch[0].Blob, Target.Blob);
@@ -819,7 +825,7 @@ namespace
         }
         for (const SNavTileData& Tile : Fx.Out.Tiles)
         {
-            if (!Tile.Blob.empty())
+            if (!Tile.Blob.IsEmpty())
             {
                 ++Fx.NonEmpty;
             }
@@ -868,7 +874,7 @@ TEST(NavMeshStreaming, AdoptedTilesCanBeEvicted)
     ASSERT_EQ(Fx.Streamer.GetResidentCount(), Fx.NonEmpty);
 
     TVector<FVector3> Focus;
-    Focus.push_back(FVector3(-38.0f, 0.0f, -38.0f));
+    Focus.Emplace(-38.0f, 0.0f, -38.0f);
     const FNavTileStreamer::FStats Stats = Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, StreamSettings(8192, 8.0f));
 
     EXPECT_GT(Stats.Removed, 0) << "a tile the streamer adopted must still be evictable";
@@ -887,7 +893,7 @@ TEST(NavMeshBuild, TileChangeIsReportedOnlyForOverlappingBounds)
     const SNavTileData* Changed = nullptr;
     for (const SNavTileData& Tile : Fx.Out.Tiles)
     {
-        if (!Tile.Blob.empty())
+        if (!Tile.Blob.IsEmpty())
         {
             Changed = &Tile;
             break;
@@ -919,7 +925,7 @@ TEST(NavMeshBuild, ChangeRingOverflowReportsChanged)
 
     const uint64 Before = Fx.Mesh->GetTopologyEpoch();
 
-    const SNavTileData& Target = Fx.Out.Tiles[Fx.Out.Tiles.size() / 2];
+    const SNavTileData& Target = Fx.Out.Tiles[Fx.Out.Tiles.Num() / 2];
     for (int32 i = 0; i < 600; ++i)
     {
         Fx.Mesh->RemoveTile(Target.X + 1000 + i, Target.Y + 1000);
@@ -933,7 +939,7 @@ TEST(NavMeshBuild, ChangeRingOverflowReportsChanged)
 TEST(NavMeshBuild, PathCornersCarryTheOffMeshLinkFlag)
 {
     FNavBuildInput In = MakeSeparatedIslands();
-    In.Links.push_back(MakeGapLink());
+    In.Links.Add(MakeGapLink());
 
     TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
     ASSERT_NE(Mesh, nullptr);
@@ -943,7 +949,7 @@ TEST(NavMeshBuild, PathCornersCarryTheOffMeshLinkFlag)
     FNavQueryFilter Filter;
     ASSERT_TRUE(Mesh->FindPath(FVector3(-4.0f, 0.0f, 0.0f), FVector3(4.0f, 0.0f, 0.0f), Filter, Path));
     ASSERT_TRUE(Path.bValid);
-    ASSERT_EQ(Path.CornerFlags.size(), Path.Corners.size());
+    ASSERT_EQ(Path.CornerFlags.Num(), Path.Corners.Num());
 
     bool bSawLink = false;
     for (uint8 Flags : Path.CornerFlags)
@@ -967,7 +973,7 @@ TEST(NavMeshBuild, CallerCornerCapTruncatesRatherThanLies)
     Tight.MaxCorners = 8;
     FNavPath Capped;
     ASSERT_TRUE(Mesh->FindPath(Start, End, Tight, Capped));
-    EXPECT_LE((int32)Capped.Corners.size(), 8);
+    EXPECT_LE(Capped.Corners.Num(), 8);
 
     FNavQueryFilter Wide;
     FNavPath Full;
@@ -975,7 +981,7 @@ TEST(NavMeshBuild, CallerCornerCapTruncatesRatherThanLies)
     ASSERT_TRUE(Full.bValid);
 
     // An open plane straightens to very few corners, so the cap only has to hold where it does bite.
-    if ((int32)Full.Corners.size() > 8)
+    if (Full.Corners.Num() > 8)
     {
         EXPECT_TRUE(Capped.bTruncated);
         EXPECT_TRUE(Capped.bPartial);
@@ -1058,14 +1064,14 @@ TEST(NavMeshBuild, WorldSizedPlaneIsWalkableInEveryTile)
     int32 Empty = 0;
     for (const SNavTileData& Tile : Out.Tiles)
     {
-        if (Tile.Blob.empty())
+        if (Tile.Blob.IsEmpty())
         {
             ++Empty;
         }
     }
 
     // The outermost ring can legitimately be empty where the plane stops inside the padded bounds.
-    const int32 Total    = (int32)Out.Tiles.size();
+    const int32 Total    = Out.Tiles.Num();
     const int32 EdgeRing = 2 * (Out.TilesX + Out.TilesY);
     EXPECT_LE(Empty, EdgeRing)
         << Empty << " of " << Total << " tiles baked empty over a flat plane (grid "
@@ -1100,7 +1106,7 @@ TEST(NavMeshBuild, LargeRaisedMeshLeavesNoRingOfEmptyTiles)
             {
                 if (Tile.X == X && Tile.Y == Y)
                 {
-                    bFound = !Tile.Blob.empty();
+                    bFound = !Tile.Blob.IsEmpty();
                     break;
                 }
             }
@@ -1159,7 +1165,7 @@ namespace
             const bool bGapHigh = Wall % 2 == 0;
             const float MinZ = bGapHigh || Wall == ClosedWall ? -kMazeHalf - 4.0f : -kMazeHalf + kMazeGap;
             const float MaxZ = !bGapHigh || Wall == ClosedWall ? kMazeHalf + 4.0f : kMazeHalf - kMazeGap;
-            In.AreaVolumes.push_back(MakeBoxVolume(MazeWallX(Wall) - 1.0f, MinZ, MazeWallX(Wall) + 1.0f, MaxZ, -2.0f, 2.0f, (uint8)ENavArea::Null));
+            In.AreaVolumes.Add(MakeBoxVolume(MazeWallX(Wall) - 1.0f, MinZ, MazeWallX(Wall) + 1.0f, MaxZ, -2.0f, 2.0f, (uint8)ENavArea::Null));
         }
         GrowBounds(In, 3.0f);
         return In;
@@ -1183,7 +1189,7 @@ namespace
             const int32 Column = (int32)std::floor((X - Layout.Origin.x) / Layout.TileWorldSize);
             for (int32 Row = 0; Row < Layout.TilesY; ++Row)
             {
-                Coords.push_back(FNavTileCoord{ Column, Row });
+                Coords.Emplace(Column, Row);
             }
         }
         TVector<SNavTileData> Baked;
@@ -1206,10 +1212,10 @@ TEST(NavHierarchy, AMazeTooBigForTheNodePoolStillPathsEndToEnd)
 
     const FNavPath Tiered = FindMazePath(*Mesh, 32.0f);
     ASSERT_EQ(Tiered.Result, ENavPathResult::Success) << ToString(Tiered.Result);
-    EXPECT_LT(Math::Length(Tiered.Corners.back() - kMazeEnd), 0.5f);
+    EXPECT_LT(Math::Length(Tiered.Corners.Last() - kMazeEnd), 0.5f);
 
     float Length = 0.0f;
-    for (size_t i = 1; i < Tiered.Corners.size(); ++i)
+    for (int32 i = 1; i < Tiered.Corners.Num(); ++i)
     {
         Length += Math::Length(Tiered.Corners[i] - Tiered.Corners[i - 1]);
     }
@@ -1230,8 +1236,8 @@ TEST(NavHierarchy, AnUnreachableGoalComesBackPartialAtTheNearestReachablePoint)
     const FNavPath Path = FindMazePath(*Mesh, 32.0f, FVector3(-55.0f, 0.0f, 0.0f), FVector3(55.0f, 0.0f, 0.0f));
     EXPECT_EQ(Path.Result, ENavPathResult::Partial) << ToString(Path.Result);
     EXPECT_FALSE(Path.bTruncated);
-    ASSERT_FALSE(Path.Corners.empty());
-    EXPECT_GT(Path.Corners.back().x, -22.0f) << "the partial path stops at the edge facing the goal";
+    ASSERT_FALSE(Path.Corners.IsEmpty());
+    EXPECT_GT(Path.Corners.Last().x, -22.0f) << "the partial path stops at the edge facing the goal";
 }
 
 TEST(NavHierarchy, RebakedTilesThatCloseAndReopenAGapChangeTheRoute)
@@ -1243,7 +1249,7 @@ TEST(NavHierarchy, RebakedTilesThatCloseAndReopenAGapChangeTheRoute)
     FNavBuildOutput Out;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(FNavBuildInput(Open), Out));
     FNavBuildOutput Layout = Out;
-    Layout.Tiles.clear();
+    Layout.Tiles.Reset();
     FNavMesh Mesh;
     ASSERT_TRUE(Mesh.Initialize(Out.Origin, Out.TileWorldSize, Out.MaxTiles, Out.MaxPolysPerTile, std::move(Out.Tiles)));
     ASSERT_EQ(FindMazePath(Mesh, 32.0f).Result, ENavPathResult::Success);
@@ -1260,8 +1266,8 @@ TEST(NavHierarchy, RebakedTilesThatCloseAndReopenAGapChangeTheRoute)
         }
         const FNavPath Blocked = FindMazePath(Mesh, 32.0f);
         EXPECT_EQ(Blocked.Result, ENavPathResult::Partial) << ToString(Blocked.Result);
-        ASSERT_FALSE(Blocked.Corners.empty());
-        EXPECT_LT(Blocked.Corners.back().x, MazeWallX(kMazeWalls / 2)) << "the closed wall stops the path on its near side";
+        ASSERT_FALSE(Blocked.Corners.IsEmpty());
+        EXPECT_LT(Blocked.Corners.Last().x, MazeWallX(kMazeWalls / 2)) << "the closed wall stops the path on its near side";
     }
 
     RebakeWall(Mesh, Layout, Open, kMazeWalls / 2);
@@ -1275,47 +1281,59 @@ TEST(NavHierarchy, ATileSwapIsNotHeldOffByAStreamOfLongQueries)
     FNavBuildOutput Out;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(FNavBuildInput(Open), Out));
     FNavBuildOutput Layout = Out;
-    Layout.Tiles.clear();
+    Layout.Tiles.Reset();
     FNavMesh Mesh;
     ASSERT_TRUE(Mesh.Initialize(Out.Origin, Out.TileWorldSize, Out.MaxTiles, Out.MaxPolysPerTile, std::move(Out.Tiles)));
 
     TVector<FNavTileCoord> Coords;
     for (int32 Row = 0; Row < Layout.TilesY; ++Row)
     {
-        Coords.push_back(FNavTileCoord{ Layout.TilesX / 2, Row });
+        Coords.Emplace(Layout.TilesX / 2, Row);
     }
     TVector<SNavTileData> Baked;
     NavMeshBuilder::BakeTiles(Open, Layout, Coords, Baked);
 
-    GetMutableDefault<CNavigationSettings>()->HierarchicalPathDistance = 32.0f;
+    ASSERT_EQ(FindMazePath(Mesh, 32.0f).Result, ENavPathResult::Success);
+
+    constexpr int32 kQueriers = 4;
     std::atomic<bool> bStop{ false };
+    std::atomic<int32> Finished{ 0 };
     TVector<FThread> Queriers;
-    for (int32 i = 0; i < 4; ++i)
+    for (int32 i = 0; i < kQueriers; ++i)
     {
-        Queriers.emplace_back([&Mesh, &bStop]
+        Queriers.Emplace([&Mesh, &bStop, &Finished]
         {
             FNavQueryFilter Filter;
             while (!bStop.load(std::memory_order_relaxed))
             {
                 FNavPath Path;
                 Mesh.FindPath(kMazeStart, kMazeEnd, Filter, Path);
+                Finished.fetch_add(1, std::memory_order_release);
             }
         });
     }
     Threading::Sleep(20);
 
-    double Worst = 0.0;
-    for (SNavTileData& Tile : Baked)
+    // A swap is measured in the queries that finish during it, which machine load cannot inflate the way it stretches wall time.
+    constexpr int32 kRounds = 8;
+    int32 Fewest = INT32_MAX;
+    for (int32 Round = 0; Round < kRounds; ++Round)
     {
-        PlatformTime::FStopwatch Watch;
-        Mesh.RebuildTile(Tile.X, Tile.Y, Move(Tile.Blob));
-        Worst = Math::Max(Worst, Watch.ElapsedMilliseconds());
+        for (const SNavTileData& Tile : Baked)
+        {
+            TVector<uint8> Blob = Tile.Blob;
+            const int32 Before = Finished.load(std::memory_order_acquire);
+            Mesh.RebuildTile(Tile.X, Tile.Y, Move(Blob));
+            Fewest = Math::Min(Fewest, Finished.load(std::memory_order_acquire) - Before);
+        }
     }
     bStop.store(true);
     for (FThread& Querier : Queriers)
     {
         Querier.Join();
     }
-    EXPECT_LT(Worst, 50.0) << "a swap waits for one search segment, not for the queries to dry up";
+    ASSERT_GT(Finished.load(), 0) << "the queriers never ran, so nothing stood in the swaps' way";
+    // The fewest is checked because a swap preempted before it announces itself lets queries through without being held off.
+    EXPECT_LE(Fewest, 2 * kQueriers) << "a swap waits for the searches in flight, not for the queries to dry up";
     EXPECT_EQ(FindMazePath(Mesh, 32.0f).Result, ENavPathResult::Success);
 }

@@ -234,10 +234,10 @@ namespace Lumina
                 Ar << Legacy.ConditionSource;
             }
 
-            Data.Terms.clear();
+            Data.Terms.Reset();
             if (!Legacy.Name.IsNone() || Legacy.ConditionSource != EAnimTransitionSource::Parameter)
             {
-                Data.Terms.push_back(Legacy);
+                Data.Terms.Add(Legacy);
             }
             return Ar;
         }
@@ -416,7 +416,7 @@ namespace Lumina
         // Resolves every parameter name to an offset in the parameter struct; call after either changes.
         void LinkParameters();
 
-        bool IsCompiled() const { return !Bytecode.empty(); }
+        bool IsCompiled() const { return !Bytecode.IsEmpty(); }
 
         /** Skeleton every pose produced by this graph is authored against. */
         PROPERTY(Editable, Category = "Animation")

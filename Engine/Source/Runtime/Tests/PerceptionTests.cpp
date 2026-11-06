@@ -62,12 +62,13 @@ namespace
 
             System = NewObject<SPerceptionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             System->SetOwningWorld(World);
-            System->OnStartup(FWorldTestAccess::SystemContext(*World));
+            System->ConfigureSystem();
+            System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
         }
 
         ~FSightWorld()
         {
-            System->OnTeardown(FWorldTestAccess::SystemContext(*World));
+            System->OnTeardown(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
             System->SetOwningWorld(nullptr);
             WorldOwner.Reset();
         }

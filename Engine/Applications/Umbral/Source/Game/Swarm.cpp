@@ -21,20 +21,20 @@ namespace Umbral
 
     void FSwarm::Initialize()
     {
-        PositionX.resize(kMaxAgents);
-        PositionY.resize(kMaxAgents);
-        VelocityX.resize(kMaxAgents);
-        VelocityY.resize(kMaxAgents);
-        Health.resize(kMaxAgents);
-        MaxHealth.resize(kMaxAgents);
-        Flash.resize(kMaxAgents);
-        Kind.resize(kMaxAgents);
-        Dead.resize(kMaxAgents);
-        AgentCell.resize(kMaxAgents);
-        CellAgents.resize(kMaxAgents);
+        PositionX.SetNum(kMaxAgents);
+        PositionY.SetNum(kMaxAgents);
+        VelocityX.SetNum(kMaxAgents);
+        VelocityY.SetNum(kMaxAgents);
+        Health.SetNum(kMaxAgents);
+        MaxHealth.SetNum(kMaxAgents);
+        Flash.SetNum(kMaxAgents);
+        Kind.SetNum(kMaxAgents);
+        Dead.SetNum(kMaxAgents);
+        AgentCell.SetNum(kMaxAgents);
+        CellAgents.SetNum(kMaxAgents);
 
-        CellStart.resize(kGridCells + 1);
-        ChunkCounts.resize(size_t(kGridChunks) * size_t(kGridCells));
+        CellStart.SetNum(kGridCells + 1);
+        ChunkCounts.SetNum(size_t(kGridChunks) * size_t(kGridCells));
 
         Count = 0;
         DeadCount = 0;
@@ -87,7 +87,7 @@ namespace Umbral
 
         const int32 PerChunk = (Count + kGridChunks - 1) / kGridChunks;
 
-        Task::ParallelFor(uint32(Count), [this](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(Count), [this](const Jobs::FParallelRange& Range)
         {
             for (uint32 Index = Range.Start; Index < Range.End; ++Index)
             {
@@ -95,13 +95,13 @@ namespace Umbral
             }
         }, kMinParallelRange);
 
-        Memory::Memzero(ChunkCounts.data(), ChunkCounts.size() * sizeof(int32));
+        Memory::Memzero(ChunkCounts.GetData(), ChunkCounts.Num() * sizeof(int32));
 
-        Task::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FParallelRange& Range)
         {
             for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
-                int32* Counts = ChunkCounts.data() + size_t(Chunk) * size_t(kGridCells);
+                int32* Counts = ChunkCounts.GetData() + size_t(Chunk) * size_t(kGridCells);
                 const int32 First = int32(Chunk) * PerChunk;
                 const int32 Last = Math::Min(First + PerChunk, Count);
 
@@ -118,7 +118,7 @@ namespace Umbral
             CellStart[Cell] = Running;
             for (int32 Chunk = 0; Chunk < kGridChunks; ++Chunk)
             {
-                int32& Slot = ChunkCounts[size_t(Chunk) * size_t(kGridCells) + size_t(Cell)];
+                int32& Slot = ChunkCounts[Chunk * kGridCells + Cell];
                 const int32 Amount = Slot;
                 Slot = Running;
                 Running += Amount;
@@ -126,11 +126,11 @@ namespace Umbral
         }
         CellStart[kGridCells] = Running;
 
-        Task::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FParallelRange& Range)
         {
             for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
-                int32* Offsets = ChunkCounts.data() + size_t(Chunk) * size_t(kGridCells);
+                int32* Offsets = ChunkCounts.GetData() + size_t(Chunk) * size_t(kGridCells);
                 const int32 First = int32(Chunk) * PerChunk;
                 const int32 Last = Math::Min(First + PerChunk, Count);
 
@@ -149,7 +149,7 @@ namespace Umbral
             return;
         }
 
-        Task::ParallelFor(uint32(Count), [this, Delta, Target](const Task::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(Count), [this, Delta, Target](const Jobs::FParallelRange& Range)
         {
             for (uint32 Index = Range.Start; Index < Range.End; ++Index)
             {
@@ -272,10 +272,10 @@ namespace Umbral
                             ++OutKills;
                             Souls += StatsFor(EAgentKind(Kind[Index])).Souls;
 
-                            if (OutDeaths.size() < 96)
+                            if (OutDeaths.Num() < 96)
                             {
-                                OutDeaths.push_back({ PositionX[Index], PositionY[Index] });
-                                OutColors.push_back(ColorFor(EAgentKind(Kind[Index])));
+                                OutDeaths.Add({ PositionX[Index], PositionY[Index] });
+                                OutColors.Add(ColorFor(EAgentKind(Kind[Index])));
                             }
                         }
                     }

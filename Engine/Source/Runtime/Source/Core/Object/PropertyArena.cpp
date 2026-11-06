@@ -20,11 +20,11 @@ namespace Lumina
     void FPropertyArena::Reset()
     {
         // Reverse of construction, so an inner property outlives the outer one that may still reach it.
-        for (size_t Index = Owned.size(); Index > 0; --Index)
+        for (int32 Index = Owned.Num(); Index > 0; --Index)
         {
             Memory::DestroyAt(Owned[Index - 1]);
         }
-        Owned.clear();
+        Owned.Reset();
 
         FBlock* Block = Head;
         while (Block != nullptr)
@@ -44,9 +44,9 @@ namespace Lumina
 
     const char* FPropertyArena::CopyString(FStringView Text)
     {
-        char* Copy = static_cast<char*>(Allocate(Text.size() + 1, alignof(char)));
-        Memory::Memcpy(Copy, const_cast<char*>(Text.data()), Text.size());
-        Copy[Text.size()] = '\0';
+        char* Copy = static_cast<char*>(Allocate(Text.Len() + 1, alignof(char)));
+        Memory::Memcpy(Copy, const_cast<char*>(Text.GetData()), Text.Len());
+        Copy[Text.Len()] = '\0';
         return Copy;
     }
 
@@ -102,7 +102,7 @@ namespace Lumina
         }
         else if (Collector != nullptr)
         {
-            Collector->push_back(Property);
+            Collector->Add(Property);
         }
         else
         {

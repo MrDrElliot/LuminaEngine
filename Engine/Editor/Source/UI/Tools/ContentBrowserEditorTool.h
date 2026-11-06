@@ -25,6 +25,7 @@ namespace Lumina
     class FPropertyTable;
     struct FAssetData;
     struct FImportRequest;
+    enum class EContentBrowserSortMode : uint8;
 
     class FContentBrowserEditorTool : public FEditorTool
     {
@@ -58,7 +59,7 @@ namespace Lumina
         // Shows Folder with Search typed into the search box, the way a user browsing there would.
         void BrowseToFolder(FStringView Folder, FStringView Search);
 
-        NODISCARD FStringView GetBrowsedFolder() const { return FStringView(SelectedPath.c_str(), SelectedPath.size()); }
+        NODISCARD FStringView GetBrowsedFolder() const { return FStringView(*SelectedPath, SelectedPath.Len()); }
 
         // Selects a just-created asset and opens its inline rename as soon as its tile appears.
         void QueueRenameAfterCreate(FStringView VirtualPath);
@@ -70,6 +71,19 @@ namespace Lumina
 
         // The one selected file's virtual path, or empty when a folder, several items or nothing is selected.
         NODISCARD FFixedString GetSelectedFilePath() const;
+
+        struct FListingEntry
+        {
+            VFS::FFileInfo  Info;
+            FName           TypeLabel;
+            FName           AssetClass;
+
+            // The asset's class is no longer registered, so it cannot be loaded or opened, only deleted.
+            bool            bMissingType = false;
+        };
+
+        // Folders first under every mode, and entries the mode cannot tell apart fall back to name order.
+        EDITOR_API static void SortListing(TVector<FListingEntry>& Entries, EContentBrowserSortMode Mode, bool bAscending);
 
     private:
 
@@ -83,17 +97,7 @@ namespace Lumina
         {
             TUniquePtr<FDirectoryWatcher>   Watcher;
             FFixedString                    VirtualPrefix;
-            size_t                          WatchRootLen = 0;
-        };
-
-        struct FListingEntry
-        {
-            VFS::FFileInfo  Info;
-            FName           TypeLabel;
-            FName           AssetClass;
-
-            // The asset's class is no longer registered, so it cannot be loaded or opened, only deleted.
-            bool            bMissingType = false;
+            int32                           WatchRootLen = 0;
         };
 
         void OnProjectLoaded();
@@ -158,8 +162,8 @@ namespace Lumina
         void NavigateTo(FStringView Path);
         void NavigateBack();
         void NavigateForward();
-        NODISCARD bool CanNavigateBack() const { return !NavBackStack.empty(); }
-        NODISCARD bool CanNavigateForward() const { return !NavForwardStack.empty(); }
+        NODISCARD bool CanNavigateBack() const { return !NavBackStack.IsEmpty(); }
+        NODISCARD bool CanNavigateForward() const { return !NavForwardStack.IsEmpty(); }
 
         // Rebuilds FilterState from the asset registry, keeping the user's choices.
         void RefreshFilterClasses();

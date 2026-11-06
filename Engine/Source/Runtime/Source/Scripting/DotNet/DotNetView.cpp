@@ -10,99 +10,220 @@
 
 // One boundary crossing per CHUNK rather than per entity, rebinding a reused wrapper handle.
 
-using namespace Lumina;
-
-namespace
+namespace Lumina::DotNetViewInternal
 {
-    ECS::FRegistry* LmViewRegistryFromWorld(uint64 World)
-    {
-        CWorld* W = DotNet::AsWorld(World);
-        return W ? &W->GetEntityRegistry() : nullptr;
-    }
-
     // Snapshotting rather than holding a live iterator is what makes the view mutation-safe.
     struct FViewState
     {
-        // The driver's dense entities as ViewBegin saw them, walked back to front like a native view.
+        // The entities ViewBegin will offer, walked back to front like a native view.
         TVector<ECS::FEntity>      Entities;
         size_t                     Remaining = 0;
         const ECS::FSparseSet*     Driver = nullptr;
         int32                      DriverInclude = 0;
         TVector<ECS::FSparseSet*>  IncludeStorages;
         TVector<ECS::FSparseSet*>  ExcludeStorages;
+        TVector<ECS::FSparseSet*>  RequireStorages;
+
+        // The tracked includes a query writes in place, whose rows hand out their change-tick slots so a write handle stamps only what it touches.
+        uint32                     StampMask = 0;
+        uint32                     StampTick = 0;
+        uint32                     TickSink = 0;
     };
+
+    NODISCARD uint32 AllIncludes(int NInc)
+    {
+        return NInc >= 32 ? ~0u : (1u << NInc) - 1u;
+    }
+
+    NODISCARD ECS::FSparseSet* FindStorage(ECS::FRegistry& Registry, const void* Ops)
+    {
+        return Ops != nullptr ? Registry.FindStorage(static_cast<uint32>(static_cast<const FComponentOps*>(Ops)->TypeId)) : nullptr;
+    }
+
+    // Leaves IncludeStorages empty when an include or a required pool is missing or empty, which reads as an empty view.
+    NODISCARD FViewState* BeginView(ECS::FRegistry& Registry, const void* const* IncludeOps, int NInc, uint32 WriteMask, const void* const* ExcludeOps, int NExc,
+                                    const void* const* RequireOps, int NReq)
+    {
+        FViewState* State = Memory::ConstructAt(static_cast<FViewState*>(Memory::Malloc(sizeof(FViewState), alignof(FViewState))));
+        State->IncludeStorages.Reserve(NInc);
+
+        for (int i = 0; i < NInc; ++i)
+        {
+            ECS::FSparseSet* Storage = FindStorage(Registry, IncludeOps[i]);
+            if (Storage == nullptr)
+            {
+                State->IncludeStorages.Reset();
+                State->StampMask = 0;
+                return State;
+            }
+            State->IncludeStorages.Add(Storage);
+            if ((WriteMask & (1u << i)) != 0 && Storage->IsTrackingChanges())
+            {
+                Storage->MarkPointersEscaped();
+                State->StampTick = ECS::FSparseSet::GetChangeTick();
+                Storage->NoteStampTick(State->StampTick);
+                State->StampMask |= 1u << i;
+            }
+
+            // The cheapest snapshot drives, by dense slots as FRuntimeView picks it, and an empty pool outranks every size.
+            const auto ScanCost = [](const ECS::FSparseSet* Set) { return Set->Num() == 0 ? 0 : Set->GetDenseSize(); };
+            if (State->Driver == nullptr || ScanCost(Storage) < ScanCost(State->Driver))
+            {
+                State->Driver = Storage;
+                State->DriverInclude = i;
+            }
+        }
+
+        for (int i = 0; i < NExc; ++i)
+        {
+            if (ECS::FSparseSet* Storage = ExcludeOps != nullptr ? FindStorage(Registry, ExcludeOps[i]) : nullptr)
+            {
+                State->ExcludeStorages.Add(Storage);
+            }
+        }
+
+        for (int i = 0; i < NReq; ++i)
+        {
+            ECS::FSparseSet* Storage = FindStorage(Registry, RequireOps[i]);
+            if (Storage == nullptr || Storage->Num() == 0)
+            {
+                State->IncludeStorages.Reset();
+                State->StampMask = 0;
+                return State;
+            }
+            State->RequireStorages.Add(Storage);
+        }
+        return State;
+    }
+
+    // Matching waits for the chunk walk, which looks every row up anyway, so the snapshot is one copy.
+    void SnapshotDriver(FViewState& State)
+    {
+        const ECS::FEntity* Dense = State.Driver->GetDenseData();
+        State.Entities.Reset();
+        State.Entities.Append(Dense, Dense + State.Driver->GetDenseSize());
+        State.Remaining = State.Entities.Num();
+    }
+
+    // TQuery's filtered walk: the first filter's pool by its ticks, then every other filter, with the chunk walk matching the includes after.
+    void SnapshotFiltered(ECS::FRegistry& Registry, FViewState& State, const void* const* FilterOps, int NFilter, uint32 AddedMask, uint32 Since)
+    {
+        State.Entities.Reset();
+        State.Remaining = 0;
+
+        for (int f = 0; f < NFilter; ++f)
+        {
+            ECS::FSparseSet* Pool = FindStorage(Registry, FilterOps[f]);
+            if (Pool != nullptr && !Pool->IsTrackingChanges())
+            {
+                Pool->TrackChanges();
+            }
+        }
+
+        const ECS::FSparseSet* First = FindStorage(Registry, FilterOps[0]);
+        if (First == nullptr)
+        {
+            return;
+        }
+
+        const uint32* Ticks = (AddedMask & 1u) != 0 ? First->GetAddedTickData() : First->GetChangeTickData();
+        const ECS::FEntity* Dense = First->GetDenseData();
+        const int32 Size = static_cast<int32>(First->GetDenseSize());
+        for (int32 Index = 0; Index < Size; ++Index)
+        {
+            const ECS::FEntity Entity = Dense[Index];
+            if (Entity.IsTombstone() || (Ticks != nullptr && !ECS::FSparseSet::IsNewerTick(Ticks[Index], Since)))
+            {
+                continue;
+            }
+
+            bool bPasses = true;
+            for (int f = 1; f < NFilter && bPasses; ++f)
+            {
+                const ECS::FSparseSet* Pool = FindStorage(Registry, FilterOps[f]);
+                bPasses = Pool != nullptr && ((AddedMask & (1u << f)) != 0 ? Pool->HasAddedSince(Entity, Since) : Pool->HasChangedSince(Entity, Since));
+            }
+            if (bPasses)
+            {
+                State.Entities.Add(Entity);
+            }
+        }
+        State.Remaining = State.Entities.Num();
+    }
 }
 
-// The runtime view is consumed here, and only the snapshot and storages live on.
+// The runtime view is consumed here, and only the snapshot and storages live on. Every include is handed out writable and, like a plain T walk, never stamped.
 LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
 {
-    ECS::FRegistry* Registry = LmViewRegistryFromWorld(World);
-    if (Registry == nullptr || IncludeOps == nullptr || NInc <= 0)
+    Lumina::CWorld* W = Lumina::DotNet::AsWorld(World);
+    if (W == nullptr || IncludeOps == nullptr || NInc <= 0)
     {
         return nullptr;
     }
 
-    FViewState* State = Memory::ConstructAt(static_cast<FViewState*>(Memory::Malloc(sizeof(FViewState), alignof(FViewState))));
-    State->IncludeStorages.reserve(NInc);
-
-    for (int i = 0; i < NInc; ++i)
+    Lumina::DotNetViewInternal::FViewState* State = Lumina::DotNetViewInternal::BeginView(W->GetEntityRegistry(), IncludeOps, NInc, Lumina::DotNetViewInternal::AllIncludes(NInc), ExcludeOps, NExc, nullptr, 0);
+    if (!State->IncludeStorages.IsEmpty())
     {
-        const FComponentOps* Ops = static_cast<const FComponentOps*>(IncludeOps[i]);
-        ECS::FSparseSet* Storage = Ops ? Registry->FindStorage(static_cast<uint32>(Ops->TypeId)) : nullptr;
-        if (Storage == nullptr)
-        {
-            // A never-emplaced (or unknown) include type -> the view is empty (no snapshot).
-            State->IncludeStorages.clear();
-            return State;
-        }
-        State->IncludeStorages.push_back(Storage);
-
-        // The smallest pool drives, as FRuntimeView picks it.
-        if (State->Driver == nullptr || Storage->Num() < State->Driver->Num())
-        {
-            State->Driver = Storage;
-            State->DriverInclude = i;
-        }
+        Lumina::DotNetViewInternal::SnapshotDriver(*State);
     }
-
-    for (int i = 0; i < NExc; ++i)
-    {
-        const FComponentOps* Ops = ExcludeOps ? static_cast<const FComponentOps*>(ExcludeOps[i]) : nullptr;
-        if (Ops != nullptr)
-        {
-            if (ECS::FSparseSet* Storage = Registry->FindStorage(static_cast<uint32>(Ops->TypeId)))
-            {
-                State->ExcludeStorages.push_back(Storage);
-            }
-        }
-    }
-
-    // Matching waits for the chunk walk, which looks every row up anyway, so the snapshot is one copy.
-    const ECS::FEntity* Dense = State->Driver->GetDenseData();
-    State->Entities.assign(Dense, Dense + State->Driver->GetDenseSize());
-    State->Remaining = State->Entities.size();
     return State;
 }
 
-// Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless.
-LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, int MaxCount, int NInclude)
+// A C# query field's view, whose Write includes hand out tick slots stamped with OutStampTick, and which with filters holds just the rows written or added after Since.
+LUMINA_DOTNET_EXPORT(void*, QueryViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, uint32 WriteMask, const void* const* ExcludeOps, int NExc,
+                                            const void* const* RequireOps, int NReq, const void* const* FilterOps, int NFilter, uint32 AddedMask, uint32 Since, uint32* OutStampTick)
 {
-    FViewState* State = static_cast<FViewState*>(StatePtr);
+    Lumina::CWorld* W = Lumina::DotNet::AsWorld(World);
+    if (W == nullptr || IncludeOps == nullptr || NInc <= 0)
+    {
+        return nullptr;
+    }
+
+    Lumina::ECS::FRegistry& Registry = W->GetEntityRegistry();
+    Lumina::DotNetViewInternal::FViewState* State = Lumina::DotNetViewInternal::BeginView(Registry, IncludeOps, NInc, WriteMask, ExcludeOps, NExc, RequireOps, NReq);
+    *OutStampTick = State->StampTick;
+    if (State->IncludeStorages.IsEmpty())
+    {
+        return State;
+    }
+    if (FilterOps != nullptr && NFilter > 0)
+    {
+        Lumina::DotNetViewInternal::SnapshotFiltered(Registry, *State, FilterOps, NFilter, AddedMask, Since);
+    }
+    else
+    {
+        Lumina::DotNetViewInternal::SnapshotDriver(*State);
+    }
+    return State;
+}
+
+// What a filtered query's CompleteRun does: the tick its next run reads changes after.
+LUMINA_DOTNET_EXPORT(uint32, AdvanceChangeTick)()
+{
+    return Lumina::ECS::FSparseSet::AdvanceChangeTick();
+}
+
+// Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless. OutTicks, when given, gets each row's change-tick slot per include, null where nothing stamps.
+LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, uint32** OutTicks, int MaxCount, int NInclude)
+{
+    Lumina::DotNetViewInternal::FViewState* State = static_cast<Lumina::DotNetViewInternal::FViewState*>(StatePtr);
     if (State == nullptr || OutEntities == nullptr || OutPtrs == nullptr || MaxCount <= 0 || State->Driver == nullptr)
     {
         return 0;
     }
 
-    const int N = (int)State->IncludeStorages.size();
+    const int N = State->IncludeStorages.Num();
     const int K = NInclude < N ? NInclude : N;
-    ECS::FSparseSet* const* Includes = State->IncludeStorages.data();
-    ECS::FSparseSet* const* Excludes = State->ExcludeStorages.data();
-    const size_t NumExcludes = State->ExcludeStorages.size();
-    const ECS::FEntity* Snapshot = State->Entities.data();
+    Lumina::ECS::FSparseSet* const* Includes = State->IncludeStorages.GetData();
+    Lumina::ECS::FSparseSet* const* Excludes = State->ExcludeStorages.GetData();
+    const int32 NumExcludes = State->ExcludeStorages.Num();
+    Lumina::ECS::FSparseSet* const* Requires = State->RequireStorages.GetData();
+    const int32 NumRequires = State->RequireStorages.Num();
+    const Lumina::ECS::FEntity* Snapshot = State->Entities.GetData();
 
-    const ECS::FSparseSet* Driver = State->Driver;
+    const Lumina::ECS::FSparseSet* Driver = State->Driver;
     const int32 DriverInclude = State->DriverInclude;
-    const ECS::FEntity* DriverDense = Driver->GetDenseData();
+    const Lumina::ECS::FEntity* DriverDense = Driver->GetDenseData();
     const size_t DriverSize = Driver->GetDenseSize();
 
     // An unpaged driver's payload is one block, so a row still in its snapshot slot costs a multiply.
@@ -116,7 +237,7 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
     while (Count < MaxCount && Remaining > 0)
     {
         const size_t Slot = --Remaining;
-        const ECS::FEntity Entity = Snapshot[Slot];
+        const Lumina::ECS::FEntity Entity = Snapshot[Slot];
         if (Entity.IsTombstone())
         {
             continue;
@@ -150,7 +271,7 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
             {
                 continue;
             }
-            const ECS::FSparseSet* Storage = Includes[k];
+            const Lumina::ECS::FSparseSet* Storage = Includes[k];
             void* Payload = nullptr;
             if (Storage->IsTagOnly())
             {
@@ -166,13 +287,27 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
                 Row[k] = Payload;
             }
         }
-        for (size_t e = 0; e < NumExcludes && bMatches; ++e)
+        for (int32 e = 0; e < NumExcludes && bMatches; ++e)
         {
             bMatches = !Excludes[e]->Contains(Entity);
+        }
+        for (int32 r = 0; r < NumRequires && bMatches; ++r)
+        {
+            bMatches = Requires[r]->Contains(Entity);
         }
         if (!bMatches)
         {
             continue;
+        }
+
+        if (OutTicks != nullptr)
+        {
+            uint32** Ticks = OutTicks + (size_t)Count * (size_t)NInclude;
+            for (int k = 0; k < K; ++k)
+            {
+                const bool bStamps = (State->StampMask & (1u << k)) != 0;
+                Ticks[k] = bStamps ? Includes[k]->GetChangeTickSlot(Includes[k]->FindLiveDense(Entity), State->TickSink) : nullptr;
+            }
         }
 
         OutEntities[Count] = static_cast<uint32>(Entity.Value);
@@ -186,10 +321,10 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
 // Each include's layout epoch, so a handle the view hands out can tell when its pool has moved.
 LUMINA_DOTNET_EXPORT(void, ViewIncludeEpochs)(void* StatePtr, const uint32** OutSlots, int NInclude)
 {
-    const FViewState* State = static_cast<const FViewState*>(StatePtr);
+    const Lumina::DotNetViewInternal::FViewState* State = static_cast<const Lumina::DotNetViewInternal::FViewState*>(StatePtr);
     for (int i = 0; i < NInclude; ++i)
     {
-        const bool bKnown = State != nullptr && i < (int)State->IncludeStorages.size();
+        const bool bKnown = State != nullptr && i < State->IncludeStorages.Num();
         OutSlots[i] = bKnown ? State->IncludeStorages[i]->GetLayoutEpoch() : nullptr;
     }
 }
@@ -197,16 +332,18 @@ LUMINA_DOTNET_EXPORT(void, ViewIncludeEpochs)(void* StatePtr, const uint32** Out
 // Frees the per-call view state allocated by ViewBegin.
 LUMINA_DOTNET_EXPORT(void, ViewEnd)(void* StatePtr)
 {
-    FViewState* State = static_cast<FViewState*>(StatePtr);
+    Lumina::DotNetViewInternal::FViewState* State = static_cast<Lumina::DotNetViewInternal::FViewState*>(StatePtr);
     if (State != nullptr)
     {
         State->~FViewState();
-        Memory::Free(State);
+        Lumina::Memory::Free(State);
     }
 }
 
 LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(ViewBegin),
+    LUMINA_DOTNET_SIG(QueryViewBegin),
+    LUMINA_DOTNET_SIG(AdvanceChangeTick),
     LUMINA_DOTNET_SIG(ViewNextChunk),
     LUMINA_DOTNET_SIG(ViewIncludeEpochs),
     LUMINA_DOTNET_SIG(ViewEnd)

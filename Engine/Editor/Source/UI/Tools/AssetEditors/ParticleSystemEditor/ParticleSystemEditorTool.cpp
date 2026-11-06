@@ -49,7 +49,7 @@ namespace Lumina
     // Built lazily so reflected classes are registered by the time it runs. Add new stock modules here.
 
     FParticleSystemEditorTool::FParticleSystemEditorTool(IEditorToolContext* Context, CObject* InAsset)
-        : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
+        : FAssetEditorTool(Context, *InAsset->GetName(), InAsset, NewObject<CWorld>())
         , ParticleEntity()
         , DirectionalLightEntity()
         , System(Cast<CParticleEmitter>(InAsset) != nullptr ? ParticleOps::WrapEmitter(Cast<CParticleEmitter>(InAsset)) : TStrongObjectPtr<CParticleSystem>(Cast<CParticleSystem>(InAsset)))
@@ -67,6 +67,7 @@ namespace Lumina
     void FParticleSystemEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
@@ -179,17 +180,11 @@ namespace Lumina
                 ReplayPreview();
             }
         }
-
-        // Re-applied every frame, since idle reclaim can rebuild the render scene and its settings.
-        if (World.IsValid() && World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
     }
 
     void FParticleSystemEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
-        EmitterStacks.clear();
+        EmitterStacks.Reset();
         SelectedObject = nullptr;
         SelectedModule = nullptr;
     }
@@ -204,15 +199,15 @@ namespace Lumina
 
         // These may be the only strong refs, and dropping them first would destroy every module and reload it from disk.
         TVector<TStrongObjectPtr<CParticleEmitterStack>> Previous = Move(EmitterStacks);
-        EmitterStacks.clear();
-        EmitterStacks.reserve(PS->Emitters.size());
+        EmitterStacks.Reset();
+        EmitterStacks.Reserve(PS->Emitters.Num());
 
-        for (int32 i = 0; i < (int32)PS->Emitters.size(); ++i)
+        for (int32 i = 0; i < PS->Emitters.Num(); ++i)
         {
-            EmitterStacks.push_back(ParticleOps::FindOrCreateStack(PS, i));
+            EmitterStacks.Add(ParticleOps::FindOrCreateStack(PS, i));
         }
 
-        if (SelectedEmitter >= (int32)EmitterStacks.size())
+        if (SelectedEmitter >= EmitterStacks.Num())
         {
             SelectedEmitter = 0;
         }
@@ -225,11 +220,11 @@ namespace Lumina
 
     CParticleEmitterStack* FParticleSystemEditorTool::GetStackFor(int32 EmitterIndex) const
     {
-        if (EmitterIndex < 0 || EmitterIndex >= (int32)EmitterStacks.size())
+        if (EmitterIndex < 0 || EmitterIndex >= EmitterStacks.Num())
         {
             return nullptr;
         }
-        return EmitterStacks[(size_t)EmitterIndex].Get();
+        return EmitterStacks[EmitterIndex].Get();
     }
 
     void FParticleSystemEditorTool::DrawHelpMenu()
@@ -283,11 +278,11 @@ namespace Lumina
         }
 
         constexpr float Speeds[] = { 0.1f, 0.25f, 0.5f, 1.0f, 2.0f };
-        if (ImGui::BeginMenu(Format(LE_ICON_PLAY_PAUSE " Speed {}x", PreviewSpeed).c_str()))
+        if (ImGui::BeginMenu(*Format(LE_ICON_PLAY_PAUSE " Speed {}x", PreviewSpeed)))
         {
             for (float Speed : Speeds)
             {
-                if (ImGui::MenuItem(Format("{}x", Speed).c_str(), nullptr, PreviewSpeed == Speed))
+                if (ImGui::MenuItem(*Format("{}x", Speed), nullptr, PreviewSpeed == Speed))
                 {
                     PreviewSpeed = Speed;
                 }
@@ -307,7 +302,7 @@ namespace Lumina
     {
         const CParticleSystem* PS = GetSystem();
         if (PS == nullptr || !World.IsValid() || !World->IsValidEntity(ParticleEntity)
-            || SelectedEmitter < 0 || SelectedEmitter >= (int32)PS->Emitters.size() || PS->Emitters[SelectedEmitter] == nullptr)
+            || SelectedEmitter < 0 || SelectedEmitter >= PS->Emitters.Num() || PS->Emitters[SelectedEmitter] == nullptr)
         {
             return;
         }
@@ -405,7 +400,7 @@ namespace Lumina
         }
 
         // Emitters can be added or removed by undo, so the stacks reconcile every frame.
-        if (EmitterStacks.size() != PS->Emitters.size())
+        if (EmitterStacks.Num() != PS->Emitters.Num())
         {
             SyncEmitterStacks();
         }
@@ -416,7 +411,7 @@ namespace Lumina
         if (CompilationResult.bIsError)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
-            ImGui::TextWrapped(LE_ICON_ALERT_CIRCLE_OUTLINE " %s", CompilationResult.CompilationLog.c_str());
+            ImGui::TextWrapped(LE_ICON_ALERT_CIRCLE_OUTLINE " %s", *CompilationResult.CompilationLog);
             ImGui::PopStyleColor();
             ImGui::Spacing();
         }
@@ -439,7 +434,7 @@ namespace Lumina
         // This panel docks tall and narrow, so fixed-width columns truncated every module name.
         ImGui::BeginChild("##emitters", ImVec2(0.0f, 0.0f));
 
-        for (int32 i = 0; i < (int32)PS->Emitters.size(); ++i)
+        for (int32 i = 0; i < PS->Emitters.Num(); ++i)
         {
             ImGui::PushID(i);
             DrawEmitterSection(i);
@@ -495,7 +490,7 @@ namespace Lumina
             if (CParticleEmitter* Added = PS->AddEmitter())
             {
                 SyncEmitterStacks();
-                SelectedEmitter = (int32)PS->Emitters.size() - 1;
+                SelectedEmitter = PS->Emitters.Num() - 1;
                 SelectObject(Added);
                 MarkEdited(PS);
                 DirtyEmitter = SelectedEmitter;
@@ -510,20 +505,20 @@ namespace Lumina
             const FName EmitterClass = CParticleEmitter::StaticClass()->GetName();
             for (const FAssetData* Data : FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Asset) { return Asset.AssetClass == EmitterClass; }))
             {
-                const FStringView Path(Data->Path.c_str(), Data->Path.size());
-                FPickerItem& Item = Items.emplace_back();
-                Item.Name     = Data->AssetName.c_str();
+                const FStringView Path(*Data->Path, Data->Path.Len());
+                FPickerItem& Item = Items.EmplaceGetRef();
+                Item.Name     = *Data->AssetName;
                 Item.Key      = Data->AssetGUID.ToString();
                 const FStringView Folder = VFS::Parent(Path, true);
-                Item.Category = FString(Folder.data(), Folder.size());
-                Item.Tooltip  = FString(Path.data(), Path.size());
+                Item.Category = FString(Folder.GetData(), Folder.Len());
+                Item.Tooltip  = FString(Path.GetData(), Path.Len());
                 Item.Icon     = LE_ICON_SHIMMER;
             }
         }, Width);
 
         if (Picked != nullptr)
         {
-            AddSharedEmitter(Cast<CParticleEmitter>(LoadObject<CObject>(FGuid::FromString(FStringView(Picked->Key.c_str(), Picked->Key.size())))));
+            AddSharedEmitter(Cast<CParticleEmitter>(LoadObject<CObject>(FGuid::FromString(FStringView(*Picked->Key, Picked->Key.Len())))));
         }
     }
 
@@ -532,9 +527,9 @@ namespace Lumina
         CParticleSystem* PS = GetSystem();
         if (Shared != nullptr)
         {
-            PS->Emitters.push_back(Shared);
+            PS->Emitters.Add(Shared);
             SyncEmitterStacks();
-            SelectedEmitter = (int32)PS->Emitters.size() - 1;
+            SelectedEmitter = PS->Emitters.Num() - 1;
             SelectObject(Shared);
             MarkEdited(PS);
             DirtyEmitter = Shared->UsesCustomShader() ? Constants::kIndexNone : SelectedEmitter;
@@ -564,15 +559,15 @@ namespace Lumina
                 Char = std::isalnum((unsigned char)Char) ? Char : '_';
             }
             const FFixedString SystemPath = PS->GetPackage()->GetPackagePath();
-            const FFixedString Path = MakeSiblingAssetPath(FStringView(SystemPath.c_str(), SystemPath.size()), Suffix.c_str());
-            Replacement = ParticleOps::SaveEmitterAsAsset(PS, EmitterIndex, FStringView(Path.c_str(), Path.size()));
+            const FFixedString Path = MakeSiblingAssetPath(FStringView(*SystemPath, SystemPath.Len()), *Suffix);
+            Replacement = ParticleOps::SaveEmitterAsAsset(PS, EmitterIndex, FStringView(*Path, Path.Len()));
             if (Replacement != nullptr)
             {
-                ImGuiX::Notifications::NotifySuccess("Saved '{0}' as '{1}'.", Emitter->EmitterName.c_str(), Path.c_str());
+                ImGuiX::Notifications::NotifySuccess("Saved '{0}' as '{1}'.", *Emitter->EmitterName, *Path);
             }
             else
             {
-                ImGuiX::Notifications::NotifyError("Could not save '{0}' as an emitter asset.", Emitter->EmitterName.c_str());
+                ImGuiX::Notifications::NotifyError("Could not save '{0}' as an emitter asset.", *Emitter->EmitterName);
             }
         }
 
@@ -642,7 +637,7 @@ namespace Lumina
     void FParticleSystemEditorTool::DrawEmitterSection(int32 EmitterIndex)
     {
         CParticleSystem* PS = GetSystem();
-        CParticleEmitter* Emitter = (PS != nullptr && EmitterIndex < (int32)PS->Emitters.size())
+        CParticleEmitter* Emitter = (PS != nullptr && EmitterIndex < PS->Emitters.Num())
                                   ? PS->Emitters[EmitterIndex].Get() : nullptr;
         if (Emitter == nullptr)
         {
@@ -698,10 +693,10 @@ namespace Lumina
         if (bShared)
         {
             ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_LINK);
-            ImGuiX::TextTooltip("Shared emitter asset {}. Edits here change every system that uses it.", Emitter->GetPackage()->GetPackagePath().c_str());
+            ImGuiX::TextTooltip("Shared emitter asset {}. Edits here change every system that uses it.", *Emitter->GetPackage()->GetPackagePath());
             ImGui::SameLine(0.0f, 4.0f);
         }
-        ImGui::TextColored(bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted(), "%s", Emitter->EmitterName.c_str());
+        ImGui::TextColored(bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted(), "%s", *Emitter->EmitterName);
 
         ImGui::SameLine();
         ImGui::SetCursorScreenPos(ImVec2(CardMin.x + CardWidth - ImGui::GetFrameHeight() - 6.0f, RowY));
@@ -753,7 +748,7 @@ namespace Lumina
             SyncEmitterStacks();
             MarkEdited(PS);
         }
-        if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Down", nullptr, false, EmitterIndex < (int32)PS->Emitters.size() - 1))
+        if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Down", nullptr, false, EmitterIndex < PS->Emitters.Num() - 1))
         {
             PS->MoveEmitter(Emitter, 1);
             SyncEmitterStacks();
@@ -769,7 +764,7 @@ namespace Lumina
         ImGui::Separator();
         // A system with no emitters renders nothing and every consumer would need a special case.
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
-        if (ImGui::MenuItem(LE_ICON_DELETE " Remove Emitter", nullptr, false, PS->Emitters.size() > 1))
+        if (ImGui::MenuItem(LE_ICON_DELETE " Remove Emitter", nullptr, false, PS->Emitters.Num() > 1))
         {
             PendingRemoveEmitter = Emitter;
         }
@@ -798,10 +793,10 @@ namespace Lumina
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(EditorColors::SectionHeader(), "%s  %s", Icon, Label);
-        if (!Stack.empty())
+        if (!Stack.IsEmpty())
         {
             ImGui::SameLine();
-            ImGui::TextColored(EditorColors::TextMuted(), "%d", (int32)Stack.size());
+            ImGui::TextColored(EditorColors::TextMuted(), "%d", Stack.Num());
         }
         ImGui::SameLine();
         ImGui::SetCursorScreenPos(ImVec2(HeaderMin.x + Width - ImGui::GetFrameHeight() - 4.0f, ImGui::GetCursorScreenPos().y));
@@ -821,7 +816,7 @@ namespace Lumina
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 2.0f));
         CParticleModule* PendingRemove = nullptr;
         bool bUnderStage = false;
-        for (int32 i = 0; i < (int32)Stack.size(); ++i)
+        for (int32 i = 0; i < Stack.Num(); ++i)
         {
             CParticleModule* Module = Stack[i].Get();
             if (Module == nullptr)
@@ -833,7 +828,7 @@ namespace Lumina
             bUnderStage = StageHeader != nullptr || bUnderStage;
 
             ImGui::PushID(i);
-            const EModuleRowAction Action = DrawModuleRow(EmitterIndex, Module, StageHeader, bUnderStage && StageHeader == nullptr, i > 0, i < (int32)Stack.size() - 1);
+            const EModuleRowAction Action = DrawModuleRow(EmitterIndex, Module, StageHeader, bUnderStage && StageHeader == nullptr, i > 0, i < Stack.Num() - 1);
             ImGui::PopID();
 
             if (Action == EModuleRowAction::MoveUp || Action == EModuleRowAction::MoveDown)
@@ -892,9 +887,9 @@ namespace Lumina
             SelectedEmitter = EmitterIndex;
             SelectModule(Module);
         }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !Module->GetTooltip().empty())
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !Module->GetTooltip().IsEmpty())
         {
-            ImGui::SetTooltip("%s", Module->GetTooltip().c_str());
+            ImGui::SetTooltip("%s", *Module->GetTooltip());
         }
         const ImVec2 AfterRow = ImGui::GetCursorScreenPos();
         const bool bHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(Min, Max);
@@ -937,20 +932,20 @@ namespace Lumina
         {
             ImGui::TextColored(bEnabled ? EditorColors::AccentAlt() : EditorColors::TextMuted(), LE_ICON_LAYERS_OUTLINE);
             ImGui::SameLine(0.0f, 4.0f);
-            ImGui::TextColored(TextColor, "%s", StageHeader->StageName.c_str());
+            ImGui::TextColored(TextColor, "%s", *StageHeader->StageName);
             ImGui::SameLine();
 
-            const FString Pill = Format("x{}", StageHeader->Iterations).c_str();
+            const FString Pill = *Format("x{}", StageHeader->Iterations);
             const ImVec2 PillPos = ImGui::GetCursorScreenPos();
-            const ImVec2 PillSize = ImGui::CalcTextSize(Pill.c_str());
+            const ImVec2 PillSize = ImGui::CalcTextSize(*Pill);
             const float  PillY = PillPos.y + (ImGui::GetFrameHeight() - PillSize.y) * 0.5f;
             DrawList->AddRectFilled(ImVec2(PillPos.x - 1.0f, PillY - 1.0f), ImVec2(PillPos.x + PillSize.x + 9.0f, PillY + PillSize.y + 1.0f),
                 EditorColors::U32(EditorColors::FrameBg()), 8.0f);
-            DrawList->AddText(ImVec2(PillPos.x + 4.0f, PillY), EditorColors::U32(EditorColors::TextDim()), Pill.c_str());
+            DrawList->AddText(ImVec2(PillPos.x + 4.0f, PillY), EditorColors::U32(EditorColors::TextDim()), *Pill);
         }
         else
         {
-            ImGui::TextColored(TextColor, "%s", Module->GetDisplayName().c_str());
+            ImGui::TextColored(TextColor, "%s", *Module->GetDisplayName());
         }
 
         // Actions stay out of sight until the row is pointed at, so a long stack reads as a list rather than a wall of buttons.
@@ -1029,7 +1024,7 @@ namespace Lumina
     void FParticleSystemEditorTool::DrawGridTargetPreview(int32 EmitterIndex)
     {
         CParticleSystem* PS = GetSystem();
-        const CParticleEmitter* Emitter = (PS != nullptr && EmitterIndex < (int32)PS->Emitters.size()) ? PS->Emitters[EmitterIndex].Get() : nullptr;
+        const CParticleEmitter* Emitter = (PS != nullptr && EmitterIndex < PS->Emitters.Num()) ? PS->Emitters[EmitterIndex].Get() : nullptr;
         if (Emitter == nullptr || Emitter->GridChannelCount == 0)
         {
             return;
@@ -1078,7 +1073,7 @@ namespace Lumina
             };
 
             TVector<FPaletteEntry> Entries;
-            Entries.reserve(ModulePalette.size());
+            Entries.Reserve(ModulePalette.Num());
             for (CClass* ModuleClass : ModulePalette)
             {
                 CParticleModule* CDO = ModuleClass->GetDefaultObject<CParticleModule>();
@@ -1092,16 +1087,16 @@ namespace Lumina
                 Entry.Name     = CDO->GetDisplayName();
                 Entry.Class    = ModuleClass;
                 Entry.CDO      = CDO;
-                Entries.push_back(Entry);
+                Entries.Add(Entry);
             }
 
             Algo::Sort(Entries, [](const FPaletteEntry& A, const FPaletteEntry& B)
             {
-                const int32 Cat = strcmp(A.Category.c_str(), B.Category.c_str());
-                return (Cat != 0) ? (Cat < 0) : (strcmp(A.Name.c_str(), B.Name.c_str()) < 0);
+                const int32 Cat = strcmp(*A.Category, *B.Category);
+                return (Cat != 0) ? (Cat < 0) : (strcmp(*A.Name, *B.Name) < 0);
             });
 
-            if (Entries.empty())
+            if (Entries.IsEmpty())
             {
                 ImGui::TextDisabled("No modules for this stage.");
             }
@@ -1113,12 +1108,12 @@ namespace Lumina
                 {
                     CurrentCategory = Entry.Category;
                     ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 150, 155, 255));
-                    ImGui::TextUnformatted(CurrentCategory.c_str());
+                    ImGui::TextUnformatted(*CurrentCategory);
                     ImGui::PopStyleColor();
                 }
 
                 ImGui::Indent(10.0f);
-                if (ImGui::Selectable(Entry.Name.c_str()))
+                if (ImGui::Selectable(*Entry.Name))
                 {
                     CParticleModule* Added = Emitter->AddModule(Entry.Class);
                     if (Added != nullptr)
@@ -1129,9 +1124,9 @@ namespace Lumina
                         DirtyEmitter = EmitterIndex;
                     }
                 }
-                if (ImGui::IsItemHovered() && !Entry.CDO->GetTooltip().empty())
+                if (ImGui::IsItemHovered() && !Entry.CDO->GetTooltip().IsEmpty())
                 {
-                    ImGui::SetTooltip("%s", Entry.CDO->GetTooltip().c_str());
+                    ImGui::SetTooltip("%s", *Entry.CDO->GetTooltip());
                 }
                 ImGui::Unindent(10.0f);
             }
@@ -1153,7 +1148,7 @@ namespace Lumina
         SyncEmitterStacks();
 
         // Stopping at the first error would blank the other emitters' shaders and darken the preview.
-        for (int32 i = 0; i < (int32)PS->Emitters.size(); ++i)
+        for (int32 i = 0; i < PS->Emitters.Num(); ++i)
         {
             CompileEmitter(i);
             MarkEdited(PS->Emitters[i].Get());
@@ -1163,7 +1158,7 @@ namespace Lumina
     bool FParticleSystemEditorTool::CompileEmitter(int32 EmitterIndex)
     {
         CParticleSystem* PS = GetSystem();
-        if (PS == nullptr || EmitterIndex < 0 || EmitterIndex >= (int32)PS->Emitters.size() || PS->Emitters[EmitterIndex] == nullptr)
+        if (PS == nullptr || EmitterIndex < 0 || EmitterIndex >= PS->Emitters.Num() || PS->Emitters[EmitterIndex] == nullptr)
         {
             return false;
         }
@@ -1210,7 +1205,7 @@ namespace Lumina
             CPackage* Package = Emitter->GetPackage();
             if (Package != Asset->GetPackage() && Package->IsDirty() && !CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
-                ImGuiX::Notifications::NotifyError("Failed to save emitter asset '{0}'.", Emitter->GetName().c_str());
+                ImGuiX::Notifications::NotifyError("Failed to save emitter asset '{0}'.", *Emitter->GetName());
             }
         }
     }
@@ -1247,10 +1242,10 @@ namespace Lumina
         ImGuiID GraphDockID = 0;
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Down, 0.5f, &GraphDockID, &RightDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(EmitterWindowName).c_str(),    LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),   RightDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(ModuleGraphWindowName).c_str(), GraphDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SelectionWindowName).c_str(),  RightBottomDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(EmitterWindowName),    LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName),   RightDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(ModuleGraphWindowName), GraphDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(SelectionWindowName),  RightBottomDockID);
     }
 
     void FParticleSystemEditorTool::OnPostUndoRedo()

@@ -156,7 +156,7 @@ namespace Lumina
     #elif defined(__linux__) || defined(__unix__)
         ByteArray bytes{};
 
-        if (!FillRandomBytes(bytes.data(), bytes.size()))
+        if (!FillRandomBytes(bytes.GetData(), bytes.Num()))
         {
             return FGuid();
         }
@@ -182,7 +182,7 @@ namespace Lumina
     
     FGuid FGuid::NewDeterministic(FStringView seed)
     {
-        const uint64 H0 = Hash::XXHash::GetHash64(seed.data(), seed.size());
+        const uint64 H0 = Hash::XXHash::GetHash64(seed.GetData(), seed.Len());
 
         uint64 H1 = H0 + 0x9E3779B97F4A7C15ULL;
         H1 = (H1 ^ (H1 >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -190,7 +190,7 @@ namespace Lumina
         H1 =  H1 ^ (H1 >> 31);
 
         ByteArray bytes{};
-        for (size_t i = 0; i < 8; ++i)
+        for (int32 i = 0; i < 8; ++i)
         {
             bytes[i]     = static_cast<uint8>((H0 >> (i * 8)) & 0xFFu);
             bytes[i + 8] = static_cast<uint8>((H1 >> (i * 8)) & 0xFFu);
@@ -205,9 +205,9 @@ namespace Lumina
     
     bool FGuid::TryParseInternal(FStringView str, ByteArray& outBytes)
     {
-        if (str.length() >= 2 && str[0] == '{' && str.back() == '}')
+        if (str.Len() >= 2 && str[0] == '{' && str.Last() == '}')
         {
-            str = str.substr(1, str.length() - 2);
+            str = str.Mid(1, str.Len() - 2);
         }
         
         auto isHex = [](char c) {
@@ -223,12 +223,12 @@ namespace Lumina
             return 0;
         };
         
-        size_t byteIdx = 0;
-        size_t i = 0;
+        int32 byteIdx = 0;
+        int32 i = 0;
         char firstNibble = 0;
         bool hasFirstNibble = false;
         
-        while (i < str.length() && byteIdx < GUID_SIZE)
+        while (i < str.Len() && byteIdx < GUID_SIZE)
         {
             char c = str[i++];
             
@@ -304,7 +304,7 @@ namespace Lumina
             oss << std::uppercase;
         }
         
-        for (size_t i = 0; i < GUID_SIZE; ++i)
+        for (int32 i = 0; i < GUID_SIZE; ++i)
         {
             if (includeDashes && (i == 4 || i == 6 || i == 8 || i == 10))
             {
@@ -323,17 +323,17 @@ namespace Lumina
     
     void FGuid::Invalidate() noexcept
     {
-        Bytes.fill(0);
+        Bytes.Fill(0);
     }
     
     void FGuid::Swap(FGuid& other) noexcept
     {
-        Bytes.swap(other.Bytes);
+        swap(Bytes, other.Bytes);
     }
     
     size_t FGuid::Hash() const noexcept
     {
-        return Hash::GetHash64(Bytes.data(), Bytes.size());
+        return Hash::GetHash64(Bytes.GetData(), Bytes.Num());
     }
     
     std::ostream& operator<<(std::ostream& os, const FGuid& guid)

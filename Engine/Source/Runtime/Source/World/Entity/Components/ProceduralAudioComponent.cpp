@@ -51,18 +51,20 @@ namespace Lumina
 
 	uint32 SProceduralAudioComponent::QueueSamples(const TVector<float>& Samples)
 	{
-		if (!Stream || ChannelCount == 0)
+		// The stream's own count, since the component's may have been edited after the stream was made.
+		const uint32 StreamChannels = Stream ? Stream->GetChannelCount() : 0;
+		if (StreamChannels == 0)
 		{
 			return 0;
 		}
 
-		const uint32 NumFrames = (uint32)(Samples.size() / ChannelCount);
+		const uint32 NumFrames = Samples.Num() / StreamChannels;
 		if (NumFrames == 0)
 		{
 			return 0;
 		}
 
-		return Stream->Write(Samples.data(), NumFrames);
+		return Stream->Write(Samples.GetData(), NumFrames);
 	}
 
 	uint32 SProceduralAudioComponent::GetQueuedFrameCount()

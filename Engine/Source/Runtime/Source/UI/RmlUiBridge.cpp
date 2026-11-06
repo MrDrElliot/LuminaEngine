@@ -121,18 +121,18 @@ namespace Lumina::RmlUi
 
             const double Now = PlatformTime::Seconds();
 
-            const FString Key(Message.c_str(), Message.size());
+            const FString Key(Message.c_str(), IntCastChecked<int32>(Message.size()));
             {
                 FScopeLock Lock(Mutex);
 
                 // Bounded rather than evicted one by one, since messages carrying line numbers are unique.
-                if (LastShown.size() >= MaxTracked)
+                if (static_cast<size_t>(LastShown.Num()) >= MaxTracked)
                 {
-                    LastShown.clear();
+                    LastShown.Reset();
                 }
 
-                auto It = LastShown.find(Key);
-                if (It != LastShown.end() && (Now - It->second) < MuteSeconds)
+                auto It = LastShown.Find(Key);
+                if (It != nullptr && (Now - (*It)) < MuteSeconds)
                 {
                     return;
                 }
@@ -144,7 +144,7 @@ namespace Lumina::RmlUi
                 ? ImGuiX::Notifications::EType::Warning
                 : ImGuiX::Notifications::EType::Error;
 
-            ImGuiX::Notifications::NotifyInternal(Severity, FStringView(Key.c_str(), Key.size()));
+            ImGuiX::Notifications::NotifyInternal(Severity, FStringView(*Key, Key.Len()));
         }
 #endif
 
@@ -166,9 +166,9 @@ namespace Lumina::RmlUi
 
                 if (bDiagnostic && GDiagnosticSink != nullptr)
                 {
-                    FRmlDiagnostic& Diagnostic = GDiagnosticSink->emplace_back();
+                    FRmlDiagnostic& Diagnostic = GDiagnosticSink->EmplaceGetRef();
                     Diagnostic.bError  = (Type != Rml::Log::LT_WARNING);
-                    Diagnostic.Message = FString(Message.c_str(), Message.size());
+                    Diagnostic.Message = FString(Message.c_str(), IntCastChecked<int32>(Message.size()));
                 }
 #if USING(WITH_EDITOR)
                 // Only when nobody is collecting, since a capturing caller reports its own summary.
@@ -331,14 +331,14 @@ namespace Lumina::RmlUi
                 const uintptr_t V = reinterpret_cast<uintptr_t>(Ptr);
                 const int Row = (int)(V >> 32);
                 const int Col = (int)(V & 0xFFFFFFFFu);
-                if (Row >= 0 && Row < (int)List->Rows.size() && Col >= 0 && Col < (int)List->Rows[Row].size())
+                if (Row >= 0 && Row < List->Rows.Num() && Col >= 0 && Col < List->Rows[Row].Num())
                 {
                     Out = List->Rows[Row][Col];
                     return true;
                 }
 
                 // A row the list just shrank past stays bound for one update while its element is removed.
-                if (Row >= (int)List->Rows.size() && Row < (int)List->PreviousRows.size() && Col >= 0 && Col < (int)List->PreviousRows[Row].size())
+                if (Row >= List->Rows.Num() && Row < List->PreviousRows.Num() && Col >= 0 && Col < List->PreviousRows[Row].Num())
                 {
                     Out = List->PreviousRows[Row][Col];
                     return true;
@@ -357,7 +357,7 @@ namespace Lumina::RmlUi
             Rml::DataVariable Child(void* Ptr, const Rml::DataAddressEntry& Address) override
             {
                 const uintptr_t Row = reinterpret_cast<uintptr_t>(Ptr) & 0xFFFFFFFFu;
-                for (size_t Col = 0; Col < List->MemberNames.size(); ++Col)
+                for (int32 Col = 0; Col < List->MemberNames.Num(); ++Col)
                 {
                     if (List->MemberNames[Col] == Address.name)
                     {
@@ -376,10 +376,10 @@ namespace Lumina::RmlUi
         {
         public:
             explicit FListArrayDef(FListField* InList) : Rml::VariableDefinition(Rml::DataVariableType::Array), List(InList) {}
-            int Size(void* /*Ptr*/) override { return (int)List->Rows.size(); }
+            int Size(void* /*Ptr*/) override { return List->Rows.Num(); }
             Rml::DataVariable Child(void* /*Ptr*/, const Rml::DataAddressEntry& Address) override
             {
-                const int Count = (int)List->Rows.size();
+                const int Count = List->Rows.Num();
                 const int Index = Address.index;
                 if (Address.name == "size")
                 {
@@ -391,7 +391,7 @@ namespace Lumina::RmlUi
                     return Rml::DataVariable();
                 }
                 // A list of plain values, such as names, reads each row's one cell as the item itself.
-                if (List->MemberNames.empty())
+                if (List->MemberNames.IsEmpty())
                 {
                     return Rml::DataVariable(List->MemberDef.get(), reinterpret_cast<void*>((uintptr_t)Index << 32));
                 }
@@ -420,6 +420,8 @@ namespace Lumina::RmlUi
 
             // Commands an editor preview fired, as "Name(args)", since it has no script to call.
             TVector<FString>          FiredCommands;
+
+            bool                      bDead = false;
 
             FManagedDataModel() = default;
             ~FManagedDataModel()
@@ -510,13 +512,13 @@ namespace Lumina::RmlUi
         void ForgetInnerRml(const Rml::Element* Element)
         {
             FState& State = S();
-            if (State.InnerRmlHashes.empty())
+            if (State.InnerRmlHashes.IsEmpty())
             {
                 return;
             }
             for (const Rml::Element* It = Element; It != nullptr; It = It->GetParentNode())
             {
-                State.InnerRmlHashes.erase(It);
+                State.InnerRmlHashes.Remove(It);
             }
         }
 
@@ -530,7 +532,7 @@ namespace Lumina::RmlUi
         FWorldUIContext* WorldUI(const CWorld* World)
         {
             FState& State = S();
-            if (World == nullptr || !State.Worlds.contains(const_cast<CWorld*>(World)))
+            if (World == nullptr || !State.Worlds.Contains(const_cast<CWorld*>(World)))
             {
                 return nullptr;
             }
@@ -602,12 +604,12 @@ namespace Lumina::RmlUi
 
         int64 GetDocumentWriteTime(const FString& VirtualPath)
         {
-            if (VirtualPath.empty())
+            if (VirtualPath.IsEmpty())
             {
                 return 0;
             }
             const FPathString Physical = VFS::ResolvePath(VirtualPath);
-            if (Physical.empty())
+            if (Physical.IsEmpty())
             {
                 return 0;
             }
@@ -654,7 +656,7 @@ namespace Lumina::RmlUi
             }
             E.ResourceID = -1;
             E.BuiltSize  = FUIntVector2(0, 0);
-            E.LoadedPath.clear();
+            E.LoadedPath.Reset();
         }
 
         void EnsureWidgetResources(FWidgetRuntime& E, CWorld* World, ECS::FEntity Entity, uint32 Width, uint32 Height)
@@ -734,11 +736,11 @@ namespace Lumina::RmlUi
             TVector<FString> Changed;
             {
                 FScopeLock ChangedLock(State.ChangedDocumentsMutex);
-                Changed.swap(State.ChangedDocuments);
+                swap(Changed, State.ChangedDocuments);
             }
             for (const FString& Path : Changed)
             {
-                UIScripts::DocumentChanged(FStringView(Path.c_str(), Path.size()));
+                UIScripts::DocumentChanged(FStringView(*Path, Path.Len()));
             }
         }
 
@@ -772,7 +774,7 @@ namespace Lumina::RmlUi
         // Safe whether or not the elements still exist, since a destroyed one already fired OnDetach.
         void ReapWorldUIListeners(FState& State, CWorld* World)
         {
-            for (size_t i = 0; i < State.UIListeners.size(); )
+            for (int32 i = 0; i < State.UIListeners.Num(); )
             {
                 FManagedUIListener* L = State.UIListeners[i];
                 if (L->World == World)
@@ -781,9 +783,50 @@ namespace Lumina::RmlUi
                     {
                         L->Element->RemoveEventListener(L->Type, L, false);
                     }
-                    State.UIListeners[i] = State.UIListeners.back();
-                    State.UIListeners.pop_back();
+                    State.UIListeners[i] = State.UIListeners.Last();
+                    State.UIListeners.Pop();
                     delete L;
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+        }
+
+        void RemoveManagedDataModel(FState& State, int32 Index)
+        {
+            FManagedDataModel* M = State.DataModels[Index];
+            if (State.bInitialized && M->World != nullptr)
+            {
+                if (FWorldUIContext* UI = WorldUI(M->World))
+                {
+                    if (UI->Context != nullptr)
+                    {
+                        UI->Context->RemoveDataModel(M->Name);
+                    }
+                }
+            }
+            else if (State.bInitialized && M->OwnerContext != nullptr)
+            {
+                M->OwnerContext->RemoveDataModel(M->Name);
+            }
+            State.DataModels[Index] = State.DataModels.Last();
+            State.DataModels.Pop();
+            delete M;
+        }
+
+        void ReapDeadDataModels(FState& State)
+        {
+            if (GEventDispatchDepth > 0)
+            {
+                return;
+            }
+            for (int32 i = 0; i < State.DataModels.Num();)
+            {
+                if (State.DataModels[i]->bDead)
+                {
+                    RemoveManagedDataModel(State, i);
                 }
                 else
                 {
@@ -795,13 +838,13 @@ namespace Lumina::RmlUi
         // RemoveContext already tore down the underlying DataModel, so only the wrapper is freed.
         void ReapWorldDataModels(FState& State, CWorld* World)
         {
-            for (size_t i = 0; i < State.DataModels.size(); )
+            for (int32 i = 0; i < State.DataModels.Num(); )
             {
                 FManagedDataModel* M = State.DataModels[i];
                 if (M->World == World)
                 {
-                    State.DataModels[i] = State.DataModels.back();
-                    State.DataModels.pop_back();
+                    State.DataModels[i] = State.DataModels.Last();
+                    State.DataModels.Pop();
                     delete M;
                 }
                 else
@@ -815,8 +858,8 @@ namespace Lumina::RmlUi
         {
             auto EndsWith = [&](FStringView Suffix)
             {
-                return VirtualPath.size() >= Suffix.size()
-                    && VirtualPath.substr(VirtualPath.size() - Suffix.size()) == Suffix;
+                return VirtualPath.Len() >= Suffix.Len()
+                    && VirtualPath.Mid(VirtualPath.Len() - Suffix.Len()) == Suffix;
             };
             if (EndsWith(FStringView(".rml")) || EndsWith(FStringView(".rcss")))
             {
@@ -824,10 +867,10 @@ namespace Lumina::RmlUi
                 {
                     FState& State = S();
                     FScopeLock Lock(State.ChangedDocumentsMutex);
-                    const FString Path(VirtualPath.data(), VirtualPath.size());
+                    const FString Path(VirtualPath.GetData(), VirtualPath.Len());
                     if (std::find(State.ChangedDocuments.begin(), State.ChangedDocuments.end(), Path) == State.ChangedDocuments.end())
                     {
-                        State.ChangedDocuments.push_back(Path);
+                        State.ChangedDocuments.Add(Path);
                     }
                 }
                 S().LastUIFileChangeCycles.store(PlatformTime::Cycles(), Atomic::MemoryOrderRelease);
@@ -864,7 +907,7 @@ namespace Lumina::RmlUi
                     FString Source;
                     if (VFS::ReadFile(Source, "/Engine/Resources/UI/Default.rcss"))
                     {
-                        DefaultRcss = Rml::String(Source.c_str());
+                        DefaultRcss = Rml::String(*Source);
                     }
                 }
 
@@ -898,21 +941,21 @@ namespace Lumina::RmlUi
 
             void OnDocumentLoad(Rml::ElementDocument* Document) override
             {
-                S().DocumentsToLint.push_back(Document);
+                S().DocumentsToLint.Add(Document);
             }
 
             void OnDocumentUnload(Rml::ElementDocument* Document) override
             {
                 TVector<Rml::ElementDocument*>& Pending = S().DocumentsToLint;
-                Pending.erase(std::remove(Pending.begin(), Pending.end(), Document), Pending.end());
+                Pending.Remove(Document);
             }
 
             void OnElementDestroy(Rml::Element* Element) override
             {
                 FState& State = S();
-                if (!State.InnerRmlHashes.empty())
+                if (!State.InnerRmlHashes.IsEmpty())
                 {
-                    State.InnerRmlHashes.erase(Element);
+                    State.InnerRmlHashes.Remove(Element);
                 }
             }
         };
@@ -956,7 +999,7 @@ namespace Lumina::RmlUi
         void LintLoadedDocuments(Rml::Context* Context)
         {
             TVector<Rml::ElementDocument*>& Pending = S().DocumentsToLint;
-            for (size_t i = 0; i < Pending.size();)
+            for (int32 i = 0; i < Pending.Num();)
             {
                 Rml::ElementDocument* Document = Pending[i];
                 if (Document->GetContext() != Context)
@@ -966,7 +1009,7 @@ namespace Lumina::RmlUi
                 }
                 int32 Warnings = 0;
                 LintTextLineHeights(Document, Document->GetSourceURL(), Warnings);
-                Pending.erase(Pending.begin() + i);
+                Pending.RemoveAt(i);
             }
         }
 
@@ -1036,7 +1079,7 @@ namespace Lumina::RmlUi
             State.System.reset();
             State.Files.reset();
             State.Renderer.reset();
-            State.EditorContexts.clear();
+            State.EditorContexts.Reset();
             State.ActiveWorld = nullptr;
             State.DebuggerHost = nullptr;
             State.bDebuggerVisible = false;
@@ -1148,7 +1191,7 @@ namespace Lumina::RmlUi
 
         for (const SUIFontFace& Face : Settings->FontFaces)
         {
-            if (Face.Family.empty() || Face.Path.empty())
+            if (Face.Family.IsEmpty() || Face.Path.IsEmpty())
             {
                 continue;
             }
@@ -1162,7 +1205,7 @@ namespace Lumina::RmlUi
             if (LoadFontFace(Face.Path, Face.Family, Face.bBold, Face.bItalic))
             {
                 LOG_INFO("[RmlUi] Registered '{}' as font family '{}'.", Face.Path, Face.Family);
-                State.RegisteredProjectFonts.push_back(Move(Key));
+                State.RegisteredProjectFonts.Add(Move(Key));
             }
             else
             {
@@ -1173,7 +1216,7 @@ namespace Lumina::RmlUi
 
     bool LoadFontFace(FStringView Path, FStringView Family, bool bBold, bool bItalic)
     {
-        return Rml::LoadFontFace(Rml::String(Path.data(), Path.size()), Rml::String(Family.data(), Family.size()),
+        return Rml::LoadFontFace(Rml::String(Path.GetData(), Path.Len()), Rml::String(Family.GetData(), Family.Len()),
             bItalic ? Rml::Style::FontStyle::Italic : Rml::Style::FontStyle::Normal,
             bBold ? Rml::Style::FontWeight::Bold : Rml::Style::FontWeight::Normal);
     }
@@ -1210,17 +1253,17 @@ namespace Lumina::RmlUi
         {
             delete L;
         }
-        State.UIListeners.clear();
+        State.UIListeners.Reset();
 
         // Same for data models (their contexts were destroyed by Rml::Shutdown above).
         for (FManagedDataModel* M : State.DataModels)
         {
             delete M;
         }
-        State.DataModels.clear();
+        State.DataModels.Reset();
 
-        State.EditorContexts.clear();
-        State.Worlds.clear();
+        State.EditorContexts.Reset();
+        State.Worlds.Reset();
         State.ActiveWorld = nullptr;
         State.bInitialized = false;
 
@@ -1247,7 +1290,7 @@ namespace Lumina::RmlUi
         {
             return UI;
         }
-        State.Worlds.insert(World);
+        State.Worlds.Add(World);
 
         // A world loaded before Initialize gets its context from the backfill there.
         if (State.bInitialized)
@@ -1278,7 +1321,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
 
-        State.Worlds.erase(World);
+        State.Worlds.Remove(World);
 
         // Rml::Shutdown already destroyed every context, so drop the dangling pointer untouched.
         if (!State.bInitialized)
@@ -1288,7 +1331,7 @@ namespace Lumina::RmlUi
             ReapContextObjectModels(UI->Context);
             UIScripts::ForgetWorld(World);
             UI->Context = nullptr;
-            UI->Documents.clear();
+            UI->Documents.Reset();
             if (State.ActiveWorld == World)
             {
                 State.ActiveWorld = nullptr;
@@ -1318,7 +1361,7 @@ namespace Lumina::RmlUi
         ReapWorldUIListeners(State, World);
         // The context (and its data models) is destroyed; free the data-model wrappers for this world.
         ReapWorldDataModels(State, World);
-        UI->Documents.clear();
+        UI->Documents.Reset();
 
         if (State.ActiveWorld == World)
         {
@@ -1366,6 +1409,7 @@ namespace Lumina::RmlUi
 
         UIScripts::Tick(World);
         DotNetUI::PollModels(World);
+        ReapDeadDataModels(State);
         PollObjectModels(UI->Context);
 
         const FWorldTarget Tgt = GetWorldTarget(World);
@@ -1401,7 +1445,7 @@ namespace Lumina::RmlUi
             LUMINA_PROFILE_SECTION("RmlUi Context Update");
             UI->Context->Update();
         }
-        if (!State.DocumentsToLint.empty())
+        if (!State.DocumentsToLint.IsEmpty())
         {
             LintLoadedDocuments(UI->Context);
         }
@@ -1454,7 +1498,7 @@ namespace Lumina::RmlUi
             return;
         }
 
-        UI->WidgetJobs.clear();
+        UI->WidgetJobs.Reset();
 
         World->View<SWidgetComponent>().ForEach([&](ECS::FEntity Entity, SWidgetComponent& Comp)
         {
@@ -1479,7 +1523,7 @@ namespace Lumina::RmlUi
 
             // Resolve the rename-safe ref to its current virtual path (GUID-first).
             const FStringView DocView = Comp.DocumentPath.ResolvePath();
-            const FString     DocPath(DocView.data(), DocView.size());
+            const FString     DocPath(DocView.GetData(), DocView.Len());
 
             const int64 CurrentWriteTime = GetDocumentWriteTime(DocPath);
             const bool  bPathChanged     = (R.LoadedPath != DocPath);
@@ -1497,9 +1541,9 @@ namespace Lumina::RmlUi
                 R.Context->UnloadAllDocuments();
                 R.Document   = nullptr;
                 R.LoadedPath = DocPath;
-                if (!DocPath.empty())
+                if (!DocPath.IsEmpty())
                 {
-                    R.Document = R.Context->LoadDocument(Rml::String(DocPath.c_str()));
+                    R.Document = R.Context->LoadDocument(Rml::String(*DocPath));
                     if (R.Document != nullptr)
                     {
                         R.Document->SetProperty("width", "100%");
@@ -1508,7 +1552,7 @@ namespace Lumina::RmlUi
                     }
                     else
                     {
-                        LOG_WARN("[RmlUi] Widget failed to load document '{}'.", DocPath.c_str());
+                        LOG_WARN("[RmlUi] Widget failed to load document '{}'.", *DocPath);
                     }
                 }
                 R.DocWriteTime = CurrentWriteTime;
@@ -1533,7 +1577,7 @@ namespace Lumina::RmlUi
             // Queue for the render phase (R.ResourceID is read by the scene gather directly).
             if (R.Document != nullptr && R.Target.IsValid())
             {
-                UI->WidgetJobs.push_back(FWidgetRenderJob{ R.Context, R.Target.Texture, R.BuiltSize });
+                UI->WidgetJobs.Emplace(R.Context, R.Target.Texture, R.BuiltSize);
             }
         });
     }
@@ -1552,7 +1596,7 @@ namespace Lumina::RmlUi
             return;
         }
 
-        const size_t JobCount = UI->WidgetJobs.size();
+        const int32 JobCount = UI->WidgetJobs.Num();
         if (JobCount == 0)
         {
             return;
@@ -1562,7 +1606,7 @@ namespace Lumina::RmlUi
         int32 Rendered = 0;
 
         // Rotate the start each frame so the budget doesn't always favor the first widgets.
-        for (size_t k = 0; k < JobCount; ++k)
+        for (int32 k = 0; k < JobCount; ++k)
         {
             const FWidgetRenderJob& Job = UI->WidgetJobs[(State.WidgetRenderCursor + k) % JobCount];
             if (Job.Context == nullptr || !RHI::IsValid(Job.Target))
@@ -1613,7 +1657,7 @@ namespace Lumina::RmlUi
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
-        State.WidgetRenderCursor = (uint32)((State.WidgetRenderCursor + 1) % JobCount);
+        State.WidgetRenderCursor = (State.WidgetRenderCursor + 1) % JobCount;
     }
 
     void ReleaseWidget(CWorld* World, SWidgetComponent& Component)
@@ -1626,10 +1670,7 @@ namespace Lumina::RmlUi
             if (FWorldUIContext* UI = WorldUI(World))
             {
                 Rml::Context* DyingContext = Component.Runtime.Context;
-                for (auto It = UI->WidgetJobs.begin(); It != UI->WidgetJobs.end(); )
-                {
-                    It = (It->Context == DyingContext) ? UI->WidgetJobs.erase(It) : It + 1;
-                }
+                UI->WidgetJobs.RemoveAll([DyingContext](const FWidgetRenderJob& Job) { return Job.Context == DyingContext; });
             }
         }
 
@@ -1644,6 +1685,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
+        ReapDeadDataModels(State);
 
         for (auto& E : State.EditorContexts)
         {
@@ -1843,19 +1885,19 @@ namespace Lumina::RmlUi
         }
 
         // Drop whatever was loaded; the preview owns the whole context.
-        for (auto& KV : UI->Documents)
+        for (auto& [Path, Document] : UI->Documents)
         {
-            UI->Context->UnloadDocument(KV.second);
+            UI->Context->UnloadDocument(Document);
         }
-        UI->Documents.clear();
+        UI->Documents.Reset();
 
-        if (Body.empty())
+        if (Body.IsEmpty())
         {
             return false;
         }
 
-        const Rml::String BodyStr(Body.data(), Body.size());
-        const Rml::String UrlStr(SourceUrl.data(), SourceUrl.size());
+        const Rml::String BodyStr(Body.GetData(), Body.Len());
+        const Rml::String UrlStr(SourceUrl.GetData(), SourceUrl.Len());
         Rml::ElementDocument* Doc = UI->Context->LoadDocumentFromMemory(BodyStr, UrlStr);
         if (Doc == nullptr)
         {
@@ -1863,7 +1905,7 @@ namespace Lumina::RmlUi
             return false;
         }
         Doc->Show();
-        UI->Documents.emplace(FString("__inline__"), Doc);
+        UI->Documents.TryAdd(FString("__inline__"), Doc);
         return true;
     }
 
@@ -1892,7 +1934,7 @@ namespace Lumina::RmlUi
         TUniquePtr<FEditorEntry> Entry = MakeUnique<FEditorEntry>();
         Entry->Context = Ctx;
         Entry->Size    = InitialSize;
-        State.EditorContexts.push_back(Move(Entry));
+        State.EditorContexts.Add(Move(Entry));
         return Ctx;
     }
 
@@ -1904,7 +1946,7 @@ namespace Lumina::RmlUi
         }
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        for (size_t i = 0; i < State.EditorContexts.size(); ++i)
+        for (int32 i = 0; i < State.EditorContexts.Num(); ++i)
         {
             FEditorEntry* E = State.EditorContexts[i].get();
             if (E->Context != Context)
@@ -1923,19 +1965,19 @@ namespace Lumina::RmlUi
             {
                 DestroyDataModel(Model);
             }
-            E->DesignModels.clear();
+            E->DesignModels.Reset();
 
             Rml::Context* Dying = E->Context;
             Rml::RemoveContext(E->Context->GetName());
             ReapContextObjectModels(Dying);
             E->Context = nullptr;
 
-            const size_t Last = State.EditorContexts.size() - 1;
+            const int32 Last = State.EditorContexts.Num() - 1;
             if (i != Last)
             {
                 std::swap(State.EditorContexts[i], State.EditorContexts[Last]);
             }
-            State.EditorContexts.pop_back();
+            State.EditorContexts.Pop();
             return;
         }
     }
@@ -2067,13 +2109,13 @@ namespace Lumina::RmlUi
             Entry->Document = nullptr;
         }
 
-        if (Body.empty())
+        if (Body.IsEmpty())
         {
             return false;
         }
 
-        const Rml::String BodyStr(Body.data(), Body.size());
-        const Rml::String UrlStr(SourceUrl.data(), SourceUrl.size());
+        const Rml::String BodyStr(Body.GetData(), Body.Len());
+        const Rml::String UrlStr(SourceUrl.GetData(), SourceUrl.Len());
         
         Rml::Factory::ClearStyleSheetCache();
         Rml::Factory::ClearTemplateCache();
@@ -2113,7 +2155,7 @@ namespace Lumina::RmlUi
 
     void EnumerateEditorSlots(Rml::Context* Context, TVector<FRmlEditorSlot>& OutSlots)
     {
-        OutSlots.clear();
+        OutSlots.Reset();
 
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
@@ -2130,21 +2172,21 @@ namespace Lumina::RmlUi
         // Iterative pre-order walk; an element is a slot only if it carries an id (the assignment anchor).
         struct FFrame { Rml::Element* Element; int32 Depth; };
         TVector<FFrame> Stack;
-        Stack.push_back({Root, 0});
+        Stack.Emplace(Root, 0);
 
-        while (!Stack.empty())
+        while (!Stack.IsEmpty())
         {
-            const FFrame Frame = Stack.back();
-            Stack.pop_back();
+            const FFrame Frame = Stack.Last();
+            Stack.Pop();
 
             Rml::Element* E = Frame.Element;
             const Rml::String& Id = E->GetId();
             if (!Id.empty())
             {
                 FRmlEditorSlot Slot;
-                Slot.Id.assign(Id.c_str(), Id.size());
+                Slot.Id = FStringView(Id.c_str(), IntCastChecked<int32>(Id.size()));
                 const Rml::String& Tag = E->GetTagName();
-                Slot.Tag.assign(Tag.c_str(), Tag.size());
+                Slot.Tag = FStringView(Tag.c_str(), IntCastChecked<int32>(Tag.size()));
 
                 const Rml::Vector2f Off  = E->GetAbsoluteOffset(Rml::BoxArea::Border);
                 const Rml::Vector2f Size = E->GetBox().GetSize(Rml::BoxArea::Border);
@@ -2152,7 +2194,7 @@ namespace Lumina::RmlUi
                 Slot.SizePx     = FVector2(Size.x, Size.y);
                 Slot.Depth      = Frame.Depth;
                 Slot.ChildCount = E->GetNumChildren();
-                OutSlots.push_back(Move(Slot));
+                OutSlots.Add(Move(Slot));
             }
 
             // Push children in reverse so the pop order stays document order.
@@ -2161,7 +2203,7 @@ namespace Lumina::RmlUi
             {
                 if (Rml::Element* Child = E->GetChild(i))
                 {
-                    Stack.push_back({Child, Frame.Depth + 1});
+                    Stack.Emplace(Child, Frame.Depth + 1);
                 }
             }
         }
@@ -2171,7 +2213,7 @@ namespace Lumina::RmlUi
     {
         Rml::Element*         AsElement (void* P) { return static_cast<Rml::Element*>(P); }
         Rml::ElementDocument* AsDocument(void* P) { return static_cast<Rml::ElementDocument*>(P); }
-        Rml::String           ToRml(FStringView V) { return Rml::String(V.data(), V.size()); }
+        Rml::String           ToRml(FStringView V) { return Rml::String(V.GetData(), V.Len()); }
     }
 
     void* LoadScreenDocument(CWorld* World, FStringView VirtualPath)
@@ -2179,7 +2221,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (World == nullptr || VirtualPath.empty())
+        if (World == nullptr || VirtualPath.IsEmpty())
         {
             return nullptr;
         }
@@ -2188,7 +2230,7 @@ namespace Lumina::RmlUi
             // A headless process never starts the UI, so a document it asks for is expected to come back empty.
             if (!GIsHeadless)
             {
-                LOG_WARN("[RmlUi] CUILibrary.LoadDocument('{}') called before RmlUi initialized.", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+                LOG_WARN("[RmlUi] CUILibrary.LoadDocument('{}') called before RmlUi initialized.", *FString(VirtualPath.GetData(), VirtualPath.Len()));
             }
             return nullptr;
         }
@@ -2196,14 +2238,14 @@ namespace Lumina::RmlUi
         if (UI == nullptr || UI->Context == nullptr)
         {
             LOG_WARN("[RmlUi] CUILibrary.LoadDocument('{}') found no UI context on world '{}'.",
-                FString(VirtualPath.data(), VirtualPath.size()).c_str(), World->GetName().c_str());
+                *FString(VirtualPath.GetData(), VirtualPath.Len()), *World->GetName());
             return nullptr;
         }
         DropStaleStyleSheets();
         Rml::ElementDocument* Doc = UI->Context->LoadDocument(ToRml(VirtualPath));
         if (Doc == nullptr)
         {
-            LOG_WARN("[RmlUi] CUILibrary.LoadDocument failed for '{}'.", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+            LOG_WARN("[RmlUi] CUILibrary.LoadDocument failed for '{}'.", *FString(VirtualPath.GetData(), VirtualPath.Len()));
         }
         return Doc;
     }
@@ -2213,7 +2255,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || World == nullptr || Body.empty())
+        if (!State.bInitialized || World == nullptr || Body.IsEmpty())
         {
             return nullptr;
         }
@@ -2239,8 +2281,8 @@ namespace Lumina::RmlUi
             return nullptr;
         }
 
-        const Rml::String From(FromModel.data(), FromModel.size());
-        const Rml::String To(ToModel.data(), ToModel.size());
+        const Rml::String From(FromModel.GetData(), FromModel.Len());
+        const Rml::String To(ToModel.GetData(), ToModel.Len());
         for (const char Quote : { '"', '\'' })
         {
             const Rml::String Old = Rml::String("data-model=") + Quote + From + Quote;
@@ -2250,7 +2292,7 @@ namespace Lumina::RmlUi
                 Body.replace(At, Old.size(), New);
             }
         }
-        return LoadScreenDocumentFromMemory(World, FStringView(Body.data(), Body.size()), VirtualPath);
+        return LoadScreenDocumentFromMemory(World, FStringView(Body.data(), IntCastChecked<int32>(Body.size())), VirtualPath);
     }
 
     bool HasDataModel(Rml::Context* Context, FStringView Name)
@@ -2258,7 +2300,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         // GetDataModel logs a miss as an error, and a miss is the answer this asks for.
-        return State.bInitialized && Context != nullptr && Context->GetDataModels().count(Rml::String(Name.data(), Name.size())) > 0;
+        return State.bInitialized && Context != nullptr && Context->GetDataModels().contains(Rml::String(Name.GetData(), Name.Len()));
     }
 
     void UnloadScreenDocument(CWorld* World, void* Document)
@@ -2321,7 +2363,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Id.empty() || !IsLiveDocument(Document))
+        if (!State.bInitialized || Id.IsEmpty() || !IsLiveDocument(Document))
         {
             return nullptr;
         }
@@ -2332,7 +2374,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Element == nullptr || Selector.empty())
+        if (!State.bInitialized || Element == nullptr || Selector.IsEmpty())
         {
             return nullptr;
         }
@@ -2375,9 +2417,9 @@ namespace Lumina::RmlUi
             return;
         }
         Rml::Element* Target = AsElement(Element);
-        const uint64 Hash = Hash::GetHash64(Markup.data(), Markup.size()) ^ Markup.size();
-        auto Known = State.InnerRmlHashes.find(Target);
-        if (Known != State.InnerRmlHashes.end() && Known->second == Hash)
+        const uint64 Hash = Hash::GetHash64(Markup.GetData(), Markup.Len()) ^ Markup.Len();
+        auto Known = State.InnerRmlHashes.Find(Target);
+        if (Known != nullptr && (*Known) == Hash)
         {
             return;
         }
@@ -2386,7 +2428,7 @@ namespace Lumina::RmlUi
         NoteElementChanged(Target);
 
         // Form controls and data bindings change their own children, so their markup stops describing them.
-        auto Has = [Markup](FStringView Needle) { return Markup.find(Needle) != FStringView::npos; };
+        auto Has = [Markup](FStringView Needle) { return Markup.Find(Needle) != Constants::kIndexNone; };
         if (!Has("<input") && !Has("<textarea") && !Has("<select") && !Has("data-"))
         {
             State.InnerRmlHashes[Target] = Hash;
@@ -2402,14 +2444,14 @@ namespace Lumina::RmlUi
             return FString();
         }
         const Rml::String Value = AsElement(Element)->GetInnerRML();
-        return FString(Value.c_str(), Value.size());
+        return FString(Value.c_str(), IntCastChecked<int32>(Value.size()));
     }
 
     void ElementSetAttribute(void* Element, FStringView Name, FStringView Value)
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Element != nullptr && !Name.empty())
+        if (State.bInitialized && Element != nullptr && !Name.IsEmpty())
         {
             Rml::Element* Target = AsElement(Element);
             const Rml::String Key = ToRml(Name);
@@ -2428,19 +2470,19 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Element == nullptr || Name.empty())
+        if (!State.bInitialized || Element == nullptr || Name.IsEmpty())
         {
             return FString();
         }
         const Rml::String Value = AsElement(Element)->GetAttribute<Rml::String>(ToRml(Name), Rml::String());
-        return FString(Value.c_str(), Value.size());
+        return FString(Value.c_str(), IntCastChecked<int32>(Value.size()));
     }
 
     void ElementSetProperty(void* Element, FStringView Name, FStringView Value)
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Element != nullptr && !Name.empty())
+        if (State.bInitialized && Element != nullptr && !Name.IsEmpty())
         {
             Rml::Element* Target = AsElement(Element);
             if (PropertyAlreadySet(Target, Name, Value))
@@ -2456,7 +2498,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Element != nullptr && !Name.empty())
+        if (State.bInitialized && Element != nullptr && !Name.IsEmpty())
         {
             AsElement(Element)->RemoveProperty(ToRml(Name));
             NoteElementChanged(AsElement(Element));
@@ -2467,7 +2509,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Element != nullptr && !Class.empty())
+        if (State.bInitialized && Element != nullptr && !Class.IsEmpty())
         {
             Rml::Element* Target = AsElement(Element);
             const Rml::String Name = ToRml(Class);
@@ -2484,7 +2526,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Element == nullptr || Class.empty())
+        if (!State.bInitialized || Element == nullptr || Class.IsEmpty())
         {
             return false;
         }
@@ -2548,13 +2590,13 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Element == nullptr || EventType.empty())
+        if (!State.bInitialized || Element == nullptr || EventType.IsEmpty())
         {
             return nullptr;
         }
         FManagedUIListener* Listener = new FManagedUIListener(World, ToRml(EventType));
         AsElement(Element)->AddEventListener(Listener->Type, Listener, false);
-        State.UIListeners.push_back(Listener);
+        State.UIListeners.Add(Listener);
         return Listener;
     }
 
@@ -2573,7 +2615,7 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedUIListener* L = static_cast<FManagedUIListener*>(Listener);
-        for (size_t i = 0; i < State.UIListeners.size(); ++i)
+        for (int32 i = 0; i < State.UIListeners.Num(); ++i)
         {
             if (State.UIListeners[i] != L)
             {
@@ -2583,8 +2625,8 @@ namespace Lumina::RmlUi
             {
                 L->Element->RemoveEventListener(L->Type, L, false);
             }
-            State.UIListeners[i] = State.UIListeners.back();
-            State.UIListeners.pop_back();
+            State.UIListeners[i] = State.UIListeners.Last();
+            State.UIListeners.Pop();
             delete L;
             return;
         }
@@ -2595,7 +2637,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FWorldUIContext* UI = State.bInitialized && World != nullptr && !Name.empty() ? WorldUI(World) : nullptr;
+        FWorldUIContext* UI = State.bInitialized && World != nullptr && !Name.IsEmpty() ? WorldUI(World) : nullptr;
         if (UI == nullptr || UI->Context == nullptr)
         {
             Scripting::ReleaseScriptCallback(OnSet);
@@ -2603,7 +2645,7 @@ namespace Lumina::RmlUi
             return nullptr;
         }
 
-        const Rml::String ModelName(Name.data(), Name.size());
+        const Rml::String ModelName(Name.GetData(), Name.Len());
         Rml::DataModelConstructor Ctor = UI->Context->CreateDataModel(ModelName);
         if (!Ctor)
         {
@@ -2620,7 +2662,7 @@ namespace Lumina::RmlUi
         M->Handle      = Ctor.GetModelHandle();
         M->OnSet       = OnSet;
         M->OnEvent     = OnEvent;
-        State.DataModels.push_back(M);
+        State.DataModels.Add(M);
         return M;
     }
 
@@ -2628,15 +2670,15 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || ModelPtr == nullptr || Name.empty())
+        if (!State.bInitialized || ModelPtr == nullptr || Name.IsEmpty())
         {
             return -1;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
 
         // Only commit to the cache vectors on success, so a failed bind never burns an id.
-        const int32       Field = (int32)M->Values.size();
-        const Rml::String VarName(Name.data(), Name.size());
+        const int32       Field = M->Values.Num();
+        const Rml::String VarName(Name.GetData(), Name.Len());
         const bool        bString = ((EUIVarType)Type == EUIVarType::String);
 
         const bool bOk = M->Constructor.BindFunc(VarName,
@@ -2645,6 +2687,11 @@ namespace Lumina::RmlUi
             // Coerce before caching, since a form control hands the setter back a string.
             [M, Field, bString](const Rml::Variant& In)
             {
+                if (M->bDead)
+                {
+                    return;
+                }
+                FEventDispatchScope Dispatch;
                 if (bString)
                 {
                     const Rml::String Str = In.Get<Rml::String>();
@@ -2668,9 +2715,9 @@ namespace Lumina::RmlUi
         }
 
         // Commit (BindFunc only registers the funcs, it never invokes the getter, so seeding now is safe).
-        M->Values.emplace_back();
-        M->Types.push_back(Type);
-        M->VarNames.push_back(VarName);
+        M->Values.Emplace();
+        M->Types.Add(Type);
+        M->VarNames.Add(VarName);
         if (bString)
         {
             M->Values[Field] = Rml::String();
@@ -2686,18 +2733,22 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || ModelPtr == nullptr || Name.empty())
+        if (!State.bInitialized || ModelPtr == nullptr || Name.IsEmpty())
         {
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        const Rml::String CmdName(Name.data(), Name.size());
+        const Rml::String CmdName(Name.GetData(), Name.Len());
         M->Constructor.BindEventCallback(CmdName,
             [M, CommandId, CmdName](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& Arguments)
             {
+                if (M->bDead)
+                {
+                    return;
+                }
                 if (!M->OnEvent.IsBound())
                 {
-                    if (M->OwnerContext != nullptr && M->FiredCommands.size() < 64)
+                    if (M->OwnerContext != nullptr && M->FiredCommands.Num() < 64)
                     {
                         Rml::String Call = CmdName + "(";
                         for (size_t Index = 0; Index < Arguments.size(); ++Index)
@@ -2705,24 +2756,25 @@ namespace Lumina::RmlUi
                             Call += (Index > 0 ? ", " : "") + Arguments[Index].Get<Rml::String>();
                         }
                         Call += ")";
-                        M->FiredCommands.push_back(FString(Call.c_str(), Call.size()));
+                        M->FiredCommands.Emplace(Call.c_str(), IntCastChecked<int32>(Call.size()));
                     }
                     return;
                 }
                 // Stringify each RML argument uniformly; keep the storage alive across the dispatch call.
                 TVector<Rml::String> Strings;
-                Strings.reserve(Arguments.size());
+                Strings.Reserve(IntCastChecked<int32>(Arguments.size()));
                 for (const Rml::Variant& Arg : Arguments)
                 {
-                    Strings.push_back(Arg.Get<Rml::String>());
+                    Strings.Add(Arg.Get<Rml::String>());
                 }
                 TVector<FUIArg> Argv;
-                Argv.reserve(Strings.size());
+                Argv.Reserve(Strings.Num());
                 for (const Rml::String& Str : Strings)
                 {
-                    Argv.push_back(FUIArg{ Str.c_str(), (int32)Str.size() });
+                    Argv.Emplace(Str.c_str(), (int32)Str.size());
                 }
-                const FUIDataEvent Fired{ CommandId, (int32)Argv.size(), Argv.empty() ? nullptr : Argv.data() };
+                const FUIDataEvent Fired{ CommandId, Argv.Num(), Argv.IsEmpty() ? nullptr : Argv.GetData() };
+                FEventDispatchScope Dispatch;
                 Scripting::InvokeScriptCallbackRepeating(M->OnEvent, reinterpret_cast<uint64>(&Fired));
             });
     }
@@ -2731,14 +2783,14 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || ModelPtr == nullptr || Name.empty())
+        if (!State.bInitialized || ModelPtr == nullptr || Name.IsEmpty())
         {
             return -1;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
 
         TUniquePtr<FListField> List = MakeUnique<FListField>();
-        List->Name = Rml::String(Name.data(), Name.size());
+        List->Name = Rml::String(Name.GetData(), Name.Len());
         FListField* LP = List.get();
         List->MemberDef = Rml::MakeUnique<FListMemberDef>(LP);
         List->StructDef = Rml::MakeUnique<FListStructDef>(LP);
@@ -2750,8 +2802,8 @@ namespace Lumina::RmlUi
             return -1;
         }
 
-        const int32 Field = (int32)M->Lists.size();
-        M->Lists.push_back(Move(List));
+        const int32 Field = M->Lists.Num();
+        M->Lists.Add(Move(List));
         return Field;
     }
 
@@ -2759,18 +2811,18 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (ModelPtr == nullptr || MemberName.empty())
+        if (ModelPtr == nullptr || MemberName.IsEmpty())
         {
             return -1;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (ListField < 0 || ListField >= (int32)M->Lists.size())
+        if (ListField < 0 || ListField >= M->Lists.Num())
         {
             return -1;
         }
         FListField* L = M->Lists[ListField].get();
-        const int32 Col = (int32)L->MemberNames.size();
-        L->MemberNames.emplace_back(MemberName.data(), MemberName.size());
+        const int32 Col = L->MemberNames.Num();
+        L->MemberNames.Emplace(MemberName.GetData(), MemberName.Len());
         return Col;
     }
 
@@ -2784,17 +2836,17 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (ListField < 0 || ListField >= (int32)M->Lists.size())
+        if (ListField < 0 || ListField >= M->Lists.Num())
         {
             return;
         }
         FListField* L = M->Lists[ListField].get();
-        const size_t Cols = L->MemberNames.size();
+        const int32 Cols = L->MemberNames.Num();
         L->PreviousRows = Move(L->Rows);
-        L->Rows.assign((size_t)RowCount, TVector<Rml::Variant>());
+        L->Rows.Init(TVector<Rml::Variant>(), (size_t)RowCount);
         for (TVector<Rml::Variant>& Row : L->Rows)
         {
-            Row.resize(Cols);
+            Row.SetNum(Cols);
             for (Rml::Variant& Cell : Row)
             {
                 Cell = Rml::String();
@@ -2812,14 +2864,14 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (ListField < 0 || ListField >= (int32)M->Lists.size())
+        if (ListField < 0 || ListField >= M->Lists.Num())
         {
             return;
         }
         FListField* L = M->Lists[ListField].get();
-        if (Row >= 0 && Row < (int32)L->Rows.size() && Col >= 0 && Col < (int32)L->Rows[Row].size())
+        if (Row >= 0 && Row < L->Rows.Num() && Col >= 0 && Col < L->Rows[Row].Num())
         {
-            L->Rows[Row][Col] = Rml::String(Value.data(), Value.size());
+            L->Rows[Row][Col] = Rml::String(Value.GetData(), Value.Len());
         }
     }
 
@@ -2833,7 +2885,7 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (M->Handle && ListField >= 0 && ListField < (int32)M->Lists.size())
+        if (M->Handle && ListField >= 0 && ListField < M->Lists.Num())
         {
             M->Handle.DirtyVariable(M->Lists[ListField]->Name);
         }
@@ -2849,7 +2901,7 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (Field >= 0 && Field < (int32)M->Values.size())
+        if (Field >= 0 && Field < M->Values.Num())
         {
             StoreNumber(M->Values[Field], M->Types[Field], Value);
         }
@@ -2865,9 +2917,9 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (Field >= 0 && Field < (int32)M->Values.size())
+        if (Field >= 0 && Field < M->Values.Num())
         {
-            M->Values[Field] = Rml::String(Value.data(), Value.size());
+            M->Values[Field] = Rml::String(Value.GetData(), Value.Len());
         }
     }
 
@@ -2881,7 +2933,7 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
-        if (M->Handle && Field >= 0 && Field < (int32)M->VarNames.size())
+        if (M->Handle && Field >= 0 && Field < M->VarNames.Num())
         {
             M->Handle.DirtyVariable(M->VarNames[Field]);
         }
@@ -2913,30 +2965,19 @@ namespace Lumina::RmlUi
             return;
         }
         // Validate against the live set, since a torn-down world already reaped the model.
-        for (size_t i = 0; i < State.DataModels.size(); ++i)
+        for (int32 i = 0; i < State.DataModels.Num(); ++i)
         {
             FManagedDataModel* M = State.DataModels[i];
             if (M != ModelPtr)
             {
                 continue;
             }
-            if (State.bInitialized && M->World != nullptr)
+            if (GEventDispatchDepth > 0)
             {
-                if (FWorldUIContext* UI = WorldUI(M->World))
-                {
-                    if (UI->Context != nullptr)
-                    {
-                        UI->Context->RemoveDataModel(M->Name);
-                    }
-                }
+                M->bDead = true;
+                return;
             }
-            else if (State.bInitialized && M->OwnerContext != nullptr)
-            {
-                M->OwnerContext->RemoveDataModel(M->Name);
-            }
-            State.DataModels[i] = State.DataModels.back();
-            State.DataModels.pop_back();
-            delete M;
+            RemoveManagedDataModel(State, i);
             return;
         }
     }
@@ -2952,9 +2993,9 @@ namespace Lumina::RmlUi
             {
                 for (const TPair<FName, uint64>& Entry : Enum->Names)
                 {
-                    if ((int64)Entry.second == Raw)
+                    if ((int64)Entry.Value == Raw)
                     {
-                        const Rml::String Qualified = Entry.first.c_str();
+                        const Rml::String Qualified = *Entry.Key;
                         const size_t Separator = Qualified.rfind("::");
                         return Separator == Rml::String::npos ? Qualified : Qualified.substr(Separator + 2);
                     }
@@ -2972,11 +3013,11 @@ namespace Lumina::RmlUi
             }
             for (const TPair<FName, uint64>& Entry : Enum->Names)
             {
-                const Rml::String Qualified = Entry.first.c_str();
+                const Rml::String Qualified = *Entry.Key;
                 const size_t Separator = Qualified.rfind("::");
                 if (Qualified == Name || (Separator != Rml::String::npos && Qualified.compare(Separator + 2, Rml::String::npos, Name) == 0))
                 {
-                    OutRaw = (int64)Entry.second;
+                    OutRaw = (int64)Entry.Value;
                     return true;
                 }
             }
@@ -3018,11 +3059,11 @@ namespace Lumina::RmlUi
                 case EPropertyTypeFlags::String:
                 {
                     const FString& Text = *static_cast<const FString*>(Value);
-                    Out = Rml::String(Text.c_str(), Text.size());
+                    Out = Rml::String(*Text, Text.Len());
                     return true;
                 }
                 case EPropertyTypeFlags::Name:
-                    Out = Rml::String(static_cast<const FName*>(Value)->c_str());
+                    Out = Rml::String(*(*static_cast<const FName*>(Value)));
                     return true;
                 case EPropertyTypeFlags::Enum:
                 {
@@ -3067,7 +3108,7 @@ namespace Lumina::RmlUi
                 case EPropertyTypeFlags::String:
                 {
                     const Rml::String Text = In.Get<Rml::String>();
-                    *static_cast<FString*>(Value) = FString(Text.c_str(), Text.size());
+                    *static_cast<FString*>(Value) = FString(Text.c_str(), IntCastChecked<int32>(Text.size()));
                     return true;
                 }
                 case EPropertyTypeFlags::Name:
@@ -3113,29 +3154,29 @@ namespace Lumina::RmlUi
         const FFunction* FindChangeHandler(const CClass* Class, const FProperty* Property, bool bReport)
         {
             const FCStringView ChangeName = Property->GetMetadata("Change");
-            if (ChangeName.empty() || Class == nullptr)
+            if (ChangeName.IsEmpty() || Class == nullptr)
             {
                 return nullptr;
             }
-            const FString HandlerName(ChangeName.data(), ChangeName.size());
-            const FFunction* Change = Class->FindFunction(FName(HandlerName.c_str()));
+            const FString HandlerName(ChangeName.GetData(), ChangeName.Len());
+            const FFunction* Change = Class->FindFunction(FName(*HandlerName));
             if (Change == nullptr)
             {
                 if (bReport)
                 {
                     LOG_WARN("[RmlUi] {}.{} names Change = {}, which is not a reflected function of the class.",
-                        Class->GetName().c_str(), Property->GetPropertyName().c_str(), HandlerName.c_str());
+                        *Class->GetName(), *Property->GetPropertyName(), *HandlerName);
                 }
                 return nullptr;
             }
             const TSpan<FProperty* const> Params = Change->GetArguments();
-            const bool bCallable = Params.empty() || (Params.size() == 2 && Params[0]->HasSameValueType(Property) && Params[1]->HasSameValueType(Property));
+            const bool bCallable = Params.IsEmpty() || (Params.Num() == 2 && Params[0]->HasSameValueType(Property) && Params[1]->HasSameValueType(Property));
             if (!bCallable)
             {
                 if (bReport)
                 {
                     LOG_WARN("[RmlUi] {}.{} names Change = {}, which must take no arguments or (Old, New) of type {}, so it will not run.",
-                        Class->GetName().c_str(), Property->GetPropertyName().c_str(), HandlerName.c_str(), PropertyTypePlainNames[(size_t)Property->GetType()]);
+                        *Class->GetName(), *Property->GetPropertyName(), *HandlerName, PropertyTypePlainNames[(size_t)Property->GetType()]);
                 }
                 return nullptr;
             }
@@ -3147,21 +3188,21 @@ namespace Lumina::RmlUi
         {
             explicit FModelCallFrame(const FFunction& InFunction)
                 : Function(InFunction)
-                , Storage(InFunction.GetParmsSize() / sizeof(std::max_align_t) + 1)
+                , Storage(IntCastChecked<int32>(InFunction.GetParmsSize() / sizeof(std::max_align_t) + 1))
             {
-                Function.InitializeFrame(Storage.data());
+                Function.InitializeFrame(Storage.GetData());
             }
 
             ~FModelCallFrame()
             {
-                Function.DestructFrame(Storage.data());
+                Function.DestructFrame(Storage.GetData());
             }
             FModelCallFrame(const FModelCallFrame&) = delete;
             FModelCallFrame& operator=(const FModelCallFrame&) = delete;
             FModelCallFrame(FModelCallFrame&&) = delete;
             FModelCallFrame& operator=(FModelCallFrame&&) = delete;
 
-            void* Data() { return Storage.data(); }
+            void* Data() { return Storage.GetData(); }
 
             const FFunction& Function;
             TVector<std::max_align_t> Storage;
@@ -3262,7 +3303,7 @@ namespace Lumina::RmlUi
                 {
                     return;
                 }
-                Warned.push_back(Key);
+                Warned.Add(Key);
                 Logging::Log(ELogLevel::Warn, Format, std::forward<TArgs>(Args)...);
             }
 
@@ -3297,8 +3338,8 @@ namespace Lumina::RmlUi
                 }
 
                 Rml::VariableDefinition* Definition = Created.get();
-                Definitions.push_back(Move(Created));
-                DefinitionIndex.push_back(FDefinitionEntry{ Property, InRoot, Definition });
+                Definitions.Add(Move(Created));
+                DefinitionIndex.Emplace(Property, InRoot, Definition);
                 return Definition;
             }
 
@@ -3323,14 +3364,14 @@ namespace Lumina::RmlUi
             {
                 if (bDesignTime)
                 {
-                    if (FiredCommands.size() < 64)
+                    if (FiredCommands.Num() < 64)
                     {
                         Rml::String Call = CommandName + "(";
                         for (size_t Index = 0; Index < Arguments.size(); ++Index)
                         {
                             Call += (Index > 0 ? ", " : "") + Arguments[Index].Get<Rml::String>();
                         }
-                        FiredCommands.push_back(FString((Call + ")").c_str()));
+                        FiredCommands.Emplace((Call + ")").c_str());
                     }
                     return;
                 }
@@ -3342,18 +3383,18 @@ namespace Lumina::RmlUi
                 FEventDispatchScope Dispatch;
                 FModelCallFrame Frame(*Function);
                 const TSpan<FProperty* const> Params = Function->GetArguments();
-                if (Params.size() != Arguments.size())
+                if (Params.Num() != static_cast<int32>(Arguments.size()))
                 {
                     WarnOnce(CommandName, "[RmlUi] {}.{} takes {} argument(s) but the markup passes {}; missing ones run as defaults and extra ones are dropped.",
-                        Name.c_str(), CommandName.c_str(), Params.size(), Arguments.size());
+                        Name.c_str(), CommandName.c_str(), Params.Num(), Arguments.size());
                 }
-                for (size_t Index = 0; Index < Params.size() && Index < Arguments.size(); ++Index)
+                for (int32 Index = 0; Index < Params.Num() && Index < static_cast<int32>(Arguments.size()); ++Index)
                 {
                     if (!WriteVariant(Params[Index], Params[Index]->GetValuePtr<void>(Frame.Data()), Arguments[Index]))
                     {
                         WarnOnce(CommandName + "#" + std::to_string(Index), "[RmlUi] {}.{} could not read '{}' as its {} argument {}, so it runs with the default.",
                             Name.c_str(), CommandName.c_str(), Arguments[Index].Get<Rml::String>().c_str(), PropertyTypePlainNames[(size_t)Params[Index]->GetType()],
-                            Params[Index]->GetPropertyName().c_str());
+                            *Params[Index]->GetPropertyName());
                     }
                 }
                 Function->Invoke(Object, Frame.Data());
@@ -3381,7 +3422,7 @@ namespace Lumina::RmlUi
                     FEventDispatchScope Dispatch;
                     const TSpan<FProperty* const> Params = Change->GetArguments();
                     FModelCallFrame Frame(*Change);
-                    if (Params.size() == 2)
+                    if (Params.Num() == 2)
                     {
                         Params[0]->CopyCompleteValue(Params[0]->GetValuePtr<void>(Frame.Data()), Snapshot.IsTracked(Index) ? Snapshot.Slot(Index) : InRoot->GetValuePtr<void>(Object));
                         Params[1]->CopyCompleteValue(Params[1]->GetValuePtr<void>(Frame.Data()), InRoot->GetValuePtr<void>(Object));
@@ -3402,7 +3443,7 @@ namespace Lumina::RmlUi
                     return;
                 }
                 bool bChanged = false;
-                for (size_t Index = 0; Index < Values.size(); ++Index)
+                for (int32 Index = 0; Index < Values.Num(); ++Index)
                 {
                     if (!Snapshot.Matches(Index, Object))
                     {
@@ -3439,7 +3480,7 @@ namespace Lumina::RmlUi
 
         int FObjectArrayDefinition::Size(void* Ptr)
         {
-            return Model->bDead ? 0 : (int)Array->GetNum(Ptr);
+            return Model->bDead ? 0 : Array->Num(Ptr);
         }
 
         bool FObjectValueDefinition::Set(void* Ptr, const Rml::Variant& In)
@@ -3468,7 +3509,7 @@ namespace Lumina::RmlUi
             Rml::StringList Names;
             for (const FProperty* Member : Struct->GetProperties())
             {
-                Names.push_back(Member->GetPropertyName().c_str());
+                Names.push_back(*Member->GetPropertyName());
             }
             return Names;
         }
@@ -3497,13 +3538,13 @@ namespace Lumina::RmlUi
         void ReapContextObjectModels(Rml::Context* Context)
         {
             TVector<FObjectModel*>& Models = ObjectModels();
-            for (size_t Index = 0; Index < Models.size();)
+            for (int32 Index = 0; Index < Models.Num();)
             {
                 if (Models[Index]->Context == Context)
                 {
                     delete Models[Index];
-                    Models[Index] = Models.back();
-                    Models.pop_back();
+                    Models[Index] = Models.Last();
+                    Models.Pop();
                 }
                 else
                 {
@@ -3518,16 +3559,16 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Context == nullptr || Object == nullptr || Name.empty())
+        if (!State.bInitialized || Context == nullptr || Object == nullptr || Name.IsEmpty())
         {
             return nullptr;
         }
 
-        const Rml::String ModelName(Name.data(), Name.size());
+        const Rml::String ModelName(Name.GetData(), Name.Len());
         Rml::DataModelConstructor Constructor = Context->CreateDataModel(ModelName);
         if (!Constructor)
         {
-            LOG_WARN("[RmlUi] Data model '{}' already exists in this context, so {} could not bind as it.", ModelName.c_str(), Object->GetClass()->GetName().c_str());
+            LOG_WARN("[RmlUi] Data model '{}' already exists in this context, so {} could not bind as it.", ModelName.c_str(), *Object->GetClass()->GetName());
             return nullptr;
         }
 
@@ -3538,7 +3579,7 @@ namespace Lumina::RmlUi
         Model->Handle      = Constructor.GetModelHandle();
         Model->Object      = Object;
         Model->bDesignTime = bDesignTime;
-        ObjectModels().push_back(Model);
+        ObjectModels().Add(Model);
 
         TVector<UIBinding::FBoundValue> Values;
         UIBinding::GetBoundValues(Object->GetClass(), Values);
@@ -3548,13 +3589,13 @@ namespace Lumina::RmlUi
             Rml::VariableDefinition* Definition = Model->DefinitionFor(Value.Property, Value.Property);
             if (Definition == nullptr)
             {
-                LOG_WARN("[RmlUi] {}.{} is bound but its type cannot be shown in a UI.", Object->GetClass()->GetName().c_str(), Value.Property->GetPropertyName().c_str());
+                LOG_WARN("[RmlUi] {}.{} is bound but its type cannot be shown in a UI.", *Object->GetClass()->GetName(), *Value.Property->GetPropertyName());
                 continue;
             }
-            const Rml::String VariableName(Value.Name.c_str(), Value.Name.size());
+            const Rml::String VariableName(*Value.Name, Value.Name.Len());
             Constructor.BindCustomDataVariable(VariableName, Rml::DataVariable(Definition, Value.Property->GetValuePtr<void>(Object)));
-            Model->Values.push_back(FObjectModel::FValue{ Value.Property, VariableName });
-            Snapshotted.push_back(Value.Property);
+            Model->Values.Emplace(Value.Property, VariableName);
+            Snapshotted.Add(Value.Property);
             if (!bDesignTime)
             {
                 FindChangeHandler(Object->GetClass(), Value.Property, true);
@@ -3566,11 +3607,11 @@ namespace Lumina::RmlUi
         UIBinding::GetBoundFunctions(Object->GetClass(), Functions);
         for (const UIBinding::FBoundFunction& Bound : Functions)
         {
-            const Rml::String FunctionName(Bound.Name.c_str(), Bound.Name.size());
+            const Rml::String FunctionName(*Bound.Name, Bound.Name.Len());
             if (Bound.bComputed)
             {
-                Model->Computed.push_back(FObjectModel::FComputed{ Bound.Function, FunctionName, Rml::Variant() });
-                const size_t Index = Model->Computed.size() - 1;
+                Model->Computed.Emplace(Bound.Function, FunctionName, Rml::Variant());
+                const int32 Index = Model->Computed.Num() - 1;
                 Model->Evaluate(Model->Computed[Index], Model->Computed[Index].Last);
                 Constructor.BindFunc(FunctionName, [Model, Index](Rml::Variant& Out) { Out = Model->Computed[Index].Last; });
             }
@@ -3592,7 +3633,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         TVector<FObjectModel*>& Models = ObjectModels();
-        for (size_t Index = 0; Index < Models.size(); ++Index)
+        for (int32 Index = 0; Index < Models.Num(); ++Index)
         {
             FObjectModel* Model = Models[Index];
             if (Model != ModelPtr)
@@ -3609,8 +3650,8 @@ namespace Lumina::RmlUi
             {
                 Model->Context->RemoveDataModel(Model->Name);
             }
-            Models[Index] = Models.back();
-            Models.pop_back();
+            Models[Index] = Models.Last();
+            Models.Pop();
             delete Model;
             return;
         }
@@ -3621,19 +3662,20 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         TVector<FObjectModel*>& Models = ObjectModels();
-        for (size_t Index = 0; Index < Models.size();)
+        for (int32 Index = 0; Index < Models.Num();)
         {
             FObjectModel* Model = Models[Index];
             if (Model->Context == Context && Model->bDead && GEventDispatchDepth == 0)
             {
                 Context->RemoveDataModel(Model->Name);
-                Models[Index] = Models.back();
-                Models.pop_back();
+                Models[Index] = Models.Last();
+                Models.Pop();
                 delete Model;
                 continue;
             }
             if (Model->Context == Context)
             {
+                FEventDispatchScope Dispatch;
                 Model->Poll();
             }
             ++Index;
@@ -3687,7 +3729,7 @@ namespace Lumina::RmlUi
             for (void* Model : Entry.DesignModels)
             {
                 FManagedDataModel* M = static_cast<FManagedDataModel*>(Model);
-                if (FStringView(M->Name.c_str(), M->Name.size()) == Name)
+                if (FStringView(M->Name.c_str(), IntCastChecked<int32>(M->Name.size())) == Name)
                 {
                     return M;
                 }
@@ -3697,9 +3739,9 @@ namespace Lumina::RmlUi
 
         int32 FindDesignField(const FManagedDataModel& M, FStringView Variable)
         {
-            for (size_t Index = 0; Index < M.VarNames.size(); ++Index)
+            for (int32 Index = 0; Index < M.VarNames.Num(); ++Index)
             {
-                if (FStringView(M.VarNames[Index].c_str(), M.VarNames[Index].size()) == Variable)
+                if (FStringView(M.VarNames[Index].c_str(), IntCastChecked<int32>(M.VarNames[Index].size())) == Variable)
                 {
                     return (int32)Index;
                 }
@@ -3714,36 +3756,36 @@ namespace Lumina::RmlUi
                 DataModelSetString(M, Field, Value);
                 return;
             }
-            const FString Text(Value.data(), Value.size());
+            const FString Text(Value.GetData(), Value.Len());
             double Number = 0.0;
             if (Text == "true")
             {
                 Number = 1.0;
             }
-            else if (!Text.empty())
+            else if (!Text.IsEmpty())
             {
-                Number = std::strtod(Text.c_str(), nullptr);
+                Number = std::strtod(*Text, nullptr);
             }
             DataModelSetNumber(M, Field, Number);
         }
 
         void FillDesignRows(FManagedDataModel* M, int32 ListField, const TVector<TVector<FString>>& Rows)
         {
-            DataModelListResize(M, ListField, (int32)Rows.size());
-            for (size_t Row = 0; Row < Rows.size(); ++Row)
+            DataModelListResize(M, ListField, Rows.Num());
+            for (int32 Row = 0; Row < Rows.Num(); ++Row)
             {
-                for (size_t Col = 0; Col < Rows[Row].size(); ++Col)
+                for (int32 Col = 0; Col < Rows[Row].Num(); ++Col)
                 {
-                    DataModelListSetCell(M, ListField, (int32)Row, (int32)Col, FStringView(Rows[Row][Col].c_str(), Rows[Row][Col].size()));
+                    DataModelListSetCell(M, ListField, (int32)Row, (int32)Col, FStringView(*Rows[Row][Col], Rows[Row][Col].Len()));
                 }
             }
         }
 
         int32 FindDesignList(FManagedDataModel& M, FStringView List)
         {
-            for (size_t Index = 0; Index < M.Lists.size(); ++Index)
+            for (int32 Index = 0; Index < M.Lists.Num(); ++Index)
             {
-                if (M.Lists[Index] && FStringView(M.Lists[Index]->Name.c_str(), M.Lists[Index]->Name.size()) == List)
+                if (M.Lists[Index] && FStringView(M.Lists[Index]->Name.c_str(), IntCastChecked<int32>(M.Lists[Index]->Name.size())) == List)
                 {
                     return (int32)Index;
                 }
@@ -3774,11 +3816,11 @@ namespace Lumina::RmlUi
         {
             DestroyDataModel(Model);
         }
-        Entry->DesignModels.clear();
+        Entry->DesignModels.Reset();
 
         for (const FUIDesignModel& Design : Models)
         {
-            const Rml::String ModelName(Design.Name.c_str(), Design.Name.size());
+            const Rml::String ModelName(*Design.Name, Design.Name.Len());
             Rml::DataModelConstructor Ctor = Context->CreateDataModel(ModelName);
             if (!Ctor)
             {
@@ -3790,36 +3832,36 @@ namespace Lumina::RmlUi
             M->Constructor  = Ctor;
             M->Handle       = Ctor.GetModelHandle();
             M->OwnerContext = Context;
-            State.DataModels.push_back(M);
-            Entry->DesignModels.push_back(M);
+            State.DataModels.Add(M);
+            Entry->DesignModels.Add(M);
 
             for (const FUIDesignScalar& Scalar : Design.Scalars)
             {
-                const int32 Field = DataModelBindScalar(M, FStringView(Scalar.Name.c_str(), Scalar.Name.size()), (int32)Scalar.Type);
+                const int32 Field = DataModelBindScalar(M, FStringView(*Scalar.Name, Scalar.Name.Len()), (int32)Scalar.Type);
                 if (Field >= 0)
                 {
-                    StoreDesignValue(M, Field, Scalar.Type, FStringView(Scalar.Value.c_str(), Scalar.Value.size()));
+                    StoreDesignValue(M, Field, Scalar.Type, FStringView(*Scalar.Value, Scalar.Value.Len()));
                 }
             }
 
             for (const FUIDesignList& List : Design.Lists)
             {
-                const int32 ListField = DataModelBindList(M, FStringView(List.Name.c_str(), List.Name.size()));
+                const int32 ListField = DataModelBindList(M, FStringView(*List.Name, List.Name.Len()));
                 if (ListField < 0)
                 {
                     continue;
                 }
                 for (const FString& Member : List.Members)
                 {
-                    DataModelBindListMember(M, ListField, FStringView(Member.c_str(), Member.size()));
+                    DataModelBindListMember(M, ListField, FStringView(*Member, Member.Len()));
                 }
                 FillDesignRows(M, ListField, List.Rows);
             }
 
-            for (size_t Index = 0; Index < Design.Commands.size(); ++Index)
+            for (int32 Index = 0; Index < Design.Commands.Num(); ++Index)
             {
                 const FString& Name = Design.Commands[Index].Name;
-                DataModelBindCommand(M, FStringView(Name.c_str(), Name.size()), (int32)Index);
+                DataModelBindCommand(M, FStringView(*Name, Name.Len()), (int32)Index);
             }
             DataModelDirtyAll(M);
         }
@@ -3853,7 +3895,7 @@ namespace Lumina::RmlUi
             return FString();
         }
         const Rml::String Text = M->Values[Field].Get<Rml::String>();
-        return FString(Text.c_str(), Text.size());
+        return FString(Text.c_str(), IntCastChecked<int32>(Text.size()));
     }
 
     void SetEditorDesignRows(Rml::Context* Context, FStringView Model, FStringView List, const TVector<TVector<FString>>& Rows)
@@ -3886,9 +3928,9 @@ namespace Lumina::RmlUi
             FManagedDataModel* M = static_cast<FManagedDataModel*>(Model);
             for (FString& Fired : M->FiredCommands)
             {
-                Out.push_back(Move(Fired));
+                Out.Add(Move(Fired));
             }
-            M->FiredCommands.clear();
+            M->FiredCommands.Reset();
         }
         for (FObjectModel* Model : ObjectModels())
         {
@@ -3898,9 +3940,9 @@ namespace Lumina::RmlUi
             }
             for (FString& Fired : Model->FiredCommands)
             {
-                Out.push_back(Move(Fired));
+                Out.Add(Move(Fired));
             }
-            Model->FiredCommands.clear();
+            Model->FiredCommands.Reset();
         }
     }
 }

@@ -15,8 +15,6 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHI.h"
 
-using Json = nlohmann::json;
-
 namespace Lumina
 {
     namespace
@@ -74,16 +72,16 @@ namespace Lumina
 
     FString CGameUserSettings::GetSettingsFilePath()
     {
-        if (GEngine != nullptr && !GEngine->GetProjectPath().empty())
+        if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
         {
             const FFixedString Path = Paths::Combine(GEngine->GetProjectPath(), "Saved", "UserSettings.json");
-            return FString(Path.c_str(), Path.size());
+            return FString(*Path, Path.Len());
         }
 
         const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
         FString Directory = Paths::GetUserDataDirectory();
         Directory += "/";
-        Directory += ProjectName.empty() ? FString("Lumina") : FString(ProjectName.data(), ProjectName.size());
+        Directory += ProjectName.IsEmpty() ? FString("Lumina") : FString(ProjectName.GetData(), ProjectName.Len());
         return Directory + "/UserSettings.json";
     }
 
@@ -100,29 +98,28 @@ namespace Lumina
             return;
         }
 
-        try
+        FJsonValue Saved;
+        FJsonParseError Error;
+        if (!FJsonValue::Parse(Text.View(), Saved, &Error))
         {
-            Json Saved = Json::parse(Text.c_str());
-            FJsonStructuredArchive::LoadStruct(Saved, StaticClass(), this);
-        }
-        catch (const std::exception& Ex)
-        {
-            LOG_WARN("User settings at {} could not be read ({}); starting from the defaults.", Path.c_str(), Ex.what());
+            LOG_WARN("User settings at {} could not be read ({}); starting from the defaults.", *Path, Error.Message);
             CaptureCurrentDisplay();
+            return;
         }
+        FJsonStructuredArchive::LoadStruct(Saved, StaticClass(), this);
     }
 
     void CGameUserSettings::Save() const
     {
-        Json Saved = Json::object();
+        FJsonValue Saved = FJsonValue::MakeObject();
         FJsonStructuredArchive::SaveStruct(Saved, StaticClass(), const_cast<CGameUserSettings*>(this));
 
         const FString Path = GetSettingsFilePath();
-        const std::string Text = Saved.dump(4);
+        const FString Text = Saved.ToString(4);
         if (!Filesystem::MakeParentDirectoryTree(Path)
-            || !Filesystem::WriteFile(Path, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.data()), Text.size())))
+            || !Filesystem::WriteFile(Path, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len())))
         {
-            LOG_ERROR("User settings could not be written to {}.", Path.c_str());
+            LOG_ERROR("User settings could not be written to {}.", *Path);
         }
     }
 
@@ -144,21 +141,21 @@ namespace Lumina
     void CGameUserSettings::SetBindingOverride(FName Action, int32 BindingIndex, const SKey& Key)
     {
         TVector<SInputBindingOverride>& Overrides = Input.BindingOverrides;
-        Overrides.erase(Algo::RemoveIf(Overrides, [&](const SInputBindingOverride& Override)
+        Overrides.RemoveAll([&](const SInputBindingOverride& Override)
         {
             return Override.Action == Action && Override.BindingIndex == BindingIndex;
-        }), Overrides.end());
-        Input.BindingOverrides.push_back(SInputBindingOverride{ Action, BindingIndex, Key });
+        });
+        Input.BindingOverrides.Emplace(Action, BindingIndex, Key);
         ApplyInput();
     }
 
     void CGameUserSettings::ResetBindingOverrides(FName Action)
     {
         TVector<SInputBindingOverride>& Overrides = Input.BindingOverrides;
-        Overrides.erase(Algo::RemoveIf(Overrides, [&](const SInputBindingOverride& Override)
+        Overrides.RemoveAll([&](const SInputBindingOverride& Override)
         {
             return Action.IsNone() || Override.Action == Action;
-        }), Overrides.end());
+        });
         ApplyInput();
     }
 

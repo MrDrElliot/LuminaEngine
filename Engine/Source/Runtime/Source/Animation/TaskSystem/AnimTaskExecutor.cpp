@@ -32,7 +32,7 @@ namespace Lumina
 
             int16 Acquire()
             {
-                const int32 Num = (int32)Slots.size();
+                const int32 Num = Slots.Num();
                 for (int32 i = 0; i < Num; ++i)
                 {
                     if (!Used[i])
@@ -42,9 +42,9 @@ namespace Lumina
                         return (int16)i;
                     }
                 }
-                Storage.push_back(MakeUnique<FPose>());
-                Slots.push_back(Storage.back().Get());
-                Used.push_back(1);
+                Storage.Add(MakeUnique<FPose>());
+                Slots.Add(Storage.Last().Get());
+                Used.Add(1);
                 return (int16)Num;
             }
 
@@ -72,35 +72,7 @@ namespace Lumina
             return Pool;
         }
 
-        // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0.
-        [[maybe_unused]] float InertEval(float X0, float V0, float T1, float T)
-        {
-            if (T1 <= 1e-5f || X0 <= 1e-7f)
-            {
-                return 0.0f;
-            }
-            if (V0 < 0.0f)
-            {
-                T1 = Math::Min(T1, -5.0f * X0 / V0); // clamp duration so the curve never overshoots below zero
-                if (T1 <= 1e-5f)
-                {
-                    return 0.0f;
-                }
-            }
-            if (T >= T1)
-            {
-                return 0.0f;
-            }
-            const float t1_2 = T1 * T1; const float t1_3 = t1_2 * T1; const float t1_4 = t1_3 * T1; const float t1_5 = t1_4 * T1;
-            const float A = -(3.0f * V0 * T1 + 6.0f  * X0) / t1_5;
-            const float B =  (8.0f * V0 * T1 + 15.0f * X0) / t1_4;
-            const float C = -(6.0f * V0 * T1 + 10.0f * X0) / t1_3;
-            const float t2 = T * T; const float t3 = t2 * T; const float t4 = t3 * T; const float t5 = t4 * T;
-            const float X = A * t5 + B * t4 + C * t3 + V0 * T + X0;
-            return X > 0.0f ? X : 0.0f;
-        }
-
-        // The same curve, 8 bones at a time, and every branch above becomes a select.
+        // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0, 8 bones at a time.
         void InertEvalChannels(FInertChannelSet& Set, float Duration, float T)
         {
             const int32 N = Set.NumLanes();
@@ -454,9 +426,9 @@ namespace Lumina
             const bool bSrc = Source.GetNumBones() >= N;
             Dead.Source = bSrc ? Source : Target;
 
-            Dead.RotVel.assign(N, FVector3(0.0f));
-            Dead.TransVel.assign(N, FVector3(0.0f));
-            Dead.ScaleVel.assign(N, FVector3(0.0f));
+            Dead.RotVel.Init(FVector3(0.0f), N);
+            Dead.TransVel.Init(FVector3(0.0f), N);
+            Dead.ScaleVel.Init(FVector3(0.0f), N);
 
             const bool bVel = bHasVel && Dt > 1e-6f && bSrc && SourcePrev.GetNumBones() >= N;
             if (!bVel)
@@ -504,7 +476,7 @@ namespace Lumina
             Out.SetNumBones(NumBones);
             Out.AdditiveSpace = Target.AdditiveSpace;
 
-            const int32 NumChannels = (int32)Dead.RotVel.size();
+            const int32 NumChannels = Dead.RotVel.Num();
             const int32 N = Math::Min(NumBones, Math::Min(NumChannels, Dead.Source.GetNumBones()));
 
             const float U = (Dead.Duration > 1e-5f) ? Math::Clamp(T / Dead.Duration, 0.0f, 1.0f) : 1.0f;
@@ -601,7 +573,7 @@ namespace Lumina
 
         FPosePool& Pool = GetThreadPosePool();
 
-        const int32 NumTasks = (int32)List.Tasks.size();
+        const int32 NumTasks = List.Tasks.Num();
 
         // The tail rides along at bind-pose locals, and the final FK stays full-hierarchy.
         const int32 NumBones    = Skeleton->GetNumBones();
@@ -617,7 +589,7 @@ namespace Lumina
             OutSnapshot->NumBones        = NumBones;
             OutSnapshot->ActiveBoneCount = List.ActiveBoneCount;
             OutSnapshot->bLockRoot       = List.bLockRoot;
-            OutSnapshot->Entries.resize(NumTasks);
+            OutSnapshot->Entries.SetNum(NumTasks);
             OutSnapshot->bValid          = true;
 
             for (int32 i = 0; i < NumTasks; ++i)
@@ -635,7 +607,7 @@ namespace Lumina
 
                 if (Task.MaskWeights != nullptr)
                 {
-                    Entry.MaskTotalBones = (int32)Task.MaskWeights->size();
+                    Entry.MaskTotalBones = Task.MaskWeights->Num();
                     for (float Weight : *Task.MaskWeights)
                     {
                         Entry.MaskWeightedBones += Weight > 0.0f ? 1 : 0;
@@ -693,11 +665,11 @@ namespace Lumina
         // Which inputs a task actually reads, so a blend that resolves to one side never runs the other.
         thread_local TVector<uint8> UsesDeps;
 
-        Needed.assign(NumTasks, 0);
-        UseCount.assign(NumTasks, 0);
-        ResultBuf.assign(NumTasks, FAnimTask::NoTask);
-        Retained.assign(NumTasks, 0);
-        UsesDeps.assign(NumTasks, 0);
+        Needed.Init(0, NumTasks);
+        UseCount.Init(0, NumTasks);
+        ResultBuf.Init(FAnimTask::NoTask, NumTasks);
+        Retained.Init(0, NumTasks);
+        UsesDeps.Init(0, NumTasks);
 
         Needed[List.OutputTask] = 1;
         for (int32 i = List.OutputTask; i >= 0; --i)
@@ -835,11 +807,11 @@ namespace Lumina
                     thread_local TVector<float> PoseOrderWeights;
                     if (PoseToAsset != nullptr)
                     {
-                        PoseOrderWeights.resize(NumBones);
+                        PoseOrderWeights.SetNum(NumBones);
                         for (int32 Bone = 0; Bone < NumBones; ++Bone)
                         {
                             const int32 AssetBone = PoseToAsset[Bone];
-                            PoseOrderWeights[Bone] = AssetBone < (int32)Weights->size() ? (*Weights)[AssetBone] : 1.0f;
+                            PoseOrderWeights[Bone] = AssetBone < Weights->Num() ? (*Weights)[AssetBone] : 1.0f;
                         }
                         Weights = &PoseOrderWeights;
                     }

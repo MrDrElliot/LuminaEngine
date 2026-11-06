@@ -20,7 +20,7 @@ namespace Lumina
 {
     ECS::FEntity FSequenceEvalContext::Resolve(int32 BindingIndex) const
     {
-        if (BoundEntities == nullptr || BindingIndex < 0 || BindingIndex >= (int32)BoundEntities->size())
+        if (BoundEntities == nullptr || BindingIndex < 0 || BindingIndex >= BoundEntities->Num())
         {
             return ECS::NullEntity;
         }
@@ -55,7 +55,7 @@ namespace Lumina
         for (SCurve* Channel : { &X, &Y, &Z })
         {
             TVector<SCurveKey>& Keys = Channel->Curve.Keys;
-            for (size_t Index = 1; Index < Keys.size(); ++Index)
+            for (int32 Index = 1; Index < Keys.Num(); ++Index)
             {
                 // Whole turns in one step, since stepping by 360 never moves a value too large for the step to register.
                 const float Delta = Keys[Index].Value - Keys[Index - 1].Value;
@@ -100,7 +100,7 @@ namespace Lumina
 
     int32 CSequenceTrack_CameraCut::FindCutAt(float Time) const
     {
-        for (int32 i = 0; i < (int32)Cuts.size(); ++i)
+        for (int32 i = 0; i < Cuts.Num(); ++i)
         {
             const SSequenceCameraCut& Cut = Cuts[i];
             if (Time >= Cut.StartTime && Time < Cut.EndTime)
@@ -157,7 +157,7 @@ namespace Lumina
         {
             if (Context.Crossed(Key.Time))
             {
-                SSequenceFiredEvent& Fired = Context.Instance->FiredEvents.emplace_back();
+                SSequenceFiredEvent& Fired = Context.Instance->FiredEvents.EmplaceGetRef();
                 Fired.Name    = Key.Name;
                 Fired.Payload = Key.Payload;
                 Fired.Time    = Key.Time;
@@ -171,17 +171,17 @@ namespace Lumina
         // Walks a dotted path of reflected fields from a component down to a leaf, stepping into nested structs.
         FProperty* ResolvePropertyPath(CStruct* Struct, void* Container, FStringView Path, void*& OutContainer)
         {
-            while (Struct != nullptr && Container != nullptr && !Path.empty())
+            while (Struct != nullptr && Container != nullptr && !Path.IsEmpty())
             {
-                const size_t Dot = Path.find('.');
-                const FStringView Segment = Dot == FStringView::npos ? Path : Path.substr(0, Dot);
+                const int32 Dot = Path.Find('.');
+                const FStringView Segment = Dot == Constants::kIndexNone ? Path : Path.Mid(0, Dot);
                 FProperty* Property = Struct->GetProperty(FName(Segment));
                 if (Property == nullptr)
                 {
                     return nullptr;
                 }
 
-                if (Dot == FStringView::npos)
+                if (Dot == Constants::kIndexNone)
                 {
                     OutContainer = Container;
                     return Property;
@@ -194,7 +194,7 @@ namespace Lumina
 
                 Container = Property->GetValuePtr<void>(Container);
                 Struct = static_cast<FStructProperty*>(Property)->GetStruct();
-                Path = Path.substr(Dot + 1);
+                Path = Path.Mid(Dot + 1);
             }
             return nullptr;
         }
@@ -203,7 +203,7 @@ namespace Lumina
     void CSequenceTrack_Property::Evaluate(const FSequenceEvalContext& Context) const
     {
         const ECS::FEntity Entity = Context.Resolve(BindingIndex);
-        if (Entity == ECS::NullEntity || Context.World == nullptr || !Context.World->IsValidEntity(Entity) || PropertyPath.empty())
+        if (Entity == ECS::NullEntity || Context.World == nullptr || !Context.World->IsValidEntity(Entity) || PropertyPath.IsEmpty())
         {
             return;
         }
@@ -222,7 +222,7 @@ namespace Lumina
         }
 
         void* Container = nullptr;
-        FProperty* Property = ResolvePropertyPath(Ops->StaticStruct(), Component, FStringView(PropertyPath.c_str(), PropertyPath.size()), Container);
+        FProperty* Property = ResolvePropertyPath(Ops->StaticStruct(), Component, FStringView(*PropertyPath, PropertyPath.Len()), Container);
         if (Property == nullptr)
         {
             return;
@@ -256,20 +256,20 @@ namespace Lumina
 
     bool CSequenceTrack_Property::SampleValue(CWorld* World, ECS::FEntity Entity, float& OutValue) const
     {
-        if (World == nullptr || Entity == ECS::NullEntity || !World->IsValidEntity(Entity) || PropertyPath.empty())
+        if (World == nullptr || Entity == ECS::NullEntity || !World->IsValidEntity(Entity) || PropertyPath.IsEmpty())
         {
             return false;
         }
 
         const FComponentOps* Ops = FindComponentOps(ComponentType.ToString());
-        void* Component = Ops != nullptr ? Ops->Get(World->GetEntityRegistry(), Entity) : nullptr;
+        void* Component = Ops != nullptr ? Ops->GetUnmarked(World->GetEntityRegistry(), Entity) : nullptr;
         if (Component == nullptr)
         {
             return false;
         }
 
         void* Container = nullptr;
-        FProperty* Property = ResolvePropertyPath(Ops->StaticStruct(), Component, FStringView(PropertyPath.c_str(), PropertyPath.size()), Container);
+        FProperty* Property = ResolvePropertyPath(Ops->StaticStruct(), Component, FStringView(*PropertyPath, PropertyPath.Len()), Container);
         if (Property == nullptr)
         {
             return false;
@@ -303,7 +303,7 @@ namespace Lumina
         const STransformComponent* Transform = (Entity != ECS::NullEntity && Context.World != nullptr && Context.World->IsValidEntity(Entity))
             ? Context.World->TryGetComponent<STransformComponent>(Entity) : nullptr;
 
-        for (int32 ClipIndex = 0; ClipIndex < (int32)Clips.size(); ++ClipIndex)
+        for (int32 ClipIndex = 0; ClipIndex < Clips.Num(); ++ClipIndex)
         {
             const SSequenceAudioClip& Clip = Clips[ClipIndex];
             if (Clip.Sound == nullptr)
@@ -358,18 +358,18 @@ namespace Lumina
                 Params.StartFrame = (uint64)(Offset * Clip.Pitch * (float)Stream->SampleRate);
             }
 
-            Context.Instance->Sounds.push_back({ this, CAudioLibrary::PlaySoundEx(Clip.Sound.Get(), Params), ClipIndex, false });
+            Context.Instance->Sounds.Emplace(this, CAudioLibrary::PlaySoundEx(Clip.Sound.Get(), Params), ClipIndex, false);
         }
     }
 
     void CSequenceTrack_Audio::OnRelease(FSequenceInstance& Instance, CWorld* World) const
     {
-        for (size_t Index = 0; Index < Instance.Sounds.size();)
+        for (int32 Index = 0; Index < Instance.Sounds.Num();)
         {
             if (Instance.Sounds[Index].Track == this)
             {
                 CAudioLibrary::Stop(Instance.Sounds[Index].Handle, true, 0.3f);
-                Instance.Sounds.erase(Instance.Sounds.begin() + Index);
+                Instance.Sounds.RemoveAt(Index);
                 continue;
             }
             ++Index;
@@ -403,11 +403,11 @@ namespace Lumina
             Params.Duration = 0.0f;
             Params.BlendInTime = 0.0f;
             Params.BlendOutTime = 0.3f;
-            Context.Instance->Shakes.push_back({ this, SCameraSystem::PlayCameraShake(Registry, Params) });
-            Playing = &Context.Instance->Shakes.back();
+            Context.Instance->Shakes.Emplace(this, SCameraSystem::PlayCameraShake(Registry, Params));
+            Playing = &Context.Instance->Shakes.Last();
         }
 
-        const float Scale = Intensity.Curve.Keys.empty() && !Intensity.bUseAsset ? 1.0f : Math::Max(Intensity.Evaluate(Context.Time), 0.0f);
+        const float Scale = Intensity.Curve.Keys.IsEmpty() && !Intensity.bUseAsset ? 1.0f : Math::Max(Intensity.Evaluate(Context.Time), 0.0f);
         FCameraGlobalState* State = Registry.Ctx().Find<FCameraGlobalState>();
         if (State == nullptr)
         {
@@ -427,7 +427,7 @@ namespace Lumina
 
     void CSequenceTrack_CameraShake::OnRelease(FSequenceInstance& Instance, CWorld* World) const
     {
-        for (size_t Index = 0; Index < Instance.Shakes.size();)
+        for (int32 Index = 0; Index < Instance.Shakes.Num();)
         {
             if (Instance.Shakes[Index].Track == this)
             {
@@ -435,7 +435,7 @@ namespace Lumina
                 {
                     SCameraSystem::StopCameraShake(World->GetEntityRegistry(), Instance.Shakes[Index].Handle);
                 }
-                Instance.Shakes.erase(Instance.Shakes.begin() + Index);
+                Instance.Shakes.RemoveAt(Index);
                 continue;
             }
             ++Index;
@@ -501,7 +501,7 @@ namespace Lumina
         }
 
         // An unkeyed weight means a plain aim, so the common case needs no keys at all.
-        const float Amount = Weight.Curve.Keys.empty() && !Weight.bUseAsset ? 1.0f : Math::Clamp(Weight.Evaluate(Context.Time), 0.0f, 1.0f);
+        const float Amount = Weight.Curve.Keys.IsEmpty() && !Weight.bUseAsset ? 1.0f : Math::Clamp(Weight.Evaluate(Context.Time), 0.0f, 1.0f);
         const FVector3 From = Transform->GetWorldLocation();
         if (bAutoFocus)
         {
@@ -528,11 +528,11 @@ namespace Lumina
             return;
         }
 
-        BoundEntities.assign(Sequence->Bindings.size(), ECS::NullEntity);
+        BoundEntities.Init(ECS::NullEntity, Sequence->Bindings.Num());
         PreviousCamera = World->GetCamera()->GetActiveCameraEntity();
         PreviousTimeDilation = World->GetTimeDilation();
 
-        for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
+        for (int32 i = 0; i < Sequence->Bindings.Num(); ++i)
         {
             const SSequenceBinding& Binding = Sequence->Bindings[i];
 
@@ -541,7 +541,7 @@ namespace Lumina
                 const ECS::FEntity Camera = World->ConstructEntity(Binding.Name);
                 World->GetOrEmplaceComponent<SCameraComponent>(Camera);
                 BoundEntities[i] = Camera;
-                SpawnedEntities.push_back(Camera);
+                SpawnedEntities.Add(Camera);
                 continue;
             }
 
@@ -556,7 +556,7 @@ namespace Lumina
                 if (Spawned != ECS::NullEntity)
                 {
                     BoundEntities[i] = Spawned;
-                    SpawnedEntities.push_back(Spawned);
+                    SpawnedEntities.Add(Spawned);
                 }
                 continue;
             }
@@ -602,7 +602,7 @@ namespace Lumina
                 Entry.Location = Transform->GetLocation();
                 Entry.Rotation = Transform->GetRotation();
                 Entry.Scale = Transform->GetScale();
-                RestoreState.push_back(Entry);
+                RestoreState.Add(Entry);
             }
         }
 
@@ -666,11 +666,11 @@ namespace Lumina
             }
         }
 
-        SpawnedEntities.clear();
-        BoundEntities.clear();
-        RestoreState.clear();
-        Sounds.clear();
-        Shakes.clear();
+        SpawnedEntities.Reset();
+        BoundEntities.Reset();
+        RestoreState.Reset();
+        Sounds.Reset();
+        Shakes.Reset();
         PreviousCamera = ECS::NullEntity;
         BoundSequence = nullptr;
         bBound = false;
@@ -724,12 +724,12 @@ namespace Lumina
     void CSequence::Evaluate(const FSequenceEvalContext& Context) const
     {
         // Tracks run in their declared order, so a look-at aims from where the transform put the camera and cuts read both.
-        TFixedVector<const CSequenceTrack*, 64> Ordered;
+        TInlineVector<const CSequenceTrack*, 64> Ordered;
         for (const TStrongObjectPtr<CSequenceTrack>& Track : Tracks)
         {
             if (Track.IsValid() && Track->bEnabled)
             {
-                Ordered.push_back(Track.Get());
+                Ordered.Add(Track.Get());
             }
         }
 

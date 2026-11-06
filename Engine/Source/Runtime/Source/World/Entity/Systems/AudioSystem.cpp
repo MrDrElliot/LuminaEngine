@@ -1,31 +1,22 @@
 #include "RuntimePCH.h"
 #include "AudioSystem.h"
-#include "World/ECS/Registry.h"
+#include "CameraSystem.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
 #include "Audio/AudioSettings.h"
 #include "Audio/SoundPlayback.h"
 #include "Core/Object/ObjectCore.h"
 #include "Physics/PhysicsScene.h"
-#include "World/Entity/Components/AudioSourceComponent.h"
-#include "World/Entity/Components/AudioVolumeComponent.h"
-#include "World/Entity/Components/ProceduralAudioComponent.h"
-#include "KinematicsSystem.h"
-#include "SignificanceSystem.h"
-#include "SystemResources.h"
-#include "World/World.h"
 
 namespace Lumina
 {
-	// PhysicsQuery is needed because occlusion casts rays against the live scene.
     void SAudioSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PostPhysics);
-        Writes<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent, SAudioVolumeComponent>();
-        Reads<STransformComponent, SystemResource::PhysicsQuery, SystemResource::Significance, SystemResource::Kinematics>();
+        RequireUpdate(EUpdateStage::FrameEnd);
+        RunsAfter<SCameraSystem>();
     }
 
-	namespace
+	namespace AudioSystemInternal
 	{
 		float MoveTowards(float Current, float Target, float MaxDelta)
 		{
@@ -35,10 +26,7 @@ namespace Lumina
 			}
 			return Current + (Target > Current ? MaxDelta : -MaxDelta);
 		}
-	}
 
-	namespace
-	{
 		struct FVolumeGroupWinner
 		{
 			FName        Group;
@@ -47,35 +35,42 @@ namespace Lumina
 			float        Weight = 0.0f;
 		};
 
+		struct FGroupVoice
+		{
+			ECS::FEntity                 Entity;
+			const SAudioVolumeComponent* Volume = nullptr;
+		};
+
 		// Each volume fades toward its own weight when it is ungrouped or wins its group, and toward silence otherwise.
-		template <typename TTransformStorage>
-		void UpdateAudioVolumes(const SSystemContext& Context, TTransformStorage& XForms, const FVector3& Listener, float DeltaTime)
+		template <typename TVolumeQuery, typename TTransformQuery>
+		void UpdateAudioVolumes(TVolumeQuery& Volumes, const TTransformQuery& Transforms, const FVector3& Listener, float DeltaTime)
 		{
 			TVector<FVolumeGroupWinner> Winners;
-			TVector<SAudioVolumeComponent*> GroupVoices;
-			auto View = Context.CreateView<SAudioVolumeComponent>();
-			View.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			TVector<FGroupVoice> GroupVoices;
+			Volumes.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioVolumeComponent> Volume)
 			{
-				if (Volume.bPlaying && !Volume.Group.IsNone())
+				const SAudioVolumeComponent& Current = Volume.Get();
+				if (Current.bPlaying && !Current.Group.IsNone())
 				{
-					GroupVoices.push_back(&Volume);
+					GroupVoices.Add(FGroupVoice{ Entity, &Current });
 				}
 
-				Volume.InsideWeight = (Volume.bEnabled && XForms.Contains(Entity)) ? Volume.ListenerWeight(XForms.Get(Entity), Listener) : 0.0f;
-				Volume.bListenerInside = Volume.InsideWeight > 0.0f;
-				if (!Volume.bListenerInside)
+				const STransformComponent* Xform = Current.bEnabled ? Transforms.template TryGet<STransformComponent>(Entity) : nullptr;
+				Volume.SetIfChanged(&SAudioVolumeComponent::InsideWeight, Xform != nullptr ? Current.ListenerWeight(*Xform, Listener) : 0.0f);
+				Volume.SetIfChanged(&SAudioVolumeComponent::bListenerInside, Current.InsideWeight > 0.0f);
+				if (!Current.bListenerInside)
 				{
-					Volume.bFinishedThisVisit = false;
+					Volume.SetIfChanged(&SAudioVolumeComponent::bFinishedThisVisit, false);
 					return;
 				}
-				if (Volume.Group.IsNone())
+				if (Current.Group.IsNone())
 				{
 					return;
 				}
 				FVolumeGroupWinner* Winner = nullptr;
 				for (FVolumeGroupWinner& Candidate : Winners)
 				{
-					if (Candidate.Group == Volume.Group)
+					if (Candidate.Group == Current.Group)
 					{
 						Winner = &Candidate;
 						break;
@@ -83,94 +78,98 @@ namespace Lumina
 				}
 				if (Winner == nullptr)
 				{
-					Winners.push_back(FVolumeGroupWinner{ Volume.Group, Entity, Volume.Priority, Volume.InsideWeight });
+					Winners.Emplace(Current.Group, Entity, Current.Priority, Current.InsideWeight);
 				}
-				else if (Volume.Priority > Winner->Priority || (Volume.Priority == Winner->Priority && Volume.InsideWeight > Winner->Weight))
+				else if (Current.Priority > Winner->Priority || (Current.Priority == Winner->Priority && Current.InsideWeight > Winner->Weight))
 				{
-					*Winner = FVolumeGroupWinner{ Volume.Group, Entity, Volume.Priority, Volume.InsideWeight };
+					*Winner = FVolumeGroupWinner{ Current.Group, Entity, Current.Priority, Current.InsideWeight };
 				}
 			});
 
-			View.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			Volumes.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioVolumeComponent> Volume)
 			{
-				bool bWinsGroup = Volume.Group.IsNone();
+				const SAudioVolumeComponent& Current = Volume.Get();
+				bool bWinsGroup = Current.Group.IsNone();
 				for (const FVolumeGroupWinner& Winner : Winners)
 				{
-					if (Winner.Group == Volume.Group)
+					if (Winner.Group == Current.Group)
 					{
 						bWinsGroup = Winner.Entity == Entity;
 						break;
 					}
 				}
 
-				const float Target = (Volume.bListenerInside && bWinsGroup) ? Volume.InsideWeight : 0.0f;
-				const float FadeTime = Target > Volume.Gain ? Volume.FadeInTime : Volume.FadeOutTime;
-				Volume.Gain = MoveTowards(Volume.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f);
+				const float Target = (Current.bListenerInside && bWinsGroup) ? Current.InsideWeight : 0.0f;
+				const float FadeTime = Target > Current.Gain ? Current.FadeInTime : Current.FadeOutTime;
+				Volume.SetIfChanged(&SAudioVolumeComponent::Gain, MoveTowards(Current.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f));
 
 				// A one-shot that played out stays quiet until the listener leaves and comes back.
-				if (Volume.bPlaying && Audio::Context().GetVoiceState(Volume.ActiveHandle) == EAudioVoiceState::Free)
+				if (Current.bPlaying && Audio::Context().GetVoiceState(Current.ActiveHandle) == EAudioVoiceState::Free)
 				{
-					Volume.bPlaying = false;
-					Volume.ActiveHandle = SAudioHandle::Invalid();
-					Volume.ResumeFrame = 0;
-					Volume.bFinishedThisVisit = !Volume.bLooping;
+					Volume->bPlaying = false;
+					Volume->ActiveHandle = SAudioHandle::Invalid();
+					Volume->ResumeFrame = 0;
+					Volume->bFinishedThisVisit = !Current.bLooping;
 				}
 
 				// Neighboring volumes of a group that play the same sound pass the voice along instead of restarting it.
-				if (!Volume.bPlaying && Target > 0.0f && !Volume.Group.IsNone())
+				if (!Current.bPlaying && Target > 0.0f && !Current.Group.IsNone())
 				{
-					for (SAudioVolumeComponent* Other : GroupVoices)
+					for (const FGroupVoice& Voice : GroupVoices)
 					{
-						if (Other != &Volume && Other->bPlaying && Other->Group == Volume.Group && Other->Sound == Volume.Sound)
+						const SAudioVolumeComponent& Other = *Voice.Volume;
+						if (&Other != &Current && Other.bPlaying && Other.Group == Current.Group && Other.Sound == Current.Sound)
 						{
-							Volume.ActiveHandle  = Other->ActiveHandle;
-							Volume.Gain          = Math::Max(Volume.Gain, Other->Gain);
-							Volume.AppliedVolume = Other->AppliedVolume;
-							Volume.bPlaying      = true;
-							Other->ActiveHandle  = SAudioHandle::Invalid();
-							Other->bPlaying      = false;
-							Other->Gain          = 0.0f;
+							Volume->ActiveHandle  = Other.ActiveHandle;
+							Volume->Gain          = Math::Max(Current.Gain, Other.Gain);
+							Volume->AppliedVolume = Other.AppliedVolume;
+							Volume->bPlaying      = true;
+							SAudioVolumeComponent& Handoff = Volumes.template Get<SAudioVolumeComponent>(Voice.Entity);
+							Handoff.ActiveHandle = SAudioHandle::Invalid();
+							Handoff.bPlaying     = false;
+							Handoff.Gain         = 0.0f;
 							break;
 						}
 					}
 				}
 
-				const float Wanted = Volume.Volume * Volume.Gain;
-				if (!Volume.bPlaying)
+				const float Wanted = Current.Volume * Current.Gain;
+				if (!Current.bPlaying)
 				{
-					if (Volume.Gain > 0.0f && !Volume.bFinishedThisVisit && Volume.Sound != nullptr && Volume.Sound->IsPlayable())
+					if (Current.Gain > 0.0f && !Current.bFinishedThisVisit && Current.Sound != nullptr && Current.Sound->IsPlayable())
 					{
 						SAudioPlayParams Params;
 						Params.Volume       = Wanted;
-						Params.bLooping     = Volume.bLooping;
+						Params.bLooping     = Current.bLooping;
 						Params.bSpatialized = false;
-						Params.Bus          = Volume.Bus;
-						Params.StartFrame   = Volume.bResumePlayback ? Volume.ResumeFrame : 0;
-						Volume.ActiveHandle  = Audio::PlaySound(Volume.Sound.Get(), Params).Handle;
-						Volume.bPlaying      = Volume.ActiveHandle.IsValid();
-						Volume.AppliedVolume = Wanted;
+						Params.Bus          = Current.Bus;
+						Params.StartFrame   = Current.bResumePlayback ? Current.ResumeFrame : 0;
+						Volume->ActiveHandle  = Audio::PlaySound(Current.Sound.Get(), Params).Handle;
+						Volume->bPlaying      = Current.ActiveHandle.IsValid();
+						Volume->AppliedVolume = Wanted;
 					}
 					return;
 				}
 
-				if (Volume.Gain <= 0.0f)
+				if (Current.Gain <= 0.0f)
 				{
-					Volume.StopVoice();
+					Volume->StopVoice();
 				}
-				else if (Math::Abs(Wanted - Volume.AppliedVolume) > 0.002f)
+				else if (Math::Abs(Wanted - Current.AppliedVolume) > 0.002f)
 				{
-					Audio::Context().SetVolume(Volume.ActiveHandle, Wanted);
-					Volume.AppliedVolume = Wanted;
+					Audio::Context().SetVolume(Current.ActiveHandle, Wanted);
+					Volume->AppliedVolume = Wanted;
 				}
 			});
 		}
 	}
 
-	void SAudioSystem::OnStartup(const SSystemContext& Context)
+	bool SAudioSystem::HasWork(const SSystemContext& Context)
 	{
+		return AnyQueryHasRows(Listeners, Volumes, Sources, ProceduralSources);
 	}
 
-	void SAudioSystem::OnTeardown(const SSystemContext& Context)
+	void SAudioSystem::OnTeardown(const SExclusiveContext& Context)
 	{
 
 		// No audio device in a headless dedicated server (Audio::Initialize is skipped).
@@ -180,41 +179,33 @@ namespace Lumina
 		}
 
 		// Stop all sounds owned by audio source components in this world.
-		auto View = Context.CreateView<SAudioSourceComponent>();
-		View.ForEach([](SAudioSourceComponent& Audio)
+		auto StopOwnedSound = [](auto Audio)
 		{
-			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
+			if (Audio.Get().bPlaying && Audio.Get().ActiveHandle.IsValid())
 			{
-				Audio::Context().StopSound(Audio.ActiveHandle);
-				Audio.ActiveHandle = SAudioHandle::Invalid();
-				Audio.bPlaying = false;
+				Audio::Context().StopSound(Audio.Get().ActiveHandle);
+				Audio->ActiveHandle = SAudioHandle::Invalid();
+				Audio->bPlaying = false;
 			}
-		});
+		};
+		AllSources.ForEach(StopOwnedSound);
+		ProceduralSources.ForEach(StopOwnedSound);
 
-		auto ProceduralView = Context.CreateView<SProceduralAudioComponent>();
-		ProceduralView.ForEach([](SProceduralAudioComponent& Audio)
+		Volumes.ForEach([](ECS::TMut<SAudioVolumeComponent> Volume)
 		{
-			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
+			const SAudioVolumeComponent& Current = Volume.Get();
+			if (Current.bPlaying || Current.ResumeFrame != 0 || Current.Gain != 0.0f)
 			{
-				Audio::Context().StopSound(Audio.ActiveHandle);
-				Audio.ActiveHandle = SAudioHandle::Invalid();
-				Audio.bPlaying = false;
+				Volume->ResumeFrame = 0;
+				Volume->StopVoice();
+				Volume->Gain = 0.0f;
 			}
-		});
-
-		auto VolumeView = Context.CreateView<SAudioVolumeComponent>();
-		VolumeView.ForEach([](SAudioVolumeComponent& Volume)
-		{
-			Volume.ResumeFrame = 0;
-			Volume.StopVoice();
-			Volume.Gain = 0.0f;
 		});
 	}
 
 	void SAudioSystem::OnUpdate(const SSystemContext& Context)
 	{
-
-		LUMINA_PROFILE_SCOPE();
+		using namespace AudioSystemInternal;
 
 		// No audio device in a headless dedicated server (Audio::Initialize is skipped).
 		if (!Audio::HasDevice())
@@ -223,29 +214,25 @@ namespace Lumina
 		}
 
 		const CAudioSettings* Settings = GetDefault<CAudioSettings>();
-		const float DeltaTime = (float)Context.GetDeltaTime();
-
-		auto XFormStorage = Context.GetStorage<STransformComponent>();
-		const FKinematicsState* KinematicsState = Kinematics::GetState(Context);
+		const float DeltaTime = Context.GetDeltaTime();
+		const FKinematicsState& Kinematics = *KinematicsState;
 
 		FVector3 ListenerPosition(0.0f);
 		bool bHasListener = false;
 		uint32 DrivenListenerMask = 0;
 
-		CWorld* World = Context.GetWorld();
-		const ECS::FEntity ActiveCamera = World != nullptr ? World->GetCamera()->GetActiveCameraEntity() : ECS::NullEntity;
-		const bool bCameraHasTransform = ActiveCamera != ECS::NullEntity && !ActiveCamera.IsTombstone() && XFormStorage.Contains(ActiveCamera);
+		const ECS::FEntity ActiveCamera = CameraState->ActiveCameraEntity;
+		const bool bCameraHasTransform = ActiveCamera != ECS::NullEntity && !ActiveCamera.IsTombstone() && Transforms.Contains(ActiveCamera);
 
 		{
-			auto ListenerView = Context.CreateView<SAudioListenerComponent>();
-			ListenerView.ForEach([&](ECS::FEntity Entity, SAudioListenerComponent& Listener)
+			Listeners.ForEach([&](ECS::FEntity Entity, const SAudioListenerComponent& Listener)
 			{
 				const uint32 Index = (uint32)Math::Clamp(Listener.ListenerIndex, 0, 3);
 				const ECS::FEntity Ears = (Listener.bFollowActiveCamera && Index == 0 && bCameraHasTransform) ? ActiveCamera : Entity;
-				const STransformComponent& Transform = XFormStorage.Get(Ears);
+				const STransformComponent& Transform = Transforms.Get<STransformComponent>(Ears);
 				const FVector3 Position = Transform.GetWorldLocation();
 
-				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Ears);
+				const FVector3 Velocity = Kinematics.GetVelocity(Ears);
 
 				Audio::Context().UpdateListener(Index, Position, Transform.GetWorldRotation(),
 					Listener.bApplyDoppler ? Velocity : FVector3(0.0f));
@@ -271,19 +258,18 @@ namespace Lumina
 
 		if (bHasListener)
 		{
-			UpdateAudioVolumes(Context, XFormStorage, ListenerPosition, DeltaTime);
+			UpdateAudioVolumes(Volumes, Transforms, ListenerPosition, DeltaTime);
 		}
 
 		const bool bOcclusionAllowed = bHasListener && Settings != nullptr && Settings->bOcclusionEnabled;
-		Physics::IPhysicsScene* PhysicsScene = bOcclusionAllowed ? Context.GetPhysicsScene() : nullptr;
+		Physics::IPhysicsQueries* PhysicsScene = bOcclusionAllowed ? Context.GetPhysics() : nullptr;
 		uint32 TraceBudget = (Settings != nullptr) ? Settings->MaxOcclusionTracesPerTick : 0;
-		const FSignificanceState* SignificanceState = Significance::GetState(Context);
+		const FSignificanceState& Significance = *SignificanceState;
 
 		{
-			auto SourceView = Context.CreateView<SAudioSourceComponent>();
-			SourceView.ForEach([&](ECS::FEntity Entity, SAudioSourceComponent& Audio)
+			Sources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioSourceComponent> Source, const STransformComponent& Transform)
 			{
-				const STransformComponent& Transform = XFormStorage.Get(Entity);
+				SAudioSourceComponent& Audio = Source.GetMut();
 				const FVector3 Position = Transform.GetWorldLocation();
 				Audio.LastPosition = Position;
 
@@ -309,8 +295,7 @@ namespace Lumina
 					return;
 				}
 
-				// A sound that plays until stopped virtualizes, dropping its voice out of range and taking
-				// a new one back. A one shot must not, or it would restart every time it finished.
+				// A looping sound virtualizes out of range; a one shot must not, or it would restart every time it finished.
 				if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsPlayable() && Audio.IsPersistent())
 				{
 					if (!Audio.bPlaying && bInRange)
@@ -329,7 +314,7 @@ namespace Lumina
 					return;
 				}
 
-				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
+				const FVector3 Velocity = Kinematics.GetVelocity(Entity);
 
 				if (Audio.bSpatialized)
 				{
@@ -374,7 +359,7 @@ namespace Lumina
 				if (Audio.OcclusionTraceTimer <= 0.0f && PhysicsScene != nullptr && TraceBudget > 0)
 				{
 					--TraceBudget;
-					Audio.OcclusionTraceTimer = Significance::ScaleInterval(SignificanceState, Entity, Audio.Occlusion.TraceInterval);
+					Audio.OcclusionTraceTimer = Audio.Occlusion.TraceInterval * (float)Significance.Get(Entity).TickInterval;
 
 					SRayCastSettings Trace;
 					Trace.Start     = ListenerPosition;
@@ -384,10 +369,10 @@ namespace Lumina
 					const ECS::FEntity BodyID = Entity;
 					if (BodyID != ECS::NullEntity)
 					{
-						Trace.IgnoreEntities.push_back(BodyID);
+						Trace.IgnoreEntities.Add(BodyID);
 					}
 
-					Audio.OcclusionTarget = PhysicsScene->CastRay(Trace).has_value() ? 1.0f : 0.0f;
+					Audio.OcclusionTarget = PhysicsScene->CastRay(Trace).IsSet() ? 1.0f : 0.0f;
 				}
 
 				const float PreviousOcclusion = Audio.OcclusionCurrent;
@@ -403,9 +388,9 @@ namespace Lumina
 		}
 
 		{
-			auto ProceduralView = Context.CreateView<SProceduralAudioComponent>();
-			ProceduralView.ForEach([&](ECS::FEntity Entity, SProceduralAudioComponent& Audio)
+			ProceduralSources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SProceduralAudioComponent> Source)
 			{
+				SProceduralAudioComponent& Audio = Source.GetMut();
 				if (!Audio.bReady)
 				{
 					Audio.bReady = true;
@@ -426,7 +411,7 @@ namespace Lumina
 				{
 					if (Audio.bSpatialized)
 					{
-						const STransformComponent& Transform = XFormStorage.Get(Entity);
+						const STransformComponent& Transform = Transforms.Get<STransformComponent>(Entity);
 						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());
 					}
 

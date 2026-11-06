@@ -7,13 +7,13 @@ namespace Lumina
     {
         if (bUseTriangleMesh)
         {
-            return TriangleIndices.size() >= 3 && !TriangleVertices.empty();
+            return TriangleIndices.Num() >= 3 && !TriangleVertices.IsEmpty();
         }
 
         for (const SCollisionPrimitive& Primitive : Primitives)
         {
             // A convex piece with too few points cannot form a volume, so it is not collision.
-            if (Primitive.Type != ECollisionPrimitiveType::ConvexHull || Primitive.HullPoints.size() >= 4)
+            if (Primitive.Type != ECollisionPrimitiveType::ConvexHull || Primitive.HullPoints.Num() >= 4)
             {
                 return true;
             }
@@ -29,7 +29,7 @@ namespace Lumina
         {
             if (Primitive.Type == ECollisionPrimitiveType::ConvexHull)
             {
-                Total += (int32)Primitive.HullPoints.size();
+                Total += Primitive.HullPoints.Num();
             }
         }
 
@@ -38,9 +38,9 @@ namespace Lumina
 
     void SMeshCollision::Clear()
     {
-        Primitives.clear();
-        TriangleVertices.clear();
-        TriangleIndices.clear();
+        Primitives.Reset();
+        TriangleVertices.Reset();
+        TriangleIndices.Reset();
         bUseTriangleMesh = false;
     }
 }

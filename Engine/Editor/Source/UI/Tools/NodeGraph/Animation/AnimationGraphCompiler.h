@@ -91,7 +91,7 @@ namespace Lumina
         uint16 AllocClockSlot()
         {
             const uint16 Slot = NextStateSlot++;
-            ClockSlots.push_back(Slot);
+            ClockSlots.Add(Slot);
             return Slot;
         }
 
@@ -194,7 +194,7 @@ namespace Lumina
         void AddDebugStateNode(CEdGraphNode* Node, uint16 CurrentStateSlot, uint16 FromStateSlot,
                                uint16 MachineIndex, int32 StateIndex)
         {
-            DebugStateNodes.push_back({ Node, CurrentStateSlot, FromStateSlot, MachineIndex, StateIndex });
+            DebugStateNodes.Emplace(Node, CurrentStateSlot, FromStateSlot, MachineIndex, StateIndex);
         }
         const TVector<FAnimGraphDebugStateNode>& GetDebugStateNodes() const { return DebugStateNodes; }
 
@@ -203,7 +203,7 @@ namespace Lumina
         const THashMap<const CEdGraphNode*, uint16>& GetDebugPlayheads() const { return DebugPlayheads; }
 
         // Machines emitted so far. One less than this is the index of the machine just emitted.
-        uint16 GetStateMachineCount() const { return (uint16)StateMachines.size(); }
+        uint16 GetStateMachineCount() const { return (uint16)StateMachines.Num(); }
 
         // Modifies a single bone of an incoming pose. Returns the destination
         // pose register; (T, R, S) are baked into the bytecode at compile time.
@@ -280,13 +280,13 @@ namespace Lumina
         // appended to the mask table, returns its index. Lets Layered Blend Per Bone mask by bone choice.
         uint16 AddBoneSubtreeMask(int32 RootBoneIndex, bool bInclusive);
 
-        FORCEINLINE bool HasErrors() const { return !Errors.empty(); }
-        FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.push_back(Error); }
+        FORCEINLINE bool HasErrors() const { return !Errors.IsEmpty(); }
+        FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.Add(Error); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetErrors() const { return Errors; }
 
         // Non-fatal diagnostics (e.g. a node references a renamed/removed
         // blackboard key). The graph still compiles; the tool surfaces these.
-        FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.push_back(Warning); }
+        FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.Add(Warning); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetWarnings() const { return Warnings; }
 
         // Writes the compiled program, clip / parameter tables, and register sizing into OutGraph.
@@ -302,22 +302,22 @@ namespace Lumina
         void Write(const T& Value)
         {
             const uint8* Bytes = reinterpret_cast<const uint8*>(&Value);
-            Bytecode.insert(Bytecode.end(), Bytes, Bytes + sizeof(T));
+            Bytecode.Append(Bytes, Bytes + sizeof(T));
         }
 
-        void WriteOp(EAnimOp Op) { Bytecode.push_back((uint8)Op); }
+        void WriteOp(EAnimOp Op) { Bytecode.Add((uint8)Op); }
 
         template <typename T>
         void WriteAt(SIZE_T Offset, const T& Value)
         {
-            Memory::Memcpy(Bytecode.data() + Offset, &Value, sizeof(T));
+            Memory::Memcpy(Bytecode.GetData() + Offset, &Value, sizeof(T));
         }
 
         template <typename T>
         T ReadAt(SIZE_T Offset) const
         {
             T Value;
-            Memory::Memcpy(&Value, Bytecode.data() + Offset, sizeof(T));
+            Memory::Memcpy(&Value, Bytecode.GetData() + Offset, sizeof(T));
             return Value;
         }
 

@@ -70,7 +70,7 @@ namespace Lumina
 
         NODISCARD int32 GetColumns() const { return Columns; }
         NODISCARD int32 GetRows() const { return Rows; }
-        NODISCARD int32 GetScrollbackCount() const { return static_cast<int32>(Scrollback.size()); }
+        NODISCARD int32 GetScrollbackCount() const { return Scrollback.Num(); }
 
         /** Negative indexes reach into scrollback, zero through Rows-1 address the live screen. */
         NODISCARD const FTerminalLine& GetLine(int32 RowIndex) const;

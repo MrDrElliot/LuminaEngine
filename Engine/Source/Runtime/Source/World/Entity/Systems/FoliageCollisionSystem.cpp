@@ -11,41 +11,35 @@ namespace Lumina
     void SFoliageCollisionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SFoliageComponent>();
-        Writes<SystemResource::PhysicsQuery>();
     }
 
     void SFoliageCollisionSystem::OnUpdate(const SSystemContext& Context)
     {
-
-        LUMINA_PROFILE_SCOPE();
-
-        Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
-        if (Scene == nullptr)
+        if (Context.GetPhysics() == nullptr)
         {
             return;
         }
 
-        Context.CreateView<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent& Foliage)
+        FoliageSets.ForEach([&](ECS::FEntity Entity, const SFoliageComponent& Source)
         {
-            if (Foliage.CollisionBakedVersion == Foliage.InstancesVersion)
+            if (Source.CollisionBakedVersion == Source.InstancesVersion)
             {
                 return;
             }
 
             // Heap rather than scratch, since the instance count is unbounded and one block cannot hold a large foliage set.
             TVector<Physics::FStaticInstanceDesc> Descs;
-            Descs.reserve(Foliage.Instances.size());
+            Descs.Reserve(Source.Instances.Num());
             bool bSourcesReady = true;
 
-            for (int32 InstanceIndex = 0; InstanceIndex < (int32)Foliage.Instances.size(); ++InstanceIndex)
+            for (int32 InstanceIndex = 0; InstanceIndex < Source.Instances.Num(); ++InstanceIndex)
             {
-                const SFoliageInstance& Inst = Foliage.Instances[InstanceIndex];
-                if (!Foliage.IsValidType(Inst.TypeIndex))
+                const SFoliageInstance& Inst = Source.Instances[InstanceIndex];
+                if (!Source.IsValidType(Inst.TypeIndex))
                 {
                     continue;
                 }
-                const SFoliageType& Type = Foliage.Types[Inst.TypeIndex];
+                const SFoliageType& Type = Source.Types[Inst.TypeIndex];
                 if (!Type.bEnableCollision)
                 {
                     continue;
@@ -59,7 +53,7 @@ namespace Lumina
                 }
                 const SMeshCollision* Collision = Mesh->GetCollision();
 
-                Physics::FStaticInstanceDesc& Desc = Descs.emplace_back();
+                Physics::FStaticInstanceDesc& Desc = Descs.EmplaceGetRef();
                 Desc.Position  = Inst.Position;
                 Desc.Rotation  = Inst.GetRotationQuat();
                 Desc.Scale     = Inst.Scale;
@@ -77,26 +71,38 @@ namespace Lumina
                 return;
             }
 
-            if (Foliage.CollisionGroupID != 0)
+            // Swapping bodies edits the physics world, so it lands at the flush rather than under other systems' queries.
+            Context.Defer([Entity, Descs = Move(Descs), Version = Source.InstancesVersion](const SExclusiveContext& X) mutable
             {
-                Scene->DestroyStaticBodyGroup(Foliage.CollisionGroupID);
-                Foliage.CollisionGroupID = 0;
-            }
-            if (!Descs.empty())
-            {
-                Foliage.CollisionGroupID = Scene->CreateStaticBodyGroup(Entity, Descs);
-            }
-            Foliage.CollisionBakedVersion = Foliage.InstancesVersion;
+                Physics::IPhysicsScene* Scene = X.GetPhysicsScene();
+                if (Scene == nullptr || !X.IsValidEntity(Entity))
+                {
+                    return;
+                }
+                X.Patch<SFoliageComponent>(Entity, [Scene, Entity, Descs = Move(Descs), Version](SFoliageComponent& Foliage)
+                {
+                    if (Foliage.CollisionGroupID != 0)
+                    {
+                        Scene->DestroyStaticBodyGroup(Foliage.CollisionGroupID);
+                        Foliage.CollisionGroupID = 0;
+                    }
+                    if (!Descs.IsEmpty())
+                    {
+                        Foliage.CollisionGroupID = Scene->CreateStaticBodyGroup(Entity, Descs);
+                    }
+                    Foliage.CollisionBakedVersion = Version;
+                });
+            });
         });
     }
 
-    void SFoliageCollisionSystem::OnTeardown(const SSystemContext& Context)
+    void SFoliageCollisionSystem::OnTeardown(const SExclusiveContext& Context)
     {
-
         Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
 
-        Context.CreateView<SFoliageComponent>().ForEach([&](SFoliageComponent& Foliage)
+        Context.GetRegistry().View<ECS::Write<SFoliageComponent>>().ForEach([&](ECS::TMut<SFoliageComponent> FoliageMut)
         {
+            SFoliageComponent& Foliage = FoliageMut.GetMut();
             if (Scene != nullptr && Foliage.CollisionGroupID != 0)
             {
                 Scene->DestroyStaticBodyGroup(Foliage.CollisionGroupID);

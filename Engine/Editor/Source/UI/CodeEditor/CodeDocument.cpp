@@ -8,7 +8,7 @@ namespace Lumina
     {
         int32 NextCharStart(FStringView Text, int32 Column)
         {
-            const int32 Size = (int32)Text.size();
+            const int32 Size = Text.Len();
             if (Column >= Size)
             {
                 return Size;
@@ -37,7 +37,7 @@ namespace Lumina
 
         int32 VisualColumn(FStringView Text, int32 Column, int32 TabSize)
         {
-            const int32 End = Math::Min(Column, (int32)Text.size());
+            const int32 End = Math::Min(Column, Text.Len());
             int32 Visual = 0;
             for (int32 i = 0; i < End; ++i)
             {
@@ -58,7 +58,7 @@ namespace Lumina
         {
             int32 Current = 0;
             int32 Column = 0;
-            const int32 Size = (int32)Text.size();
+            const int32 Size = Text.Len();
             while (Column < Size)
             {
                 const int32 Width = Text[Column] == '\t' ? TabSize - (Current % TabSize) : 1;
@@ -76,7 +76,7 @@ namespace Lumina
         int32 LeadingWhitespace(FStringView Text)
         {
             int32 Count = 0;
-            while (Count < (int32)Text.size() && IsSpace(Text[Count]))
+            while (Count < Text.Len() && IsSpace(Text[Count]))
             {
                 ++Count;
             }
@@ -85,24 +85,24 @@ namespace Lumina
 
         bool IsBlank(FStringView Text)
         {
-            return LeadingWhitespace(Text) == (int32)Text.size();
+            return LeadingWhitespace(Text) == Text.Len();
         }
 
         bool StartsWithIgnoreCase(FStringView Text, FStringView Prefix)
         {
-            return Text.size() >= Prefix.size() && EqualsIgnoreCase(Text.substr(0, Prefix.size()), Prefix);
+            return Text.Len() >= Prefix.Len() && EqualsIgnoreCase(Text.Mid(0, Prefix.Len()), Prefix);
         }
 
         int32 FindIgnoreCase(FStringView Haystack, FStringView Needle, int32 From)
         {
-            if (Needle.empty())
+            if (Needle.IsEmpty())
             {
                 return -1;
             }
-            const int32 Last = (int32)Haystack.size() - (int32)Needle.size();
+            const int32 Last = Haystack.Len() - Needle.Len();
             for (int32 i = Math::Max(0, From); i <= Last; ++i)
             {
-                if (EqualsIgnoreCase(Haystack.substr(i, Needle.size()), Needle))
+                if (EqualsIgnoreCase(Haystack.Mid(i, Needle.Len()), Needle))
                 {
                     return i;
                 }
@@ -113,24 +113,24 @@ namespace Lumina
 
     FCodeDocument::FCodeDocument()
     {
-        Lines.emplace_back();
+        Lines.Emplace();
     }
 
     void FCodeDocument::SetText(FStringView Text)
     {
-        Lines.clear();
-        size_t LineStart = 0;
-        for (size_t i = 0; i <= Text.size(); ++i)
+        Lines.Reset();
+        int32 LineStart = 0;
+        for (int32 i = 0; i <= Text.Len(); ++i)
         {
-            if (i == Text.size() || Text[i] == '\n')
+            if (i == Text.Len() || Text[i] == '\n')
             {
-                size_t LineEnd = i;
+                int32 LineEnd = i;
                 if (LineEnd > LineStart && Text[LineEnd - 1] == '\r')
                 {
                     --LineEnd;
                 }
-                FLine& Line = Lines.emplace_back();
-                Line.Text.assign(Text.data() + LineStart, LineEnd - LineStart);
+                FLine& Line = Lines.EmplaceGetRef();
+                Line.Text = FStringView(Text.GetData() + LineStart, LineEnd - LineStart);
                 LineStart = i + 1;
             }
         }
@@ -141,8 +141,8 @@ namespace Lumina
     FString FCodeDocument::GetText() const
     {
         FString Result;
-        Result.reserve(GetByteSize());
-        for (size_t i = 0; i < Lines.size(); ++i)
+        Result.Reserve(IntCastChecked<int32>(GetByteSize()));
+        for (int32 i = 0; i < Lines.Num(); ++i)
         {
             if (i > 0)
             {
@@ -163,26 +163,26 @@ namespace Lumina
         }
         if (Start.Line == End.Line)
         {
-            return FString(GetLineView(Start.Line).substr(Start.Column, End.Column - Start.Column));
+            return FString(GetLineView(Start.Line).Mid(Start.Column, End.Column - Start.Column));
         }
 
-        FString Result(GetLineView(Start.Line).substr(Start.Column));
+        FString Result(GetLineView(Start.Line).Mid(Start.Column));
         for (int32 Line = Start.Line + 1; Line < End.Line; ++Line)
         {
             Result += '\n';
             Result += Lines[Line].Text;
         }
         Result += '\n';
-        Result += GetLineView(End.Line).substr(0, End.Column);
+        Result += GetLineView(End.Line).Mid(0, End.Column);
         return Result;
     }
 
     size_t FCodeDocument::GetByteSize() const
     {
-        size_t Size = Lines.size() - 1;
+        int32 Size = Lines.Num() - 1;
         for (const FLine& Line : Lines)
         {
-            Size += Line.Text.size();
+            Size += Line.Text.Len();
         }
         return Size;
     }
@@ -198,8 +198,8 @@ namespace Lumina
             return GetEnd();
         }
         const FStringView Text = GetLineView(Position.Line);
-        Position.Column = Math::Clamp(Position.Column, 0, (int32)Text.size());
-        while (Position.Column > 0 && Position.Column < (int32)Text.size() && CodeText::IsContinuationByte(Text[Position.Column]))
+        Position.Column = Math::Clamp(Position.Column, 0, Text.Len());
+        while (Position.Column > 0 && Position.Column < Text.Len() && CodeText::IsContinuationByte(Text[Position.Column]))
         {
             --Position.Column;
         }
@@ -209,13 +209,13 @@ namespace Lumina
     FCodePosition FCodeDocument::GetEnd() const
     {
         const int32 Last = GetLineCount() - 1;
-        return FCodePosition{ Last, (int32)Lines[Last].Text.size() };
+        return FCodePosition{ Last, Lines[Last].Text.Len() };
     }
 
     FCodePosition FCodeDocument::Next(FCodePosition Position) const
     {
         const FStringView Text = GetLineView(Position.Line);
-        if (Position.Column < (int32)Text.size())
+        if (Position.Column < Text.Len())
         {
             return FCodePosition{ Position.Line, CodeText::NextCharStart(Text, Position.Column) };
         }
@@ -234,7 +234,7 @@ namespace Lumina
         }
         if (Position.Line > 0)
         {
-            return FCodePosition{ Position.Line - 1, (int32)Lines[Position.Line - 1].Text.size() };
+            return FCodePosition{ Position.Line - 1, Lines[Position.Line - 1].Text.Len() };
         }
         return Position;
     }
@@ -246,7 +246,7 @@ namespace Lumina
             return 0;
         }
         const FStringView Text = GetLineView(Position.Line);
-        if (Position.Column < (int32)Text.size())
+        if (Position.Column < Text.Len())
         {
             return Text[Position.Column];
         }
@@ -256,7 +256,7 @@ namespace Lumina
     FCodePosition FCodeDocument::Insert(FCodePosition At, FStringView Text)
     {
         At = Clamp(At);
-        if (Text.empty())
+        if (Text.IsEmpty())
         {
             return At;
         }
@@ -264,36 +264,41 @@ namespace Lumina
         MarkEdited(At.Line);
         ++Version;
 
-        const size_t FirstBreak = Text.find('\n');
-        if (FirstBreak == FStringView::npos)
+        const int32 FirstBreak = Text.Find('\n');
+        if (FirstBreak == Constants::kIndexNone)
         {
-            Lines[At.Line].Text.insert(At.Column, Text);
-            return FCodePosition{ At.Line, At.Column + (int32)Text.size() };
+            Lines[At.Line].Text.InsertAt(At.Column, Text);
+            return FCodePosition{ At.Line, At.Column + Text.Len() };
         }
 
         // Every new line is built first and spliced in once, so a large paste moves the tail of the document a single time.
         TVector<FLine> Inserted;
-        size_t SegmentStart = FirstBreak + 1;
-        for (size_t i = SegmentStart; i <= Text.size(); ++i)
+        int32 SegmentStart = FirstBreak + 1;
+        for (int32 i = SegmentStart; i <= Text.Len(); ++i)
         {
-            if (i < Text.size() && Text[i] != '\n')
+            if (i < Text.Len() && Text[i] != '\n')
             {
                 continue;
             }
             const size_t SegmentEnd = (i > SegmentStart && Text[i - 1] == '\r') ? i - 1 : i;
-            Inserted.emplace_back().Text.assign(Text.data() + SegmentStart, SegmentEnd - SegmentStart);
+            Inserted.EmplaceGetRef().Text = FStringView(Text.GetData() + SegmentStart, IntCastChecked<int32>(SegmentEnd - SegmentStart));
             SegmentStart = i + 1;
         }
 
         FString& First = Lines[At.Line].Text;
-        FLine& Last = Inserted.back();
-        const FCodePosition End{ At.Line + (int32)Inserted.size(), (int32)Last.Text.size() };
-        Last.Text += First.View().substr(At.Column);
+        FLine& Last = Inserted.Last();
+        const FCodePosition End{ At.Line + Inserted.Num(), Last.Text.Len() };
+        Last.Text += First.View().Mid(At.Column);
         const size_t FirstEnd = (FirstBreak > 0 && Text[FirstBreak - 1] == '\r') ? FirstBreak - 1 : FirstBreak;
-        First.resize(At.Column);
-        First.append(Text.data(), FirstEnd);
+        First.SetLen(At.Column);
+        First.Append(Text.GetData(), IntCastChecked<int32>(FirstEnd));
 
-        Lines.insert(Lines.begin() + At.Line + 1, std::make_move_iterator(Inserted.begin()), std::make_move_iterator(Inserted.end()));
+        const int32 SpliceAt = At.Line + 1;
+        Lines.InsertDefaulted(SpliceAt, Inserted.Num());
+        for (int32 i = 0; i < Inserted.Num(); ++i)
+        {
+            Lines[SpliceAt + i] = Move(Inserted[i]);
+        }
         return End;
     }
 
@@ -309,14 +314,14 @@ namespace Lumina
         FString& First = Lines[Start.Line].Text;
         if (Start.Line == End.Line)
         {
-            First.erase(Start.Column, End.Column - Start.Column);
+            First.RemoveAt(Start.Column, End.Column - Start.Column);
         }
         else
         {
-            const FString Tail(GetLineView(End.Line).substr(End.Column));
-            First.resize(Start.Column);
+            const FString Tail(GetLineView(End.Line).Mid(End.Column));
+            First.SetLen(Start.Column);
             First += Tail;
-            Lines.erase(Lines.begin() + Start.Line + 1, Lines.begin() + End.Line + 1);
+            Lines.RemoveAt(Start.Line + 1, End.Line - Start.Line);
         }
         MarkEdited(Start.Line);
         ++Version;
@@ -328,7 +333,7 @@ namespace Lumina
         size_t Offset = 0;
         for (int32 Line = 0; Line < Position.Line; ++Line)
         {
-            Offset += Lines[Line].Text.size() + 1;
+            Offset += Lines[Line].Text.Len() + 1;
         }
         return Offset + Position.Column;
     }
@@ -337,8 +342,8 @@ namespace Lumina
     {
         for (int32 Line = 0; Line < GetLineCount(); ++Line)
         {
-            const size_t Size = Lines[Line].Text.size();
-            if (Offset <= Size)
+            const int32 Size = Lines[Line].Text.Len();
+            if (Offset <= static_cast<size_t>(Size))
             {
                 return Clamp(FCodePosition{ Line, (int32)Offset });
             }
@@ -369,11 +374,11 @@ namespace Lumina
         {
             FLine& Current = Lines[Index];
             const uint32 StartState = Index == 0 ? Language.GetInitialState() : Lines[Index - 1].EndState;
-            if (Current.bDirty || Current.StartState != StartState || Current.Tokens.size() != Current.Text.size())
+            if (Current.bDirty || Current.StartState != StartState || Current.Tokens.Num() != Current.Text.Len())
             {
-                Current.Tokens.resize(Current.Text.size());
+                Current.Tokens.SetNum(Current.Text.Len());
                 Current.StartState = StartState;
-                Current.EndState = Language.Tokenize(Current.Text.View(), StartState, Current.Tokens.data());
+                Current.EndState = Language.Tokenize(Current.Text.View(), StartState, Current.Tokens.GetData());
                 Current.bDirty = false;
             }
         }
@@ -392,7 +397,7 @@ namespace Lumina
             return ECodeToken::Default;
         }
         const TVector<ECodeToken>& Tokens = Lines[Position.Line].Tokens;
-        if (Position.Column < 0 || Position.Column >= (int32)Tokens.size())
+        if (Position.Column < 0 || Position.Column >= Tokens.Num())
         {
             return ECodeToken::Default;
         }

@@ -106,8 +106,8 @@ namespace Lumina
         /** Refreshes the tangents of every auto (Cubic) key. CubicUser keys are left alone. */
         void ComputeAutoTangents();
 
-        int32 NumKeys() const { return (int32)Keys.size(); }
-        bool IsEmpty() const { return Keys.empty(); }
+        int32 NumKeys() const { return Keys.Num(); }
+        bool IsEmpty() const { return Keys.IsEmpty(); }
 
         void GetTimeRange(float& OutMin, float& OutMax) const;
         void GetValueRange(float& OutMin, float& OutMax) const;

@@ -78,9 +78,9 @@ namespace Lumina
         bool HasCollision() const;
 
         // A concave set builds a triangle mesh, which the physics engine restricts to static and kinematic bodies.
-        bool IsConcave() const { return bUseTriangleMesh && !TriangleIndices.empty(); }
+        bool IsConcave() const { return bUseTriangleMesh && !TriangleIndices.IsEmpty(); }
 
-        int32 NumTriangles() const { return (int32)(TriangleIndices.size() / 3); }
+        int32 NumTriangles() const { return TriangleIndices.Num() / 3; }
 
         // Every hull's point count summed, which is what the collision really costs to test against.
         int32 NumHullPoints() const;

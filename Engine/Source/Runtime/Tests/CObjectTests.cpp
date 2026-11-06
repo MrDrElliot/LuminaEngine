@@ -76,17 +76,17 @@ TEST(CObjectLifetime, PoppingAPinnedListDestroysEachEntryExactlyOnce)
     TWeakObjectPtr<CObject> WeakParent = Parent;
 
     TVector<TStrongObjectPtr<CObject>> Created;
-    Created.push_back(Child);
-    Created.push_back(Parent);
+    Created.Add(Child);
+    Created.Add(Parent);
 
-    Created.pop_back();
+    Created.Pop();
     EXPECT_FALSE(WeakParent.IsValid());
-    ASSERT_EQ(Created.size(), 1u);
-    EXPECT_TRUE(Created.back().IsValid())
+    ASSERT_EQ(Created.Num(), 1);
+    EXPECT_TRUE(Created.Last().IsValid())
         << "the child's own pin must outlive the parent that held the other reference to it";
-    EXPECT_EQ(Created.back().Get(), Child);
+    EXPECT_EQ(Created.Last().Get(), Child);
 
-    Created.pop_back();
+    Created.Pop();
     EXPECT_FALSE(WeakChild.IsValid());
 }
 

@@ -6,11 +6,18 @@
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "EntitySystem.h"
+#include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
+#include "World/Entity/Components/NavMeshComponent.h"
+#include "World/Entity/Components/RVOAgentComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/SignificanceSystem.h"
+#include "World/Entity/Systems/SystemResources.h"
 #include "RVOAvoidanceSystem.generated.h"
 
 namespace Lumina
 {
-    // Per-world avoidance state published into the registry context.
+    // Per-world avoidance scratch and the last solve's counts.
     struct FAvoidanceState
     {
         Avoidance::FCrowdAgents Agents;
@@ -38,12 +45,19 @@ namespace Lumina
 
         void Configure() override;
 
-        void OnStartup(const SSystemContext& Context) override;
+        // Only the avoiders decide, since the other queries are lookups.
+        bool HasWork(const SSystemContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
-    };
 
-    namespace Avoidance
-    {
-        RUNTIME_API const FAvoidanceState* GetState(const SSystemContext& Context);
-    }
+    private:
+
+        ECS::TQuery<ECS::Write<SRVOAgentComponent>, ECS::Read<STransformComponent>> Avoiders;
+        ECS::TQuery<ECS::Read<SCharacterPhysicsComponent>> Characters;
+        ECS::TQuery<ECS::Read<SCharacterMovementComponent>> Movers;
+        ECS::TQuery<ECS::Write<SCharacterControllerComponent>> Controllers;
+        ECS::TQuery<ECS::Read<SNavMeshComponent>> NavMeshes;
+        TRes<FSignificanceState> SignificanceState;
+
+        FAvoidanceState State;
+    };
 }

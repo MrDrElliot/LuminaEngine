@@ -61,7 +61,7 @@ namespace Lumina
 
     int32 SAnimMontageSlotTrack::FindSegment(float MontageTime) const
     {
-        for (int32 i = 0; i < (int32)Segments.size(); ++i)
+        for (int32 i = 0; i < Segments.Num(); ++i)
         {
             const SAnimMontageSegment& Segment = Segments[i];
             if (MontageTime >= Segment.StartTime && MontageTime < Segment.GetEndTime())
@@ -73,7 +73,7 @@ namespace Lumina
         // The final frame sits exactly on the end boundary, so hold the last segment there.
         int32 Last = Constants::kIndexNone;
         float LastEnd = 0.0f;
-        for (int32 i = 0; i < (int32)Segments.size(); ++i)
+        for (int32 i = 0; i < Segments.Num(); ++i)
         {
             const float End = Segments[i].GetEndTime();
             if (End > LastEnd)
@@ -105,7 +105,7 @@ namespace Lumina
 
     int32 CAnimationMontage::FindSlotIndex(const FName& SlotName) const
     {
-        for (int32 i = 0; i < (int32)SlotTracks.size(); ++i)
+        for (int32 i = 0; i < SlotTracks.Num(); ++i)
         {
             if (SlotTracks[i].SlotName == SlotName)
             {
@@ -117,7 +117,7 @@ namespace Lumina
 
     int32 CAnimationMontage::FindSectionIndex(const FName& SectionName) const
     {
-        for (int32 i = 0; i < (int32)Sections.size(); ++i)
+        for (int32 i = 0; i < Sections.Num(); ++i)
         {
             if (Sections[i].Name == SectionName)
             {
@@ -132,7 +132,7 @@ namespace Lumina
         int32 Best = Constants::kIndexNone;
         float BestStart = -1.0f;
 
-        for (int32 i = 0; i < (int32)Sections.size(); ++i)
+        for (int32 i = 0; i < Sections.Num(); ++i)
         {
             const float Start = Sections[i].StartTime;
             if (Start <= MontageTime && Start >= BestStart)
@@ -148,7 +148,7 @@ namespace Lumina
     float CAnimationMontage::GetSectionEndTime(int32 SectionIndex) const
     {
         const float Duration = GetDuration();
-        if (SectionIndex < 0 || SectionIndex >= (int32)Sections.size())
+        if (SectionIndex < 0 || SectionIndex >= Sections.Num())
         {
             return Duration;
         }
@@ -215,7 +215,7 @@ namespace Lumina
             if (!Track.SlotName.IsNone() &&
                 !Algo::Contains(OutNames, Track.SlotName))
             {
-                OutNames.push_back(Track.SlotName);
+                OutNames.Add(Track.SlotName);
             }
         }
     }
@@ -226,7 +226,7 @@ namespace Lumina
         {
             if (!Track.IsNone() && !Algo::Contains(NotifyTracks, Track))
             {
-                NotifyTracks.push_back(Track);
+                NotifyTracks.Add(Track);
             }
         };
 
@@ -239,9 +239,9 @@ namespace Lumina
             AddTrack(State.Track);
         }
 
-        if (NotifyTracks.empty())
+        if (NotifyTracks.IsEmpty())
         {
-            NotifyTracks.push_back("Notifies");
+            NotifyTracks.Add("Notifies");
         }
     }
 }

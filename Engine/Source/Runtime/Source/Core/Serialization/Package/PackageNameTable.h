@@ -22,7 +22,7 @@ namespace Lumina
         // written last, because no name is known until everything that could carry one has been serialized
         void Serialize(FArchive& Ar) const;
 
-        size_t Num() const { return Slots.size(); }
+        int32 Num() const { return Slots.Num(); }
 
         const TVector<FName>& GetSlots() const { return Slots; }
 
@@ -44,7 +44,7 @@ namespace Lumina
         // NAME_None for a slot outside the table, so a reader that skipped loading it fails visibly
         FName Resolve(uint32 Slot, bool bHasNumber, uint32 ExternalNumber) const;
 
-        size_t Num() const { return Slots.size(); }
+        int32 Num() const { return Slots.Num(); }
 
     private:
 

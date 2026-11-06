@@ -131,7 +131,7 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     TStrongObjectPtr<CEntityScript> Pinned(Script);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1);
-    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.IsEmpty());
 }
 
 // [Reflect(UpdatePhase = PostPhysics)] moves OnUpdate to the pass after the physics step, keeping OnReady where it was.
@@ -178,7 +178,7 @@ TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
     Registry.EmplaceOrReplace<SEntityScriptComponent>(Destination, std::move(Copied));
 
     SEntityScriptComponent& Placed = Registry.Get<SEntityScriptComponent>(Destination);
-    ASSERT_EQ(Placed.Scripts.size(), size_t(1));
+    ASSERT_EQ(Placed.Scripts.Num(), 1);
 
     CEntityScript* Clone = Placed.Scripts[0].Get();
     ASSERT_NE(Clone, nullptr);
@@ -202,14 +202,14 @@ TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmas
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Source);
     ASSERT_NE(Script, nullptr);
-    Script->Values.push_back(FName("Alpha"));
-    Script->Values.push_back(FName("Beta"));
+    Script->Values.Emplace("Alpha");
+    Script->Values.Emplace("Beta");
 
     SEntityScriptComponent Copied = Registry.Get<SEntityScriptComponent>(Source);
     const ECS::FEntity Destination = Registry.Create();
     Registry.EmplaceOrReplace<SEntityScriptComponent>(Destination, std::move(Copied));
 
-    ASSERT_EQ(Registry.Get<SEntityScriptComponent>(Destination).Scripts.size(), size_t(1));
+    ASSERT_EQ(Registry.Get<SEntityScriptComponent>(Destination).Scripts.Num(), 1);
     CEntityScript* Cloned = Registry.Get<SEntityScriptComponent>(Destination).Scripts[0].Get();
     ASSERT_NE(Cloned, nullptr);
 
@@ -218,11 +218,11 @@ TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmas
     CEntityScriptTest* Clone = Cast<CEntityScriptTest>(Cloned);
     ASSERT_NE(Clone, nullptr);
 
-    ASSERT_EQ(Clone->Values.size(), size_t(2)) << "the array copied, and copied into the right place";
+    ASSERT_EQ(Clone->Values.Num(), 2) << "the array copied, and copied into the right place";
     EXPECT_EQ(Clone->Values[0], FName("Alpha"));
     EXPECT_EQ(Clone->Values[1], FName("Beta"));
 
-    EXPECT_EQ(Script->Values.size(), size_t(2)) << "the source is untouched";
+    EXPECT_EQ(Script->Values.Num(), 2) << "the source is untouched";
 
     // A virtual call is what a corrupt vtable pointer actually faults on; the driver makes several.
     EntityScripts::Tick(Registry, 0.1f);
@@ -246,24 +246,24 @@ TEST(EntityScriptUnification, PrefabOverridesTrackAScriptComponentAsOneAtomicVal
     };
 
     SEntityScriptComponent Authored;
-    Authored.Scripts.push_back(MakeScript());
-    static_cast<CEntityScriptTest*>(Authored.Scripts[0].Get())->Values.push_back(FName("Prefab"));
+    Authored.Scripts.Add(MakeScript());
+    static_cast<CEntityScriptTest*>(Authored.Scripts[0].Get())->Values.Emplace("Prefab");
 
     SEntityScriptComponent Instance = Authored;   // a placed instance starts as an exact clone
 
     CStruct* Layout = SEntityScriptComponent::StaticStruct();
     TVector<FName> Paths;
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Authored, Paths);
-    EXPECT_TRUE(Paths.empty()) << "an untouched instance overrides nothing";
+    EXPECT_TRUE(Paths.IsEmpty()) << "an untouched instance overrides nothing";
 
     static_cast<CEntityScriptTest*>(Instance.Scripts[0].Get())->Values[0] = FName("Instance");
-    Paths.clear();
+    Paths.Reset();
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Authored, Paths);
-    ASSERT_EQ(Paths.size(), size_t(1)) << "editing a script value diverges the component";
+    ASSERT_EQ(Paths.Num(), 1) << "editing a script value diverges the component";
     EXPECT_EQ(Paths[0], PrefabOverride::WholeValuePath());
 
     THashSet<FName> Overridden;
-    Overridden.insert(PrefabOverride::WholeValuePath());
+    Overridden.Add(PrefabOverride::WholeValuePath());
     PrefabOverride::ApplyInheritedLeaves(Layout, &Instance, &Authored, Overridden);
     EXPECT_EQ(ValueOf(Instance), FName("Instance")) << "a refresh must not overwrite the override";
 
@@ -280,7 +280,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     CObject* Created = NewObject(CEntityScriptTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient);
     CEntityScriptTest* Unadopted = static_cast<CEntityScriptTest*>(Created);
     ASSERT_NE(Unadopted, nullptr);
-    Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.push_back(Unadopted);
+    Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.Add(Unadopted);
 
     EXPECT_FALSE(Unadopted->IsAttached());
 
@@ -385,7 +385,7 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EntityScripts::Tick(Registry, 0.1f);
     EntityScripts::Tick(Registry, 0.1f);
 
-    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.size(), 2u);
+    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.Num(), 2);
     EXPECT_TRUE(Managed->IsReady()) << "the minted script was readied by the same pass as the C++ one";
     EXPECT_EQ(Native->UpdateCount, 2);
     EXPECT_EQ(Managed->GetClass(), Minted);
@@ -414,8 +414,8 @@ TEST(EntityScriptUnification, ParallelUpdateScriptsRunOncePerPassAcrossThreads)
     TVector<CParallelEntityScriptTest*> Scripts;
     for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
     {
-        Scripts.push_back(AttachParallelTestScript(Registry, Registry.Create()));
-        ASSERT_NE(Scripts.back(), nullptr);
+        Scripts.Add(AttachParallelTestScript(Registry, Registry.Create()));
+        ASSERT_NE(Scripts.Last(), nullptr);
     }
 
     EntityScripts::Tick(Registry, 0.5f);
@@ -428,11 +428,11 @@ TEST(EntityScriptUnification, ParallelUpdateScriptsRunOncePerPassAcrossThreads)
         EXPECT_EQ(Script->ReadyCount, 1);
         EXPECT_EQ(Script->UpdateCount, 2) << "every promising script updates once per pass, no more and no fewer";
         EXPECT_EQ(Script->FixedUpdateCount, 1);
-        Threads.insert(Script->LastThreadID);
+        Threads.Add(Script->LastThreadID);
     }
     if (Threading::GetNumThreads() > 1)
     {
-        EXPECT_GT(Threads.size(), 1u) << "thousands of promising scripts should have spread across the workers";
+        EXPECT_GT(Threads.Num(), 1) << "thousands of promising scripts should have spread across the workers";
     }
 }
 
@@ -466,11 +466,11 @@ TEST(EntityScriptUnification, AMintedClassOptsInThroughItsFlag)
     TVector<CEntityScriptTest*> Scripts;
     for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
     {
-        Scripts.push_back(AttachMintedTestScript(Registry, Registry.Create(), "EntityScript_GTestParallel"));
-        ASSERT_NE(Scripts.back(), nullptr);
+        Scripts.Add(AttachMintedTestScript(Registry, Registry.Create(), "EntityScript_GTestParallel"));
+        ASSERT_NE(Scripts.Last(), nullptr);
     }
 
-    CScriptClass* Class = ToScriptClass(Scripts.front()->GetClass());
+    CScriptClass* Class = ToScriptClass(Scripts[0]->GetClass());
     ASSERT_NE(Class, nullptr);
     const FName ParallelUpdateName("ParallelUpdate");
     Class->Metadata.SetValue(ParallelUpdateName, FString());
@@ -492,8 +492,8 @@ TEST(EntityScriptUnification, AStructuralChangeMidPassHandsTheRestToTheSerialPat
     TVector<CParallelEntityScriptTest*> Scripts;
     for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
     {
-        Scripts.push_back(AttachParallelTestScript(Registry, Registry.Create()));
-        ASSERT_NE(Scripts.back(), nullptr);
+        Scripts.Add(AttachParallelTestScript(Registry, Registry.Create()));
+        ASSERT_NE(Scripts.Last(), nullptr);
     }
     EntityScripts::Tick(Registry, 0.5f);
 
@@ -536,7 +536,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Source.Get<SEntityScriptComponent>(Entity).Serialize(Ar);
     }
-    ASSERT_FALSE(Bytes.empty());
+    ASSERT_FALSE(Bytes.IsEmpty());
 
     // Load into a fresh registry + entity, exactly as scene load would.
     ECS::FRegistry Loaded{};
@@ -548,7 +548,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
         Restored.Serialize(Ar);
     }
 
-    ASSERT_EQ(Restored.Scripts.size(), 2u) << "both scripts must come back";
+    ASSERT_EQ(Restored.Scripts.Num(), 2) << "both scripts must come back";
     ASSERT_NE(Restored.Scripts[0].Get(), nullptr);
     EXPECT_EQ(Restored.Scripts[0].Get()->GetClass(), CEntityScriptTest::StaticClass())
         << "the script's concrete class must round-trip, not its base";
@@ -575,12 +575,12 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
 {
     Scripting::FScriptExportSchema Schema;
     {
-        Scripting::FScriptExportField& Speed = Schema.Fields.emplace_back();
+        Scripting::FScriptExportField& Speed = Schema.Fields.EmplaceGetRef();
         Speed.Name = FName("Speed");
         Speed.Type = MakeShared<Scripting::FScriptExportType>();
         Speed.Type->Kind = EPropertyTypeFlags::Float;
 
-        Scripting::FScriptExportField& Label = Schema.Fields.emplace_back();
+        Scripting::FScriptExportField& Label = Schema.Fields.EmplaceGetRef();
         Label.Name = FName("Label");
         Label.Type = MakeShared<Scripting::FScriptExportType>();
         Label.Type->Kind = EPropertyTypeFlags::String;
@@ -612,7 +612,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Source.Get<SEntityScriptComponent>(Entity).Serialize(Ar);
     }
-    ASSERT_FALSE(Bytes.empty());
+    ASSERT_FALSE(Bytes.IsEmpty());
 
     ECS::FRegistry Loaded{};
     const ECS::FEntity LoadedEntity = Loaded.Create();
@@ -623,7 +623,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
         Restored.Serialize(Ar);
     }
 
-    ASSERT_EQ(Restored.Scripts.size(), 1u);
+    ASSERT_EQ(Restored.Scripts.Num(), 1);
     CEntityScript* LoadedScript = Restored.Scripts[0].Get();
     ASSERT_NE(LoadedScript, nullptr);
     ASSERT_EQ(LoadedScript->GetClass(), Minted);
@@ -631,7 +631,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
 
     EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(LoadedScript), 12.5f)
         << "an authored scalar reverted; it would silently reset on every Play";
-    EXPECT_STREQ(Label->GetValuePtr<FString>(LoadedScript)->c_str(), "authored in the inspector")
+    EXPECT_STREQ(*(*Label->GetValuePtr<FString>(LoadedScript)), "authored in the inspector")
         << "an authored string reverted";
 
     // And the values survive the driver adopting the loaded script, which runs OnAttach/OnReady on it.
@@ -658,13 +658,13 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
 
     TVector<CEntityScript*> All;
     EntityScripts::FindAll(Registry, Entity, CEntityScriptTest::StaticClass(), All);
-    EXPECT_EQ(All.size(), 2u);
+    EXPECT_EQ(All.Num(), 2);
 
     // Held, since Remove drops the component's reference and the reads below would otherwise touch a freed script.
     const TStrongObjectPtr<CEntityScriptTest> PinnedFirst(First);
     EXPECT_TRUE(EntityScripts::Remove(Registry, Entity, First));
     EXPECT_EQ(First->DetachCount, 1) << "Remove must run OnDetach";
-    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.size(), 1u);
+    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.Num(), 1);
     EXPECT_EQ(EntityScripts::Find(Registry, Entity, CEntityScriptTest::StaticClass()), Second);
 
     EXPECT_FALSE(EntityScripts::Remove(Registry, Entity, First)) << "removing twice must be refused";
@@ -681,7 +681,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
         Speed.Name = FName("Speed");
         Speed.Type = MakeShared<Scripting::FScriptExportType>();
         Speed.Type->Kind = EPropertyTypeFlags::Float;
-        Before.Fields.push_back(std::move(Speed));
+        Before.Fields.Add(std::move(Speed));
     }
 
     CScriptClass* Minted = FScriptableRegistry::Mint("EvacTest_Script", "CEntityScript");
@@ -707,13 +707,13 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
         Kept.Name = FName("Speed");
         Kept.Type = MakeShared<Scripting::FScriptExportType>();
         Kept.Type->Kind = EPropertyTypeFlags::Float;
-        After.Fields.push_back(std::move(Kept));
+        After.Fields.Add(std::move(Kept));
 
         Scripting::FScriptExportField Added;
         Added.Name = FName("Health");
         Added.Type = MakeShared<Scripting::FScriptExportType>();
         Added.Type->Kind = EPropertyTypeFlags::Int32;
-        After.Fields.push_back(std::move(Added));
+        After.Fields.Add(std::move(Added));
     }
 
     // A local registry is not reachable from GWorldManager, so it takes part the same way any holder does.
@@ -725,7 +725,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
 
     SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
-    ASSERT_EQ(Component->Scripts.size(), 1u) << "the attached script did not survive the reshape";
+    ASSERT_EQ(Component->Scripts.Num(), 1) << "the attached script did not survive the reshape";
 
     CEntityScript* Restored = Component->Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
@@ -771,7 +771,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
     ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
     CScriptClass* Minted = FScriptableRegistry::Mint("RenameProp_Script", "CEntityScript");
     ASSERT_NE(Minted, nullptr);
@@ -786,7 +786,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
 
     // Speed -> Velocity, declaring the old name.
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(MakeReloadField("Velocity", EPropertyTypeFlags::Float, "Speed"));
+    After.Fields.Add(MakeReloadField("Velocity", EPropertyTypeFlags::Float, "Speed"));
 
     FLocalRegistryReferenceProvider Provider{ Registry };
     FObjectReferenceProviders::Register(&Provider);
@@ -797,7 +797,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
 
     SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
-    ASSERT_EQ(Component->Scripts.size(), 1u);
+    ASSERT_EQ(Component->Scripts.Num(), 1);
     CEntityScript* Restored = Component->Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
 
@@ -817,7 +817,7 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Before;
-    Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.Add(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
     CScriptClass* Minted = FScriptableRegistry::Mint("RenameNoAlias_Script", "CEntityScript");
     ASSERT_NE(Minted, nullptr);
@@ -831,7 +831,7 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     Minted->GetProperty(FName("Speed"))->SetValue<float>(Attached, 9.75f);
 
     Scripting::FScriptExportSchema After;
-    After.Fields.push_back(MakeReloadField("Velocity", EPropertyTypeFlags::Float));   // no alias
+    After.Fields.Add(MakeReloadField("Velocity", EPropertyTypeFlags::Float));   // no alias
 
     FLocalRegistryReferenceProvider Provider{ Registry };
     FObjectReferenceProviders::Register(&Provider);
@@ -852,7 +852,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
     CScriptClass* Old = FScriptableRegistry::Mint("RenameClass_Before", "CEntityScript");
     ASSERT_NE(Old, nullptr);
@@ -872,7 +872,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Component->Serialize(Ar);
-        Component->Scripts.clear();
+        Component->Scripts.Reset();
     }
 
     // The reload brings up the renamed type and registers where the old name went.
@@ -890,7 +890,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     // And the class the reload should move across is reported for evacuation.
     THashSet<CClass*> Renamed;
     FScriptableRegistry::GatherRenamedClasses(Renamed);
-    EXPECT_NE(Renamed.find(Old), Renamed.end()) << "the renamed class was not offered for evacuation";
+    EXPECT_TRUE(Renamed.Contains(Old)) << "the renamed class was not offered for evacuation";
 
     {
         SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
@@ -901,7 +901,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
 
     SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
-    ASSERT_EQ(Component->Scripts.size(), 1u) << "the renamed script did not come back";
+    ASSERT_EQ(Component->Scripts.Num(), 1) << "the renamed script did not come back";
 
     CEntityScript* Restored = Component->Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
@@ -920,11 +920,11 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
     ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(MakeReloadField("Kept", EPropertyTypeFlags::Float));
+    Schema.Fields.Add(MakeReloadField("Kept", EPropertyTypeFlags::Float));
     {
         Scripting::FScriptExportField Scratch = MakeReloadField("Scratch", EPropertyTypeFlags::Float);
         Scratch.Meta.Set(FName("SkipHotReload"), FString());
-        Schema.Fields.push_back(std::move(Scratch));
+        Schema.Fields.Add(std::move(Scratch));
     }
 
     CScriptClass* Minted = FScriptableRegistry::Mint("SkipHotReload_Script", "CEntityScript");
@@ -945,7 +945,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Component->Serialize(Ar);
-        Component->Scripts.clear();
+        Component->Scripts.Reset();
     }
 
     // A unit test has no world contexts to walk, so replay and reset are driven directly.
@@ -1019,12 +1019,12 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     EXPECT_EQ(SecondScript->DetachCount, 1) << "every entity in the snapshot is detached";
     EXPECT_EQ(ThirdScript->DetachCount, 1) << "a mutation mid-walk must not cut the pass short";
 
-    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(First).Scripts.empty());
-    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Second).Scripts.empty());
-    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Third).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(First).Scripts.IsEmpty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Second).Scripts.IsEmpty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Third).Scripts.IsEmpty());
 
     ASSERT_TRUE(Context.Spawned != ECS::NullEntity);
-    EXPECT_FALSE(Registry.Get<SEntityScriptComponent>(Context.Spawned).Scripts.empty())
+    EXPECT_FALSE(Registry.Get<SEntityScriptComponent>(Context.Spawned).Scripts.IsEmpty())
         << "a script attached during the pass is outside the snapshot; the clear that follows drops it";
 }
 
@@ -1040,11 +1040,11 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
 
     CEntityScriptTest* First = AttachTestScript(Registry, Entity);
     ASSERT_NE(First, nullptr);
-    First->Values.push_back(FName("KeptFirst"));
+    First->Values.Emplace("KeptFirst");
 
     CEntityScriptTest* Second = AttachTestScript(Registry, Entity);
     ASSERT_NE(Second, nullptr);
-    Second->Values.push_back(FName("KeptSecond"));
+    Second->Values.Emplace("KeptSecond");
 
     // A real two-script payload, so the bogus record below sits between two well-formed ones.
     TVector<uint8> Good;
@@ -1082,8 +1082,8 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
             Live.Serialize(TailAr);
         }
         const size_t HeaderBytes = sizeof(int32) * 2;
-        ASSERT_GT(Tail.size(), HeaderBytes);
-        Ar.Serialize(Tail.data() + HeaderBytes, (int64)(Tail.size() - HeaderBytes));
+        ASSERT_GT(Tail.Num(), HeaderBytes);
+        Ar.Serialize(Tail.GetData() + HeaderBytes, (int64)(Tail.Num() - HeaderBytes));
     }
 
     SEntityScriptComponent Restored;
@@ -1093,15 +1093,15 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
         Restored.Serialize(Ar);
     }
 
-    ASSERT_EQ(Restored.Scripts.size(), size_t(2)) << "the siblings of a missing class must survive it";
+    ASSERT_EQ(Restored.Scripts.Num(), 2) << "the siblings of a missing class must survive it";
 
     CEntityScriptTest* RestoredFirst  = Cast<CEntityScriptTest>(Restored.Scripts[0].Get());
     CEntityScriptTest* RestoredSecond = Cast<CEntityScriptTest>(Restored.Scripts[1].Get());
     ASSERT_NE(RestoredFirst, nullptr);
     ASSERT_NE(RestoredSecond, nullptr);
 
-    ASSERT_EQ(RestoredFirst->Values.size(), size_t(1));
-    ASSERT_EQ(RestoredSecond->Values.size(), size_t(1));
+    ASSERT_EQ(RestoredFirst->Values.Num(), 1);
+    ASSERT_EQ(RestoredSecond->Values.Num(), 1);
     EXPECT_EQ(RestoredFirst->Values[0], FName("KeptFirst")) << "skipping must not shift the next script";
     EXPECT_EQ(RestoredSecond->Values[0], FName("KeptSecond"));
 
@@ -1116,11 +1116,11 @@ TEST(EntityScriptUnification, AHeldScriptKeepsItsObjectsThroughAProxyArchive)
     ASSERT_NE(Target, nullptr);
 
     SEntityScriptComponent Source;
-    SHeldValue& Held = Source.Pending.emplace_back();
+    SHeldValue& Held = Source.Pending.EmplaceGetRef();
     Held.TypeName = FName("CScriptClassThatIsNotLoaded");
     Held.Data.Bytes = { 1, 2, 3, 4 };
-    Held.Data.Names.push_back({ 0, FName("HeldName") });
-    Held.Data.Objects.push_back({ 0, Target->GetGUID() });
+    Held.Data.Names.Emplace(0, FName("HeldName"));
+    Held.Data.Objects.Emplace(0, Target->GetGUID());
 
     TVector<uint8> Bytes;
     {
@@ -1137,13 +1137,13 @@ TEST(EntityScriptUnification, AHeldScriptKeepsItsObjectsThroughAProxyArchive)
         EXPECT_FALSE(Ar.HasError());
     }
 
-    ASSERT_EQ(Restored.Pending.size(), size_t(1));
+    ASSERT_EQ(Restored.Pending.Num(), 1);
     const FPortableBytes& Data = Restored.Pending[0].Data;
     EXPECT_EQ(Restored.Pending[0].TypeName, FName("CScriptClassThatIsNotLoaded"));
     EXPECT_EQ(Data.Bytes, Held.Data.Bytes);
-    ASSERT_EQ(Data.Names.size(), size_t(1));
+    ASSERT_EQ(Data.Names.Num(), 1);
     EXPECT_EQ(Data.Names[0].Name, FName("HeldName"));
-    ASSERT_EQ(Data.Objects.size(), size_t(1));
+    ASSERT_EQ(Data.Objects.Num(), 1);
     EXPECT_EQ(Data.Objects[0].Object, Target->GetGUID());
 }
 
@@ -1152,7 +1152,7 @@ namespace
     Scripting::FScriptExportSchema IntSchema(const char* FieldName)
     {
         Scripting::FScriptExportSchema Schema;
-        Scripting::FScriptExportField& Field = Schema.Fields.emplace_back();
+        Scripting::FScriptExportField& Field = Schema.Fields.EmplaceGetRef();
         Field.Name = FName(FieldName);
         Field.Type = MakeShared<Scripting::FScriptExportType>();
         Field.Type->Kind = EPropertyTypeFlags::Int32;
@@ -1248,8 +1248,8 @@ namespace
 TEST(ScriptClassInheritance, ANewChildIsLaidOutPastANewParent)
 {
     TVector<Scripting::FManagedTypeDefinition> Definitions;
-    Definitions.push_back(ScriptClassDefinition("Shell_GTestParent", "CEntityScript", "ParentValue"));
-    Definitions.push_back(ScriptClassDefinition("Shell_GTestChild", "Shell_GTestParent", "ChildValue"));
+    Definitions.Add(ScriptClassDefinition("Shell_GTestParent", "CEntityScript", "ParentValue"));
+    Definitions.Add(ScriptClassDefinition("Shell_GTestChild", "Shell_GTestParent", "ChildValue"));
     ReloadClasses(Definitions);
 
     CClass* Parent = FindObject<CClass>(FName("Shell_GTestParent"));
@@ -1259,9 +1259,9 @@ TEST(ScriptClassInheritance, ANewChildIsLaidOutPastANewParent)
 
     // A parent reshaped in the same reload that adds a child under it hands that child to the replacement.
     TVector<Scripting::FManagedTypeDefinition> Second;
-    Second.push_back(ScriptClassDefinition("Shell_GTestParent", "CEntityScript", "WiderParentValue"));
-    Second.push_back(ScriptClassDefinition("Shell_GTestChild", "Shell_GTestParent", "ChildValue"));
-    Second.push_back(ScriptClassDefinition("Shell_GTestLateChild", "Shell_GTestParent", "LateValue"));
+    Second.Add(ScriptClassDefinition("Shell_GTestParent", "CEntityScript", "WiderParentValue"));
+    Second.Add(ScriptClassDefinition("Shell_GTestChild", "Shell_GTestParent", "ChildValue"));
+    Second.Add(ScriptClassDefinition("Shell_GTestLateChild", "Shell_GTestParent", "LateValue"));
     ReloadClasses(Second);
 
     CClass* Replacement = FindObject<CClass>(FName("Shell_GTestParent"));
@@ -1277,8 +1277,8 @@ TEST(ScriptClassInheritance, ANewChildIsLaidOutPastANewParent)
 TEST(ScriptClassInheritance, ARemovedParentOutlivesTheSubclassStillOnIt)
 {
     TVector<Scripting::FManagedTypeDefinition> First;
-    First.push_back(ScriptClassDefinition("Retire_GTestParent", "CEntityScript", "ParentValue", /*bAbstract*/ true));
-    First.push_back(ScriptClassDefinition("Retire_GTestChild", "Retire_GTestParent", "ChildValue"));
+    First.Add(ScriptClassDefinition("Retire_GTestParent", "CEntityScript", "ParentValue", /*bAbstract*/ true));
+    First.Add(ScriptClassDefinition("Retire_GTestChild", "Retire_GTestParent", "ChildValue"));
     FScriptableRegistry::RefreshMintedClasses(First);
 
     CClass* OldChild = FindObject<CClass>(FName("Retire_GTestChild"));
@@ -1292,7 +1292,7 @@ TEST(ScriptClassInheritance, ARemovedParentOutlivesTheSubclassStillOnIt)
 
     // The parent goes and the child moves up to the native base, the way the stress run reshaped them.
     TVector<Scripting::FManagedTypeDefinition> Second;
-    Second.push_back(ScriptClassDefinition("Retire_GTestChild", "CEntityScript", "ChildValue"));
+    Second.Add(ScriptClassDefinition("Retire_GTestChild", "CEntityScript", "ChildValue"));
     FScriptableRegistry::RefreshMintedClasses(Second);
 
     CClass* NewChild = FindObject<CClass>(FName("Retire_GTestChild"));
@@ -1320,16 +1320,16 @@ TEST(ScriptClassInheritance, AParentThatGainsItsFirstFieldRebuildsItsSubclasses)
     EmptyParent.Schema = Scripting::FScriptExportSchema();
 
     TVector<Scripting::FManagedTypeDefinition> First;
-    First.push_back(EmptyParent);
-    First.push_back(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
+    First.Add(EmptyParent);
+    First.Add(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
     FScriptableRegistry::RefreshMintedClasses(First);
 
     CClass* OldChild = FindObject<CClass>(FName("Grow_GTestChild"));
     ASSERT_NE(OldChild, nullptr);
 
     TVector<Scripting::FManagedTypeDefinition> Second;
-    Second.push_back(ScriptClassDefinition("Grow_GTestParent", "CEntityScript", "ParentValue"));
-    Second.push_back(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
+    Second.Add(ScriptClassDefinition("Grow_GTestParent", "CEntityScript", "ParentValue"));
+    Second.Add(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
     FScriptableRegistry::RefreshMintedClasses(Second);
 
     CClass* Parent = FindObject<CClass>(FName("Grow_GTestParent"));
@@ -1351,9 +1351,9 @@ TEST(ScriptClassInheritance, AClassUnderAScriptParentKeepsItsOverrides)
 {
     Scripting::FManagedTypeDefinition Parent = ScriptClassDefinition("Override_GTestParent", "CEntityScript", "ParentValue");
     Scripting::FManagedTypeDefinition Child = ScriptClassDefinition("Override_GTestChild", "Override_GTestParent", "ChildValue");
-    Parent.OverriddenEvents.push_back("OnReady");
-    Child.OverriddenEvents.push_back("OnReady");
-    Child.OverriddenEvents.push_back("OnUpdate");
+    Parent.OverriddenEvents.Add("OnReady");
+    Child.OverriddenEvents.Add("OnReady");
+    Child.OverriddenEvents.Add("OnUpdate");
     ReloadClasses({ Parent, Child });
 
     const CScriptClass* ChildClass = Cast<CScriptClass>(FindObject<CClass>(FName("Override_GTestChild")));
@@ -1370,7 +1370,7 @@ namespace
         auto* Script = static_cast<CEntityScriptTest*>(NewObject(CEntityScriptTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
         Script->Label = Label;
         Script->EventLog = &Log;
-        Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.push_back(Script);
+        Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.Add(Script);
         return Script;
     }
 
@@ -1387,7 +1387,7 @@ namespace
         FString Out;
         for (const FString& Entry : Log)
         {
-            Out += Out.empty() ? Entry : " " + Entry;
+            Out += Out.IsEmpty() ? Entry : " " + Entry;
         }
         return Out;
     }
@@ -1436,7 +1436,7 @@ TEST(EntityScriptUnification, LifecycleOrderHoldsForAScriptAddedLater)
 
     AddUnattached(Registry, Parent, "parent", Log);
     EntityScripts::Tick(Registry, 0.1f);
-    Log.clear();
+    Log.Reset();
 
     AddUnattached(Registry, Child, "child", Log);
     AddUnattached(Registry, Parent, "late", Log);

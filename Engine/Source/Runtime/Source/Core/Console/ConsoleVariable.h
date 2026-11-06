@@ -31,8 +31,8 @@ namespace Lumina
         TOptional<T> ParseValue(FStringView Str)
         {
             char* End = nullptr;
-            long long Value = std::strtoll(Str.data(), &End, 10);
-            if (End != Str.data() && Value >= TNumericLimits<T>::Min() && Value <= TNumericLimits<T>::Max())
+            long long Value = std::strtoll(Str.GetData(), &End, 10);
+            if (End != Str.GetData() && Value >= TNumericLimits<T>::Min() && Value <= TNumericLimits<T>::Max())
             {
                 return static_cast<T>(Value);
             }
@@ -44,8 +44,8 @@ namespace Lumina
         TOptional<T> ParseValue(FStringView Str)
         {
             char* End = nullptr;
-            const T Value = static_cast<T>(std::strtod(Str.data(), &End));
-            if (End != Str.data() && std::isfinite(Value))
+            const T Value = static_cast<T>(std::strtod(Str.GetData(), &End));
+            if (End != Str.GetData() && std::isfinite(Value))
             {
                 return Value;
             }
@@ -83,7 +83,6 @@ namespace Lumina
         CVarValueType DefaultValue;
         void (*OnChange)(const CVarValueType&);
 
-        // TVariant copies through a type-erased table, so a constexpr constructor here is C3615 on MSVC 14.50.
         FConsoleVariable(FStringView InName, FStringView InHint, CVarValueType* InPtr, const CVarValueType& InDefault, void (*InCallback)(const CVarValueType&) = nullptr)
             : Name(InName)
             , Hint(InHint)
@@ -129,8 +128,8 @@ namespace Lumina
     {
     public:
 
-        using FConsoleContainer = TFixedHashMap<FStringView, FConsoleVariable, 100>;
-        using FCommandContainer = TFixedHashMap<FStringView, FConsoleCommand, 100>;
+        using FConsoleContainer = TInlineHashMap<FStringView, FConsoleVariable, 100>;
+        using FCommandContainer = TInlineHashMap<FStringView, FConsoleCommand, 100>;
 
 
         static FConsoleRegistry& Get() noexcept;
@@ -186,16 +185,23 @@ namespace Lumina
 
         bool ExecuteCommand(FStringView Name);
 
-        // A command name, or a variable name with an optional new value, as every console types it. Echoes to the log when asked.
+        // A command name, or a variable name with an optional new value, as every console types it. Successful sets are saved to config.
         FConsoleLineResult ExecuteLine(FStringView Line, bool bEchoToLog);
 
         void SaveToConfig();
         void LoadFromConfig();
 
+        // Writes the numeric and bool variables that differ from their defaults, keeping entries for names not registered yet.
+        bool SaveToFile(FStringView Path);
+        bool LoadFromFile(FStringView Path);
+
+        static FString GetConfigFilePath();
+
     private:
 
         FConsoleContainer ConsoleVariables;
         FCommandContainer ConsoleCommands;
+        FString LoadedConfigText;
     };
 
 

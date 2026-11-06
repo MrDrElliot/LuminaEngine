@@ -21,14 +21,14 @@ namespace
 
         const char* GetName() const override { return Name; }
 
-        void PreUnload() override { Log->push_back(FString(Name) + "::PreUnload"); }
+        void PreUnload() override { Log->Add(FString(Name) + "::PreUnload"); }
 
-        void UnloadAborted() override { Log->push_back(FString(Name) + "::UnloadAborted"); }
+        void UnloadAborted() override { Log->Add(FString(Name) + "::UnloadAborted"); }
 
         void Compile(TSpan<const FManagedTypeDefinition> Definitions, TSpan<const FManagedTypeAlias>) override
         {
-            Log->push_back(FString(Name));
-            SeenCount = Definitions.size();
+            Log->Emplace(Name);
+            SeenCount = Definitions.Num();
 
             for (const FManagedTypeDefinition& Definition : Definitions)
             {
@@ -79,7 +79,7 @@ TEST(ManagedTypeRegistry, StagesRunInRegistrationOrder)
     TVector<FManagedTypeDefinition> Definitions;
     Registry.CompileAll(Definitions);
 
-    ASSERT_EQ(Log.size(), 3u);
+    ASSERT_EQ(Log.Num(), 3);
     EXPECT_EQ(Log[0], FString("First"));
     EXPECT_EQ(Log[1], FString("Second"));
     EXPECT_EQ(Log[2], FString("Third"));
@@ -99,8 +99,8 @@ TEST(ManagedTypeRegistry, EveryStageSeesTheSameDefinitions)
     Registry.Register(&Second);
 
     TVector<FManagedTypeDefinition> Definitions;
-    Definitions.push_back(MakeScriptable("Alpha"));
-    Definitions.push_back(MakeScriptable("Beta"));
+    Definitions.Add(MakeScriptable("Alpha"));
+    Definitions.Add(MakeScriptable("Beta"));
 
     Registry.CompileAll(Definitions);
 
@@ -115,7 +115,7 @@ TEST(ManagedTypeRegistry, CompilingWithNoStagesOrNoTypesIsHarmless)
     const FScopedStages Scope;
 
     TVector<FManagedTypeDefinition> Definitions;
-    Definitions.push_back(MakeScriptable("Alpha"));
+    Definitions.Add(MakeScriptable("Alpha"));
     FManagedTypeRegistry::Get().CompileAll(Definitions);
 
     TVector<FString> Log;
@@ -125,7 +125,7 @@ TEST(ManagedTypeRegistry, CompilingWithNoStagesOrNoTypesIsHarmless)
     TVector<FManagedTypeDefinition> Empty;
     FManagedTypeRegistry::Get().CompileAll(Empty);
 
-    ASSERT_EQ(Log.size(), 1u) << "a stage must still run for a generation that declared nothing";
+    ASSERT_EQ(Log.Num(), 1) << "a stage must still run for a generation that declared nothing";
     EXPECT_EQ(Only.SeenCount, 0u);
 }
 
@@ -136,7 +136,7 @@ TEST(ManagedTypeRegistry, TheBuiltInStagesAreRegisteredInTheOrderTheyMustRun)
     RegisterBuiltInManagedTypeStages();
 
     const TSpan<IManagedTypeCompiler* const> Stages = FManagedTypeRegistry::Get().GetStages();
-    ASSERT_EQ(Stages.size(), 5u);
+    ASSERT_EQ(Stages.Num(), 5);
     EXPECT_STREQ(Stages[0]->GetName(), "Redirects");
     EXPECT_STREQ(Stages[1]->GetName(), "Enums");
     EXPECT_STREQ(Stages[2]->GetName(), "ClassShells");
@@ -161,7 +161,7 @@ TEST(ManagedTypeRegistry, PreUnloadRunsInReverseRegistrationOrder)
 
     Registry.PreUnloadAll();
 
-    ASSERT_EQ(Log.size(), 3u);
+    ASSERT_EQ(Log.Num(), 3);
     EXPECT_EQ(Log[0], FString("Third::PreUnload"));
     EXPECT_EQ(Log[1], FString("Second::PreUnload"));
     EXPECT_EQ(Log[2], FString("First::PreUnload"));
@@ -184,7 +184,7 @@ TEST(ManagedTypeRegistry, AnAbortedUnloadPutsEveryStageBackInRegistrationOrder)
     Registry.PreUnloadAll();
     Registry.UnloadAbortedAll();
 
-    ASSERT_EQ(Log.size(), 4u);
+    ASSERT_EQ(Log.Num(), 4);
     EXPECT_EQ(Log[0], FString("Second::PreUnload"));
     EXPECT_EQ(Log[1], FString("First::PreUnload"));
     EXPECT_EQ(Log[2], FString("First::UnloadAborted"));

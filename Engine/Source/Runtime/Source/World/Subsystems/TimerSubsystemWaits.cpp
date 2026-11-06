@@ -28,12 +28,13 @@ namespace Lumina
 
     uint64 CTimerSubsystem::ScheduleWait(CoroDetail::FLatentWaitSpec&& Spec, SScriptCallback OnDone)
     {
-        if (GetWorld() == nullptr || !OnDone.IsBound())
+        FCoroutineManager* CoroutineManager = EnsureCoroutineManager();
+        if (CoroutineManager == nullptr || !OnDone.IsBound())
         {
             Scripting::ReleaseScriptCallback(OnDone);
             return 0;
         }
-        return CoroutineManager.AddWait(std::move(Spec), [Owned = FOneShotCallback(OnDone)](bool bCompleted) mutable
+        return CoroutineManager->AddWait(std::move(Spec), [Owned = FOneShotCallback(OnDone)](bool bCompleted) mutable
         {
             Owned.Fire(bCompleted);
         });
@@ -58,14 +59,16 @@ namespace Lumina
 
     void CTimerSubsystem::CancelWait(uint64 Wait)
     {
-        if (Wait != 0)
+        FCoroutineManager* CoroutineManager = EnsureCoroutineManager();
+        if (Wait != 0 && CoroutineManager != nullptr)
         {
-            CoroutineManager.CancelWait(Wait);
+            CoroutineManager->CancelWait(Wait);
         }
     }
 
     int32 CTimerSubsystem::GetPendingCount()
     {
-        return CoroutineManager.NumWaiting();
+        FCoroutineManager* CoroutineManager = EnsureCoroutineManager();
+        return CoroutineManager != nullptr ? CoroutineManager->NumWaiting() : 0;
     }
 }

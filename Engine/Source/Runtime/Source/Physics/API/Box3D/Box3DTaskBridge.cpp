@@ -7,7 +7,7 @@
 
 namespace Lumina::Physics
 {
-    namespace
+    namespace Box3DTaskBridgeInternal
     {
         TConsoleVar<int32> CVarBox3DWorkers("Physics.Box3D.Workers", 0,
             "Workers each Box3D world steps with, read when a world is created. Zero picks one per physical core.");
@@ -26,49 +26,38 @@ namespace Lumina::Physics
             THashSet<uint16> Cores;
             for (uint32 Index = 0; Index < Described; ++Index)
             {
-                Cores.insert(Topology[Index].PhysicalCore);
+                Cores.Add(Topology[Index].PhysicalCore);
             }
-            return (uint32)Cores.size();
+            return (uint32)Cores.Num();
         }
 
-        // One per physical core, since the solver's workers spin on each other at every stage and hyperthreads only add spinners.
+        // One per physical core, capped at the pool plus the stepping thread, since the solver's workers spin on each other.
         uint32 ResolvePhysicsWorkerCount()
         {
-            if (const int32 Requested = CVarBox3DWorkers.GetValue(); Requested > 0)
-            {
-                return Math::Clamp((uint32)Requested, 1u, (uint32)B3_MAX_WORKERS);
-            }
-            return Math::Clamp(CountPhysicalCores(), 1u, (uint32)B3_MAX_WORKERS);
+            const int32  Requested = CVarBox3DWorkers.GetValue();
+            const uint32 Wanted    = Requested > 0 ? (uint32)Requested : CountPhysicalCores();
+            const uint32 Limit     = Math::Min((uint32)B3_MAX_WORKERS, Jobs::GetNumWorkers() + 1u);
+            return Math::Clamp(Wanted, 1u, Limit);
         }
     }
+
+    using namespace Box3DTaskBridgeInternal;
 
     FBox3DTaskBridge::FBox3DTaskBridge()
     {
         WorkerCount = ResolvePhysicsWorkerCount();
-
-        for (FTaskSlot& Slot : Slots)
-        {
-            Slot.Counter = Jobs::AllocCounter(0);
-        }
     }
 
-    FBox3DTaskBridge::~FBox3DTaskBridge()
-    {
-        for (FTaskSlot& Slot : Slots)
-        {
-            Jobs::FreeCounter(Slot.Counter);
-            Slot.Counter = nullptr;
-        }
-    }
+    FBox3DTaskBridge::~FBox3DTaskBridge() = default;
 
-    void FBox3DTaskBridge::RunTask(void* Arg, uint32 /*WorkerIndex*/)
+    Jobs::TTask<void> FBox3DTaskBridge::RunTask(FTaskSlot* Slot)
     {
         LUMINA_PROFILE_SCOPE();
-        FTaskSlot* Slot = static_cast<FTaskSlot*>(Arg);
         Slot->Task(Slot->Context);
+        co_return;
     }
 
-    void* FBox3DTaskBridge::EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, const char* Name)
+    void* FBox3DTaskBridge::EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, const char*)
     {
         FBox3DTaskBridge* Bridge = static_cast<FBox3DTaskBridge*>(UserContext);
 
@@ -85,7 +74,8 @@ namespace Lumina::Physics
 
             Slot.Task = Task;
             Slot.Context = TaskContext;
-            Jobs::RunJob(&RunTask, &Slot, Jobs::EJobPriority::High, Slot.Counter, Name);
+            Slot.Done.Reset();
+            Jobs::Spawn(Jobs::EJobPriority::High, Slot.Done, &RunTask, &Slot);
             return &Slot;
         }
 
@@ -98,8 +88,7 @@ namespace Lumina::Physics
     {
         FTaskSlot* Slot = static_cast<FTaskSlot*>(UserTask);
 
-        // Box3D's tasks spin on each other inside one step, so this wait is microseconds and parking loses.
-        Jobs::WaitForCounterBusy(Slot->Counter);
+        Slot->Done.Wait();
         Slot->bInUse.store(false, std::memory_order_release);
     }
 }

@@ -66,11 +66,11 @@ namespace Lumina
         FScopeLock Lock(Mutex);
 
         // Oldest out first, so the list stays the most recent MaxRecentRecords entries.
-        if (Recent.size() >= MaxRecentRecords)
+        if (static_cast<uint32>(Recent.Num()) >= MaxRecentRecords)
         {
-            Recent.erase(Recent.begin());
+            Recent.RemoveAt(0);
         }
-        Recent.push_back(Record);
+        Recent.Add(Record);
 
         const bool bRequest = Record.Source == EAssetLoadSource::Request;
         Accumulate(bRequest ? ByRequest[Record.Name] : ByPackage[Record.Name], Record);
@@ -88,9 +88,9 @@ namespace Lumina
     {
         FScopeLock Lock(Mutex);
 
-        Recent.clear();
-        ByRequest.clear();
-        ByPackage.clear();
+        Recent.Reset();
+        ByRequest.Reset();
+        ByPackage.Reset();
         TotalRequests  = 0;
         ResidentHits   = 0;
         TotalRequestMs = 0.0;
@@ -102,15 +102,16 @@ namespace Lumina
     {
         FScopeLock Lock(Mutex);
 
-        OutRecent.assign(Recent.begin(), Recent.end());
+        OutRecent.Reset();
+        OutRecent.Append(Recent.begin(), Recent.end());
 
         auto Flatten = [](const THashMap<FName, FAssetLoadStat>& In, TVector<FAssetLoadStat>& Out)
         {
-            Out.clear();
-            Out.reserve(In.size());
-            for (const auto& Pair : In)
+            Out.Reset();
+            Out.Reserve(In.Num());
+            for (const auto& [Name, Stat] : In)
             {
-                Out.push_back(Pair.second);
+                Out.Add(Stat);
             }
         };
 

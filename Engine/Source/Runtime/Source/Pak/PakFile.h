@@ -32,7 +32,7 @@ namespace Lumina
     // Runtime entry: points into the archive's decompressed buffer.
     struct FPakEntry
     {
-        uint64 Offset = 0;
-        uint64 Size   = 0;
+        int64 Offset = 0;
+        int64 Size   = 0;
     };
 }

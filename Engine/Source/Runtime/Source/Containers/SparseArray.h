@@ -1,338 +1,199 @@
 #pragma once
 
-#include <stdexcept>
 #include "Vector.h"
 #include "Optional.h"
 #include "Containers/Algorithm.h"
 #include "Memory/Construct.h"
 
-
 namespace Lumina
 {
-    /** Stable-index array; non-contiguous storage. */
+    /** Stable-index array: a removal leaves a hole the next add reuses, so every other index stays put. */
     template <typename T>
     class TSparseArray
     {
     public:
-        
-        using Index = size_t;
-        using value_type = T;
-        using size_type = size_t;
-    
+
+        using ElementType = T;
+        using value_type  = T;
+        using size_type   = int32;
+
         TSparseArray() = default;
-        
-        TSparseArray(const TSparseArray& other) = default;
-        TSparseArray(TSparseArray&& other) noexcept = default;
+        TSparseArray(const TSparseArray&) = default;
+        TSparseArray(TSparseArray&&) noexcept = default;
+        TSparseArray& operator=(const TSparseArray&) = default;
+        TSparseArray& operator=(TSparseArray&&) noexcept = default;
+        ~TSparseArray() = default;
 
-        TSparseArray& operator=(const TSparseArray& other)
+        template <typename... TArgs>
+        int32 Emplace(TArgs&&... Args)
         {
-            if (this != &other)
+            if (!FreeIndices.IsEmpty())
             {
-                TSparseArray temp(other);
-                *this = std::move(temp);
+                const int32 Index = FreeIndices.Pop();
+                Elements[Index].Emplace(std::forward<TArgs>(Args)...);
+                return Index;
             }
-            return *this;
-        }
-        
-        TSparseArray& operator=(TSparseArray&& other) noexcept
-        {
-            if (this != &other)
-            {
-                Clear();
-                Data = std::move(other.Data);
-                FreeList = std::move(other.FreeList);
-            }
-            return *this;
-        }
-    
-        ~TSparseArray()
-        {
-            Clear();
-        }
-    
-        template<typename... Args>
-        Index Emplace(Args&&... args)
-        {
-            Index idx;
-            if (!FreeList.empty())
-            {
-                idx = FreeList.back();
-                Data[idx].emplace(std::forward<Args>(args)...);
-                FreeList.pop_back();
-            }
-            else
-            {
-                idx = Data.size();
-                Data.emplace_back(Containers::InPlace, std::forward<Args>(args)...);
-            }
-            return idx;
-        }
-    
-        Index Insert(const T& value)
-        {
-            return Emplace(value);
-        }
-    
-        Index Insert(T&& value)
-        {
-            return Emplace(std::move(value));
-        }
-    
-        bool Erase(Index idx)
-        {
-            if (idx >= Data.size() || !Data[idx].has_value())
-            {
-                return false;
-            }
-            
-            FreeList.push_back(idx);
-            Data[idx].reset();
-            return true;
-        }
-    
-        T* Get(Index idx) noexcept
-        {
-            return (idx < Data.size() && Data[idx].has_value()) ? Data[idx].operator->() : nullptr;
-        }
-    
-        const T* Get(Index idx) const noexcept
-        {
-            return (idx < Data.size() && Data[idx].has_value()) ? Data[idx].operator->() : nullptr;
-        }
-    
-        T& At(Index idx)
-        {
-            if (idx >= Data.size() || !Data[idx].has_value())
-            {
-                throw std::out_of_range("TSparseArray::At: invalid index");
-            }
-            return *Data[idx].operator->();
-        }
-    
-        const T& At(Index idx) const
-        {
-            if (idx >= Data.size() || !Data[idx].has_value())
-            {
-                throw std::out_of_range("TSparseArray::At: invalid index");
-            }
-            return *Data[idx].operator->();
-        }
-    
-        T& operator[](Index idx) noexcept
-        {
-            return *Data[idx].operator->();
-        }
-    
-        const T& operator[](Index idx) const noexcept
-        {
-            return *Data[idx].operator->();
-        }
-    
-        bool IsValid(Index idx) const noexcept
-        {
-            return idx < Data.size() && Data[idx].has_value();
-        }
-    
-        void Clear() noexcept
-        {
-            Data.clear();
-            FreeList.clear();
-        }
-    
-        void Reserve(size_type capacity)
-        {
-            Data.reserve(capacity);
+            Elements.Emplace(Containers::InPlace, std::forward<TArgs>(Args)...);
+            return Elements.Num() - 1;
         }
 
-        void ShrinkToFit()
-        {
-            Data.shrink_to_fit();
-            FreeList.shrink_to_fit();
-        }
-    
-        size_type Size() const noexcept { return Data.size() - FreeList.size(); }
-        size_type Capacity() const noexcept { return Data.size(); }
-        size_type FreeCount() const noexcept { return FreeList.size(); }
-        bool Empty() const noexcept { return Size() == 0; }
+        int32 Add(const T& Value) { return Emplace(Value); }
+        int32 Add(T&& Value) { return Emplace(std::move(Value)); }
 
-        /** 0.0 = none, 1.0 = max fragmentation. */
-        float FragmentationRatio() const noexcept 
+        void RemoveAt(int32 Index)
         {
-            return Data.empty() ? 0.0f : static_cast<float>(FreeList.size()) / Data.size();
+            if (IsAllocated(Index))
+            {
+                Elements[Index].Reset();
+                FreeIndices.Add(Index);
+            }
         }
-    
-        void Defragment()
+
+        NODISCARD FORCEINLINE bool IsAllocated(int32 Index) const noexcept
         {
-            if (FreeList.empty())
+            return Elements.IsValidIndex(Index) && Elements[Index].IsSet();
+        }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto TryGet(this TSelf&& Self, int32 Index) noexcept -> TLikeSelf<TSelf, T>*
+        {
+            return Self.IsAllocated(Index) ? &*Self.Elements[Index] : nullptr;
+        }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto operator[](this TSelf&& Self, int32 Index) noexcept -> TLikeSelf<TSelf, T>& { return *Self.Elements[Index]; }
+
+        NODISCARD FORCEINLINE int32 Num() const noexcept { return Elements.Num() - FreeIndices.Num(); }
+        NODISCARD FORCEINLINE int32 GetMaxIndex() const noexcept { return Elements.Num(); }
+        NODISCARD FORCEINLINE int32 NumFree() const noexcept { return FreeIndices.Num(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Num() == 0; }
+
+        NODISCARD float FragmentationRatio() const noexcept
+        {
+            return Elements.IsEmpty() ? 0.0f : static_cast<float>(FreeIndices.Num()) / static_cast<float>(Elements.Num());
+        }
+
+        void Empty()
+        {
+            Elements.Empty();
+            FreeIndices.Empty();
+        }
+
+        void Reset()
+        {
+            Elements.Reset();
+            FreeIndices.Reset();
+        }
+
+        void Reserve(int32 Count) { Elements.Reserve(Count); }
+
+        void Shrink()
+        {
+            Elements.Shrink();
+            FreeIndices.Shrink();
+        }
+
+        /** Closes every hole. This moves elements, so indices handed out earlier no longer hold. */
+        void Compact()
+        {
+            if (FreeIndices.IsEmpty())
             {
                 return;
             }
 
-            Algo::Sort(FreeList);
-
-            Index writeIdx = 0;
-            Index readIdx = 0;
-
-            while (readIdx < Data.size()) {
-                if (Data[readIdx].has_value()) {
-                    if (writeIdx != readIdx) {
-                        Data[writeIdx].emplace(std::move(*Data[readIdx]));
-                        Data[readIdx].reset();
-                    }
-                    ++writeIdx;
+            int32 Write = 0;
+            for (int32 Read = 0; Read < Elements.Num(); ++Read)
+            {
+                if (!Elements[Read].IsSet())
+                {
+                    continue;
                 }
-                ++readIdx;
+                if (Write != Read)
+                {
+                    Elements[Write].Emplace(std::move(*Elements[Read]));
+                    Elements[Read].Reset();
+                }
+                ++Write;
             }
 
-            Data.resize(writeIdx);
-            FreeList.clear();
+            Elements.SetNum(Write);
+            FreeIndices.Reset();
         }
 
-        class const_iterator;
-
-        class iterator
+        template <bool bConst>
+        class TIterator
         {
+            using FOwner = std::conditional_t<bConst, const TSparseArray, TSparseArray>;
+
         public:
+
             using iterator_category = std::forward_iterator_tag;
-            using value_type = T;
-            using difference_type = std::ptrdiff_t;
-            using pointer = T*;
-            using reference = T&;
-    
-            iterator() : Owner(nullptr), IndexValue(0) {}
-            iterator(TSparseArray* owner, Index idx) : Owner(owner), IndexValue(idx) 
+            using value_type        = T;
+            using difference_type   = std::ptrdiff_t;
+            using pointer           = std::conditional_t<bConst, const T*, T*>;
+            using reference         = std::conditional_t<bConst, const T&, T&>;
+
+            TIterator() = default;
+            TIterator(FOwner* InOwner, int32 InIndex) : Owner(InOwner), Index(InIndex) { SkipHoles(); }
+
+            template <bool bOther>
+            requires (bConst && !bOther)
+            TIterator(const TIterator<bOther>& Other) : Owner(Other.Owner), Index(Other.Index) {}
+
+            TIterator& operator++()
             {
-                SkipHoles();
-            }
-    
-            iterator& operator++()
-            {
-                ++IndexValue;
+                ++Index;
                 SkipHoles();
                 return *this;
             }
-    
-            iterator operator++(int)
-            {
-                iterator temp = *this;
-                ++(*this);
-                return temp;
-            }
-    
-            reference operator*() const
-            {
-                return *Owner->Data[IndexValue].operator->();
-            }
-    
-            pointer operator->() const
-            {
-                return Owner->Data[IndexValue].operator->();
-            }
-    
-            bool operator==(const iterator& other) const
-            {
-                return Owner == other.Owner && IndexValue == other.IndexValue;
-            }
-    
-            bool operator!=(const iterator& other) const
-            {
-                return !(*this == other);
-            }
-    
-            Index GetIndex() const { return IndexValue; }
-    
-        private:
-            
-            void SkipHoles()
-            {
-                while (IndexValue < Owner->Data.size() && !Owner->Data[IndexValue].has_value())
-                {
-                    ++IndexValue;
-                }
-            }
-    
-            friend class const_iterator;
 
-            TSparseArray* Owner;
-            Index IndexValue;
-        };
-    
-        class const_iterator
-        {
-        public:
-            using iterator_category = std::forward_iterator_tag;
-            using value_type = const T;
-            using difference_type = std::ptrdiff_t;
-            using pointer = const T*;
-            using reference = const T&;
-    
-            const_iterator() : Owner(nullptr), IndexValue(0) {}
-            const_iterator(const TSparseArray* owner, Index idx) : Owner(owner), IndexValue(idx) 
+            TIterator operator++(int)
             {
-                SkipHoles();
-            }
-            const_iterator(const iterator& it) : Owner(it.Owner), IndexValue(it.IndexValue) {}
-    
-            const_iterator& operator++()
-            {
-                ++IndexValue;
-                SkipHoles();
-                return *this;
-            }
-    
-            const_iterator operator++(int)
-            {
-                const_iterator temp = *this;
+                TIterator Copy = *this;
                 ++(*this);
-                return temp;
+                return Copy;
             }
-    
-            reference operator*() const
-            {
-                return *Owner->Data[IndexValue].operator->();
-            }
-    
-            pointer operator->() const
-            {
-                return Owner->Data[IndexValue].operator->();
-            }
-    
-            bool operator==(const const_iterator& other) const
-            {
-                return Owner == other.Owner && IndexValue == other.IndexValue;
-            }
-    
-            bool operator!=(const const_iterator& other) const
-            {
-                return !(*this == other);
-            }
-    
-            Index GetIndex() const { return IndexValue; }
-    
+
+            NODISCARD reference operator*() const { return (*Owner)[Index]; }
+            NODISCARD pointer operator->() const { return &(*Owner)[Index]; }
+
+            NODISCARD friend bool operator==(const TIterator& Left, const TIterator& Right) { return Left.Owner == Right.Owner && Left.Index == Right.Index; }
+
+            NODISCARD int32 GetIndex() const { return Index; }
+
         private:
-            
+
+            template <bool> friend class TIterator;
+
             void SkipHoles()
             {
-                while (IndexValue < Owner->Data.size() && !Owner->Data[IndexValue].has_value())
+                while (Index < Owner->Elements.Num() && !Owner->Elements[Index].IsSet())
                 {
-                    ++IndexValue;
+                    ++Index;
                 }
             }
-    
-            const TSparseArray* Owner;
-            Index IndexValue;
+
+            FOwner* Owner = nullptr;
+            int32   Index = 0;
         };
-    
-        iterator begin() { return iterator(this, 0); }
-        iterator end() { return iterator(this, Data.size()); }
-        const_iterator begin() const { return const_iterator(this, 0); }
-        const_iterator end() const { return const_iterator(this, Data.size()); }
-        const_iterator cbegin() const { return const_iterator(this, 0); }
-        const_iterator cend() const { return const_iterator(this, Data.size()); }
-    
+
+        using iterator       = TIterator<false>;
+        using const_iterator = TIterator<true>;
+
+        NODISCARD iterator begin() { return iterator(this, 0); }
+        NODISCARD iterator end() { return iterator(this, Elements.Num()); }
+        NODISCARD const_iterator begin() const { return const_iterator(this, 0); }
+        NODISCARD const_iterator end() const { return const_iterator(this, Elements.Num()); }
+
     private:
-        
-        TVector<Containers::TOptional<T>> Data;
-        TVector<Index> FreeList;
+
+        TVector<Containers::TOptional<T>> Elements;
+        TVector<int32>                    FreeIndices;
+    };
+
+    template <typename T>
+    struct TIsTriviallyRelocatable<TSparseArray<T>>
+    {
+        static constexpr bool Value = true;
     };
 }

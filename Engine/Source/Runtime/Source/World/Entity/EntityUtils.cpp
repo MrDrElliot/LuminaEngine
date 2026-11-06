@@ -13,12 +13,13 @@
 #include "Networking/INetworkRuntime.h"
 #include "Components/TagComponent.h"
 #include "Components/TransformComponent.h"
+#include "Systems/MovedTransforms.h"
 #include "Systems/SystemAccess.h"
 #include "Systems/SystemResources.h"
 #include "Core/Assertions/Assert.h"
 #include "Containers/ConcurrentQueue.h"
-#include "TaskSystem/FiberSync.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "Core/Threading/Sync.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
@@ -30,6 +31,7 @@
 #include "Memory/SmartPtr.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptTypeRegistry.h"
+#include "World/Entity/Systems/ResourceRegistry.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
 #include <atomic>
@@ -41,7 +43,11 @@ namespace Lumina
     FName GetAccessTypeName(uint32 Id)
     {
         const ECS::FComponentTypeRegistry& Types = ECS::FComponentTypeRegistry::Get();
-        if (Id >= Types.Num())
+        if (Id >= ECS::FirstNamedAccessToken)
+        {
+            return ECS::FResourceTypeRegistry::Get().GetNamedAccessTokenName(Id);
+        }
+        if (Id >= static_cast<uint32>(Types.Num()))
         {
             return NAME_None;
         }
@@ -74,7 +80,7 @@ namespace Lumina
     CStruct* FindComponentStructByTypeId(uint64 TypeId)
     {
         const ECS::FComponentTypeRegistry& Types = ECS::FComponentTypeRegistry::Get();
-        if (TypeId >= Types.Num())
+        if (TypeId >= static_cast<uint64>(Types.Num()))
         {
             return nullptr;
         }
@@ -90,7 +96,7 @@ namespace Lumina
     void ForEachComponentStruct(const TFunction<void(CStruct*)>& Function)
     {
         const ECS::FComponentTypeRegistry& Types = ECS::FComponentTypeRegistry::Get();
-        for (size_t TypeId = 0; TypeId < Types.Num(); ++TypeId)
+        for (int32 TypeId = 0; TypeId < Types.Num(); ++TypeId)
         {
             // Only a type that went through RegisterComponentOps is a component.
             if (CStruct* Struct = Types.GetInfo(static_cast<ECS::FComponentTypeID>(TypeId)).GetBoundStruct())
@@ -107,14 +113,11 @@ namespace Lumina
         thread_local const FSystemAccess* GExecutingSystemAccess = nullptr;
     }
 
-    void SetExecutingSystemAccess(const FSystemAccess* Access)
+    const FSystemAccess* SetExecutingSystemAccess(const FSystemAccess* Access)
     {
+        const FSystemAccess* Previous = GExecutingSystemAccess;
         GExecutingSystemAccess = Access;
-    }
-
-    const FSystemAccess* GetExecutingSystemAccess()
-    {
-        return GExecutingSystemAccess;
+        return Previous;
     }
 
     void ValidateSystemAccess(uint32 ComponentId, bool bWrite, const char* What)
@@ -132,13 +135,13 @@ namespace Lumina
         }
 
         // Log each unique missing access once so a per-entity loop cannot spam, then assert in debug.
-        static FFiberMutex SeenMutex;
+        static FMutex SeenMutex;
         static THashSet<uint64> Seen;
         const uint64 Key = (reinterpret_cast<uint64>(Access) ^ (uint64(ComponentId) << 1)) ^ (bWrite ? 1ull : 0ull);
         bool bFirst = false;
         {
-            FFiberScopeLock Lock(SeenMutex);
-            bFirst = Seen.insert(Key).second;
+            FScopeLock Lock(SeenMutex);
+            bFirst = Seen.TryAdd(Key);
         }
         if (bFirst)
         {
@@ -148,6 +151,29 @@ namespace Lumina
                       "exclusive). This is a silent data race under concurrent scheduling.",
                       TypeName.IsNone() ? FName("<unregistered type>") : TypeName, What);
             DEBUG_ASSERT(false, "System under-declared ECS access (see log).");
+        }
+    }
+
+    void ValidateNotInParallelSystem(const char* What)
+    {
+        const FSystemAccess* Access = GExecutingSystemAccess;
+        if (Access == nullptr || Access->bExclusive)
+        {
+            return;
+        }
+
+        static FMutex SeenMutex;
+        static THashSet<const char*> Seen;
+        bool bFirst = false;
+        {
+            FScopeLock Lock(SeenMutex);
+            bFirst = Seen.TryAdd(What);
+        }
+        if (bFirst)
+        {
+            LOG_ERROR("{} from a system running alongside others edits shared state under their reads; defer it to the flush "
+                      "through the system context or its command bus, or make the system exclusive.", What);
+            DEBUG_ASSERT(false, "Parallel system edited shared engine state in place (see log).");
         }
     }
 
@@ -164,14 +190,13 @@ namespace Lumina
 
         void ValidateEntityStructuralWrite(ECS::FRegistry&, ECS::FEntity)
         {
-            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()),
-                true, "Write<SystemResource::EntityStructure>");
+            ValidateNotInParallelSystem("Creating or destroying an entity on the registry (use the system context's Create or Destroy)");
         }
     }
 
     void RegisterComponentAccessValidator(void (*Connect)(ECS::FRegistry&))
     {
-        ComponentAccessValidators().push_back(Connect);
+        ComponentAccessValidators().Add(Connect);
     }
 
     void ConnectComponentAccessValidators(ECS::FRegistry& Registry)
@@ -210,7 +235,7 @@ namespace Lumina::ECS::Utils
 
         void Build(ECS::FRegistry& Registry)
         {
-            Entries.clear();
+            Entries.Reset();
             for (Lumina::ECS::FSparseSet* SetPtr : Registry.GetActiveStorages())
             {
                 ECS::FSparseSet& Set = *SetPtr;
@@ -221,7 +246,7 @@ namespace Lumina::ECS::Utils
 
                 if (CStruct* StructType = FindComponentStructByTypeId(Set.GetTypeInfo().TypeID))
                 {
-                    Entries.push_back({ &Set, StructType, StructIdentity(StructType) });
+                    Entries.Emplace(&Set, StructType, StructIdentity(StructType));
                 }
             }
         }
@@ -249,7 +274,7 @@ namespace Lumina::ECS::Utils
             return;
         }
 
-        Links->Links.push_back({ Entity, Legacy.Parent, ECS::FHierarchy::AppendPosition });
+        Links->Links.Emplace(Entity, Legacy.Parent, ECS::FHierarchy::AppendPosition);
         if (!Legacy.Next.IsNull())
         {
             Links->LegacyNextSibling[Entity] = Legacy.Next;
@@ -260,7 +285,7 @@ namespace Lumina::ECS::Utils
     void FParentLinks::Apply(ECS::FRegistry& Registry)
     {
         // A legacy file only names each child's next sibling, so its indices come from walking those chains.
-        if (!LegacyNextSibling.empty())
+        if (!LegacyNextSibling.IsEmpty())
         {
             THashMap<ECS::FEntity, FLink*> ByChild;
             THashSet<ECS::FEntity> HasPrev;
@@ -270,11 +295,11 @@ namespace Lumina::ECS::Utils
             }
             for (const auto& [Child, Next] : LegacyNextSibling)
             {
-                HasPrev.insert(Next);
+                HasPrev.Add(Next);
             }
             for (FLink& Head : Links)
             {
-                if (HasPrev.contains(Head.Child))
+                if (HasPrev.Contains(Head.Child))
                 {
                     continue;
                 }
@@ -282,12 +307,12 @@ namespace Lumina::ECS::Utils
                 for (FLink* Cursor = &Head; Cursor != nullptr; ++Index)
                 {
                     Cursor->SiblingIndex = Index;
-                    const auto Next = LegacyNextSibling.find(Cursor->Child);
-                    const auto NextLink = Next != LegacyNextSibling.end() ? ByChild.find(Next->second) : ByChild.end();
-                    Cursor = NextLink != ByChild.end() && NextLink->second->Parent == Head.Parent ? NextLink->second : nullptr;
+                    const auto Next = LegacyNextSibling.Find(Cursor->Child);
+                    const auto NextLink = Next != nullptr ? ByChild.Find(*Next) : nullptr;
+                    Cursor = NextLink != nullptr && (*NextLink)->Parent == Head.Parent ? (*NextLink) : nullptr;
                 }
             }
-            LegacyNextSibling.clear();
+            LegacyNextSibling.Reset();
         }
 
         // Ascending index per parent, so inserting each one at its index rebuilds the saved order.
@@ -303,7 +328,7 @@ namespace Lumina::ECS::Utils
                 Registry.AttachChild(Link.Child, Link.Parent, Link.SiblingIndex);
             }
         }
-        Links.clear();
+        Links.Reset();
     }
 
     bool SerializeEntity(FArchive& RESTRICT Ar, ECS::FRegistry& RESTRICT Registry, ECS::FEntity& RESTRICT Entity, FParentLinks* Links)
@@ -332,7 +357,7 @@ namespace Lumina::ECS::Utils
                 {
                     if (Links != nullptr)
                     {
-                        Links->Links.push_back({ Entity, Parent, SiblingIndex });
+                        Links->Links.Emplace(Entity, Parent, SiblingIndex);
                     }
                     else if (Registry.IsValid(Parent))
                     {
@@ -370,7 +395,7 @@ namespace Lumina::ECS::Utils
 
                 if (CStruct* Struct = ResolveStructByName(TypeName))
                 {
-                    LUMINA_PROFILE_SECTION_NAMED(Struct->GetName().c_str());
+                    LUMINA_PROFILE_SECTION_NAMED(*Struct->GetName());
                     if (Struct == STagComponent::StaticStruct())
                     {
                         STagComponent NewTagComponent;
@@ -398,7 +423,7 @@ namespace Lumina::ECS::Utils
                 }
                 else
                 {
-                    SHeldValue& Held = Unloaded.emplace_back();
+                    SHeldValue& Held = Unloaded.EmplaceGetRef();
                     Held.TypeName = TypeName;
                     if (Held.Data.Cut(Ar, ComponentSize))
                     {
@@ -406,7 +431,7 @@ namespace Lumina::ECS::Utils
                     }
                     else
                     {
-                        Unloaded.pop_back();
+                        Unloaded.Pop();
                         LOG_WARN("[ECS] Entity {}: skipping unknown component '{}' ({} bytes), which this archive cannot hold.", (uint32)Entity, TypeName, ComponentSize);
                     }
                 }
@@ -471,7 +496,7 @@ namespace Lumina::ECS::Utils
             int64 StartOfComponentData = Ar.Tell();
 
             {
-                LUMINA_PROFILE_SECTION_NAMED(Name.c_str());
+                LUMINA_PROFILE_SECTION_NAMED(*Name);
                 Entry.Struct->SerializeProperties(Ar, Entry.Set->GetRaw(Entity));
             }
 
@@ -570,12 +595,22 @@ namespace Lumina::ECS::Utils
             // A child can come before its parent in the file, so links attach once every entity exists.
             FParentLinks Links;
 
+            const bool bPriorError = Ar.HasError();
+            Ar.SetHasError(false);
+
             for (int32 i = 0; i < NumEntitiesSerialized; ++i)
             {
                 int64 EntitySaveSize = 0;
                 Ar << EntitySaveSize;
 
                 int64 PreEntityPos = Ar.Tell();
+                const int64 Total = Ar.TotalSize();
+                if (Ar.HasError() || EntitySaveSize < 0 || (Total > 0 && EntitySaveSize > Total - PreEntityPos))
+                {
+                    LOG_ERROR("Archiver corrupted: entity {} of {} claims {} bytes", i, NumEntitiesSerialized, EntitySaveSize);
+                    Ar.SetHasError(true);
+                    break;
+                }
 
                 ECS::FEntity NewEntity = ECS::NullEntity;
                 bool bSuccess = ECS::Utils::SerializeEntity(Ar, Registry, NewEntity, &Links);
@@ -605,6 +640,11 @@ namespace Lumina::ECS::Utils
             }
 
             Links.Apply(Registry);
+
+            if (bPriorError)
+            {
+                Ar.SetHasError(true);
+            }
         }
 
         return !Ar.HasError();
@@ -673,7 +713,7 @@ namespace Lumina::ECS::Utils
 
         // Gathered first, since removing reshapes the storages being walked.
         TVector<ECS::FSparseSet*> Tagged;
-        ForEachTagStorage(Registry, Entity, [&](ECS::FSparseSet& Storage) { Tagged.push_back(&Storage); });
+        ForEachTagStorage(Registry, Entity, [&](ECS::FSparseSet& Storage) { Tagged.Add(&Storage); });
         for (ECS::FSparseSet* Storage : Tagged)
         {
             Storage->RemoveEntity(Entity);
@@ -789,8 +829,8 @@ namespace Lumina::ECS::Utils
 
         // Children before their parents, so a registry that orphans on destroy never sees one outlive its parent.
         TVector<ECS::FEntity> Subtree;
-        Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Descendant) { Subtree.push_back(Descendant); });
-        for (size_t Index = Subtree.size(); Index-- > 0;)
+        Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Descendant) { Subtree.Add(Descendant); });
+        for (int32 Index = Subtree.Num(); Index-- > 0;)
         {
             if (Registry.IsValid(Subtree[Index]))
             {
@@ -847,7 +887,7 @@ namespace Lumina::ECS::Utils
 
         FDirtyQueue       DirtyTransforms;     // entities whose local transform changed (drained at resolve)
         FDirtyQueue       DirtyBodies;         // setter-moved entities to re-sync to physics (drained pre-sync)
-        FFiberMutex       ResolveGuard;        // one resolver writes WorldTransform at a time (fiber-aware)
+        FMutex       ResolveGuard;        // one resolver writes WorldTransform at a time
 
         // Resolve scratch reused across calls; HierBySlot lets the hierarchical filter parallelize.
         TVector<ECS::FEntity>     DrainScratch;
@@ -883,8 +923,8 @@ namespace Lumina::ECS::Utils
                     return true;
                 }
                 const uint32 Index = Entity.GetIndex();
-                const SIZE_T Word  = Index >> 6;
-                return Word < Interest.size() && ((Interest[Word] >> (Index & 63u)) & 1u) != 0;
+                const int32 Word  = Index >> 6;
+                return Word < Interest.Num() && ((Interest[Word] >> (Index & 63u)) & 1u) != 0;
             }
         };
 
@@ -901,11 +941,11 @@ namespace Lumina::ECS::Utils
             {
                 FMovedSlot& Moved = *Consumer.Slots[Slot];
                 TScopeLock<FMutex> Guard(Moved.Lock);
-                Moved.Items.insert(Moved.Items.end(), Entities, Entities + Count);
+                Moved.Items.Append(Entities, IntCastChecked<int32>(Count));
             }
             else
             {
-                Consumer.Overflow.EnqueueBulk(Entities, Count);
+                Consumer.Overflow.EnqueueBulk(Entities, IntCastChecked<uint32>(Count));
             }
         }
 
@@ -926,7 +966,7 @@ namespace Lumina::ECS::Utils
                 return;
             }
 
-            const uint32 Slot = Jobs::IsInitialized() ? Jobs::GetWorkerIndex() : Constants::kIndexNoneU32;
+            const uint32 Slot = Jobs::IsRuntimeRunning() ? Jobs::GetThreadSlot() : Constants::kIndexNoneU32;
             for (uint32 Bits = Mask; Bits != 0; Bits &= Bits - 1)
             {
                 FMovedConsumer& Consumer = *MovedConsumers[(uint32)Math::CountTrailingZeros64(Bits)];
@@ -967,14 +1007,14 @@ namespace Lumina::ECS::Utils
             }
             TVector<uint64>& Interest = MovedConsumers[Index]->Interest;
             const uint32 EntityIndex = Entity.GetIndex();
-            const SIZE_T Word = EntityIndex >> 6;
-            if (Word >= Interest.size())
+            const int32 Word = EntityIndex >> 6;
+            if (Word >= Interest.Num())
             {
                 if (!bInterested)
                 {
                     return;
                 }
-                Interest.resize(Word + 1, 0);
+                Interest.SetNum(Word + 1, 0);
             }
             const uint64 Bit = 1ull << (EntityIndex & 63u);
             Interest[Word] = bInterested ? (Interest[Word] | Bit) : (Interest[Word] & ~Bit);
@@ -991,14 +1031,14 @@ namespace Lumina::ECS::Utils
                 if (!MovedConsumers[Index])
                 {
                     MovedConsumers[Index] = MakeUnique<FMovedConsumer>();
-                    MovedConsumers[Index]->Slots.reserve(NumMovedSlots);
+                    MovedConsumers[Index]->Slots.Reserve(NumMovedSlots);
                     for (uint32 Slot = 0; Slot < NumMovedSlots; ++Slot)
                     {
-                        MovedConsumers[Index]->Slots.push_back(MakeUnique<FMovedSlot>());
+                        MovedConsumers[Index]->Slots.Add(MakeUnique<FMovedSlot>());
                     }
                 }
                 MovedConsumers[Index]->bFiltered = bFiltered;
-                MovedConsumers[Index]->Interest.clear();
+                MovedConsumers[Index]->Interest.Reset();
                 MovedConsumerMask.fetch_or(1u << Index, std::memory_order_release);
                 return Index;
             }
@@ -1015,15 +1055,15 @@ namespace Lumina::ECS::Utils
             for (TUniquePtr<FMovedSlot>& Slot : Consumer.Slots)
             {
                 TScopeLock<FMutex> Guard(Slot->Lock);
-                Out.insert(Out.end(), Slot->Items.begin(), Slot->Items.end());
-                Slot->Items.clear();
+                Out.Append(Slot->Items);
+                Slot->Items.Reset();
             }
 
             ECS::FEntity Batch[256];
             size_t Count;
             while ((Count = Consumer.Overflow.DequeueBulk(Batch, 256)) != 0)
             {
-                Out.insert(Out.end(), Batch, Batch + Count);
+                Out.Append(Batch, IntCastChecked<int32>(Count));
             }
         }
 
@@ -1040,8 +1080,8 @@ namespace Lumina::ECS::Utils
 
         FTransformDirtyState()
         {
-            const uint32 Slots = Jobs::IsInitialized() ? Jobs::GetNumThreadSlots() : 1;
-            HierBySlot.resize(Slots);
+            const uint32 Slots = Jobs::IsRuntimeRunning() ? Jobs::GetNumThreadSlots() : 1;
+            HierBySlot.SetNum(Slots);
             NumMovedSlots = Slots;
         }
     };
@@ -1233,7 +1273,7 @@ namespace Lumina::ECS::Utils
         const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
 
         // Everything above the highest ancestor that moved still has a current cached world, so the walk stops being needed there.
-        TFixedVector<ECS::FEntity, 64> Chain;
+        TInlineVector<ECS::FEntity, 64> Chain;
         int32 TopmostDirty = -1;
 
         ECS::FEntity Current = Entity;
@@ -1241,9 +1281,9 @@ namespace Lumina::ECS::Utils
         {
             if (XFormStorage.Contains(Current) && XFormStorage.Get(Current).bWorldDirty)
             {
-                TopmostDirty = (int32)Chain.size();
+                TopmostDirty = Chain.Num();
             }
-            Chain.push_back(Current);
+            Chain.Add(Current);
 
             const ECS::FEntity Parent = Hierarchy.GetParent(Current);
             if (Parent == ECS::NullEntity || !Registry.IsValid(Parent) || !XFormStorage.Contains(Parent))
@@ -1259,7 +1299,7 @@ namespace Lumina::ECS::Utils
         }
 
         FTransform World = XFormStorage.Get(Chain[TopmostDirty]).LocalTransform;
-        if (TopmostDirty + 1 < (int32)Chain.size())
+        if (TopmostDirty + 1 < Chain.Num())
         {
             World = XFormStorage.Get(Chain[TopmostDirty + 1]).GetWorldTransformCached() * World;
         }
@@ -1311,13 +1351,13 @@ namespace Lumina::ECS::Utils
             return false;
         }
 
-        const SIZE_T Before = Out.size();
+        const int32 Before = Out.Num();
         State->DrainMovedConsumer(Consumer, Out);
 
         // Bumping the epoch opens the next publish window, so no clearing pass over drained entities.
         State->PublishEpoch.fetch_add(1, std::memory_order_relaxed);
 
-        return Out.size() != Before;
+        return Out.Num() != Before;
     }
 
     void ResolveAllDirtyTransforms(ECS::FRegistry& Registry)
@@ -1325,10 +1365,9 @@ namespace Lumina::ECS::Utils
         LUMINA_PROFILE_SCOPE();
 
         ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
-        ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::Hierarchy>()), false, "Read<SystemResource::Hierarchy>");
 
         FTransformDirtyState& DirtyState = *EnsureTransformDirtyState(Registry);
-        FFiberScopeLock ResolveLock(DirtyState.ResolveGuard);   // one resolver writes WorldTransform at a time
+        FScopeLock ResolveLock(DirtyState.ResolveGuard);   // one resolver writes WorldTransform at a time
 
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
         const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
@@ -1356,19 +1395,19 @@ namespace Lumina::ECS::Utils
 
         // The raw drain is serial and cheap; the per-entity filter and flat resolve run in parallel.
         TVector<ECS::FEntity>& Raw = DirtyState.DrainScratch;
-        Raw.clear();
+        Raw.Reset();
         {
             ECS::FEntity Batch[256];
             std::size_t Count;
             while ((Count = DirtyState.DirtyTransforms.DequeueBulk(Batch, 256)) != 0)
             {
-                Raw.insert(Raw.end(), Batch, Batch + Count);
+                Raw.Append(Batch, IntCastChecked<int32>(Count));
             }
         }
 
         DirtyState.bAnyDirty.store(false, std::memory_order_release);
 
-        if (Raw.empty())
+        if (Raw.IsEmpty())
         {
             return;
         }
@@ -1381,13 +1420,13 @@ namespace Lumina::ECS::Utils
 
         for (TVector<uint32>& Slot : DirtyState.HierBySlot)
         {
-            Slot.clear();
+            Slot.Reset();
         }
 
-        auto FilterChunk = [&](const Task::FParallelRange& Chunk)
+        auto FilterChunk = [&](const Jobs::FParallelRange& Chunk)
         {
-            uint32 Worker = Jobs::GetWorkerIndex();
-            if (Worker >= DirtyState.HierBySlot.size()) { Worker = 0; }
+            uint32 Worker = Jobs::GetThreadSlot();
+            if (Worker >= static_cast<uint32>(DirtyState.HierBySlot.Num())) { Worker = 0; }
             TVector<uint32>& WorkerSlots = DirtyState.HierBySlot[Worker];
 
             constexpr uint32 MovedBatch = 128;
@@ -1406,7 +1445,7 @@ namespace Lumina::ECS::Utils
                 // An entity outside the preorder has no parent to compose with, whatever its flat bit says.
                 if (const uint32 OrderSlot = bAnyHierarchy ? Hierarchy.GetSlotOfLive(E) : ECS::FHierarchy::NoSlot; OrderSlot != ECS::FHierarchy::NoSlot)
                 {
-                    WorkerSlots.push_back(OrderSlot);
+                    WorkerSlots.Add(OrderSlot);
                     continue;
                 }
                 T->WorldTransform = T->LocalTransform;
@@ -1422,34 +1461,34 @@ namespace Lumina::ECS::Utils
             DirtyState.PublishMovedBulk(Moved, NumMoved);
         };
 
-        LUMINA_PROFILE_VALUE("Transform/Dirty", (int64)Raw.size());
-        if (Raw.size() > 1000)
+        LUMINA_PROFILE_VALUE("Transform/Dirty", Raw.Num());
+        if (Raw.Num() > 1000)
         {
             LUMINA_PROFILE_SECTION("FilterDirty");
-            Task::ParallelFor((uint32)Raw.size(), FilterChunk);
+            Jobs::ParallelFor((uint32)Raw.Num(), FilterChunk);
         }
         else
         {
-            FilterChunk(Task::FParallelRange{ 0, (uint32)Raw.size(), 0 });
+            FilterChunk(Jobs::FParallelRange{ 0, (uint32)Raw.Num(), 0 });
         }
 
         TVector<uint32>& DirtySlots = DirtyState.HierScratch;
-        DirtySlots.clear();
+        DirtySlots.Reset();
         {
             size_t Total = 0;
             for (const TVector<uint32>& Slot : DirtyState.HierBySlot)
             {
-                Total += Slot.size();
+                Total += Slot.Num();
             }
 
-            DirtySlots.reserve(Total);
+            DirtySlots.Reserve(IntCastChecked<int32>(Total));
             for (const TVector<uint32>& Slot : DirtyState.HierBySlot)
             {
-                DirtySlots.insert(DirtySlots.end(), Slot.begin(), Slot.end());
+                DirtySlots.Append(Slot);
             }
         }
 
-        if (DirtySlots.empty())
+        if (DirtySlots.IsEmpty())
         {
             return;
         }
@@ -1460,11 +1499,11 @@ namespace Lumina::ECS::Utils
 
         // Ascending slots make a dirty descendant of a dirty ancestor fall inside the ancestor's range.
         TVector<uint32>& RangeStarts = DirtyState.RangeStarts;
-        RangeStarts.clear();
+        RangeStarts.Reset();
         uint32 RangeTotal = 0;
 
         constexpr size_t SortedDirtyRatio = 16;
-        if (DirtySlots.size() * SortedDirtyRatio < Order.size())
+        if (DirtySlots.Num() * SortedDirtyRatio < static_cast<size_t>(Order.Num()))
         {
             std::sort(DirtySlots.begin(), DirtySlots.end());
 
@@ -1475,7 +1514,7 @@ namespace Lumina::ECS::Utils
                 {
                     continue;
                 }
-                RangeStarts.push_back(Slot);
+                RangeStarts.Add(Slot);
                 CoveredEnd = Slot + SubtreeSizes[Slot];
                 RangeTotal += SubtreeSizes[Slot];
             }
@@ -1484,13 +1523,13 @@ namespace Lumina::ECS::Utils
         {
             // Most of the tree is dirty, so one pass over a mark per slot beats sorting the slots.
             TVector<uint8>& Marks = DirtyState.SlotMarks;
-            Marks.assign(Order.size(), 0);
+            Marks.Init(0, Order.Num());
             for (const uint32 Slot : DirtySlots)
             {
                 Marks[Slot] = 1;
             }
 
-            const uint32 NumSlots = (uint32)Order.size();
+            const uint32 NumSlots = (uint32)Order.Num();
             for (uint32 Slot = 0; Slot < NumSlots;)
             {
                 if (Marks[Slot] == 0)
@@ -1498,16 +1537,16 @@ namespace Lumina::ECS::Utils
                     ++Slot;
                     continue;
                 }
-                RangeStarts.push_back(Slot);
+                RangeStarts.Add(Slot);
                 RangeTotal += SubtreeSizes[Slot];
                 Slot += SubtreeSizes[Slot];
             }
         }
 
         TVector<STransformComponent*>& SlotTransforms = DirtyState.SlotTransforms;
-        if (SlotTransforms.size() < Order.size())
+        if (SlotTransforms.Num() < Order.Num())
         {
-            SlotTransforms.resize(Order.size());
+            SlotTransforms.SetNum(Order.Num());
         }
 
         auto ResolveRange = [&](uint32 RangeIndex)
@@ -1545,7 +1584,7 @@ namespace Lumina::ECS::Utils
         };
 
         // Ranges are contiguous runs of the preorder, so a chunk publishes them in batches rather than one lock each.
-        auto ResolveRangeChunk = [&](const Task::FParallelRange& Chunk)
+        auto ResolveRangeChunk = [&](const Jobs::FParallelRange& Chunk)
         {
             constexpr uint32 MovedBatch = 128;
             ECS::FEntity Moved[MovedBatch];
@@ -1573,16 +1612,16 @@ namespace Lumina::ECS::Utils
             DirtyState.PublishMovedBulk(Moved, NumMoved);
         };
 
-        LUMINA_PROFILE_VALUE("Transform/Ranges", (int64)RangeStarts.size());
-        LUMINA_PROFILE_VALUE("Transform/RangeEntities", (int64)RangeTotal);
-        if (RangeTotal > 1000 && RangeStarts.size() > 1)
+        LUMINA_PROFILE_VALUE("Transform/Ranges", RangeStarts.Num());
+        LUMINA_PROFILE_VALUE("Transform/RangeEntities", RangeTotal);
+        if (RangeTotal > 1000 && RangeStarts.Num() > 1)
         {
             LUMINA_PROFILE_SECTION("ResolveRanges");
-            Task::ParallelFor((uint32)RangeStarts.size(), ResolveRangeChunk);
+            Jobs::ParallelFor((uint32)RangeStarts.Num(), ResolveRangeChunk);
         }
         else
         {
-            ResolveRangeChunk(Task::FParallelRange{ 0, (uint32)RangeStarts.size(), 0 });
+            ResolveRangeChunk(Jobs::FParallelRange{ 0, (uint32)RangeStarts.Num(), 0 });
         }
     }
 
@@ -1619,10 +1658,10 @@ namespace Lumina::ECS::Utils
                 return;
             }
 
-            auto It = Map.find(Stored);
-            if (It != Map.end())
+            auto It = Map.Find(Stored);
+            if (It != nullptr)
             {
-                Value = static_cast<uint32>((It->second).Value);
+                Value = static_cast<uint32>((*It).Value);
             }
             else if (bClearUnmapped)
             {
@@ -1773,7 +1812,7 @@ namespace Lumina::ECS::Utils
             const ECS::FEntity Referenced = static_cast<ECS::FEntity>(Value);
             if (Referenced != ECS::NullEntity)
             {
-                Out.push_back(Referenced);
+                Out.Add(Referenced);
             }
         };
         ForEachEntityRefOnEntity(Registry, Entity, Visit);
@@ -1782,7 +1821,6 @@ namespace Lumina::ECS::Utils
     void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation)
     {
         ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
-        ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::Hierarchy>()), false, "Read<SystemResource::Hierarchy>");
 
         STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
@@ -1811,7 +1849,6 @@ namespace Lumina::ECS::Utils
     void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform)
     {
         ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
-        ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::Hierarchy>()), false, "Read<SystemResource::Hierarchy>");
 
         STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
@@ -1872,5 +1909,62 @@ namespace Lumina::ECS::Utils
     {
         Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         MarkPhysicsBodyDirtyIfBodied(Registry, Entity);
+    }
+}
+
+namespace Lumina
+{
+    FMovedTransforms::FMovedTransforms(EMovedTransforms InMode)
+        : Mode(InMode)
+    {
+        RegisterSystemParam(this, GetOps());
+    }
+
+    void FMovedTransforms::Watch(ECS::FEntity Entity, bool bWatch)
+    {
+        if (Registry != nullptr)
+        {
+            ECS::Utils::SetMovedTransformInterest(*Registry, Consumer, Entity, bWatch);
+        }
+    }
+
+    bool FMovedTransforms::Drain(TVector<ECS::FEntity>& Out)
+    {
+        return Registry != nullptr && ECS::Utils::DrainMovedTransforms(*Registry, Consumer, Out);
+    }
+
+    void FMovedTransforms::Release()
+    {
+        if (Registry != nullptr)
+        {
+            ECS::Utils::RemoveMovedTransformConsumer(*Registry, Consumer);
+            Registry = nullptr;
+            Consumer = Constants::kIndexNoneU32;
+        }
+    }
+
+    const FSystemParamOps& FMovedTransforms::GetOps()
+    {
+        static const FSystemParamOps Ops
+        {
+            .Bind = [](void* Param, CWorld& World)
+            {
+                FMovedTransforms& Moved = *static_cast<FMovedTransforms*>(Param);
+                ECS::FRegistry& Bound = GetSystemRegistry(World);
+                if (Moved.Registry == &Bound)
+                {
+                    return;
+                }
+                Moved.Release();
+                Moved.Consumer = ECS::Utils::AddMovedTransformConsumer(Bound, Moved.Mode == EMovedTransforms::Watched);
+                Moved.Registry = Moved.Consumer != Constants::kIndexNoneU32 ? &Bound : nullptr;
+            },
+            .Declare = [](const void*, FSystemAccess& Access)
+            {
+                DeclareParamRead(Access, static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true);
+            },
+            .Unbind = [](void* Param) { static_cast<FMovedTransforms*>(Param)->Release(); },
+        };
+        return Ops;
     }
 }

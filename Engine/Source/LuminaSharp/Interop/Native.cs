@@ -118,6 +118,7 @@ public static unsafe partial class Native
     // Pure reads with no managed re-entry, so they skip the GC transition.
     [NativeCall(SuppressGCTransition = true)] public static partial IntPtr GetComponent(ulong World, uint Entity, IntPtr Ops);
     [NativeCall(SuppressGCTransition = true)] public static partial int HasComponent(ulong World, uint Entity, IntPtr Ops);
+    [NativeCall(SuppressGCTransition = true)] public static partial IntPtr GetComponentRead(ulong World, uint Entity, IntPtr Ops);
     [NativeCall(SuppressGCTransition = true)] public static partial IntPtr GetComponentTracked(ulong World, uint Entity, IntPtr Ops, uint** OutEpoch);
 
     [NativeCall(EntryPoint = "LuminaSharp_TrackComponentPointer")]
@@ -147,7 +148,9 @@ public static unsafe partial class Native
 
     // View iteration gathers a chunk of entities and their component pointers per crossing, see DotNetView.cpp.
     [NativeCall] public static partial IntPtr ViewBegin(ulong World, IntPtr* IncludeOps, int NInc, IntPtr* ExcludeOps, int NExc);
-    [NativeCall] public static partial int ViewNextChunk(IntPtr State, uint* OutEntities, IntPtr* OutPtrs, int MaxCount, int NInclude);
+    [NativeCall] public static partial IntPtr QueryViewBegin(ulong World, IntPtr* IncludeOps, int NInc, uint WriteMask, IntPtr* ExcludeOps, int NExc, IntPtr* RequireOps, int NReq, IntPtr* FilterOps, int NFilter, uint AddedMask, uint Since, uint* OutStampTick);
+    [NativeCall(SuppressGCTransition = true)] public static partial uint AdvanceChangeTick();
+    [NativeCall] public static partial int ViewNextChunk(IntPtr State, uint* OutEntities, IntPtr* OutPtrs, uint** OutTicks, int MaxCount, int NInclude);
     [NativeCall] public static partial void ViewIncludeEpochs(IntPtr State, uint** OutSlots, int NInclude);
     [NativeCall] public static partial void ViewEnd(IntPtr State);
 

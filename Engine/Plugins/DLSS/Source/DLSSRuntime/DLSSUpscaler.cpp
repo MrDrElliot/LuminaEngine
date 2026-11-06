@@ -115,7 +115,7 @@ namespace Lumina
         bInitAttempted = true;
 
         std::error_code Error;
-        const std::filesystem::path DataPath = std::filesystem::path(Paths::GetUserDataDirectory().c_str()) / "Lumina" / "NGX";
+        const std::filesystem::path DataPath = std::filesystem::path(*Paths::GetUserDataDirectory()) / "Lumina" / "NGX";
         std::filesystem::create_directories(DataPath, Error);
 
         const std::wstring ExecutableDirectory = GetExecutableDirectory();

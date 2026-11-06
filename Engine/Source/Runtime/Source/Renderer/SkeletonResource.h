@@ -56,29 +56,29 @@ namespace Lumina
         // Transient import-dialog flag; not serialized.
         bool                    bShouldImport = true;
 
-        FORCEINLINE int32 GetNumBones() const { return (int32)Bones.size(); }
+        FORCEINLINE int32 GetNumBones() const { return Bones.Num(); }
 
         FORCEINLINE bool HasBindPoseCache() const
         {
-            return !Bones.empty() && BindLocalRotations.size() == Bones.size() && HasBindGlobalMatrices();
+            return !Bones.IsEmpty() && BindLocalRotations.Num() == Bones.Num() && HasBindGlobalMatrices();
         }
 
         FORCEINLINE bool HasBindGlobalMatrices() const
         {
-            return !Bones.empty() && BindGlobalMatrices.size() == Bones.size();
+            return !Bones.IsEmpty() && BindGlobalMatrices.Num() == Bones.Num();
         }
 
         FORCEINLINE bool HasFlatBoneCache() const
         {
-            return !Bones.empty() && BoneParents.size() == Bones.size() && BoneInvBind.size() == Bones.size();
+            return !Bones.IsEmpty() && BoneParents.Num() == Bones.Num() && BoneInvBind.Num() == Bones.Num();
         }
 
         void BuildBindPoseCache();
 
         FORCEINLINE int32 FindBoneIndex(const FName& BoneName) const
         {
-            auto It = BoneNameToIndex.find(BoneName);
-            return It != BoneNameToIndex.end() ? It->second : Constants::kIndexNone;
+            auto It = BoneNameToIndex.Find(BoneName);
+            return It != nullptr ? (*It) : Constants::kIndexNone;
         }
 
         FORCEINLINE bool IsBoneIndexValid(int32 BoneIndex) const
@@ -107,7 +107,7 @@ namespace Lumina
             {
                 if (Bones[i].ParentIndex == BoneIndex)
                 {
-                    Children.push_back(i);
+                    Children.Add(i);
                 }
             }
             return Children;
@@ -120,7 +120,7 @@ namespace Lumina
             {
                 if (Bones[i].ParentIndex < 0)
                 {
-                    Roots.push_back(i);
+                    Roots.Add(i);
                 }
             }
             return Roots;
@@ -128,7 +128,7 @@ namespace Lumina
 
         bool HasConsistentHierarchy() const
         {
-            for (int32 Index = 0; Index < (int32)Bones.size(); ++Index)
+            for (int32 Index = 0; Index < Bones.Num(); ++Index)
             {
                 const int32 Parent = Bones[Index].ParentIndex;
                 if (Parent != Constants::kIndexNone && (Parent < 0 || Parent >= Index))
@@ -138,7 +138,7 @@ namespace Lumina
             }
             for (const auto& [BoneName, Index] : BoneNameToIndex)
             {
-                if (Index < 0 || Index >= (int32)Bones.size())
+                if (Index < 0 || Index >= Bones.Num())
                 {
                     return false;
                 }
@@ -155,10 +155,10 @@ namespace Lumina
             // Every pose walk indexes by these without checking, so a corrupt package loads an empty skeleton.
             if (Ar.IsReading() && !Data.HasConsistentHierarchy())
             {
-                LOG_ERROR("FSkeletonResource '{}': a parent or name index points outside its {} bones; the skeleton loads empty", Data.Name, Data.Bones.size());
+                LOG_ERROR("FSkeletonResource '{}': a parent or name index points outside its {} bones; the skeleton loads empty", Data.Name, Data.Bones.Num());
                 Ar.SetHasError(true);
-                Data.Bones.clear();
-                Data.BoneNameToIndex.clear();
+                Data.Bones.Reset();
+                Data.BoneNameToIndex.Reset();
             }
 
             Data.BuildBindPoseCache();

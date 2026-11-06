@@ -28,11 +28,11 @@ namespace LuminaParallelSortBench
     {
         uint64 State = Seed;
         TVector<int32> Values;
-        Values.reserve(Count);
+        Values.Reserve(Lumina::IntCastChecked<Lumina::int32>(Count));
         for (size_t Index = 0; Index < Count; ++Index)
         {
             State = State * 6364136223846793005ull + 1442695040888963407ull;
-            Values.push_back(static_cast<int32>(State >> 33));
+            Values.Add(static_cast<int32>(State >> 33));
         }
 
         return Values;

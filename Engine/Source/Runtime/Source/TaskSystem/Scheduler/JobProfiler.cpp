@@ -1,23 +1,25 @@
-﻿#include "Platform/Time/PlatformTime.h"
-#include "RuntimePCH.h"
-#include "JobProfiler.h"
+﻿#include "JobProfiler.h"
 
 #if USING(WITH_EDITOR)
 
-#include "JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "Core/Console/ConsoleVariable.h"
-
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina
 {
-    namespace
+    namespace JobProfilerInternal
     {
         TConsoleVar<bool> CVarTaskProfilerEnabled("task.Profiler.Enabled", false,
-            "Record per-worker fiber/job spans for the Task System profiler tool. Costs a little per job.");
+            "Record per-thread job spans for the Task System profiler tool. Costs a little per job.");
 
-        double SteadyNowMs()
+        void PushHistory(TVector<float>& History, float Value)
         {
-            return PlatformTime::Seconds() * 1000.0;
+            History.Add(Value);
+            if (static_cast<uint32>(History.Num()) > FJobProfiler::HistorySize)
+            {
+                History.RemoveAt(0);
+            }
         }
     }
 
@@ -27,67 +29,51 @@ namespace Lumina
         return Instance;
     }
 
-    double FJobProfiler::NowMs() { return SteadyNowMs(); }
+    double FJobProfiler::NowMs()
+    {
+        return PlatformTime::Seconds() * 1000.0;
+    }
 
     void FJobProfiler::EnsureSized()
     {
         const uint32 Slots = Jobs::GetNumThreadSlots();
-        if (Lanes.size() == Slots)
+        if (static_cast<uint32>(Lanes.Num()) == Slots)
         {
             return;
         }
-        Lanes.clear();
-        Lanes.reserve(Slots);
-        for (uint32 i = 0; i < Slots; ++i)
+        Lanes.Reset();
+        Lanes.Reserve(Slots);
+        for (uint32 Slot = 0; Slot < Slots; ++Slot)
         {
-            Lanes.emplace_back(MakeUnique<FLane>());
+            Lanes.Emplace(MakeUnique<FLane>());
         }
     }
 
     void FJobProfiler::Shutdown()
     {
         bEnabled.store(false, std::memory_order_relaxed);
-        Lanes.clear();
+        Lanes.Reset();
         Latest = FJobProfFrame{};
-    }
-
-    void FJobProfiler::PushHistory(TVector<float>& H, float V)
-    {
-        H.push_back(V);
-        if (H.size() > HistorySize)
-        {
-            H.erase(H.begin());
-        }
     }
 
     void FJobProfiler::BeginFrame()
     {
-        const bool Want = CVarTaskProfilerEnabled.GetValue() && Jobs::IsInitialized();
-        bEnabled.store(Want, std::memory_order_relaxed);
-        if (!Want)
+        const bool bWant = JobProfilerInternal::CVarTaskProfilerEnabled.GetValue() && Jobs::IsRuntimeRunning();
+        bEnabled.store(bWant, std::memory_order_relaxed);
+        if (!bWant)
         {
             return;
         }
-
         EnsureSized();
-
         FrameStartMs = NowMs();
-        JobsRunCtr.store(0, std::memory_order_relaxed);
-        Parks.store(0, std::memory_order_relaxed);
-        Migrations.store(0, std::memory_order_relaxed);
+        JobsRun.store(0, std::memory_order_relaxed);
+        JobsHelped.store(0, std::memory_order_relaxed);
         WorkerJobs.store(0, std::memory_order_relaxed);
         ExternalJobs.store(0, std::memory_order_relaxed);
-        Resumes.store(0, std::memory_order_relaxed);
-        AffinityOpps.store(0, std::memory_order_relaxed);
-        Starvations.store(0, std::memory_order_relaxed);
-        PopConcSum.store(0, std::memory_order_relaxed);
-        PopConcSamples.store(0, std::memory_order_relaxed);
-        PopConcMax.store(0, std::memory_order_relaxed);
-
-        for (TUniquePtr<FLane>& LP : Lanes)
+        for (TUniquePtr<FLane>& Lane : Lanes)
         {
-            FScopeLock Lock(LP->Lock);
-            LP->Spans.clear(); // keeps capacity
+            FScopeLock Lock(Lane->Lock);
+            Lane->Spans.Reset();
         }
     }
 
@@ -97,97 +83,109 @@ namespace Lumina
         {
             return;
         }
-
-        const double End = NowMs();
-
-        Latest.Spans.clear();
-        for (TUniquePtr<FLane>& LP : Lanes)
+        Latest.Spans.Reset();
+        for (TUniquePtr<FLane>& Lane : Lanes)
         {
-            FScopeLock Lock(LP->Lock);
-            for (const FJobProfSpan& S : LP->Spans)
-            {
-                Latest.Spans.push_back(S);
-            }
+            FScopeLock Lock(Lane->Lock);
+            Latest.Spans.Append(Lane->Spans);
         }
         Latest.FrameStartMs = FrameStartMs;
-        Latest.FrameEndMs   = End;
-        Latest.JobsRun      = JobsRunCtr.load(std::memory_order_relaxed);
-        Latest.Parks        = Parks.load(std::memory_order_relaxed);
-        Latest.Migrations   = Migrations.load(std::memory_order_relaxed);
+        Latest.FrameEndMs   = NowMs();
+        Latest.JobsRun      = JobsRun.load(std::memory_order_relaxed);
+        Latest.JobsHelped   = JobsHelped.load(std::memory_order_relaxed);
         Latest.WorkerJobs   = WorkerJobs.load(std::memory_order_relaxed);
         Latest.ExternalJobs = ExternalJobs.load(std::memory_order_relaxed);
-        Latest.Resumes      = Resumes.load(std::memory_order_relaxed);
-        Latest.AffinityOpps = AffinityOpps.load(std::memory_order_relaxed);
-        Latest.Starvations  = Starvations.load(std::memory_order_relaxed);
-        Latest.MaxPoppers   = PopConcMax.load(std::memory_order_relaxed);
-        const uint32 PopSamples = PopConcSamples.load(std::memory_order_relaxed);
-        Latest.AvgPoppers   = PopSamples ? static_cast<float>(static_cast<double>(PopConcSum.load(std::memory_order_relaxed)) / PopSamples) : 0.0f;
-
-        Jobs::FJobLiveStats LS;
-        Jobs::GetLiveStats(LS);
-
-        PushHistory(JobsHist,    static_cast<float>(Latest.JobsRun));
-        PushHistory(MigHist,     static_cast<float>(Latest.Migrations));
-        PushHistory(FibersHist,  static_cast<float>(LS.FibersInUse));
-        PushHistory(PoppersHist, Latest.AvgPoppers);
+        JobProfilerInternal::PushHistory(JobsHist, static_cast<float>(Latest.JobsRun));
+        JobProfilerInternal::PushHistory(HelpedHist, static_cast<float>(Latest.JobsHelped));
     }
 
-    void FJobProfiler::SliceBegin(uint32 Worker, uint16 Fiber, const char* Name, double Ms)
+    // A nested job closes the span of the one it interrupted, which reopens when the nested one ends.
+    void FJobProfiler::CloseOpen(FLane& Lane, uint32 Slot, double Now)
     {
-        if (Worker >= Lanes.size())
+        if (Lane.Depth == 0)
         {
             return;
         }
-        FLane& L = *Lanes[Worker];
-        L.Open    = FJobProfSpan{ Name ? Name : "job", static_cast<uint16>(Worker), Fiber, Ms, Ms, static_cast<uint8>(EJobSpanKind::Ran) };
-        L.HasOpen = true;
-        JobsRunCtr.fetch_add(1, std::memory_order_relaxed);
+        FJobProfSpan Span;
+        Span.Name    = Lane.Names[Lane.Depth - 1];
+        Span.Worker  = static_cast<uint16>(Slot);
+        Span.Depth   = static_cast<uint16>(Lane.Depth - 1);
+        Span.StartMs = Lane.OpenMs;
+        Span.EndMs   = Now;
+        FScopeLock Lock(Lane.Lock);
+        Lane.Spans.Add(Span);
     }
 
-    void FJobProfiler::SliceEnd(uint32 Worker, bool Parked, double Ms)
+    void FJobProfiler::JobBegin(uint32 Slot, const char* Name, bool bHelping)
     {
-        if (Worker >= Lanes.size())
+        if (Slot >= static_cast<uint32>(Lanes.Num()))
         {
             return;
         }
-        FLane& L = *Lanes[Worker];
-        if (!L.HasOpen)
+        FLane& Lane = *Lanes[Slot];
+        const double Now = NowMs();
+        CloseOpen(Lane, Slot, Now);
+        if (Lane.Depth < kMaxDepth)
         {
-            return;
+            Lane.Names[Lane.Depth] = Name != nullptr ? Name : "job";
         }
-        L.Open.EndMs = Ms;
-        L.Open.Kind  = static_cast<uint8>(Parked ? EJobSpanKind::RanThenParked : EJobSpanKind::Ran);
-        L.HasOpen    = false;
-        FScopeLock Lock(L.Lock);
-        L.Spans.push_back(L.Open);
+        ++Lane.Depth;
+        Lane.OpenMs = Now;
+        JobsRun.fetch_add(1, std::memory_order_relaxed);
+        if (bHelping || Lane.Depth > 1)
+        {
+            JobsHelped.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
-    void FJobProfiler::IdleBegin(uint32 Worker, double Ms)
+    void FJobProfiler::JobEnd(uint32 Slot)
     {
-        if (Worker >= Lanes.size())
+        if (Slot >= static_cast<uint32>(Lanes.Num()))
         {
             return;
         }
-        FLane& L  = *Lanes[Worker];
-        L.HasIdle = true;
-        L.IdleStart = Ms;
+        FLane& Lane = *Lanes[Slot];
+        if (Lane.Depth == 0)
+        {
+            return;
+        }
+        const double Now = NowMs();
+        CloseOpen(Lane, Slot, Now);
+        --Lane.Depth;
+        Lane.OpenMs = Now;
     }
 
-    void FJobProfiler::IdleEnd(uint32 Worker, double Ms)
+    void FJobProfiler::IdleBegin(uint32 Slot)
     {
-        if (Worker >= Lanes.size())
+        if (Slot >= static_cast<uint32>(Lanes.Num()))
         {
             return;
         }
-        FLane& L = *Lanes[Worker];
-        if (!L.HasIdle)
+        FLane& Lane = *Lanes[Slot];
+        Lane.bIdle = true;
+        Lane.IdleStartMs = NowMs();
+    }
+
+    void FJobProfiler::IdleEnd(uint32 Slot)
+    {
+        if (Slot >= static_cast<uint32>(Lanes.Num()))
         {
             return;
         }
-        L.HasIdle = false;
-        FJobProfSpan S{ "idle", static_cast<uint16>(Worker), 0xFFFF, L.IdleStart, Ms, static_cast<uint8>(EJobSpanKind::Idle) };
-        FScopeLock Lock(L.Lock);
-        L.Spans.push_back(S);
+        FLane& Lane = *Lanes[Slot];
+        if (!Lane.bIdle)
+        {
+            return;
+        }
+        Lane.bIdle = false;
+        FJobProfSpan Span;
+        Span.Name    = "idle";
+        Span.Worker  = static_cast<uint16>(Slot);
+        Span.StartMs = Lane.IdleStartMs;
+        Span.EndMs   = NowMs();
+        Span.Kind    = EJobSpanKind::Idle;
+        FScopeLock Lock(Lane.Lock);
+        Lane.Spans.Add(Span);
     }
 }
 

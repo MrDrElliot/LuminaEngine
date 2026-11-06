@@ -7,7 +7,7 @@
 #include "Scripting/ScriptTypeRegistry.h"
 #include "Memory/Memcpy.h"
 #include "Memory/Memory.h"
-#include "TaskSystem/Scheduler/JobScheduler.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 
 namespace Lumina::ECS
 {
@@ -57,7 +57,7 @@ namespace Lumina::ECS
         , TypeID(InTypeID)
         , Stride(Math::Max(Info.Size, 1u))
     {
-        Staging.resize(Math::Max(Jobs::GetNumThreadSlots(), 1u));
+        Staging.SetNum(Math::Max(Jobs::GetNumThreadSlots(), 1u));
     }
 
     FEventQueue::~FEventQueue()
@@ -175,8 +175,15 @@ namespace Lumina::ECS
             return;
         }
 
-        const uint32 Slot = Jobs::GetWorkerIndex();
-        ASSERT(Slot < Staging.size());
+        // A reload resized the event since the last Advance, so the caller's buffer no longer matches the stride.
+        if (Math::Max(Info.Size, 1u) != Stride)
+        {
+            LOG_WARN("Dropped {} event(s) of type {} sent while its layout changed; the queue resumes next frame.", Count, Info.Name);
+            return;
+        }
+
+        const uint32 Slot = Jobs::GetThreadSlot();
+        ASSERT(Slot < static_cast<uint32>(Staging.Num()));
         CopyInto(Staging[Slot], static_cast<const uint8*>(Events), Count);
         bStaged.store(true, std::memory_order_release);
     }
@@ -185,6 +192,10 @@ namespace Lumina::ECS
     {
         FEventRuns Runs;
         Runs.Stride = Stride;
+        if (Math::Max(Info.Size, 1u) != Stride)
+        {
+            return Runs;
+        }
 
         auto Take = [&](const FBuffer& Buffer, FEventRun& Out)
         {
@@ -305,7 +316,7 @@ namespace Lumina::ECS
             return *Queue;
         }
 
-        FEventQueue* Created = Owned.emplace_back(MakeUnique<FEventQueue>(TypeID)).get();
+        FEventQueue* Created = Owned.EmplaceGetRef(MakeUnique<FEventQueue>(TypeID)).get();
         ByTypeID[TypeID].store(Created, std::memory_order_release);
         return *Created;
     }
@@ -323,10 +334,10 @@ namespace Lumina::ECS
             // Snapshotted, since a fan-out handler may create a queue of a type nothing had named yet.
             {
                 FScopeLock Lock(CreateLock);
-                CommitScratch.clear();
+                CommitScratch.Reset();
                 for (const TUniquePtr<FEventQueue>& Queue : Owned)
                 {
-                    CommitScratch.push_back(Queue.get());
+                    CommitScratch.Add(Queue.get());
                 }
             }
 

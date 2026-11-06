@@ -15,7 +15,7 @@ namespace Lumina
     class FInputContext;
 }
 
-// The C++ gameplay input surface, which CInputLibrary exposes to scripts. Every read returns neutral values while the world is not receiving.
+// The C++ per-world input polling surface, which CInputSubsystem exposes to scripts as World.Input while CInputLibrary only holds rebinding. Every read returns neutral values while the world is not receiving.
 namespace Lumina::Input
 {
     // The one gate on gameplay input. Null unless the world's viewport is the active one and the editor has handed input to the game.

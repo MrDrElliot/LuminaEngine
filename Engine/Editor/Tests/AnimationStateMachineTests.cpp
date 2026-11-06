@@ -25,7 +25,7 @@ namespace
         FSkeletonResource::FBoneInfo Bone;
         Bone.Name        = FName("Root");
         Bone.ParentIndex = Constants::kIndexNone;
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
         Skeleton.BoneNameToIndex[Bone.Name] = 0;
     }
 
@@ -51,7 +51,7 @@ namespace
     FTestState CompilePlayOnceState(FAnimationGraphCompiler& Compiler, CAnimation* Clip)
     {
         FTestState Out;
-        Out.ClockSlotFirst = (uint16)Compiler.GetClockSlots().size();
+        Out.ClockSlotFirst = (uint16)Compiler.GetClockSlots().Num();
         Out.ClockSlot      = Compiler.AllocClockSlot();
 
         const uint16 SpeedReg    = Compiler.EmitLoadConst(1.0f);
@@ -63,7 +63,7 @@ namespace
         const uint16 TimeReg = Compiler.EmitAdvanceClock(Out.ClockSlot, SpeedReg, ClipIndex, LoopModeReg, StartPosReg, FinishedReg);
 
         Out.PoseRegister  = Compiler.EmitSampleAnim(ClipIndex, TimeReg);
-        Out.ClockSlotEnd  = (uint16)Compiler.GetClockSlots().size();
+        Out.ClockSlotEnd  = (uint16)Compiler.GetClockSlots().Num();
         return Out;
     }
 
@@ -115,13 +115,13 @@ namespace
         ToB.ToState       = 1;
         ToB.Terms         = { MakeTerm(EAnimTransitionSource::Parameter, FName("Go"), EAnimTransitionCompare::Greater, 0.5f) };
         ToB.BlendDuration = 0.1f;
-        Machine.Transitions.push_back(ToB);
+        Machine.Transitions.Add(ToB);
 
         FAnimGraphTransition ToA = ToB;
         ToA.FromState = 1;
         ToA.ToState   = 0;
         ToA.Terms[0].Compare = EAnimTransitionCompare::Less;
-        Machine.Transitions.push_back(ToA);
+        Machine.Transitions.Add(ToA);
 
         Out.GoParam = Compiler.AddParameter(FName("Go"), EAnimGraphParamType::Float, 0.0f);
         if (bSkipInactive) { Compiler.FinishStateMachineCode(EnterOp); }
@@ -171,13 +171,13 @@ TEST(AnimationStateMachine, PlayOnceStateRestartsOnReEntry)
     ToIdle.ToState            = 1;
     ToIdle.Terms              = { MakeTerm(EAnimTransitionSource::Parameter, FName("Go"), EAnimTransitionCompare::Greater, 0.5f) };
     ToIdle.BlendDuration      = 0.0f;
-    Machine.Transitions.push_back(ToIdle);
+    Machine.Transitions.Add(ToIdle);
 
     FAnimGraphTransition BackToOneShot = ToIdle;
     BackToOneShot.FromState = 1;
     BackToOneShot.ToState   = 0;
     BackToOneShot.Terms[0].Compare = EAnimTransitionCompare::Less;
-    Machine.Transitions.push_back(BackToOneShot);
+    Machine.Transitions.Add(BackToOneShot);
 
     const int32 GoParam = Compiler.AddParameter(FName("Go"), EAnimGraphParamType::Float, 0.0f);
     Compiler.EmitOutput(Compiler.EmitEvalStateMachine(Move(Machine)));
@@ -239,7 +239,7 @@ TEST(AnimationStateMachine, TimeInStateTransitionFiresAfterItsDwellTime)
     WhenDone.ToState         = 1;
     WhenDone.Terms           = { MakeTerm(EAnimTransitionSource::TimeInState, FName(), EAnimTransitionCompare::GreaterEqual, 0.3f) };
     WhenDone.BlendDuration   = 0.0f;
-    Machine.Transitions.push_back(WhenDone);
+    Machine.Transitions.Add(WhenDone);
 
     const uint16 CurrentStateSlot = Machine.CurrentStateSlot;
     Compiler.EmitOutput(Compiler.EmitEvalStateMachine(Move(Machine)));
@@ -291,7 +291,7 @@ TEST(AnimationStateMachine, NestedMachineKeepsItsStateWhileItsOwnerIsInactive)
     ToInnerMoving.ToState            = 1;
     ToInnerMoving.Terms              = { MakeTerm(EAnimTransitionSource::Parameter, FName("InnerGo"), EAnimTransitionCompare::Greater, 0.5f) };
     ToInnerMoving.BlendDuration      = 0.0f;
-    Inner.Transitions.push_back(ToInnerMoving);
+    Inner.Transitions.Add(ToInnerMoving);
 
     const uint16 InnerCurrentStateSlot = Inner.CurrentStateSlot;
     const uint16 InnerPose = Compiler.EmitEvalStateMachine(Move(Inner));
@@ -314,13 +314,13 @@ TEST(AnimationStateMachine, NestedMachineKeepsItsStateWhileItsOwnerIsInactive)
     ToAirborne.ToState            = 1;
     ToAirborne.Terms              = { MakeTerm(EAnimTransitionSource::Parameter, FName("Airborne"), EAnimTransitionCompare::Greater, 0.5f) };
     ToAirborne.BlendDuration      = 0.0f;
-    Outer.Transitions.push_back(ToAirborne);
+    Outer.Transitions.Add(ToAirborne);
 
     FAnimGraphTransition BackToGrounded = ToAirborne;
     BackToGrounded.FromState = 1;
     BackToGrounded.ToState   = 0;
     BackToGrounded.Terms[0].Compare = EAnimTransitionCompare::Less;
-    Outer.Transitions.push_back(BackToGrounded);
+    Outer.Transitions.Add(BackToGrounded);
 
     const int32 InnerGoParam  = Compiler.AddParameter(FName("InnerGo"), EAnimGraphParamType::Float, 0.0f);
     const int32 AirborneParam = Compiler.AddParameter(FName("Airborne"), EAnimGraphParamType::Float, 0.0f);
@@ -380,8 +380,8 @@ TEST(AnimationStateMachine, SkippingInactiveStatesMatchesRunningThemAll)
             FAnimationGraphVM::BuildTasks(Full.Graph, &Skeleton, 0.05f, FullState, FullTasks, RootMotion);
             FAnimationGraphVM::BuildTasks(Skipped.Graph, &Skeleton, 0.05f, SkippedState, SkippedTasks, RootMotion);
 
-            ASSERT_EQ(FullState.StateSlots.size(), SkippedState.StateSlots.size());
-            for (SIZE_T Slot = 0; Slot < FullState.StateSlots.size(); ++Slot)
+            ASSERT_EQ(FullState.StateSlots.Num(), SkippedState.StateSlots.Num());
+            for (int32 Slot = 0; Slot < FullState.StateSlots.Num(); ++Slot)
             {
                 EXPECT_NEAR(FullState.StateSlots[Slot], SkippedState.StateSlots[Slot], 1e-5f) << "slot " << Slot << " tick " << Tick;
             }

@@ -57,20 +57,20 @@ TEST(ObjectTemplateInit, NewObjectTakesScalarDefaultsFromTheCDO)
 TEST(ObjectTemplateInit, NewObjectTakesContainerDefaultsFromTheCDO)
 {
     TVector<FName> Seeded;
-    Seeded.push_back(FName("Alpha"));
-    Seeded.push_back(FName("Beta"));
+    Seeded.Emplace("Alpha");
+    Seeded.Emplace("Beta");
 
     TScopedDefault<CEntityScriptTest, TVector<FName>> Default(&CEntityScriptTest::Values, Seeded);
 
     CEntityScriptTest* Fresh = NewObject<CEntityScriptTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
 
-    ASSERT_EQ(Fresh->Values.size(), 2u) << "a container default did not reach the new object";
+    ASSERT_EQ(Fresh->Values.Num(), 2) << "a container default did not reach the new object";
     EXPECT_EQ(Fresh->Values[0], FName("Alpha"));
     EXPECT_EQ(Fresh->Values[1], FName("Beta"));
 
     // Proves the copy is a real one rather than a shared buffer, which a memcpy of the header would give.
-    Fresh->Values.push_back(FName("Gamma"));
-    EXPECT_EQ(GetMutableDefault<CEntityScriptTest>()->Values.size(), 2u) << "the new object writes through to the CDO";
+    Fresh->Values.Emplace("Gamma");
+    EXPECT_EQ(GetMutableDefault<CEntityScriptTest>()->Values.Num(), 2) << "the new object writes through to the CDO";
 }
 
 TEST(ObjectTemplateInit, AnExplicitTemplateBeatsTheCDO)

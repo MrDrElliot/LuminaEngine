@@ -5,6 +5,7 @@
 #include "Core/Http/HttpServer.h"
 #include "Core/JsonRpc/JsonRpc.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "MCPLog.h"
 
 namespace Lumina::MCP
 {
@@ -17,11 +18,11 @@ namespace Lumina::MCP
     };
 
     // Carries Model Context Protocol traffic over loopback HTTP and hands it to a JSON-RPC dispatcher.
-    class FServer
+    class MCPEDITOR_API FServer
     {
     public:
 
-        FServer() = default;
+        FServer();
         ~FServer();
 
         FServer(const FServer&) = delete;
@@ -36,6 +37,20 @@ namespace Lumina::MCP
         // Where a plugin or subsystem registers the methods it wants to answer.
         NODISCARD JsonRpc::FDispatcher& GetDispatcher() { return Dispatcher; }
 
+        NODISCARD const FLog& GetLog() const { return Log; }
+        NODISCARD FLog& GetLog() { return Log; }
+
+        struct FReply
+        {
+            FString Body;
+
+            // Set when this message opened a session, which the client sends back on every later request.
+            FString OpenedSession;
+        };
+
+        // The dispatch boundary every message crosses, so each one is logged whichever method or tool it names.
+        NODISCARD FReply HandleMessage(FStringView Message, FStringView Session);
+
         // Holds an asset for the session, as an open editor tab would, when a tool's own short-lived ref is its only one.
         void KeepLoaded(CObject* Object);
 
@@ -47,6 +62,7 @@ namespace Lumina::MCP
 
         Http::FServer        Transport;
         JsonRpc::FDispatcher Dispatcher;
+        FLog                 Log;
 
         FServerSettings Settings;
 

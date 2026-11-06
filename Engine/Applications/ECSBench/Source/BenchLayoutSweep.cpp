@@ -32,12 +32,12 @@ namespace ECSBench
         };
 
         template<typename T>
-        double MeasureEmplace(size_t EntityCount, size_t Passes)
+        double MeasureEmplace(int32 EntityCount, int32 Passes)
         {
             return MeasureNanosPerOp(EntityCount, Passes, [&]
             {
                 ECS::FRegistry Registry;
-                for (size_t Index = 0; Index < EntityCount; ++Index)
+                for (int32 Index = 0; Index < EntityCount; ++Index)
                 {
                     Registry.Emplace<T>(Registry.Create());
                 }
@@ -45,10 +45,10 @@ namespace ECSBench
         }
 
         template<typename T>
-        double MeasureIterate(size_t EntityCount, size_t Passes)
+        double MeasureIterate(int32 EntityCount, int32 Passes)
         {
             ECS::FRegistry Registry;
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 Registry.Emplace<T>(Registry.Create());
             }
@@ -65,32 +65,32 @@ namespace ECSBench
         }
 
         template<typename T>
-        double MeasureRandomGet(size_t EntityCount, size_t Passes)
+        double MeasureRandomGet(int32 EntityCount, int32 Passes)
         {
             ECS::FRegistry Registry;
             TVector<ECS::FEntity> Entities;
-            Entities.reserve(EntityCount);
+            Entities.Reserve(EntityCount);
 
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
                 const ECS::FEntity Entity = Registry.Create();
                 Registry.Emplace<T>(Entity);
-                Entities.push_back(Entity);
+                Entities.Add(Entity);
             }
 
             FSplitMix Random(0x5EEDu);
             TVector<ECS::FEntity> Order;
-            Order.reserve(EntityCount);
-            for (size_t Index = 0; Index < EntityCount; ++Index)
+            Order.Reserve(EntityCount);
+            for (int32 Index = 0; Index < EntityCount; ++Index)
             {
-                Order.push_back(Entities[Random.NextBelow(static_cast<uint32>(EntityCount))]);
+                Order.Add(Entities[Random.NextBelow(static_cast<uint32>(EntityCount))]);
             }
 
             float Sink = 0.0f;
             const double Nanos = MeasureNanosPerOp(EntityCount, Passes, [&]
             {
                 float Total = 0.0f;
-                for (size_t Index = 0; Index < Order.size(); ++Index)
+                for (int32 Index = 0; Index < Order.Num(); ++Index)
                 {
                     Total += Registry.Get<T>(Order[Index]).M[0];
                 }
@@ -101,7 +101,7 @@ namespace ECSBench
         }
 
         template<uint32 Bytes>
-        FLayoutRow MeasureSize(size_t EntityCount, size_t Passes)
+        FLayoutRow MeasureSize(int32 EntityCount, int32 Passes)
         {
             FLayoutRow Row;
             Row.Bytes = Bytes;
@@ -124,7 +124,7 @@ namespace ECSBench
         }
     }
 
-    void RunLayoutSweepCases(size_t EntityCount, size_t Passes)
+    void RunLayoutSweepCases(int32 EntityCount, int32 Passes)
     {
         std::printf("\nLayout sweep, packed against paged, nanoseconds per op. Ratio above 1.00 favors paged.\n\n");
         std::printf("%6s %9s %9s %9s %9s %9s %9s %9s %9s %9s\n",

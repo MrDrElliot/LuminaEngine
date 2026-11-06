@@ -27,8 +27,8 @@ namespace Lumina
 
     void SMeshComponent::InvalidateRenderResolve()
     {
-        // Invalidates THIS COMPONENT's copy; the shared entry goes through InvalidateDependency.
+        // This component's copy only; the shared entry goes through InvalidateDependency.
         CachedEntryState = MESH_RESOLVE_STATE_STALE;
-        FMeshResolveCache::MarkPendingWork();
+        ResolveBinding.Enqueue();
     }
 }

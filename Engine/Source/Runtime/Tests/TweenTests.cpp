@@ -45,16 +45,16 @@ TEST(Tween, StepsRunInSequence)
 
     TVector<int32> Order;
     Manager.Create()
-        .Call([&Order] { Order.push_back(1); })
+        .Call([&Order] { Order.Add(1); })
         .Interval(0.5f)
-        .Call([&Order] { Order.push_back(2); });
+        .Call([&Order] { Order.Add(2); });
 
     Advance(Manager, 1);
-    ASSERT_EQ(Order.size(), 1u);
+    ASSERT_EQ(Order.Num(), 1);
     EXPECT_EQ(Order[0], 1);
 
     Advance(Manager, 6);
-    ASSERT_EQ(Order.size(), 2u);
+    ASSERT_EQ(Order.Num(), 2);
     EXPECT_EQ(Order[1], 2);
 }
 
@@ -325,15 +325,15 @@ TEST(Tween, StepAndLoopEventsFireInOrder)
         .Interval(0.1f)
         .Interval(0.1f)
         .SetLoops(2)
-        .OnStep([&Steps](int32 Step) { Steps.push_back(Step); })
-        .OnLoop([&Loops](int32 Completed) { Loops.push_back(Completed); });
+        .OnStep([&Steps](int32 Step) { Steps.Add(Step); })
+        .OnLoop([&Loops](int32 Completed) { Loops.Add(Completed); });
 
     Advance(Manager, 10);
-    ASSERT_EQ(Steps.size(), 4u);
+    ASSERT_EQ(Steps.Num(), 4);
     EXPECT_EQ(Steps[0], 0);
     EXPECT_EQ(Steps[1], 1);
     EXPECT_EQ(Steps[2], 0);
-    ASSERT_EQ(Loops.size(), 1u) << "the last pass ends in OnFinished, not OnLoop";
+    ASSERT_EQ(Loops.Num(), 1) << "the last pass ends in OnFinished, not OnLoop";
     EXPECT_EQ(Loops[0], 1);
 }
 

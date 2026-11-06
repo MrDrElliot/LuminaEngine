@@ -39,23 +39,23 @@ namespace Lumina::ECS
     {
     public:
 
-        NODISCARD FORCEINLINE bool IsEmpty() const { return Listeners.empty(); }
+        NODISCARD FORCEINLINE bool IsEmpty() const { return Listeners.IsEmpty(); }
 
         FSignalConnection Connect(FComponentListener::FCallback Callback, void* Payload = nullptr)
         {
             const FComponentListener Listener{ Callback, Payload };
-            Listeners.push_back(Listener);
+            Listeners.Add(Listener);
             return FSignalConnection{ this, Listener };
         }
 
         void Disconnect(FComponentListener::FCallback Callback, void* Payload = nullptr)
         {
             const FComponentListener Target{ Callback, Payload };
-            for (size_t Index = 0; Index < Listeners.size(); ++Index)
+            for (int32 Index = 0; Index < Listeners.Num(); ++Index)
             {
                 if (Listeners[Index] == Target)
                 {
-                    Listeners.erase(Listeners.begin() + Index);
+                    Listeners.RemoveAt(Index);
                     return;
                 }
             }
@@ -63,11 +63,11 @@ namespace Lumina::ECS
 
         void DisconnectPayload(void* Payload)
         {
-            for (size_t Index = Listeners.size(); Index > 0; --Index)
+            for (int32 Index = Listeners.Num(); Index > 0; --Index)
             {
                 if (Listeners[Index - 1].Payload == Payload)
                 {
-                    Listeners.erase(Listeners.begin() + (Index - 1));
+                    Listeners.RemoveAt((Index - 1));
                 }
             }
         }
@@ -97,11 +97,11 @@ namespace Lumina::ECS
             Disconnect(&FreeThunk<Callback>, nullptr);
         }
 
-        void Clear() { Listeners.clear(); }
+        void Clear() { Listeners.Reset(); }
 
         FORCEINLINE void Broadcast(FRegistry& Registry, FEntity Entity) const
         {
-            if (Listeners.empty())
+            if (Listeners.IsEmpty())
             {
                 return;
             }
@@ -178,13 +178,13 @@ namespace Lumina::ECS
         // Indexed and copied, since a handler may connect or disconnect on this very signal while it runs.
         FORCENOINLINE void BroadcastSlow(FRegistry& Registry, FEntity Entity) const
         {
-            for (size_t Index = 0; Index < Listeners.size();)
+            for (int32 Index = 0; Index < Listeners.Num();)
             {
                 const FComponentListener Listener = Listeners[Index];
                 Listener.Callback(Listener.Payload, Registry, Entity);
 
                 // A handler that disconnected itself left the next listener in its slot.
-                if (Index < Listeners.size() && Listeners[Index] == Listener)
+                if (Index < Listeners.Num() && Listeners[Index] == Listener)
                 {
                     ++Index;
                 }

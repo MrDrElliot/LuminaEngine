@@ -128,7 +128,7 @@ namespace Lumina
         uint32 NumChannels = 0;
         uint64 NumFrames   = 0;
 
-        bool IsValid() const { return NumChannels > 0 && NumFrames > 0 && !Samples.empty(); }
+        bool IsValid() const { return NumChannels > 0 && NumFrames > 0 && !Samples.IsEmpty(); }
     };
 
 
@@ -254,7 +254,7 @@ namespace Lumina
         // Allocates, so call it while the operator is being built.
         void Initialize(uint32 MaxDelayFrames)
         {
-            Buffer.assign((size_t)MaxDelayFrames + 2, 0.0f);
+            Buffer.Init(0.0f, IntCastChecked<int32>(static_cast<int64>(MaxDelayFrames) + 2));
             WriteIndex = 0;
         }
 
@@ -264,12 +264,12 @@ namespace Lumina
             WriteIndex = 0;
         }
 
-        float GetMaxDelay() const { return Buffer.size() > 2 ? (float)(Buffer.size() - 2) : 0.0f; }
+        float GetMaxDelay() const { return Buffer.Num() > 2 ? (float)(Buffer.Num() - 2) : 0.0f; }
 
         // Delay counts frames back from the next write and may be fractional.
         FORCEINLINE float Read(float Delay) const
         {
-            const size_t Capacity = Buffer.size();
+            const int32 Capacity = Buffer.Num();
 
             float Position = (float)WriteIndex - Delay;
             while (Position < 0.0f)
@@ -277,8 +277,8 @@ namespace Lumina
                 Position += (float)Capacity;
             }
 
-            const size_t Index = (size_t)Position % Capacity;
-            const size_t Next  = (Index + 1) % Capacity;
+            const int32 Index = static_cast<int32>(Position) % Capacity;
+            const int32 Next  = (Index + 1) % Capacity;
             const float  Alpha = Math::Fract(Position);
             return Buffer[Index] + (Buffer[Next] - Buffer[Index]) * Alpha;
         }
@@ -286,15 +286,15 @@ namespace Lumina
         FORCEINLINE void Write(float Sample)
         {
             Buffer[WriteIndex] = Sample;
-            WriteIndex = (WriteIndex + 1) % Buffer.size();
+            WriteIndex = (WriteIndex + 1) % Buffer.Num();
         }
 
-        bool IsEmpty() const { return Buffer.empty(); }
+        bool IsEmpty() const { return Buffer.IsEmpty(); }
 
     private:
 
         TVector<float> Buffer;
-        size_t         WriteIndex = 0;
+        int32          WriteIndex = 0;
     };
 
     /** Per-block state handed to every operator's Execute. */

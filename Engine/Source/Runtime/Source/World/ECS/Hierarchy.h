@@ -33,7 +33,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE const FHierarchyNode* Find(FEntity Entity) const
         {
             const uint32 Index = Entity.GetIndex();
-            if (Index >= Nodes.size())
+            if (Index >= static_cast<uint32>(Nodes.Num()))
             {
                 return nullptr;
             }
@@ -105,16 +105,16 @@ namespace Lumina::ECS
             TVector<FEntity> Pending;
             for (FEntity Child = GetLastChild(Root); !Child.IsNull(); Child = GetPrevSibling(Child))
             {
-                Pending.push_back(Child);
+                Pending.Add(Child);
             }
-            while (!Pending.empty())
+            while (!Pending.IsEmpty())
             {
-                const FEntity Current = Pending.back();
-                Pending.pop_back();
+                const FEntity Current = Pending.Last();
+                Pending.Pop();
                 Func(Current);
                 for (FEntity Child = GetLastChild(Current); !Child.IsNull(); Child = GetPrevSibling(Child))
                 {
-                    Pending.push_back(Child);
+                    Pending.Add(Child);
                 }
             }
         }
@@ -131,7 +131,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE uint32 GetSlot(FEntity Entity) const
         {
             const uint32 Index = Entity.GetIndex();
-            if (Index >= SlotByIndex.size())
+            if (Index >= static_cast<uint32>(SlotByIndex.Num()))
             {
                 return NoSlot;
             }
@@ -143,7 +143,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE uint32 GetSlotOfLive(FEntity Entity) const
         {
             const uint32 Index = Entity.GetIndex();
-            return Index < SlotByIndex.size() ? SlotByIndex[Index] : NoSlot;
+            return Index < static_cast<uint32>(SlotByIndex.Num()) ? SlotByIndex[Index] : NoSlot;
         }
 
         NODISCARD FORCEINLINE const TVector<FEntity>& GetOrder() const { return Order; }

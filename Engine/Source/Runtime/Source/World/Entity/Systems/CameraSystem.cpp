@@ -20,8 +20,6 @@ namespace Lumina
         RequireUpdate(EUpdateStage::Paused);
         // Everything that moves a camera in the same stage goes first, so the resolved view is this frame's.
         RunsAfter<SCameraRigSystem, SSocketAttachmentSystem, STweenSystem, SCoroutineSystem>();
-        Writes<FResolvedSceneView, FCameraGlobalState, SCameraComponent>();
-        Reads<STransformComponent, SPostProcessComponent>();
     }
 
     float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha)
@@ -39,7 +37,7 @@ namespace Lumina
         }
     }
 
-    namespace Detail
+    namespace CameraSystemInternal
     {
         static void NewCameraConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
@@ -50,7 +48,7 @@ namespace Lumina
                 return;
             }
 
-            SCameraComponent& Camera = Registry.Get<SCameraComponent>(Entity);
+            const SCameraComponent& Camera = Registry.Get<ECS::Read<SCameraComponent>>(Entity);
             if (Camera.bAutoActivate)
             {
                 World->GetCamera()->SetActiveCamera(Entity);
@@ -60,14 +58,14 @@ namespace Lumina
         // Split from the sample below so a same-frame re-resolve can read the shakes without advancing them.
         static void AdvanceCameraShakes(FCameraGlobalState& State, float Dt)
         {
-            for (int32 i = 0; i < (int32)State.Shakes.size(); )
+            for (int32 i = 0; i < State.Shakes.Num(); )
             {
                 FCameraShakeInstance& S = State.Shakes[i];
                 S.Elapsed += Dt;
 
                 if (S.Duration > 0.0f && S.Elapsed >= S.Duration)
                 {
-                    State.Shakes.erase(State.Shakes.begin() + i);
+                    State.Shakes.RemoveAt(i);
                 }
                 else
                 {
@@ -115,19 +113,9 @@ namespace Lumina
         }
 
         // Advances no clock, so calling it a second time inside one frame is free of side effects.
-        static bool StampResolvedView(ECS::FRegistry& Registry, FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
+        static void StampResolvedView(const FCameraGlobalState& CameraState, SCameraComponent& Camera, const STransformComponent& CameraTransform,
+                                      FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
         {
-            FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
-
-            const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
-            if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
-            {
-                return false;
-            }
-
-            const STransformComponent& CameraTransform = Registry.Get<STransformComponent>(CameraEntity);
-            SCameraComponent& Camera = Registry.Get<SCameraComponent>(CameraEntity);
-
             OutPosition = CameraTransform.GetWorldLocation();
             OutRotation = CameraTransform.GetWorldRotation();
             OutFOV      = Camera.FOV;
@@ -164,44 +152,36 @@ namespace Lumina
                 ShakenRotation * FVector3(0.0f, 0.0f, 1.0f),
                 ShakenRotation * FVector3(0.0f, 1.0f, 0.0f),
                 OutFOV);
-
-            return true;
         }
     }
 
-    void SCameraSystem::OnStartup(const SSystemContext& Context)
+    void SCameraSystem::OnStartup(const SExclusiveContext& Context)
     {
-
-        Context.GetRegistry().GetSignals<SCameraComponent>().OnConstruct.Connect<&Detail::NewCameraConstructed>();
-    }
-
-    void SCameraSystem::OnTeardown(const SSystemContext& Context)
-    {
+        Context.GetRegistry().GetSignals<SCameraComponent>().OnConstruct.Connect<&CameraSystemInternal::NewCameraConstructed>();
     }
 
     void SCameraSystem::OnUpdate(const SSystemContext& Context)
     {
+        using namespace CameraSystemInternal;
 
-        LUMINA_PROFILE_SCOPE();
-
-        ECS::FRegistry& Registry = Context.GetRegistry();
-        FResolvedSceneView& Resolved = Registry.Ctx().Get<FResolvedSceneView>();
-
+        FResolvedSceneView& Resolved = *ResolvedView;
         Resolved.bHasView = false;
         Resolved.bHasPostProcess = false;
-        Resolved.PostProcessMaterials.clear();
+        Resolved.PostProcessMaterials.Reset();
 
-        FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
+        FCameraGlobalState& CameraState = *GlobalState;
         const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
-        if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
+        SCameraComponent* CameraPtr = Cameras.TryGet<SCameraComponent>(CameraEntity);
+        const STransformComponent* CameraTransformPtr = Cameras.TryGet<STransformComponent>(CameraEntity);
+        if (CameraPtr == nullptr || CameraTransformPtr == nullptr)
         {
             return;
         }
 
-        const STransformComponent& CameraTransform = Registry.Get<STransformComponent>(CameraEntity);
+        const STransformComponent& CameraTransform = *CameraTransformPtr;
         (void)CameraTransform.GetWorldMatrix();
 
-        SCameraComponent& Camera = Registry.Get<SCameraComponent>(CameraEntity);
+        SCameraComponent& Camera = *CameraPtr;
 
         // Live pose of the active camera; the blend (if any) eases toward this.
         FVector3 TargetPosition;
@@ -215,42 +195,58 @@ namespace Lumina
 
         struct FVolumeContribution { float Weight; const SPostProcessSettings* Settings; int32 Priority; };
         static thread_local TVector<FVolumeContribution> Contributions;
-        Contributions.clear();
+        Contributions.Reset();
 
-        auto VolumeView = Registry.View<SPostProcessComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
-        for (ECS::FEntity VolEntity : VolumeView)
+        struct FMaterialVolumeRef { const SPostProcessComponent* Volume; int32 Priority; };
+        static thread_local TVector<FMaterialVolumeRef> MaterialVolumes;
+        MaterialVolumes.Reset();
+
+        Volumes.ForEach([&](const SPostProcessComponent& Volume, const STransformComponent& VolXform)
         {
-            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(VolEntity);
-            if (!Volume.bEnabled || Volume.BlendWeight <= 0.0f)
+            if (!Volume.bEnabled)
             {
-                continue;
+                return;
             }
 
-            float Weight = Volume.BlendWeight;
+            const bool bBlends = Volume.BlendWeight > 0.0f;
+            const bool bHasMaterials = !Volume.PostProcessMaterials.IsEmpty();
+            if (!bBlends && !bHasMaterials)
+            {
+                return;
+            }
 
+            float Outside = 0.0f;
             if (!Volume.bInfiniteExtent)
             {
-                const STransformComponent& VolXform = VolumeView.Get<STransformComponent>(VolEntity);
                 const FMatrix4 InvWorld = Math::Inverse(VolXform.GetWorldMatrix());
                 const FVector3 LocalCam = FVector3(InvWorld * FVector4(CameraWorldPos, 1.0f));
                 const FVector3 D = Math::Abs(LocalCam) - Volume.BoxExtent;
-                const float Outside = Math::Max(D.x, Math::Max(D.y, D.z));
+                Outside = Math::Max(D.x, Math::Max(D.y, D.z));
 
                 if (Outside > Volume.BlendDistance)
                 {
-                    continue;
+                    return;
                 }
+            }
+
+            if (bBlends)
+            {
+                float Weight = Volume.BlendWeight;
                 if (Outside > 0.0f && Volume.BlendDistance > 0.0001f)
                 {
                     Weight *= 1.0f - (Outside / Volume.BlendDistance);
                 }
+                if (Weight > 0.0f)
+                {
+                    Contributions.Emplace(Weight, &Volume.Settings, Volume.Priority);
+                }
             }
 
-            if (Weight > 0.0f)
+            if (bHasMaterials)
             {
-                Contributions.push_back({Weight, &Volume.Settings, Volume.Priority});
+                MaterialVolumes.Emplace(&Volume, Volume.Priority);
             }
-        }
+        });
 
         Algo::Sort(Contributions, [](const FVolumeContribution& A, const FVolumeContribution& B)
         {
@@ -276,34 +272,10 @@ namespace Lumina
         {
             if (M.IsValid())
             {
-                PostProcessMaterials.push_back(M.Get());
+                PostProcessMaterials.Add(M.Get());
             }
         }
 
-        struct FMaterialVolumeRef { ECS::FEntity Entity; int32 Priority; };
-        TVector<FMaterialVolumeRef> MaterialVolumes;
-        for (ECS::FEntity VolEntity : VolumeView)
-        {
-            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(VolEntity);
-            if (!Volume.bEnabled || Volume.PostProcessMaterials.empty())
-            {
-                continue;
-            }
-            if (!Volume.bInfiniteExtent)
-            {
-                const STransformComponent& VolXform = VolumeView.Get<STransformComponent>(VolEntity);
-                const FMatrix4 InvWorld = Math::Inverse(VolXform.GetWorldMatrix());
-                const FVector3 LocalCam = FVector3(InvWorld * FVector4(CameraWorldPos, 1.0f));
-                const FVector3 D = Math::Abs(LocalCam) - Volume.BoxExtent;
-                const float Outside = Math::Max(D.x, Math::Max(D.y, D.z));
-                if (Outside > Volume.BlendDistance)
-                {
-                    continue;
-                }
-            }
-            MaterialVolumes.push_back({VolEntity, Volume.Priority});
-        }
-        
         Algo::Sort(MaterialVolumes, [](const FMaterialVolumeRef& A, const FMaterialVolumeRef& B)
         {
             return A.Priority < B.Priority;
@@ -311,12 +283,11 @@ namespace Lumina
         
         for (const FMaterialVolumeRef& Ref : MaterialVolumes)
         {
-            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(Ref.Entity);
-            for (const TStrongObjectPtr<CMaterialInterface>& M : Volume.PostProcessMaterials)
+            for (const TStrongObjectPtr<CMaterialInterface>& M : Ref.Volume->PostProcessMaterials)
             {
                 if (M.IsValid())
                 {
-                    PostProcessMaterials.push_back(M.Get());
+                    PostProcessMaterials.Add(M.Get());
                 }
             }
         }
@@ -325,14 +296,14 @@ namespace Lumina
         FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
         if (Blend.bActive)
         {
-            Blend.Elapsed += (float)Context.GetDeltaTime();
+            Blend.Elapsed += Context.GetDeltaTime();
             if (Blend.Elapsed >= Blend.Duration)
             {
                 Blend.bActive = false;
             }
         }
 
-        Detail::AdvanceCameraShakes(CameraState, (float)Context.GetDeltaTime());
+        AdvanceCameraShakes(CameraState, Context.GetDeltaTime());
 
         SPostProcessSettings FinalPostProcess = ResolvedPostProcess;
         if (Blend.bActive)
@@ -346,10 +317,7 @@ namespace Lumina
         FVector3 FinalPosition = TargetPosition;
         FQuat    FinalRotation = TargetRotation;
         float    FinalFOV      = TargetFOV;
-        if (!Detail::StampResolvedView(Registry, FinalPosition, FinalRotation, FinalFOV))
-        {
-            return;
-        }
+        StampResolvedView(CameraState, Camera, CameraTransform, FinalPosition, FinalRotation, FinalFOV);
 
         if (CameraState.OverlayFade > FinalPostProcess.FadeAmount)
         {
@@ -379,20 +347,24 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FVector3 Position(0.0f);
-        FQuat    Rotation;
-        float    FOV = 0.0f;
-        if (!Detail::StampResolvedView(Registry, Position, Rotation, FOV))
+        const FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
+        const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
+        if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
         {
             return;
         }
+
+        SCameraComponent& Camera = Registry.Get<ECS::Write<SCameraComponent>>(CameraEntity);
+        FVector3 Position(0.0f);
+        FQuat    Rotation;
+        float    FOV = 0.0f;
+        CameraSystemInternal::StampResolvedView(CameraState, Camera, Registry.Get<ECS::Read<STransformComponent>>(CameraEntity), Position, Rotation, FOV);
 
         // Only refreshed once Update has published a view, so this never invents one before the first tick.
         FResolvedSceneView& Resolved = Registry.Ctx().Get<FResolvedSceneView>();
         if (Resolved.bHasView)
         {
-            const ECS::FEntity CameraEntity = Registry.Ctx().Get<FCameraGlobalState>().ActiveCameraEntity;
-            Resolved.ViewVolume = Registry.Get<SCameraComponent>(CameraEntity).GetViewVolume();
+            Resolved.ViewVolume = Camera.GetViewVolume();
         }
     }
 
@@ -441,7 +413,7 @@ namespace Lumina
 
     SCameraComponent* SCameraSystem::GetActiveCamera(ECS::FRegistry& Registry)
     {
-        return Registry.TryGet<SCameraComponent>(GetActiveCameraEntity(Registry));
+        return Registry.TryGet<ECS::Write<SCameraComponent>>(GetActiveCameraEntity(Registry));
     }
 
     uint32 SCameraSystem::PlayCameraShake(ECS::FRegistry& Registry, const SCameraShakeParams& Params)
@@ -468,7 +440,7 @@ namespace Lumina
             S.RotFreqMul[a] = 0.85f + 0.30f * Frac(S.Handle * 23u + (uint32)a * 71u + 11u);
         }
 
-        State.Shakes.push_back(S);
+        State.Shakes.Add(S);
         return S.Handle;
     }
 
@@ -492,6 +464,6 @@ namespace Lumina
 
     void SCameraSystem::StopAllCameraShakes(ECS::FRegistry& Registry)
     {
-        Registry.Ctx().Get<FCameraGlobalState>().Shakes.clear();
+        Registry.Ctx().Get<FCameraGlobalState>().Shakes.Reset();
     }
 }

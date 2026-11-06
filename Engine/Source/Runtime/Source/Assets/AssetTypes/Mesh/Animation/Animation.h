@@ -318,12 +318,12 @@ namespace Lumina
 
         const TVector<FAnimationNotify>& GetNotifies() const { return AnimationResource->Notifies; }
         const TVector<FAnimationNotifyState>& GetNotifyStates() const { return AnimationResource->NotifyStates; }
-        bool HasNotifies() const { return !AnimationResource->Notifies.empty() || !AnimationResource->NotifyStates.empty(); }
+        bool HasNotifies() const { return !AnimationResource->Notifies.IsEmpty() || !AnimationResource->NotifyStates.IsEmpty(); }
 
         const FSyncTrack& GetSyncTrack() const { return AnimationResource->SyncTrack; }
 
         const TVector<FAnimationCurve>& GetCurves() const { return AnimationResource->Curves; }
-        bool HasCurves() const { return !AnimationResource->Curves.empty(); }
+        bool HasCurves() const { return !AnimationResource->Curves.IsEmpty(); }
 
         int32 FindCurveIndex(const FName& CurveName) const;
 

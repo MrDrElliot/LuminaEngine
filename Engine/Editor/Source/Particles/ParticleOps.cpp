@@ -30,12 +30,12 @@ namespace Lumina::ParticleOps
 
         bool EqualsIgnoreCase(FStringView A, FStringView B)
         {
-            if (A.size() != B.size())
+            if (A.Len() != B.Len())
             {
                 return false;
             }
 
-            for (size_t Index = 0; Index < A.size(); ++Index)
+            for (int32 Index = 0; Index < A.Len(); ++Index)
             {
                 if (std::tolower((unsigned char)A[Index]) != std::tolower((unsigned char)B[Index]))
                 {
@@ -48,7 +48,7 @@ namespace Lumina::ParticleOps
 
         CParticleEmitter* EmitterAt(CParticleSystem* System, int32 EmitterIndex)
         {
-            if (System == nullptr || EmitterIndex < 0 || EmitterIndex >= (int32)System->Emitters.size())
+            if (System == nullptr || EmitterIndex < 0 || EmitterIndex >= System->Emitters.Num())
             {
                 return nullptr;
             }
@@ -94,18 +94,18 @@ namespace Lumina::ParticleOps
         // An emitter asset keeps its stack in its own package, which for an emitter inside a system is the system's.
         CParticleEmitterStack* StackOf(const CParticleEmitter* Emitter)
         {
-            if (Emitter == nullptr || Emitter->GetPackage() == nullptr || Emitter->AuthoringStackName.empty())
+            if (Emitter == nullptr || Emitter->GetPackage() == nullptr || Emitter->AuthoringStackName.IsEmpty())
             {
                 return nullptr;
             }
-            return Cast<CParticleEmitterStack>(Emitter->GetPackage()->LoadObjectByName(FName(Emitter->AuthoringStackName.c_str())));
+            return Cast<CParticleEmitterStack>(Emitter->GetPackage()->LoadObjectByName(FName(*Emitter->AuthoringStackName)));
         }
 
         FName UniqueStackName(CPackage* Package)
         {
             for (int32 Suffix = 0; ; ++Suffix)
             {
-                const FName Candidate(Format("ParticleStack_{}", Suffix).c_str());
+                const FName Candidate(*Format("ParticleStack_{}", Suffix));
                 if (Package->LoadObjectByName(Candidate) == nullptr)
                 {
                     return Candidate;
@@ -123,9 +123,9 @@ namespace Lumina::ParticleOps
         }
 
         // Persisted on the emitter, so reordering or renaming never re-points a stack.
-        if (Emitter->AuthoringStackName.empty())
+        if (Emitter->AuthoringStackName.IsEmpty())
         {
-            Emitter->AuthoringStackName = FString("ParticleStack_") + Format("{}", EmitterIndex).c_str();
+            Emitter->AuthoringStackName = FString("ParticleStack_") + *Format("{}", EmitterIndex);
         }
 
         CParticleEmitterStack* Stack = StackOf(Emitter);
@@ -147,7 +147,7 @@ namespace Lumina::ParticleOps
     {
         // Strong from the start, since nothing else holds the wrapper and a compile job dropping its ref would free it.
         TStrongObjectPtr<CParticleSystem> System = NewObject<CParticleSystem>();
-        System->Emitters.push_back(Emitter);
+        System->Emitters.Add(Emitter);
         return System;
     }
 
@@ -162,12 +162,12 @@ namespace Lumina::ParticleOps
         CParticleEmitterStack* Stack = StackOf(Source);
         if (Stack != nullptr)
         {
-            Sources.push_back(Stack);
+            Sources.Add(Stack);
             for (EParticleModuleStage Stage : GetStages())
             {
                 for (const TStrongObjectPtr<CParticleModule>& Module : Stack->GetStack(Stage))
                 {
-                    Sources.push_back(Module.Get());
+                    Sources.Add(Module.Get());
                     Module->GetOwnedObjects(Sources);
                 }
             }
@@ -179,13 +179,13 @@ namespace Lumina::ParticleOps
         {
             return Object == Source ? EmitterName : Object == Stack ? StackName : NAME_None;
         });
-        if (Remap.empty())
+        if (Remap.IsEmpty())
         {
             return nullptr;
         }
 
-        CParticleEmitter* Copy = Cast<CParticleEmitter>(Remap.find(Source)->second);
-        Copy->AuthoringStackName = Stack != nullptr ? FString(StackName.c_str()) : FString();
+        CParticleEmitter* Copy = Cast<CParticleEmitter>(Remap.FindChecked(Source));
+        Copy->AuthoringStackName = Stack != nullptr ? FString(*StackName) : FString();
         return Copy;
     }
 
@@ -238,7 +238,7 @@ namespace Lumina::ParticleOps
             CParticleModule* CDO = Class->GetDefaultObject<CParticleModule>();
             if (CDO != nullptr && CDO->IsPaletteVisible())
             {
-                Types.push_back(Class);
+                Types.Add(Class);
             }
         });
 
@@ -249,10 +249,10 @@ namespace Lumina::ParticleOps
     {
         for (CClass* Class : GetModuleTypes())
         {
-            const FString ClassName(Class->GetName().ToString().c_str());
+            const FString ClassName(*Class->GetName().ToString());
             const FString DisplayName = Class->GetDefaultObject<CParticleModule>()->GetDisplayName();
-            const FStringView ShortName = FStringView(ClassName).starts_with(ModuleClassPrefix)
-                ? FStringView(ClassName).substr(ModuleClassPrefix.size())
+            const FStringView ShortName = FStringView(ClassName).StartsWith(ModuleClassPrefix)
+                ? FStringView(ClassName).Mid(ModuleClassPrefix.Len())
                 : FStringView(ClassName);
             if (EqualsIgnoreCase(FStringView(ClassName), Name) || EqualsIgnoreCase(ShortName, Name) || EqualsIgnoreCase(FStringView(DisplayName), Name))
             {
@@ -284,12 +284,12 @@ namespace Lumina::ParticleOps
         }
 
         TVector<TStrongObjectPtr<CParticleModule>>& Modules = Stack->GetStack(Module->GetStage());
-        const int32 Last = (int32)Modules.size() - 1;
+        const int32 Last = Modules.Num() - 1;
         if (InsertIndex >= 0 && InsertIndex < Last)
         {
             TStrongObjectPtr<CParticleModule> Added = Modules[Last];
-            Modules.erase(Modules.begin() + Last);
-            Modules.insert(Modules.begin() + InsertIndex, Added);
+            Modules.RemoveAt(Last);
+            Modules.Insert(Added, InsertIndex);
         }
 
         return Module;
@@ -298,26 +298,26 @@ namespace Lumina::ParticleOps
     bool RemoveModule(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage, int32 Index)
     {
         TVector<TStrongObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
-        if (Modules == nullptr || Index < 0 || Index >= (int32)Modules->size())
+        if (Modules == nullptr || Index < 0 || Index >= Modules->Num())
         {
             return false;
         }
 
-        Modules->erase(Modules->begin() + Index);
+        Modules->RemoveAt(Index);
         return true;
     }
 
     bool MoveModule(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage, int32 From, int32 To)
     {
         TVector<TStrongObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
-        if (Modules == nullptr || From < 0 || From >= (int32)Modules->size() || To < 0 || To >= (int32)Modules->size())
+        if (Modules == nullptr || From < 0 || From >= Modules->Num() || To < 0 || To >= Modules->Num())
         {
             return false;
         }
 
         TStrongObjectPtr<CParticleModule> Moved = (*Modules)[From];
-        Modules->erase(Modules->begin() + From);
-        Modules->insert(Modules->begin() + To, Moved);
+        Modules->RemoveAt(From);
+        Modules->Insert(Moved, To);
         return true;
     }
 
@@ -333,18 +333,18 @@ namespace Lumina::ParticleOps
     }
 
     bool BeginCompileEmitter(CParticleSystem* System, int32 EmitterIndex, FParticleEmitterCompileJob& Job,
-                             FParticleEmitterCompileOutput& Out, ETaskPriority Priority)
+                             FParticleEmitterCompileOutput& Out, Jobs::EJobPriority Priority)
     {
         CParticleEmitter* Emitter = EmitterAt(System, EmitterIndex);
         CParticleEmitterStack* Stack = FindOrCreateStack(System, EmitterIndex);
         if (Emitter == nullptr || Stack == nullptr)
         {
-            Out.Errors.push_back("That emitter does not exist.");
+            Out.Errors.Add("That emitter does not exist.");
             return false;
         }
         if (GShaderCompiler == nullptr)
         {
-            Out.Errors.push_back("No shader compiler is running in this process.");
+            Out.Errors.Add("No shader compiler is running in this process.");
             return false;
         }
 
@@ -360,26 +360,27 @@ namespace Lumina::ParticleOps
         {
             for (const EdNodeGraph::FError& Error : Compiler.GetErrors())
             {
-                Out.Errors.push_back(Error.Name + ": " + Error.Description);
+                Out.Errors.Add(Error.Name + ": " + Error.Description);
             }
             return false;
         }
 
         const FString Source = Compiler.BuildShader();
-        if (Source.empty())
+        if (Source.IsEmpty())
         {
-            Out.Errors.push_back("The module stack produced no shader source.");
+            Out.Errors.Add("The module stack produced no shader source.");
             return false;
         }
 
         FShaderCompileOptions Options;
-        Options.DebugName = FString(System->GetName().c_str()) + "_" + Emitter->EmitterName + "_Sim";
+        Options.DebugName = FString(*System->GetName()) + "_" + Emitter->EmitterName + "_Sim";
         // Without a template path the raw cache keys to zero and skips itself, so every save paid a full Slang compile.
         Options.TemplateVirtualPath = "/Engine/Resources/Shaders/Particles/ParticleSimulateTemplate.slang";
         Options.Priority = Priority;
         GShaderCompiler->CompilerShaderRaw(Source, Options, [Binaries = Job.Binaries](const FShaderHeader& Header)
         {
-            Binaries->assign(Header.Binaries.begin(), Header.Binaries.end());
+            Binaries->Reset();
+            Binaries->Append(Header.Binaries.begin(), Header.Binaries.end());
         }, Job.Waiter.Track());
         return true;
     }
@@ -391,13 +392,13 @@ namespace Lumina::ParticleOps
         CParticleEmitterStack* Stack = FindStack(System, Job.EmitterIndex);
         if (Emitter == nullptr || Stack == nullptr || Job.Compiler == nullptr)
         {
-            Out.Errors.push_back("The emitter went away while its shader compiled.");
+            Out.Errors.Add("The emitter went away while its shader compiled.");
             return false;
         }
 
-        if (Job.Binaries == nullptr || Job.Binaries->empty())
+        if (Job.Binaries == nullptr || Job.Binaries->IsEmpty())
         {
-            Out.Errors.push_back("The generated shader failed to compile. The editor log has the Slang diagnostics.");
+            Out.Errors.Add("The generated shader failed to compile. The editor log has the Slang diagnostics.");
             return false;
         }
 
@@ -413,16 +414,16 @@ namespace Lumina::ParticleOps
         Emitter->AttributeFloatCount = Compiler.GetAttributeFloatCount();
         Emitter->GridChannelCount    = Compiler.GetGridChannelCount();
         Emitter->GridStageIterations = Compiler.GetGridStageIterations();
-        Emitter->GridChannelNames.clear();
+        Emitter->GridChannelNames.Reset();
         for (const FString& Channel : Compiler.GetGridChannelNames())
         {
-            Emitter->GridChannelNames.push_back(FName(Channel.c_str()));
+            Emitter->GridChannelNames.Emplace(*Channel);
         }
         Emitter->bUsesNeighborGrid = Compiler.UsesNeighborGrid();
-        Emitter->ArrayNames.clear();
+        Emitter->ArrayNames.Reset();
         for (const FString& Array : Compiler.GetArrayNames())
         {
-            Emitter->ArrayNames.push_back(FName(Array.c_str()));
+            Emitter->ArrayNames.Emplace(*Array);
         }
 
         if (Emitter->GridChannelCount > 0)
@@ -430,14 +431,14 @@ namespace Lumina::ParticleOps
             FString Channels;
             for (const FString& Channel : Compiler.GetGridChannelNames())
             {
-                Channels += (Channels.empty() ? "" : ", ") + Channel;
+                Channels += (Channels.IsEmpty() ? "" : ", ") + Channel;
             }
-            Out.Notes.push_back(Format("Grid of {} by {} cells with {} stages and channels {}.", Emitter->GridWidth, Emitter->GridHeight,
-                Emitter->GridStageIterations.size(), Channels).c_str());
+            Out.Notes.Add(*Format("Grid of {} by {} cells with {} stages and channels {}.", Emitter->GridWidth, Emitter->GridHeight,
+                Emitter->GridStageIterations.Num(), Channels));
         }
 
         // The shared vertex shader cannot know the generated layout, so it receives these as uniforms.
-        Emitter->RenderAttributeSlots.resize((size_t)ParticleRenderAttribute::Count);
+        Emitter->RenderAttributeSlots.SetNum(static_cast<int32>(ParticleRenderAttribute::Count));
         for (int32 Attribute = 0; Attribute < (int32)ParticleRenderAttribute::Count; ++Attribute)
         {
             Emitter->RenderAttributeSlots[Attribute] = Compiler.FindAttributeSlot(ParticleRenderAttribute::Names[Attribute]);
@@ -446,11 +447,11 @@ namespace Lumina::ParticleOps
         // Nothing on screen says whether the trail wiring resolved, so the output has to say it.
         if (Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX] >= 0)
         {
-            Out.Notes.push_back(Format("Trail active, previous position in attribute slots {}/{}/{} of {} floats per particle.",
+            Out.Notes.Add(*Format("Trail active, previous position in attribute slots {}/{}/{} of {} floats per particle.",
                 Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX],
                 Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosY],
                 Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosZ],
-                Emitter->AttributeFloatCount).c_str());
+                Emitter->AttributeFloatCount));
         }
 
         // Route the renderer to the generated module-stack shader.

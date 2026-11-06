@@ -30,4 +30,4 @@ namespace Lumina::Profiler
 #define LUMINA_PROFILE_SECTION_NAMED(x)
 #endif
 #define LUMINA_PROFILE_LOG(text, size)              TracyMessage(text, size)
-#define LUMINA_PROFILE_VALUE(text, value)           TracyPlot(text, value)
+#define LUMINA_PROFILE_VALUE(text, value)           TracyPlot(text, static_cast<int64_t>(value))

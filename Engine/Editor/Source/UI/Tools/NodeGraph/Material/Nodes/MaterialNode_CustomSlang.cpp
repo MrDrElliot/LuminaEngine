@@ -52,7 +52,7 @@ namespace Lumina
             }
             if (ToWidth < FromWidth)
             {
-                return "(" + Expr + ")." + FString("xyzw").substr(0, ToWidth);
+                return "(" + Expr + ")." + FString("xyzw").Mid(0, ToWidth);
             }
             FString Padded = TypeName + "(" + Expr;
             for (int32 Index = FromWidth; Index < ToWidth; ++Index)
@@ -120,8 +120,8 @@ namespace Lumina
             int32 Brackets = 0;
             bool  bInBlockComment = false;
 
-            const size_t Len = Code.size();
-            for (size_t i = 0; i < Len; ++i)
+            const int32 Len = Code.Len();
+            for (int32 i = 0; i < Len; ++i)
             {
                 const char C = Code[i];
                 const char N = (i + 1 < Len) ? Code[i + 1] : '\0';
@@ -202,9 +202,9 @@ namespace Lumina
         // Directives escape our scoping, and an include can pull arbitrary files into the shader.
         bool FindPreprocessorDirective(const FString& Code, FString& OutLine)
         {
-            const size_t Len = Code.size();
+            const int32 Len = Code.Len();
             bool bLineStart = true;
-            for (size_t i = 0; i < Len; ++i)
+            for (int32 i = 0; i < Len; ++i)
             {
                 const char C = Code[i];
                 if (C == '\n')
@@ -218,9 +218,9 @@ namespace Lumina
                 }
                 if (bLineStart && C == '#')
                 {
-                    size_t End = i;
+                    int32 End = i;
                     while (End < Len && Code[End] != '\n') { ++End; }
-                    OutLine = Code.substr(i, End - i);
+                    OutLine = Code.Mid(i, End - i);
                     return true;
                 }
                 bLineStart = false;
@@ -236,16 +236,16 @@ namespace Lumina
         {
             bDefaultsSeeded = true;
 
-            if (Inputs.empty())
+            if (Inputs.IsEmpty())
             {
-                SCustomSlangPin& UV = Inputs.emplace_back();
+                SCustomSlangPin& UV = Inputs.EmplaceGetRef();
                 UV.Name    = "UV";
                 UV.Type    = EMaterialValueType::Float2;
                 UV.Default = ECustomSlangInputDefault::UV0;
             }
-            if (Outputs.empty())
+            if (Outputs.IsEmpty())
             {
-                SCustomSlangPin& Out = Outputs.emplace_back();
+                SCustomSlangPin& Out = Outputs.EmplaceGetRef();
                 Out.Name = "Out";
                 Out.Type = EMaterialValueType::Float3;
             }
@@ -289,7 +289,7 @@ namespace Lumina
                 Snap.Name    = Pin->GetPinName();
                 Snap.bInput  = bInput;
                 Snap.Remotes = Pin->GetConnections();
-                Snapshots.push_back(Move(Snap));
+                Snapshots.Add(Move(Snap));
             }
         };
         SnapshotPins(GetInputPins(), true);
@@ -306,32 +306,32 @@ namespace Lumina
                 }
                 Pin->ClearConnections();
             }
-            NodePins[(uint32)Direction].clear();
+            NodePins[(uint32)Direction].Reset();
         };
         ClearDirection(ENodePinDirection::Input);
         ClearDirection(ENodePinDirection::Output);
 
-        CustomInputPins.clear();
-        CustomOutputPins.clear();
+        CustomInputPins.Reset();
+        CustomOutputPins.Reset();
 
         for (const SCustomSlangPin& Decl : Inputs)
         {
             const EMaterialInputType T = ToMaterialInputType(Decl.Type);
-            CMaterialInput* Pin = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), Decl.Name.c_str(), ENodePinDirection::Input));
-            Pin->SetPinName(Decl.Name.c_str());
+            CMaterialInput* Pin = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), *Decl.Name, ENodePinDirection::Input));
+            Pin->SetPinName(*Decl.Name);
             Pin->SetInputType(T);
             Pin->SetComponentMask(FullMaskForType(T));
-            CustomInputPins.push_back(Pin);
+            CustomInputPins.Add(Pin);
         }
 
         for (const SCustomSlangPin& Decl : Outputs)
         {
             const EMaterialInputType T = ToMaterialInputType(Decl.Type);
-            CMaterialOutput* Pin = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), Decl.Name.c_str(), ENodePinDirection::Output));
-            Pin->SetPinName(Decl.Name.c_str());
+            CMaterialOutput* Pin = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), *Decl.Name, ENodePinDirection::Output));
+            Pin->SetPinName(*Decl.Name);
             Pin->SetInputType(T);
             Pin->SetComponentMask(FullMaskForType(T));
-            CustomOutputPins.push_back(Pin);
+            CustomOutputPins.Add(Pin);
         }
 
         // Names are not unique, so a pin takes one snapshot or two would pile onto the first.
@@ -341,11 +341,11 @@ namespace Lumina
             const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
             for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
-                if (!Pin.IsValid() || Pin->GetPinName() != Snap.Name || Restored.count(Pin.Get()) != 0)
+                if (!Pin.IsValid() || Pin->GetPinName() != Snap.Name || Restored.Contains(Pin.Get()) != 0)
                 {
                     continue;
                 }
-                Restored.insert(Pin.Get());
+                Restored.Add(Pin.Get());
                 for (CEdNodeGraphPin* Remote : Snap.Remotes)
                 {
                     if (Remote != nullptr)
@@ -385,10 +385,10 @@ namespace Lumina
 
     void CMaterialExpression_CustomSlang::DrawNodeBody()
     {
-        ImGui::TextUnformatted(Title.c_str());
+        ImGui::TextUnformatted(*Title);
 
         // Enough to see whether the node is wired and healthy, without hosting a code editor on canvas.
-        int32 Lines = Code.empty() ? 0 : 1;
+        int32 Lines = Code.IsEmpty() ? 0 : 1;
         for (char C : Code)
         {
             Lines += (C == '\n') ? 1 : 0;
@@ -398,13 +398,13 @@ namespace Lumina
         const bool bValid = Validate(Problems);
 
         ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.64f, 1.0f), "%d in / %d out - %d line%s",
-                           (int32)Inputs.size(), (int32)Outputs.size(), Lines, Lines == 1 ? "" : "s");
+                           Inputs.Num(), Outputs.Num(), Lines, Lines == 1 ? "" : "s");
 
         if (!bValid)
         {
             ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%d problem%s",
-                               (int32)Problems.size(), Problems.size() == 1 ? "" : "s");
-            if (ImGui::IsItemHovered() && !Problems.empty() && GetOwningGraph() != nullptr)
+                               Problems.Num(), Problems.Num() == 1 ? "" : "s");
+            if (ImGui::IsItemHovered() && !Problems.IsEmpty() && GetOwningGraph() != nullptr)
             {
                 GetOwningGraph()->GetEditor().SetTooltip(Problems[0]);
             }
@@ -420,43 +420,43 @@ namespace Lumina
             for (const SCustomSlangPin& Pin : Pins)
             {
                 const FString Name = Pin.Name.ToString();
-                if (!IsValidIdentifier(Name.c_str()))
+                if (!IsValidIdentifier(*Name))
                 {
-                    OutProblems.push_back(FString(Direction) + " name '" + Name + "' is not a valid Slang identifier (letters, digits, underscore; cannot start with a digit).");
+                    OutProblems.Add(FString(Direction) + " name '" + Name + "' is not a valid Slang identifier (letters, digits, underscore; cannot start with a digit).");
                     continue;
                 }
                 if (IsReservedWord(Name))
                 {
-                    OutProblems.push_back(FString(Direction) + " name '" + Name + "' is a reserved Slang keyword.");
+                    OutProblems.Add(FString(Direction) + " name '" + Name + "' is a reserved Slang keyword.");
                     continue;
                 }
-                if (!Seen.insert(Name).second)
+                if (!Seen.TryAdd(Name))
                 {
-                    OutProblems.push_back(FString("Duplicate pin name '") + Name + "' -- input and output names must all be distinct.");
+                    OutProblems.Add(FString("Duplicate pin name '") + Name + "' -- input and output names must all be distinct.");
                 }
             }
         };
         CheckNames(Inputs, "Input");
         CheckNames(Outputs, "Output");
 
-        if (Outputs.empty())
+        if (Outputs.IsEmpty())
         {
-            OutProblems.push_back("No outputs declared, add at least one output for this node to produce a value.");
+            OutProblems.Add("No outputs declared, add at least one output for this node to produce a value.");
         }
 
         FString Directive;
         if (FindPreprocessorDirective(Code, Directive))
         {
-            OutProblems.push_back(FString("Preprocessor directives are not allowed ('") + Directive + "'). They escape this node's scope.");
+            OutProblems.Add(FString("Preprocessor directives are not allowed ('") + Directive + "'). They escape this node's scope.");
         }
 
         const FBalanceResult Balance = CheckBalance(Code);
         if (!Balance.bBalanced)
         {
-            OutProblems.push_back(Balance.Problem);
+            OutProblems.Add(Balance.Problem);
         }
 
-        return OutProblems.empty();
+        return OutProblems.IsEmpty();
     }
 
     void CMaterialExpression_CustomSlang::GenerateDefinition(FMaterialCompiler& Compiler)
@@ -475,8 +475,8 @@ namespace Lumina
 
         // Always emitted and initialized, so even a rejected node leaves a compilable shader.
         TVector<FString> OutVars;
-        OutVars.reserve(CustomOutputPins.size());
-        for (size_t i = 0; i < CustomOutputPins.size(); ++i)
+        OutVars.Reserve(CustomOutputPins.Num());
+        for (int32 i = 0; i < CustomOutputPins.Num(); ++i)
         {
             CMaterialOutput* Pin = CustomOutputPins[i];
             const EMaterialInputType T = Pin->InputType;
@@ -489,7 +489,7 @@ namespace Lumina
                 Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + "_DDY = " + ZeroLiteral(T) + ";\n");
             }
             Pin->ResolvedVar = Var;
-            OutVars.push_back(Var);
+            OutVars.Add(Var);
         }
 
         TVector<FString> Problems;
@@ -502,7 +502,7 @@ namespace Lumina
             return;
         }
 
-        if (Code.empty())
+        if (Code.IsEmpty())
         {
             EmitError("Node has no code; its outputs stay at zero.");
             return;
@@ -515,41 +515,41 @@ namespace Lumina
         TVector<int32> ArgWidths;
         bool bAnyUnknownGradient = false;
         bool bAllZeroGradient = true;
-        ArgExprs.reserve(CustomInputPins.size());
-        ArgWidths.reserve(CustomInputPins.size());
-        for (size_t i = 0; i < CustomInputPins.size(); ++i)
+        ArgExprs.Reserve(CustomInputPins.Num());
+        ArgWidths.Reserve(CustomInputPins.Num());
+        for (int32 i = 0; i < CustomInputPins.Num(); ++i)
         {
             // The stage aliases are float-typed, so a handle input falls back to the neutral index instead.
-            const bool bHandle = i < Inputs.size()
+            const bool bHandle = i < Inputs.Num()
                               && ToMaterialInputType(Inputs[i].Type) == EMaterialInputType::TextureHandle;
 
             const FString Fallback = bHandle
                 ? ZeroLiteral(EMaterialInputType::TextureHandle)
-                : (i < Inputs.size() ? DefaultExpressionFor(Inputs[i].Default) : FString("0.0"));
+                : (i < Inputs.Num() ? DefaultExpressionFor(Inputs[i].Default) : FString("0.0"));
 
             const FMaterialCompiler::FInputValue Value = Compiler.GetTypedInputValue(CustomInputPins[i], Fallback);
             const FString Swizzle = GetSwizzleForMask(Value.Mask);
-            ArgExprs.push_back(Value.Value + Swizzle);
+            ArgExprs.Add(Value.Value + Swizzle);
             const bool bValid = Value.Deriv == FMaterialCompiler::EDerivState::Valid;
-            ArgDdx.push_back(bValid ? Value.DDX + Swizzle : FString("0.0"));
-            ArgDdy.push_back(bValid ? Value.DDY + Swizzle : FString("0.0"));
+            ArgDdx.Add(bValid ? Value.DDX + Swizzle : FString("0.0"));
+            ArgDdy.Add(bValid ? Value.DDY + Swizzle : FString("0.0"));
             bAnyUnknownGradient = bAnyUnknownGradient || (!bHandle && Value.Deriv == FMaterialCompiler::EDerivState::Unknown);
             bAllZeroGradient    = bAllZeroGradient && (bHandle || Value.Deriv == FMaterialCompiler::EDerivState::Zero);
             if (!CustomInputPins[i]->HasConnection())
             {
-                ArgWidths.push_back(bHandle || i >= Inputs.size() ? 1 : DefaultWidthFor(Inputs[i].Default));
+                ArgWidths.Add(bHandle || i >= Inputs.Num() ? 1 : DefaultWidthFor(Inputs[i].Default));
             }
             else
             {
-                ArgWidths.push_back(Swizzle.empty() ? Value.ComponentCount : FMaterialCompiler::GetComponentCount(Value.Mask));
+                ArgWidths.Add(Swizzle.IsEmpty() ? Value.ComponentCount : FMaterialCompiler::GetComponentCount(Value.Mask));
             }
         }
 
-        Compiler.AddRaw(FString("// ---- custom slang: ") + Title.c_str() + " ----\n");
+        Compiler.AddRaw(FString("// ---- custom slang: ") + *Title + " ----\n");
         Compiler.AddRaw("{\n");
 
         // Coercing whatever width was wired in means the body sees exactly the type it declared.
-        for (size_t i = 0; i < CustomInputPins.size() && i < Inputs.size(); ++i)
+        for (int32 i = 0; i < CustomInputPins.Num() && i < Inputs.Num(); ++i)
         {
             const EMaterialInputType T = ToMaterialInputType(Inputs[i].Type);
             const FString TypeName = FMaterialCompiler::GetHLSLTypeName(T);
@@ -579,7 +579,7 @@ namespace Lumina
         Compiler.AddRaw("\n}\n");
 
         // Copy back into the canonical outputs, then close the block.
-        for (size_t i = 0; i < OutVars.size() && i < Outputs.size(); ++i)
+        for (int32 i = 0; i < OutVars.Num() && i < Outputs.Num(); ++i)
         {
             Compiler.AddRaw(OutVars[i] + " = " + Outputs[i].Name.ToString() + ";\n");
             if (bProvidesGradients)

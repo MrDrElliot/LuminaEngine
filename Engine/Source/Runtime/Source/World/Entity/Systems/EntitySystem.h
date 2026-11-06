@@ -26,29 +26,34 @@ namespace Lumina
 
     public:
 
+        // Opens member registration, so the queries, resources and events a system holds declare themselves as they are built.
+        CEntitySystem();
+
+        //~ Lifecycle.
+
         // Answered on the default object before an instance exists, so a system can decline a world.
         FUNCTION()
         virtual bool ShouldCreate() { return true; }
 
-        // Declares this system's stages and component access, before it is scheduled and before any startup.
+        // Declares this system's stages and ordering, before it is scheduled and before any startup; members declare the access.
         FUNCTION()
         virtual void Configure() {}
 
-        // Runs once when the world starts, after every system has been created and configured.
+        // Runs once on the main thread when the world starts, after every system has been created and configured.
         FUNCTION()
-        virtual void OnStartup(const SSystemContext& Context) {}
+        virtual void OnStartup(const SExclusiveContext& Context) {}
 
         // Runs every frame on each stage this system required, possibly on a worker thread.
         FUNCTION()
         virtual void OnUpdate(const SSystemContext& Context) {}
 
-        // Asked on the main thread as each stage starts. False leaves this system out of that frame, so it neither runs nor separates the systems around it.
+        // Asked on the main thread as each stage starts; by default a system has work when any query it holds matches or any event reader has unread events.
         FUNCTION()
-        virtual bool HasWork(const SSystemContext& Context) { return true; }
+        virtual bool HasWork(const SSystemContext& Context);
 
-        // Runs once when the world tears down, or when this system is disabled.
+        // Runs once on the main thread when the world tears down, or when this system is disabled.
         FUNCTION()
-        virtual void OnTeardown(const SSystemContext& Context) {}
+        virtual void OnTeardown(const SExclusiveContext& Context) {}
 
         // The world is about to be captured into SaveGame, so state kept outside SaveGame fields can be folded in.
         FUNCTION()
@@ -58,11 +63,7 @@ namespace Lumina
         FUNCTION()
         virtual void OnWorldRestored(CSaveGame* SaveGame) {}
 
-        // The owning world, valid from Configure onwards.
-        FUNCTION()
-        CWorld* GetWorld() const { return OwningWorld; }
-
-        //~ Begin Configure declarations.
+        //~ Scheduling, called from Configure.
 
         // Schedules this system in Stage, where only the systems it declares to run after or before order it.
         FUNCTION()
@@ -75,58 +76,74 @@ namespace Lumina
         FUNCTION()
         void RunsBeforeSystem(FName System);
 
+        // Answers to Set as well as its class names, so one RunsAfterSystem or RunsBeforeSystem orders against every member.
+        FUNCTION()
+        void JoinSet(FName Set);
+
         template<typename... Ts>
         void RunsAfter() { (RunsAfterSystem(Ts::StaticClass()->GetName()), ...); }
 
         template<typename... Ts>
         void RunsBefore() { (RunsBeforeSystem(Ts::StaticClass()->GetName()), ...); }
 
-        // Named rather than typed, so a script can declare access to a component it only knows by name.
-        FUNCTION()
+        //~ C# entry points.
+
+        // Named rather than typed, for a C# system member declaring a component or event it only knows by name.
+        FUNCTION(ScriptInternal)
         void DeclareWrite(FName Component);
 
-        FUNCTION()
+        FUNCTION(ScriptInternal)
         void DeclareRead(FName Component);
 
-        template<typename... Ts>
-        void Writes() { Access.Write<Ts...>(); }
+        // A C# system member's native block, bound to the world and asked for work like a C++ member; LuminaSharp's SystemParamBlock lays it out.
+        FUNCTION(ScriptInternal)
+        void DeclareManagedParam(void* Param);
 
-        template<typename... Ts>
-        void Reads() { Access.Read<Ts...>(); }
-
-        // Declares the read and hands back the reader that OnUpdate drains with Context.ReadEvents.
-        template<typename T>
-        NODISCARD ECS::TEventReader<T> ReadsEvent()
-        {
-            Access.Reads.push_back(static_cast<uint32>(ECS::GetComponentTypeID<T>()));
-            return {};
-        }
-
-        // Declares that OnUpdate sends T with Context.SendEvent, so readers of T run after this system's batch.
-        template<typename... Ts>
-        void SendsEvent() { (Access.Writes.push_back(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...); }
-
-        //~ End Configure declarations.
+        //~ Driver.
 
         bool RunsInStage(EUpdateStage Stage) const { return (StageMask & (1u << (uint32)Stage)) != 0; }
         const TVector<FName>& GetRunsAfter() const { return After; }
         const TVector<FName>& GetRunsBefore() const { return Before; }
+        const TVector<FName>& GetSets() const { return Sets; }
         const FSystemAccess& GetAccess() const { return Access; }
 
         // Set by the driver before Configure runs.
         void SetOwningWorld(CWorld* InWorld) { OwningWorld = InWorld; }
 
-        // Runs Configure and settles what it declared into the final access set.
+        // Binds the members, runs Configure, and gathers what the members declare into the access set.
         void ConfigureSystem();
+        void UnbindParams();
 
         bool HasStarted() const { return bStarted; }
         void MarkStarted() { bStarted = true; }
 
+    protected:
+
+        CWorld* GetOwningWorld() const { return OwningWorld; }
+
+        // For a HasWork override whose system also holds lookup-only queries that must not count as work.
+        template<typename... TQueries>
+        static bool AnyQueryHasRows(const TQueries&... Queries) { return (!Queries.IsEmpty() || ...); }
+
+        // Set by CExclusiveSystem, so the system always runs alone.
+        bool                bExclusiveClass = false;
+
     private:
+
+        friend RUNTIME_API void RegisterSystemParam(void* Param, const FSystemParamOps& Ops);
+
+        struct FRegisteredParam
+        {
+            void*                  Param = nullptr;
+            const FSystemParamOps* Ops   = nullptr;
+        };
+
+        TVector<FRegisteredParam> Params;
 
         CWorld*             OwningWorld = nullptr;
         TVector<FName>      After;
         TVector<FName>      Before;
+        TVector<FName>      Sets;
         FSystemAccess       Access;
         uint8               StageMask = 0;
         bool                bStarted = false;

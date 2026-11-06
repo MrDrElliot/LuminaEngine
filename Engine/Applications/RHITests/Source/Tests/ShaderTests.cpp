@@ -35,7 +35,7 @@ namespace Lumina::RHITests
     {
         const TVector<uint32> Spirv = Ctx.TryCompileShader(kTwoStageSource, "Shaders.Unselected");
 
-        RHI_CHECK(Spirv.empty());
+        RHI_CHECK(Spirv.IsEmpty());
     }
 
     RHI_TEST(Shaders, EntryPointSelectsOneStage)
@@ -43,7 +43,7 @@ namespace Lumina::RHITests
         const TVector<uint32> Vertex = Ctx.CompileShader(kTwoStageSource, "Shaders.Vertex", "EntryPointVS");
         const TVector<uint32> Pixel  = Ctx.CompileShader(kTwoStageSource, "Shaders.Pixel", "EntryPointPS");
 
-        RHI_REQUIRE(!Vertex.empty() && !Pixel.empty());
+        RHI_REQUIRE(!Vertex.IsEmpty() && !Pixel.IsEmpty());
 
         RHI_CHECK_EQ(Vertex[0], kSpirvMagic);
         RHI_CHECK_EQ(Pixel[0], kSpirvMagic);
@@ -56,7 +56,7 @@ namespace Lumina::RHITests
     {
         const TVector<uint32> Spirv = Ctx.TryCompileShader(kTwoStageSource, "Shaders.Missing", "NoSuchEntryPoint");
 
-        RHI_CHECK(Spirv.empty());
+        RHI_CHECK(Spirv.IsEmpty());
     }
 
     // A single-stage module still compiles without naming its entry point.
@@ -70,7 +70,7 @@ namespace Lumina::RHITests
 
         const TVector<uint32> Spirv = Ctx.CompileShader(Source, "Shaders.Lone");
 
-        RHI_REQUIRE(!Spirv.empty());
+        RHI_REQUIRE(!Spirv.IsEmpty());
         RHI_CHECK_EQ(Spirv[0], kSpirvMagic);
     }
 }

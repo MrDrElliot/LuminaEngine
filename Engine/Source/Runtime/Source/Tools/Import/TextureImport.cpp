@@ -50,15 +50,15 @@ namespace Lumina::Import::Textures
                 return;
         }
     
-        const uint32 BytesPerPixel = (uint32)Source.Pixels.size() / (SrcW * SrcH);
+        const uint32 BytesPerPixel = (uint32)Source.Pixels.Num() / (SrcW * SrcH);
 
         // A fresh buffer rather than in place, since the resampler reads the source while it writes.
-        TVector<uint8> Resized(static_cast<size_t>(DstW) * DstH * BytesPerPixel);
+        TVector64<uint8> Resized(static_cast<int64>(DstW) * DstH * BytesPerPixel);
 
         stbir_resize
         (
-            Source.Pixels.data(), (int)SrcW, (int)SrcH, 0,
-            Resized.data(), (int)DstW, (int)DstH, 0,
+            Source.Pixels.GetData(), (int)SrcW, (int)SrcH, 0,
+            Resized.GetData(), (int)DstW, (int)DstH, 0,
             Layout, DataType,
             STBIR_EDGE_CLAMP,
             STBIR_FILTER_MITCHELL
@@ -77,17 +77,17 @@ namespace Lumina::Import::Textures
             return;
         }
 
-        const size_t RowBytes = Source.Pixels.size() / Height;
-        TVector<uint8> Scratch(RowBytes);
+        const size_t RowBytes = Source.Pixels.Num() / Height;
+        TVector<uint8> Scratch(IntCastChecked<int32>(RowBytes));
 
         for (uint32 Row = 0; Row < Height / 2; ++Row)
         {
-            uint8* Top    = Source.Pixels.data() + (size_t)Row * RowBytes;
-            uint8* Bottom = Source.Pixels.data() + (size_t)(Height - 1 - Row) * RowBytes;
+            uint8* Top    = Source.Pixels.GetData() + (size_t)Row * RowBytes;
+            uint8* Bottom = Source.Pixels.GetData() + (size_t)(Height - 1 - Row) * RowBytes;
 
-            Memory::Memcpy(Scratch.data(), Top, RowBytes);
+            Memory::Memcpy(Scratch.GetData(), Top, RowBytes);
             Memory::Memcpy(Top, Bottom, RowBytes);
-            Memory::Memcpy(Bottom, Scratch.data(), RowBytes);
+            Memory::Memcpy(Bottom, Scratch.GetData(), RowBytes);
         }
     }
 
@@ -100,26 +100,26 @@ namespace Lumina::Import::Textures
             return;
         }
 
-        const size_t RowBytes      = Source.Pixels.size() / Height;
+        const size_t RowBytes      = Source.Pixels.Num() / Height;
         const size_t BytesPerTexel = RowBytes / Width;
         if (BytesPerTexel == 0)
         {
             return;
         }
 
-        TVector<uint8> Scratch(BytesPerTexel);
+        TVector<uint8> Scratch(IntCastChecked<int32>(BytesPerTexel));
 
         for (uint32 Row = 0; Row < Height; ++Row)
         {
-            uint8* RowStart = Source.Pixels.data() + (size_t)Row * RowBytes;
+            uint8* RowStart = Source.Pixels.GetData() + (size_t)Row * RowBytes;
             for (uint32 Column = 0; Column < Width / 2; ++Column)
             {
                 uint8* Left  = RowStart + (size_t)Column * BytesPerTexel;
                 uint8* Right = RowStart + (size_t)(Width - 1 - Column) * BytesPerTexel;
 
-                Memory::Memcpy(Scratch.data(), Left, BytesPerTexel);
+                Memory::Memcpy(Scratch.GetData(), Left, BytesPerTexel);
                 Memory::Memcpy(Left, Right, BytesPerTexel);
-                Memory::Memcpy(Right, Scratch.data(), BytesPerTexel);
+                Memory::Memcpy(Right, Scratch.GetData(), BytesPerTexel);
             }
         }
     }
@@ -147,13 +147,13 @@ namespace Lumina::Import::Textures
     static FFixedString ClipPathForLabel(FStringView Path)
     {
         constexpr size_t MaxLabelChars = 96;
-        if (Path.size() <= MaxLabelChars)
+        if (static_cast<size_t>(Path.Len()) <= MaxLabelChars)
         {
-            return FFixedString(Path.data(), Path.size());
+            return FFixedString(Path.GetData(), Path.Len());
         }
 
         return FormatAs<FFixedString>("{}...[{} chars]",
-                                      FStringView(Path.data(), MaxLabelChars), (uint64)Path.size());
+                                      FStringView(Path.GetData(), MaxLabelChars), (uint64)Path.Len());
     }
 
     TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical, FUIntVector2 Size)
@@ -166,9 +166,9 @@ namespace Lumina::Import::Textures
         
         int x, y, channels;
         
-        if (stbi_is_hdr(RawFilePath.data()))
+        if (stbi_is_hdr(RawFilePath.GetData()))
         {
-            float* data = stbi_loadf(RawFilePath.data(), &x, &y, &channels, 0);
+            float* data = stbi_loadf(RawFilePath.GetData(), &x, &y, &channels, 0);
             if (data == nullptr)
             {
                 LOG_WARN("Failed to load HDR image: {0}", ClipPathForLabel(RawFilePath));
@@ -188,16 +188,17 @@ namespace Lumina::Import::Textures
             }
             
             size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(float);
-            Result.Pixels.assign(reinterpret_cast<uint8*>(data), reinterpret_cast<uint8*>(data) + dataSize);
+            Result.Pixels.Reset();
+            Result.Pixels.Append(reinterpret_cast<uint8*>(data), reinterpret_cast<uint8*>(data) + dataSize);
             stbi_image_free(data);
             
             Result.Dimensions = {x, y};
             return Result;
         }
         
-        if (stbi_is_16_bit(RawFilePath.data()))
+        if (stbi_is_16_bit(RawFilePath.GetData()))
         {
-            uint16* data = stbi_load_16(RawFilePath.data(), &x, &y, &channels, 0);
+            uint16* data = stbi_load_16(RawFilePath.GetData(), &x, &y, &channels, 0);
             if (data == nullptr)
             {
                 LOG_WARN("Failed to load 16-bit image: {0}", ClipPathForLabel(RawFilePath));
@@ -213,10 +214,11 @@ namespace Lumina::Import::Textures
                     // RGB16 not commonly supported, convert to RGBA16
                     {
                         Result.Format = EFormat::RGBA16_UNORM;
-                        TVector<uint16> rgba16Data(x * y * 4);
-                        SIMD::ExpandRGBToRGBA16(data, rgba16Data.data(), (size_t)x * (size_t)y);
-                        size_t dataSize = rgba16Data.size() * sizeof(uint16);
-                        Result.Pixels.assign(reinterpret_cast<uint8*>(rgba16Data.data()), reinterpret_cast<uint8*>(rgba16Data.data()) + dataSize);
+                        TVector64<uint16> rgba16Data(static_cast<int64>(x) * y * 4);
+                        SIMD::ExpandRGBToRGBA16(data, rgba16Data.GetData(), (size_t)x * (size_t)y);
+                        size_t dataSize = rgba16Data.Num() * sizeof(uint16);
+                        Result.Pixels.Reset();
+                        Result.Pixels.Append(reinterpret_cast<uint8*>(rgba16Data.GetData()), reinterpret_cast<uint8*>(rgba16Data.GetData()) + dataSize);
                     }
                     break;
                 default:
@@ -228,7 +230,8 @@ namespace Lumina::Import::Textures
             if (channels != 3) // If we didn't do the RGB->RGBA conversion above
             {
                 size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(uint16);
-                Result.Pixels.assign(reinterpret_cast<uint8*>(data), reinterpret_cast<uint8*>(data) + dataSize);
+                Result.Pixels.Reset();
+                Result.Pixels.Append(reinterpret_cast<uint8*>(data), reinterpret_cast<uint8*>(data) + dataSize);
             }
             
             stbi_image_free(data);
@@ -237,7 +240,7 @@ namespace Lumina::Import::Textures
         }
         
         // Standard 8-bit image
-        uint8* data = stbi_load(RawFilePath.data(), &x, &y, &channels, 0);
+        uint8* data = stbi_load(RawFilePath.GetData(), &x, &y, &channels, 0);
         if (data == nullptr)
         {
             LOG_WARN("Failed to load 8-bit image: {0}", ClipPathForLabel(RawFilePath));
@@ -256,8 +259,8 @@ namespace Lumina::Import::Textures
                 // RGB8 not commonly supported, convert to RGBA8
                 {
                     Result.Format = bIsSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM;
-                    TVector<uint8> rgba8Data(x * y * 4);
-                    SIMD::ExpandRGBToRGBA8(data, rgba8Data.data(), (size_t)x * (size_t)y);
+                    TVector64<uint8> rgba8Data(static_cast<int64>(x) * y * 4);
+                    SIMD::ExpandRGBToRGBA8(data, rgba8Data.GetData(), (size_t)x * (size_t)y);
                     Result.Pixels = std::move(rgba8Data);
                 }
                 break;
@@ -269,7 +272,8 @@ namespace Lumina::Import::Textures
         
         if (channels != 3) // If we didn't do the RGB -> RGBA conversion above
         {
-            Result.Pixels.assign(data, data + static_cast<size_t>(x) * y * channels);
+            Result.Pixels.Reset();
+            Result.Pixels.Append(data, data + static_cast<size_t>(x) * y * channels);
         }
         
         Result.Dimensions = FUIntVector2(x, y);
@@ -290,13 +294,13 @@ namespace Lumina::Import::Textures
         FTextureImportResult Result = {};
         
         stbi_set_flip_vertically_on_load_thread(bFlipVertical);
-        int DataSize = static_cast<int>(ImageData.size());
+        int DataSize = ImageData.Num();
         
         int x, y, channels;
         
-        if (stbi_is_hdr_from_memory(ImageData.data(), DataSize))
+        if (stbi_is_hdr_from_memory(ImageData.GetData(), DataSize))
         {
-            float* Data = stbi_loadf_from_memory(ImageData.data(), DataSize, &x, &y, &channels, 0);
+            float* Data = stbi_loadf_from_memory(ImageData.GetData(), DataSize, &x, &y, &channels, 0);
             if (Data == nullptr)
             {
                 LOG_WARN("Failed to load HDR image");
@@ -316,16 +320,17 @@ namespace Lumina::Import::Textures
             }
             
             size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(float);
-            Result.Pixels.assign(reinterpret_cast<uint8*>(Data), reinterpret_cast<uint8*>(Data) + dataSize);
+            Result.Pixels.Reset();
+            Result.Pixels.Append(reinterpret_cast<uint8*>(Data), reinterpret_cast<uint8*>(Data) + dataSize);
             stbi_image_free(Data);
             
             Result.Dimensions = {x, y};
             return Result;
         }
         
-        if (stbi_is_16_bit_from_memory(ImageData.data(), DataSize))
+        if (stbi_is_16_bit_from_memory(ImageData.GetData(), DataSize))
         {
-            uint16* Data = stbi_load_16_from_memory(ImageData.data(), DataSize, &x, &y, &channels, 0);
+            uint16* Data = stbi_load_16_from_memory(ImageData.GetData(), DataSize, &x, &y, &channels, 0);
             if (Data == nullptr)
             {
                 LOG_WARN("Failed to load 16-bit image");
@@ -341,10 +346,11 @@ namespace Lumina::Import::Textures
                     // RGB16 not commonly supported, convert to RGBA16
                     {
                         Result.Format = EFormat::RGBA16_UNORM;
-                        TVector<uint16> rgba16Data(x * y * 4);
-                        SIMD::ExpandRGBToRGBA16(Data, rgba16Data.data(), (size_t)x * (size_t)y);
-                        size_t dataSize = rgba16Data.size() * sizeof(uint16);
-                        Result.Pixels.assign(reinterpret_cast<uint8*>(rgba16Data.data()), reinterpret_cast<uint8*>(rgba16Data.data()) + dataSize);
+                        TVector64<uint16> rgba16Data(static_cast<int64>(x) * y * 4);
+                        SIMD::ExpandRGBToRGBA16(Data, rgba16Data.GetData(), (size_t)x * (size_t)y);
+                        size_t dataSize = rgba16Data.Num() * sizeof(uint16);
+                        Result.Pixels.Reset();
+                        Result.Pixels.Append(reinterpret_cast<uint8*>(rgba16Data.GetData()), reinterpret_cast<uint8*>(rgba16Data.GetData()) + dataSize);
                     }
                     break;
                 default:
@@ -356,7 +362,8 @@ namespace Lumina::Import::Textures
             if (channels != 3) // If we didn't do the RGB->RGBA conversion above
             {
                 size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(uint16);
-                Result.Pixels.assign(reinterpret_cast<uint8*>(Data), reinterpret_cast<uint8*>(Data) + dataSize);
+                Result.Pixels.Reset();
+                Result.Pixels.Append(reinterpret_cast<uint8*>(Data), reinterpret_cast<uint8*>(Data) + dataSize);
             }
             
             stbi_image_free(Data);
@@ -365,7 +372,7 @@ namespace Lumina::Import::Textures
         }
         
         // Standard 8-bit image
-        uint8* data = stbi_load_from_memory(ImageData.data(), DataSize, &x, &y, &channels, 0);
+        uint8* data = stbi_load_from_memory(ImageData.GetData(), DataSize, &x, &y, &channels, 0);
         if (data == nullptr)
         {
             LOG_WARN("Failed to load 8-bit image");
@@ -384,8 +391,8 @@ namespace Lumina::Import::Textures
                 // RGB8 not commonly supported, convert to RGBA8
                 {
                     Result.Format = bIsSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM;
-                    TVector<uint8> rgba8Data(x * y * 4);
-                    SIMD::ExpandRGBToRGBA8(data, rgba8Data.data(), (size_t)x * (size_t)y);
+                    TVector64<uint8> rgba8Data(static_cast<int64>(x) * y * 4);
+                    SIMD::ExpandRGBToRGBA8(data, rgba8Data.GetData(), (size_t)x * (size_t)y);
                     Result.Pixels = std::move(rgba8Data);
                 }
                 break;
@@ -397,7 +404,8 @@ namespace Lumina::Import::Textures
         
         if (channels != 3) // If we didn't do the RGB -> RGBA conversion above
         {
-            Result.Pixels.assign(data, data + static_cast<size_t>(x) * y * channels);
+            Result.Pixels.Reset();
+            Result.Pixels.Append(data, data + static_cast<size_t>(x) * y * channels);
         }
         
         Result.Dimensions = FUIntVector2(x, y);
@@ -418,12 +426,12 @@ namespace Lumina::Import::Textures
         LUMINA_PROFILE_SCOPE();
 
         TOptional<FTextureImportResult> MaybeResult = ImportTexture(RawFilePath, bFlipVerticalOnLoad, Size);
-        if (!MaybeResult.has_value())
+        if (!MaybeResult.IsSet())
         {
             return {};
         }
 
-        const FTextureImportResult& Result = MaybeResult.value();
+        const FTextureImportResult& Result = MaybeResult.GetValue();
 
         const FFixedString DebugName = FFixedString("Import.") + ClipPathForLabel(RawFilePath);
 
@@ -432,9 +440,9 @@ namespace Lumina::Import::Textures
             .Width  = Result.Dimensions.x,
             .Height = Result.Dimensions.y,
             .Format = Result.Format,
-            .DebugName = DebugName.c_str(),
+            .DebugName = *DebugName,
         });
-        RHI::Textures::Upload(Texture, 0, Result.Pixels.data(), Result.Pixels.size(), Result.Dimensions.x);
+        RHI::Textures::Upload(Texture, 0, Result.Pixels.GetData(), Result.Pixels.Num(), Result.Dimensions.x);
 
         return Texture;
     }

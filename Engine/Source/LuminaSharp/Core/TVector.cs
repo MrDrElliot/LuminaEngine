@@ -154,20 +154,23 @@ public readonly unsafe struct TVector<T> : IList<T>
         }
         if (ElementKind<T>.IsMarshalled)
         {
-            // Default-construct the slot through the ops table first (a live FString / a null object slot),
-            // then assign into it. Pushing the managed value's bytes would be meaningless for these.
-            OpsPtr->PushBack((void*)Vector, null);
-            ElementMarshal.Write(ElementAt(Count - 1), item);
+            // A handle read out of a container still points into it, so native copies it before growing can free it.
+            nint Source = ElementMarshal.BoundAddress(item);
+            OpsPtr->Add((void*)Vector, (void*)Source);
+            if (Source == 0)
+            {
+                ElementMarshal.Write(ElementAt(Count - 1), item);
+            }
             return;
         }
-        OpsPtr->PushBack((void*)Vector, Unsafe.AsPointer(ref item));
+        OpsPtr->Add((void*)Vector, Unsafe.AsPointer(ref item));
     }
 
     public void Clear()
     {
         if (IsValid)
         {
-            OpsPtr->Clear((void*)Vector);
+            OpsPtr->Reset((void*)Vector);
         }
     }
 
@@ -176,7 +179,7 @@ public readonly unsafe struct TVector<T> : IList<T>
     {
         if (IsValid && Size >= 0)
         {
-            OpsPtr->Resize((void*)Vector, (nuint)Size);
+            OpsPtr->SetNum((void*)Vector, Size);
         }
     }
 
@@ -184,7 +187,7 @@ public readonly unsafe struct TVector<T> : IList<T>
     {
         if (IsValid && Size > 0)
         {
-            OpsPtr->Reserve((void*)Vector, (nuint)Size);
+            OpsPtr->Reserve((void*)Vector, Size);
         }
     }
 
@@ -202,7 +205,7 @@ public readonly unsafe struct TVector<T> : IList<T>
         {
             throw new ArgumentOutOfRangeException(nameof(index));
         }
-        OpsPtr->RemoveAt((void*)Vector, (nuint)index);
+        OpsPtr->RemoveAt((void*)Vector, index);
     }
 
     public void Insert(int index, T item)
@@ -211,14 +214,12 @@ public readonly unsafe struct TVector<T> : IList<T>
         {
             throw new ArgumentOutOfRangeException(nameof(index));
         }
-        // Grow by one, then shift the tail up. The shift goes through Set so a marshalled element is moved by
-        // its own assignment rather than by bytes.
+        // The appended copy is swapped down into place, so nothing reads an element the append may have moved.
         Add(item);
         for (int i = Count - 1; i > index; --i)
         {
-            Set(i, Get(i - 1));
+            OpsPtr->Swap((void*)Vector, i, i - 1);
         }
-        Set(index, item);
     }
 
     public int IndexOf(T item)

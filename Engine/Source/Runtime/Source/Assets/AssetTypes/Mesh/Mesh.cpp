@@ -72,7 +72,7 @@ namespace Lumina
         }
 
         // Fallback for procedurally-generated meshes that bypass the import finalize pass.
-        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.empty())
+        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.IsEmpty())
         {
             Import::Mesh::GenerateMeshlets(*MeshResources);
         }
@@ -94,21 +94,16 @@ namespace Lumina
         FMeshResolveCache::InvalidateDependency(this);
     }
 
-    CMaterialInterface* CMesh::GetMaterialAtSlot(size_t Slot) const
+    CMaterialInterface* CMesh::GetMaterialAtSlot(int32 Slot) const
     {
-        if (Materials.size() <= Slot)
-        {
-            return nullptr;
-        }
-        
-        return Materials.empty() ? nullptr : Materials[Slot].Get();
+        return Materials.IsValidIndex(Slot) ? Materials[Slot].Get() : nullptr;
     }
 
-    void CMesh::SetMaterialAtSlot(size_t Slot, CMaterialInterface* NewMaterial)
+    void CMesh::SetMaterialAtSlot(int32 Slot, CMaterialInterface* NewMaterial)
     {
-        if (Materials.size() <= Slot)
+        if (Materials.Num() <= Slot)
         {
-            Materials.push_back(NewMaterial);
+            Materials.Add(NewMaterial);
         }
         else
         {
@@ -125,7 +120,7 @@ namespace Lumina
         GenerateBoundingBox();
 
         // ThumbnailManager's primitive meshes arrive without baked meshlets.
-        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.empty())
+        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.IsEmpty())
         {
             Import::Mesh::GenerateMeshlets(*MeshResources);
         }
@@ -148,7 +143,7 @@ namespace Lumina
 
     void CMesh::BuildDeferredMeshlets()
     {
-        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.empty())
+        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.IsEmpty())
         {
             Import::Mesh::GenerateMeshlets(*MeshResources);
         }
@@ -187,7 +182,7 @@ namespace Lumina
             return Material != nullptr && Material->IsReadyForRender();
         });
 
-        return bMaterialsReady && !Materials.empty();
+        return bMaterialsReady && !Materials.IsEmpty();
     }
 
     namespace
@@ -230,7 +225,7 @@ namespace Lumina
                 Bounds.Max = Math::Max(Bounds.Max, P);
             }
 
-            if (MD.VertexPositions.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
+            if (MD.VertexPositions.IsEmpty() && MD.MeshletSkinnedVertices.IsEmpty() && !MD.MeshletSpheres.IsEmpty())
             {
                 // Conservative for culling but wildly loose for anything not roughly spherical.
                 for (const FMeshletSphere& S : MD.MeshletSpheres)
@@ -278,29 +273,29 @@ namespace Lumina
             if (!Texture.IsValid())
             {
                 LOG_ERROR("Distance field texture creation failed for mesh '{}'; SDF nodes will read as invalid.",
-                          Resource.Name.c_str());
+                          *Resource.Name);
                 return;
             }
 
-            RHI::Textures::Upload(Texture, 0, Volume.Distances.data(), Volume.Distances.size());
+            RHI::Textures::Upload(Texture, 0, Volume.Distances.GetData(), Volume.Distances.Num());
         }
 
         // Meshes built by the importer already carry palettes and are left alone.
         void BuildBonePalettes(FMeshletData& MData)
         {
-            if (MData.MeshletBonePalettes.size() == MData.Meshlets.size())
+            if (MData.MeshletBonePalettes.Num() == MData.Meshlets.Num())
             {
                 return;
             }
 
             LUMINA_PROFILE_SCOPE();
 
-            MData.MeshletBonePalettes.clear();
-            MData.MeshletBonePalettes.reserve(MData.Meshlets.size());
-            MData.MeshletBoneIndices.clear();
-            MData.MeshletBoneIndices.reserve(MData.Meshlets.size() * 16);
+            MData.MeshletBonePalettes.Reset();
+            MData.MeshletBonePalettes.Reserve(MData.Meshlets.Num());
+            MData.MeshletBoneIndices.Reset();
+            MData.MeshletBoneIndices.Reserve(MData.Meshlets.Num() * 16);
 
-            const uint32 VertexTotal = (uint32)MData.MeshletSkinnedVertices.size();
+            const uint32 VertexTotal = static_cast<uint32>(MData.MeshletSkinnedVertices.Num());
 
             FMeshletPaletteScratch Palette;
 
@@ -311,7 +306,7 @@ namespace Lumina
                 const uint32 End   = Math::Min(Begin + Math::Min(Meshlet.VertexCount, (uint32)MESHLET_MAX_VERTICES),
                                                VertexTotal);
 
-                Palette.clear();
+                Palette.Reset();
 
                 for (uint32 v = Begin; v < End; ++v)
                 {
@@ -441,28 +436,28 @@ namespace Lumina
             Resource.RequiredBoneCount = MaxJoint;
         }
 
-        const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.VertexAttributes.data();
+        const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.GetData() : (const void*)MData.VertexAttributes.GetData();
         const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshVertexAttributes);
-        const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.VertexAttributes.size();
+        const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.Num() : MData.VertexAttributes.Num();
 
-        const uint64 MeshletBytes  = sizeof(FMeshlet)       * MData.Meshlets.size();
-        const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.size();
-        const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
+        const uint64 MeshletBytes  = sizeof(FMeshlet)       * MData.Meshlets.Num();
+        const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.Num();
+        const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.Num();
         const uint64 VertexBytes   = VertCount              * VertStride;
-        const uint64 PositionBytes = sizeof(FMeshVertexPosition) * MData.VertexPositions.size();
-        const uint64 RefBytes      = sizeof(uint32)         * MData.MeshletVertexRefs.size();
-        const uint64 UV1Bytes      = sizeof(uint32)         * MData.VertexUV1s.size();
-        const uint64 ColorBytes    = sizeof(uint32)         * MData.VertexColors.size();
-        const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
-        const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.size();
-        const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.size();
+        const uint64 PositionBytes = sizeof(FMeshVertexPosition) * MData.VertexPositions.Num();
+        const uint64 RefBytes      = sizeof(uint32)         * MData.MeshletVertexRefs.Num();
+        const uint64 UV1Bytes      = sizeof(uint32)         * MData.VertexUV1s.Num();
+        const uint64 ColorBytes    = sizeof(uint32)         * MData.VertexColors.Num();
+        const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.Num();
+        const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.Num();
+        const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.Num();
 
         const bool bMissingStaticStream = !bSkinned && (PositionBytes == 0 || RefBytes == 0);
         if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0 || bMissingStaticStream)
         {
             LOG_ERROR("Mesh rebuild failed: {} meshlets with an empty geometry stream "
                       "(meshlets {}, spheres {}, cones {}, vertices {}, positions {}, refs {}, triangles {} bytes). Previous geometry kept.",
-                      MData.Meshlets.size(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, PositionBytes, RefBytes, TriangleBytes);
+                      MData.Meshlets.Num(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, PositionBytes, RefBytes, TriangleBytes);
             return;
         }
 
@@ -491,17 +486,17 @@ namespace Lumina
         if (Block.Gpu == 0)
         {
             LOG_ERROR("Mesh rebuild failed: {} KiB GPU allocation for {} meshlets. Previous geometry kept.",
-                      Cursor / 1024, MData.Meshlets.size());
+                      Cursor / 1024, MData.Meshlets.Num());
             return;
         }
 
         RHI::SetDebugName(Block.Gpu, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
 
-        RHI::UploadBuffer(Block, MData.Meshlets.data(),         MeshletBytes,  MeshletOffset);
-        RHI::UploadBuffer(Block, MData.MeshletSpheres.data(),   SphereBytes,   SphereOffset);
-        RHI::UploadBuffer(Block, MData.MeshletCones.data(),     ConeBytes,     ConeOffset);
+        RHI::UploadBuffer(Block, MData.Meshlets.GetData(),         MeshletBytes,  MeshletOffset);
+        RHI::UploadBuffer(Block, MData.MeshletSpheres.GetData(),   SphereBytes,   SphereOffset);
+        RHI::UploadBuffer(Block, MData.MeshletCones.GetData(),     ConeBytes,     ConeOffset);
         RHI::UploadBuffer(Block, VertSrc,                       VertexBytes,   VertexOffset);
-        RHI::UploadBuffer(Block, MData.MeshletTriangles.data(), TriangleBytes, TriangleOffset);
+        RHI::UploadBuffer(Block, MData.MeshletTriangles.GetData(), TriangleBytes, TriangleOffset);
 
         auto UploadIfPresent = [&Block](const void* Source, uint64 Bytes, uint64 Offset)
         {
@@ -510,15 +505,15 @@ namespace Lumina
                 RHI::UploadBuffer(Block, Source, Bytes, Offset);
             }
         };
-        UploadIfPresent(MData.VertexPositions.data(),   PositionBytes, PositionOffset);
-        UploadIfPresent(MData.MeshletVertexRefs.data(), RefBytes,      RefOffset);
-        UploadIfPresent(MData.VertexUV1s.data(),        UV1Bytes,      UV1Offset);
-        UploadIfPresent(MData.VertexColors.data(),      ColorBytes,    ColorOffset);
+        UploadIfPresent(MData.VertexPositions.GetData(),   PositionBytes, PositionOffset);
+        UploadIfPresent(MData.MeshletVertexRefs.GetData(), RefBytes,      RefOffset);
+        UploadIfPresent(MData.VertexUV1s.GetData(),        UV1Bytes,      UV1Offset);
+        UploadIfPresent(MData.VertexColors.GetData(),      ColorBytes,    ColorOffset);
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
         {
-            RHI::UploadBuffer(Block, MData.MeshletBonePalettes.data(), PaletteBytes, PaletteOffset);
-            RHI::UploadBuffer(Block, MData.MeshletBoneIndices.data(),  BoneIdxBytes, BoneIdxOffset);
+            RHI::UploadBuffer(Block, MData.MeshletBonePalettes.GetData(), PaletteBytes, PaletteOffset);
+            RHI::UploadBuffer(Block, MData.MeshletBoneIndices.GetData(),  BoneIdxBytes, BoneIdxOffset);
         }
 
         MB.ReleaseGeometryBuffers();
@@ -539,7 +534,7 @@ namespace Lumina
         // Null for a static mesh; SkinVertex reads that as bind pose rather than misreading the indices.
         MB.MeshletBonePaletteBuffer = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block.Gpu + PaletteOffset : 0;
         MB.MeshletBoneIndexBuffer   = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block.Gpu + BoneIdxOffset : 0;
-        MB.MeshletCount          = (uint32)MData.Meshlets.size();
+        MB.MeshletCount          = (uint32)MData.Meshlets.Num();
 
         // The header publishes the heap slot, and a failed allocation leaves the sentinel every SDF path gates on.
         CreateDistanceFieldTexture(Resource);
@@ -600,7 +595,7 @@ namespace Lumina
 
         // Drop import-time scratch.
         MeshResources->ClearVertices();
-        MeshResources->Indices.clear();
-        MeshResources->Indices.shrink_to_fit();
+        MeshResources->Indices.Reset();
+        MeshResources->Indices.Shrink();
     }
 }

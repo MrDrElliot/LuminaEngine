@@ -40,7 +40,7 @@ namespace Lumina::RHI
     GFSDK_Aftermath_Result _result = FC;                                                                \
     if (!GFSDK_Aftermath_SUCCEED(_result))                                                              \
     {                                                                                                   \
-        MessageBoxA(0, AftermathErrorMessage(_result).c_str(), "Aftermath Error", MB_OK);               \
+        MessageBoxA(0, *AftermathErrorMessage(_result), "Aftermath Error", MB_OK);               \
         exit(1);                                                                                        \
     }                                                                                                   \
 }()
@@ -50,7 +50,7 @@ namespace Lumina::RHI
     GFSDK_Aftermath_Result _result = FC;                                                                \
     if (!GFSDK_Aftermath_SUCCEED(_result))                                                              \
     {                                                                                                   \
-        printf("%s\n", AftermathErrorMessage(_result).c_str());                                         \
+        printf("%s\n", *AftermathErrorMessage(_result));                                         \
         fflush(stdout);                                                                                 \
         exit(1);                                                                                        \
     }                                                                                                   \
@@ -102,7 +102,7 @@ namespace Lumina::RHI
         }
 
         const FString* Marker = static_cast<const FString*>(MarkerData);
-        ResolveMarker(reinterpret_cast<const void*>(Marker->c_str()), static_cast<uint32>(Marker->size()));
+        ResolveMarker(reinterpret_cast<const void*>(*(*Marker)), static_cast<uint32>(Marker->Len()));
     }
 
     template<typename T>
@@ -191,19 +191,19 @@ namespace Lumina::RHI
 
         {
             FWriteScopeLock Lock(ShaderRegistryMutex);
-            RegisteredShaders.clear();
-            DebugNameToHash.clear();
-            RegistrationOrder.clear();
+            RegisteredShaders.Reset();
+            DebugNameToHash.Reset();
+            RegistrationOrder.Reset();
             RegistrationHead = 0;
             RegisteredBytes  = 0;
         }
         {
             FWriteScopeLock Lock(ShaderDebugInfoMutex);
-            ShaderDebugInfos.clear();
+            ShaderDebugInfos.Reset();
         }
         {
             FWriteScopeLock Lock(MarkerMutex);
-            MarkerStorage.clear();
+            MarkerStorage.Empty();
         }
 
         Device = VK_NULL_HANDLE;
@@ -298,13 +298,13 @@ namespace Lumina::RHI
         TVector<VkDeviceFaultAddressInfoEXT> AddressInfos(Counts.addressInfoCount);
         TVector<VkDeviceFaultVendorInfoEXT>  VendorInfos(Counts.vendorInfoCount);
 
-        TVector<uint8> VendorBinary(static_cast<size_t>(Counts.vendorBinarySize));
+        TVector<uint8> VendorBinary(IntCastChecked<int32>(Counts.vendorBinarySize));
 
         VkDeviceFaultInfoEXT Info{};
         Info.sType             = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
-        Info.pAddressInfos     = AddressInfos.empty() ? nullptr : AddressInfos.data();
-        Info.pVendorInfos      = VendorInfos.empty()  ? nullptr : VendorInfos.data();
-        Info.pVendorBinaryData = VendorBinary.empty() ? nullptr : VendorBinary.data();
+        Info.pAddressInfos     = AddressInfos.IsEmpty() ? nullptr : AddressInfos.GetData();
+        Info.pVendorInfos      = VendorInfos.IsEmpty()  ? nullptr : VendorInfos.GetData();
+        Info.pVendorBinaryData = VendorBinary.IsEmpty() ? nullptr : VendorBinary.GetData();
 
         Result = vkGetDeviceFaultInfoEXT(Device, &Counts, &Info);
         if (Result != VK_SUCCESS && Result != VK_INCOMPLETE)
@@ -335,9 +335,9 @@ namespace Lumina::RHI
             if (bDataAddress)
             {
                 const FString Attribution = DescribeDeviceAddress(Lower, Upper);
-                if (!Attribution.empty())
+                if (!Attribution.IsEmpty())
                 {
-                    LOG_ERROR("[DeviceLost]     -> {}", Attribution.c_str());
+                    LOG_ERROR("[DeviceLost]     -> {}", *Attribution);
                 }
             }
         }
@@ -355,22 +355,22 @@ namespace Lumina::RHI
             const FString BinaryPath = GetCrashDumpDirectory() + "/GPUFault_"
                 + Lumina::Format("{}", static_cast<uint64>(Time)) + ".bin";
 
-            std::ofstream File(BinaryPath.c_str(), std::ios::binary);
+            std::ofstream File(*BinaryPath, std::ios::binary);
             if (File.is_open())
             {
-                File.write(reinterpret_cast<const char*>(VendorBinary.data()),
+                File.write(reinterpret_cast<const char*>(VendorBinary.GetData()),
                     static_cast<std::streamsize>(Counts.vendorBinarySize));
                 File.close();
 
                 LOG_ERROR("[DeviceLost] Vendor crash binary ({} bytes): {}",
-                    (uint64)Counts.vendorBinarySize, BinaryPath.c_str());
+                    (uint64)Counts.vendorBinarySize, *BinaryPath);
 
                 // Goes up with the crash report; it is the only artifact that explains an AMD fault.
                 CrashReporting::AddAttachment(BinaryPath);
             }
             else
             {
-                LOG_ERROR("[DeviceLost] Could not write vendor crash binary to {}", BinaryPath.c_str());
+                LOG_ERROR("[DeviceLost] Could not write vendor crash binary to {}", *BinaryPath);
             }
         }
 
@@ -424,7 +424,7 @@ namespace Lumina::RHI
 
         const FString Reason = LogDeviceFaultInfo();
 
-        CrashReporting::SetAttribute("DeviceLostReason", Reason.empty() ? FStringView("Unknown") : FStringView(Reason));
+        CrashReporting::SetAttribute("DeviceLostReason", Reason.IsEmpty() ? FStringView("Unknown") : FStringView(Reason));
 
         #if WITH_RGD
         if (IsAmdDevice())
@@ -442,7 +442,7 @@ namespace Lumina::RHI
             if (!GFSDK_Aftermath_SUCCEED(Result))
             {
                 LOG_ERROR("[DeviceLost] Aftermath status query failed ({}); continuing without NVIDIA data.",
-                    AftermathErrorMessage(Result).c_str());
+                    *AftermathErrorMessage(Result));
                 return false;
             }
             return true;
@@ -469,7 +469,7 @@ namespace Lumina::RHI
         {
         case GFSDK_Aftermath_CrashDump_Status_Finished:
             LOG_ERROR("[DeviceLost] Aftermath finished; GPU dump and decoded JSON are in {}",
-                GetCrashDumpDirectory().c_str());
+                *GetCrashDumpDirectory());
             break;
 
         case GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed:
@@ -519,17 +519,17 @@ namespace Lumina::RHI
         FString JsonPath = GetCrashDumpDirectory() + "/GPUCrash_" + Lumina::Format("{}", static_cast<uint64>(Time)) + ".json";
 
         {
-            std::ofstream DumpFile(DumpPath.c_str(), std::ios::binary);
+            std::ofstream DumpFile(*DumpPath, std::ios::binary);
             if (DumpFile.is_open())
             {
                 DumpFile.write(static_cast<const char*>(GPUCrashDump), CrashDumpSize);
-                LOG_ERROR("[DeviceLost] Aftermath raw dump written to '{}'", DumpPath.c_str());
+                LOG_ERROR("[DeviceLost] Aftermath raw dump written to '{}'", *DumpPath);
                 
                 CrashReporting::AddAttachment(DumpPath);
             }
             else
             {
-                LOG_ERROR("[DeviceLost] Could not write Aftermath dump to '{}'", DumpPath.c_str());
+                LOG_ERROR("[DeviceLost] Could not write Aftermath dump to '{}'", *DumpPath);
             }
         }
 
@@ -565,16 +565,16 @@ namespace Lumina::RHI
         if (GFSDK_Aftermath_SUCCEED(JsonResult) && JsonSize > 0)
         {
             TVector<char> Json(JsonSize);
-            GFSDK_Aftermath_GpuCrashDump_GetJSON(Decoder, JsonSize, Json.data());
+            GFSDK_Aftermath_GpuCrashDump_GetJSON(Decoder, JsonSize, Json.GetData());
 
-            std::ofstream JsonFile(JsonPath.c_str());
+            std::ofstream JsonFile(*JsonPath);
             if (JsonFile.is_open())
             {
-                JsonFile.write(Json.data(), JsonSize);
+                JsonFile.write(Json.GetData(), JsonSize);
                 JsonFile.close();
 
                 LOG_ERROR("[DeviceLost] Aftermath JSON written to '{}' - decoded fault, active warps "
-                          "and shader attribution are in there", JsonPath.c_str());
+                          "and shader attribution are in there", *JsonPath);
 
                 CrashReporting::AddAttachment(JsonPath);
             }
@@ -603,7 +603,7 @@ namespace Lumina::RHI
 
         // Persist for Nsight consumption.
         FString FilePath = GetCrashDumpDirectory() + "/Shader" + ToString(Identifier) + ".nvdbg";
-        std::ofstream F(FilePath.c_str(), std::ios::out | std::ios::binary);
+        std::ofstream F(*FilePath, std::ios::out | std::ios::binary);
         if (F)
         {
             F.write((const char*)ShaderDebugInfo, ShaderDebugInfoSize);
@@ -614,14 +614,14 @@ namespace Lumina::RHI
     void FVulkanCrashTracker::RegisterShader(const TVector<uint32>& SPIRV, const FString& Name)
     {
         #if WITH_AFTERMATH
-        if (SPIRV.empty())
+        if (SPIRV.IsEmpty())
         {
             return;
         }
 
         GFSDK_Aftermath_SpirvCode SpirvCode = {};
-        SpirvCode.pData = SPIRV.data();
-        SpirvCode.size  = static_cast<uint32>(SPIRV.size() * sizeof(uint32));
+        SpirvCode.pData = SPIRV.GetData();
+        SpirvCode.size  = static_cast<uint32>(SPIRV.Num() * sizeof(uint32));
 
         // BinaryHash is the key Aftermath uses to look up the shader during dump decoding.
         GFSDK_Aftermath_ShaderBinaryHash BinaryHash = {};
@@ -645,9 +645,9 @@ namespace Lumina::RHI
             &DebugName);
 
         FRegisteredShader Entry;
-        Entry.Binary.assign(
-            reinterpret_cast<const uint8*>(SPIRV.data()),
-            reinterpret_cast<const uint8*>(SPIRV.data()) + SPIRV.size() * sizeof(uint32));
+        Entry.Binary.Append(
+            reinterpret_cast<const uint8*>(SPIRV.GetData()),
+            static_cast<int32>(SPIRV.Num() * sizeof(uint32)));
         Entry.FriendlyName = Name;
 
         if (GFSDK_Aftermath_SUCCEED(DebugNameResult))
@@ -658,19 +658,19 @@ namespace Lumina::RHI
         {
             FWriteScopeLock Lock(ShaderRegistryMutex);
 
-            if (!Entry.DebugName.empty())
+            if (!Entry.DebugName.IsEmpty())
             {
                 DebugNameToHash[Entry.DebugName] = BinaryHash.hash;
             }
 
-            if (auto Existing = RegisteredShaders.find(BinaryHash.hash); Existing != RegisteredShaders.end())
+            if (auto Existing = RegisteredShaders.Find(BinaryHash.hash); Existing != nullptr)
             {
-                RegisteredBytes -= Existing->second.Binary.size();
+                RegisteredBytes -= Existing->Binary.Num();
             }
 
             Entry.Sequence = ++NextSequence;
-            RegisteredBytes += Entry.Binary.size();
-            RegistrationOrder.push_back(FShaderRegistration{ BinaryHash.hash, Entry.Sequence });
+            RegisteredBytes += Entry.Binary.Num();
+            RegistrationOrder.Emplace(BinaryHash.hash, Entry.Sequence);
             RegisteredShaders[BinaryHash.hash] = Move(Entry);
 
             EvictOldShadersLocked();
@@ -680,29 +680,29 @@ namespace Lumina::RHI
 
     void FVulkanCrashTracker::EvictOldShadersLocked()
     {
-        while (RegisteredBytes > kShaderRegistryBudgetBytes && RegistrationHead < RegistrationOrder.size())
+        while (RegisteredBytes > kShaderRegistryBudgetBytes && RegistrationHead < RegistrationOrder.Num())
         {
             const FShaderRegistration Oldest = RegistrationOrder[RegistrationHead++];
 
             // A later registration of the same binary superseded this one, so it is not the oldest copy.
-            auto It = RegisteredShaders.find(Oldest.Hash);
-            if (It == RegisteredShaders.end() || It->second.Sequence != Oldest.Sequence)
+            auto It = RegisteredShaders.Find(Oldest.Hash);
+            if (It == nullptr || It->Sequence != Oldest.Sequence)
             {
                 continue;
             }
 
-            RegisteredBytes -= It->second.Binary.size();
+            RegisteredBytes -= It->Binary.Num();
             // A recompile under the same name points it at the newer binary, which keeps the mapping.
-            if (auto Name = DebugNameToHash.find(It->second.DebugName); Name != DebugNameToHash.end() && Name->second == Oldest.Hash)
+            if (auto Name = DebugNameToHash.Find(It->DebugName); Name != nullptr && (*Name) == Oldest.Hash)
             {
-                DebugNameToHash.erase(Name);
+                DebugNameToHash.Remove(It->DebugName);
             }
-            RegisteredShaders.erase(It);
+            RegisteredShaders.Remove(Oldest.Hash);
         }
 
-        if (RegistrationHead > 4096 && RegistrationHead * 2 > RegistrationOrder.size())
+        if (RegistrationHead > 4096 && RegistrationHead * 2 > RegistrationOrder.Num())
         {
-            RegistrationOrder.erase(RegistrationOrder.begin(), RegistrationOrder.begin() + (ptrdiff_t)RegistrationHead);
+            RegistrationOrder.RemoveAt(0, RegistrationHead);
             RegistrationHead = 0;
         }
     }
@@ -713,28 +713,28 @@ namespace Lumina::RHI
     {
         FReadScopeLock Lock(ShaderDebugInfoMutex);
 
-        auto It = ShaderDebugInfos.find(IdentifierKey(Identifier));
-        if (It == ShaderDebugInfos.end())
+        auto It = ShaderDebugInfos.Find(IdentifierKey(Identifier));
+        if (It == nullptr)
         {
             LOG_WARN("Aftermath: No shader debug info found for identifier {}", ToString(Identifier));
             return;
         }
 
-        SetShaderDebugInfo(It->second.data(), static_cast<uint32>(It->second.size()));
+        SetShaderDebugInfo(It->GetData(), static_cast<uint32>(It->Num()));
     }
 
     void FVulkanCrashTracker::OnShaderLookup(const GFSDK_Aftermath_ShaderBinaryHash& ShaderHash, PFN_GFSDK_Aftermath_SetData SetShaderBinary) const
     {
         FReadScopeLock Lock(ShaderRegistryMutex);
 
-        auto It = RegisteredShaders.find(ShaderHash.hash);
-        if (It == RegisteredShaders.end())
+        auto It = RegisteredShaders.Find(ShaderHash.hash);
+        if (It == nullptr)
         {
             LOG_WARN("Aftermath: No shader binary registered for hash {}", ToString(ShaderHash));
             return;
         }
 
-        SetShaderBinary(It->second.Binary.data(), static_cast<uint32>(It->second.Binary.size()));
+        SetShaderBinary(It->Binary.GetData(), static_cast<uint32>(It->Binary.Num()));
     }
 
     void FVulkanCrashTracker::OnShaderSourceDebugInfoLookup(const GFSDK_Aftermath_ShaderDebugName& DebugName, PFN_GFSDK_Aftermath_SetData SetShaderBinary) const
@@ -742,29 +742,29 @@ namespace Lumina::RHI
         FReadScopeLock Lock(ShaderRegistryMutex);
 
         FString Key = DebugName.name;
-        auto HashIt = DebugNameToHash.find(Key);
-        if (HashIt == DebugNameToHash.end())
+        auto HashIt = DebugNameToHash.Find(Key);
+        if (HashIt == nullptr)
         {
             LOG_WARN("Aftermath: No source debug data for shader DebugName '{}'", Key);
             return;
         }
 
-        auto ShaderIt = RegisteredShaders.find(HashIt->second);
-        if (ShaderIt == RegisteredShaders.end())
+        auto ShaderIt = RegisteredShaders.Find(*HashIt);
+        if (ShaderIt == nullptr)
         {
             return;
         }
 
         // Full binary doubles as source debug data (no stripping).
-        SetShaderBinary(ShaderIt->second.Binary.data(), static_cast<uint32>(ShaderIt->second.Binary.size()));
+        SetShaderBinary(ShaderIt->Binary.GetData(), static_cast<uint32>(ShaderIt->Binary.Num()));
     }
 #endif
 
     const void* FVulkanCrashTracker::StoreMarker(const char* MarkerName)
     {
         FWriteScopeLock Lock(MarkerMutex);
-        MarkerStorage.emplace_back(MarkerName ? MarkerName : "");
-        return &MarkerStorage.back();
+        MarkerStorage.EmplaceTail(MarkerName ? MarkerName : "");
+        return &MarkerStorage.Tail();
     }
 
     void FVulkanCrashTracker::SetMarker(RHICommandBuffer CmdBuffer, const char* MarkerName)
@@ -790,7 +790,7 @@ namespace Lumina::RHI
         }
 
         FString BeginName = FString("[Begin] ") + (MarkerName ? MarkerName : "");
-        const void* Marker = StoreMarker(BeginName.c_str());
+        const void* Marker = StoreMarker(*BeginName);
         vkCmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
         #endif
     }

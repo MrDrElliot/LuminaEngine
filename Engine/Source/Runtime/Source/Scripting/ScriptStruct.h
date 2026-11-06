@@ -127,6 +127,7 @@ namespace Lumina
         RUNTIME_API void ConstructInto(void* Buffer) const;
         RUNTIME_API void DestructIn(void* Buffer) const;
         RUNTIME_API void CopyInto(void* Dst, const void* Src) const;
+        RUNTIME_API void RelocateInto(void* Dst, void* Src) const;
 
         bool RequiresValueLifecycle() const override { return bRequiresLifecycle; }
 
@@ -140,6 +141,7 @@ namespace Lumina
         }
         void DestroyStruct(void* Dest) const override { DestructIn(Dest); }
         void CopyStruct(void* Dest, const void* Src) const override { CopyInto(Dest, Src); }
+        void RelocateStruct(void* Dest, void* Source) const override { RelocateInto(Dest, Source); }
 
         // The layout's defaults buffer, so editor diff and reset-to-default work for script fields.
         void* GetDefaultInstance() override { return const_cast<void*>(GetDefaults()); }

@@ -16,10 +16,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /**
-         * Instantiates the prefab at Transform. Returns false if no prefab is assigned, it fails to
-         * load.
-         */
+        // Loads the prefab asynchronously and instantiates it at Transform once ready, skipped if the world died meanwhile.
         FUNCTION()
         bool Spawn(CWorld* World, const FTransform& Transform = FTransform{}) const;
 

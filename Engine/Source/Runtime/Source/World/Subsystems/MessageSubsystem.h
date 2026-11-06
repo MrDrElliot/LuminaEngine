@@ -2,7 +2,7 @@
 
 #include "Containers/Name.h"
 #include "Containers/Optional.h"
-#include "GameplayTags/GameplayMessageBus.h"
+#include "HierarchicalTags/GameplayMessageBus.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Scripting/ScriptCallback.h"
 #include "World/ECS/Entity.h"

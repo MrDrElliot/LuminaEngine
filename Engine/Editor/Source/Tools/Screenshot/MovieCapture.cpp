@@ -58,7 +58,7 @@ namespace Lumina::MovieCapture
 
         void WriteVariable(const char* Name, const FString& Value)
         {
-            if (!Value.empty())
+            if (!Value.IsEmpty())
             {
                 FConsoleRegistry::Get().SetValueFromString(Name, Value);
             }
@@ -68,18 +68,18 @@ namespace Lumina::MovieCapture
         {
             for (uint32 Index = 0; Index < Bytes; ++Index)
             {
-                Out.push_back((uint8)((Value >> (Index * 8u)) & 0xFFu));
+                Out.Add((uint8)((Value >> (Index * 8u)) & 0xFFu));
             }
         }
 
         bool WriteWav(const FString& Path, const TVector<int16>& Samples, uint32 SampleRate, uint32 Channels)
         {
-            const uint32 DataBytes = (uint32)(Samples.size() * sizeof(int16));
+            const uint32 DataBytes = (uint32)(Samples.Num() * sizeof(int16));
             TVector<uint8> File;
-            File.reserve(44u + DataBytes);
-            File.insert(File.end(), { 'R', 'I', 'F', 'F' });
+            File.Reserve(44u + DataBytes);
+            File.Append({ 'R', 'I', 'F', 'F' });
             AppendLittleEndian(File, 36u + DataBytes, 4);
-            File.insert(File.end(), { 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ' });
+            File.Append({ 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ' });
             AppendLittleEndian(File, 16u, 4);
             AppendLittleEndian(File, 1u, 2);
             AppendLittleEndian(File, Channels, 2);
@@ -87,11 +87,11 @@ namespace Lumina::MovieCapture
             AppendLittleEndian(File, SampleRate * Channels * 2u, 4);
             AppendLittleEndian(File, Channels * 2u, 2);
             AppendLittleEndian(File, 16u, 2);
-            File.insert(File.end(), { 'd', 'a', 't', 'a' });
+            File.Append({ 'd', 'a', 't', 'a' });
             AppendLittleEndian(File, DataBytes, 4);
-            const uint8* Bytes = reinterpret_cast<const uint8*>(Samples.data());
-            File.insert(File.end(), Bytes, Bytes + DataBytes);
-            return FileHelper::SaveArrayToFile(File, FStringView(Path.c_str(), Path.size()));
+            const uint8* Bytes = reinterpret_cast<const uint8*>(Samples.GetData());
+            File.Append(Bytes, DataBytes);
+            return FileHelper::SaveArrayToFile(File, FStringView(*Path, Path.Len()));
         }
 
         void Finish(const FString& Error)
@@ -103,11 +103,11 @@ namespace Lumina::MovieCapture
             }
 
             FString CloseError;
-            if (S.Encoder.IsOpen() && !S.Encoder.Close(CloseError) && Error.empty())
+            if (S.Encoder.IsOpen() && !S.Encoder.Close(CloseError) && Error.IsEmpty())
             {
                 S.Status.Error = CloseError;
             }
-            if (!Error.empty())
+            if (!Error.IsEmpty())
             {
                 S.Status.Error = Error;
             }
@@ -117,17 +117,17 @@ namespace Lumina::MovieCapture
                 Audio::Context().EndOfflineRender();
                 S.bOfflineAudio = false;
             }
-            if (!S.Settings.WavPath.empty() && !S.WavSamples.empty())
+            if (!S.Settings.WavPath.IsEmpty() && !S.WavSamples.IsEmpty())
             {
                 if (!WriteWav(S.Settings.WavPath, S.WavSamples, S.AudioRate, S.AudioChannels))
                 {
                     LOG_WARN("Movie capture could not write the sound to {}.", S.Settings.WavPath);
                 }
             }
-            S.WavSamples.clear();
-            S.WavSamples.shrink_to_fit();
+            S.WavSamples.Reset();
+            S.WavSamples.Shrink();
 
-            WriteVariable(FixedDeltaVariable, S.PreviousFixedDelta.empty() ? FString("0") : S.PreviousFixedDelta);
+            WriteVariable(FixedDeltaVariable, S.PreviousFixedDelta.IsEmpty() ? FString("0") : S.PreviousFixedDelta);
             if (GEngine != nullptr)
             {
                 GEngine->SetFrameRateCapOverride(S.PreviousFrameRateCap);
@@ -136,8 +136,8 @@ namespace Lumina::MovieCapture
             S.Status.bActive = false;
             S.Status.bFinished = true;
             LOG_INFO("Movie capture finished with {} frames{}{}", S.Status.FramesWritten,
-                S.Status.OutputPath.empty() ? FString() : FString(" to ") + S.Status.OutputPath,
-                S.Status.Error.empty() ? FString() : FString(", ") + S.Status.Error);
+                S.Status.OutputPath.IsEmpty() ? FString() : FString(" to ") + S.Status.OutputPath,
+                S.Status.Error.IsEmpty() ? FString() : FString(", ") + S.Status.Error);
 
             TFunction<void()> Callback = Move(S.Settings.OnRecordingFinished);
 
@@ -158,7 +158,7 @@ namespace Lumina::MovieCapture
             OutError = "A movie is already being recorded.";
             return false;
         }
-        if (Settings.OutputPath.empty() && Settings.PngDirectory.empty())
+        if (Settings.OutputPath.IsEmpty() && Settings.PngDirectory.IsEmpty())
         {
             OutError = "Give an output path, a PNG folder, or both.";
             return false;
@@ -174,16 +174,16 @@ namespace Lumina::MovieCapture
         }
 
         // Taken from the device before the file opens, since the encoder needs the mix format up front.
-        S.bOfflineAudio = Settings.bRecordAudio && (!Settings.OutputPath.empty() || !Settings.WavPath.empty()) && Audio::HasDevice()
+        S.bOfflineAudio = Settings.bRecordAudio && (!Settings.OutputPath.IsEmpty() || !Settings.WavPath.IsEmpty()) && Audio::HasDevice()
                        && Audio::Context().BeginOfflineRender(S.AudioRate, S.AudioChannels);
         S.AudioTick = 0;
 
-        if (!Settings.OutputPath.empty())
+        if (!Settings.OutputPath.IsEmpty())
         {
-            const FString Parent = Paths::Parent(FStringView(Settings.OutputPath.c_str(), Settings.OutputPath.size()), true);
-            if (!Parent.empty())
+            const FString Parent = Paths::Parent(FStringView(*Settings.OutputPath, Settings.OutputPath.Len()), true);
+            if (!Parent.IsEmpty())
             {
-                Paths::CreateDirectories(FStringView(Parent.c_str(), Parent.size()));
+                Paths::CreateDirectories(FStringView(*Parent, Parent.Len()));
             }
             const uint32 Rate = S.bOfflineAudio ? S.AudioRate : 0u;
             if (!S.Encoder.Open(Settings.OutputPath, Settings.Width, Settings.Height, Settings.FrameRate, Settings.BitRate, OutError, Rate, S.AudioChannels))
@@ -196,9 +196,9 @@ namespace Lumina::MovieCapture
                 return false;
             }
         }
-        if (!Settings.PngDirectory.empty())
+        if (!Settings.PngDirectory.IsEmpty())
         {
-            Paths::CreateDirectories(FStringView(Settings.PngDirectory.c_str(), Settings.PngDirectory.size()));
+            Paths::CreateDirectories(FStringView(*Settings.PngDirectory, Settings.PngDirectory.Len()));
         }
 
         S.Status = FStatus{};
@@ -268,8 +268,8 @@ namespace Lumina::MovieCapture
             const uint64 Fps = S.Settings.FrameRate;
             AudioFrames = (uint32)(Rate * (S.AudioTick + 1) / Fps - Rate * S.AudioTick / Fps);
             ++S.AudioTick;
-            S.AudioSlice.resize((size_t)AudioFrames * S.AudioChannels);
-            Audio::Context().RenderOffline(S.AudioSlice.data(), AudioFrames);
+            S.AudioSlice.SetNum(IntCastChecked<int32>(static_cast<int64>(AudioFrames) * S.AudioChannels));
+            Audio::Context().RenderOffline(S.AudioSlice.GetData(), AudioFrames);
         }
 
         if (S.WarmupRemaining > 0)
@@ -310,7 +310,7 @@ namespace Lumina::MovieCapture
         uint32 SourceHeight = 0;
         if (Scene == nullptr || !Screenshot::ReadDisplayPixels(Scene, S.Source, SourceWidth, SourceHeight, Error))
         {
-            Finish(Error.empty() ? FString("No world is rendering.") : Error);
+            Finish(Error.IsEmpty() ? FString("No world is rendering.") : Error);
             return;
         }
         S.Status.SourceWidth = SourceWidth;
@@ -322,30 +322,30 @@ namespace Lumina::MovieCapture
                 SourceWidth, SourceHeight, S.Settings.Width, S.Settings.Height));
             return;
         }
-        S.Frame.swap(S.Source);
+        swap(S.Frame, S.Source);
 
-        if (S.Encoder.IsOpen() && !S.Encoder.WriteFrame(S.Frame.data(), Error))
+        if (S.Encoder.IsOpen() && !S.Encoder.WriteFrame(S.Frame.GetData(), Error))
         {
             Finish(Error);
             return;
         }
-        if (S.Encoder.HasAudio() && !S.Encoder.WriteAudio(S.AudioSlice.data(), AudioFrames, Error))
+        if (S.Encoder.HasAudio() && !S.Encoder.WriteAudio(S.AudioSlice.GetData(), AudioFrames, Error))
         {
             Finish(Error);
             return;
         }
-        if (S.bOfflineAudio && !S.Settings.WavPath.empty())
+        if (S.bOfflineAudio && !S.Settings.WavPath.IsEmpty())
         {
             for (const float Sample : S.AudioSlice)
             {
-                S.WavSamples.push_back((int16)(Math::Clamp(Sample, -1.0f, 1.0f) * 32767.0f));
+                S.WavSamples.Add((int16)(Math::Clamp(Sample, -1.0f, 1.0f) * 32767.0f));
             }
         }
 
-        if (!S.Settings.PngDirectory.empty() && S.Status.FramesWritten % Math::Max(S.Settings.PngEvery, 1u) == 0)
+        if (!S.Settings.PngDirectory.IsEmpty() && S.Status.FramesWritten % Math::Max(S.Settings.PngEvery, 1u) == 0)
         {
             const FString Path = Lumina::Format("{}/Frame_{:05}.png", S.Settings.PngDirectory, S.Status.FramesWritten);
-            ImageWrite::WritePngFile(Path.c_str(), S.Settings.Width, S.Settings.Height, 4, S.Frame.data(), S.Settings.Width * 4);
+            ImageWrite::WritePngFile(*Path, S.Settings.Width, S.Settings.Height, 4, S.Frame.GetData(), S.Settings.Width * 4);
         }
 
         ++S.Status.FramesWritten;

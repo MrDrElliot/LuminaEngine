@@ -1,0 +1,90 @@
+name: Build failure
+description: The engine, a project, shaders or the C# layer fail to generate or compile.
+title: "[Build]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Build problems are almost always about the toolchain, so the versions below matter.
+        Please paste the first error in full, not only the last line.
+
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+      description: The version from Engine/Source/Runtime/Source/Lumina.h, or the commit hash you built from.
+      placeholder: 0.1.168 (or a commit hash)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: step
+    attributes:
+      label: What fails
+      options:
+        - Project file generation (GenerateProject)
+        - Engine build
+        - Game project build
+        - Shader compilation
+        - C# build (LuminaSharp or project scripts)
+        - Reflection or generated headers
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: The IDE and compiler versions you build with, and the .NET SDK version from `dotnet --version`.
+      placeholder: |
+        Visual Studio 2026 18.0, MSVC v143 toolset
+        .NET SDK 10.0.301
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: How you built
+      description: The command you ran, or the IDE action (for example Build Solution in Visual Studio, or Build in Rider).
+      placeholder: LuminaBuild.bat Build Lumina -TargetType=Editor -Configuration=Development
+    validations:
+      required: true
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Error output
+      description: The full build output around the first error. This is formatted as code automatically.
+      render: shell
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: What you already tried
+      options:
+        - label: Regenerated the project files
+        - label: Cleaned and rebuilt
+        - label: Followed the installation steps in the README for my platform
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this has not been reported yet.
+          required: true

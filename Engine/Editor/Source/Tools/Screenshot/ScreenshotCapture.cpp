@@ -26,7 +26,7 @@ namespace Lumina::Screenshot
         FString GenerateDefaultPath(ECaptureSource Source)
         {
             const FString Folder = GetScreenshotDirectory();
-            Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
+            Paths::CreateDirectories(FStringView(*Folder, Folder.Len()));
 
             const PlatformTime::FDateTime Now = PlatformTime::LocalNow();
 
@@ -101,7 +101,7 @@ namespace Lumina::Screenshot
         bool WritePNG(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,
                       const uint8* Src, size_t RowPitch, FString& OutError)
         {
-            TVector<uint8> Pixels(static_cast<size_t>(Width) * Height * 4u);
+            TVector<uint8> Pixels(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 4u));
 
             const bool bIsBGRA = (Format == EFormat::BGRA8_UNORM) || (Format == EFormat::SBGRA8_UNORM);
             const bool bIsRGBA = (Format == EFormat::RGBA8_UNORM) || (Format == EFormat::SRGBA8_UNORM);
@@ -115,7 +115,7 @@ namespace Lumina::Screenshot
             for (uint32 Y = 0; Y < Height; ++Y)
             {
                 const uint8* SrcRow = Src + static_cast<size_t>(Y) * RowPitch;
-                uint8*       DstRow = Pixels.data() + static_cast<size_t>(Y) * Width * 4u;
+                uint8*       DstRow = Pixels.GetData() + static_cast<size_t>(Y) * Width * 4u;
 
                 if (bIsBGRA)
                 {
@@ -133,7 +133,7 @@ namespace Lumina::Screenshot
                 }
             }
 
-            if (!ImageWrite::WritePngFile(OutPath.c_str(), Width, Height, 4, Pixels.data(), Width * 4))
+            if (!ImageWrite::WritePngFile(*OutPath, Width, Height, 4, Pixels.GetData(), Width * 4))
             {
                 OutError = "PNG encode failed (check the output path is writable).";
                 return false;
@@ -150,12 +150,12 @@ namespace Lumina::Screenshot
                 return false;
             }
 
-            TVector<float> Pixels(static_cast<size_t>(Width) * Height * 3u);
+            TVector<float> Pixels(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 3u));
 
             for (uint32 Y = 0; Y < Height; ++Y)
             {
                 const uint16* SrcRow = reinterpret_cast<const uint16*>(Src + static_cast<size_t>(Y) * RowPitch);
-                float*        DstRow = Pixels.data() + static_cast<size_t>(Y) * Width * 3u;
+                float*        DstRow = Pixels.GetData() + static_cast<size_t>(Y) * Width * 3u;
 
                 for (uint32 X = 0; X < Width; ++X)
                 {
@@ -165,7 +165,7 @@ namespace Lumina::Screenshot
                 }
             }
 
-            if (!ImageWrite::WriteHdrFile(OutPath.c_str(), Width, Height, 3, Pixels.data()))
+            if (!ImageWrite::WriteHdrFile(*OutPath, Width, Height, 3, Pixels.GetData()))
             {
                 OutError = "HDR encode failed (check the output path is writable).";
                 return false;
@@ -179,7 +179,7 @@ namespace Lumina::Screenshot
         if (GEngine != nullptr && GEngine->HasLoadedProject())
         {
             const FStringView ProjectPath = GEngine->GetProjectPath();
-            return FString(ProjectPath.data(), ProjectPath.size()) + "/Saved/Screenshots";
+            return FString(ProjectPath.GetData(), ProjectPath.Len()) + "/Saved/Screenshots";
         }
 
         return Paths::GetEngineDirectory() + "/Saved/Screenshots";
@@ -200,14 +200,14 @@ namespace Lumina::Screenshot
         Out.ResolutionY = SrcImage.GetSizeY();
 
         // Resolve output path.
-        FString ResolvedPath = OutputPath.empty() ? GenerateDefaultPath(Source) : OutputPath;
+        FString ResolvedPath = OutputPath.IsEmpty() ? GenerateDefaultPath(Source) : OutputPath;
 
         // Make sure the parent directory exists when the user passed an explicit path.
         {
-            const FString Parent = Paths::Parent(FStringView(ResolvedPath.c_str(), ResolvedPath.size()), true);
-            if (!Parent.empty())
+            const FString Parent = Paths::Parent(FStringView(*ResolvedPath, ResolvedPath.Len()), true);
+            if (!Parent.IsEmpty())
             {
-                Paths::CreateDirectories(FStringView(Parent.c_str(), Parent.size()));
+                Paths::CreateDirectories(FStringView(*Parent, Parent.Len()));
             }
         }
 
@@ -275,27 +275,27 @@ namespace Lumina::Screenshot
         FCaptureResult Out;
         Out.ResolutionX = Width;
         Out.ResolutionY = Height;
-        if (Width == 0 || Height == 0 || BGRA.size() < (size_t)Width * Height * 4u)
+        if (Width == 0 || Height == 0 || static_cast<size_t>(BGRA.Num()) < (size_t)Width * Height * 4u)
         {
             Out.ErrorMessage = "The window capture holds no pixels.";
             return Out;
         }
 
-        const FString ResolvedPath = OutputPath.empty() ? GenerateDefaultPath(ECaptureSource::FinalLDR) : OutputPath;
-        const FString Parent = Paths::Parent(FStringView(ResolvedPath.c_str(), ResolvedPath.size()), true);
-        if (!Parent.empty())
+        const FString ResolvedPath = OutputPath.IsEmpty() ? GenerateDefaultPath(ECaptureSource::FinalLDR) : OutputPath;
+        const FString Parent = Paths::Parent(FStringView(*ResolvedPath, ResolvedPath.Len()), true);
+        if (!Parent.IsEmpty())
         {
-            Paths::CreateDirectories(FStringView(Parent.c_str(), Parent.size()));
+            Paths::CreateDirectories(FStringView(*Parent, Parent.Len()));
         }
 
         // The window composites opaque, but UI passes leave arbitrary alpha behind, which a PNG would show as holes.
         TVector<uint8> Opaque = BGRA;
-        for (size_t i = 3; i < Opaque.size(); i += 4)
+        for (int32 i = 3; i < Opaque.Num(); i += 4)
         {
             Opaque[i] = 255;
         }
 
-        if (WritePNG(ResolvedPath, Width, Height, EFormat::BGRA8_UNORM, Opaque.data(), (size_t)Width * 4u, Out.ErrorMessage))
+        if (WritePNG(ResolvedPath, Width, Height, EFormat::BGRA8_UNORM, Opaque.GetData(), (size_t)Width * 4u, Out.ErrorMessage))
         {
             Out.bSuccess   = true;
             Out.OutputPath = ResolvedPath;
@@ -382,10 +382,10 @@ namespace Lumina::Screenshot
             return false;
         }
 
-        OutRGBA.resize((size_t)ReadbackSize);
+        OutRGBA.SetNum(IntCastChecked<int32>(ReadbackSize));
         if (bIsBGRA)
         {
-            for (size_t Pixel = 0; Pixel < (size_t)OutWidth * OutHeight; ++Pixel)
+            for (int32 Pixel = 0, Limit = IntCastChecked<int32>(static_cast<int64>(OutWidth) * OutHeight); Pixel < Limit; ++Pixel)
             {
                 OutRGBA[Pixel * 4 + 0] = Mapped[Pixel * 4 + 2];
                 OutRGBA[Pixel * 4 + 1] = Mapped[Pixel * 4 + 1];
@@ -395,7 +395,7 @@ namespace Lumina::Screenshot
         }
         else
         {
-            std::memcpy(OutRGBA.data(), Mapped, (size_t)ReadbackSize);
+            std::memcpy(OutRGBA.GetData(), Mapped, (size_t)ReadbackSize);
         }
 
         RHI::Retire(Readback);

@@ -159,7 +159,7 @@ public static class UnityBuildStep
     /// <summary>Whether a source has to keep its own translation unit, and why.</summary>
     private static bool MustCompileAlone(BuildModule Module, FileItem Source, out string Reason)
     {
-        // Merging would drop the flags and miscompile, since the fiber scheduler needs /GT on exactly one file.
+        // Merging would silently drop the flags the file asked for.
         if (Module.Rules.PerFileCompilerOptions.ContainsKey(Source.Name))
         {
             Reason = "has per-file compiler options";

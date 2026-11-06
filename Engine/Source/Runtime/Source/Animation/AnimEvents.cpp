@@ -15,7 +15,7 @@ namespace Lumina
         }
 
         const TVector<FAnimationNotify>& Notifies = Clip->GetNotifies();
-        if (Notifies.empty())
+        if (Notifies.IsEmpty())
         {
             return;
         }
@@ -33,7 +33,7 @@ namespace Lumina
                 continue;
             }
 
-            FAnimNotifyEvent& Event = Out.emplace_back();
+            FAnimNotifyEvent& Event = Out.EmplaceGetRef();
             Event.Name      = Notify.NotifyName;
             Event.Track     = Notify.NotifyTrack;
             Event.Type      = EAnimNotifyEventType::Trigger;

@@ -9,6 +9,7 @@
 #include "Renderer/MaterialTypes.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "UI/Tools/TerrainEditMode.h"
+#include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CloudComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
@@ -288,6 +289,16 @@ namespace Lumina::DefaultScene
             BuildAtmosphereAndGrading(World);
             return Sun;
         }
+
+        // Play activates this view, so a fresh level never falls back to a camera the world has to invent.
+        void BuildPlayerCamera(CWorld* World)
+        {
+            const FCameraPose Pose = { FVector3(0.0f, 2.0f, 5.0f), FVector3(0.0f) };
+            FTransform Transform(Pose.Location);
+            Transform.SetRotation(Math::FindLookAtRotation(Pose.Target, Pose.Location));
+
+            World->EmplaceComponent<SCameraComponent>(World->ConstructEntity("Camera", Transform)).bAutoActivate = true;
+        }
     }
 
     void PopulateStarterLevel(CWorld* World)
@@ -299,6 +310,7 @@ namespace Lumina::DefaultScene
 
         // Saved levels keep the default material, because a runtime instance has no package to be saved into.
         BuildStarterLevel(World, nullptr);
+        BuildPlayerCamera(World);
     }
 
     void PopulateWelcomeScene(CWorld* World)
@@ -398,16 +410,16 @@ namespace Lumina::DefaultScene
             const float  Stride = kRangeTerrainSize / (float)(kRangeTerrainRes - 1);
             const float  MinX   = -kRangeTerrainSize * 0.5f;
             const float  MinZ   = kRangeTerrainZ - kRangeTerrainSize * 0.5f;
-            Terrain.Heightmap.resize(Count);
+            Terrain.Heightmap.SetNum(Count);
             for (int32 Row = 0; Row < kRangeTerrainRes; ++Row)
             {
                 for (int32 Col = 0; Col < kRangeTerrainRes; ++Col)
                 {
                     const float Height = RangeHeight(MinX + (float)Col * Stride, MinZ + (float)Row * Stride);
-                    Terrain.Heightmap[(size_t)Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
+                    Terrain.Heightmap[Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
                 }
             }
-            Terrain.LayerWeights.assign(Count * Terrain.Layers.size(), uint8(0));
+            Terrain.LayerWeights.Init(uint8(0), Count * Terrain.Layers.Num());
             Terrain.MarkHeightmapReplaced();
         }
 
@@ -453,7 +465,7 @@ namespace Lumina::DefaultScene
 
                 const FString Text = Lumina::Format("{:.0f} m", Distance);
                 const float   Size = 3.0f + Distance * 0.02f;
-                SpawnLabel(World, Text.c_str(), FVector3(0.0f, RangeHeight(0.0f, Z) + Size * 0.6f, Z), Size);
+                SpawnLabel(World, *Text, FVector3(0.0f, RangeHeight(0.0f, Z) + Size * 0.6f, Z), Size);
             }
         }
 

@@ -27,7 +27,7 @@ namespace Lumina
         tinyobj::ObjReaderConfig ReaderConfig;
         tinyobj::ObjReader Reader;
 
-        if (!Reader.ParseFromFile(Request.SourcePath.c_str(), ReaderConfig))
+        if (!Reader.ParseFromFile(*Request.SourcePath, ReaderConfig))
         {
             OutError = FString(Reader.Error().c_str());
             return false;
@@ -58,10 +58,10 @@ namespace Lumina
             }
 
             FFixedString Key(TexName.c_str());
-            auto Existing = ImageKeyToIndex.find(Key);
-            if (Existing != ImageKeyToIndex.end())
+            auto Existing = ImageKeyToIndex.Find(Key);
+            if (Existing != nullptr)
             {
-                return Existing->second;
+                return (*Existing);
             }
 
             FSourceImage Image;
@@ -69,15 +69,15 @@ namespace Lumina
             Image.ResolvedPath       = Lumina::Paths::Combine(SourceDir, Key);
             Image.IntendedColorSpace = Role;
 
-            const int32 Index = (int32)OutData.Images.size();
-            ImageKeyToIndex.emplace(Move(Key), Index);
-            OutData.Images.push_back(Move(Image));
+            const int32 Index = OutData.Images.Num();
+            ImageKeyToIndex.TryAdd(Move(Key), Index);
+            OutData.Images.Add(Move(Image));
             return Index;
         };
 
         if (Options.bImportMaterials || Options.bImportTextures)
         {
-            OutData.Materials.reserve(Materials.size());
+            OutData.Materials.Reserve(IntCastChecked<int32>(Materials.size()));
             for (const tinyobj::material_t& Material : Materials)
             {
                 // Emitted for every usable channel so a textures-only import still brings the referenced files in.
@@ -117,7 +117,7 @@ namespace Lumina
                 Out.EmissiveImage  = Emissive;
                 Out.OcclusionImage = Occlusion;
 
-                OutData.Materials.push_back(Move(Out));
+                OutData.Materials.Add(Move(Out));
             }
         }
 
@@ -134,8 +134,9 @@ namespace Lumina
             {
                 TotalCorners += Shape.mesh.indices.size();
             }
-            MeshResource->ReserveVertices(TotalCorners);
-            MeshResource->Indices.reserve(TotalCorners);
+            const int32 Corners = IntCastChecked<int32>(TotalCorners);
+            MeshResource->ReserveVertices(Corners);
+            MeshResource->Indices.Reserve(Corners);
         }
 
         const float ShapeStep = 0.55f / (float)Math::Max<size_t>(1, Shapes.size());
@@ -143,32 +144,32 @@ namespace Lumina
 
         for (const tinyobj::shape_t& Shape : Shapes)
         {
-            const size_t NumFaces = Shape.mesh.num_face_vertices.size();
+            const int32 NumFaces = IntCastChecked<int32>(Shape.mesh.num_face_vertices.size());
 
             TVector<size_t> FaceIndexOffsets(NumFaces);
             {
                 size_t Running = 0;
-                for (size_t Face = 0; Face < NumFaces; ++Face)
+                for (int32 Face = 0; Face < NumFaces; ++Face)
                 {
                     FaceIndexOffsets[Face] = Running;
                     Running += Shape.mesh.num_face_vertices[Face];
                 }
             }
 
-            THashMap<int, TVector<size_t>> FacesByMaterial;
-            for (size_t Face = 0; Face < NumFaces; ++Face)
+            THashMap<int, TVector<int32>> FacesByMaterial;
+            for (int32 Face = 0; Face < NumFaces; ++Face)
             {
                 const int MaterialID = Shape.mesh.material_ids.empty() ? -1 : Shape.mesh.material_ids[Face];
-                FacesByMaterial[MaterialID].push_back(Face);
+                FacesByMaterial[MaterialID].Add(Face);
             }
 
             for (auto& [MaterialID, FaceList] : FacesByMaterial)
             {
-                FGeometrySurface& Surface = MeshResource->GeometrySurfaces.emplace_back();
-                if (FacesByMaterial.size() > 1)
+                FGeometrySurface& Surface = MeshResource->GeometrySurfaces.EmplaceGetRef();
+                if (FacesByMaterial.Num() > 1)
                 {
                     FFixedString SurfaceID;
-                    SurfaceID.append(FStringView(Shape.name.data(), Shape.name.size())).append("_Mat").append(Format("{}", MaterialID));
+                    SurfaceID.Append(FStringView(Shape.name.data(), IntCastChecked<int32>(Shape.name.size()))).Append("_Mat").Append(Format("{}", MaterialID));
                     Surface.ID = SurfaceID;
                 }
                 else
@@ -177,9 +178,9 @@ namespace Lumina
                 }
                 Surface.MaterialIndex = (int16)MaterialID;
                 Surface.IndexCount    = 0;
-                Surface.StartIndex    = (uint32)MeshResource->Indices.size();
+                Surface.StartIndex    = (uint32)MeshResource->Indices.Num();
 
-                for (size_t Face : FaceList)
+                for (int32 Face : FaceList)
                 {
                     const size_t NumFaceVerts = Shape.mesh.num_face_vertices[Face];
                     const size_t IndexOffset  = FaceIndexOffsets[Face];
@@ -188,7 +189,7 @@ namespace Lumina
                     {
                         const tinyobj::index_t Index = Shape.mesh.indices[IndexOffset + V];
 
-                        MeshResource->Indices.push_back((uint32)MeshResource->GetNumVertices());
+                        MeshResource->Indices.Add((uint32)MeshResource->GetNumVertices());
                         Surface.IndexCount++;
 
                         FSourceSkinnedVertex Vertex;
@@ -249,7 +250,7 @@ namespace Lumina
         }
 
         OutData.SourceNodeCount = (uint32)Shapes.size();
-        OutData.Resources.push_back(Move(MeshResource));
+        OutData.Resources.Add(Move(MeshResource));
         return true;
     }
 }

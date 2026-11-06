@@ -74,5 +74,5 @@ TEST(MaterialFallbackGradient, VertexStageNeverNamesAGradientPair)
     FFallbackFixture F;
     const FMaterialCompiler::FInputValue Value = F.Resolve(EMaterialCompileStage::Vertex, "float2(UV0)");
     EXPECT_NE(Value.Deriv, FMaterialCompiler::EDerivState::Valid);
-    EXPECT_TRUE(Value.DDX.empty());
+    EXPECT_TRUE(Value.DDX.IsEmpty());
 }

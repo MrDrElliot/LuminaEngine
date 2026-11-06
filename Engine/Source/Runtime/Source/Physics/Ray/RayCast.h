@@ -168,12 +168,12 @@ namespace Lumina
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY(Hidden)
-        TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
+        TInlineVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
 
         FUNCTION()
         void AddIgnoredEntity(ECS::FEntity Entity)
         {
-            IgnoreEntities.push_back(Entity);
+            IgnoreEntities.Add(Entity);
         }
     };
 
@@ -209,12 +209,12 @@ namespace Lumina
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY(Hidden)
-        TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
+        TInlineVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
 
         FUNCTION()
         void AddIgnoredEntity(ECS::FEntity Entity)
         {
-            IgnoreEntities.push_back(Entity);
+            IgnoreEntities.Add(Entity);
         }
     };
 }

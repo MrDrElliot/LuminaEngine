@@ -37,9 +37,9 @@ namespace Lumina
 
         void Broadcast(const void* Data, SIZE_T Size, uint8 Channel, ESendMode Mode) override
         {
-            ConnectionScratch.clear();
+            ConnectionScratch.Reset();
             Inner->GetConnectionStats(ConnectionScratch);
-            Tally(static_cast<const uint8*>(Data), Size, static_cast<uint64>(ConnectionScratch.size()));
+            Tally(static_cast<const uint8*>(Data), Size, static_cast<uint64>(ConnectionScratch.Num()));
             Inner->Broadcast(Data, Size, Channel, Mode);
         }
 
@@ -47,7 +47,7 @@ namespace Lumina
         TArray<uint64, TypeCount> TakeBytesByType()
         {
             TArray<uint64, TypeCount> Result = BytesByType;
-            BytesByType.fill(0);
+            BytesByType.Fill(0);
             return Result;
         }
 

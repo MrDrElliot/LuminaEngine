@@ -68,6 +68,6 @@ TEST(NodeGraphComment, ACommentIsNeverAnUnusedNode)
 
     TVector<CEdGraphNode*> Dead;
     Graph->CollectDeadNodes(Dead);
-    ASSERT_EQ(Dead.size(), 1u);
+    ASSERT_EQ(Dead.Num(), 1);
     EXPECT_EQ(Dead[0], Unused);
 }

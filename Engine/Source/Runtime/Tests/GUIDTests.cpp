@@ -58,7 +58,7 @@ TEST(GUIDTests, NewDeterministic_HighAndLowHalvesDiffer)
     const auto& B = G.GetBytes();
 
     bool AnyDifferent = false;
-    for (size_t i = 0; i < 8; ++i)
+    for (int32 i = 0; i < 8; ++i)
     {
         if (B[i] != B[i + 8])
         {
@@ -73,16 +73,16 @@ TEST(GUIDTests, ToString_ProducesNonEmpty)
 {
     FGuid G = FGuid::NewDeterministic("Engine.PrimitiveMesh.Sphere");
     FString Text = G.ToString();
-    EXPECT_FALSE(Text.empty());
-    EXPECT_EQ(Text.length(), 36u);
+    EXPECT_FALSE(Text.IsEmpty());
+    EXPECT_EQ(Text.Len(), 36);
 }
 
 TEST(GUIDTests, ToShortString_ProducesNonEmpty)
 {
     FGuid G = FGuid::NewDeterministic("Engine.PrimitiveMesh.Sphere");
     FString Text = G.ToShortString();
-    EXPECT_FALSE(Text.empty());
-    EXPECT_EQ(Text.length(), 32u);
+    EXPECT_FALSE(Text.IsEmpty());
+    EXPECT_EQ(Text.Len(), 32);
 }
 
 TEST(GUIDTests, NewDeterministic_RoundTripThroughString)
@@ -101,7 +101,7 @@ TEST(GUIDTests, NewDeterministic_StringViewSourceIndependence)
     FString     Owned   = "Engine.PrimitiveMesh.Plane";
 
     FGuid FromLiteral = FGuid::NewDeterministic(FStringView(Literal));
-    FGuid FromOwned   = FGuid::NewDeterministic(FStringView(Owned.c_str(), Owned.length()));
+    FGuid FromOwned   = FGuid::NewDeterministic(FStringView(*Owned, Owned.Len()));
 
     EXPECT_EQ(FromLiteral, FromOwned);
 }
@@ -161,9 +161,9 @@ TEST(GUIDTests, FromString_RoundTripWithoutDashes)
 
 TEST(GUIDTests, TryParse_RejectsGarbage)
 {
-    EXPECT_FALSE(FGuid::TryParse("not a guid").has_value());
-    EXPECT_FALSE(FGuid::TryParse("").has_value());
-    EXPECT_FALSE(FGuid::TryParse("ZZZZZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZZZZZZZZZ").has_value());
+    EXPECT_FALSE(FGuid::TryParse("not a guid").IsSet());
+    EXPECT_FALSE(FGuid::TryParse("").IsSet());
+    EXPECT_FALSE(FGuid::TryParse("ZZZZZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZZZZZZZZZ").IsSet());
 }
 
 TEST(GUIDTests, TryParse_AcceptsValid)
@@ -171,7 +171,7 @@ TEST(GUIDTests, TryParse_AcceptsValid)
     FGuid Original = FGuid::NewDeterministic("valid-parse");
     auto  Parsed   = FGuid::TryParse(Original.ToString());
 
-    ASSERT_TRUE(Parsed.has_value());
+    ASSERT_TRUE(Parsed.IsSet());
     EXPECT_EQ(*Parsed, Original);
 }
 

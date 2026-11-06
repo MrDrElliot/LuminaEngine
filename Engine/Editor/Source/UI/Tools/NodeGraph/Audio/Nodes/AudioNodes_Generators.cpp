@@ -82,7 +82,7 @@ namespace Lumina
     {
         for (const TStrongObjectPtr<CAudioStream>& Wave : Waves)
         {
-            OutWaves.push_back(Wave.Get());
+            OutWaves.Add(Wave.Get());
         }
     }
 }

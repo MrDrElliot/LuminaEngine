@@ -29,10 +29,22 @@ namespace Lumina
         // The sparse slots laid out densely, so the package name reader reads them as it would a package's own table.
         TVector<FName> DenseNames(const FPortableBytes& Source)
         {
-            TVector<FName> Slots(Source.Names.empty() ? 0 : Source.Names.back().Slot + 1);
+            constexpr uint32 MaxNameSlots = 1u << 20;
+            uint32 Count = 0;
             for (const FPortableBytes::FNameSlot& Entry : Source.Names)
             {
-                Slots[Entry.Slot] = Entry.Name;
+                if (Entry.Slot < MaxNameSlots)
+                {
+                    Count = Math::Max(Count, Entry.Slot + 1);
+                }
+            }
+            TVector<FName> Slots(Count);
+            for (const FPortableBytes::FNameSlot& Entry : Source.Names)
+            {
+                if (Entry.Slot < Count)
+                {
+                    Slots[Entry.Slot] = Entry.Name;
+                }
             }
             return Slots;
         }
@@ -89,12 +101,13 @@ namespace Lumina
                 FObjectPackageIndex Index;
                 if (Value != nullptr)
                 {
-                    auto [It, bAdded] = ObjectIndices.try_emplace(Value, (int32)Objects.size());
-                    if (bAdded)
+                    const int32 NewIndex = Objects.Num();
+                    const int32 ObjectIndex = ObjectIndices.FindOrAdd(Value, NewIndex);
+                    if (ObjectIndex == NewIndex)
                     {
-                        Objects.push_back(Value->GetGUID());
+                        Objects.Add(Value->GetGUID());
                     }
-                    Index = FObjectPackageIndex::FromImport(It->second);
+                    Index = FObjectPackageIndex::FromImport(ObjectIndex);
                 }
                 *this << Index;
                 return *this;
@@ -126,12 +139,18 @@ namespace Lumina
     bool FPortableBytes::Cut(FArchive& Ar, int64 Size)
     {
         FileVersion = Ar.GetFileVersion();
-        Names.clear();
-        Objects.clear();
-        Bytes.resize((size_t)Math::Max<int64>(Size, 0));
-        if (!Bytes.empty())
+        Names.Reset();
+        Objects.Reset();
+        Bytes.Reset();
+        if (Size < 0 || !Ar.CanHoldCount((uint64)Size, 8))
         {
-            Ar.Serialize(Bytes.data(), (int64)Bytes.size());
+            Ar.SetHasError(true);
+            return false;
+        }
+        Bytes.SetNum(IntCastChecked<int32>(Size));
+        if (!Bytes.IsEmpty())
+        {
+            Ar.Serialize(Bytes.GetData(), Bytes.Num());
         }
         if (!Ar.DescribeCutBytes(*this))
         {
@@ -144,23 +163,23 @@ namespace Lumina
 
     void FPortableBytes::Capture(const CStruct& Struct, const void* Value)
     {
-        Bytes.clear();
-        Names.clear();
-        Objects.clear();
+        Bytes.Reset();
+        Names.Reset();
+        Objects.Reset();
 
         FPortableWriter Writer(Bytes);
         Struct.SerializeProperties(Writer, const_cast<void*>(Value));
         FileVersion = Writer.GetFileVersion();
 
         const TVector<FName>& Slots = Writer.GetNameMap().GetSlots();
-        for (uint32 Slot = 0; Slot < (uint32)Slots.size(); ++Slot)
+        for (int32 Slot = 0; Slot < Slots.Num(); ++Slot)
         {
-            Names.push_back({ Slot, Slots[Slot] });
+            Names.Emplace(static_cast<uint32>(Slot), Slots[Slot]);
         }
         // Imports count down from -1, so walking the list backward keeps the slots ascending.
-        for (int32 Import = (int32)Writer.Objects.size() - 1; Import >= 0; --Import)
+        for (int32 Import = Writer.Objects.Num() - 1; Import >= 0; --Import)
         {
-            Objects.push_back({ FObjectPackageIndex::FromImport(Import).GetRaw(), Writer.Objects[Import] });
+            Objects.Emplace(FObjectPackageIndex::FromImport(Import).GetRaw(), Writer.Objects[Import]);
         }
     }
 

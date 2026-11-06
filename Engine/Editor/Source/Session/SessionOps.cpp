@@ -49,7 +49,7 @@ namespace Lumina::SessionOps
 
         FSceneEditorTool* RequireSceneTarget(FString& OutError)
         {
-            if (GSceneTargetTab.empty())
+            if (GSceneTargetTab.IsEmpty())
             {
                 return RequireSceneEditor(OutError);
             }
@@ -73,7 +73,7 @@ namespace Lumina::SessionOps
 
         FEditorTool* FindUndoTarget(FStringView Tab, FString& OutError)
         {
-            if (Tab.empty())
+            if (Tab.IsEmpty())
             {
                 return RequireSceneTarget(OutError);
             }
@@ -85,9 +85,9 @@ namespace Lumina::SessionOps
 
     bool SetSceneTarget(FStringView TabName, FString& OutError)
     {
-        if (TabName.empty())
+        if (TabName.IsEmpty())
         {
-            GSceneTargetTab.clear();
+            GSceneTargetTab.Reset();
             return true;
         }
 
@@ -102,7 +102,7 @@ namespace Lumina::SessionOps
             OutError = Lumina::Format("'{}' is not a scene editor.", TabName);
             return false;
         }
-        GSceneTargetTab = FString(TabName.data(), TabName.size());
+        GSceneTargetTab = FString(TabName.GetData(), TabName.Len());
         return true;
     }
 
@@ -141,7 +141,7 @@ namespace Lumina::SessionOps
 
     bool IsSceneTargetSimulating()
     {
-        return GSceneTargetTab.empty() && IsSimulating();
+        return GSceneTargetTab.IsEmpty() && IsSimulating();
     }
 
     bool GetPlayState(FPlayState& Out, FString& OutError)
@@ -156,9 +156,11 @@ namespace Lumina::SessionOps
         Out.bPaused  = Out.bPlaying && Tool->IsPlaySessionPaused();
         Out.bEjected = Tool->IsEjectedFromPlay();
 
-        if (CWorld* World = Tool->GetSceneWorld(); World != nullptr && World->GetPackage() != nullptr)
+        // The play world is transient, so a session names the world it was started from.
+        CWorld* World = Out.bPlaying && Tool->GetPIESourceWorld() != nullptr ? Tool->GetPIESourceWorld() : Tool->GetSceneWorld();
+        if (World != nullptr && World->GetPackage() != nullptr)
         {
-            Out.World = FString(World->GetPackage()->GetPackagePath().c_str());
+            Out.World = FString(*World->GetPackage()->GetPackagePath());
         }
         return true;
     }
@@ -333,7 +335,7 @@ namespace Lumina::SessionOps
         }
         FFixedString Error;
         CPrefab* Prefab = Tool->CreatePrefabFromSelection(Folder, Name, Error);
-        OutError = FString(Error.c_str());
+        OutError = FString(*Error);
         return Prefab;
     }
 
@@ -498,7 +500,7 @@ namespace Lumina::SessionOps
         Out.MinY      = Min.y;
         Out.MaxX      = Max.x;
         Out.MaxY      = Max.y;
-        Out.NodeCount = (int32)Graph->Nodes.size();
+        Out.NodeCount = Graph->Nodes.Num();
 
         for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
         {
@@ -506,7 +508,7 @@ namespace Lumina::SessionOps
                 && Node->GetNodeY() >= Min.y && Node->GetNodeY() <= Max.y;
             if (Out.bDrawn && !bInside)
             {
-                Out.Offscreen.push_back(Node->GetNodeID());
+                Out.Offscreen.Add(Node->GetNodeID());
             }
         }
         return true;
@@ -624,7 +626,7 @@ namespace Lumina::SessionOps
             CPackage* Package = *Itr;
             if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
             {
-                Paths.push_back(FString(Package->GetPackagePath().c_str()));
+                Paths.Emplace(*Package->GetPackagePath());
             }
         }
         return Paths;
@@ -642,9 +644,9 @@ namespace Lumina::SessionOps
         FEditorUI::FSaveAllResult Result = UI->SaveAllDirtyPackagesSilently();
         OutSaved = Result.Saved;
         OutFailedPaths = Move(Result.FailedPaths);
-        if (!OutFailedPaths.empty())
+        if (!OutFailedPaths.IsEmpty())
         {
-            OutError = Lumina::Format("{} package(s) failed to save.", OutFailedPaths.size());
+            OutError = Lumina::Format("{} package(s) failed to save.", OutFailedPaths.Num());
             return false;
         }
         return true;
@@ -704,9 +706,9 @@ namespace Lumina::SessionOps
         else if (Unsaved == EQuitUnsaved::Refuse)
         {
             const TVector<FString> Dirty = GetDirtyPackagePaths();
-            if (!Dirty.empty())
+            if (!Dirty.IsEmpty())
             {
-                OutError = Lumina::Format("{} package(s) have unsaved changes.", Dirty.size());
+                OutError = Lumina::Format("{} package(s) have unsaved changes.", Dirty.Num());
                 return false;
             }
         }
@@ -747,9 +749,9 @@ namespace Lumina::SessionOps
         }
 
         // The window name carries its id after a "###", which is what a caller addresses a tab by.
-        const FString Full(Tool->GetToolName().c_str());
-        const size_t Hash = Full.find("###");
-        OutTabId = Hash == FString::npos ? Full : Full.substr(Hash + 3);
+        const FString Full(*Tool->GetToolName());
+        const int32 Hash = Full.Find("###");
+        OutTabId = Hash == Constants::kIndexNone ? Full : Full.Mid(Hash + 3);
         return true;
     }
 }

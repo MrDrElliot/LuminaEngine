@@ -58,7 +58,7 @@ namespace
         // The join. Nothing reads Spirv until the compile task has landed.
         GShaderCompiler->Flush();
 
-        if (Spirv.empty())
+        if (Spirv.IsEmpty())
         {
             LOG_ERROR("Failed to compile '{}'.", DebugName);
         }
@@ -69,8 +69,8 @@ namespace
     {
         return RHI::FShaderSource
         {
-            .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
-                                                 Spirv.size() * sizeof(uint32)),
+            .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.GetData()),
+                                                 Spirv.Num() * sizeof(uint32)),
             .EntryPoint = EntryPoint,
         };
     }
@@ -79,7 +79,7 @@ namespace
     {
         const TVector<uint32> Vertex = CompileSpirv(kShader, "VSMain", "HelloTriangle.Vertex");
         const TVector<uint32> Pixel  = CompileSpirv(kShader, "PSMain", "HelloTriangle.Pixel");
-        if (Vertex.empty() || Pixel.empty())
+        if (Vertex.IsEmpty() || Pixel.IsEmpty())
         {
             return {};
         }
@@ -153,7 +153,7 @@ int main(int ArgC, char** ArgV)
     Memory::Initialize();
 
     FApplicationGlobalState GlobalState("HelloTriangle Main");
-    Task::Initialize();
+    Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
@@ -189,7 +189,7 @@ int main(int ArgC, char** ArgV)
     GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
-    Task::Shutdown();
+    Jobs::Shutdown();
     GCommandLine = nullptr;
 
     return bCompiled ? 0 : 1;

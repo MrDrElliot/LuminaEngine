@@ -19,14 +19,14 @@ namespace Lumina::SceneOps
 {
     CStruct* ResolveComponentType(FStringView TypeName)
     {
-        return TypeName.empty() ? nullptr : FindComponentStruct(TypeName);
+        return TypeName.IsEmpty() ? nullptr : FindComponentStruct(TypeName);
     }
 
     FAddComponentPlan PlanAddComponent(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Targets, CStruct* Type)
     {
         FAddComponentPlan Plan;
 
-        if (Targets.empty() || Type == nullptr)
+        if (Targets.IsEmpty() || Type == nullptr)
         {
             return Plan;
         }
@@ -34,7 +34,7 @@ namespace Lumina::SceneOps
         // The reflected struct is what lets an instance record the add in its override ledger.
         Plan.Component = Type;
 
-        Plan.Missing.reserve(Targets.size());
+        Plan.Missing.Reserve(Targets.Num());
 
         for (ECS::FEntity Target : Targets)
         {
@@ -44,7 +44,7 @@ namespace Lumina::SceneOps
             }
             else
             {
-                Plan.Missing.push_back(Target);
+                Plan.Missing.Add(Target);
             }
         }
 
@@ -121,6 +121,12 @@ namespace Lumina::SceneOps
         if (!Registry.IsValid(Entity))
         {
             return;
+        }
+
+        // A raw store stamps nothing by itself, and the edit stays silent like the details panel's live ops.
+        if (const FComponentOps* ComponentOps = Event.OuterType->GetComponentOps())
+        {
+            Registry.MarkChangedRaw(ComponentOps->GetTypeID(), Entity);
         }
 
         // A raw store leaves none of the flags the transform setters would have raised.

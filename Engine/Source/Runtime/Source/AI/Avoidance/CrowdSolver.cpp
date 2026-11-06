@@ -13,7 +13,7 @@ namespace Lumina::Avoidance
 
         void SolveOne(FCrowdAgents& Agents, int32 i, float InvTimeStep)
         {
-            const uint8 Flags = Agents.Flags[(size_t)i];
+            const uint8 Flags = Agents.Flags[i];
 
             if ((Flags & CrowdFlag::Solve) == 0)
             {
@@ -22,42 +22,42 @@ namespace Lumina::Avoidance
 
             if ((Flags & CrowdFlag::Passthrough) != 0)
             {
-                Agents.OutVelX[(size_t)i]      = Agents.PrefVelX[(size_t)i];
-                Agents.OutVelZ[(size_t)i]      = Agents.PrefVelZ[(size_t)i];
-                Agents.OutNeighbors[(size_t)i] = 0;
+                Agents.OutVelX[i]      = Agents.PrefVelX[i];
+                Agents.OutVelZ[i]      = Agents.PrefVelZ[i];
+                Agents.OutNeighbors[i] = 0;
                 return;
             }
 
             FORCAAgent Self;
-            Self.PosX     = Agents.PosX[(size_t)i];
-            Self.PosZ     = Agents.PosZ[(size_t)i];
-            Self.VelX     = Agents.VelX[(size_t)i];
-            Self.VelZ     = Agents.VelZ[(size_t)i];
-            Self.Radius   = Agents.Radius[(size_t)i];
-            Self.MaxSpeed = Agents.MaxSpeed[(size_t)i];
+            Self.PosX     = Agents.PosX[i];
+            Self.PosZ     = Agents.PosZ[i];
+            Self.VelX     = Agents.VelX[i];
+            Self.VelZ     = Agents.VelZ[i];
+            Self.Radius   = Agents.Radius[i];
+            Self.MaxSpeed = Agents.MaxSpeed[i];
 
             FNeighborHit Hits[kMaxORCALines];
             const int32  Found = GatherNeighbors(Agents.Grid, i, Self.PosX, Self.PosZ,
-                                                 Agents.NeighborRange[(size_t)i],
-                                                 Agents.MaxNeighbors[(size_t)i], Hits);
+                                                 Agents.NeighborRange[i],
+                                                 Agents.MaxNeighbors[i], Hits);
 
             FORCALine   Lines[kMaxORCALines];
-            const float InvHorizon     = Agents.InvTimeHorizon[(size_t)i];
-            const float Responsibility = Agents.Responsibility[(size_t)i];
+            const float InvHorizon     = Agents.InvTimeHorizon[i];
+            const float Responsibility = Agents.Responsibility[i];
 
             for (int32 n = 0; n < Found; ++n)
             {
                 const int32 Other = Hits[n].Index;
 
                 FORCAAgent Neighbor;
-                Neighbor.PosX   = Agents.PosX[(size_t)Other];
-                Neighbor.PosZ   = Agents.PosZ[(size_t)Other];
-                Neighbor.VelX   = Agents.VelX[(size_t)Other];
-                Neighbor.VelZ   = Agents.VelZ[(size_t)Other];
-                Neighbor.Radius = Agents.Radius[(size_t)Other];
+                Neighbor.PosX   = Agents.PosX[Other];
+                Neighbor.PosZ   = Agents.PosZ[Other];
+                Neighbor.VelX   = Agents.VelX[Other];
+                Neighbor.VelZ   = Agents.VelZ[Other];
+                Neighbor.Radius = Agents.Radius[Other];
 
                 // A neighbor that ignores others takes none of the correction, so this agent takes it all.
-                const float Share = (Agents.Flags[(size_t)Other] & CrowdFlag::Passthrough) != 0
+                const float Share = (Agents.Flags[Other] & CrowdFlag::Passthrough) != 0
                     ? 1.0f
                     : Responsibility;
 
@@ -65,31 +65,31 @@ namespace Lumina::Avoidance
             }
 
             SolveVelocity(Lines, Found, Self.MaxSpeed,
-                          Agents.PrefVelX[(size_t)i], Agents.PrefVelZ[(size_t)i],
-                          Agents.OutVelX[(size_t)i], Agents.OutVelZ[(size_t)i]);
+                          Agents.PrefVelX[i], Agents.PrefVelZ[i],
+                          Agents.OutVelX[i], Agents.OutVelZ[i]);
 
-            Agents.OutNeighbors[(size_t)i] = Found;
+            Agents.OutNeighbors[i] = Found;
         }
     }
 
-    void FCrowdAgents::Reset(size_t Count)
+    void FCrowdAgents::Reset(int32 Count)
     {
-        PosX.resize(Count);
-        PosZ.resize(Count);
-        VelX.resize(Count);
-        VelZ.resize(Count);
-        PrefVelX.resize(Count);
-        PrefVelZ.resize(Count);
-        Radius.resize(Count);
-        MaxSpeed.resize(Count);
-        InvTimeHorizon.resize(Count);
-        NeighborRange.resize(Count);
-        Responsibility.resize(Count);
-        MaxNeighbors.resize(Count);
-        Flags.resize(Count);
-        OutVelX.resize(Count);
-        OutVelZ.resize(Count);
-        OutNeighbors.resize(Count);
+        PosX.SetNum(Count);
+        PosZ.SetNum(Count);
+        VelX.SetNum(Count);
+        VelZ.SetNum(Count);
+        PrefVelX.SetNum(Count);
+        PrefVelZ.SetNum(Count);
+        Radius.SetNum(Count);
+        MaxSpeed.SetNum(Count);
+        InvTimeHorizon.SetNum(Count);
+        NeighborRange.SetNum(Count);
+        Responsibility.SetNum(Count);
+        MaxNeighbors.SetNum(Count);
+        Flags.SetNum(Count);
+        OutVelX.SetNum(Count);
+        OutVelZ.SetNum(Count);
+        OutNeighbors.SetNum(Count);
     }
 
     void SolveCrowd(FCrowdAgents& Agents, int32 Count, float InvTimeStep, bool bAllowParallel)
@@ -104,12 +104,12 @@ namespace Lumina::Avoidance
         float CellSize = kMinCellSize;
         for (int32 i = 0; i < Count; ++i)
         {
-            CellSize = Math::Max(CellSize, Agents.NeighborRange[(size_t)i]);
+            CellSize = Math::Max(CellSize, Agents.NeighborRange[i]);
         }
 
-        Agents.Grid.Build(Agents.PosX.data(), Agents.PosZ.data(), Count, CellSize);
+        Agents.Grid.Build(Agents.PosX.GetData(), Agents.PosZ.GetData(), Count, CellSize);
 
-        if (!bAllowParallel || Count < kCrowdParallelThreshold || GTaskSystem == nullptr)
+        if (!bAllowParallel || Count < kCrowdParallelThreshold || !Jobs::IsRuntimeRunning())
         {
             for (int32 i = 0; i < Count; ++i)
             {
@@ -118,7 +118,7 @@ namespace Lumina::Avoidance
             return;
         }
 
-        Task::ParallelFor((uint32)Count, [&](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)Count, [&](const Jobs::FParallelRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {

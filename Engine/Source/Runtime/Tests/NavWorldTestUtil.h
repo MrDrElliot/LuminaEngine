@@ -59,14 +59,14 @@ namespace Lumina::NavTest
         Terrain.Resolution = (int32)Size + 1;
         Terrain.TileWorldSize = Size;
         Terrain.MaxHeight = kTerrainRange;
-        Terrain.Heightmap.resize((size_t)Terrain.Resolution * Terrain.Resolution);
+        Terrain.Heightmap.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Terrain.Resolution) * Terrain.Resolution));
         const float Stride = Size / (float)(Terrain.Resolution - 1);
         for (int32 Row = 0; Row < Terrain.Resolution; ++Row)
         {
             for (int32 Col = 0; Col < Terrain.Resolution; ++Col)
             {
                 const float Height = GroundHeight(-Size * 0.5f + Col * Stride, -Size * 0.5f + Row * Stride);
-                Terrain.Heightmap[(size_t)Row * Terrain.Resolution + Col] = (Height - kTerrainBase) / kTerrainRange;
+                Terrain.Heightmap[Row * Terrain.Resolution + Col] = (Height - kTerrainBase) / kTerrainRange;
             }
         }
         Registry.Emplace<STerrainComponent>(Entity, std::move(Terrain));
@@ -122,14 +122,16 @@ namespace Lumina::NavTest
             Nav().bBakeRequested = true;
             System = NewObject<SNavMeshSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             System->SetOwningWorld(World);
-            World->Systems.push_back(System);
-            System->OnStartup(FWorldTestAccess::SystemContext(*World));
+            System->ConfigureSystem();
+            World->Systems.Add(System);
+            System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
             if (bWithPathFollow)
             {
                 Follow = NewObject<SPathFollowSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
                 Follow->SetOwningWorld(World);
-                World->Systems.push_back(Follow);
-                Follow->OnStartup(FWorldTestAccess::SystemContext(*World));
+                Follow->ConfigureSystem();
+                World->Systems.Add(Follow);
+                Follow->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
             }
         }
 
@@ -137,12 +139,12 @@ namespace Lumina::NavTest
         {
             if (Follow != nullptr)
             {
-                Follow->OnTeardown(FWorldTestAccess::SystemContext(*World));
+                Follow->OnTeardown(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
                 Follow = nullptr;
             }
             if (System != nullptr)
             {
-                System->OnTeardown(FWorldTestAccess::SystemContext(*World));
+                System->OnTeardown(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
                 System = nullptr;
             }
         }
@@ -189,7 +191,7 @@ namespace Lumina::NavTest
             return TickUntil([this]
             {
                 const FNavMeshRuntime& Runtime = Nav().Runtime;
-                return Runtime.DirtyTiles.empty() && Runtime.SettlingTiles.empty() && Runtime.PendingRebakes.empty() && Runtime.PendingSourceChanges.empty();
+                return Runtime.DirtyTiles.IsEmpty() && Runtime.SettlingTiles.IsEmpty() && Runtime.PendingRebakes.IsEmpty() && Runtime.PendingSourceChanges.IsEmpty();
             }, TimeoutMs);
         }
 

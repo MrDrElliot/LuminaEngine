@@ -43,12 +43,12 @@ namespace Lumina
 
         if (!bDynamic)
         {
-            ImGui::TextUnformatted(GetNodeDisplayName().data());
+            ImGui::TextUnformatted(GetNodeDisplayName().GetData());
             return;
         }
 
         // A graph of nodes all titled Float says nothing about which one drives EmissivePower.
-        ImGui::Text(LE_ICON_MATERIAL_DESIGN " %s", GetNodeTitleText().c_str());
+        ImGui::Text(LE_ICON_MATERIAL_DESIGN " %s", *GetNodeTitleText());
 
         if (ImGui::IsItemHovered() && GetOwningGraph() != nullptr)
         {
@@ -69,8 +69,8 @@ namespace Lumina
 
             const FString Current = ParameterName->IsNone() ? FString() : ParameterName->ToString();
             constexpr size_t MaxLength = sizeof(GParameterRenameBuffer) - 1;
-            const size_t Length = Current.size() < MaxLength ? Current.size() : MaxLength;
-            Memory::Memcpy(GParameterRenameBuffer, Current.c_str(), Length);
+            const size_t Length = static_cast<size_t>(Current.Len()) < MaxLength ? Current.Len() : MaxLength;
+            Memory::Memcpy(GParameterRenameBuffer, *Current, Length);
             GParameterRenameBuffer[Length] = '\0';
         }
     }

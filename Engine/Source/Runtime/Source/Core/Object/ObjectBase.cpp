@@ -25,7 +25,7 @@ namespace Lumina
         TVector<CObjectBase*>            Registrants;
 
         TVector<const FCompiledInTypes*> Modules;
-        size_t                           NumRegistered = 0;
+        int32                            NumRegistered = 0;
 
         // Copied out of the module, since its table lives in a DLL that can be freed.
         THashMap<FString, uint64>        LayoutHashes;
@@ -121,7 +121,7 @@ namespace Lumina
 
     void CObjectBase::BeginRegister()
     {
-        PendingTypes().Registrants.push_back(this);
+        PendingTypes().Registrants.Add(this);
     }
 
     void CObjectBase::FinishRegister(CClass* InClass, const TCHAR* InName)
@@ -226,7 +226,7 @@ namespace Lumina
     void CObjectBase::AddToRoot()
     {
         FScopeLock Lock(Object::Internal::GRootMutex);
-        Object::Internal::GRootedObjects.emplace(this);
+        Object::Internal::GRootedObjects.TryAdd(this);
         SetFlag(OF_Rooted);
     }
 
@@ -238,18 +238,18 @@ namespace Lumina
             return;
         }
 
-        // The root set often holds the ONLY strong ref, so erase would free this before the flags clear.
+        // The root set often holds the ONLY strong ref, so Remove would free this before the flags clear.
         TStrongObjectPtr<CObjectBase> Pinned(this);
         {
             FScopeLock Lock(Object::Internal::GRootMutex);
-            Object::Internal::GRootedObjects.erase(this);
+            Object::Internal::GRootedObjects.Remove(this);
             ClearFlags(OF_Rooted);
         }
     }
 
     FFixedString CObjectBase::MakeDisplayName() const
     {
-        return NamePrivate.c_str();
+        return *NamePrivate;
     }
 
     void CObjectBase::AddObject()
@@ -265,17 +265,17 @@ namespace Lumina
     void FinishRegistration(CObjectBase* Object)
     {
         TVector<CObjectBase*>& Pending = PendingTypes().Registrants;
-        const int32 Index = VectorFindIndex(Pending, Object);
+        const int32 Index = Pending.Find(Object);
         if (Index != Constants::kIndexNone)
         {
-            Pending.erase(Pending.begin() + Index);
+            Pending.RemoveAt(Index);
             Object->FinishRegister(static_cast<CClass*>(Object)->GetMetaClass(), TEXT(""));
         }
     }
 
     FTypeRegistrar::FTypeRegistrar(const FCompiledInTypes& Types)
     {
-        PendingTypes().Modules.push_back(&Types);
+        PendingTypes().Modules.Add(&Types);
         if (Types.Module != nullptr)
         {
             PendingTypes().LayoutHashes[FString(Types.Module)] = Types.LayoutHash;
@@ -285,24 +285,24 @@ namespace Lumina
     uint64 FindModuleLayoutHash(FStringView Module)
     {
         const THashMap<FString, uint64>& Hashes = PendingTypes().LayoutHashes;
-        auto It = Hashes.find(FString(Module.data(), Module.size()));
-        return It != Hashes.end() ? It->second : 0;
+        auto It = Hashes.Find(FString(Module.GetData(), Module.Len()));
+        return It != nullptr ? (*It) : 0;
     }
 
-    size_t SnapshotPendingTypes()
+    int32 SnapshotPendingTypes()
     {
-        return PendingTypes().Modules.size();
+        return PendingTypes().Modules.Num();
     }
 
-    void RollbackPendingTypes(size_t Snapshot)
+    void RollbackPendingTypes(int32 Snapshot)
     {
         FPendingTypes& Pending = PendingTypes();
 
         // A registered module's types are live, so only the refused module's tail can be dropped.
         ASSERT(Snapshot >= Pending.NumRegistered);
-        if (Snapshot < Pending.Modules.size())
+        if (Snapshot < Pending.Modules.Num())
         {
-            Pending.Modules.resize(Snapshot);
+            Pending.Modules.SetNum(Snapshot);
         }
     }
 
@@ -318,20 +318,20 @@ namespace Lumina
     {
         FPendingTypes& Pending = PendingTypes();
         const TGuardValue<bool> Guard(Pending.bRegistering, true);
-        while (!Pending.Registrants.empty() || Pending.NumRegistered < Pending.Modules.size())
+        while (!Pending.Registrants.IsEmpty() || Pending.NumRegistered < Pending.Modules.Num())
         {
             // Finishing one can allocate another, which queues behind it.
-            while (!Pending.Registrants.empty())
+            while (!Pending.Registrants.IsEmpty())
             {
-                FinishRegistration(Pending.Registrants.front());
+                FinishRegistration(Pending.Registrants[0]);
             }
 
-            const size_t First = Pending.NumRegistered;
-            const size_t Last = Pending.Modules.size();
+            const int32 First = Pending.NumRegistered;
+            const int32 Last = Pending.Modules.Num();
             Pending.NumRegistered = Last;
 
             // Enums and structs first, since a class's properties can name either.
-            for (size_t Index = First; Index < Last; ++Index)
+            for (int32 Index = First; Index < Last; ++Index)
             {
                 const FCompiledInTypes& Types = *Pending.Modules[Index];
                 for (uint32 Enum = 0; Enum < Types.NumEnums; ++Enum)
@@ -345,12 +345,12 @@ namespace Lumina
             }
 
             TVector<CClass*> NewClasses;
-            for (size_t Index = First; Index < Last; ++Index)
+            for (int32 Index = First; Index < Last; ++Index)
             {
                 const FCompiledInTypes& Types = *Pending.Modules[Index];
                 for (uint32 Class = 0; Class < Types.NumClasses; ++Class)
                 {
-                    NewClasses.push_back(Types.Classes[Class]());
+                    NewClasses.Add(Types.Classes[Class]());
                 }
             }
 
@@ -385,7 +385,7 @@ namespace Lumina
         // Otherwise dropping the last ref on each rooted object destroys it immediately.
         Object::Internal::BeginShutdown();
 
-        Object::Internal::GRootedObjects.clear();
+        Object::Internal::GRootedObjects.Reset();
 
         Object::Internal::Shutdown();
 

@@ -15,18 +15,18 @@ namespace Lumina
 
         const auto& Inputs = Node->GetInputPins();
         int32 Slot = 0;
-        while (Slot < (int32)Inputs.size() && Inputs[Slot].Get() != this)
+        while (Slot < Inputs.Num() && Inputs[Slot].Get() != this)
         {
             ++Slot;
         }
 
         // A saved value wins over the pin's initial one, and pins past the saved count start from theirs.
-        for (int32 Missing = (int32)Node->PinDefaults.size(); Missing <= Slot && Missing < (int32)Inputs.size(); ++Missing)
+        for (int32 Missing = Node->PinDefaults.Num(); Missing <= Slot && Missing < Inputs.Num(); ++Missing)
         {
             const CParticleInput* Pin = Cast<CParticleInput>(Inputs[Missing].Get());
-            Node->PinDefaults.push_back(Pin != nullptr ? Pin->InitialDefault : FVector4(0.0f));
+            Node->PinDefaults.Add(Pin != nullptr ? Pin->InitialDefault : FVector4(0.0f));
         }
-        return Slot < (int32)Node->PinDefaults.size() ? Node->PinDefaults[Slot] : InitialDefault;
+        return Slot < Node->PinDefaults.Num() ? Node->PinDefaults[Slot] : InitialDefault;
     }
 
     float CParticleInput::DrawPin()

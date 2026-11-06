@@ -12,14 +12,14 @@ namespace Lumina
 
     void FNavOctree::Clear()
     {
-        Nodes.clear();
-        Elements.clear();
-        FreeElements.clear();
+        Nodes.Reset();
+        Elements.Reset();
+        FreeElements.Reset();
         Count = 0;
 
         FNode Root;
         Root.HalfSize = RootHalfSize;
-        Nodes.push_back(Move(Root));
+        Nodes.Add(Move(Root));
     }
 
     uint32 FNavOctree::NodeFor(const FVector3& Min, const FVector3& Max)
@@ -44,14 +44,14 @@ namespace Lumina
 
             if (Nodes[Node].FirstChild == kNone)
             {
-                const uint32 First = (uint32)Nodes.size();
+                const uint32 First = (uint32)Nodes.Num();
                 Nodes[Node].FirstChild = First;
                 for (uint32 Octant = 0; Octant < 8; ++Octant)
                 {
                     FNode Child;
                     Child.HalfSize = ChildHalf;
                     Child.Center = NodeCenter + FVector3((Octant & 1) ? ChildHalf : -ChildHalf, (Octant & 2) ? ChildHalf : -ChildHalf, (Octant & 4) ? ChildHalf : -ChildHalf);
-                    Nodes.push_back(Move(Child));
+                    Nodes.Add(Move(Child));
                 }
             }
 
@@ -64,33 +64,33 @@ namespace Lumina
     {
         FElement& E = Elements[Element];
         E.Node = Node;
-        E.Slot = (uint32)Nodes[Node].Elements.size();
-        Nodes[Node].Elements.push_back(Element);
+        E.Slot = (uint32)Nodes[Node].Elements.Num();
+        Nodes[Node].Elements.Add(Element);
     }
 
     void FNavOctree::Unlink(uint32 Element)
     {
         FElement& E = Elements[Element];
         TVector<uint32>& Slots = Nodes[E.Node].Elements;
-        const uint32 Moved = Slots.back();
+        const uint32 Moved = Slots.Last();
         Slots[E.Slot] = Moved;
         Elements[Moved].Slot = E.Slot;
-        Slots.pop_back();
+        Slots.Pop();
         E.Node = kNone;
     }
 
     uint32 FNavOctree::Add(const FVector3& Min, const FVector3& Max, uint32 Payload)
     {
         uint32 Element;
-        if (!FreeElements.empty())
+        if (!FreeElements.IsEmpty())
         {
-            Element = FreeElements.back();
-            FreeElements.pop_back();
+            Element = FreeElements.Last();
+            FreeElements.Pop();
         }
         else
         {
-            Element = (uint32)Elements.size();
-            Elements.emplace_back();
+            Element = (uint32)Elements.Num();
+            Elements.Emplace();
         }
 
         FElement& E = Elements[Element];
@@ -116,12 +116,12 @@ namespace Lumina
 
     void FNavOctree::Remove(uint32 Element)
     {
-        if (Element >= Elements.size() || Elements[Element].Node == kNone)
+        if (Element >= static_cast<uint32>(Elements.Num()) || Elements[Element].Node == kNone)
         {
             return;
         }
         Unlink(Element);
-        FreeElements.push_back(Element);
+        FreeElements.Add(Element);
         --Count;
     }
 }

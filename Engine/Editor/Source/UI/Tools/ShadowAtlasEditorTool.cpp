@@ -121,7 +121,7 @@ namespace Lumina
 
         ImGui::Text("Atlas: %u x %u", Cfg.AtlasResolution, Cfg.AtlasResolution);
         ImGui::Text("Tiles allocated: %u   Utilization: %.1f%% (%llu / %llu px)",
-            (uint32)Tiles.size(), UsedPct, (unsigned long long)UsedPixels, (unsigned long long)AtlasPixels);
+            (uint32)Tiles.Num(), UsedPct, (unsigned long long)UsedPixels, (unsigned long long)AtlasPixels);
 
         // Counts only power-of-two buckets the allocator can produce, keeping the UI compact.
         ImGui::Spacing();
@@ -201,7 +201,7 @@ namespace Lumina
         int32 HoveredTile = -1;
         const ImVec2 Mouse = ImGui::GetMousePos();
 
-        for (int32 i = 0; i < (int32)Tiles.size(); ++i)
+        for (int32 i = 0; i < Tiles.Num(); ++i)
         {
             const FShadowTile& Tile = Tiles[i];
             const uint32 TileSize = (uint32)(Tile.UVScale.x * (float)Cfg.AtlasResolution + 0.5f);
@@ -256,7 +256,7 @@ namespace Lumina
         const FShadowAtlasConfig& Cfg = Atlas.GetConfig();
         const TVector<FShadowTile>& Tiles = Atlas.GetAllocatedTiles();
 
-        if (Tiles.empty())
+        if (Tiles.IsEmpty())
         {
             ImGui::TextDisabled("No tiles allocated.");
             return;
@@ -278,7 +278,7 @@ namespace Lumina
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
 
-        for (int32 i = 0; i < (int32)Tiles.size(); ++i)
+        for (int32 i = 0; i < Tiles.Num(); ++i)
         {
             const FShadowTile& Tile = Tiles[i];
             const uint32 TileSize = (uint32)(Tile.UVScale.x * (float)Cfg.AtlasResolution + 0.5f);

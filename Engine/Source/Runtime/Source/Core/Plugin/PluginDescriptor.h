@@ -22,7 +22,9 @@ namespace Lumina
     };
 
     RUNTIME_API FStringView LexToString(EPluginModuleType Type);
-    RUNTIME_API EPluginModuleType ParsePluginModuleType(FStringView Str, EPluginModuleType Default = EPluginModuleType::Runtime);
+
+    // False for a name that is not a module type; the descriptor loader reports it, as the build tool does.
+    RUNTIME_API bool TryParsePluginModuleType(FStringView Str, EPluginModuleType& OutType);
 
     struct FPluginModuleDescriptor
     {
@@ -34,11 +36,16 @@ namespace Lumina
         TVector<FString>    SupportedPlatforms;
     };
 
+    // Written as a bare plugin name, or as { "Name", "Optional", "Version" }; LuminaBuildTool reads the same two forms.
     struct FPluginDependency
     {
         FString Name;
-        int32   Version  = 0;       // 0 == any
-        bool    bOptional = false;  // missing optional dep is not an error
+
+        // The lowest Version of the dependency that satisfies this; 0 accepts any.
+        int32   Version  = 0;
+
+        // A missing or too-old optional dependency is no error; it only stops ordering against it.
+        bool    bOptional = false;
     };
 
     // Parsed contents of a .lplugin descriptor file. Not the live runtime
@@ -69,8 +76,7 @@ namespace Lumina
         // reached transitively from project/engine roots.
         TVector<FCookRoot>               CookRoots;
 
-        // Load + parse a .lplugin file. Returns false + populates OutError on
-        // any failure (missing file, malformed JSON, missing required field).
+        // False with OutError set for a missing file, malformed JSON, a missing Name, or a field LuminaBuildTool would also reject.
         RUNTIME_API static bool LoadFromFile(FStringView FilePath, FPluginDescriptor& OutDescriptor, FString& OutError);
 
         // Parse a .lplugin from an in-memory buffer.

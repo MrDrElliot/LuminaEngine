@@ -69,7 +69,7 @@ TEST_F(PhysicsSceneLifecycle, ReadsNeverCreatePendingBodies)
     for (int i = 0; i < 1000; ++i)
     {
         EXPECT_FALSE(Scene->TryGetBodyState(Entity, State));
-        EXPECT_FALSE(Scene->CastRay(Ray()).has_value());
+        EXPECT_FALSE(Scene->CastRay(Ray()).IsSet());
         EXPECT_EQ(Scene->GetBodyCount(), 0u);
     }
     EXPECT_EQ(Scene->GetBodyStatus(Entity), Physics::EPhysicsBodyStatus::Pending);
@@ -146,7 +146,7 @@ TEST_F(PhysicsSceneLifecycle, RetainedHitTargetsCannotReachRecycledBodies)
     const ECS::FEntity Entity = Spawn();
     Scene->Update(0.0);
     const auto Hit = Scene->CastRay(Ray());
-    ASSERT_TRUE(Hit.has_value());
+    ASSERT_TRUE(Hit.IsSet());
     Registry->Destroy(Entity);
     const ECS::FEntity Replacement = Spawn();
     Scene->Update(0.0);
@@ -161,10 +161,10 @@ TEST_F(PhysicsSceneLifecycle, EntityFiltersNeedNoBodyLookup)
 {
     const ECS::FEntity Entity = Spawn();
     auto Query = Ray();
-    Query.IgnoreEntities.push_back(Entity);
+    Query.IgnoreEntities.Add(Entity);
     Scene->Update(0.0);
-    EXPECT_TRUE(Scene->CastRay(Ray()).has_value());
-    EXPECT_FALSE(Scene->CastRay(Query).has_value());
+    EXPECT_TRUE(Scene->CastRay(Ray()).IsSet());
+    EXPECT_FALSE(Scene->CastRay(Query).IsSet());
 }
 
 TEST_F(PhysicsSceneLifecycle, ForceIsConsumedByOneFixedStep)
@@ -216,7 +216,7 @@ TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwne
         Bone.ParentIndex = Constants::kIndexNone;
         Bone.LocalTransform = FMatrix4(1.0f);
         Bone.InvBindMatrix = FMatrix4(1.0f);
-        Skeleton.Bones.push_back(Bone);
+        Skeleton.Bones.Add(Bone);
         Skeleton.BoneNameToIndex[Bone.Name] = 0;
         TVector<FMatrix4> Globals{ FMatrix4(1.0f) };
         Physics::FRagdollDesc Desc;
@@ -232,9 +232,9 @@ TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwne
     EXPECT_TRUE(Scene->IsRagdollReady(*Handle));
     EXPECT_EQ(Scene->GetBodyCount(), 1u);
     auto Query = Ray();
-    Query.IgnoreEntities.push_back(Owner);
-    EXPECT_TRUE(Scene->CastRay(Ray()).has_value());
-    EXPECT_FALSE(Scene->CastRay(Query).has_value());
+    Query.IgnoreEntities.Add(Owner);
+    EXPECT_TRUE(Scene->CastRay(Ray()).IsSet());
+    EXPECT_FALSE(Scene->CastRay(Query).IsSet());
     Scene->DestroyRagdoll(Handle);
     Scene->Update(0.0);
     EXPECT_EQ(Scene->GetBodyCount(), 0u);
@@ -258,7 +258,7 @@ TEST_F(PhysicsSceneLifecycle, RagdollTakesEntityVelocityAndPerLimbTargets)
             Bone.ParentIndex = Index == 0 ? Constants::kIndexNone : 0;
             Bone.LocalTransform = Globals[Index];
             Bone.InvBindMatrix = Math::Inverse(Globals[Index]);
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.Bones.Add(Bone);
             Skeleton.BoneNameToIndex[Bone.Name] = Index;
         }
         TVector<FMatrix4> BoneGlobals{ Globals[0], Globals[1] };
@@ -312,19 +312,19 @@ TEST_F(PhysicsSceneLifecycle, ShapeSweepsReachPastTheRayLine)
 
     const FVector3 Start(0.6f, 0.0f, -3.0f);
     const FVector3 End(0.6f, 0.0f, 3.0f);
-    EXPECT_FALSE(Scene->CastRay(Ray(0.6f)).has_value());
+    EXPECT_FALSE(Scene->CastRay(Ray(0.6f)).IsSet());
 
     for (const SQueryShape& Shape : { SQueryShape::Sphere(0.2f), SQueryShape::Box(FVector3(0.2f), FQuat::Identity()),
                                       SQueryShape::Capsule(0.2f, 0.5f, FQuat::Identity()) })
     {
         const TOptional<SRayResult> Hit = Scene->CastShapeClosest(Shape, Start, End, ECollisionProfiles::All, {});
-        ASSERT_TRUE(Hit.has_value()) << "shape " << (int)Shape.Type;
+        ASSERT_TRUE(Hit.IsSet()) << "shape " << (int)Shape.Type;
         EXPECT_EQ(Hit->Entity, Entity.Value);
         EXPECT_LT(Hit->Location.z, 0.0f) << "the sweep touches the near side of the sphere";
 
         TVector<SRayResult> All;
         Scene->CastShapeAll(Shape, Start, End, ECollisionProfiles::All, {}, All);
-        EXPECT_EQ(All.size(), 1u);
+        EXPECT_EQ(All.Num(), 1);
     }
 }
 
@@ -338,15 +338,15 @@ TEST_F(PhysicsSceneLifecycle, AnyHitAndSingleEntityRays)
     Along.Start = FVector3(-5.0f, 0.0f, 0.0f);
     Along.End = FVector3(5.0f, 0.0f, 0.0f);
     EXPECT_TRUE(Scene->CastRayAny(Along));
-    Along.IgnoreEntities.push_back(Near);
-    Along.IgnoreEntities.push_back(Far);
+    Along.IgnoreEntities.Add(Near);
+    Along.IgnoreEntities.Add(Far);
     EXPECT_FALSE(Scene->CastRayAny(Along)) << "both blockers are ignored";
 
     const TOptional<SRayResult> Hit = Scene->CastRayAgainst(Far, Along.Start, Along.End);
-    ASSERT_TRUE(Hit.has_value()) << "the near body in front does not block a ray aimed at one entity";
+    ASSERT_TRUE(Hit.IsSet()) << "the near body in front does not block a ray aimed at one entity";
     EXPECT_EQ(Hit->Entity, Far.Value);
     EXPECT_NEAR(Hit->Location.x, 2.5f, 0.05f);
-    EXPECT_FALSE(Scene->CastRayAgainst(Far, FVector3(-5.0f, 2.0f, 0.0f), FVector3(5.0f, 2.0f, 0.0f)).has_value());
+    EXPECT_FALSE(Scene->CastRayAgainst(Far, FVector3(-5.0f, 2.0f, 0.0f), FVector3(5.0f, 2.0f, 0.0f)).IsSet());
 }
 
 TEST_F(PhysicsSceneLifecycle, OverlapsFollowShapeRotationAndLayerMask)
@@ -598,7 +598,7 @@ TEST_F(PhysicsSceneLifecycle, ResizingACharacterAppliesInPlace)
     Query.Start = Center + FVector3(-3.0f, 1.1f, 0.0f);
     Query.End   = Center + FVector3(3.0f, 1.1f, 0.0f);
     const TOptional<SRayResult> Hit = Scene->CastRay(Query);
-    ASSERT_TRUE(Hit.has_value()) << "the proxy body other queries see is still the old size";
+    ASSERT_TRUE(Hit.IsSet()) << "the proxy body other queries see is still the old size";
     EXPECT_EQ(Hit->Entity, (uint32)Character);
 }
 

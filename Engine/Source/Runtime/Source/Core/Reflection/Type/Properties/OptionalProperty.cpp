@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "OptionalProperty.h"
+#include "Core/Serialization/NetArchive.h"
 
 namespace Lumina
 {
@@ -8,7 +9,7 @@ namespace Lumina
         // The wire carries an engaged bool followed by the payload only when engaged.
         if (Ar.IsWriting())
         {
-            bool bEngaged = HasValue(Value);
+            bool bEngaged = IsSet(Value);
             Ar << bEngaged;
 
             if (bEngaged)
@@ -55,7 +56,7 @@ namespace Lumina
         }
         else
         {
-            bool bEngaged = HasValue(Value);
+            bool bEngaged = IsSet(Value);
             Record << StructuredArchive::TNamedValue<bool>("Engaged", bEngaged);
 
             if (bEngaged)
@@ -67,8 +68,8 @@ namespace Lumina
 
     bool FOptionalProperty::Identical(const void* ValueA, const void* ValueB) const
     {
-        const bool bA = HasValue(ValueA);
-        const bool bB = HasValue(ValueB);
+        const bool bA = IsSet(ValueA);
+        const bool bB = IsSet(ValueB);
         if (bA != bB)
         {
             return false;
@@ -84,9 +85,35 @@ namespace Lumina
         return Inner->Identical(PayloadA, PayloadB);
     }
 
+    void FOptionalProperty::NetSerialize(FNetArchive& Ar, void* Value)
+    {
+        bool bEngaged = Ar.IsWriting() && IsSet(Value);
+        Ar.SerializeBit(bEngaged);
+        if (!bEngaged)
+        {
+            if (Ar.IsReading())
+            {
+                Reset(Value);
+            }
+            return;
+        }
+        if (Ar.IsReading() && !IsSet(Value))
+        {
+            SetValue(Value, nullptr);
+        }
+        if (Inner != nullptr)
+        {
+            Inner->NetSerialize(Ar, GetValue(Value));
+        }
+    }
+
     void FOptionalProperty::CopyCompleteValue(void* Dst, const void* Src) const
     {
-        const bool bSrcEngaged = HasValue(Src);
+        if (Dst == Src)
+        {
+            return;
+        }
+        const bool bSrcEngaged = IsSet(Src);
         if (!bSrcEngaged)
         {
             Reset(Dst);

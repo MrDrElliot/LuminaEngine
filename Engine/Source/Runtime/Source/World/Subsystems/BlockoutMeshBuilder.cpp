@@ -65,19 +65,19 @@ namespace Lumina
                 return;
             }
 
-            const uint32 Base = (uint32)M.Positions.size();
-            M.Positions.push_back(A.Position);
-            M.Positions.push_back(B.Position);
-            M.Positions.push_back(C.Position);
-            M.Normals.push_back(A.Normal);
-            M.Normals.push_back(B.Normal);
-            M.Normals.push_back(C.Normal);
-            M.UVs.push_back(A.UV);
-            M.UVs.push_back(B.UV);
-            M.UVs.push_back(C.UV);
-            M.Indices.push_back(Base);
-            M.Indices.push_back(Base + 1);
-            M.Indices.push_back(Base + 2);
+            const uint32 Base = (uint32)M.Positions.Num();
+            M.Positions.Add(A.Position);
+            M.Positions.Add(B.Position);
+            M.Positions.Add(C.Position);
+            M.Normals.Add(A.Normal);
+            M.Normals.Add(B.Normal);
+            M.Normals.Add(C.Normal);
+            M.UVs.Add(A.UV);
+            M.UVs.Add(B.UV);
+            M.UVs.Add(C.UV);
+            M.Indices.Add(Base);
+            M.Indices.Add(Base + 1);
+            M.Indices.Add(Base + 2);
         }
 
         void AddQuad(FBlockoutMeshData& M, const FBuildVertex& A, const FBuildVertex& B, const FBuildVertex& C, const FBuildVertex& D)
@@ -265,7 +265,7 @@ namespace Lumina
             const float ArcRadius = (RadiusX + RadiusZ) * 0.5f;
 
             TVector<FBuildVertex> Grid;
-            Grid.resize((size_t)Stride * 2);
+            Grid.SetNum(IntCastChecked<int32>(static_cast<int64>(Stride) * 2));
 
             for (int32 Slice = 0; Slice < Stride; ++Slice)
             {
@@ -328,7 +328,7 @@ namespace Lumina
             const float ArcRadius = (RadiusX + RadiusZ) * 0.5f;
 
             TVector<FBuildVertex> Grid;
-            Grid.resize((size_t)Stride * (size_t)RingCount);
+            Grid.SetNum(IntCastChecked<int32>(static_cast<int64>(Stride) * RingCount));
 
             for (int32 Ring = 0; Ring < RingCount; ++Ring)
             {
@@ -347,7 +347,7 @@ namespace Lumina
                                                                      CosT        / Math::Max(RadiusY, kMinExtent),
                                                                      SinT * SinP / Math::Max(RadiusZ, kMinExtent)));
 
-                    Grid[(size_t)Ring * Stride + Slice] = FBuildVertex
+                    Grid[Ring * Stride + Slice] = FBuildVertex
                     {
                         Center + Offset,
                         Normal,
@@ -384,7 +384,7 @@ namespace Lumina
             const int32 RingCount = MajorSegments + 1;
 
             TVector<FBuildVertex> Grid;
-            Grid.resize((size_t)Stride * (size_t)RingCount);
+            Grid.SetNum(IntCastChecked<int32>(static_cast<int64>(Stride) * RingCount));
 
             for (int32 Ring = 0; Ring < RingCount; ++Ring)
             {
@@ -403,7 +403,7 @@ namespace Lumina
                                             TubeRadius + TubeRadius * SinV,
                                             (MajorRadius + TubeRadius * CosV) * SinU);
 
-                    Grid[(size_t)Ring * Stride + Slice] = FBuildVertex
+                    Grid[Ring * Stride + Slice] = FBuildVertex
                     {
                         Position,
                         Normal,

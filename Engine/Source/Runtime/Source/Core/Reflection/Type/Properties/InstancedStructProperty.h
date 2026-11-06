@@ -11,7 +11,7 @@ namespace Lumina
     class FInstancedStructProperty : public FProperty
     {
     public:
-        explicit FInstancedStructProperty(const FPropertyDesc& Desc);
+        explicit FInstancedStructProperty(const FPropertyDesc& InDesc);
 
         RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
         RUNTIME_API void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
@@ -22,6 +22,8 @@ namespace Lumina
         // Owns a heap instance of whatever type was picked, so zeroed bytes are not a valid FInstancedStruct.
         RUNTIME_API void ConstructValue(void* Value) const override;
         RUNTIME_API void DestructValue(void* Value) const override;
+        RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
+        RUNTIME_API void RelocateValue(void* Dest, void* Source) const override;
         bool OwnsStorage() const override { return true; }
 
         // The base every owned instance must derive from: the T in TInstancedStruct<T>, or the type named

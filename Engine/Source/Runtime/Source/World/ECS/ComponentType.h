@@ -119,7 +119,7 @@ namespace Lumina::ECS
         NODISCARD RUNTIME_API FComponentTypeID FindByName(const FName& Name) const;
         NODISCARD RUNTIME_API FComponentTypeID FindByStruct(const CStruct* Struct) const;
 
-        NODISCARD RUNTIME_API size_t Num() const;
+        NODISCARD RUNTIME_API int32 Num() const;
 
         // Gives a runtime-layout type its new layout, and every live pool of it the same, carrying each value across.
         RUNTIME_API void Relayout(FComponentTypeID TypeID, const FComponentTypeInfo& Info, FMigrateComponentValue Migrate);
@@ -145,14 +145,170 @@ namespace Lumina::ECS
     template<typename T>
     concept CHasStaticStruct = requires { { T::StaticStruct() } -> std::convertible_to<CStruct*>; };
 
-    // A pool stores objects, so a reference, a pointer or a cv-qualified spelling is a call-site mistake.
+    // Read<T> reads like const T; Write<T> walks hand out TMut<T>, which stamps a row only on mutable access, while a plain T walks untracked.
+    template<typename T>
+    struct Read
+    {
+        using Component = T;
+        static constexpr bool bWrite = false;
+    };
+
+    template<typename T>
+    struct Write
+    {
+        using Component = T;
+        static constexpr bool bWrite = true;
+    };
+
+    // One Write<T> row. Const access never stamps; mutable access stores the walk's tick into the row's change-tick slot.
+    template<typename T>
+    class TMut
+    {
+    public:
+
+        FORCEINLINE TMut(T& InValue, uint32* InTick, uint32 InNow)
+            : Value(&InValue)
+            , Tick(InTick)
+            , Now(InNow)
+        {}
+
+        NODISCARD FORCEINLINE const T& Get() const { return *Value; }
+        NODISCARD FORCEINLINE const T* operator -> () const { return Value; }
+        NODISCARD FORCEINLINE const T& operator * () const { return *Value; }
+        FORCEINLINE operator const T& () const { return *Value; }
+
+        NODISCARD FORCEINLINE T& GetMut() { Stamp(); return *Value; }
+        NODISCARD FORCEINLINE T* operator -> () { Stamp(); return Value; }
+        NODISCARD FORCEINLINE T& operator * () { Stamp(); return *Value; }
+
+        // Returns whether it wrote, so an unchanged value leaves Changed<T> quiet.
+        FORCEINLINE bool SetIfChanged(const T& NewValue) { return AssignIfChanged(*Value, NewValue); }
+
+        template<typename TField>
+        FORCEINLINE bool SetIfChanged(TField T::* Field, const std::type_identity_t<TField>& NewValue) { return AssignIfChanged(Value->*Field, NewValue); }
+
+        // For a write no Changed<T> reader should see, such as runtime bookkeeping inside the component.
+        NODISCARD FORCEINLINE T& BypassChangeDetection() const { return *Value; }
+
+    private:
+
+        template<typename TDest>
+        FORCEINLINE bool AssignIfChanged(TDest& Dest, const TDest& NewValue)
+        {
+            if (Dest == NewValue)
+            {
+                return false;
+            }
+            Dest = NewValue;
+            Stamp();
+            return true;
+        }
+
+        // Relaxed, since parallel walks stamp disjoint rows and an untracked pool's rows share one sink.
+        FORCEINLINE void Stamp() { std::atomic_ref<uint32>(*Tick).store(Now, std::memory_order_relaxed); }
+
+        T* Value;
+        uint32* Tick;
+        uint32 Now;
+    };
+
+    template<typename T> inline constexpr bool bIsAccessWrapper           = false;
+    template<typename T> inline constexpr bool bIsAccessWrapper<Read<T>>  = true;
+    template<typename T> inline constexpr bool bIsAccessWrapper<Write<T>> = true;
+
+    template<typename T> inline constexpr bool bIsWriteAccess           = false;
+    template<typename T> inline constexpr bool bIsWriteAccess<Write<T>> = true;
+
+    // Only entities whose T was written, or added, since a query last ran; T need not be an include.
+    template<typename T>
+    struct Changed
+    {
+        using Component = T;
+    };
+
+    template<typename T>
+    struct Added
+    {
+        using Component = T;
+    };
+
+    // Skips entities holding T, in a view or a query: View<ECS::Read<A>, ECS::Without<SDisabledTag>>().
+    template<typename T>
+    struct Without
+    {
+        using Component = T;
+    };
+
+    // Keeps only entities holding T without reading it, so it declares no access and runs beside writers of T.
+    template<typename T>
+    struct With
+    {
+        using Component = T;
+    };
+
+    // Hands a query callback a pointer that is null when the entity lacks T, without changing which entities match; a const T or Read<T> spelling reads.
+    template<typename T>
+    struct Optional
+    {
+        using Spelling = T;
+    };
+
+    template<typename T> inline constexpr bool bIsOptionalTerm              = false;
+    template<typename T> inline constexpr bool bIsOptionalTerm<Optional<T>> = true;
+
+    template<typename T> inline constexpr bool bIsChangedTerm             = false;
+    template<typename T> inline constexpr bool bIsChangedTerm<Changed<T>> = true;
+    template<typename T> inline constexpr bool bIsAddedTerm               = false;
+    template<typename T> inline constexpr bool bIsAddedTerm<Added<T>>     = true;
+    template<typename T> inline constexpr bool bIsWithoutTerm             = false;
+    template<typename T> inline constexpr bool bIsWithoutTerm<Without<T>> = true;
+    template<typename T> inline constexpr bool bIsWithTerm                = false;
+    template<typename T> inline constexpr bool bIsWithTerm<With<T>>       = true;
+
+    template<typename T>
+    inline constexpr bool bIsMembershipTerm = bIsWithoutTerm<T> || bIsWithTerm<T>;
+
+    // A view's membership filter entry: a plain T excludes holders of T, With<T> requires it.
+    template<typename T> struct TMembershipFilter          { using Component = T; static constexpr bool bRequired = false; };
+    template<typename T> struct TMembershipFilter<With<T>> { using Component = T; static constexpr bool bRequired = true; };
+
+    template<typename T>
+    inline constexpr bool bIsFilterTerm = bIsChangedTerm<T> || bIsAddedTerm<T>;
+
+    template<typename T>
+    inline constexpr bool bIsQueryTerm = bIsAccessWrapper<T> || bIsFilterTerm<T> || bIsMembershipTerm<T> || bIsOptionalTerm<T>;
+
+    // What a view include stores for each spelling: Read<T> is a const include, Write<T> and bare T are mutable ones.
+    template<typename T> struct TAccessViewType           { using Type = T; };
+    template<typename T> struct TAccessViewType<Read<T>>  { using Type = const T; };
+    template<typename T> struct TAccessViewType<Write<T>> { using Type = T; };
+
+    template<typename T>
+    using TViewType = typename TAccessViewType<T>::Type;
+
+    // A view keeps an include as TViewType spells it, except a Write<T> stays spelled so its walks hand out TMut<T>.
+    template<typename T> struct TViewIncludeSpelling           { using Type = TViewType<T>; };
+    template<typename T> struct TViewIncludeSpelling<Write<T>> { using Type = Write<T>; };
+
+    template<typename T>
+    using TViewInclude = typename TViewIncludeSpelling<T>::Type;
+
+    // A pool stores objects, so a reference, a pointer, a cv-qualified spelling or an access wrapper is a call-site mistake.
     template<typename T>
     concept CComponent =
         std::is_object_v<T> &&
         !std::is_pointer_v<T> &&
         !std::is_const_v<T> &&
         !std::is_volatile_v<T> &&
-        !std::is_array_v<T>;
+        !std::is_array_v<T> &&
+        !bIsQueryTerm<T>;
+
+    // A view may spell an include const or wrap it in Read or Write, which says whether it marks the pool written.
+    template<typename T>
+    concept CViewComponent = CComponent<std::remove_const_t<TViewType<T>>>;
+
+    template<typename T>
+    using TBareComponent = std::remove_const_t<TViewType<T>>;
 
     enum class EComponentLayout : uint8
     {
@@ -172,7 +328,23 @@ namespace Lumina::ECS
         static constexpr bool InPlaceDelete = false;
         static constexpr EComponentLayout Layout = EComponentLayout::Automatic;
         static constexpr uint32 PageSize = 1024;
+
+        // A component whose methods read other entities (a transform reads its parents), so a filter cannot prove two systems apart on it.
+        static constexpr bool ReachesOtherEntities = false;
     };
+
+    template<typename T>
+    NODISCARD consteval bool ReadReachesOtherEntities()
+    {
+        if constexpr (requires { { T::ReachesOtherEntities } -> std::convertible_to<bool>; })
+        {
+            return T::ReachesOtherEntities;
+        }
+        else
+        {
+            return FComponentTraitDefaults::ReachesOtherEntities;
+        }
+    }
 
     template<typename T>
     NODISCARD consteval bool ReadInPlaceDelete()
@@ -276,6 +448,7 @@ namespace Lumina::ECS
         static constexpr bool InPlaceDelete = ReadInPlaceDelete<T>();
         static constexpr EComponentLayout Layout = ReadLayout<T>();
         static constexpr uint32 PageSize = ReadPageSize<T>();
+        static constexpr bool bReachesOtherEntities = ReadReachesOtherEntities<T>();
 
         // Paged by default, so a held reference survives an emplace into the same pool mid-iteration.
         static constexpr bool bPaged = !bEmpty &&
@@ -305,7 +478,7 @@ namespace Lumina::ECS
         static FName GetName()
         {
             constexpr std::string_view Name = GetSignatureTypeName<T>();
-            return FName(FStringView(Name.data(), Name.size()));
+            return FName(FStringView(Name.data(), static_cast<int32>(Name.size())));
         }
     };
 

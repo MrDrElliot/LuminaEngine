@@ -1,200 +1,59 @@
-﻿#include "RuntimePCH.h"
-#include "TaskSystem.h"
+﻿#include "TaskSystem.h"
 
-#include "Core/Threading/Atomic.h"
+#include "Core/Profiler/Profile.h"
+#include "Core/Diagnostics/HangWatchdog.h"
+#include "Core/Threading/Sync.h"
 #include "Core/Threading/Thread.h"
-#include "Platform/Time/PlatformTime.h"
-#include "Platform/Process/PlatformProcess.h"
 #include "Log/Log.h"
-#include "Memory/Memory.h"
+#include "Platform/Process/PlatformProcess.h"
+#include "Platform/Time/PlatformTime.h"
 #if USING(WITH_EDITOR)
 #include "Scheduler/JobProfiler.h"
 #endif
-#include <algorithm>
-#include <cstring>
+
 #include <cstdlib>
+#include <cstring>
 
-namespace Lumina
+namespace Lumina::Jobs
 {
-    RUNTIME_API FTaskSystem* GTaskSystem = nullptr;
-
-    uint32 Task::ComputeChunkCount(uint32 Num, uint32 MinRange)
+    namespace TaskSystemInternal
     {
-        const uint32 Grain = MinRange == 0 ? 1u : MinRange;
-        uint32 NumChunks = (Num + Grain - 1) / Grain;
+        using ParallelDetail::FRangeThunk;
 
-        uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
-        if (MaxChunks == 0)
-        {
-            MaxChunks = 1;
-        }
-        MaxChunks = Math::Min(MaxChunks, Task::kMaxChunks);
-        NumChunks = Math::Min(NumChunks, MaxChunks);
-
-        if (NumChunks == 0)
-        {
-            NumChunks = 1;
-        }
-        return NumChunks;
-    }
-
-    namespace
-    {
-        constexpr uint32 kMaxChunks = Task::kMaxChunks;
-
-        using FRawThunk = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
-
-        // Four times less queue and counter traffic than pre-split chunk jobs, at identical balance.
-        struct FCursorFor
-        {
-            FRawThunk Thunk = nullptr;
-            void*     Ctx   = nullptr;
-            uint32    Num   = 0;
-            uint32    Grain = 1;
-
-            // Carried so a yielding job can put an equivalent one back and keep the loop parallel.
-            Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal;
-            Jobs::FCounter*    Counter  = nullptr;
-
-            // Names each worker's share after the function that issued the loop.
-            const char*        CallSite = nullptr;
-
-            alignas(64) TAtomic<uint32> Cursor{0};
-        };
-
-        // Background items can run for many milliseconds each, so frame work keeps a share of the workers to itself.
-        TAtomic<uint32> GBackgroundGrabs{0};
-
-        FORCEINLINE uint32 MaxBackgroundGrabs()
-        {
-            const uint32 Workers = Jobs::GetNumWorkers();
-            const uint32 Reserve = Math::Max(2u, Workers / 4u);
-            return Workers > Reserve ? Workers - Reserve : 1u;
-        }
-
-        struct FBackgroundGrabScope
-        {
-            const bool bCounted;
-            explicit FBackgroundGrabScope(bool bInCounted) : bCounted(bInCounted)
-            {
-                if (bCounted)
-                {
-                    GBackgroundGrabs.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-            ~FBackgroundGrabScope()
-            {
-                if (bCounted)
-                {
-                    GBackgroundGrabs.fetch_sub(1, std::memory_order_relaxed);
-                }
-            }
-            FBackgroundGrabScope(const FBackgroundGrabScope&) = delete;
-            FBackgroundGrabScope& operator=(const FBackgroundGrabScope&) = delete;
-            FBackgroundGrabScope(FBackgroundGrabScope&&) = delete;
-            FBackgroundGrabScope& operator=(FBackgroundGrabScope&&) = delete;
-        };
-
-        // Items this thread pulled off the cursor, so the caller can price the loop from work it ran anyway.
-        uint32 RunCursorRanges(FCursorFor& C)
-        {
-            const bool bBackground = C.Priority == Jobs::EJobPriority::Background;
-            uint32 Ran = 0;
-            for (;;)
-            {
-                const uint32 Start = C.Cursor.fetch_add(C.Grain, std::memory_order_relaxed);
-                if (Start >= C.Num)
-                {
-                    return Ran;
-                }
-                const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
-                // Counted but never refused, since the caller draining its own loop is what guarantees it finishes.
-                const FBackgroundGrabScope Grab(bBackground);
-                // Re-read per range, since the thunk may wait inside and a resumed fiber can migrate.
-                C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
-                Ran += End - Start;
-            }
-        }
-
-        // A job that drains the whole cursor owns its worker for the entire loop, so priority is honored at
-        // dispatch and never again. Background work would hold every worker while a frame waits.
-        void RunCursorJob(void* Arg, uint32 /*Worker*/)
-        {
-            FCursorFor& C = *static_cast<FCursorFor*>(Arg);
-            const bool bYieldable = C.Priority == Jobs::EJobPriority::Background;
-            LUMINA_PROFILE_SECTION_NAMED(C.CallSite != nullptr ? C.CallSite : "Task::ParallelFor");
-
-            for (;;)
-            {
-                // A helper over the cap leaves; the caller is still draining the cursor, so the loop finishes regardless.
-                if (bYieldable && GBackgroundGrabs.load(std::memory_order_relaxed) >= MaxBackgroundGrabs())
-                {
-                    return;
-                }
-
-                const uint32 Start = C.Cursor.fetch_add(C.Grain, std::memory_order_relaxed);
-                if (Start >= C.Num)
-                {
-                    return;
-                }
-                const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
-                {
-                    const FBackgroundGrabScope Grab(bYieldable);
-                    C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
-                }
-
-                // Requeued before returning, so the counter never reaches zero with ranges left to run.
-                if (bYieldable && Jobs::HasForegroundWorkQueued()
-                    && C.Cursor.load(std::memory_order_relaxed) < C.Num)
-                {
-                    const Jobs::FJobDecl Decl{ &RunCursorJob, &C, "Task::ParallelFor" };
-                    Jobs::RunJobs(Decl, 1, C.Priority, C.Counter);
-                    return;
-                }
-            }
-        }
-
-        // A count cannot express the crossover, and the thunk address is one instantiation per call site.
+        constexpr uint32 kMaxChunks         = 256;
         constexpr uint32 kCostSlots         = 256;
-        constexpr uint64 kSerialBudgetNanos = 25'000;   // below this, the fan-out costs more than the work
-        constexpr uint64 kSerialOverrunFactor = 4;
-        constexpr uint64 kBackgroundGrabNanos = 1'000'000;
-        // Least work worth waking a helper for, since each costs a wake and is one more straggler to wait on.
-        constexpr uint64 kMinNanosPerHelper = 50'000;
+        constexpr uint64 kSerialBudgetNanos = 25'000;
 
         struct alignas(64) FCostEntry
         {
-            TAtomic<uint64> Key{0};
-            TAtomic<uint64> NanosPerItem{0};
+            std::atomic<uint64> Key{0};
+            std::atomic<uint64> NanosPerItem{0};
         };
+
         FCostEntry GCostTable[kCostSlots];
 
-        FORCEINLINE FCostEntry& CostSlot(FRawThunk Thunk)
+        FORCEINLINE FCostEntry& CostSlot(FRangeThunk Thunk)
         {
-            const uint64 Key  = reinterpret_cast<uint64>(Thunk);
-            const uint64 Hash = (Key >> 4) * 0x9E3779B97F4A7C15ull;
+            const uint64 Hash = (reinterpret_cast<uint64>(Thunk) >> 4) * 0x9E3779B97F4A7C15ull;
             return GCostTable[(Hash >> 56) % kCostSlots];
         }
 
-        // Zero when never measured, or when the slot belongs to someone else.
-        FORCEINLINE uint64 EstimatedNanosPerItem(FRawThunk Thunk)
+        FORCEINLINE uint64 EstimatedNanosPerItem(FRangeThunk Thunk)
         {
             const FCostEntry& Slot = CostSlot(Thunk);
             return Slot.Key.load(std::memory_order_relaxed) == reinterpret_cast<uint64>(Thunk)
                  ? Slot.NanosPerItem.load(std::memory_order_relaxed) : 0;
         }
 
-        // Racy by design, since a stale estimate costs one mis-sized dispatch and never correctness.
-        void RecordItemCost(FRawThunk Thunk, uint32 ItemsRun, double Seconds)
+        void RecordItemCost(FRangeThunk Thunk, uint32 Items, double Seconds)
         {
-            if (ItemsRun == 0 || Seconds <= 0.0)
+            if (Items == 0 || Seconds <= 0.0)
             {
                 return;
             }
-            const uint64 Sample = static_cast<uint64>((Seconds * 1'000'000'000.0) / ItemsRun);
+            const uint64 Sample = static_cast<uint64>((Seconds * 1'000'000'000.0) / Items);
             FCostEntry&  Slot   = CostSlot(Thunk);
             const uint64 Key    = reinterpret_cast<uint64>(Thunk);
-
             if (Slot.Key.load(std::memory_order_relaxed) != Key)
             {
                 Slot.Key.store(Key, std::memory_order_relaxed);
@@ -205,305 +64,248 @@ namespace Lumina
             Slot.NanosPerItem.store(Prior == 0 ? Sample : (Prior * 3 + Sample) / 4, std::memory_order_relaxed);
         }
 
-
-        // Owns the user function and chunk storage, and self-destructs once its counter drains.
-        struct FAsyncContext
-        {
-            TaskSetFunction           Function;
-            TWeakPtr<FTaskCompletion> Handle;
-            Jobs::FCounter*           Counter   = nullptr;
-
-            struct FChunk
-            {
-                FAsyncContext* Ctx;
-                uint32         Start;
-                uint32         End;
-            };
-            FChunk* Chunks    = nullptr;
-            uint32  NumChunks = 0;
-
-            static void RunChunk(void* Arg, uint32 Worker)
-            {
-                FChunk* C = static_cast<FChunk*>(Arg);
-                C->Ctx->Function(C->Start, C->End, Worker);
-            }
-
-            static void OnComplete(void* Raw, uint32 /*Worker*/)
-            {
-                FAsyncContext* Self = static_cast<FAsyncContext*>(Raw);
-                if (TSharedPtr<FTaskCompletion> H = Self->Handle.lock())
-                {
-                    H->bCompleted.exchange(true, std::memory_order_release);
-                    std::atomic_notify_all(&H->bCompleted);
-                }
-                Jobs::FreeCounter(Self->Counter);
-                void* ChunksMem = Self->Chunks;
-                Memory::Free(ChunksMem);
-                Memory::Delete(Self);
-            }
-
-            void Launch(uint32 Num, uint32 MinRange, ETaskPriority Priority)
-            {
-                NumChunks = Task::ComputeChunkCount(Num, MinRange);
-                Chunks    = static_cast<FChunk*>(Memory::Malloc(sizeof(FChunk) * NumChunks, alignof(FChunk)));
-                Counter   = Jobs::AllocCounter(0);
-                Jobs::SetCounterCompletion(Counter, &FAsyncContext::OnComplete, this);
-
-                Jobs::FJobDecl Decls[kMaxChunks];
-                const uint32 Base = Num / NumChunks;
-                const uint32 Rem  = Num % NumChunks;
-                uint32 Start = 0;
-                for (uint32 c = 0; c < NumChunks; ++c)
-                {
-                    const uint32 Len = Base + (c < Rem ? 1u : 0u);
-                    Chunks[c] = FChunk{ this, Start, Start + Len };
-                    // AsyncTask runs arbitrary user work, while a ParallelFor chunk is compute and stays native.
-                    Decls[c]  = Jobs::FJobDecl{ &FAsyncContext::RunChunk, &Chunks[c], "Task::Async", /*bMayPark*/ true };
-                    Start += Len;
-                }
-
-                Jobs::RunJobs(Decls, NumChunks, ToJobPriority(Priority), Counter);
-            }
-        };
-    }
-
-    namespace Task
-    {
-        void Initialize()
-        {
-            GTaskSystem = Memory::New<FTaskSystem>();
-
-            const uint32 Hardware = Threading::GetNumThreads();
-
-            Jobs::FConfig Config;
-            // One per processor bar the one submitting, so a solver asking for that many gets a thread each.
-            Config.NumWorkerThreads   = Hardware > 1 ? Hardware - 1 : 1;
-            const FString WorkersEnv = Platform::GetEnvVariable("LUMINA_JOB_WORKERS");
-            if (!WorkersEnv.empty())
-            {
-                const int N = std::atoi(WorkersEnv.c_str());
-                if (N > 0) Config.NumWorkerThreads = (uint32)N;
-            }
-            Config.NumExternalThreads = 8;
-
-            Jobs::Initialize(Config);
-            GTaskSystem->RegisterExternalThread(); // the main thread gets a stable slot
-        }
-
-        void Shutdown()
-        {
-            Jobs::WaitForAll();
-#if USING(WITH_EDITOR)
-            FJobProfiler::Get().Shutdown();
-#endif
-            GTaskSystem->UnregisterExternalThread();
-            Jobs::Shutdown();
-            Memory::Delete(GTaskSystem);
-            GTaskSystem = nullptr;
-        }
-    }
-
-    namespace
-    {
-        thread_local uint32 GInlineNestedDepth = 0;
-    }
-
-    Task::FInlineNestedScope::FInlineNestedScope()
-    {
-        ++GInlineNestedDepth;
-    }
-
-    Task::FInlineNestedScope::~FInlineNestedScope()
-    {
-        --GInlineNestedDepth;
-    }
-
-    bool Task::FInlineNestedScope::IsOpen()
-    {
-        return GInlineNestedDepth > 0;
-    }
-
-    const char* Task::CallSiteName(const char* Signature)
-    {
-        static FMutex Mutex;
-        static TVector<FString> Names;
-
-        // The callable's type sits in the template argument, as ParallelFor<class Scope::Function::<lambda_1>> on MSVC and TFunc = Scope::Function(args)::<lambda on GCC or Clang.
-        FString Signed(Signature);
-        size_t Begin = Signed.find("ParallelFor<");
-        if (Begin != FString::npos)
-        {
-            Begin += 12;
-        }
-        else if ((Begin = Signed.find("TFunc = ")) != FString::npos)
-        {
-            Begin += 8;
-        }
-
-        FString Name = Signed;
-        if (Begin != FString::npos)
-        {
-            for (const char* Keyword : { "class ", "struct " })
-            {
-                if (Signed.find(Keyword, Begin) == Begin)
-                {
-                    Begin += strlen(Keyword);
-                }
-            }
-
-            // Whichever comes first ends the enclosing function's name, the lambda marker or GCC's parameter list.
-            const size_t Lambda = Signed.find("::<lambda", Begin);
-            const size_t Params = Signed.find('(', Begin);
-            const size_t Close  = Signed.find('>', Begin);
-            const size_t End    = Math::Min(Lambda, Math::Min(Params, Close));
-            if (End != FString::npos && End > Begin)
-            {
-                Name = Signed.substr(Begin, End - Begin);
-            }
-        }
-
-        // The anonymous and engine namespaces add nothing a reader needs and only make every name longer.
-        for (const char* Noise : { "`anonymous namespace'::", "(anonymous namespace)::", "Lumina::" })
-        {
-            for (size_t At = Name.find(Noise); At != FString::npos; At = Name.find(Noise))
-            {
-                Name.erase(At, strlen(Noise));
-            }
-        }
-
-        FScopeLock Lock(Mutex);
-        for (const FString& Existing : Names)
-        {
-            if (Existing == Name)
-            {
-                return Existing.c_str();
-            }
-        }
-        // Reserved up front, since growing the vector would move the strings every returned pointer refers to.
-        if (Names.capacity() == 0)
-        {
-            Names.reserve(1024);
-        }
-        if (Names.size() == Names.capacity())
-        {
-            return "Task::ParallelFor";
-        }
-        Names.push_back(Move(Name));
-        return Names.back().c_str();
-    }
-
-    void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx,
-                                      const char* CallSite)
-    {
-        // Running inline never waits, so the enclosing item cannot park and pick up unrelated work meanwhile.
-        if (GInlineNestedDepth > 0)
-        {
-            Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
-            return;
-        }
-
-        uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
-
-        // A loop finishing inside the dispatch overhead runs on the caller and submits nothing.
-        const uint64 NanosPerItem = EstimatedNanosPerItem(Thunk);
-        const bool   bTooSmall    = NanosPerItem != 0 && NanosPerItem * Num <= kSerialBudgetNanos;
-
-        // Background jobs yield only between grabs, so a grab is sized to about a millisecond once the item cost is known.
-        if (Priority == ETaskPriority::Background && NanosPerItem != 0)
-        {
-            const uint64 ItemsPerGrab = Math::Max<uint64>(1, kBackgroundGrabNanos / NanosPerItem);
-            Grain = (uint32)Math::Clamp<uint64>(ItemsPerGrab, Math::Max(MinRange, 1u), Grain);
-        }
-
-        if (Num <= Grain)
+        void RunTimedRange(FRangeThunk Thunk, void* Context, uint32 Begin, uint32 End)
         {
             const double Start = PlatformTime::Seconds();
-            Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
-            RecordItemCost(Thunk, Num, PlatformTime::Seconds() - Start);
-            return;
+            Thunk(Context, Begin, End, GetThreadSlot());
+            RecordItemCost(Thunk, End - Begin, PlatformTime::Seconds() - Start);
         }
 
-        // The estimate comes from earlier calls whose items may have been far lighter, so an overrun hands the rest to the workers.
-        uint32 FirstItem = 0;
-        if (bTooSmall)
+        // Victims nearest first: an SMT sibling, then the same cache group, then everyone else, external slots last.
+        void BuildTopologyStealOrder(uint32 NumWorkers, uint32 NumSlots, uint16 (*Order)[kMaxThreadSlots])
         {
-            const double Start    = PlatformTime::Seconds();
-            const double Deadline = Start + (double)(kSerialBudgetNanos * kSerialOverrunFactor) * 1.0e-9;
-            const uint32 Worker   = Jobs::GetWorkerIndex();
-            double Now = Start;
-            while (FirstItem < Num && Now <= Deadline)
+            constexpr uint32 kMaxDescribed = 256;
+            Threading::FCpuTopology Topology[kMaxDescribed];
+            const uint32 NumCpus   = Threading::GetNumThreads();
+            const uint32 Described = Threading::GetCpuTopology(Topology, NumCpus < kMaxDescribed ? NumCpus : kMaxDescribed);
+            const auto CpuOf = [NumCpus](uint32 Worker) { return NumCpus > 1 ? (Worker + 1) % NumCpus : 0u; };
+
+            for (uint32 Self = 0; Self < NumSlots; ++Self)
             {
-                const uint32 End = Num - FirstItem < Grain ? Num : FirstItem + Grain;
-                Thunk(Ctx, FirstItem, End, Worker);
-                FirstItem = End;
-                Now = PlatformTime::Seconds();
+                uint32 Fill = 0;
+                if (Self < NumWorkers && Described != 0)
+                {
+                    for (uint32 Tier = 0; Tier < 3; ++Tier)
+                    {
+                        for (uint32 Offset = 1; Offset < NumWorkers; ++Offset)
+                        {
+                            const uint32 Victim = (Self + Offset) % NumWorkers;
+                            const uint32 A = CpuOf(Self);
+                            const uint32 B = CpuOf(Victim);
+                            const bool bKnown     = A < Described && B < Described;
+                            const bool bSameCore  = bKnown && Topology[A].PhysicalCore == Topology[B].PhysicalCore;
+                            const bool bSameCache = bKnown && Topology[A].CacheGroup == Topology[B].CacheGroup;
+                            if ((bSameCore ? 0u : (bSameCache ? 1u : 2u)) == Tier)
+                            {
+                                Order[Self][Fill++] = static_cast<uint16>(Victim);
+                            }
+                        }
+                    }
+                    for (uint32 External = NumWorkers; External < NumSlots; ++External)
+                    {
+                        Order[Self][Fill++] = static_cast<uint16>(External);
+                    }
+                    continue;
+                }
+                for (uint32 Offset = 1; Offset < NumSlots; ++Offset)
+                {
+                    Order[Self][Fill++] = static_cast<uint16>((Self + Offset) % NumSlots);
+                }
             }
-            RecordItemCost(Thunk, FirstItem, Now - Start);
-            if (FirstItem >= Num)
+        }
+
+#if USING(WITH_EDITOR)
+        void OnSegmentBegin(uint32 Slot, bool bInjected)
+        {
+            if (FJobProfiler::Get().IsEnabled())
             {
+                FJobProfiler::Get().JobBegin(Slot, bInjected ? "task" : "stolen", false);
+            }
+        }
+
+        void OnSegmentEnd(uint32 Slot)
+        {
+            if (FJobProfiler::Get().IsEnabled())
+            {
+                FJobProfiler::Get().JobEnd(Slot);
+            }
+        }
+
+        void OnIdleBegin(uint32 Slot)
+        {
+            if (FJobProfiler::Get().IsEnabled())
+            {
+                FJobProfiler::Get().IdleBegin(Slot);
+            }
+        }
+
+        void OnIdleEnd(uint32 Slot)
+        {
+            if (FJobProfiler::Get().IsEnabled())
+            {
+                FJobProfiler::Get().IdleEnd(Slot);
+            }
+        }
+#endif
+
+        void ReportHang()
+        {
+            FRuntimeStats Stats;
+            GetRuntimeStats(Stats);
+            LOG_ERROR("Job system: {} workers, {} sleeping, {} detached task(s) live, queued roots {}/{}/{}/{}, forks {}/{}/{}/{} (H/N/L/Bg).",
+                      GetNumWorkers(), Stats.Sleepers, Stats.LiveRoots,
+                      Stats.QueuedRoots[0], Stats.QueuedRoots[1], Stats.QueuedRoots[2], Stats.QueuedRoots[3],
+                      Stats.QueuedForks[0], Stats.QueuedForks[1], Stats.QueuedForks[2], Stats.QueuedForks[3]);
+        }
+    }
+
+    namespace ParallelDetail
+    {
+        uint32 ComputeGrain(uint32 Num, uint32 MinRange)
+        {
+            const uint32 MaxChunks = Math::Min(Math::Max(GetNumThreadSlots() * 4u, 1u), TaskSystemInternal::kMaxChunks);
+            const uint32 Balanced  = (Num + MaxChunks - 1) / MaxChunks;
+            return Math::Max(MinRange == 0 ? 1u : MinRange, Balanced);
+        }
+
+        // Forks the right half and keeps the left, so a range costs one frame per level.
+        TTask<void> Split(FRangeThunk Thunk, void* Context, uint32 Begin, uint32 End, uint32 Grain, const char* CallSite)
+        {
+            while (End - Begin > Grain)
+            {
+                const uint32 Mid = Begin + (End - Begin) / 2;
+                co_await Fork(Split(Thunk, Context, Mid, End, Grain, CallSite));
+                End = Mid;
+            }
+            {
+                LUMINA_PROFILE_SECTION_NAMED(CallSite != nullptr ? CallSite : "Jobs::ParallelFor");
+                TaskSystemInternal::RunTimedRange(Thunk, Context, Begin, End);
+            }
+            co_await Join();
+        }
+
+        void Run(uint32 Num, uint32 MinRange, EJobPriority Band, FRangeThunk Thunk, void* Context, const char* CallSite)
+        {
+            const uint32 Grain        = ComputeGrain(Num, MinRange);
+            const uint64 NanosPerItem = TaskSystemInternal::EstimatedNanosPerItem(Thunk);
+            if (Num <= Grain || (NanosPerItem != 0 && NanosPerItem * Num <= TaskSystemInternal::kSerialBudgetNanos))
+            {
+                TaskSystemInternal::RunTimedRange(Thunk, Context, 0, Num);
                 return;
             }
+            SyncWait(Band, Split, Thunk, Context, 0u, Num, Grain, CallSite);
         }
 
-        FCursorFor C;
-        C.Thunk = Thunk;
-        C.Ctx   = Ctx;
-        C.Num   = Num;
-        C.Grain = Grain;
-        C.Priority = ToJobPriority(Priority);
-        C.CallSite = CallSite;
-        C.Cursor.store(FirstItem, std::memory_order_relaxed);
-
-        // One job per worker at most, minus the grab the participating caller takes itself.
-        const uint32 Grabs = (Num - FirstItem + Grain - 1) / Grain;
-        uint32 K = Grabs - 1;
-        K = Math::Min(K, Math::Min(Jobs::GetNumWorkers(), Task::kMaxChunks));
-
-        // A priced loop goes only as wide as it has work to give each helper, and the caller runs whatever that leaves.
-        if (NanosPerItem != 0)
+        const char* CallSiteName(const char* Signature)
         {
-            const uint64 Helpers = (NanosPerItem * (uint64)(Num - FirstItem)) / kMinNanosPerHelper;
-            K = (uint32)Math::Min<uint64>(K, Helpers);
+            static FMutex Mutex;
+            static TVector<FString> Names;
+
+            FString Signed(Signature);
+            int32 Begin = Signed.Find("ParallelFor<");
+            if (Begin != Constants::kIndexNone)
+            {
+                Begin += 12;
+            }
+            else if ((Begin = Signed.Find("TFunc = ")) != Constants::kIndexNone)
+            {
+                Begin += 8;
+            }
+
+            FString Name = Signed;
+            if (Begin != Constants::kIndexNone)
+            {
+                for (const char* Keyword : { "class ", "struct " })
+                {
+                    if (Signed.Find(Keyword, Begin) == Begin)
+                    {
+                        Begin += FStringView(Keyword).Len();
+                    }
+                }
+
+                int32 End = Constants::kIndexNone;
+                for (const int32 Marker : { Signed.Find("::<lambda", Begin), Signed.Find('(', Begin), Signed.Find('>', Begin) })
+                {
+                    if (Marker != Constants::kIndexNone && (End == Constants::kIndexNone || Marker < End))
+                    {
+                        End = Marker;
+                    }
+                }
+                if (End != Constants::kIndexNone && End > Begin)
+                {
+                    Name = Signed.Mid(Begin, End - Begin);
+                }
+            }
+
+            for (const char* Noise : { "`anonymous namespace'::", "(anonymous namespace)::", "Lumina::" })
+            {
+                for (int32 At = Name.Find(Noise); At != Constants::kIndexNone; At = Name.Find(Noise))
+                {
+                    Name.RemoveAt(At, IntCastChecked<int32>(strlen(Noise)));
+                }
+            }
+
+            FScopeLock Lock(Mutex);
+            for (const FString& Existing : Names)
+            {
+                if (Existing == Name)
+                {
+                    return *Existing;
+                }
+            }
+            if (Names.Max() == 0)
+            {
+                Names.Reserve(1024);
+            }
+            if (Names.Num() == Names.Max())
+            {
+                return "Jobs::ParallelFor";
+            }
+            Names.Add(Move(Name));
+            return *Names.Last();
         }
-
-        const Jobs::FJobDecl Decl{ &RunCursorJob, &C, "Task::ParallelFor" };
-
-        Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-        C.Counter = Counter;
-        Jobs::RunJobs(Decl, K, C.Priority, Counter);
-        // The work happens either way, so timing the caller's own slices costs two clock reads.
-        const double Start = PlatformTime::Seconds();
-        const uint32 Ran   = RunCursorRanges(C);
-        RecordItemCost(Thunk, Ran, PlatformTime::Seconds() - Start);
-
-        Jobs::WaitForCounter(Counter, 0);
-        Jobs::FreeCounter(Counter);
     }
 
-    FTaskHandle FTaskSystem::ScheduleLambda(uint32 Num, uint32 MinRange, TaskSetFunction&& Function, ETaskPriority Priority)
+    void Initialize()
     {
-        if (Num == 0)
+        using namespace TaskSystemInternal;
+
+        FRuntimeConfig Config;
+        const FString WorkersEnv = ::Lumina::Platform::GetEnvVariable("LUMINA_JOB_WORKERS");
+        if (!WorkersEnv.IsEmpty() && std::atoi(*WorkersEnv) > 0)
         {
-            LOG_WARN("Task Size of [0] passed to task system.");
-            return nullptr;
+            Config.NumWorkers = static_cast<uint32>(std::atoi(*WorkersEnv));
         }
+        Config.BuildStealOrder = &BuildTopologyStealOrder;
+#if USING(WITH_EDITOR)
+        Config.Hooks.SegmentBegin = &OnSegmentBegin;
+        Config.Hooks.SegmentEnd   = &OnSegmentEnd;
+        Config.Hooks.IdleBegin    = &OnIdleBegin;
+        Config.Hooks.IdleEnd      = &OnIdleEnd;
+#endif
+        StartRuntime(Config);
+        (void)GetThreadSlot();
 
-        FTaskHandle    Handle = MakeShared<FTaskCompletion>();
-        FAsyncContext* Ctx    = Memory::New<FAsyncContext>();
-        Ctx->Function = Move(Function);
-        Ctx->Handle   = Handle;
-        Ctx->Launch(Num, MinRange, Priority);
-
-        return Handle;
+        static bool bReporterRegistered = false;
+        if (!bReporterRegistered)
+        {
+            HangWatchdog::RegisterReporter(&ReportHang);
+            bReporterRegistered = true;
+        }
+        LOG_DISPLAY("Job system online: {} workers, {} thread slots, coroutine fork-join.", GetNumWorkers(), GetNumThreadSlots());
     }
 
-    void FTaskSystem::WaitForAll()
+    void Shutdown()
     {
-        Jobs::WaitForAll();
-    }
-
-    FTaskHandle Task::AsyncTask(uint32 Num, uint32 MinRange, TaskSetFunction&& Function, ETaskPriority Priority)
-    {
-        return GTaskSystem->ScheduleLambda(Num, MinRange, Move(Function), Priority);
+        if (!IsRuntimeRunning())
+        {
+            return;
+        }
+        WaitForSpawned();
+#if USING(WITH_EDITOR)
+        FJobProfiler::Get().Shutdown();
+#endif
+        ReleaseThreadSlot();
+        StopRuntime();
     }
 }

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
+#include "Containers/Algorithm.h"
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectBase.h"
@@ -11,6 +12,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Package/PackageNameTable.h"
 #include "Core/Versioning/CoreVersion.h"
+#include "Log/Log.h"
 
 using namespace Lumina;
 
@@ -44,7 +46,7 @@ TEST(PackageNameTable, ANameSurvivesTheSlotRoundTrip)
         Table.Serialize(TableReader);
     }
 
-    EXPECT_EQ(Table.Num(), 4u) << "a name used twice must take one slot";
+    EXPECT_EQ(Table.Num(), 4) << "a name used twice must take one slot";
 
     FPackageContainerReader Reader(Stream);
     Reader.SetNameTable(&Table);
@@ -115,7 +117,7 @@ TEST(PackageNameTable, ANumberedNameSharesItsBaseSlot)
         Table.Serialize(TableReader);
     }
 
-    EXPECT_EQ(Table.Num(), 1u) << "the number is not part of the interned text";
+    EXPECT_EQ(Table.Num(), 1) << "the number is not part of the interned text";
 
     FPackageContainerReader Reader(Stream);
     Reader.SetNameTable(&Table);
@@ -161,7 +163,7 @@ TEST(PackageNameTable, ACorruptEntryCountIsRefused)
     Table.Serialize(Reader);
 
     EXPECT_TRUE(Reader.HasError());
-    EXPECT_EQ(Table.Num(), 0u);
+    EXPECT_EQ(Table.Num(), 0);
 }
 
 TEST(PropertyHeader, RoundTripsAtTheCurrentVersion)
@@ -179,7 +181,7 @@ TEST(PropertyHeader, RoundTripsAtTheCurrentVersion)
     }
 
     // 1 kind + the name + 4 size, where the name costs 8 bytes of text length before its 10 characters.
-    EXPECT_LT(Bytes.size(), 24u) << "the tag is what the stream pays per property";
+    EXPECT_LT(Bytes.Num(), 24) << "the tag is what the stream pays per property";
 
     FPropertyHeader Read;
     FMemoryReader Reader(Bytes);
@@ -272,8 +274,8 @@ namespace
                 Object->ConditionalBeginDestroy();
             }
         }
-        Package->ExportTable.clear();
-        Package->ImportTable.clear();
+        Package->ExportTable.Reset();
+        Package->ImportTable.Reset();
         // The root set holds the only strong reference, so unrooting is what destroys it.
         Package->RemoveFromRoot();
     }
@@ -370,19 +372,19 @@ TEST(PackageNameTable, AContainerReaderDecodesTheExportTableWithoutAPackage)
     Reader << Header;
     Reader.SetFileVersion(Header.Version);
 
-    ASSERT_EQ(Header.Tag, (uint32)PACKAGE_FILE_TAG);
+    ASSERT_EQ(Header.Tag, PACKAGE_FILE_TAG);
     ASSERT_GT(Header.NameTableOffset, 0) << "a current-version package must locate its name table";
 
     FPackageNameTable Names;
     ASSERT_TRUE(CPackage::ReadNameTable(Reader, Header, Names));
-    EXPECT_GT(Names.Num(), 0u);
+    EXPECT_GT(Names.Num(), 0);
     Reader.SetNameTable(&Names);
 
     Reader.Seek(Header.ExportTableOffset);
     TVector<FObjectExport> Exports;
     Reader << Exports;
 
-    ASSERT_FALSE(Exports.empty());
+    ASSERT_FALSE(Exports.IsEmpty());
 
     const FObjectExport* Found = nullptr;
     for (const FObjectExport& Export : Exports)
@@ -397,6 +399,62 @@ TEST(PackageNameTable, AContainerReaderDecodesTheExportTableWithoutAPackage)
     ASSERT_NE(Found, nullptr) << "the scan could not find the export it just wrote";
     EXPECT_EQ(Found->ObjectName, ExportName);
     EXPECT_EQ(Found->ClassName, CParticleEmitter::StaticClass()->GetName());
+}
+
+namespace
+{
+    // Loads a saved emitter whose export is re-labeled as a class this process never registered, and counts the resolve errors.
+    int32 CountErrorsLoadingUnregisteredClass(const char* Tag, const FName& ClassPackage)
+    {
+        EnsureCompatMount();
+        CParticleEmitter::StaticClass()->Link();
+
+        char Path[128];
+        std::snprintf(Path, sizeof(Path), "%s/%s.lasset", kCompatAlias, Tag);
+        const FGuid Guid = FGuid::New();
+        const FName MissingClass("CUnregisteredNodeGraph");
+
+        {
+            CPackage* Package = CPackage::CreatePackage(Path);
+            EXPECT_NE(NewObject(CParticleEmitter::StaticClass(), Package, "Graph", Guid), nullptr) << Tag;
+            EXPECT_TRUE(CPackage::SavePackage(Package, Path)) << Tag;
+            RetireCompatPackage(Package);
+        }
+
+        CPackage* Loaded = CPackage::LoadPackage(Path);
+        EXPECT_NE(Loaded, nullptr) << Tag;
+        FObjectExport* Export = Algo::FindIf(Loaded->ExportTable, [&](const FObjectExport& E) { return E.ObjectGUID == Guid; });
+        EXPECT_NE(Export, nullptr) << Tag;
+        EXPECT_EQ(Export->ClassPackage, CParticleEmitter::StaticClass()->GetPackage()->GetName()) << Tag << ": the save must record the class's type package";
+
+        Export->ClassName    = MissingClass;
+        Export->ClassPackage = ClassPackage;
+
+        Logging::ClearLogQueue();
+        EXPECT_EQ(Loaded->LoadObject(Guid), nullptr) << Tag;
+        Logging::Flush();
+
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+        int32 Errors = 0;
+        for (int32 Index = 0; Index < Messages.Num(); ++Index)
+        {
+            Errors += Messages[Index].Level == ELogLevel::Error && Messages[Index].Message.View().Contains("CUnregisteredNodeGraph");
+        }
+
+        RetireCompatPackage(Loaded);
+        return Errors;
+    }
+}
+
+TEST(PackageExportClass, EditorDataLoadsQuietlyWithoutTheEditorModule)
+{
+    ASSERT_EQ(FindObject<CPackage>(FName("/Types/Editor")), nullptr) << "the test binary must not register the editor's types";
+    EXPECT_EQ(CountErrorsLoadingUnregisteredClass("EditorOnlyExport", "/Types/Editor"), 0);
+}
+
+TEST(PackageExportClass, AMissingRuntimeClassStillLogs)
+{
+    EXPECT_EQ(CountErrorsLoadingUnregisteredClass("MissingClassExport", CParticleEmitter::StaticClass()->GetPackage()->GetName()), 1);
 }
 
 // reading the tables without standing the name table up first must not invent plausible names
@@ -427,6 +485,6 @@ TEST(PackageNameTable, AContainerReadWithoutItsNameTableDoesNotInventNames)
     TVector<FObjectExport> Exports;
     Reader << Exports;
 
-    ASSERT_FALSE(Exports.empty());
+    ASSERT_FALSE(Exports.IsEmpty());
     EXPECT_EQ(Exports[0].ObjectName, NAME_None) << "an unresolvable slot must read as none, not as a real name";
 }

@@ -82,7 +82,7 @@ namespace Lumina
 
         // An edited action can keep its name and still change shape, so a reload always restarts every context's state.
         ++Serial;
-        LOG_INFO("[InputActions] Loaded {} actions, {} mapping contexts.", Actions.size(), MappingContexts.size());
+        LOG_INFO("[InputActions] Loaded {} actions, {} mapping contexts.", Actions.Num(), MappingContexts.Num());
     }
 
     void FInputActionMap::SetPlayerSettings(const SPlayerInputSettings& Settings)
@@ -94,16 +94,16 @@ namespace Lumina
     void FInputActionMap::Rebuild()
     {
         TVector<FName> PreviousNames;
-        PreviousNames.reserve(Actions.size());
+        PreviousNames.Reserve(Actions.Num());
         for (const SInputAction& Action : Actions)
         {
-            PreviousNames.push_back(Action.Name);
+            PreviousNames.Add(Action.Name);
         }
 
         Actions = GetDefault<CInputSettings>()->Actions;
         MappingContexts = GetDefault<CInputSettings>()->MappingContexts;
-        Lookup.clear();
-        for (int32 i = 0; i < int32(Actions.size()); ++i)
+        Lookup.Reset();
+        for (int32 i = 0; i < Actions.Num(); ++i)
         {
             // Folded here rather than at every read, so nothing downstream has to know about the old flag.
             Actions[i].FoldLegacyAxisFlag();
@@ -114,7 +114,7 @@ namespace Lumina
         for (const SInputBindingOverride& Override : PlayerSettings.BindingOverrides)
         {
             const int32 Index = FindActionIndex(Override.Action);
-            if (Index == Constants::kIndexNone || Override.BindingIndex < 0 || Override.BindingIndex >= int32(Actions[Index].Bindings.size()))
+            if (Index == Constants::kIndexNone || Override.BindingIndex < 0 || Override.BindingIndex >= Actions[Index].Bindings.Num())
             {
                 continue;
             }
@@ -125,7 +125,7 @@ namespace Lumina
             }
         }
 
-        ToggleActions.assign(Actions.size(), false);
+        ToggleActions.Init(false, Actions.Num());
         for (const FName& Name : PlayerSettings.ToggleActions)
         {
             const int32 Index = FindActionIndex(Name);
@@ -136,8 +136,8 @@ namespace Lumina
         }
 
         // A player settings change keeps the layout, so a held toggle survives a sensitivity tweak in the pause menu.
-        bool bLayoutChanged = PreviousNames.size() != Actions.size();
-        for (size_t i = 0; i < Actions.size() && !bLayoutChanged; ++i)
+        bool bLayoutChanged = PreviousNames.Num() != Actions.Num();
+        for (int32 i = 0; i < Actions.Num() && !bLayoutChanged; ++i)
         {
             bLayoutChanged = PreviousNames[i] != Actions[i].Name;
         }
@@ -149,14 +149,14 @@ namespace Lumina
 
     const SInputAction* FInputActionMap::FindAction(FName Name) const
     {
-        const auto It = Lookup.find(Name);
-        return It != Lookup.end() ? &Actions[It->second] : nullptr;
+        const auto It = Lookup.Find(Name);
+        return It != nullptr ? &Actions[(*It)] : nullptr;
     }
 
     int32 FInputActionMap::FindActionIndex(FName Name) const
     {
-        const auto It = Lookup.find(Name);
-        return It != Lookup.end() ? It->second : Constants::kIndexNone;
+        const auto It = Lookup.Find(Name);
+        return It != nullptr ? (*It) : Constants::kIndexNone;
     }
 
     int32 FInputActionMap::ResolveIndex(const SInputActionHandle& Handle) const
@@ -206,7 +206,7 @@ namespace Lumina
     {
         // A blocking layer that does not list the action swallows it before any layer underneath.
         const TVector<FName>& Stack = Context.GetInputLayers();
-        for (size_t i = Stack.size(); i > 0; --i)
+        for (int32 i = Stack.Num(); i > 0; --i)
         {
             const SInputMappingContext* Layer = FindMappingContext(Stack[i - 1]);
             if (Layer == nullptr)
@@ -307,14 +307,14 @@ namespace Lumina
         TVector<FInputContext::FActionTriggerState>& Triggers = Context.GetMutableTriggerStates();
 
         // Carrying a stale HeldTime onto a different action would fire a phantom release next frame.
-        if (Context.GetActionsSerial() != Serial || States.size() != Actions.size())
+        if (Context.GetActionsSerial() != Serial || States.Num() != Actions.Num())
         {
-            States.assign(Actions.size(), SInputActionState());
-            Triggers.assign(Actions.size(), FInputContext::FActionTriggerState());
+            States.Init(SInputActionState(), Actions.Num());
+            Triggers.Init(FInputContext::FActionTriggerState(), Actions.Num());
             Context.SetActionsSerial(Serial);
         }
 
-        for (size_t Index = 0; Index < Actions.size(); ++Index)
+        for (int32 Index = 0; Index < Actions.Num(); ++Index)
         {
             const SInputAction& Action = Actions[Index];
             SInputActionState& State = States[Index];
@@ -421,7 +421,7 @@ namespace Lumina
 
         const int32 Index = ResolveIndex(Handle);
         const TVector<SInputActionState>& States = Context.GetActionStates();
-        if (Index == Constants::kIndexNone || Context.GetActionsSerial() != Serial || Index >= int32(States.size()))
+        if (Index == Constants::kIndexNone || Context.GetActionsSerial() != Serial || Index >= States.Num())
         {
             return Empty;
         }

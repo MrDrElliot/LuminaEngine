@@ -8,7 +8,6 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Log/Log.h"
 #include "MCPAnimGraphTools.h"
-#include "MCPAssetObjectTools.h"
 #include "MCPAssetTools.h"
 #include "MCPBuiltinTools.h"
 #include "MCPDataTableTools.h"
@@ -17,16 +16,17 @@
 #include "MCPPackageTools.h"
 #include "MCPParticleTools.h"
 #include "MCPPrefabTools.h"
-#include "MCPTerrainTools.h"
 #include "MCPProfilerTools.h"
 #include "MCPRuntimeTools.h"
 #include "MCPSceneTools.h"
 #include "MCPSequenceTools.h"
 #include "MCPStressTools.h"
+#include "MCPTerrainTools.h"
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina::MCP
 {
-    namespace
+    namespace MCPServerInternal
     {
         // Bump when the protocol revision this speaks changes, and recheck tools against the new one.
         constexpr const char* GProtocolVersion = "2025-06-18";
@@ -36,27 +36,24 @@ namespace Lumina::MCP
 
         constexpr const char* GOwner = "MCPEditor";
 
-        std::string ToStandard(FStringView Text)
-        {
-            return std::string(Text.data(), Text.size());
-        }
+        constexpr FStringView GSessionHeader = "Mcp-Session-Id";
 
         // What a model reads. A tool that ran and failed says so here rather than as a transport error.
-        nlohmann::json MakeContent(const Agent::FToolResult& Outcome)
+        FJsonValue MakeContent(const Agent::FToolResult& Outcome)
         {
-            nlohmann::json Block = nlohmann::json::object();
-            Block["type"] = "text";
-            Block["text"] = ToStandard(FStringView(Outcome.Text));
+            FJsonValue Block = FJsonValue::MakeObject();
+            Block.Set("type", "text");
+            Block.Set("text", Outcome.Text);
 
-            nlohmann::json Content = nlohmann::json::array();
-            Content.push_back(Move(Block));
+            FJsonValue Content = FJsonValue::MakeArray();
+            Content.Add(Move(Block));
             return Content;
         }
 
         // A RawJson string field takes any JSON value, re-encoded as text so a model need not double-quote it.
-        void EncodeRawJsonArguments(CStruct* ParamsType, nlohmann::json& Arguments)
+        void EncodeRawJsonArguments(CStruct* ParamsType, FJsonValue& Arguments)
         {
-            if (ParamsType == nullptr || !Arguments.is_object())
+            if (ParamsType == nullptr || !Arguments.IsObject())
             {
                 return;
             }
@@ -69,26 +66,33 @@ namespace Lumina::MCP
                     return;
                 }
 
-                const auto Found = Arguments.find(ToStandard(FStringView(Property->GetPropertyName().ToString())));
-                if (Found == Arguments.end())
+                FJsonValue* Found = Arguments.Find(FStringView(Property->GetPropertyName().ToString()));
+                if (Found == nullptr)
                 {
                     return;
                 }
 
-                if (!Found->is_string())
+                if (!Found->IsString())
                 {
-                    *Found = Found->dump();
+                    *Found = FJsonValue(Found->ToString());
                     return;
                 }
 
                 // A string that is not itself JSON is a plain string, so it is quoted rather than refused.
-                const std::string Text = Found->get<std::string>();
-                if (nlohmann::json::parse(Text, nullptr, false).is_discarded())
+                FJsonValue Parsed;
+                if (!FJsonValue::Parse(Found->AsString(), Parsed))
                 {
-                    *Found = nlohmann::json(Text).dump();
+                    *Found = FJsonValue(Found->ToString());
                 }
             });
         }
+    }
+
+    using namespace MCPServerInternal;
+
+    FServer::FServer()
+    {
+        RegisterProtocolMethods();
     }
 
     FServer::~FServer()
@@ -106,11 +110,9 @@ namespace Lumina::MCP
 
         Settings = InSettings;
 
-        RegisterProtocolMethods();
         RegisterBuiltinTools(GOwner);
         RegisterSceneTools(GOwner);
         RegisterAssetTools(GOwner);
-        RegisterAssetObjectTools(GOwner);
         RegisterMaterialTools(GOwner);
         RegisterParticleTools(GOwner);
         RegisterAnimGraphTools(GOwner);
@@ -138,7 +140,6 @@ namespace Lumina::MCP
         if (!bStarted)
         {
             LOG_ERROR("[MCP] Failed to listen on port {}.", Settings.Port);
-            Dispatcher.UnregisterOwner(GOwner);
             return false;
         }
 
@@ -154,10 +155,9 @@ namespace Lumina::MCP
         }
 
         Transport.Stop();
-        KeptLoaded.clear();
+        KeptLoaded.Reset();
 
         UnregisterEditorSessionTools();
-        Dispatcher.UnregisterOwner(GOwner);
         Agent::FToolRegistry::Get().UnregisterOwner(GOwner);
     }
 
@@ -165,7 +165,7 @@ namespace Lumina::MCP
     {
         if (Object != nullptr && !Algo::AnyOf(KeptLoaded, [Object](const TStrongObjectPtr<CObject>& Kept) { return Kept.Get() == Object; }))
         {
-            KeptLoaded.emplace_back(Object);
+            KeptLoaded.Emplace(Object);
         }
     }
 
@@ -173,33 +173,29 @@ namespace Lumina::MCP
     {
         Dispatcher.RegisterMethod(GOwner, "initialize", [](const JsonRpc::FRequest&)
         {
-            nlohmann::json Result = nlohmann::json::object();
-            Result["protocolVersion"] = GProtocolVersion;
+            FJsonValue Result = FJsonValue::MakeObject();
+            Result.Set("protocolVersion", GProtocolVersion);
 
             // Only tools are offered so far, so no resource or prompt capability is advertised.
-            Result["capabilities"] = nlohmann::json::object();
-            Result["capabilities"]["tools"] = nlohmann::json::object();
-
-            Result["serverInfo"] = nlohmann::json::object();
-            Result["serverInfo"]["name"]    = GServerName;
-            Result["serverInfo"]["version"] = GServerVersion;
+            Result.Set("capabilities", FJsonValue::MakeObject({ { "tools", FJsonValue::MakeObject() } }));
+            Result.Set("serverInfo", FJsonValue::MakeObject({ { "name", GServerName }, { "version", GServerVersion } }));
 
             return JsonRpc::FResponse::Success(Result);
         });
 
         Dispatcher.RegisterMethod(GOwner, "notifications/initialized", [](const JsonRpc::FRequest&)
         {
-            return JsonRpc::FResponse::Success(nlohmann::json::object());
+            return JsonRpc::FResponse::Success(FJsonValue::MakeObject());
         });
 
         Dispatcher.RegisterMethod(GOwner, "ping", [](const JsonRpc::FRequest&)
         {
-            return JsonRpc::FResponse::Success(nlohmann::json::object());
+            return JsonRpc::FResponse::Success(FJsonValue::MakeObject());
         });
 
         Dispatcher.RegisterMethod(GOwner, "tools/list", [](const JsonRpc::FRequest&)
         {
-            nlohmann::json Tools = nlohmann::json::array();
+            FJsonValue Tools = FJsonValue::MakeArray();
 
             Agent::FToolRegistry::Get().ForEachTool([&Tools](const Agent::FTool& Tool)
             {
@@ -212,37 +208,37 @@ namespace Lumina::MCP
                     return;
                 }
 
-                nlohmann::json Entry = nlohmann::json::object();
-                Entry["name"]        = ToStandard(FStringView(Tool.Name));
-                Entry["description"] = ToStandard(FStringView(Tool.Description));
-                Entry["inputSchema"] = Input.Schema;
+                FJsonValue Entry = FJsonValue::MakeObject();
+                Entry.Set("name", Tool.Name);
+                Entry.Set("description", Tool.Description);
+                Entry.Set("inputSchema", Input.Schema);
 
                 if (Tool.ResultType != nullptr)
                 {
                     if (const Agent::FSchemaResult Output = Agent::GenerateSchema(Tool.ResultType); Output.IsValid())
                     {
-                        Entry["outputSchema"] = Output.Schema;
+                        Entry.Set("outputSchema", Output.Schema);
                     }
                 }
 
-                Tools.push_back(Move(Entry));
+                Tools.Add(Move(Entry));
             });
 
-            nlohmann::json Result = nlohmann::json::object();
-            Result["tools"] = Move(Tools);
+            FJsonValue Result = FJsonValue::MakeObject();
+            Result.Set("tools", Move(Tools));
             return JsonRpc::FResponse::Success(Result);
         });
 
         Dispatcher.RegisterMethod(GOwner, "tools/call", [](const JsonRpc::FRequest& Request)
         {
-            const auto Name = Request.Params.find("name");
-            if (Name == Request.Params.end() || !Name->is_string())
+            const FJsonValue& Name = Request.Params["name"];
+            if (!Name.IsString())
             {
                 return JsonRpc::FResponse::Failure(JsonRpc::EErrorCode::InvalidParams,
                     "A tool call needs a string name.");
             }
 
-            const FString ToolName(Name->get_ref<const std::string&>().c_str());
+            const FString ToolName(Name.AsString());
 
             Agent::FTool Tool;
             if (!Agent::FToolRegistry::Get().TryGetTool(FStringView(ToolName), Tool))
@@ -252,10 +248,8 @@ namespace Lumina::MCP
                     "No tool is registered under that name.");
             }
 
-            const auto Arguments = Request.Params.find("arguments");
-            nlohmann::json Given = Arguments != Request.Params.end() && Arguments->is_object()
-                ? *Arguments
-                : nlohmann::json::object();
+            const FJsonValue& Arguments = Request.Params["arguments"];
+            FJsonValue Given = Arguments.IsObject() ? Arguments : FJsonValue::MakeObject();
 
             Agent::FStructInstance Params(Tool.ParamsType);
             Agent::FStructInstance Result(Tool.ResultType);
@@ -277,7 +271,7 @@ namespace Lumina::MCP
 
             Agent::FToolResult Outcome;
 
-            // A tool that throws, such as json refusing a string that is not UTF-8, reports the failure instead of ending the editor.
+            // A tool that throws reports the failure instead of ending the editor.
             const auto Invoke = [&Outcome, &Tool, &Params, &Result]()
             {
                 try
@@ -305,16 +299,16 @@ namespace Lumina::MCP
                 Invoke();
             }
 
-            nlohmann::json Payload = nlohmann::json::object();
-            Payload["content"] = MakeContent(Outcome);
-            Payload["isError"] = Outcome.bIsError;
+            FJsonValue Payload = FJsonValue::MakeObject();
+            Payload.Set("content", MakeContent(Outcome));
+            Payload.Set("isError", Outcome.bIsError);
 
             if (!Outcome.bIsError && Result.IsValid())
             {
-                nlohmann::json Structured;
+                FJsonValue Structured;
                 if (Agent::WriteStruct(Result.GetType(), Result.Get(), Structured).IsValid())
                 {
-                    Payload["structuredContent"] = Move(Structured);
+                    Payload.Set("structuredContent", Move(Structured));
                 }
             }
 
@@ -335,9 +329,12 @@ namespace Lumina::MCP
             return Http::FResponse::Empty(405, "Method Not Allowed");
         }
 
-        // Ending a session costs nothing to honor, since no per-session state is kept yet.
+        const FStringView Session = Request.FindHeader(GSessionHeader);
+
+        // The session only labels the client in the log, so ending one has nothing else to release.
         if (Request.Method == "DELETE")
         {
+            Log.RecordDisconnect(Session);
             return Http::FResponse::Empty(204, "No Content");
         }
 
@@ -347,19 +344,34 @@ namespace Lumina::MCP
         }
 
         const FStringView ContentType = Request.FindHeader("Content-Type");
-        if (!ContentType.empty() && ContentType.find("application/json") == FStringView::npos)
+        if (!ContentType.IsEmpty() && ContentType.Find("application/json") == Constants::kIndexNone)
         {
             return Http::FResponse::Empty(415, "Unsupported Media Type");
         }
 
-        const FString Reply = Dispatcher.HandleMessage(FStringView(Request.Body));
+        FReply Reply = HandleMessage(FStringView(Request.Body), Session);
 
         // A notification produces nothing to send, which over HTTP is an accepted empty response.
-        if (Reply.empty())
+        if (Reply.Body.IsEmpty())
         {
             return Http::FResponse::Empty(202, "Accepted");
         }
 
-        return Http::FResponse::Json(Reply);
+        Http::FResponse Response = Http::FResponse::Json(Move(Reply.Body));
+        if (!Reply.OpenedSession.IsEmpty())
+        {
+            Response.ExtraHeaders.Add({ FString(GSessionHeader), Move(Reply.OpenedSession) });
+        }
+        return Response;
+    }
+
+    FServer::FReply FServer::HandleMessage(FStringView Message, FStringView Session)
+    {
+        const PlatformTime::FStopwatch Stopwatch;
+
+        FReply Reply;
+        Reply.Body = Dispatcher.HandleMessage(Message);
+        Reply.OpenedSession = Log.Record(Session, Message, FStringView(Reply.Body), Stopwatch.ElapsedMilliseconds());
+        return Reply;
     }
 }

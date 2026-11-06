@@ -35,18 +35,18 @@ TEST(PrefabOverrideDiff, AnInheritedLeafIsReportedOnce)
 
     TVector<FName> Paths;
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Prefab, Paths);
-    EXPECT_TRUE(Paths.empty()) << "an untouched instance overrides nothing";
+    EXPECT_TRUE(Paths.IsEmpty()) << "an untouched instance overrides nothing";
 
     Instance.Inherited = 7;
-    Paths.clear();
+    Paths.Reset();
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Prefab, Paths);
-    ASSERT_EQ(Paths.size(), size_t(1)) << "an inherited leaf must be reported once, not once per level";
+    ASSERT_EQ(Paths.Num(), 1) << "an inherited leaf must be reported once, not once per level";
     EXPECT_EQ(Paths[0], FName("Inherited"));
 
     Instance.Own = 3;
-    Paths.clear();
+    Paths.Reset();
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Prefab, Paths);
-    EXPECT_EQ(Paths.size(), size_t(2)) << "own and inherited leaves are both visible to the diff";
+    EXPECT_EQ(Paths.Num(), 2) << "own and inherited leaves are both visible to the diff";
 }
 
 // The inherited half of the chain has to round-trip through apply as well as through the diff.
@@ -64,7 +64,7 @@ TEST(PrefabOverrideDiff, AnInheritedLeafInheritsAndOverridesCorrectly)
     Instance.Own = 42;
 
     THashSet<FName> Overridden;
-    Overridden.insert(FName("Inherited"));
+    Overridden.Emplace("Inherited");
 
     PrefabOverride::ApplyInheritedLeaves(Layout, &Instance, &Prefab, Overridden);
     EXPECT_EQ(Instance.Inherited, 99) << "an overridden inherited leaf keeps the instance value";
@@ -90,12 +90,12 @@ TEST(PrefabOverrideDiff, ACustomPrimitiveColorChangeIsAnOverride)
 
     TVector<FName> Paths;
     PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Prefab, Paths);
-    ASSERT_FALSE(Paths.empty()) << "a recolor must read as an override";
+    ASSERT_FALSE(Paths.IsEmpty()) << "a recolor must read as an override";
 
     THashSet<FName> Overridden;
     for (const FName& Path : Paths)
     {
-        Overridden.insert(Path);
+        Overridden.Add(Path);
     }
     SStaticMeshComponent Resolved;
     Resolved.CustomPrimitiveData.SetAsColor(FVector4(1.0f, 0.0f, 0.0f, 1.0f));
@@ -388,10 +388,10 @@ TEST(PrefabInstances, CaptureGivesEveryNestedNodeItsOwnStableID)
     Outer->Registry.View<SPrefabComponent>().ForEach([&](ECS::FEntity, const SPrefabComponent& Node)
     {
         ++Nodes;
-        IDs.insert(Node.StableID);
+        IDs.Add(Node.StableID);
     });
     EXPECT_EQ(Nodes, 5);
-    EXPECT_EQ((int32)IDs.size(), Nodes) << "no two captured nodes may share an id";
+    EXPECT_EQ(IDs.Num(), Nodes) << "no two captured nodes may share an id";
 
     // Adopted as the new prefab's instance, the source refreshes onto itself without spawning or losing a node.
     Outer->RefreshInstance(World, Root);
@@ -422,7 +422,7 @@ TEST(PrefabInstances, RefreshKeepsAnOverriddenHandleThatCollidesWithAPrefabID)
     Registry.Emplace<SPrefabLinkTestComponent>(Link).Target = WorldEntity;
 
     SPrefabOverrideComponent& Ledger = Registry.Emplace<SPrefabOverrideComponent>(Root);
-    Ledger.PropertyOverrides.push_back({ FName("link"), SPrefabLinkTestComponent::StaticStruct()->GetName(), FName("Target") });
+    Ledger.PropertyOverrides.Emplace(FName("link"), SPrefabLinkTestComponent::StaticStruct()->GetName(), FName("Target"));
 
     Prefab->Registry.Get<SPrefabLinkTestComponent>(PrefabLink).Value = 7;
     Prefab->RefreshInstance(World, Root);
@@ -456,7 +456,7 @@ TEST(PrefabInstances, OverrideCaptureComparesHandlesInTheInstancesIDs)
         TVector<FName> Out;
         for (const SPrefabPropertyOverride& Override : Registry.Get<SPrefabOverrideComponent>(Root).PropertyOverrides)
         {
-            Out.push_back(Override.PropertyPath);
+            Out.Add(Override.PropertyPath);
         }
         return Out;
     };

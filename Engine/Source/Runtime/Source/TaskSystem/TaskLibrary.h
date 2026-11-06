@@ -7,7 +7,7 @@
 
 namespace Lumina
 {
-    /** Scheduling work on the engine's fiber workers. A body that blocks or yields breaks CLR affinity. */
+    // Scheduling work on the engine's job workers. A body that blocks or yields breaks CLR affinity.
     REFLECT()
     class RUNTIME_API CTaskLibrary : public CFunctionLibrary
     {
@@ -15,7 +15,7 @@ namespace Lumina
 
     public:
 
-        /** Runs Body once on a worker and returns a handle, which the caller has to Release exactly once. */
+        // Runs Body once on a worker and returns a handle, which the caller has to Release exactly once.
         FUNCTION()
         static uint64 Run(SScriptCallback Body, int32 Priority);
 
@@ -23,19 +23,19 @@ namespace Lumina
         FUNCTION(ScriptInternal)
         static void ParallelFor(uint32 Num, uint32 MinRange, SScriptCallback Body, int32 Priority);
 
-        /** Blocks until the task behind Handle has completed. */
+        // Blocks until the task behind Handle has completed.
         FUNCTION()
         static void Wait(uint64 Handle);
 
-        /** Drops the handle's refcount on the completion state. */
+        // Drops the handle's refcount on the completion state.
         FUNCTION()
         static void Release(uint64 Handle);
 
-        /** Blocks until every task submitted so far has completed. */
+        // Blocks until every task submitted so far has completed.
         FUNCTION()
         static void WaitForAll();
 
-        /** Number of background worker threads. */
+        // Number of job worker threads.
         FUNCTION()
         static int32 NumWorkers();
     };

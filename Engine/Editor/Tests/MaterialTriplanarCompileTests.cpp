@@ -38,7 +38,7 @@ namespace
 
     bool Contains(const FString& Haystack, const char* Needle)
     {
-        return Haystack.find(Needle) != FString::npos;
+        return Haystack.Find(Needle) != Constants::kIndexNone;
     }
 }
 
@@ -51,7 +51,7 @@ TEST(MaterialTriplanar, PixelStageSamplesWithWorldPositionGradients)
     EXPECT_TRUE(Contains(Code, "float4 Tri = TriplanarSample(GetMaterialTexture(MaterialIndex, 3), SAMPLER_LINEAR_WRAP"));
     EXPECT_TRUE(Contains(Code, "WorldPosition_DDX, WorldPosition_DDY"));
     EXPECT_FALSE(F.Compiler.HasErrors());
-    EXPECT_TRUE(F.Compiler.GetWarnings().empty());
+    EXPECT_TRUE(F.Compiler.GetWarnings().IsEmpty());
 }
 
 // No vertex template declares *_DDX companions, so referencing one would not compile.

@@ -36,9 +36,9 @@ namespace Lumina
     int32 CGameplayProfilerLibrary::RegisterScope(const FString& Name)
     {
         FScopeLock Lock(GRegisterMutex);
-        if (auto It = GScopeIdsByName.find(Name); It != GScopeIdsByName.end())
+        if (auto It = GScopeIdsByName.Find(Name); It != nullptr)
         {
-            return It->second;
+            return (*It);
         }
 
         const int32 Id = GRegisteredScopeCount.load(std::memory_order_relaxed);
@@ -50,12 +50,12 @@ namespace Lumina
         FRegisteredScope& Scope = GRegisteredScopes[Id];
         Scope.Name = Name;
         #if defined(TRACY_ENABLE)
-        Scope.SourceLocation.name     = Scope.Name.c_str();
+        Scope.SourceLocation.name     = *Scope.Name;
         Scope.SourceLocation.function = "Script";
         Scope.SourceLocation.file     = __FILE__;
         Scope.SourceLocation.line     = __LINE__;
         #endif
-        GScopeIdsByName.emplace(Name, Id);
+        GScopeIdsByName.TryAdd(Name, Id);
         GRegisteredScopeCount.store(Id + 1, std::memory_order_release);
         return Id;
     }
@@ -66,19 +66,19 @@ namespace Lumina
         {
             // Pushed anyway, so the paired EndScope still pops what this pushed.
             #if defined(TRACY_ENABLE)
-            GScriptZones.push_back(TracyCZoneCtx{});
+            GScriptZones.Add(TracyCZoneCtx{});
             #endif
             return;
         }
 
         const FRegisteredScope& Scope = GRegisteredScopes[ScopeId];
         #if defined(TRACY_ENABLE)
-        GScriptZones.push_back(TracyCIsConnected ? ___tracy_emit_zone_begin(&Scope.SourceLocation, 1) : TracyCZoneCtx{});
+        GScriptZones.Add(TracyCIsConnected ? ___tracy_emit_zone_begin(&Scope.SourceLocation, 1) : TracyCZoneCtx{});
         #endif
 
         if (FGameplayProfiler::Get().IsEnabled())
         {
-            FGameplayProfiler::Get().BeginScope(FStringView(Scope.Name.c_str(), Scope.Name.size()));
+            FGameplayProfiler::Get().BeginScope(FStringView(*Scope.Name, Scope.Name.Len()));
         }
     }
 
@@ -87,18 +87,18 @@ namespace Lumina
         #if defined(TRACY_ENABLE)
         // Also a Tracy zone named at runtime, so script work sampled by name reads by that name in a capture.
         TracyCZoneCtx Zone{};
-        if (!Name.empty() && TracyCIsConnected)
+        if (!Name.IsEmpty() && TracyCIsConnected)
         {
             const uint64 SourceLocation = ___tracy_alloc_srcloc_name(__LINE__, __FILE__, strlen(__FILE__), __FUNCTION__, strlen(__FUNCTION__),
-                                                                     Name.c_str(), Name.size(), 0);
+                                                                     *Name, Name.Len(), 0);
             Zone = ___tracy_emit_zone_begin_alloc(SourceLocation, 1);
         }
-        GScriptZones.push_back(Zone);
+        GScriptZones.Add(Zone);
         #endif
 
-        if (!Name.empty())
+        if (!Name.IsEmpty())
         {
-            FGameplayProfiler::Get().BeginScope(FStringView(Name.c_str(), Name.size()));
+            FGameplayProfiler::Get().BeginScope(FStringView(*Name, Name.Len()));
         }
     }
 
@@ -107,10 +107,10 @@ namespace Lumina
         FGameplayProfiler::Get().EndScope();
 
         #if defined(TRACY_ENABLE)
-        if (!GScriptZones.empty())
+        if (!GScriptZones.IsEmpty())
         {
-            const TracyCZoneCtx Zone = GScriptZones.back();
-            GScriptZones.pop_back();
+            const TracyCZoneCtx Zone = GScriptZones.Last();
+            GScriptZones.Pop();
             if (Zone.active)
             {
                 ___tracy_emit_zone_end(Zone);

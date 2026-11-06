@@ -4,6 +4,7 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Log/Log.h"
 
 #include "Scripting/ScriptableTest.h"
 #include "World/ECS/Registry.h"
@@ -13,6 +14,7 @@
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/World.h"
+#include "WorldTestAccess.h"
 
 using namespace Lumina;
 
@@ -45,7 +47,7 @@ namespace
         {
             if (Class != CEntitySystemTest::StaticClass() && Class != CEntitySystemExclusiveTest::StaticClass())
             {
-                Disabled.insert(Class->GetName());
+                Disabled.Add(Class->GetName());
             }
         });
         return Disabled;
@@ -55,6 +57,114 @@ namespace
     {
         return Cast<CEntitySystemTest>(EntitySystems::Find(Systems, CEntitySystemTest::StaticClass()));
     }
+
+    template<typename TSystem>
+    CEntitySystem* AddSystem(CWorld* World)
+    {
+        CEntitySystem* System = NewObject<TSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+        System->SetOwningWorld(World);
+        System->ConfigureSystem();
+        World->Systems.Add(System);
+        return System;
+    }
+
+    // Both systems write the transform, so only a declared order keeps the pair out of the ambiguity report.
+    CWorld* ScheduleTwoTransformWriters(bool bDeclareOrder)
+    {
+        CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+        AddSystem<CEntitySystemTest>(World);
+        CEntitySystem* SecondWriter = AddSystem<CEntitySystemTransformReaderTest>(World);
+
+        SecondWriter->DeclareWrite("STransformComponent");
+        if (bDeclareOrder)
+        {
+            SecondWriter->RunsAfter<CEntitySystemTest>();
+        }
+
+        Logging::ClearLogQueue();
+        FWorldTestAccess::RebuildSystemSchedule(*World);
+        return World;
+    }
+
+    int32 CountAmbiguityReports()
+    {
+        Logging::Flush();
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+        int32 Count = 0;
+        for (int32 Index = 0; Index < Messages.Num(); ++Index)
+        {
+            const FStringView Text = Messages[Index].Message.View();
+            if (Messages[Index].Level == ELogLevel::Info && Text.Contains("CEntitySystemTest") && Text.Contains("CEntitySystemTransformReaderTest")
+                && Text.Contains("STransformComponent"))
+            {
+                ++Count;
+            }
+        }
+        return Count;
+    }
+}
+
+TEST(EntitySystem, FirstScheduleWarnsOnceAboutUnorderedWritersOfOneComponent)
+{
+    FCreationGate Gate;
+
+    CWorld* World = ScheduleTwoTransformWriters(false);
+    EXPECT_EQ(CountAmbiguityReports(), 1) << "the pair shares only PrePhysics, so it is reported once";
+
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountAmbiguityReports(), 0) << "a later rebuild must not restate what the first schedule reported";
+}
+
+TEST(EntitySystem, ASystemAddedAfterTheFirstScheduleStillReportsItsConflict)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    AddSystem<CEntitySystemTest>(World);
+    AddSystem<CEntitySystemReaderTest>(World);
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+
+    AddSystem<CEntitySystemTransformReaderTest>(World)->DeclareWrite("STransformComponent");
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountAmbiguityReports(), 1) << "a conflict a later system brings in must be reported on the rebuild that adds it";
+}
+
+TEST(EntitySystem, DeclaredOrderSilencesTheAmbiguityWarning)
+{
+    FCreationGate Gate;
+
+    ScheduleTwoTransformWriters(true);
+    EXPECT_EQ(CountAmbiguityReports(), 0);
+}
+
+TEST(EntitySystem, RunsAfterASetOrdersAfterEveryMember)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* Writer = NewObject<CEntitySystemTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* TransformReader = NewObject<CEntitySystemTransformReaderTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* Reader = NewObject<CEntitySystemReaderTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    for (CEntitySystem* System : { Writer, TransformReader, Reader })
+    {
+        System->SetOwningWorld(World);
+        System->ConfigureSystem();
+    }
+
+    const FName SetName = "EntitySystemTestSet";
+    Writer->JoinSet(SetName);
+    TransformReader->JoinSet(SetName);
+    Reader->RunsAfterSystem(SetName);
+
+    const CWorld::FStageSchedule Stage = SystemSchedule::OrderStage({ Reader, Writer, TransformReader }, EUpdateStage::PrePhysics);
+    ASSERT_EQ(Stage.Systems.Num(), 3);
+
+    const int32 ReaderIndex = Stage.Systems.Find(Reader);
+    EXPECT_EQ(ReaderIndex, 2) << "a system ordered after a set runs after every member";
+    EXPECT_TRUE(Stage.MustPrecede(Stage.Systems.Find(Writer), ReaderIndex));
+    EXPECT_TRUE(Stage.MustPrecede(Stage.Systems.Find(TransformReader), ReaderIndex));
 }
 
 TEST(EntitySystem, TeardownOnlyRunsForASystemThatStarted)
@@ -82,13 +192,13 @@ TEST(EntitySystem, ConfigureDeclaresStagesAndAccess)
     CEntitySystemTest* Created = FindTestSystem(Systems);
     ASSERT_NE(Created, nullptr) << "a system class that is not disabled was not created";
 
-    EXPECT_EQ(Created->GetWorld(), SentinelWorld) << "the owning world is set before Configure runs";
+    EXPECT_EQ(Created->GetOwningWorldForTest(), SentinelWorld) << "the owning world is set before Configure runs";
     EXPECT_EQ(Created->ConfigureCount, 1);
 
     EXPECT_TRUE(Created->RunsInStage(EUpdateStage::PrePhysics));
     EXPECT_TRUE(Created->RunsInStage(EUpdateStage::FrameEnd));
     EXPECT_FALSE(Created->RunsInStage(EUpdateStage::PostPhysics));
-    EXPECT_TRUE(Created->GetRunsAfter().empty() && Created->GetRunsBefore().empty()) << "nothing orders a system that declares no dependency";
+    EXPECT_TRUE(Created->GetRunsAfter().IsEmpty() && Created->GetRunsBefore().IsEmpty()) << "nothing orders a system that declares no dependency";
 
     // The typed declaration and the name keyed one a script uses must reach the same set.
     const FSystemAccess& Access = Created->GetAccess();
@@ -98,12 +208,12 @@ TEST(EntitySystem, ConfigureDeclaresStagesAndAccess)
     EXPECT_FALSE(Access.DeclaresWrite((uint32)ECS::GetComponentTypeID<SStaticMeshComponent>()));
 
     // Without one per declared type the lazy assure rehashes the shared pool map inside a parallel batch.
-    EXPECT_EQ(Access.Pools.size(), 2u) << "a name keyed declaration must carry its pool too";
+    EXPECT_EQ(Access.Pools.Num(), 2) << "a name keyed declaration must carry its pool too";
 
     EntitySystems::DestroyAll(NoContext(), Systems);
 }
 
-TEST(EntitySystem, DeclaringNoAccessRunsExclusive)
+TEST(EntitySystem, AnExclusiveSystemRunsAlone)
 {
     FCreationGate Gate;
 
@@ -113,7 +223,7 @@ TEST(EntitySystem, DeclaringNoAccessRunsExclusive)
     CEntitySystem* Exclusive = EntitySystems::Find(Systems, CEntitySystemExclusiveTest::StaticClass());
     ASSERT_NE(Exclusive, nullptr);
 
-    EXPECT_TRUE(Exclusive->GetAccess().bExclusive) << "declaring nothing is not a claim to be honest about";
+    EXPECT_TRUE(Exclusive->GetAccess().bExclusive) << "an exclusive system conflicts with every other";
     EXPECT_TRUE(FSystemAccess::Conflicts(Exclusive->GetAccess(), FindTestSystem(Systems)->GetAccess()));
 
     EntitySystems::DestroyAll(NoContext(), Systems);
@@ -127,14 +237,14 @@ TEST(EntitySystem, CreateMissingIsIdempotent)
     const THashSet<FName> Disabled = AllButTestSystems();
 
     EXPECT_EQ(EntitySystems::CreateMissing(*SentinelWorld, Disabled, Systems), 2);
-    const size_t CountAfterFirst = Systems.size();
+    const int32 CountAfterFirst = Systems.Num();
 
     CEntitySystemTest* Created = FindTestSystem(Systems);
     ASSERT_NE(Created, nullptr);
 
     EXPECT_EQ(EntitySystems::CreateMissing(*SentinelWorld, Disabled, Systems), 0)
         << "a second pass must not duplicate a system that already exists";
-    EXPECT_EQ(Systems.size(), CountAfterFirst);
+    EXPECT_EQ(Systems.Num(), CountAfterFirst);
     EXPECT_EQ(Created->ConfigureCount, 1) << "an existing system must not be configured twice";
 
     EntitySystems::DestroyAll(NoContext(), Systems);
@@ -158,8 +268,8 @@ TEST(EntitySystem, StartupRunsOnceAndTeardownFollows)
     EntitySystems::DestroyAll(NoContext(), Systems);
 
     EXPECT_EQ(Created->TeardownCount, 1);
-    EXPECT_EQ(Created->GetWorld(), nullptr) << "teardown must unlink the world it no longer belongs to";
-    EXPECT_TRUE(Systems.empty());
+    EXPECT_EQ(Created->GetOwningWorldForTest(), nullptr) << "teardown must unlink the world it no longer belongs to";
+    EXPECT_TRUE(Systems.IsEmpty());
 }
 
 TEST(EntitySystem, DropDisabledRemovesOnlyTheNamedSystem)
@@ -175,7 +285,7 @@ TEST(EntitySystem, DropDisabledRemovesOnlyTheNamedSystem)
     ASSERT_NE(Created, nullptr);
 
     THashSet<FName> Disabled;
-    Disabled.insert(CEntitySystemTest::StaticClass()->GetName());
+    Disabled.Add(CEntitySystemTest::StaticClass()->GetName());
     EntitySystems::DropDisabled(NoContext(), Disabled, Systems);
 
     EXPECT_EQ(FindTestSystem(Systems), nullptr);
@@ -192,13 +302,13 @@ TEST(EntitySystem, DropScriptedLeavesNativeSystemsAlone)
     TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
-    const size_t Before = Systems.size();
+    const int32 Before = Systems.Num();
     ASSERT_GT(Before, 0u);
 
     // Nothing here is backed by a script class, so a reload rebuild must not disturb the native ones.
     EntitySystems::DropScripted(NoContext(), Systems);
 
-    EXPECT_EQ(Systems.size(), Before);
+    EXPECT_EQ(Systems.Num(), Before);
     EXPECT_NE(FindTestSystem(Systems), nullptr);
 
     EntitySystems::DestroyAll(NoContext(), Systems);

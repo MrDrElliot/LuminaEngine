@@ -5,6 +5,7 @@
 #include <iterator>
 
 #include "ContainerAllocator.h"
+#include "Core/Templates/NumericLimits.h"
 #include "ContainerTraits.h"
 #include "ElementOps.h"
 #include "Memory/Construct.h"
@@ -29,7 +30,7 @@ namespace Lumina::Containers
             alignas(T) uint8 Buffer[N * sizeof(T)];
         };
 
-        // Empty base, so the empty-base optimization keeps TVector<T> at one pointer plus two uint32.
+        // Empty base, so the empty-base optimization keeps TVector<T> at one pointer plus two int32.
         template <typename T>
         struct TInlineStorage<T, 0>
         {
@@ -38,7 +39,7 @@ namespace Lumina::Containers
         };
     }
 
-    /** Contiguous dynamic array; size and capacity are stored as uint32 but reported as size_t. */
+    /** Contiguous dynamic array shaped after Unreal's TArray, counted in its allocator's SizeType (SizeType by default). */
     template <typename T, size_t InlineCapacity = 0, ContainerAllocatorType TAllocator = FHeapAllocator>
     class TVector : private Private::TInlineStorage<T, InlineCapacity>
     {
@@ -46,8 +47,11 @@ namespace Lumina::Containers
 
     public:
 
+        using ElementType            = T;
+        using SizeType               = typename TAllocatorSizeType<TAllocator>::Type;
+        using USizeType              = std::make_unsigned_t<SizeType>;
         using value_type             = T;
-        using size_type              = size_t;
+        using size_type              = SizeType;
         using difference_type        = ptrdiff_t;
         using reference              = T&;
         using const_reference        = const T&;
@@ -59,31 +63,39 @@ namespace Lumina::Containers
         using const_reverse_iterator = std::reverse_iterator<const T*>;
         using allocator_type         = TAllocator;
 
-        static constexpr size_t npos            = ~static_cast<size_t>(0);
-        static constexpr size_t MaxCapacity     = 0xFFFFFFFFu;
-        static constexpr size_t InlineCapacityV = InlineCapacity;
+        static constexpr SizeType MaxElements  = TNumericLimits<SizeType>::Max();
+        static constexpr SizeType InlineCapacityV = static_cast<SizeType>(InlineCapacity);
 
-        TVector() noexcept
+        // Constant-initializable, so a global vector can be constinit and no static initializer can run before it.
+        constexpr TVector() noexcept
         {
             AdoptInlineStorage();
         }
 
-        explicit TVector(size_t InCount)
+        explicit TVector(SizeType InNum)
         {
             AdoptInlineStorage();
-            resize(InCount);
+            SetNum(InNum);
         }
 
-        TVector(size_t InCount, const T& Value)
+        TVector(SizeType InNum, const T& Value)
         {
             AdoptInlineStorage();
-            resize(InCount, Value);
+            SetNum(InNum, Value);
+        }
+
+        TVector(const T* Ptr, SizeType Count)
+        {
+            AdoptInlineStorage();
+            ReserveExact(static_cast<USizeType>(Count));
+            Append(Ptr, Count);
         }
 
         TVector(std::initializer_list<T> Init)
         {
             AdoptInlineStorage();
-            assign(Init.begin(), Init.end());
+            ReserveExact(static_cast<USizeType>(Init.size()));
+            Append(Init.begin(), static_cast<SizeType>(Init.size()));
         }
 
         template <typename TIter>
@@ -91,98 +103,127 @@ namespace Lumina::Containers
         TVector(TIter First, TIter Last)
         {
             AdoptInlineStorage();
-            assign(First, Last);
+            AppendRange(First, Last);
         }
 
         TVector(const TVector& Other)
         {
             AdoptInlineStorage();
-            Reserve(Other.Count);
-            ElementOps::CopyConstructRange(Data, Other.Data, Other.Count);
-            Count = Other.Count;
+            ReserveExact(static_cast<USizeType>(Other.ArrayNum));
+            ElementOps::CopyConstructRange(Elements, Other.Elements, Other.ArrayNum);
+            ArrayNum = Other.ArrayNum;
         }
 
         TVector(TVector&& Other) noexcept(Private::TNothrowRelocate<InlineCapacity, T>::value)
         {
             AdoptInlineStorage();
+            TakeFrom(Other);
+        }
 
-            if (Other.OwnsHeapBlock())
+        // Both heap allocators share one heap, so a vector of the other width hands over its block without a copy.
+        template <ContainerAllocatorType TOtherAllocator>
+        requires (InlineCapacity == 0 && !std::is_same_v<TOtherAllocator, TAllocator>
+            && std::is_base_of_v<FHeapAllocator, TAllocator> && std::is_base_of_v<FHeapAllocator, TOtherAllocator>)
+        explicit(sizeof(typename TAllocatorSizeType<TOtherAllocator>::Type) > sizeof(SizeType)) TVector(TVector<T, 0, TOtherAllocator>&& Other)
+        {
+            AdoptInlineStorage();
+            if (static_cast<uint64>(Other.ArrayMax) > static_cast<uint64>(MaxElements))
             {
-                Data  = Other.Data;
-                Count = Other.Count;
-                Cap   = Other.Cap;
-                Other.ResetToEmpty();
+                Other.Shrink();
             }
-            else
-            {
-                Reserve(Other.Count);
-                ElementOps::RelocateRange(Data, Other.Data, Other.Count);
-                Count = Other.Count;
-                Other.Count = 0;
-            }
+            const SizeType TakenNum = CheckedCount(static_cast<uint64>(Other.ArrayNum));
+            const SizeType TakenMax = CheckedCount(static_cast<uint64>(Other.ArrayMax));
+            Elements = Other.Elements;
+            ArrayNum = TakenNum;
+            ArrayMax = TakenMax;
+            Other.ResetToEmpty();
         }
 
         ~TVector()
         {
-            ElementOps::DestructRange(Data, Count);
+            ElementOps::DestructRange(Elements, ArrayNum);
             ReleaseHeapBlock();
         }
 
+        // Through a copy when Other lives inside one of our elements, which assigning would destroy first.
         TVector& operator=(const TVector& Other)
         {
             if (this != &Other)
             {
-                assign(Other.Data, Other.Data + Other.Count);
+                if (IsOwnedRegion(&Other))
+                {
+                    TVector Copy(Other);
+                    *this = std::move(Copy);
+                }
+                else
+                {
+                    // Assigned over within capacity, so each element keeps its storage; one that cannot be assigned is rebuilt.
+                    if constexpr (std::is_copy_assignable_v<T>)
+                    {
+                        if (Other.ArrayNum <= ArrayMax)
+                        {
+                            const USizeType Common = static_cast<USizeType>(ArrayNum < Other.ArrayNum ? ArrayNum : Other.ArrayNum);
+                            ElementOps::CopyAssignRange(Elements, Other.Elements, Common);
+                            if (Other.ArrayNum > ArrayNum)
+                            {
+                                ElementOps::CopyConstructRange(Elements + ArrayNum, Other.Elements + ArrayNum, Other.ArrayNum - ArrayNum);
+                            }
+                            else
+                            {
+                                ElementOps::DestructRange(Elements + Other.ArrayNum, ArrayNum - Other.ArrayNum);
+                            }
+                            ArrayNum = Other.ArrayNum;
+                            return *this;
+                        }
+                    }
+                    Reset();
+                    ReserveExact(static_cast<USizeType>(Other.ArrayNum));
+                    Append(Other.Elements, Other.ArrayNum);
+                }
             }
             return *this;
         }
 
+        // Other is emptied before our elements go, since it may live inside one of them.
         TVector& operator=(TVector&& Other) noexcept(Private::TNothrowRelocate<InlineCapacity, T>::value)
         {
-            if (this == &Other)
+            if (this != &Other)
             {
-                return *this;
-            }
-
-            ElementOps::DestructRange(Data, Count);
-            Count = 0;
-
-            if (Other.OwnsHeapBlock())
-            {
-                ReleaseHeapBlock();
-                Data  = Other.Data;
-                Count = Other.Count;
-                Cap   = Other.Cap;
-                Other.ResetToEmpty();
-            }
-            else
-            {
-                Reserve(Other.Count);
-                ElementOps::RelocateRange(Data, Other.Data, Other.Count);
-                Count = Other.Count;
-                Other.Count = 0;
+                TVector Taken(std::move(Other));
+                ElementOps::DestructRange(Elements, ArrayNum);
+                ArrayNum = 0;
+                if (InlineCapacity == 0 || Taken.OwnsHeapBlock())
+                {
+                    ReleaseHeapBlock();
+                    ResetToEmpty();
+                }
+                TakeFrom(Taken);
             }
             return *this;
         }
 
         TVector& operator=(std::initializer_list<T> Init)
         {
-            assign(Init.begin(), Init.end());
+            Reset();
+            ReserveExact(static_cast<USizeType>(Init.size()));
+            Append(Init.begin(), static_cast<SizeType>(Init.size()));
             return *this;
         }
 
-        NODISCARD FORCEINLINE T* data() noexcept { return Data; }
-        NODISCARD FORCEINLINE const T* data() const noexcept { return Data; }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto GetData(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>* { return Self.Elements; }
 
-        NODISCARD FORCEINLINE size_t size() const noexcept { return Count; }
+        NODISCARD FORCEINLINE SizeType Num() const noexcept { return ArrayNum; }
+        NODISCARD FORCEINLINE SizeType Max() const noexcept { return ArrayMax; }
+        NODISCARD FORCEINLINE SizeType GetSlack() const noexcept { return ArrayMax - ArrayNum; }
+        NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return ArrayNum == 0; }
+        NODISCARD FORCEINLINE bool IsValidIndex(SizeType Index) const noexcept { return static_cast<USizeType>(Index) < static_cast<USizeType>(ArrayNum); }
+        NODISCARD FORCEINLINE size_t NumBytes() const noexcept { return static_cast<size_t>(ArrayNum) * sizeof(T); }
+        NODISCARD FORCEINLINE size_t GetAllocatedSize() const noexcept { return OwnsHeapBlock() ? static_cast<size_t>(ArrayMax) * sizeof(T) : 0; }
 
         // C# reads the buffer and count in place, and an inline buffer base moves them off offset zero.
-        static uint32 GetDataOffsetForInterop() noexcept { return static_cast<uint32>(offsetof(TVector, Data)); }
-        static uint32 GetCountOffsetForInterop() noexcept { return static_cast<uint32>(offsetof(TVector, Count)); }
-        NODISCARD FORCEINLINE size_t capacity() const noexcept { return Cap; }
-        NODISCARD FORCEINLINE bool empty() const noexcept { return Count == 0; }
-        NODISCARD FORCEINLINE size_t size_bytes() const noexcept { return static_cast<size_t>(Count) * sizeof(T); }
-        NODISCARD static constexpr size_t max_size() noexcept { return MaxCapacity; }
+        static uint32 GetDataOffsetForInterop() noexcept { return static_cast<uint32>(offsetof(TVector, Elements)); }
+        static uint32 GetCountOffsetForInterop() noexcept { return static_cast<uint32>(offsetof(TVector, ArrayNum)); }
 
         /** True while the elements live in the inline buffer rather than a heap block. */
         NODISCARD FORCEINLINE bool IsInline() const noexcept
@@ -193,578 +234,588 @@ namespace Lumina::Containers
             }
             else
             {
-                return Data == FStorage::GetInlineData();
+                return Elements == FStorage::GetInlineData();
             }
         }
 
-        NODISCARD FORCEINLINE T* begin() noexcept { return Data; }
-        NODISCARD FORCEINLINE const T* begin() const noexcept { return Data; }
-        NODISCARD FORCEINLINE const T* cbegin() const noexcept { return Data; }
-        NODISCARD FORCEINLINE T* end() noexcept { return Data + Count; }
-        NODISCARD FORCEINLINE const T* end() const noexcept { return Data + Count; }
-        NODISCARD FORCEINLINE const T* cend() const noexcept { return Data + Count; }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto begin(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>* { return Self.Elements; }
 
-        NODISCARD FORCEINLINE reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
-        NODISCARD FORCEINLINE const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
-        NODISCARD FORCEINLINE reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
-        NODISCARD FORCEINLINE const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto end(this TSelf&& Self) noexcept -> TLikeSelf<TSelf, T>* { return Self.Elements + Self.ArrayNum; }
 
-        NODISCARD FORCEINLINE T& operator[](size_t Index) noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto rbegin(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.end()); }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto rend(this TSelf&& Self) noexcept { return std::reverse_iterator(Self.begin()); }
+
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto operator[](this TSelf&& Self, SizeType Index) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Data[Index];
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Self.ArrayNum);
+            return Self.Elements[Index];
         }
 
-        NODISCARD FORCEINLINE const T& operator[](size_t Index) const noexcept
+        template <typename TSelf>
+        NODISCARD FORCEINLINE auto Last(this TSelf&& Self, SizeType IndexFromEnd = 0) noexcept -> TLikeSelf<TSelf, T>&
         {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            return Data[Index];
+            return Self[Self.ArrayNum - IndexFromEnd - 1];
         }
 
-        NODISCARD FORCEINLINE T& at(size_t Index) noexcept { return (*this)[Index]; }
-        NODISCARD FORCEINLINE const T& at(size_t Index) const noexcept { return (*this)[Index]; }
+        FORCEINLINE SizeType Add(const T& Item) { return Emplace(Item); }
+        FORCEINLINE SizeType Add(T&& Item) { return Emplace(std::move(Item)); }
+        FORCEINLINE T& AddGetRef(const T& Item) { return EmplaceGetRef(Item); }
+        FORCEINLINE T& AddGetRef(T&& Item) { return EmplaceGetRef(std::move(Item)); }
 
-        NODISCARD FORCEINLINE T& front() noexcept
+        template <typename... TArgs>
+        FORCEINLINE SizeType Emplace(TArgs&&... Args)
         {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return Data[0];
+            EmplaceGetRef(std::forward<TArgs>(Args)...);
+            return ArrayNum - 1;
         }
 
-        NODISCARD FORCEINLINE const T& front() const noexcept
+        template <typename... TArgs>
+        FORCEINLINE T& EmplaceGetRef(TArgs&&... Args)
         {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return Data[0];
-        }
-
-        NODISCARD FORCEINLINE T& back() noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return Data[Count - 1];
-        }
-
-        NODISCARD FORCEINLINE const T& back() const noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            return Data[Count - 1];
-        }
-
-        void Reserve(size_t NewCapacity)
-        {
-            if (NewCapacity > Cap)
+            if (ArrayNum == ArrayMax) [[unlikely]]
             {
-                ReallocateTo(ToCapacity(NewCapacity));
+                // By value, so the caller's temporary is never spilled, where its narrow stores would stall the wide copy-load.
+                if constexpr (std::is_trivially_copyable_v<T> && sizeof(T) <= 2 * sizeof(void*))
+                {
+                    return EmplaceGrowingValue(T(std::forward<TArgs>(Args)...));
+                }
+                else
+                {
+                    return EmplaceGrowing(std::forward<TArgs>(Args)...);
+                }
             }
+            T* Slot = Elements + ArrayNum;
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
+            ++ArrayNum;
+            return *Slot;
         }
 
-        FORCEINLINE void reserve(size_t NewCapacity) { Reserve(NewCapacity); }
-
-        // Reserve honors the request exactly; the growth paths go through here so they stay amortized.
-        FORCEINLINE void ReserveForGrowth(size_t Required)
+        SizeType AddUnique(const T& Item)
         {
-            if (Required > Cap)
+            const SizeType Existing = Find(Item);
+            return Existing != Constants::kIndexNone ? Existing : Add(Item);
+        }
+
+        /** Grows by Count raw slots and returns the first index; the caller constructs every one of them. */
+        SizeType AddUninitialized(SizeType Count = 1)
+        {
+            const SizeType OldNum = ArrayNum;
+            ReserveForGrowth(RequiredFor(Count));
+            ArrayNum += Count;
+            return OldNum;
+        }
+
+        SizeType AddDefaulted(SizeType Count = 1)
+        {
+            const SizeType Index = AddUninitialized(Count);
+            ElementOps::DefaultConstructRange(Elements + Index, Count);
+            return Index;
+        }
+
+        T& AddDefaultedGetRef()
+        {
+            return Elements[AddDefaulted(1)];
+        }
+
+        SizeType AddZeroed(SizeType Count = 1)
+        {
+            static_assert(std::is_trivially_default_constructible_v<T>, "AddZeroed needs a T whose zero bytes are a valid value");
+            const SizeType Index = AddUninitialized(Count);
+            Memory::Memzero(static_cast<void*>(Elements + Index), static_cast<size_t>(Count) * sizeof(T));
+            return Index;
+        }
+
+        void Append(const T* Ptr, SizeType Count)
+        {
+            Insert(Ptr, Count, ArrayNum);
+        }
+
+        void Append(const TVector& Other) { Insert(Other.Elements, Other.ArrayNum, ArrayNum); }
+
+        // Taken out first when Other lives inside one of our elements, since growing would move it.
+        void Append(TVector&& Other)
+        {
+            if (&Other == this)
             {
-                ReallocateTo(CalculateGrowth(Cap, Required));
+                Append(static_cast<const TVector&>(*this));
+                return;
             }
+            if (IsOwnedRegion(&Other))
+            {
+                TVector Local(std::move(Other));
+                Append(std::move(Local));
+                return;
+            }
+            if (IsEmpty())
+            {
+                *this = std::move(Other);
+                return;
+            }
+            const SizeType Index = AddUninitialized(Other.ArrayNum);
+            ElementOps::RelocateRange(Elements + Index, Other.Elements, Other.ArrayNum);
+            Other.ArrayNum = 0;
         }
 
-        void shrink_to_fit()
+        void Append(std::initializer_list<T> Init) { Insert(Init.begin(), static_cast<SizeType>(Init.size()), ArrayNum); }
+
+        template <typename TIter>
+        requires std::input_iterator<TIter>
+        void Append(TIter First, TIter Last)
         {
-            if (Count == Cap || IsInline())
+            AppendRange(First, Last);
+        }
+
+        template <typename TRange>
+        requires (!std::is_same_v<std::remove_cvref_t<TRange>, TVector> && requires(TRange& Range) { Range.begin(); Range.end(); })
+        void Append(TRange&& Range)
+        {
+            AppendRange(Range.begin(), Range.end());
+        }
+
+        TVector& operator+=(const TVector& Other) { Append(Other); return *this; }
+        TVector& operator+=(TVector&& Other) { Append(std::move(Other)); return *this; }
+        TVector& operator+=(std::initializer_list<T> Init) { Append(Init); return *this; }
+
+        SizeType Insert(const T& Item, SizeType Index)
+        {
+            if (IsOwnedAddress(&Item))
+            {
+                EmplaceAt(Index, Item);
+                return Index;
+            }
+            OpenGap(Index, 1);
+            Memory::ConstructAt(Elements + Index, Item);
+            ++ArrayNum;
+            return Index;
+        }
+
+        SizeType Insert(T&& Item, SizeType Index)
+        {
+            if (IsOwnedAddress(&Item))
+            {
+                EmplaceAt(Index, std::move(Item));
+                return Index;
+            }
+            OpenGap(Index, 1);
+            Memory::ConstructAt(Elements + Index, std::move(Item));
+            ++ArrayNum;
+            return Index;
+        }
+
+        // A run out of our own buffer is copied first, since opening the gap can move or free it.
+        SizeType Insert(const T* Ptr, SizeType Count, SizeType Index)
+        {
+            LUMINA_CONTAINER_CHECK(Count >= 0);
+            if (Count <= 0)
+            {
+                return Index;
+            }
+            if (IsOwnedRegion(Ptr))
+            {
+                TVector Staged(Ptr, Count);
+                return Insert(Staged.Elements, Count, Index);
+            }
+            OpenGap(Index, Count);
+            ElementOps::CopyConstructRange(Elements + Index, Ptr, Count);
+            ArrayNum += Count;
+            return Index;
+        }
+
+        SizeType Insert(const TVector& Items, SizeType Index) { return Insert(Items.Elements, Items.ArrayNum, Index); }
+        SizeType Insert(std::initializer_list<T> Init, SizeType Index) { return Insert(Init.begin(), static_cast<SizeType>(Init.size()), Index); }
+
+        void InsertUninitialized(SizeType Index, SizeType Count = 1)
+        {
+            OpenGap(Index, Count);
+            ArrayNum += Count;
+        }
+
+        void InsertDefaulted(SizeType Index, SizeType Count = 1)
+        {
+            OpenGap(Index, Count);
+            ElementOps::DefaultConstructRange(Elements + Index, Count);
+            ArrayNum += Count;
+        }
+
+        // The value is built before the gap opens, so an argument naming one of our elements stays valid.
+        template <typename... TArgs>
+        T& EmplaceAt(SizeType Index, TArgs&&... Args)
+        {
+            T Local(std::forward<TArgs>(Args)...);
+            OpenGap(Index, 1);
+            Memory::ConstructAt(Elements + Index, std::move(Local));
+            ++ArrayNum;
+            return Elements[Index];
+        }
+
+        void RemoveAt(SizeType Index, SizeType Count = 1)
+        {
+            LUMINA_CONTAINER_CHECK(Count >= 0 && Index >= 0 && Index <= ArrayNum && Count <= ArrayNum - Index);
+            if (Count <= 0)
+            {
+                return;
+            }
+            ElementOps::DestructRange(Elements + Index, Count);
+            ElementOps::RelocateRangeOverlapping(Elements + Index, Elements + Index + Count, ArrayNum - Index - Count);
+            ArrayNum -= Count;
+        }
+
+        /** Removes in constant time by moving the last elements into the hole; does not preserve order. */
+        void RemoveAtSwap(SizeType Index, SizeType Count = 1)
+        {
+            LUMINA_CONTAINER_CHECK(Count >= 0 && Index >= 0 && Index <= ArrayNum && Count <= ArrayNum - Index);
+            if (Count <= 0)
+            {
+                return;
+            }
+            ElementOps::DestructRange(Elements + Index, Count);
+            const SizeType Tail = ArrayNum - Index - Count;
+            const SizeType Moved = Tail < Count ? Tail : Count;
+            ElementOps::RelocateRange(Elements + Index, Elements + ArrayNum - Moved, Moved);
+            ArrayNum -= Count;
+        }
+
+        SizeType Remove(const T& Item)
+        {
+            if (IsOwnedAddress(&Item))
+            {
+                const T Local(Item);
+                return RemoveAll([&Local](const T& Element) { return Element == Local; });
+            }
+            return RemoveAll([&Item](const T& Element) { return Element == Item; });
+        }
+
+        SizeType RemoveSwap(const T& Item)
+        {
+            if (IsOwnedAddress(&Item))
+            {
+                const T Local(Item);
+                return RemoveAllSwap([&Local](const T& Element) { return Element == Local; });
+            }
+            return RemoveAllSwap([&Item](const T& Element) { return Element == Item; });
+        }
+
+        SizeType RemoveSingle(const T& Item)
+        {
+            const SizeType Index = Find(Item);
+            if (Index == Constants::kIndexNone)
+            {
+                return 0;
+            }
+            RemoveAt(Index);
+            return 1;
+        }
+
+        SizeType RemoveSingleSwap(const T& Item)
+        {
+            const SizeType Index = Find(Item);
+            if (Index == Constants::kIndexNone)
+            {
+                return 0;
+            }
+            RemoveAtSwap(Index);
+            return 1;
+        }
+
+        /** Stable compaction in one pass; returns how many elements went away. */
+        template <typename TPredicate>
+        SizeType RemoveAll(TPredicate&& Predicate)
+        {
+            SizeType Write = 0;
+            for (SizeType Read = 0; Read < ArrayNum; ++Read)
+            {
+                if (Predicate(Elements[Read]))
+                {
+                    ElementOps::DestructRange(Elements + Read, 1);
+                    continue;
+                }
+                if (Write != Read)
+                {
+                    ElementOps::RelocateRange(Elements + Write, Elements + Read, 1);
+                }
+                ++Write;
+            }
+            const SizeType Removed = ArrayNum - Write;
+            ArrayNum = Write;
+            return Removed;
+        }
+
+        template <typename TPredicate>
+        SizeType RemoveAllSwap(TPredicate&& Predicate)
+        {
+            SizeType Removed = 0;
+            for (SizeType Index = 0; Index < ArrayNum;)
+            {
+                if (Predicate(Elements[Index]))
+                {
+                    RemoveAtSwap(Index);
+                    ++Removed;
+                }
+                else
+                {
+                    ++Index;
+                }
+            }
+            return Removed;
+        }
+
+        T Pop()
+        {
+            LUMINA_CONTAINER_CHECK(ArrayNum != 0);
+            T Result = std::move(Elements[ArrayNum - 1]);
+            --ArrayNum;
+            ElementOps::DestructRange(Elements + ArrayNum, 1);
+            return Result;
+        }
+
+        template <typename TKey>
+        NODISCARD SizeType Find(const TKey& Item) const
+        {
+            return ElementOps::FindIndex(Elements, ArrayNum, Item);
+        }
+
+        template <typename TKey>
+        NODISCARD bool Find(const TKey& Item, SizeType& OutIndex) const
+        {
+            OutIndex = Find(Item);
+            return OutIndex != Constants::kIndexNone;
+        }
+
+        template <typename TKey>
+        NODISCARD SizeType FindLast(const TKey& Item) const
+        {
+            for (SizeType Index = ArrayNum - 1; Index >= 0; --Index)
+            {
+                if (Elements[Index] == Item)
+                {
+                    return Index;
+                }
+            }
+            return Constants::kIndexNone;
+        }
+
+        template <typename TPredicate>
+        NODISCARD SizeType IndexOfByPredicate(TPredicate&& Predicate) const
+        {
+            for (SizeType Index = 0; Index < ArrayNum; ++Index)
+            {
+                if (Predicate(Elements[Index]))
+                {
+                    return Index;
+                }
+            }
+            return Constants::kIndexNone;
+        }
+
+        template <typename TPredicate>
+        NODISCARD SizeType FindLastByPredicate(TPredicate&& Predicate) const
+        {
+            for (SizeType Index = ArrayNum - 1; Index >= 0; --Index)
+            {
+                if (Predicate(Elements[Index]))
+                {
+                    return Index;
+                }
+            }
+            return Constants::kIndexNone;
+        }
+
+        template <typename TKey>
+        NODISCARD FORCEINLINE SizeType IndexOfByKey(const TKey& Key) const { return Find(Key); }
+
+        template <typename TKey, typename TSelf>
+        NODISCARD auto FindByKey(this TSelf&& Self, const TKey& Key) -> TLikeSelf<TSelf, T>*
+        {
+            const SizeType Index = Self.Find(Key);
+            return Index != Constants::kIndexNone ? Self.Elements + Index : nullptr;
+        }
+
+        template <typename TPredicate, typename TSelf>
+        NODISCARD auto FindByPredicate(this TSelf&& Self, TPredicate&& Predicate) -> TLikeSelf<TSelf, T>*
+        {
+            const SizeType Index = Self.IndexOfByPredicate(std::forward<TPredicate>(Predicate));
+            return Index != Constants::kIndexNone ? Self.Elements + Index : nullptr;
+        }
+
+        template <typename TKey>
+        NODISCARD FORCEINLINE bool Contains(const TKey& Item) const { return Find(Item) != Constants::kIndexNone; }
+
+        template <typename TPredicate>
+        NODISCARD FORCEINLINE bool ContainsByPredicate(TPredicate&& Predicate) const { return IndexOfByPredicate(std::forward<TPredicate>(Predicate)) != Constants::kIndexNone; }
+
+        void Reserve(SizeType Number)
+        {
+            ReserveExact(static_cast<USizeType>(Number));
+        }
+
+        void Shrink()
+        {
+            if (ArrayNum == ArrayMax || IsInline())
             {
                 return;
             }
 
             if constexpr (InlineCapacity > 0)
             {
-                if (Count <= InlineCapacity)
+                if (static_cast<size_t>(ArrayNum) <= InlineCapacity)
                 {
                     T* Inline = FStorage::GetInlineData();
-                    ElementOps::RelocateRange(Inline, Data, Count);
+                    ElementOps::RelocateRange(Inline, Elements, ArrayNum);
                     ReleaseHeapBlock();
-                    Data = Inline;
-                    Cap  = static_cast<uint32>(InlineCapacity);
+                    Elements = Inline;
+                    ArrayMax = InlineCapacityV;
                     return;
                 }
             }
 
-            if (Count == 0)
+            if (ArrayNum == 0)
             {
                 ReleaseHeapBlock();
                 ResetToEmpty();
                 return;
             }
 
-            ReallocateTo(Count);
+            ReallocateTo(static_cast<USizeType>(ArrayNum));
         }
 
-        FORCEINLINE void clear() noexcept
+        /** Destroys every element and sizes the block for Slack, so the default gives the memory back. */
+        void Empty(SizeType Slack = 0)
         {
-            ElementOps::DestructRange(Data, Count);
-            Count = 0;
-        }
-
-        /** Drops the elements and returns the capacity to the allocator, unlike clear which keeps it. */
-        void Reset()
-        {
-            ElementOps::DestructRange(Data, Count);
-            ReleaseHeapBlock();
-            ResetToEmpty();
-        }
-
-        void resize(size_t NewCount)
-        {
-            if (NewCount < Count)
+            ElementOps::DestructRange(Elements, ArrayNum);
+            ArrayNum = 0;
+            if (Slack <= InlineCapacityV)
             {
-                ElementOps::DestructRange(Data + NewCount, Count - NewCount);
+                ReleaseHeapBlock();
+                ResetToEmpty();
             }
-            else if (NewCount > Count)
+            else if (Slack != ArrayMax)
             {
-                ReserveForGrowth(NewCount);
-                ElementOps::DefaultConstructRange(Data + Count, NewCount - Count);
+                ReallocateTo(static_cast<USizeType>(CheckedCount(static_cast<USizeType>(Slack))));
             }
-            Count = static_cast<uint32>(NewCount);
         }
 
-        // For a trivially-constructible T the caller writes every new element itself, so no memzero.
-        void resize_uninitialized(size_t NewCount)
+        /** Destroys every element but keeps the block, so refilling it does not reallocate. */
+        void Reset(SizeType NewSize = 0)
         {
-            static_assert(std::is_trivially_default_constructible_v<T>, "resize_uninitialized needs a trivial T");
-            if (NewCount > Count)
+            ElementOps::DestructRange(Elements, ArrayNum);
+            ArrayNum = 0;
+            if (static_cast<USizeType>(NewSize) > static_cast<USizeType>(ArrayMax))
             {
-                ReserveForGrowth(NewCount);
+                ReserveExact(static_cast<USizeType>(NewSize));
             }
-            Count = static_cast<uint32>(NewCount);
         }
 
-        void resize(size_t NewCount, const T& Value)
+        void SetNum(SizeType NewNum)
         {
-            if (NewCount < Count)
+            if (static_cast<USizeType>(NewNum) > static_cast<USizeType>(ArrayNum))
             {
-                ElementOps::DestructRange(Data + NewCount, Count - NewCount);
+                const SizeType Index = AddUninitialized(GrowthTo(NewNum));
+                ElementOps::DefaultConstructRange(Elements + Index, ArrayNum - Index);
             }
-            else if (NewCount > Count)
+            else if (NewNum < ArrayNum)
             {
-                ReserveForGrowth(NewCount);
-                ElementOps::FillConstructRange(Data + Count, NewCount - Count, Value);
+                ElementOps::DestructRange(Elements + NewNum, ArrayNum - NewNum);
+                ArrayNum = NewNum;
             }
-            Count = static_cast<uint32>(NewCount);
         }
 
-        /** Grows by Extra elements without constructing them; the caller must construct every slot. */
-        NODISCARD T* AddUninitialized(size_t Extra)
+        void SetNum(SizeType NewNum, const T& Fill)
         {
-            ReserveForGrowth(static_cast<size_t>(Count) + Extra);
-            T* Slot = Data + Count;
-            Count += static_cast<uint32>(Extra);
-            return Slot;
-        }
-
-        /** Grows by one default-constructed element and hands back a reference to it. */
-        FORCEINLINE T& push_back()
-        {
-            return emplace_back();
-        }
-
-        FORCEINLINE T& push_back(const T& Value)
-        {
-            if (Count == Cap) [[unlikely]]
+            if (static_cast<USizeType>(NewNum) > static_cast<USizeType>(ArrayNum))
             {
-                return EmplaceBackGrowing(Value);
-            }
-
-            T* Slot = Data + Count;
-            Memory::ConstructAt(Slot, Value);
-            ++Count;
-            return *Slot;
-        }
-
-        FORCEINLINE T& push_back(T&& Value)
-        {
-            if (Count == Cap) [[unlikely]]
-            {
-                return EmplaceBackGrowing(std::move(Value));
-            }
-
-            T* Slot = Data + Count;
-            Memory::ConstructAt(Slot, std::move(Value));
-            ++Count;
-            return *Slot;
-        }
-
-        template <typename... TArgs>
-        FORCEINLINE T& emplace_back(TArgs&&... Args)
-        {
-            if (Count == Cap) [[unlikely]]
-            {
-                return EmplaceBackGrowing(std::forward<TArgs>(Args)...);
-            }
-
-            T* Slot = Data + Count;
-            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
-            ++Count;
-            return *Slot;
-        }
-
-        FORCEINLINE void pop_back() noexcept
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            --Count;
-            ElementOps::DestructRange(Data + Count, 1);
-        }
-
-        /** pop_back that hands the element back, so a work queue can drain without a copy. */
-        NODISCARD T PopBackValue()
-        {
-            LUMINA_CONTAINER_CHECK(Count != 0);
-            --Count;
-            T Result = std::move(Data[Count]);
-            ElementOps::DestructRange(Data + Count, 1);
-            return Result;
-        }
-
-        T* insert(const T* Pos, const T& Value)
-        {
-            const size_t Index = ValidateInsertPosition(Pos);
-
-            if (IsOwnedAddress(&Value))
-            {
-                T Local(Value);
-                return InsertAtIndex(Index, std::move(Local));
-            }
-            return InsertAtIndex(Index, Value);
-        }
-
-        T* insert(const T* Pos, T&& Value)
-        {
-            const size_t Index = ValidateInsertPosition(Pos);
-
-            if (IsOwnedAddress(&Value))
-            {
-                T Local(std::move(Value));
-                return InsertAtIndex(Index, std::move(Local));
-            }
-            return InsertAtIndex(Index, std::move(Value));
-        }
-
-        template <typename... TArgs>
-        T* emplace(const T* Pos, TArgs&&... Args)
-        {
-            const size_t Index = ValidateInsertPosition(Pos);
-            T Local(std::forward<TArgs>(Args)...);
-            return InsertAtIndex(Index, std::move(Local));
-        }
-
-        T* insert(const T* Pos, size_t Repeat, const T& Value)
-        {
-            const size_t Index = ValidateInsertPosition(Pos);
-            if (Repeat == 0)
-            {
-                return Data + Index;
-            }
-
-            T Local(Value);
-            OpenGap(Index, Repeat);
-            ElementOps::FillConstructRange(Data + Index, Repeat, Local);
-            Count += static_cast<uint32>(Repeat);
-            return Data + Index;
-        }
-
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        T* insert(const T* Pos, TIter First, TIter Last)
-        {
-            const size_t Index = ValidateInsertPosition(Pos);
-
-            if constexpr (std::forward_iterator<TIter>)
-            {
-                const size_t Extra = static_cast<size_t>(std::distance(First, Last));
-                if (Extra == 0)
+                if (IsOwnedAddress(&Fill))
                 {
-                    return Data + Index;
-                }
-
-                OpenGap(Index, Extra);
-                T* Write = Data + Index;
-
-                if constexpr (std::contiguous_iterator<TIter> && std::is_same_v<std::iter_value_t<TIter>, T>)
-                {
-                    ElementOps::CopyConstructRange(Write, std::to_address(First), Extra);
-                }
-                else
-                {
-                    for (; First != Last; ++First, ++Write)
-                    {
-                        Memory::ConstructAt(Write, *First);
-                    }
-                }
-
-                Count += static_cast<uint32>(Extra);
-                return Data + Index;
-            }
-            else
-            {
-                TVector Staged(First, Last);
-                return insert(Data + Index, Staged.begin(), Staged.end());
-            }
-        }
-
-        T* insert(const T* Pos, std::initializer_list<T> Init)
-        {
-            return insert(Pos, Init.begin(), Init.end());
-        }
-
-        T* erase(const T* Pos)
-        {
-            const size_t Index = static_cast<size_t>(Pos - Data);
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-
-            ElementOps::DestructRange(Data + Index, 1);
-            ElementOps::RelocateRangeOverlapping(Data + Index, Data + Index + 1, Count - Index - 1);
-            --Count;
-            return Data + Index;
-        }
-
-        T* erase(const T* First, const T* Last)
-        {
-            const size_t Index   = static_cast<size_t>(First - Data);
-            const size_t Removed = static_cast<size_t>(Last - First);
-            LUMINA_CONTAINER_CHECK_WITHIN(Index, Count);
-            LUMINA_CONTAINER_CHECK_WITHIN(Index + Removed, Count);
-
-            if (Removed == 0)
-            {
-                return Data + Index;
-            }
-
-            ElementOps::DestructRange(Data + Index, Removed);
-            ElementOps::RelocateRangeOverlapping(Data + Index, Data + Index + Removed, Count - Index - Removed);
-            Count -= static_cast<uint32>(Removed);
-            return Data + Index;
-        }
-
-        /** Erase in constant time by moving the last element into the hole; does not preserve order. */
-        void RemoveAtSwap(size_t Index)
-        {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-
-            ElementOps::DestructRange(Data + Index, 1);
-            --Count;
-            if (Index != Count)
-            {
-                ElementOps::RelocateRange(Data + Index, Data + Count, 1);
-            }
-        }
-
-        void EraseAt(size_t Index)
-        {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
-            erase(Data + Index);
-        }
-
-        NODISCARD size_t IndexOf(const T& Value) const
-        {
-            for (size_t Index = 0; Index < Count; ++Index)
-            {
-                if (Data[Index] == Value)
-                {
-                    return Index;
-                }
-            }
-            return npos;
-        }
-
-        template <typename TPredicate>
-        NODISCARD size_t IndexOfBy(TPredicate&& Predicate) const
-        {
-            for (size_t Index = 0; Index < Count; ++Index)
-            {
-                if (Predicate(Data[Index]))
-                {
-                    return Index;
-                }
-            }
-            return npos;
-        }
-
-        NODISCARD FORCEINLINE bool Contains(const T& Value) const { return IndexOf(Value) != npos; }
-
-        NODISCARD T* Find(const T& Value)
-        {
-            const size_t Index = IndexOf(Value);
-            return Index == npos ? end() : Data + Index;
-        }
-
-        NODISCARD const T* Find(const T& Value) const
-        {
-            const size_t Index = IndexOf(Value);
-            return Index == npos ? end() : Data + Index;
-        }
-
-        template <typename TPredicate>
-        NODISCARD T* FindBy(TPredicate&& Predicate)
-        {
-            const size_t Index = IndexOfBy(std::forward<TPredicate>(Predicate));
-            return Index == npos ? end() : Data + Index;
-        }
-
-        template <typename TPredicate>
-        NODISCARD const T* FindBy(TPredicate&& Predicate) const
-        {
-            const size_t Index = IndexOfBy(std::forward<TPredicate>(Predicate));
-            return Index == npos ? end() : Data + Index;
-        }
-
-        /** Appends only if absent; returns the index of the element either way. */
-        size_t AddUnique(const T& Value)
-        {
-            const size_t Existing = IndexOf(Value);
-            if (Existing != npos)
-            {
-                return Existing;
-            }
-            push_back(Value);
-            return Count - 1;
-        }
-
-        bool RemoveFirst(const T& Value)
-        {
-            const size_t Index = IndexOf(Value);
-            if (Index == npos)
-            {
-                return false;
-            }
-            EraseAt(Index);
-            return true;
-        }
-
-        bool RemoveFirstSwap(const T& Value)
-        {
-            const size_t Index = IndexOf(Value);
-            if (Index == npos)
-            {
-                return false;
-            }
-            RemoveAtSwap(Index);
-            return true;
-        }
-
-        /** Erase-remove in one pass; returns how many elements went away. */
-        template <typename TPredicate>
-        size_t RemoveAllBy(TPredicate&& Predicate)
-        {
-            size_t Write = 0;
-            for (size_t Read = 0; Read < Count; ++Read)
-            {
-                if (Predicate(Data[Read]))
-                {
-                    ElementOps::DestructRange(Data + Read, 1);
-                    continue;
-                }
-
-                if (Write != Read)
-                {
-                    ElementOps::RelocateRange(Data + Write, Data + Read, 1);
-                }
-                ++Write;
-            }
-
-            const size_t Removed = Count - Write;
-            Count = static_cast<uint32>(Write);
-            return Removed;
-        }
-
-        size_t RemoveAll(const T& Value)
-        {
-            return RemoveAllBy([&Value](const T& Element) { return Element == Value; });
-        }
-
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        void assign(TIter First, TIter Last)
-        {
-            clear();
-
-            if constexpr (std::forward_iterator<TIter>)
-            {
-                const size_t Incoming = static_cast<size_t>(std::distance(First, Last));
-                Reserve(Incoming);
-
-                if constexpr (std::contiguous_iterator<TIter> && std::is_same_v<std::iter_value_t<TIter>, T>)
-                {
-                    ElementOps::CopyConstructRange(Data, std::to_address(First), Incoming);
-                    Count = static_cast<uint32>(Incoming);
+                    const T Local(Fill);
+                    SetNum(NewNum, Local);
                     return;
                 }
-                else
-                {
-                    T* Write = Data;
-                    for (; First != Last; ++First, ++Write)
-                    {
-                        Memory::ConstructAt(Write, *First);
-                    }
-                    Count = static_cast<uint32>(Incoming);
-                }
+                const SizeType Index = AddUninitialized(GrowthTo(NewNum));
+                ElementOps::FillConstructRange(Elements + Index, ArrayNum - Index, Fill);
+            }
+            else if (NewNum < ArrayNum)
+            {
+                ElementOps::DestructRange(Elements + NewNum, ArrayNum - NewNum);
+                ArrayNum = NewNum;
+            }
+        }
+
+        void SetNumZeroed(SizeType NewNum)
+        {
+            static_assert(std::is_trivially_default_constructible_v<T>, "SetNumZeroed needs a T whose zero bytes are a valid value");
+            if (static_cast<USizeType>(NewNum) > static_cast<USizeType>(ArrayNum))
+            {
+                AddZeroed(GrowthTo(NewNum));
             }
             else
             {
-                for (; First != Last; ++First)
-                {
-                    push_back(*First);
-                }
+                ArrayNum = NewNum;
             }
         }
 
-        void assign(size_t Repeat, const T& Value)
+        // For a trivially-constructible T the caller writes every new element itself, so nothing is zeroed.
+        void SetNumUninitialized(SizeType NewNum)
         {
-            clear();
-            resize(Repeat, Value);
+            static_assert(std::is_trivially_default_constructible_v<T>, "SetNumUninitialized needs a trivial T");
+            if (static_cast<USizeType>(NewNum) > static_cast<USizeType>(ArrayNum))
+            {
+                AddUninitialized(GrowthTo(NewNum));
+            }
+            else
+            {
+                ArrayNum = NewNum;
+            }
         }
 
-        void assign(std::initializer_list<T> Init) { assign(Init.begin(), Init.end()); }
-
-        template <typename TIter>
-        requires std::input_iterator<TIter>
-        void Append(TIter First, TIter Last)
+        void Init(const T& Element, SizeType Number)
         {
-            insert(end(), First, Last);
+            if (IsOwnedAddress(&Element))
+            {
+                const T Local(Element);
+                Init(Local, Number);
+                return;
+            }
+            Reset(Number);
+            SetNum(Number, Element);
         }
 
-        void Append(const TVector& Other) { insert(end(), Other.begin(), Other.end()); }
-
-        void Append(std::initializer_list<T> Init) { insert(end(), Init.begin(), Init.end()); }
-
-        void swap(TVector& Other) noexcept
+        void Swap(SizeType FirstIndex, SizeType SecondIndex)
         {
-            if (this == &Other)
+            LUMINA_CONTAINER_CHECK(IsValidIndex(FirstIndex) && IsValidIndex(SecondIndex));
+            if (FirstIndex != SecondIndex)
+            {
+                ElementOps::SwapElements(Elements[FirstIndex], Elements[SecondIndex]);
+            }
+        }
+
+        friend void swap(TVector& A, TVector& B) noexcept(Private::TNothrowRelocate<InlineCapacity, T>::value)
+        {
+            if (&A == &B)
             {
                 return;
             }
-
             if constexpr (InlineCapacity == 0)
             {
-                T* const     SwapData  = Data;
-                const uint32 SwapCount = Count;
-                const uint32 SwapCap   = Cap;
-
-                Data  = Other.Data;
-                Count = Other.Count;
-                Cap   = Other.Cap;
-
-                Other.Data  = SwapData;
-                Other.Count = SwapCount;
-                Other.Cap   = SwapCap;
+                std::swap(A.Elements, B.Elements);
+                std::swap(A.ArrayNum, B.ArrayNum);
+                std::swap(A.ArrayMax, B.ArrayMax);
             }
             else
             {
-                TVector Staged(std::move(*this));
-                *this = std::move(Other);
-                Other = std::move(Staged);
+                TVector Staged(std::move(A));
+                A = std::move(B);
+                B = std::move(Staged);
             }
         }
 
         NODISCARD friend bool operator==(const TVector& A, const TVector& B)
         {
-            return A.Count == B.Count && ElementOps::RangeEquals(A.Data, B.Data, A.Count);
+            return A.ArrayNum == B.ArrayNum && ElementOps::RangeEquals(A.Elements, B.Elements, A.ArrayNum);
         }
 
         NODISCARD friend auto operator<=>(const TVector& A, const TVector& B)
@@ -774,176 +825,251 @@ namespace Lumina::Containers
 
     private:
 
-        FORCEINLINE void AdoptInlineStorage() noexcept
+        template <typename, size_t, ContainerAllocatorType>
+        friend class TVector;
+
+        template <typename TIter>
+        void AppendRange(TIter First, TIter Last)
+        {
+            if constexpr (std::contiguous_iterator<TIter> && std::is_same_v<std::remove_cv_t<std::iter_value_t<TIter>>, T>)
+            {
+                Append(std::to_address(First), CheckedCount(static_cast<uint64>(Last - First)));
+            }
+            else if constexpr (std::forward_iterator<TIter>)
+            {
+                // A range over our own elements, such as reverse iterators, is staged before growth can move it.
+                if constexpr (std::is_lvalue_reference_v<std::iter_reference_t<TIter>>)
+                {
+                    if (First != Last && IsOwnedRegion(std::addressof(*First)))
+                    {
+                        TVector Staged(First, Last);
+                        Append(std::move(Staged));
+                        return;
+                    }
+                }
+                const USizeType Count = static_cast<USizeType>(CheckedCount(static_cast<uint64>(std::distance(First, Last))));
+                ReserveForGrowth(RequiredFor(static_cast<SizeType>(Count)));
+                for (; First != Last; ++First)
+                {
+                    Memory::ConstructAt(Elements + ArrayNum, *First);
+                    ++ArrayNum;
+                }
+            }
+            else
+            {
+                for (; First != Last; ++First)
+                {
+                    Emplace(*First);
+                }
+            }
+        }
+
+        void TakeFrom(TVector& Other) noexcept(Private::TNothrowRelocate<InlineCapacity, T>::value)
+        {
+            if (Other.OwnsHeapBlock())
+            {
+                Elements = Other.Elements;
+                ArrayNum = Other.ArrayNum;
+                ArrayMax = Other.ArrayMax;
+                Other.ResetToEmpty();
+            }
+            else if constexpr (InlineCapacity > 0)
+            {
+                ReserveExact(static_cast<USizeType>(Other.ArrayNum));
+                ElementOps::RelocateRange(Elements, Other.Elements, Other.ArrayNum);
+                ArrayNum = Other.ArrayNum;
+                Other.ArrayNum = 0;
+            }
+        }
+
+        FORCEINLINE constexpr void AdoptInlineStorage() noexcept
         {
             if constexpr (InlineCapacity > 0)
             {
-                Data = FStorage::GetInlineData();
-                Cap  = static_cast<uint32>(InlineCapacity);
+                Elements = FStorage::GetInlineData();
+                ArrayMax = InlineCapacityV;
             }
         }
 
         FORCEINLINE void ResetToEmpty() noexcept
         {
-            Data  = FStorage::GetInlineData();
-            Count = 0;
-            Cap   = static_cast<uint32>(InlineCapacity);
+            Elements = FStorage::GetInlineData();
+            ArrayNum = 0;
+            ArrayMax = InlineCapacityV;
         }
 
         NODISCARD FORCEINLINE bool OwnsHeapBlock() const noexcept
         {
-            return Data != nullptr && !IsInline();
+            return Elements != nullptr && !IsInline();
         }
 
         FORCEINLINE void ReleaseHeapBlock() noexcept
         {
             if (OwnsHeapBlock())
             {
-                TAllocator::Deallocate(Data, static_cast<size_t>(Cap) * sizeof(T), alignof(T));
+                TAllocator::Deallocate(Elements, static_cast<size_t>(ArrayMax) * sizeof(T), alignof(T));
             }
         }
 
         NODISCARD FORCEINLINE bool IsOwnedAddress(const T* Address) const noexcept
         {
-            return Address >= Data && Address < Data + Count;
+            return Address >= Elements && Address < Elements + ArrayNum;
         }
 
-        NODISCARD static uint32 ToCapacity(size_t Requested)
+        NODISCARD FORCEINLINE bool IsOwnedRegion(const void* Address) const noexcept
         {
-            LUMINA_CONTAINER_CHECK_WITHIN(Requested, MaxCapacity);
-            return static_cast<uint32>(Requested);
+            const uint8* Byte = static_cast<const uint8*>(Address);
+            return Byte >= reinterpret_cast<const uint8*>(Elements) && Byte < reinterpret_cast<const uint8*>(Elements + ArrayNum);
+        }
+
+        // Wraps instead of overflowing for a negative NewNum, which RequiredFor then reads as too large.
+        NODISCARD FORCEINLINE SizeType GrowthTo(SizeType NewNum) const noexcept
+        {
+            return static_cast<SizeType>(static_cast<USizeType>(NewNum) - static_cast<USizeType>(ArrayNum));
+        }
+
+        // Read unsigned so a negative Added fails as too large; an int64 count must also refuse a sum that would wrap.
+        NODISCARD FORCEINLINE uint64 RequiredFor(SizeType Added) const noexcept
+        {
+            if constexpr (sizeof(SizeType) <= 4)
+            {
+                return static_cast<uint64>(ArrayNum) + static_cast<USizeType>(Added);
+            }
+            else
+            {
+                const uint64 Extra = static_cast<uint64>(Added);
+                const uint64 Room  = static_cast<uint64>(MaxElements) - static_cast<uint64>(ArrayNum);
+                return Extra <= Room ? static_cast<uint64>(ArrayNum) + Extra : TNumericLimits<uint64>::Max();
+            }
+        }
+
+        // An int32 count of any element fits size_t, while an int64 one can overflow it.
+        NODISCARD static size_t BytesFor(USizeType Count)
+        {
+            if constexpr (sizeof(SizeType) > 4)
+            {
+                (void)Private::CheckCapacity(Count, TNumericLimits<uint64>::Max() / sizeof(T));
+            }
+            return static_cast<size_t>(Count) * sizeof(T);
+        }
+
+        NODISCARD static SizeType CheckedCount(uint64 Requested)
+        {
+            return static_cast<SizeType>(Private::CheckCapacity(Requested, static_cast<uint64>(MaxElements)));
+        }
+
+        FORCEINLINE void ReserveExact(USizeType NewMax)
+        {
+            const USizeType Wanted = static_cast<USizeType>(CheckedCount(NewMax));
+            if (Wanted > static_cast<USizeType>(ArrayMax))
+            {
+                ReallocateTo(Wanted);
+            }
+        }
+
+        // Exact reservations honor the request, and the growth paths come through here so they stay amortized.
+        FORCEINLINE void ReserveForGrowth(uint64 Required)
+        {
+            if (Required > static_cast<uint64>(ArrayMax))
+            {
+                ReallocateTo(CalculateGrowth(ArrayMax, Required));
+            }
         }
 
         // Measured against 1.5x and a hybrid: doubling wins, because 1.5x copies half again as many bytes.
-        NODISCARD static uint32 CalculateGrowth(uint32 CurrentCapacity, size_t Required)
+        NODISCARD static USizeType CalculateGrowth(SizeType CurrentMax, uint64 Required)
         {
-            size_t Grown = (CurrentCapacity < 4) ? 4 : static_cast<size_t>(CurrentCapacity) * 2;
-
+            uint64 Grown = (CurrentMax < 4) ? 4 : static_cast<uint64>(CurrentMax) * 2;
+            if (Grown > static_cast<uint64>(MaxElements))
+            {
+                Grown = static_cast<uint64>(MaxElements);
+            }
             if (Grown < Required)
             {
                 Grown = Required;
             }
-            return ToCapacity(Grown);
+            return static_cast<USizeType>(CheckedCount(Grown));
         }
 
-        void ReallocateTo(uint32 NewCapacity)
+        void ReallocateTo(USizeType NewMax)
         {
-            LUMINA_CONTAINER_CHECK(NewCapacity >= Count);
+            LUMINA_CONTAINER_CHECK(NewMax >= static_cast<USizeType>(ArrayNum));
 
-            const size_t NewBytes = static_cast<size_t>(NewCapacity) * sizeof(T);
+            const size_t NewBytes = BytesFor(NewMax);
 
-            if (NewCapacity > Cap && OwnsHeapBlock())
+            if (NewMax > static_cast<USizeType>(ArrayMax) && OwnsHeapBlock())
             {
-                if (TAllocator::TryExpand(Data, static_cast<size_t>(Cap) * sizeof(T), NewBytes))
+                if (TAllocator::TryExpand(Elements, static_cast<size_t>(ArrayMax) * sizeof(T), NewBytes))
                 {
-                    Cap = NewCapacity;
+                    ArrayMax = static_cast<SizeType>(NewMax);
                     return;
                 }
             }
 
             T* NewData = static_cast<T*>(TAllocator::Allocate(NewBytes, alignof(T)));
-            ElementOps::RelocateRange(NewData, Data, Count);
+            ElementOps::RelocateRange(NewData, Elements, static_cast<USizeType>(ArrayNum));
             ReleaseHeapBlock();
 
-            Data = NewData;
-            Cap  = NewCapacity;
+            Elements = NewData;
+            ArrayMax = static_cast<SizeType>(NewMax);
         }
 
         // Constructs into the new block before relocating, so an argument aliasing our own buffer stays live.
-        // Never inlined, so the allocation path stays out of every emplace_back call site.
+        // Never inlined, so the allocation path stays out of every Emplace call site.
         template <typename... TArgs>
-        FORCENOINLINE T& EmplaceBackGrowing(TArgs&&... Args)
+        FORCENOINLINE T& EmplaceGrowing(TArgs&&... Args)
         {
-            const uint32 NewCapacity = CalculateGrowth(Cap, static_cast<size_t>(Cap) + 1);
-            const size_t NewBytes    = static_cast<size_t>(NewCapacity) * sizeof(T);
+            const USizeType NewMax   = CalculateGrowth(ArrayMax, static_cast<uint64>(ArrayMax) + 1);
+            const size_t NewBytes = BytesFor(NewMax);
 
-            if (OwnsHeapBlock() && TAllocator::TryExpand(Data, static_cast<size_t>(Cap) * sizeof(T), NewBytes))
+            if (OwnsHeapBlock() && TAllocator::TryExpand(Elements, static_cast<size_t>(ArrayMax) * sizeof(T), NewBytes))
             {
-                Cap = NewCapacity;
-                T* Slot = Data + Count;
+                ArrayMax = static_cast<SizeType>(NewMax);
+                T* Slot = Elements + ArrayNum;
                 Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
-                ++Count;
+                ++ArrayNum;
                 return *Slot;
             }
 
             T* NewData = static_cast<T*>(TAllocator::Allocate(NewBytes, alignof(T)));
-            T* Slot    = NewData + Count;
+            T* Slot    = NewData + ArrayNum;
             Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
 
-            ElementOps::RelocateRange(NewData, Data, Count);
+            ElementOps::RelocateRange(NewData, Elements, ArrayNum);
             ReleaseHeapBlock();
 
-            Data = NewData;
-            Cap  = NewCapacity;
-            ++Count;
+            Elements = NewData;
+            ArrayMax = static_cast<SizeType>(NewMax);
+            ++ArrayNum;
             return *Slot;
         }
 
-        NODISCARD size_t ValidateInsertPosition(const T* Pos) const noexcept
+        FORCENOINLINE T& EmplaceGrowingValue(T Value)
         {
-            const size_t Index = static_cast<size_t>(Pos - Data);
-            LUMINA_CONTAINER_CHECK_WITHIN(Index, Count);
-            return Index;
+            return EmplaceGrowing(Value);
         }
 
-        // Leaves Extra raw slots at Index for the caller to construct into; Count is not updated here.
-        void OpenGap(size_t Index, size_t Extra)
+        // Leaves Count raw slots at Index for the caller to construct into; ArrayNum is not updated here.
+        void OpenGap(SizeType Index, SizeType Count)
         {
-            ReserveForGrowth(static_cast<size_t>(Count) + Extra);
-            ElementOps::RelocateRangeOverlapping(Data + Index + Extra, Data + Index, Count - Index);
+            LUMINA_CONTAINER_CHECK(Index >= 0 && Index <= ArrayNum && Count >= 0);
+            ReserveForGrowth(RequiredFor(Count));
+            ElementOps::RelocateRangeOverlapping(Elements + Index + Count, Elements + Index, ArrayNum - Index);
         }
 
-        template <typename TValue>
-        T* InsertAtIndex(size_t Index, TValue&& Value)
-        {
-            OpenGap(Index, 1);
-            Memory::ConstructAt(Data + Index, std::forward<TValue>(Value));
-            ++Count;
-            return Data + Index;
-        }
-
-        T*     Data  = nullptr;
-        uint32 Count = 0;
-        uint32 Cap   = 0;
+        T*    Elements = nullptr;
+        SizeType ArrayNum = 0;
+        SizeType ArrayMax = 0;
     };
-
-    template <typename T, size_t N, ContainerAllocatorType TAllocator, typename TPredicate>
-    size_t erase_if(TVector<T, N, TAllocator>& Values, TPredicate Predicate)
-    {
-        const size_t Before = Values.size();
-        size_t Write = 0;
-        for (size_t Read = 0; Read < Values.size(); ++Read)
-        {
-            if (!Predicate(Values[Read]))
-            {
-                if (Write != Read)
-                {
-                    Values[Write] = std::move(Values[Read]);
-                }
-                ++Write;
-            }
-        }
-        Values.resize(Write);
-        return Before - Write;
-    }
-
-    template <typename T, size_t N, ContainerAllocatorType TAllocator, typename TValue>
-    size_t erase(TVector<T, N, TAllocator>& Values, const TValue& Value)
-    {
-        return erase_if(Values, [&Value](const T& Element) { return Element == Value; });
-    }
-
-    template <typename T, size_t N, typename TAllocator>
-    FORCEINLINE void swap(TVector<T, N, TAllocator>& A, TVector<T, N, TAllocator>& B) noexcept
-    {
-        A.swap(B);
-    }
 
     template <typename T, size_t N>
     using TInlineVector = TVector<T, N>;
 
     template <typename T>
     using TScratchVector = TVector<T, 0, FScratchAllocator>;
+
+    template <typename T>
+    using TVector64 = TVector<T, 0, FHeapAllocator64>;
 }
 
 namespace Lumina
@@ -961,6 +1087,9 @@ namespace Lumina
     template <typename T, size_t InlineCapacity = 0, ContainerAllocatorType TAllocator = FHeapAllocator>
     using TVector = Containers::TVector<T, InlineCapacity, TAllocator>;
 
-    template <typename T, size_t S, bool bOverflow = true>
-    using TFixedVector = Containers::TVector<T, S>;
+    template <typename T>
+    using TVector64 = Containers::TVector64<T>;
+
+    template <typename T, size_t N>
+    using TInlineVector = Containers::TInlineVector<T, N>;
 }

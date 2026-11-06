@@ -11,18 +11,18 @@ namespace Lumina
     void FMaterialCompileQueue::QueueRecompile(CMaterial* Material)
     {
         FScopeLock Lock(Mutex);
-        if (QueuedRecompiles.insert(Material).second)
+        if (QueuedRecompiles.TryAdd(Material))
         {
-            Recompiles.push_back(Material);
+            Recompiles.Add(Material);
         }
     }
 
     void FMaterialCompileQueue::QueueFunctionRecompile(const FGuid& MaterialGUID)
     {
         FScopeLock Lock(Mutex);
-        if (QueuedFunctionRecompiles.insert(MaterialGUID).second)
+        if (QueuedFunctionRecompiles.TryAdd(MaterialGUID))
         {
-            FunctionRecompiles.push_back(MaterialGUID);
+            FunctionRecompiles.Add(MaterialGUID);
         }
     }
 
@@ -41,52 +41,52 @@ namespace Lumina
         });
         if (!bQueued)
         {
-            Permutations.push_back({ Material, Key });
+            Permutations.Emplace(Material, Key);
         }
     }
 
     TStrongObjectPtr<CMaterial> FMaterialCompileQueue::PopRecompile()
     {
         FScopeLock Lock(Mutex);
-        if (Recompiles.empty())
+        if (Recompiles.IsEmpty())
         {
             return nullptr;
         }
-        TStrongObjectPtr<CMaterial> Material = Move(Recompiles.back());
-        Recompiles.pop_back();
-        QueuedRecompiles.erase(Material.Get());
+        TStrongObjectPtr<CMaterial> Material = Move(Recompiles.Last());
+        Recompiles.Pop();
+        QueuedRecompiles.Remove(Material.Get());
         return Material;
     }
 
     bool FMaterialCompileQueue::PopFunctionRecompile(FGuid& OutMaterialGUID)
     {
         FScopeLock Lock(Mutex);
-        if (FunctionRecompiles.empty())
+        if (FunctionRecompiles.IsEmpty())
         {
             return false;
         }
-        OutMaterialGUID = FunctionRecompiles.back();
-        FunctionRecompiles.pop_back();
-        QueuedFunctionRecompiles.erase(OutMaterialGUID);
+        OutMaterialGUID = FunctionRecompiles.Last();
+        FunctionRecompiles.Pop();
+        QueuedFunctionRecompiles.Remove(OutMaterialGUID);
         return true;
     }
 
     bool FMaterialCompileQueue::PopPermutation(TStrongObjectPtr<CMaterial>& OutMaterial, uint64& OutKey)
     {
         FScopeLock Lock(Mutex);
-        if (Permutations.empty())
+        if (Permutations.IsEmpty())
         {
             return false;
         }
-        OutMaterial = Move(Permutations.back().Material);
-        OutKey      = Permutations.back().Key;
-        Permutations.pop_back();
+        OutMaterial = Move(Permutations.Last().Material);
+        OutKey      = Permutations.Last().Key;
+        Permutations.Pop();
         return true;
     }
 
     bool FMaterialCompileQueue::IsFunctionRecompileQueued(const FGuid& MaterialGUID) const
     {
         FScopeLock Lock(Mutex);
-        return QueuedFunctionRecompiles.contains(MaterialGUID);
+        return QueuedFunctionRecompiles.Contains(MaterialGUID);
     }
 }

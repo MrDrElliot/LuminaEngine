@@ -39,7 +39,7 @@ namespace Lumina
         void Finalize() override;   // diffs the handle set, then serializes what was created
 
         // Nothing was created -> no undo step, same contract as the registry snapshot's.
-        bool IsNoOp() const override { return Created.empty(); }
+        bool IsNoOp() const override { return Created.IsEmpty(); }
 
     private:
 

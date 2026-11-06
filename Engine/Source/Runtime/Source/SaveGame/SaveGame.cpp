@@ -12,7 +12,7 @@ namespace Lumina
     {
         FString WorldKey(const CWorld* World)
         {
-            return FString(World->GetName().c_str());
+            return FString(*World->GetName());
         }
 
         // Runs inline rather than queued, since a system folds its state in before the capture reads it.
@@ -56,12 +56,12 @@ namespace Lumina
 
     bool CSaveGame::HasWorldState(CWorld* World) const
     {
-        return World != nullptr && WorldStates.find(WorldKey(World)) != WorldStates.end();
+        return World != nullptr && WorldStates.Contains(WorldKey(World));
     }
 
     void CSaveGame::ClearWorldStates()
     {
-        WorldStates.clear();
+        WorldStates.Reset();
     }
 
     bool CSaveGame::CaptureRegistry(const FString& Key, ECS::FRegistry& Registry)
@@ -78,12 +78,12 @@ namespace Lumina
 
     bool CSaveGame::RestoreRegistry(const FString& Key, ECS::FRegistry& Registry) const
     {
-        const auto Found = WorldStates.find(Key);
-        if (Found == WorldStates.end())
+        const auto Found = WorldStates.Find(Key);
+        if (Found == nullptr)
         {
             return false;
         }
-        FMemoryReader Reader(Found->second);
+        FMemoryReader Reader(*Found);
         Reader.SetFileVersion(LoadedFileVersion);
         return SaveGame::SerializeRegistry(Reader, Registry);
     }
@@ -97,21 +97,21 @@ namespace Lumina
             LoadedFileVersion = Ar.GetFileVersion();
         }
 
-        uint32 Count = (uint32)WorldStates.size();
+        uint32 Count = (uint32)WorldStates.Num();
         Ar << Count;
         if (Ar.IsWriting())
         {
             for (auto& [Key, Bytes] : WorldStates)
             {
                 FString Name = Key;
-                int64 Size = (int64)Bytes.size();
+                int64 Size = Bytes.Num();
                 Ar << Name << Size;
-                Ar.Serialize(Bytes.data(), Size);
+                Ar.Serialize(Bytes.GetData(), Size);
             }
             return;
         }
 
-        WorldStates.clear();
+        WorldStates.Reset();
         if (!Ar.CanHoldCount(Count, sizeof(int64)))
         {
             Ar.SetHasError(true);
@@ -128,8 +128,8 @@ namespace Lumina
                 return;
             }
             TVector<uint8>& Bytes = WorldStates[Name];
-            Bytes.resize((size_t)Size);
-            Ar.Serialize(Bytes.data(), Size);
+            Bytes.SetNum(IntCastChecked<int32>(Size));
+            Ar.Serialize(Bytes.GetData(), Size);
         }
     }
 }

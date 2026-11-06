@@ -3,14 +3,22 @@
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Delegates/CoreDelegates.h"
+#include "Core/Engine/Engine.h"
 #include "Core/Module/ModuleManager.h"
 #include "Log/Log.h"
+#include "LuminaEditor.h"
+#include "MCPHubEditorTool.h"
+#include "Tools/UI/ImGui/ImGuiModule.h"
+#include "UI/EditorUI.h"
 
 using namespace Lumina;
 
 IMPLEMENT_MODULE(FMCPEditorModule, "MCPEditor");
 
-namespace
+// ImGui is a StaticLib, so without this the DLL gets its own null context and faults.
+LUMINA_MODULE_IMGUI();
+
+namespace MCPEditorModuleInternal
 {
     FMCPEditorModule* GModule = nullptr;
 
@@ -26,6 +34,8 @@ namespace
         "Whether the Model Context Protocol endpoint opens as soon as the plugin loads.");
 }
 
+using namespace MCPEditorModuleInternal;
+
 namespace Lumina
 {
     MCP::FServer* FMCPEditorModule::GetServer()
@@ -39,6 +49,12 @@ namespace Lumina
 
         // A request still in flight when shutdown tears down reflection would serialize its reply through freed types.
         ShutdownStartedHandle = FCoreDelegates::OnEngineShutdownStarted.AddLambda([this]() { Server.Stop(); });
+
+        // The editor tears its tools down before plugins unload, so the drawer never outlives this DLL.
+        if (FEditorUI* EditorUI = GEditorEngine != nullptr ? static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI()) : nullptr)
+        {
+            EditorUI->CreateDrawerTool<FMCPHubEditorTool>(LE_ICON_ROBOT, "MCP", 0, EditorUI, &Server);
+        }
 
         // A single dash clusters into character flags, so the switch has to be the double dash form.
         const bool bSwitched = GCommandLine != nullptr && GCommandLine->Has("mcp");

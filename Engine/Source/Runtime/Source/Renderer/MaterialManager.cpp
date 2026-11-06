@@ -181,7 +181,7 @@ namespace Lumina::RHI
     uint32 FMaterialManager::GetSlotFlags(uint32 Index) const
     {
         FReadScopeLock Lock(Mutex);
-        return Index < (uint32)Mirror.size() ? Mirror[Index].Flags : 0u;
+        return Index < (uint32)Mirror.Num() ? Mirror[Index].Flags : 0u;
     }
 
     uint32 FMaterialManager::CopySlotTextureIDs(uint32 Index, uint32* OutIDs, uint32 MaxIDs) const
@@ -192,7 +192,7 @@ namespace Lumina::RHI
         }
 
         FReadScopeLock Lock(Mutex);
-        if (Index >= (uint32)Mirror.size())
+        if (Index >= (uint32)Mirror.Num())
         {
             return 0;
         }
@@ -244,10 +244,10 @@ namespace Lumina::RHI
         }
 
         // Sized with the staged table so a published slot always has a mirror entry.
-        Mirror.resize(NewCapacity);
-        HeaderImage.resize(NewCapacity);
-        BlockUnits.resize(NewCapacity);
-        Headers.Stage(HeaderImage.data(), sizeof(FMaterialHeaderGPU) * NewCapacity);
+        Mirror.SetNum(NewCapacity);
+        HeaderImage.SetNum(NewCapacity);
+        BlockUnits.SetNum(NewCapacity);
+        Headers.Stage(HeaderImage.GetData(), sizeof(FMaterialHeaderGPU) * NewCapacity);
     }
 
     bool FMaterialManager::GrowLocked(uint32 MinSlots)
@@ -295,8 +295,8 @@ namespace Lumina::RHI
             return;
         }
 
-        PoolImage.resize((size_t)NewUnits * 4u);
-        Pool.Stage(PoolImage.data(), (uint64)NewUnits * kPoolUnitBytes);
+        PoolImage.SetNum(IntCastChecked<int32>(static_cast<int64>(NewUnits) * 4u));
+        Pool.Stage(PoolImage.GetData(), (uint64)NewUnits * kPoolUnitBytes);
     }
 
     bool FMaterialManager::GrowPoolLocked(uint32 MinUnits)
@@ -325,10 +325,10 @@ namespace Lumina::RHI
 
     uint32 FMaterialManager::AllocateBlockLocked(uint32 Units)
     {
-        if (!FreeBlocks[Units].empty())
+        if (!FreeBlocks[Units].IsEmpty())
         {
-            const uint32 Reused = FreeBlocks[Units].back();
-            FreeBlocks[Units].pop_back();
+            const uint32 Reused = FreeBlocks[Units].Last();
+            FreeBlocks[Units].Pop();
             return Reused;
         }
 
@@ -351,7 +351,7 @@ namespace Lumina::RHI
     {
         if (BlockUnits[Index] != 0)
         {
-            FreeBlocks[BlockUnits[Index]].push_back(HeaderImage[Index].DataWord / 4u);
+            FreeBlocks[BlockUnits[Index]].Add(HeaderImage[Index].DataWord / 4u);
             BlockUnits[Index] = 0;
         }
     }
@@ -365,10 +365,10 @@ namespace Lumina::RHI
 
         uint32 FreeIndex;
 
-        if (!FreeList.empty())
+        if (!FreeList.IsEmpty())
         {
-            FreeIndex = FreeList.back();
-            FreeList.pop_back();
+            FreeIndex = FreeList.Last();
+            FreeList.Pop();
         }
         else
         {
@@ -419,7 +419,7 @@ namespace Lumina::RHI
             FreeBlockLocked(Index);
         }
 
-        FreeList.push_back(Index);
+        FreeList.Add(Index);
         --NumMaterials;
     }
 
@@ -542,7 +542,7 @@ namespace Lumina::RHI
 
     FMaterialCollectionManager::FMaterialCollectionManager()
     {
-        Mirror.resize(MAX_PARAMETER_COLLECTIONS);
+        Mirror.SetNum(MAX_PARAMETER_COLLECTIONS);
 
         constexpr uint64 ByteSize = sizeof(FMaterialCollectionUniforms) * MAX_PARAMETER_COLLECTIONS;
         CollectionBuffer = Malloc(ByteSize, kDefaultAlign, EMemoryType::GPUOnly);
@@ -554,7 +554,7 @@ namespace Lumina::RHI
         }
 
         // Zeroed up front, which is also what makes reserved slot 0 read as an absent collection.
-        UploadBuffer(CollectionBuffer, Mirror.data(), ByteSize);
+        UploadBuffer(CollectionBuffer, Mirror.GetData(), ByteSize);
     }
 
     FMaterialCollectionManager::~FMaterialCollectionManager()
@@ -567,14 +567,14 @@ namespace Lumina::RHI
     {
         FWriteScopeLock Lock(Mutex);
 
-        if (!FreeList.empty())
+        if (!FreeList.IsEmpty())
         {
-            const int32 Reused = FreeList.back();
-            FreeList.pop_back();
+            const int32 Reused = FreeList.Last();
+            FreeList.Pop();
             return Reused;
         }
 
-        if (HighWater >= (int32)MAX_PARAMETER_COLLECTIONS)
+        if (HighWater >= MAX_PARAMETER_COLLECTIONS)
         {
             LOG_ERROR("MaterialCollectionManager: the {} slot collection table is full; this collection "
                       "reads zeros for every parameter.", MAX_PARAMETER_COLLECTIONS);
@@ -586,7 +586,7 @@ namespace Lumina::RHI
 
     void FMaterialCollectionManager::Release(int32 Index)
     {
-        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS)
+        if (Index <= 0 || Index >= MAX_PARAMETER_COLLECTIONS)
         {
             return;
         }
@@ -598,12 +598,12 @@ namespace Lumina::RHI
         UploadBuffer(CollectionBuffer, &Mirror[Index], sizeof(FMaterialCollectionUniforms),
             (uint64)Index * sizeof(FMaterialCollectionUniforms));
 
-        FreeList.push_back(Index);
+        FreeList.Add(Index);
     }
 
     void FMaterialCollectionManager::Update(int32 Index, const FMaterialCollectionUniforms& Uniforms)
     {
-        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS)
+        if (Index <= 0 || Index >= MAX_PARAMETER_COLLECTIONS)
         {
             return;
         }
@@ -622,7 +622,7 @@ namespace Lumina::RHI
 
     void FMaterialCollectionManager::UpdateRange(int32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize)
     {
-        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS || Data == nullptr || ByteSize == 0)
+        if (Index <= 0 || Index >= MAX_PARAMETER_COLLECTIONS || Data == nullptr || ByteSize == 0)
         {
             return;
         }

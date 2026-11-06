@@ -71,7 +71,7 @@ namespace Lumina
 
         int32 HoveredHandle = Constants::kIndexNone;
 
-        for (int32 i = 0; i < (int32)Handles.size(); ++i)
+        for (int32 i = 0; i < Handles.Num(); ++i)
         {
             ImVec2 Screen;
             if (!ShapeHandles::ProjectToScreen(ViewProj, Frame.ViewportOrigin, Frame.ViewportSize, Handles[i].Position, Screen))

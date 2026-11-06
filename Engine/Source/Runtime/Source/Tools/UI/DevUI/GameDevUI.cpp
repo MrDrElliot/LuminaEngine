@@ -70,10 +70,10 @@ namespace Lumina
         FString ScreenshotPath()
         {
             const FStringView ProjectPath = GEngine->GetProjectPath();
-            const FString Folder = ProjectPath.empty()
+            const FString Folder = ProjectPath.IsEmpty()
                 ? Paths::GetEngineDirectory() + "/Saved/Screenshots"
-                : FString(Paths::Combine(ProjectPath, "Saved", "Screenshots").c_str());
-            Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
+                : FString(*Paths::Combine(ProjectPath, "Saved", "Screenshots"));
+            Paths::CreateDirectories(FStringView(*Folder, Folder.Len()));
 
             const PlatformTime::FDateTime Now = PlatformTime::LocalNow();
             return Lumina::Format("{}/Screenshot_{:04}{:02}{:02}_{:02}{:02}{:02}.png", Folder,
@@ -95,18 +95,18 @@ namespace Lumina
         if (GCommandLine != nullptr)
         {
             // Split on semicolons, as -exec="DebugDraw.Enabled false;screenshot" lists several lines.
-            if (const TOptional<FFixedString> Exec = GCommandLine->Get("exec"); Exec.has_value())
+            if (const TOptional<FFixedString> Exec = GCommandLine->Get("exec"); Exec.IsSet())
             {
-                FStringView Remaining(Exec->c_str(), Exec->size());
-                while (!Remaining.empty())
+                FStringView Remaining(*(*Exec), Exec->Len());
+                while (!Remaining.IsEmpty())
                 {
-                    const size_t Split = Remaining.find(';');
-                    const FStringView Line = Remaining.substr(0, Split);
-                    if (!Line.empty())
+                    const int32 Split = Remaining.Find(';');
+                    const FStringView Line = Split == Constants::kIndexNone ? Remaining : Remaining.Left(Split);
+                    if (!Line.IsEmpty())
                     {
-                        PendingExecLines.emplace_back(Line.data(), Line.size());
+                        PendingExecLines.Emplace(Line.GetData(), Line.Len());
                     }
-                    Remaining = Split == FStringView::npos ? FStringView() : Remaining.substr(Split + 1);
+                    Remaining = Split == Constants::kIndexNone ? FStringView() : Remaining.Mid(Split + 1);
                 }
             }
             SetOpen(GCommandLine->Has("devui"));
@@ -196,7 +196,7 @@ namespace Lumina
 
     void FGameDevUI::RunPendingExecLines()
     {
-        if (PendingExecLines.empty() || bScreenshotPending)
+        if (PendingExecLines.IsEmpty() || bScreenshotPending)
         {
             return;
         }
@@ -213,8 +213,8 @@ namespace Lumina
         }
 
         // One line a frame, so each sees the frame the line before it changed.
-        const FString Line = Move(PendingExecLines.front());
-        PendingExecLines.erase(PendingExecLines.begin());
+        const FString Line = Move(PendingExecLines[0]);
+        PendingExecLines.RemoveAt(0);
         FConsoleRegistry::Get().ExecuteLine(Line, true);
     }
 
@@ -228,14 +228,14 @@ namespace Lumina
         bScreenshotPending = false;
 
         // The swapchain is BGRA and UI passes leave arbitrary alpha behind, which a PNG would show as holes.
-        for (size_t Index = 0; Index + 3 < Capture.Pixels.size(); Index += 4)
+        for (int32 Index = 0; Index + 3 < Capture.Pixels.Num(); Index += 4)
         {
             std::swap(Capture.Pixels[Index], Capture.Pixels[Index + 2]);
             Capture.Pixels[Index + 3] = 255;
         }
 
         const FString Path = ScreenshotPath();
-        if (ImageWrite::WritePngFile(Path.c_str(), Capture.Width, Capture.Height, 4, Capture.Pixels.data(), Capture.Width * 4))
+        if (ImageWrite::WritePngFile(*Path, Capture.Width, Capture.Height, 4, Capture.Pixels.GetData(), Capture.Width * 4))
         {
             LOG_INFO("Saved screenshot ({}x{}) to {}", Capture.Width, Capture.Height, Path);
         }

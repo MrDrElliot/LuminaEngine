@@ -55,7 +55,7 @@ namespace Lumina
 
         if (bUseColor)
         {
-            Batch.Append(Descriptor.AnsiColor.data(), static_cast<uint32>(Descriptor.AnsiColor.size()));
+            Batch.Append(Descriptor.AnsiColor.GetData(), static_cast<uint32>(Descriptor.AnsiColor.Len()));
         }
 
         Batch.AppendChar('[');

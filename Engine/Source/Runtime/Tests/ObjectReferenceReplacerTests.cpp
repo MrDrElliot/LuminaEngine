@@ -24,7 +24,7 @@ using namespace Lumina;
 TEST(ObjectReferenceReplacer, RepointsAHardReferenceAndClearsWhenTheReplacementIsNull)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Ref", EPropertyTypeFlags::Object));
+    Schema.Fields.Add(ScriptTest::ScalarField("Ref", EPropertyTypeFlags::Object));
 
     CScriptClass* Holder = ScriptTest::MintWith("Replacer_Holder", Schema);
     ASSERT_NE(Holder, nullptr);
@@ -55,7 +55,7 @@ TEST(ObjectReferenceReplacer, RepointsAHardReferenceAndClearsWhenTheReplacementI
 TEST(ObjectReferenceReplacer, RewritesASoftReferenceByGuidWithoutLoadingIt)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Soft", EPropertyTypeFlags::SoftObject));
+    Schema.Fields.Add(ScriptTest::ScalarField("Soft", EPropertyTypeFlags::SoftObject));
 
     CScriptClass* Holder = ScriptTest::MintWith("Replacer_SoftHolder", Schema);
     ASSERT_NE(Holder, nullptr);
@@ -76,14 +76,14 @@ TEST(ObjectReferenceReplacer, RewritesASoftReferenceByGuidWithoutLoadingIt)
 
     const FSoftObjectPath* Result = Soft->GetValuePtr<FSoftObjectPath>(Owner);
     EXPECT_EQ(Result->GetCachedGUID(), NewGuid);
-    EXPECT_EQ(FString(Result->GetPath().data(), Result->GetPath().size()), FString("/Game/New"));
+    EXPECT_EQ(FString(Result->GetPath().GetData(), Result->GetPath().Len()), FString("/Game/New"));
 }
 
 // A deleted skeletal mesh and its skeleton own each other, so clearing the skeleton's preview mesh freed the skeleton mid-visit.
 TEST(ObjectReferenceReplacer, SurvivesFreeingTheObjectItIsVisitingThroughACycle)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Ref", EPropertyTypeFlags::Object));
+    Schema.Fields.Add(ScriptTest::ScalarField("Ref", EPropertyTypeFlags::Object));
 
     CScriptClass* Holder = ScriptTest::MintWith("Replacer_CycleHolder", Schema);
     ASSERT_NE(Holder, nullptr);
@@ -119,7 +119,7 @@ TEST(ObjectReferenceReplacer, ReachesAReferenceInsideAContainer)
     Scripting::FScriptExportField Field;
     Field.Name = FName("Refs");
     Field.Type = List;
-    Schema.Fields.push_back(Field);
+    Schema.Fields.Add(Field);
 
     CScriptClass* Holder = ScriptTest::MintWith("Replacer_ListHolder", Schema);
     ASSERT_NE(Holder, nullptr);
@@ -133,7 +133,7 @@ TEST(ObjectReferenceReplacer, ReachesAReferenceInsideAContainer)
     ASSERT_NE(Array, nullptr);
 
     void* Container = Array->GetValuePtr<void>(Owner);
-    Array->Resize(Container, 1);
+    Array->SetNum(Container, 1);
     *static_cast<TStrongObjectPtr<CObject>*>(Array->GetAt(Container, 0)) = Target;
 
     FObjectReferenceReplacer Replacer(Target, Other);
@@ -163,7 +163,7 @@ namespace
 TEST(ObjectReferenceReplacer, ClearsAReferenceHeldOnlyByAProvider)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Unused", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Unused", EPropertyTypeFlags::Int32));
 
     CScriptClass* Holder = ScriptTest::MintWith("Replacer_ProviderHolder", Schema);
     ASSERT_NE(Holder, nullptr);
@@ -188,7 +188,7 @@ TEST(ObjectReferenceReplacer, ClearsAReferenceHeldOnlyByAProvider)
 TEST(ObjectReferenceReplacer, ClearsAClassReferenceHeldByAProvider)
 {
     Scripting::FScriptExportSchema Schema;
-    Schema.Fields.push_back(ScriptTest::ScalarField("Unused", EPropertyTypeFlags::Int32));
+    Schema.Fields.Add(ScriptTest::ScalarField("Unused", EPropertyTypeFlags::Int32));
 
     CScriptClass* Retiring = ScriptTest::MintWith("Replacer_RetiringClass", Schema);
     ASSERT_NE(Retiring, nullptr);

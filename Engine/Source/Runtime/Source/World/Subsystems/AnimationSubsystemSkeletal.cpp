@@ -38,7 +38,7 @@ namespace Lumina
         Attachment.SocketName = SocketOrBone;
 
         FMatrix4 SocketTransform;
-        STransformComponent* Transform = Registry->TryGet<STransformComponent>(Child);
+        STransformComponent* Transform = Registry->TryGet<ECS::Write<STransformComponent>>(Child);
         if (Transform && SkeletalUtils::GetEntitySocketTransform(*Registry, Parent, SocketOrBone, SocketTransform))
         {
             Transform->SetLocalTransform(FTransform(SocketTransform * Attachment.RelativeTransform.GetMatrix()));
@@ -98,7 +98,7 @@ namespace Lumina
             return FName();
         }
 
-        const SSkeletalMeshComponent* Mesh = Registry->TryGet<SSkeletalMeshComponent>(Entity);
+        const SSkeletalMeshComponent* Mesh = Registry->TryGet<ECS::Read<SSkeletalMeshComponent>>(Entity);
         if (Mesh == nullptr)
         {
             return FName();
@@ -120,7 +120,7 @@ namespace Lumina
             return Constants::kIndexNone;
         }
 
-        const SSkeletalMeshComponent* Mesh = Registry->TryGet<SSkeletalMeshComponent>(Entity);
+        const SSkeletalMeshComponent* Mesh = Registry->TryGet<ECS::Read<SSkeletalMeshComponent>>(Entity);
         if (Mesh == nullptr)
         {
             return Constants::kIndexNone;

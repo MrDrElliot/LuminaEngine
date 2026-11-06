@@ -6,7 +6,6 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Templates/Optional.h"
-#include "Core/Utils/Expected.h"
 #include "Memory/SmartPtr.h"
 #include "Platform/Platform.h"
 #include "Renderer/Format.h"
@@ -32,18 +31,18 @@ namespace Lumina::Import
     inline FString SanitizeAssetName(FStringView In, FStringView Fallback = "Asset")
     {
         FString Out;
-        Out.reserve(In.size());
+        Out.Reserve(In.Len());
         bool bSep = false;
         for (char C : In)
         {
             const bool bKeep = (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9');
             if (bKeep)
             {
-                if (bSep && !Out.empty())
+                if (bSep && !Out.IsEmpty())
                 {
-                    Out.push_back('_');
+                    Out.AppendChar('_');
                 }
-                Out.push_back(C);
+                Out.AppendChar(C);
                 bSep = false;
             }
             else
@@ -51,9 +50,9 @@ namespace Lumina::Import
                 bSep = true;
             }
         }
-        if (Out.empty())
+        if (Out.IsEmpty())
         {
-            Out.assign(Fallback.data(), Fallback.size());
+            Out = FStringView(Fallback.GetData(), Fallback.Len());
         }
         return Out;
     }
@@ -64,8 +63,8 @@ namespace Lumina::Import
     {
         FString Name = SanitizeAssetName(Raw, Fallback);
 
-        bool bHasPrefix = Name.size() >= Prefix.size();
-        for (size_t i = 0; bHasPrefix && i < Prefix.size(); ++i)
+        bool bHasPrefix = Name.Len() >= Prefix.Len();
+        for (int32 i = 0; bHasPrefix && i < Prefix.Len(); ++i)
         {
             char A = Name[i];
             char B = Prefix[i];
@@ -78,8 +77,8 @@ namespace Lumina::Import
             return Name;
         }
 
-        FString Out(Prefix.data(), Prefix.size());
-        Out.append(Name);
+        FString Out(Prefix.GetData(), Prefix.Len());
+        Out.Append(Name);
         return Out;
     }
 
@@ -100,7 +99,7 @@ namespace Lumina::Import
     {
         struct FTextureImportResult
         {
-            TVector<uint8>      Pixels;
+            TVector64<uint8>    Pixels;
             FUIntVector2        Dimensions;
             EFormat             Format;
         };
@@ -194,9 +193,9 @@ namespace Lumina::Import
             // 0 = auto. A batch cooking many textures at once passes 1 so each doesn't spawn its own pool.
             uint32 EncodeThreadBudget = 0;
 
-            NODISCARD bool IsEmbedded() const { return !Bytes.empty(); }
+            NODISCARD bool IsEmbedded() const { return !Bytes.IsEmpty(); }
 
-            void AdoptOwnedBytes() { Bytes = TSpan<const uint8>(OwnedBytes.data(), OwnedBytes.size()); }
+            void AdoptOwnedBytes() { Bytes = TSpan<const uint8>(OwnedBytes.GetData(), OwnedBytes.Num()); }
         };
 
         /** Alpha handling parsed from the source material; maps to EBlendMode at material-asset creation. */

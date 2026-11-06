@@ -43,7 +43,7 @@ namespace
     double SignedVolume(const FBlockoutMeshData& Mesh)
     {
         double Volume = 0.0;
-        for (size_t Index = 0; Index + 2 < Mesh.Indices.size(); Index += 3)
+        for (int32 Index = 0; Index + 2 < Mesh.Indices.Num(); Index += 3)
         {
             const FVector3& A = Mesh.Positions[Mesh.Indices[Index]];
             const FVector3& B = Mesh.Positions[Mesh.Indices[Index + 1]];
@@ -59,7 +59,7 @@ namespace
         int32 Disagreeing = 0;
         int32 Total = 0;
 
-        for (size_t Index = 0; Index + 2 < Mesh.Indices.size(); Index += 3)
+        for (int32 Index = 0; Index + 2 < Mesh.Indices.Num(); Index += 3)
         {
             const uint32 I0 = Mesh.Indices[Index];
             const uint32 I1 = Mesh.Indices[Index + 1];
@@ -95,13 +95,13 @@ TEST(BlockoutMesh, EveryShapeGeneratesGeometry)
         BlockoutMesh::Build(MakeShape(Shape), Mesh);
 
         EXPECT_FALSE(Mesh.IsEmpty()) << BlockoutMesh::GetShapeName(Shape);
-        EXPECT_EQ(Mesh.Positions.size(), Mesh.Normals.size()) << BlockoutMesh::GetShapeName(Shape);
-        EXPECT_EQ(Mesh.Positions.size(), Mesh.UVs.size()) << BlockoutMesh::GetShapeName(Shape);
-        EXPECT_EQ(Mesh.Indices.size() % 3, 0u) << BlockoutMesh::GetShapeName(Shape);
+        EXPECT_EQ(Mesh.Positions.Num(), Mesh.Normals.Num()) << BlockoutMesh::GetShapeName(Shape);
+        EXPECT_EQ(Mesh.Positions.Num(), Mesh.UVs.Num()) << BlockoutMesh::GetShapeName(Shape);
+        EXPECT_EQ(Mesh.Indices.Num() % 3, 0) << BlockoutMesh::GetShapeName(Shape);
 
         for (uint32 Index : Mesh.Indices)
         {
-            ASSERT_LT((size_t)Index, Mesh.Positions.size()) << BlockoutMesh::GetShapeName(Shape);
+            ASSERT_LT(Index, static_cast<uint32>(Mesh.Positions.Num())) << BlockoutMesh::GetShapeName(Shape);
         }
     }
 }

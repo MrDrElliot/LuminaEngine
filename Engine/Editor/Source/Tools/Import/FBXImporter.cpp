@@ -53,12 +53,12 @@ namespace Lumina
 
         FORCEINLINE FStringView ToView(const ufbx_string& S)
         {
-            return (S.data != nullptr) ? FStringView(S.data, S.length) : FStringView();
+            return (S.data != nullptr) ? FStringView(S.data, IntCastChecked<int32>(S.length)) : FStringView();
         }
 
         FORCEINLINE FFixedString ToFixed(const ufbx_string& S)
         {
-            return (S.data != nullptr && S.length > 0) ? FFixedString(S.data, S.length) : FFixedString();
+            return (S.data != nullptr && S.length > 0) ? FFixedString(S.data, IntCastChecked<int32>(S.length)) : FFixedString();
         }
 
         FORCEINLINE FVector2 ToVector2(const ufbx_vec2& V) { return FVector2((float)V.x, (float)V.y); }
@@ -66,7 +66,7 @@ namespace Lumina
         FORCEINLINE FVector4 ToVector4(const ufbx_vec4& V) { return FVector4((float)V.x, (float)V.y, (float)V.z, (float)V.w); }
         FORCEINLINE FQuat    ToQuat(const ufbx_quat& Q)    { return FQuat((float)Q.w, (float)Q.x, (float)Q.y, (float)Q.z); }
 
-        /** ufbx_matrix is a column-major 4x3 affine; the missing row is (0,0,0,1). */
+        // ufbx_matrix is a column-major 4x3 affine; the missing row is (0,0,0,1).
         FMatrix4 ToMatrix4(const ufbx_matrix& M)
         {
             return FMatrix4(
@@ -159,16 +159,15 @@ namespace Lumina
             FVector3 Scale(const FVector3& S) const { return Math::Abs(Matrix3 * S); }
         };
 
-        /** Lowercased leaf of a path, used to key an image and to match a texture against a file on disk. */
         FFixedString PathLeaf(FStringView Path)
         {
-            FFixedString Normalized(Path.data(), Path.size());
+            FFixedString Normalized(Path.GetData(), Path.Len());
             for (FFixedString::value_type& C : Normalized)
             {
                 if (C == '\\') { C = '/'; }
             }
-            const FStringView Leaf = VFS::FileName(FStringView(Normalized.c_str(), Normalized.size()), false);
-            return FFixedString(Leaf.data(), Leaf.size());
+            const FStringView Leaf = VFS::FileName(FStringView(*Normalized, Normalized.Len()), false);
+            return FFixedString(Leaf.GetData(), Leaf.Len());
         }
     }
 
@@ -183,8 +182,8 @@ namespace Lumina
             Scene = nullptr;
         }
 
-        SourceBlob.clear();
-        SourceBlob.shrink_to_fit();
+        SourceBlob.Reset();
+        SourceBlob.Shrink();
     }
 
     bool CFBXImporter::ParseMeshSource(const FImportRequest& Request,
@@ -212,9 +211,9 @@ namespace Lumina
             Progress->UpdateMessage("Loading source file...");
         }
 
-        if (!FileHelper::LoadFileToArray(SourceBlob, FStringView(SourcePath.c_str(), SourcePath.size())))
+        if (!FileHelper::LoadFileToArray(SourceBlob, FStringView(*SourcePath, SourcePath.Len())))
         {
-            OutError = FString(Format("Failed to read '{0}'.", SourcePath.c_str()).c_str());
+            OutError = FString(*Format("Failed to read '{0}'.", *SourcePath));
             return false;
         }
 
@@ -228,8 +227,8 @@ namespace Lumina
         LoadOptions.result_allocator.allocator = MakeTrackedAllocator();
 
         // Lets ufbx resolve texture paths and any external file the scene references relative to the FBX.
-        LoadOptions.filename.data   = SourcePath.c_str();
-        LoadOptions.filename.length = SourcePath.size();
+        LoadOptions.filename.data   = *SourcePath;
+        LoadOptions.filename.length = SourcePath.Len();
 
         // These axes preserve the X mirror used by the GLTF importer.
         LoadOptions.target_axes                = {
@@ -263,24 +262,24 @@ namespace Lumina
         LoadOptions.connect_broken_elements = true;
 
         ufbx_error LoadError;
-        Scene = ufbx_load_memory(SourceBlob.data(), SourceBlob.size(), &LoadOptions, &LoadError);
+        Scene = ufbx_load_memory(SourceBlob.GetData(), SourceBlob.Num(), &LoadOptions, &LoadError);
         if (Scene == nullptr)
         {
-            OutError = FString(Format("Failed to parse '{0}': {1}",
-                SourcePath.c_str(), FormatUfbxError(LoadError).c_str()).c_str());
-            SourceBlob.clear();
-            SourceBlob.shrink_to_fit();
+            OutError = FString(*Format("Failed to parse '{0}': {1}",
+                *SourcePath, *FormatUfbxError(LoadError)));
+            SourceBlob.Reset();
+            SourceBlob.Shrink();
             return false;
         }
 
         for (const ufbx_warning& Warning : Scene->metadata.warnings)
         {
-            LOG_WARN("[FBX] '{}': {} (x{})", SourceName.data(), ToView(Warning.description).data(), (uint32)Warning.count);
+            LOG_WARN("[FBX] '{}': {} (x{})", SourceName.GetData(), ToView(Warning.description).GetData(), (uint32)Warning.count);
         }
 
         //~ Embedded payloads stay VIEWS into the scene ufbx owns, and ReleaseSourceData is what frees them.
 
-        TVector<int32> FileToImage(Scene->texture_files.count, Constants::kIndexNone);
+        TVector<int32> FileToImage(IntCastChecked<int32>(Scene->texture_files.count), Constants::kIndexNone);
 
         if (bWantTextures && Scene->texture_files.count > 0)
         {
@@ -291,18 +290,18 @@ namespace Lumina
                 const FStringView Absolute = ToView(File.absolute_filename);
                 const FStringView Resolved = ToView(File.filename);
 
-                const FFixedString Leaf = PathLeaf(!Relative.empty() ? Relative
-                                                 : (!Resolved.empty() ? Resolved : Absolute));
+                const FFixedString Leaf = PathLeaf(!Relative.IsEmpty() ? Relative
+                                                 : (!Resolved.IsEmpty() ? Resolved : Absolute));
 
-                FFixedString Fbm(SourceName.data(), SourceName.size());
-                Fbm.append(".fbm");
+                FFixedString Fbm(SourceName.GetData(), SourceName.Len());
+                Fbm.Append(".fbm");
 
                 FFixedString Candidates[6];
                 uint32 Count = 0;
-                if (!Resolved.empty()) { Candidates[Count++] = FFixedString(Resolved.data(), Resolved.size()); }
-                if (!Relative.empty()) { Candidates[Count++] = Paths::Combine(SourceDir, Relative); }
-                if (!Absolute.empty()) { Candidates[Count++] = FFixedString(Absolute.data(), Absolute.size()); }
-                if (!Leaf.empty())
+                if (!Resolved.IsEmpty()) { Candidates[Count++] = FFixedString(Resolved.GetData(), Resolved.Len()); }
+                if (!Relative.IsEmpty()) { Candidates[Count++] = Paths::Combine(SourceDir, Relative); }
+                if (!Absolute.IsEmpty()) { Candidates[Count++] = FFixedString(Absolute.GetData(), Absolute.Len()); }
+                if (!Leaf.IsEmpty())
                 {
                     Candidates[Count++] = Paths::Combine(SourceDir, Leaf);
                     Candidates[Count++] = Paths::Combine(SourceDir, Fbm, Leaf);
@@ -311,54 +310,54 @@ namespace Lumina
 
                 for (uint32 i = 0; i < Count; ++i)
                 {
-                    if (Paths::Exists(FStringView(Candidates[i].c_str(), Candidates[i].size())))
+                    if (Paths::Exists(FStringView(*Candidates[i], Candidates[i].Len())))
                     {
                         return Candidates[i];
                     }
-                    if (!OutTried.empty()) { OutTried.append(", "); }
-                    OutTried.append(Candidates[i]);
+                    if (!OutTried.IsEmpty()) { OutTried.Append(", "); }
+                    OutTried.Append(Candidates[i]);
                 }
 
                 return FFixedString();
             };
 
-            OutData.Images.reserve(Scene->texture_files.count);
+            OutData.Images.Reserve(IntCastChecked<int32>(Scene->texture_files.count));
 
-            for (size_t i = 0; i < Scene->texture_files.count; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Scene->texture_files.count); i < Limit; ++i)
             {
                 const ufbx_texture_file& File = Scene->texture_files.data[i];
 
                 FSourceImage Image;
 
                 // The key drives the cook's filename color-space heuristic, so it wants to look like a filename.
-                Image.Key = PathLeaf(!ToView(File.relative_filename).empty() ? ToView(File.relative_filename)
+                Image.Key = PathLeaf(!ToView(File.relative_filename).IsEmpty() ? ToView(File.relative_filename)
                                                                             : ToView(File.filename));
-                if (Image.Key.empty())
+                if (Image.Key.IsEmpty())
                 {
                     Image.Key = FormatAs<FFixedString>("{}_Image_{}",
-                                                       FStringView(SourceName.data(), SourceName.length()), (uint32)i);
+                                                       FStringView(SourceName.GetData(), SourceName.Len()), (uint32)i);
                 }
 
                 if (File.content.size > 0 && File.content.data != nullptr)
                 {
-                    Image.Bytes = TSpan<const uint8>((const uint8*)File.content.data, File.content.size);
+                    Image.Bytes = TSpan<const uint8>((const uint8*)File.content.data, IntCastChecked<int32>(File.content.size));
                 }
                 else
                 {
                     FFixedString Tried;
                     Image.ResolvedPath = ResolveOnDisk(File, Tried);
-                    if (Image.ResolvedPath.empty())
+                    if (Image.ResolvedPath.IsEmpty())
                     {
                         // Named loudly with the paths tried, since a default material looks like an untextured file.
                         LOG_WARN("[FBX] Texture '{}' is neither embedded nor on disk; the materials using it "
                                  "will import with the neutral default. Looked in: {}",
-                                 Image.Key, Tried.empty() ? FFixedString("(no path in the file)") : Tried);
+                                 Image.Key, Tried.IsEmpty() ? FFixedString("(no path in the file)") : Tried);
                         continue;
                     }
                 }
 
-                FileToImage[i] = (int32)OutData.Images.size();
-                OutData.Images.push_back(Move(Image));
+                FileToImage[i] = OutData.Images.Num();
+                OutData.Images.Add(Move(Image));
             }
 
             uint32 EmbeddedCount = 0;
@@ -368,7 +367,7 @@ namespace Lumina
             }
 
             LOG_INFO("[FBX] '{}': {} texture file(s) -> {} image(s) ({} embedded).",
-                     SourceName.data(), (uint32)Scene->texture_files.count, (uint32)OutData.Images.size(),
+                     SourceName.GetData(), (uint32)Scene->texture_files.count, (uint32)OutData.Images.Num(),
                      (uint32)EmbeddedCount);
         }
 
@@ -381,9 +380,9 @@ namespace Lumina
             for (const ufbx_uv_set& Set : Mesh->uv_sets)
             {
                 FFixedString Name = ToFixed(Set.name);
-                if (!Name.empty() && UVSetIndexByName.find(Name) == UVSetIndexByName.end())
+                if (!Name.IsEmpty() && !UVSetIndexByName.Contains(Name))
                 {
-                    UVSetIndexByName.emplace(Move(Name), Math::Min<uint32>(Set.index, 1u));
+                    UVSetIndexByName.TryAdd(Move(Name), Math::Min<uint32>(Set.index, 1u));
                 }
             }
         }
@@ -395,12 +394,12 @@ namespace Lumina
                 return 0;
             }
             const FFixedString Name = ToFixed(Texture->uv_set);
-            if (Name.empty())
+            if (Name.IsEmpty())
             {
                 return 0;
             }
-            auto It = UVSetIndexByName.find(Name);
-            return (It != UVSetIndexByName.end()) ? It->second : 0u;
+            auto It = UVSetIndexByName.Find(Name);
+            return (It != nullptr) ? (*It) : 0u;
         };
 
         auto ResolveImage = [&](const ufbx_material_map& Map) -> int32
@@ -411,7 +410,7 @@ namespace Lumina
             {
                 return Constants::kIndexNone;
             }
-            return (File->file_index < FileToImage.size()) ? FileToImage[File->file_index] : Constants::kIndexNone;
+            return (File->file_index < static_cast<uint32_t>(FileToImage.Num())) ? FileToImage[File->file_index] : Constants::kIndexNone;
         };
 
         auto ResolveUVTransform = [&](const ufbx_material_map& Map) -> FTextureUVTransform
@@ -455,7 +454,7 @@ namespace Lumina
 
         auto MarkRole = [&](int32 ImageIndex, ETextureColorSpace Role)
         {
-            if (ImageIndex >= 0 && (size_t)ImageIndex < OutData.Images.size())
+            if (ImageIndex >= 0 && (size_t)ImageIndex < static_cast<size_t>(OutData.Images.Num()))
             {
                 OutData.Images[ImageIndex].IntendedColorSpace = Role;
             }
@@ -470,19 +469,19 @@ namespace Lumina
 
             auto Lower = [](FStringView In) -> FString
             {
-                FString L(In.data(), In.size());
+                FString L(In.GetData(), In.Len());
                 for (FString::value_type& C : L) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
                 return L;
             };
 
-            const FString Name = Lower(FStringView(MaterialName.c_str(), MaterialName.size()));
-            const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < OutData.Images.size())
+            const FString Name = Lower(FStringView(*MaterialName, MaterialName.Len()));
+            const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < static_cast<size_t>(OutData.Images.Num()))
                 ? OutData.Images[BaseColorImage].Key : FFixedString();
-            const FString Texture = Lower(FStringView(TexKey.c_str(), TexKey.size()));
+            const FString Texture = Lower(FStringView(*TexKey, TexKey.Len()));
 
             for (const char* Keyword : kKeywords)
             {
-                if (Name.find(Keyword) != FString::npos || Texture.find(Keyword) != FString::npos)
+                if (Name.Find(Keyword) != Constants::kIndexNone || Texture.Find(Keyword) != Constants::kIndexNone)
                 {
                     return true;
                 }
@@ -490,23 +489,23 @@ namespace Lumina
             return false;
         };
 
-        TVector<int32> MaterialToUnique(Scene->materials.count, Constants::kIndexNone);
+        TVector<int32> MaterialToUnique(IntCastChecked<int32>(Scene->materials.count), Constants::kIndexNone);
 
         if (Options.bImportMaterials)
         {
             FKeyDedup MaterialDedup(Scene->materials.count);
-            OutData.Materials.reserve(Scene->materials.count);
+            OutData.Materials.Reserve(IntCastChecked<int32>(Scene->materials.count));
 
-            for (size_t i = 0; i < Scene->materials.count; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Scene->materials.count); i < Limit; ++i)
             {
                 const ufbx_material& Source        = *Scene->materials.data[i];
                 const ufbx_material_pbr_maps& PBR  = Source.pbr;
                 const ufbx_material_features& Feat = Source.features;
 
                 FMeshImportMaterial Material;
-                Material.Name = !ToView(Source.name).empty()
-                    ? FString(Source.name.data, Source.name.length)
-                    : Format("{}_Mat{}", FStringView(SourceName.data(), SourceName.length()), (uint32)i);
+                Material.Name = !ToView(Source.name).IsEmpty()
+                    ? FString(Source.name.data, IntCastChecked<int32>(Source.name.length))
+                    : Format("{}_Mat{}", FStringView(SourceName.GetData(), SourceName.Len()), (uint32)i);
 
                 // ufbx normalizes Phong, Arnold, Max Physical, Substance and Blender onto this one set of maps.
                 Material.BaseColorImage = ResolveImage(PBR.base_color);
@@ -641,57 +640,57 @@ namespace Lumina
 
                 if (!bDeduplicateMaterials)
                 {
-                    MaterialToUnique[i] = (int32)OutData.Materials.size();
-                    OutData.Materials.push_back(Move(Material));
+                    MaterialToUnique[i] = OutData.Materials.Num();
+                    OutData.Materials.Add(Move(Material));
                     continue;
                 }
 
                 TVector<uint32> Key;
-                Key.reserve(32);
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.x));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.y));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.z));
-                Key.push_back(QuantizeFloat(Material.BaseColorFactor.w));
-                Key.push_back(QuantizeFloat(Material.MetallicFactor));
-                Key.push_back(QuantizeFloat(Material.RoughnessFactor));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.x));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.y));
-                Key.push_back(QuantizeFloat(Material.EmissiveColor.z));
-                Key.push_back(QuantizeFloat(Material.AlphaCutoff));
-                Key.push_back((uint32)Material.AlphaMode | (Material.bTwoSided ? 0x100u : 0u) | (Material.bUnlit ? 0x200u : 0u));
-                Key.push_back((uint32)Material.BaseColorImage);
-                Key.push_back((uint32)Material.MetallicRoughnessImage);
-                Key.push_back((uint32)Material.MetallicImage);
-                Key.push_back((uint32)Material.RoughnessImage);
-                Key.push_back((uint32)Material.NormalImage);
-                Key.push_back((uint32)Material.EmissiveImage);
-                Key.push_back((uint32)Material.OcclusionImage);
+                Key.Reserve(32);
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.x));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.y));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.z));
+                Key.Add(QuantizeFloat(Material.BaseColorFactor.w));
+                Key.Add(QuantizeFloat(Material.MetallicFactor));
+                Key.Add(QuantizeFloat(Material.RoughnessFactor));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.x));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.y));
+                Key.Add(QuantizeFloat(Material.EmissiveColor.z));
+                Key.Add(QuantizeFloat(Material.AlphaCutoff));
+                Key.Add((uint32)Material.AlphaMode | (Material.bTwoSided ? 0x100u : 0u) | (Material.bUnlit ? 0x200u : 0u));
+                Key.Add((uint32)Material.BaseColorImage);
+                Key.Add((uint32)Material.MetallicRoughnessImage);
+                Key.Add((uint32)Material.MetallicImage);
+                Key.Add((uint32)Material.RoughnessImage);
+                Key.Add((uint32)Material.NormalImage);
+                Key.Add((uint32)Material.EmissiveImage);
+                Key.Add((uint32)Material.OcclusionImage);
 
                 // Same images mapped or filtered differently are NOT the same material and must not collapse.
                 for (const FTextureUVTransform& UVT : Material.UVTransforms)
                 {
-                    Key.push_back(UVT.TexCoordSet);
-                    Key.push_back(QuantizeFloat(UVT.Offset.x));
-                    Key.push_back(QuantizeFloat(UVT.Offset.y));
-                    Key.push_back(QuantizeFloat(UVT.Scale.x));
-                    Key.push_back(QuantizeFloat(UVT.Scale.y));
-                    Key.push_back(QuantizeFloat(UVT.Rotation));
+                    Key.Add(UVT.TexCoordSet);
+                    Key.Add(QuantizeFloat(UVT.Offset.x));
+                    Key.Add(QuantizeFloat(UVT.Offset.y));
+                    Key.Add(QuantizeFloat(UVT.Scale.x));
+                    Key.Add(QuantizeFloat(UVT.Scale.y));
+                    Key.Add(QuantizeFloat(UVT.Rotation));
                 }
                 for (EImportSampler Sampler : Material.Samplers)
                 {
-                    Key.push_back((uint32)Sampler);
+                    Key.Add((uint32)Sampler);
                 }
-                Key.push_back(QuantizeFloat(Material.IOR));
-                Key.push_back(QuantizeFloat(Material.SpecularFactor));
-                Key.push_back(QuantizeFloat(Material.ClearcoatFactor));
-                Key.push_back(QuantizeFloat(Material.ClearcoatRoughness));
+                Key.Add(QuantizeFloat(Material.IOR));
+                Key.Add(QuantizeFloat(Material.SpecularFactor));
+                Key.Add(QuantizeFloat(Material.ClearcoatFactor));
+                Key.Add(QuantizeFloat(Material.ClearcoatRoughness));
 
                 bool bIsNew = false;
                 const uint32 Slot = MaterialDedup.Insert(Move(Key), bIsNew);
                 MaterialToUnique[i] = (int32)Slot;
                 if (bIsNew)
                 {
-                    OutData.Materials.push_back(Move(Material));
+                    OutData.Materials.Add(Move(Material));
                 }
             }
         }
@@ -705,7 +704,7 @@ namespace Lumina
 
         // typed_id is a dense key into Scene->nodes, and the visit order is parents-before-children.
         TVector<uint32> NodeVisitOrder;
-        NodeVisitOrder.reserve(Scene->nodes.count);
+        NodeVisitOrder.Reserve(IntCastChecked<int32>(Scene->nodes.count));
 
         struct FStackEntry
         {
@@ -714,7 +713,7 @@ namespace Lumina
         };
 
         TVector<FStackEntry> Stack;
-        Stack.reserve(Math::Max<size_t>(64, Scene->nodes.count));
+        Stack.Reserve(IntCastChecked<int32>(Math::Max<size_t>(64, Scene->nodes.count)));
 
         // Light props are still in the file's own units; ufbx only converts transforms and geometry.
         const float SourceUnitMeters = (float)Scene->settings.original_unit_meters;
@@ -772,33 +771,33 @@ namespace Lumina
         };
         TVector<FDetachedLight> DetachedLights;
 
-        OutData.SceneNodes.reserve(Scene->nodes.count);
-        OutData.MeshInstances.reserve(Scene->nodes.count);
+        OutData.SceneNodes.Reserve(IntCastChecked<int32>(Scene->nodes.count));
+        OutData.MeshInstances.Reserve(IntCastChecked<int32>(Scene->nodes.count));
 
-        TVector<uint8> MeshReferenced(Scene->meshes.count, 0);
+        TVector<uint8> MeshReferenced(IntCastChecked<int32>(Scene->meshes.count), 0);
 
         // The root itself is the scene's implicit container, so its children start at the top level.
         for (const ufbx_node* Child : Scene->root_node->children)
         {
-            Stack.push_back(FStackEntry{ Child, Constants::kIndexNone });
+            Stack.Emplace(Child, Constants::kIndexNone);
         }
 
         uint32 VisitedNodes = 0;
-        while (!Stack.empty())
+        while (!Stack.IsEmpty())
         {
-            const FStackEntry Entry = Stack.back();
-            Stack.pop_back();
+            const FStackEntry Entry = Stack.Last();
+            Stack.Pop();
             ++VisitedNodes;
 
             const ufbx_node& Node = *Entry.Node;
 
-            const int32 SceneNodeIndex = (int32)OutData.SceneNodes.size();
-            NodeVisitOrder.push_back(Node.typed_id);
+            const int32 SceneNodeIndex = OutData.SceneNodes.Num();
+            NodeVisitOrder.Add(Node.typed_id);
 
-            FSourceSceneNode& SceneNode = OutData.SceneNodes.push_back();
+            FSourceSceneNode& SceneNode = OutData.SceneNodes.AddDefaultedGetRef();
             SceneNode.ParentIndex = Entry.ParentSceneNode;
-            SceneNode.Name = !ToView(Node.name).empty()
-                ? FName(ToFixed(Node.name).c_str())
+            SceneNode.Name = !ToView(Node.name).IsEmpty()
+                ? FName(*ToFixed(Node.name))
                 : FName("Node", (uint32)Node.typed_id);
 
             SceneNode.Translation = Basis.Translation(Node, ToVector3(Node.local_transform.translation));
@@ -814,12 +813,11 @@ namespace Lumina
                 SceneNode.MeshSlot = (int32)MeshIndex;
 
                 // geometry_to_world, since helper nodes carry the mesh offset the merge path bakes in.
-                OutData.MeshInstances.push_back(FSourceMeshInstance{
-                    MeshIndex, (uint32)Node.typed_id, Basis.WorldToEngine(Node.geometry_to_world) });
+                OutData.MeshInstances.Emplace(MeshIndex, (uint32)Node.typed_id, Basis.WorldToEngine(Node.geometry_to_world));
 
                 if (Node.light != nullptr)
                 {
-                    DetachedLights.push_back(FDetachedLight{ SceneNodeIndex, Node.light });
+                    DetachedLights.Emplace(SceneNodeIndex, Node.light);
                 }
             }
             else if (Node.light != nullptr)
@@ -847,16 +845,16 @@ namespace Lumina
 
             for (const ufbx_node* Child : Node.children)
             {
-                Stack.push_back(FStackEntry{ Child, SceneNodeIndex });
+                Stack.Emplace(Child, SceneNodeIndex);
             }
         }
 
         for (const FDetachedLight& Detached : DetachedLights)
         {
-            FSourceSceneNode& LightNode = OutData.SceneNodes.push_back();
+            FSourceSceneNode& LightNode = OutData.SceneNodes.AddDefaultedGetRef();
             LightNode.ParentIndex = Detached.ParentSceneNode;
-            LightNode.Name = !ToView(Detached.Light->name).empty()
-                ? FName(ToFixed(Detached.Light->name).c_str())
+            LightNode.Name = !ToView(Detached.Light->name).IsEmpty()
+                ? FName(*ToFixed(Detached.Light->name))
                 : FName("Light", (uint32)Detached.Light->typed_id);
             FillLight(LightNode, *Detached.Light);
         }
@@ -871,23 +869,23 @@ namespace Lumina
         }
         if (!bAnyReferenced)
         {
-            for (size_t i = 0; i < Scene->meshes.count; ++i)
+            for (int32 i = 0, Limit = IntCastChecked<int32>(Scene->meshes.count); i < Limit; ++i)
             {
                 MeshReferenced[i] = 1;
-                OutData.MeshInstances.push_back(FSourceMeshInstance{ (uint32)i, 0u, FMatrix4(1.0f) });
+                OutData.MeshInstances.Emplace((uint32)i, 0u, FMatrix4(1.0f));
             }
         }
 
         //~ ufbx already shares a mesh across instances, so this only catches doubly-emitted geometry.
 
         TVector<uint32> UniqueMeshes;
-        TVector<int32>  MeshToUnique(Scene->meshes.count, Constants::kIndexNone);
+        TVector<int32>  MeshToUnique(IntCastChecked<int32>(Scene->meshes.count), Constants::kIndexNone);
         {
             FKeyDedup MeshDedup(Scene->meshes.count);
-            UniqueMeshes.reserve(Scene->meshes.count);
+            UniqueMeshes.Reserve(IntCastChecked<int32>(Scene->meshes.count));
 
             TVector<uint32> Key;
-            for (size_t MeshIndex = 0; MeshIndex < Scene->meshes.count; ++MeshIndex)
+            for (int32 MeshIndex = 0, Limit = IntCastChecked<int32>(Scene->meshes.count); MeshIndex < Limit; ++MeshIndex)
             {
                 if (MeshReferenced[MeshIndex] == 0)
                 {
@@ -898,20 +896,20 @@ namespace Lumina
 
                 if (!bDeduplicateMeshes)
                 {
-                    MeshToUnique[MeshIndex] = (int32)UniqueMeshes.size();
-                    UniqueMeshes.push_back((uint32)MeshIndex);
+                    MeshToUnique[MeshIndex] = UniqueMeshes.Num();
+                    UniqueMeshes.Add((uint32)MeshIndex);
                     continue;
                 }
 
                 // Counts, material assignment and a position hash, specific enough that two meshes never collapse.
-                Key.clear();
-                Key.push_back((uint32)Mesh.num_vertices);
-                Key.push_back((uint32)Mesh.num_indices);
-                Key.push_back((uint32)Mesh.num_faces);
-                Key.push_back((uint32)Mesh.skin_deformers.count);
+                Key.Reset();
+                Key.Add((uint32)Mesh.num_vertices);
+                Key.Add((uint32)Mesh.num_indices);
+                Key.Add((uint32)Mesh.num_faces);
+                Key.Add((uint32)Mesh.skin_deformers.count);
                 for (const ufbx_material* Material : Mesh.materials)
                 {
-                    Key.push_back(Material != nullptr ? Material->typed_id : Constants::kIndexNoneU32);
+                    Key.Add(Material != nullptr ? Material->typed_id : Constants::kIndexNoneU32);
                 }
 
                 uint64 PositionHash = 0xCBF29CE484222325ull;
@@ -925,8 +923,8 @@ namespace Lumina
                         PositionHash = (PositionHash ^ Bits) * 0x100000001B3ull;
                     }
                 }
-                Key.push_back((uint32)(PositionHash & 0xFFFFFFFFu));
-                Key.push_back((uint32)(PositionHash >> 32));
+                Key.Add((uint32)(PositionHash & 0xFFFFFFFFu));
+                Key.Add((uint32)(PositionHash >> 32));
 
                 bool bIsNew = false;
                 TVector<uint32> OwnedKey = Key;
@@ -934,7 +932,7 @@ namespace Lumina
                 MeshToUnique[MeshIndex] = (int32)Slot;
                 if (bIsNew)
                 {
-                    UniqueMeshes.push_back((uint32)MeshIndex);
+                    UniqueMeshes.Add((uint32)MeshIndex);
                 }
             }
 
@@ -959,7 +957,7 @@ namespace Lumina
         TVector<const ufbx_node*> BoneNodes;
 
         {
-            TVector<uint8> IsBone(Scene->nodes.count, 0);
+            TVector<uint8> IsBone(IntCastChecked<int32>(Scene->nodes.count), 0);
             for (const ufbx_skin_deformer* Skin : Scene->skin_deformers)
             {
                 for (const ufbx_skin_cluster* Cluster : Skin->clusters)
@@ -985,14 +983,14 @@ namespace Lumina
                         && (Node->parent == nullptr || IsBone[Node->parent->typed_id] == 0);
                     if (bSkeletonRoot)
                     {
-                        Pending.push_back(Node);
+                        Pending.Add(Node);
                     }
                 }
 
-                while (!Pending.empty())
+                while (!Pending.IsEmpty())
                 {
-                    const ufbx_node* Node = Pending.back();
-                    Pending.pop_back();
+                    const ufbx_node* Node = Pending.Last();
+                    Pending.Pop();
                     for (const ufbx_node* Child : Node->children)
                     {
                         // Descending past a skipped node would orphan whatever hangs below it.
@@ -1001,7 +999,7 @@ namespace Lumina
                             continue;
                         }
                         IsBone[Child->typed_id] = 1;
-                        Pending.push_back(Child);
+                        Pending.Add(Child);
                     }
                 }
             }
@@ -1013,16 +1011,16 @@ namespace Lumina
                 {
                     continue;
                 }
-                NodeToBone.emplace(TypedId, (int32)BoneNodes.size());
-                BoneNodes.push_back(Scene->nodes.data[TypedId]);
+                NodeToBone.TryAdd(TypedId, BoneNodes.Num());
+                BoneNodes.Add(Scene->nodes.data[TypedId]);
             }
         }
 
-        if (!BoneNodes.empty() && Options.bImportSkeleton)
+        if (!BoneNodes.IsEmpty() && Options.bImportSkeleton)
         {
             TUniquePtr<FSkeletonResource> Skeleton = MakeUnique<FSkeletonResource>();
-            Skeleton->Name = FName((FString(SourceName.data(), SourceName.size()) + "_Skeleton").c_str());
-            Skeleton->Bones.resize(BoneNodes.size());
+            Skeleton->Name = FName(*(FString(SourceName.GetData(), SourceName.Len()) + "_Skeleton"));
+            Skeleton->Bones.SetNum(BoneNodes.Num());
 
             // A clustered bone's FK times InvBind is the skin's geometry-to-world, so every other bone must match it.
             FMatrix4 SkinGeometryToWorld = FMatrix4(1.0f);
@@ -1035,12 +1033,12 @@ namespace Lumina
                 }
             }
 
-            for (size_t BoneIndex = 0; BoneIndex < BoneNodes.size(); ++BoneIndex)
+            for (int32 BoneIndex = 0; BoneIndex < BoneNodes.Num(); ++BoneIndex)
             {
                 const ufbx_node& Node = *BoneNodes[BoneIndex];
 
                 FSkeletonResource::FBoneInfo& Bone = Skeleton->Bones[BoneIndex];
-                Bone.Name           = !ToView(Node.name).empty() ? FName(ToFixed(Node.name).c_str())
+                Bone.Name           = !ToView(Node.name).IsEmpty() ? FName(*ToFixed(Node.name))
                                                                  : FName("Bone", (uint32)Node.typed_id);
                 FMatrix4 LocalTransform = Math::ToMatrix4(InverseAdjustRotation(Node)) * ToMatrix4(Node.node_to_parent);
                 Bone.LocalTransform = Basis.BoneToEngine(Node, LocalTransform);
@@ -1051,10 +1049,10 @@ namespace Lumina
                 Bone.ParentIndex = Constants::kIndexNone;
                 if (Node.parent != nullptr)
                 {
-                    auto It = NodeToBone.find(Node.parent->typed_id);
-                    if (It != NodeToBone.end())
+                    auto It = NodeToBone.Find(Node.parent->typed_id);
+                    if (It != nullptr)
                     {
-                        Bone.ParentIndex = It->second;
+                        Bone.ParentIndex = (*It);
                     }
                 }
 
@@ -1070,17 +1068,17 @@ namespace Lumina
                     {
                         continue;
                     }
-                    auto It = NodeToBone.find(Cluster->bone_node->typed_id);
-                    if (It == NodeToBone.end())
+                    auto It = NodeToBone.Find(Cluster->bone_node->typed_id);
+                    if (It == nullptr)
                     {
                         continue;
                     }
-                    Skeleton->Bones[It->second].InvBindMatrix = Basis.InvBindToEngine(ToMatrix4(Cluster->geometry_to_bone));
+                    Skeleton->Bones[(*It)].InvBindMatrix = Basis.InvBindToEngine(ToMatrix4(Cluster->geometry_to_bone));
                 }
             }
 
             Skeleton->BuildBindPoseCache();
-            OutData.Skeletons.push_back(Move(Skeleton));
+            OutData.Skeletons.Add(Move(Skeleton));
         }
 
         //~ The node's world transform stays on the instance, so an instanced scene costs one mesh.
@@ -1097,27 +1095,27 @@ namespace Lumina
             bool                      bHasColors = false;
         };
 
-        TVector<FMeshSlotResult> Slots(UniqueMeshes.size());
+        TVector<FMeshSlotResult> Slots(UniqueMeshes.Num());
 
         // Named serially so a collision suffix is deterministic, then the parallel pass owns its own slot.
-        TVector<FFixedString> MeshNames(UniqueMeshes.size());
+        TVector<FFixedString> MeshNames(UniqueMeshes.Num());
         {
             THashMap<FFixedString, uint32> NameCounts;
-            for (size_t Slot = 0; Slot < UniqueMeshes.size(); ++Slot)
+            for (int32 Slot = 0; Slot < UniqueMeshes.Num(); ++Slot)
             {
                 const ufbx_mesh& Mesh = *Scene->meshes.data[UniqueMeshes[Slot]];
 
                 FFixedString Name = SanitizedSourceName(Mesh.name.data, Mesh.name.length);
-                if (Name.empty())
+                if (Name.IsEmpty())
                 {
                     Name = FormatAs<FFixedString>("{}_{}",
-                                                  FStringView(SourceName.data(), SourceName.length()), (uint32)UniqueMeshes[Slot]);
+                                                  FStringView(SourceName.GetData(), SourceName.Len()), (uint32)UniqueMeshes[Slot]);
                 }
 
                 uint32& Count = NameCounts[Name];
                 if (Count > 0)
                 {
-                    Name.append("_").append(Format("{}", Count));
+                    Name.Append("_").Append(Format("{}", Count));
                 }
                 ++Count;
 
@@ -1126,10 +1124,10 @@ namespace Lumina
         }
 
         const bool  bSkipFinalize = Options.bSkipFinalization;
-        const float GeometryStep  = 0.6f / (float)Math::Max<size_t>(1, UniqueMeshes.size());
+        const float GeometryStep  = 0.6f / (float)Math::Max<size_t>(1, UniqueMeshes.Num());
         TAtomic<uint32> Completed{0};
 
-        Task::ParallelFor((uint32)UniqueMeshes.size(), [&](uint32 SlotIndex)
+        Jobs::ParallelFor((uint32)UniqueMeshes.Num(), [&](uint32 SlotIndex)
         {
             const ufbx_mesh& Mesh = *Scene->meshes.data[UniqueMeshes[SlotIndex]];
             const FFixedString& MeshName = MeshNames[SlotIndex];
@@ -1137,12 +1135,12 @@ namespace Lumina
             FMeshSlotResult& Slot = Slots[SlotIndex];
 
             const ufbx_skin_deformer* Skin = (Mesh.skin_deformers.count > 0) ? Mesh.skin_deformers.data[0] : nullptr;
-            const bool bSkinned = (Skin != nullptr) && !NodeToBone.empty();
+            const bool bSkinned = (Skin != nullptr) && !NodeToBone.IsEmpty();
 
             TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
             Resource->bSkinnedMesh = bSkinned;
-            Resource->Name = FName((FString(MeshName.c_str(), MeshName.size())
-                                    + (bSkinned ? "_SkeletalMesh" : "_Mesh")).c_str());
+            Resource->Name = FName(*(FString(*MeshName, MeshName.Len())
+                                    + (bSkinned ? "_SkeletalMesh" : "_Mesh")));
 
             const ufbx_vertex_vec2* UV1Source = (Mesh.uv_sets.count > 1) ? &Mesh.uv_sets.data[1].vertex_uv : nullptr;
             Slot.bHasColors = (Mesh.vertex_color.exists);
@@ -1155,35 +1153,35 @@ namespace Lumina
                 return;
             }
 
-            TVector<FSourceSkinnedVertex> Corners(CornerCount);
-            TVector<uint32>               Indices(CornerCount);
-            TVector<uint32>               TriangleIndices(Mesh.max_face_triangles * 3);
+            TVector<FSourceSkinnedVertex> Corners(IntCastChecked<int32>(CornerCount));
+            TVector<uint32>               Indices(IntCastChecked<int32>(CornerCount));
+            TVector<uint32>               TriangleIndices(IntCastChecked<int32>(Mesh.max_face_triangles * 3));
 
             // Bone remap for this mesh's clusters, resolved once rather than per influence.
             TVector<int32> ClusterToBone;
             if (bSkinned)
             {
-                ClusterToBone.resize(Skin->clusters.count, Constants::kIndexNone);
-                for (size_t c = 0; c < Skin->clusters.count; ++c)
+                ClusterToBone.SetNum(IntCastChecked<int32>(Skin->clusters.count), Constants::kIndexNone);
+                for (int32 c = 0, Limit = IntCastChecked<int32>(Skin->clusters.count); c < Limit; ++c)
                 {
                     const ufbx_node* BoneNode = Skin->clusters.data[c]->bone_node;
                     if (BoneNode == nullptr)
                     {
                         continue;
                     }
-                    auto It = NodeToBone.find(BoneNode->typed_id);
-                    if (It != NodeToBone.end())
+                    auto It = NodeToBone.Find(BoneNode->typed_id);
+                    if (It != nullptr)
                     {
-                        ClusterToBone[c] = It->second;
+                        ClusterToBone[c] = (*It);
                     }
                 }
             }
 
-            size_t CornerCursor = 0;
+            int32 CornerCursor = 0;
 
             struct FPendingSurface { uint32 Start; uint32 Count; int16 Material; };
             TVector<FPendingSurface> PendingSurfaces;
-            PendingSurfaces.reserve(Mesh.material_parts.count);
+            PendingSurfaces.Reserve(IntCastChecked<int32>(Mesh.material_parts.count));
 
             for (const ufbx_mesh_part& Part : Mesh.material_parts)
             {
@@ -1198,7 +1196,7 @@ namespace Lumina
                 {
                     const ufbx_face Face = Mesh.faces.data[FaceIndex];
                     const uint32 TriangleCount = ufbx_triangulate_face(
-                        TriangleIndices.data(), TriangleIndices.size(), &Mesh, Face);
+                        TriangleIndices.GetData(), TriangleIndices.Num(), &Mesh, Face);
 
                     for (uint32 i = 0; i < TriangleCount * 3; ++i)
                     {
@@ -1248,7 +1246,7 @@ namespace Lumina
                                 for (uint32 w = 0; w < Count; ++w)
                                 {
                                     const ufbx_skin_weight& Weight = Skin->weights.data[SkinVertex.weight_begin + w];
-                                    const int32 Bone = (Weight.cluster_index < ClusterToBone.size())
+                                    const int32 Bone = (Weight.cluster_index < static_cast<uint32_t>(ClusterToBone.Num()))
                                         ? ClusterToBone[Weight.cluster_index] : Constants::kIndexNone;
                                     if (Bone < 0)
                                     {
@@ -1276,19 +1274,19 @@ namespace Lumina
                 if (Part.index < Mesh.materials.count)
                 {
                     const ufbx_material* Material = Mesh.materials.data[Part.index];
-                    if (Material != nullptr && Material->typed_id < MaterialToUnique.size()
+                    if (Material != nullptr && Material->typed_id < static_cast<uint32_t>(MaterialToUnique.Num())
                         && MaterialToUnique[Material->typed_id] >= 0)
                     {
                         Surface.Material = (int16)MaterialToUnique[Material->typed_id];
                     }
                 }
 
-                PendingSurfaces.push_back(Surface);
+                PendingSurfaces.Add(Surface);
             }
 
             // Two corners collapse only when every attribute the renderer reads is bit-identical.
             ufbx_vertex_stream Stream = {};
-            Stream.data         = Corners.data();
+            Stream.data         = Corners.GetData();
             Stream.vertex_count = CornerCursor;
             Stream.vertex_size  = sizeof(FSourceSkinnedVertex);
 
@@ -1296,22 +1294,22 @@ namespace Lumina
             IndexAllocator.allocator = MakeTrackedAllocator();
 
             ufbx_error IndexError;
-            size_t UniqueVertices = ufbx_generate_indices(&Stream, 1, Indices.data(), CornerCursor,
-                                                          &IndexAllocator, &IndexError);
+            int32 UniqueVertices = IntCastChecked<int32>(ufbx_generate_indices(&Stream, 1, Indices.GetData(), CornerCursor,
+                                                                                &IndexAllocator, &IndexError));
             if (UniqueVertices == 0 && CornerCursor > 0)
             {
                 // Welding is an optimization; a failure must not lose the mesh.
                 LOG_WARN("[FBX] Mesh '{}': index generation failed ({}), keeping unwelded vertices.",
                          MeshName, FormatUfbxError(IndexError));
                 UniqueVertices = CornerCursor;
-                for (size_t i = 0; i < CornerCursor; ++i)
+                for (int32 i = 0; i < CornerCursor; ++i)
                 {
                     Indices[i] = (uint32)i;
                 }
             }
 
             Resource->ResizeVertices(UniqueVertices);
-            for (size_t i = 0; i < UniqueVertices; ++i)
+            for (int32 i = 0; i < UniqueVertices; ++i)
             {
                 const FSourceSkinnedVertex& V = Corners[i];
                 Resource->Positions[i] = V.Position;
@@ -1327,24 +1325,25 @@ namespace Lumina
                 }
             }
 
-            Resource->Indices.assign(Indices.begin(), Indices.begin() + CornerCursor);
+            Resource->Indices.Reset();
+            Resource->Indices.Append(Indices.begin(), Indices.begin() + CornerCursor);
 
-            Resource->GeometrySurfaces.reserve(PendingSurfaces.size());
-            for (size_t i = 0; i < PendingSurfaces.size(); ++i)
+            Resource->GeometrySurfaces.Reserve(PendingSurfaces.Num());
+            for (int32 i = 0; i < PendingSurfaces.Num(); ++i)
             {
                 const FPendingSurface& Pending = PendingSurfaces[i];
 
                 FGeometrySurface Surface;
                 FFixedString SurfaceName = MeshName;
-                if (PendingSurfaces.size() > 1)
+                if (PendingSurfaces.Num() > 1)
                 {
-                    SurfaceName.append("_").append(Format("{}", i));
+                    SurfaceName.Append("_").Append(Format("{}", i));
                 }
                 Surface.ID            = SurfaceName;
                 Surface.StartIndex    = Pending.Start;
                 Surface.IndexCount    = Pending.Count;
                 Surface.MaterialIndex = Pending.Material;
-                Resource->GeometrySurfaces.push_back(Surface);
+                Resource->GeometrySurfaces.Add(Surface);
             }
 
             if (!bSkipFinalize)
@@ -1362,28 +1361,28 @@ namespace Lumina
             {
                 const uint32 Done = Completed.fetch_add(1) + 1;
                 const FFixedString Message = FormatAs<FFixedString>("Processing geometry ({}/{} meshes)...",
-                                                                    Done, (uint32)UniqueMeshes.size());
+                                                                    Done, (uint32)UniqueMeshes.Num());
                 Progress->EnterProgressFrame(GeometryStep, Message);
             }
         });
 
-        OutData.Resources.reserve(UniqueMeshes.size());
-        OutData.MeshSlots.resize(Slots.size());
+        OutData.Resources.Reserve(UniqueMeshes.Num());
+        OutData.MeshSlots.SetNum(Slots.Num());
 
-        for (size_t SlotIndex = 0; SlotIndex < Slots.size(); ++SlotIndex)
+        for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
         {
             FMeshSlotResult& Slot = Slots[SlotIndex];
             OutData.bHasVertexColors |= Slot.bHasColors;
 
             if (Slot.Static && Slot.Static->GetNumVertices() > 0)
             {
-                OutData.MeshSlots[SlotIndex].StaticResource = (int32)OutData.Resources.size();
-                OutData.Resources.push_back(Move(Slot.Static));
+                OutData.MeshSlots[SlotIndex].StaticResource = OutData.Resources.Num();
+                OutData.Resources.Add(Move(Slot.Static));
             }
             if (Slot.Skinned && Slot.Skinned->GetNumVertices() > 0)
             {
-                OutData.MeshSlots[SlotIndex].SkinnedResource = (int32)OutData.Resources.size();
-                OutData.Resources.push_back(Move(Slot.Skinned));
+                OutData.MeshSlots[SlotIndex].SkinnedResource = OutData.Resources.Num();
+                OutData.Resources.Add(Move(Slot.Skinned));
             }
         }
 
@@ -1396,7 +1395,7 @@ namespace Lumina
                 Progress->UpdateMessage("Reading animations...");
             }
 
-            OutData.Animations.reserve(Scene->anim_stacks.count);
+            OutData.Animations.Reserve(IntCastChecked<int32>(Scene->anim_stacks.count));
 
             for (const ufbx_anim_stack* AnimStack : Scene->anim_stacks)
             {
@@ -1411,15 +1410,15 @@ namespace Lumina
                 if (Baked == nullptr)
                 {
                     LOG_WARN("[FBX] Animation '{}' failed to bake: {}",
-                             ToView(AnimStack->name).data(), FormatUfbxError(BakeError));
+                             ToView(AnimStack->name).GetData(), FormatUfbxError(BakeError));
                     continue;
                 }
 
                 TUniquePtr<FAnimationResource> Clip = MakeUnique<FAnimationResource>();
-                Clip->Name = !ToView(AnimStack->name).empty() ? FName(ToFixed(AnimStack->name).c_str())
+                Clip->Name = !ToView(AnimStack->name).IsEmpty() ? FName(*ToFixed(AnimStack->name))
                                                           : FName("Animation");
                 Clip->Duration = (float)Baked->playback_duration;
-                Clip->Channels.reserve(Baked->nodes.count * 3);
+                Clip->Channels.Reserve(IntCastChecked<int32>(Baked->nodes.count * 3));
 
                 for (const ufbx_baked_node& BakedNode : Baked->nodes)
                 {
@@ -1429,22 +1428,22 @@ namespace Lumina
                     }
 
                     const ufbx_node& Node = *Scene->nodes.data[BakedNode.typed_id];
-                    const FName TargetBone = !ToView(Node.name).empty()
-                        ? FName(ToFixed(Node.name).c_str()) : FName("Bone", (uint32)Node.typed_id);
+                    const FName TargetBone = !ToView(Node.name).IsEmpty()
+                        ? FName(*ToFixed(Node.name)) : FName("Bone", (uint32)Node.typed_id);
 
                     if (BakedNode.translation_keys.count > 0)
                     {
                         FAnimationChannel Channel;
                         Channel.TargetBone = TargetBone;
                         Channel.TargetPath = FAnimationChannel::ETargetPath::Translation;
-                        Channel.Timestamps.reserve(BakedNode.translation_keys.count);
-                        Channel.Translations.reserve(BakedNode.translation_keys.count);
+                        Channel.Timestamps.Reserve(IntCastChecked<int32>(BakedNode.translation_keys.count));
+                        Channel.Translations.Reserve(IntCastChecked<int32>(BakedNode.translation_keys.count));
                         for (const ufbx_baked_vec3& Key : BakedNode.translation_keys)
                         {
-                            Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Translations.push_back(Basis.KeyTranslation(Node, ToVector3(Key.value)));
+                            Channel.Timestamps.Add((float)Key.time);
+                            Channel.Translations.Add(Basis.KeyTranslation(Node, ToVector3(Key.value)));
                         }
-                        Clip->Channels.push_back(Move(Channel));
+                        Clip->Channels.Add(Move(Channel));
                     }
 
                     if (BakedNode.rotation_keys.count > 0)
@@ -1452,14 +1451,14 @@ namespace Lumina
                         FAnimationChannel Channel;
                         Channel.TargetBone = TargetBone;
                         Channel.TargetPath = FAnimationChannel::ETargetPath::Rotation;
-                        Channel.Timestamps.reserve(BakedNode.rotation_keys.count);
-                        Channel.Rotations.reserve(BakedNode.rotation_keys.count);
+                        Channel.Timestamps.Reserve(IntCastChecked<int32>(BakedNode.rotation_keys.count));
+                        Channel.Rotations.Reserve(IntCastChecked<int32>(BakedNode.rotation_keys.count));
                         for (const ufbx_baked_quat& Key : BakedNode.rotation_keys)
                         {
-                            Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Rotations.push_back(Basis.KeyRotation(Node, ToQuat(Key.value)));
+                            Channel.Timestamps.Add((float)Key.time);
+                            Channel.Rotations.Add(Basis.KeyRotation(Node, ToQuat(Key.value)));
                         }
-                        Clip->Channels.push_back(Move(Channel));
+                        Clip->Channels.Add(Move(Channel));
                     }
 
                     if (BakedNode.scale_keys.count > 0)
@@ -1467,31 +1466,31 @@ namespace Lumina
                         FAnimationChannel Channel;
                         Channel.TargetBone = TargetBone;
                         Channel.TargetPath = FAnimationChannel::ETargetPath::Scale;
-                        Channel.Timestamps.reserve(BakedNode.scale_keys.count);
-                        Channel.Scales.reserve(BakedNode.scale_keys.count);
+                        Channel.Timestamps.Reserve(IntCastChecked<int32>(BakedNode.scale_keys.count));
+                        Channel.Scales.Reserve(IntCastChecked<int32>(BakedNode.scale_keys.count));
                         for (const ufbx_baked_vec3& Key : BakedNode.scale_keys)
                         {
-                            Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Scales.push_back(ToVector3(Key.value));
+                            Channel.Timestamps.Add((float)Key.time);
+                            Channel.Scales.Add(ToVector3(Key.value));
                         }
-                        Clip->Channels.push_back(Move(Channel));
+                        Clip->Channels.Add(Move(Channel));
                     }
                 }
 
                 ufbx_free_baked_anim(Baked);
 
-                if (!Clip->Channels.empty())
+                if (!Clip->Channels.IsEmpty())
                 {
-                    OutData.Animations.push_back(Move(Clip));
+                    OutData.Animations.Add(Move(Clip));
                 }
             }
         }
 
         LOG_INFO("[FBX] '{}': {} nodes, {} mesh instances -> {} unique meshes, {} materials, {} images, "
                  "{} bones, {} animations.",
-                 SourceName.data(), OutData.SourceNodeCount, (uint32)OutData.MeshInstances.size(),
-                 (uint32)OutData.Resources.size(), (uint32)OutData.Materials.size(),
-                 (uint32)OutData.Images.size(), (uint32)BoneNodes.size(), (uint32)OutData.Animations.size());
+                 SourceName.GetData(), OutData.SourceNodeCount, (uint32)OutData.MeshInstances.Num(),
+                 (uint32)OutData.Resources.Num(), (uint32)OutData.Materials.Num(),
+                 (uint32)OutData.Images.Num(), (uint32)BoneNodes.Num(), (uint32)OutData.Animations.Num());
 
         return true;
     }

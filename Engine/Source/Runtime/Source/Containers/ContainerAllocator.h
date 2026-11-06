@@ -18,6 +18,8 @@ namespace Lumina
     /** rpmalloc through Memory::Malloc, so allocations stay pool-coherent across DLL boundaries. */
     struct FHeapAllocator
     {
+        using SizeType = int32;
+
         static constexpr bool bIsStateless = true;
 
         NODISCARD static void* Allocate(size_t Bytes, size_t Alignment)
@@ -40,6 +42,26 @@ namespace Lumina
         }
     };
     
+    /** The heap allocator counted in int64, for buffers that outgrow two billion elements, as Unreal's TArray64. */
+    struct FHeapAllocator64 : FHeapAllocator
+    {
+        using SizeType = int64;
+    };
+
+    /** The count type a container uses with an allocator; int32 unless the allocator names its own. */
+    template <typename TAllocator>
+    struct TAllocatorSizeType
+    {
+        using Type = int32;
+    };
+
+    template <typename TAllocator>
+    requires requires { typename TAllocator::SizeType; }
+    struct TAllocatorSizeType<TAllocator>
+    {
+        using Type = typename TAllocator::SizeType;
+    };
+
     /** The calling thread's frame arena; reset at the frame boundary, so Deallocate is a no-op. */
     struct FFrameAllocator
     {

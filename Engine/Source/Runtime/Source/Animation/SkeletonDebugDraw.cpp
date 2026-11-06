@@ -22,7 +22,7 @@ namespace Lumina::SkeletonDebugDraw
                                      TVector<FMatrix4>& OutGlobals)
     {
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
-        OutGlobals.resize(NumBones);
+        OutGlobals.SetNum(NumBones);
         if (NumBones == 0)
         {
             return;
@@ -31,7 +31,7 @@ namespace Lumina::SkeletonDebugDraw
         const bool bHasBinds = Skeleton->HasBindGlobalMatrices();
 
         // Live pose has Global*InvBind; recover model-space by undoing InvBind.
-        if ((int32)BoneTransforms.size() == NumBones)
+        if (BoneTransforms.Num() == NumBones)
         {
             for (int32 i = 0; i < NumBones; ++i)
             {
@@ -189,10 +189,10 @@ namespace Lumina::SkeletonDebugDraw
             const bool bJoints = Options.bJoints && bFull;
             const bool bShaped = Options.bOctahedral && (Job.Detail != EDetail::Sticks);
 
-            Scratch.Positions.resize(NumBones);
+            Scratch.Positions.SetNum(NumBones);
             if (bAxes)
             {
-                Scratch.Bases.resize(NumBones);
+                Scratch.Bases.SetNum(NumBones);
             }
 
             uint32 NumParented = 0;
@@ -285,7 +285,7 @@ namespace Lumina::SkeletonDebugDraw
         }
 
         const int32 NumBones = Skeleton->GetNumBones();
-        if ((int32)GlobalBoneTransforms.size() != NumBones)
+        if (GlobalBoneTransforms.Num() != NumBones)
         {
             return;
         }
@@ -384,7 +384,7 @@ namespace Lumina::SkeletonDebugDraw
                 FSkeletonJob Job;
                 Job.MeshWorld = View.Get<STransformComponent>(Entity).GetWorldMatrix();
                 Job.Skeleton  = Skeleton;
-                Job.Pose      = ((int32)Mesh.BoneTransforms.size() == Skeleton->GetNumBones()) ? &Mesh.BoneTransforms : nullptr;
+                Job.Pose      = ((int32)Mesh.BoneTransforms.Num() == Skeleton->GetNumBones()) ? &Mesh.BoneTransforms : nullptr;
 
                 const SAABB LocalBounds = SkeletalMesh->GetAABB();
                 if (State != nullptr && LocalBounds.IsValid())
@@ -442,10 +442,10 @@ namespace Lumina::SkeletonDebugDraw
 
         // Game thread only, so one persistent list keeps the gather off the allocator every frame.
         static TVector<FSkeletonJob> Jobs;
-        Jobs.clear();
-        ForEachVisibleSkeleton(World, State, Options, [&](const FSkeletonJob& Job) { Jobs.push_back(Job); });
+        Jobs.Reset();
+        ForEachVisibleSkeleton(World, State, Options, [&](const FSkeletonJob& Job) { Jobs.Add(Job); });
 
-        if (Jobs.empty())
+        if (Jobs.IsEmpty())
         {
             return;
         }
@@ -454,7 +454,7 @@ namespace Lumina::SkeletonDebugDraw
             ? FImmediateLineRenderer::DepthTested
             : FImmediateLineRenderer::XRay;
 
-        Task::ParallelFor((uint32)Jobs.size(), [&](const Task::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)Jobs.Num(), [&](const Jobs::FParallelRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
@@ -481,7 +481,7 @@ namespace Lumina::SkeletonDebugDraw
             const FSkeletonResource& Skeleton = *Job.Skeleton;
             const int32              NumBones = Skeleton.GetNumBones();
 
-            for (int32 i = 0; i < NumBones && (int32)OutLabels.size() < MaxLabels; ++i)
+            for (int32 i = 0; i < NumBones && OutLabels.Num() < MaxLabels; ++i)
             {
                 const FVector4 Model = Job.Pose ? ((*Job.Pose)[i] * Skeleton.BindGlobalMatrices[i][3])
                                                 : Skeleton.BindGlobalMatrices[i][3];
@@ -493,7 +493,7 @@ namespace Lumina::SkeletonDebugDraw
                     continue;
                 }
 
-                OutLabels.push_back({ Skeleton.GetBone(i).Name, Position });
+                OutLabels.Emplace(Skeleton.GetBone(i).Name, Position);
             }
         });
     }

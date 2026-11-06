@@ -36,7 +36,7 @@ namespace Lumina
 
     int32 CDataTable::FindRowIndex(const FName& RowName) const
     {
-        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        for (int32 i = 0; i < Rows.Num(); ++i)
         {
             if (Rows[i].Name == RowName)
             {
@@ -48,7 +48,7 @@ namespace Lumina
 
     FName CDataTable::GetRowNameAt(int32 Index) const
     {
-        return (Index >= 0 && Index < (int32)Rows.size()) ? Rows[Index].Name : FName();
+        return (Index >= 0 && Index < Rows.Num()) ? Rows[Index].Name : FName();
     }
 
     int32 CDataTable::GetRowStructSize() const
@@ -59,7 +59,7 @@ namespace Lumina
 
     const void* CDataTable::FindRowHinted(const FName& RowName, int32& InOutIndex) const
     {
-        if (InOutIndex < 0 || InOutIndex >= (int32)Rows.size() || Rows[InOutIndex].Name != RowName)
+        if (InOutIndex < 0 || InOutIndex >= Rows.Num() || Rows[InOutIndex].Name != RowName)
         {
             InOutIndex = FindRowIndex(RowName);
         }
@@ -97,10 +97,10 @@ namespace Lumina
         if (ChangedProperty != nullptr && ChangedProperty->GetPropertyName() == FName("RowStructName"))
         {
             CStruct* RowStruct = GetRowStruct();
-            Rows.erase(std::remove_if(Rows.begin(), Rows.end(), [RowStruct](const SDataTableRow& Row)
+            Rows.RemoveAll([RowStruct](const SDataTableRow& Row)
             {
                 return Row.Value.GetScriptStruct() != RowStruct;
-            }), Rows.end());
+            });
         }
     }
 
@@ -114,40 +114,40 @@ namespace Lumina
             return Constants::kIndexNone;
         }
 
-        SDataTableRow& Row = Rows.emplace_back();
+        SDataTableRow& Row = Rows.EmplaceGetRef();
         Row.Name = RowName;
         Row.Value.InitializeAs(Struct);
 
-        return (int32)Rows.size() - 1;
+        return Rows.Num() - 1;
     }
 
     void CDataTable::RemoveRow(int32 Index)
     {
-        if (Index < 0 || Index >= (int32)Rows.size())
+        if (Index < 0 || Index >= Rows.Num())
         {
             return;
         }
 
-        // Ordered erase, not swap-and-pop, since row order is authored and visible in the editor.
-        Rows.erase(Rows.begin() + Index);
+        // Ordered RemoveAt, not RemoveAtSwap, since row order is authored and visible in the editor.
+        Rows.RemoveAt(Index);
     }
 
     void CDataTable::MoveRow(int32 From, int32 To)
     {
-        const int32 Count = (int32)Rows.size();
+        const int32 Count = Rows.Num();
         if (From == To || From < 0 || From >= Count || To < 0 || To >= Count)
         {
             return;
         }
 
         SDataTableRow Moved = std::move(Rows[From]);
-        Rows.erase(Rows.begin() + From);
-        Rows.insert(Rows.begin() + To, std::move(Moved));
+        Rows.RemoveAt(From);
+        Rows.Insert(std::move(Moved), To);
     }
 
     void CDataTable::ClearRows()
     {
-        Rows.clear();
+        Rows.Reset();
     }
 
     CStruct* SDataTableRowHandle::GetRowStruct() const
@@ -180,7 +180,7 @@ namespace Lumina
         const FString BaseText = Base.ToString();
         for (int32 Suffix = 1; Suffix < 100000; ++Suffix)
         {
-            const FName Candidate(BaseText + "_" + Format("{}", Suffix).c_str());
+            const FName Candidate(BaseText + "_" + *Format("{}", Suffix));
             if (FindRowIndex(Candidate) == Constants::kIndexNone)
             {
                 return Candidate;

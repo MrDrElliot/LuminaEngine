@@ -129,7 +129,7 @@ namespace Lumina
     {
         Property->GetValue(&Value);
 
-        const char* NameStr = Value.Name.IsNone() ? "" : Value.Name.c_str();
+        const char* NameStr = Value.Name.IsNone() ? "" : *Value.Name;
         strncpy(NameBuffer, NameStr, sizeof(NameBuffer));
         NameBuffer[sizeof(NameBuffer) - 1] = '\0';
     }

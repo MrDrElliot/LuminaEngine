@@ -7,10 +7,10 @@ namespace Lumina
     class FObjectProperty : public FProperty
     {
     public:
-        explicit FObjectProperty(const FPropertyDesc& Desc)
-            : FProperty(Desc)
+        explicit FObjectProperty(const FPropertyDesc& InDesc)
+            : FProperty(InDesc)
         {
-            ObjectClass = Desc.Type->GetClass();
+            ObjectClass = InDesc.Type->GetClass();
             SetElementSize(sizeof(TStrongObjectPtr<CObject>));
         }
 

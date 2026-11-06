@@ -26,7 +26,7 @@ namespace Lumina
 
         void Enqueue(TMoveOnlyFunction<void()>&& Job);
 
-        uint32 GetNumThreads() const { return (uint32)Threads.size(); }
+        uint32 GetNumThreads() const { return (uint32)Threads.Num(); }
 
         // The caller takes a share and drains the queue while it waits, so a job on the pool can fan out without deadlocking it.
         template <typename TFunc>
@@ -82,7 +82,7 @@ namespace Lumina
 
     // Fans out on the pool when there is one, or on the frame's workers when there is not.
     template <typename TFunc>
-    void NavParallelFor(FNavBuildPool* Pool, uint32 Num, TFunc&& Func, uint32 MinRange, ETaskPriority Priority)
+    void NavParallelFor(FNavBuildPool* Pool, uint32 Num, TFunc&& Func, uint32 MinRange, Jobs::EJobPriority Priority)
     {
         if (Pool != nullptr)
         {
@@ -90,7 +90,7 @@ namespace Lumina
         }
         else
         {
-            Task::ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
+            Jobs::ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
         }
     }
 }

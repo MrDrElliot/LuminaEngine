@@ -21,11 +21,11 @@ namespace
     FManagedTypeDefinition HeldDefinition(const char* Name)
     {
         FScriptExportSchema Schema;
-        Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Float));
-        Schema.Fields.push_back(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
-        Schema.Fields.push_back(ScriptTest::ScalarField("Tag", EPropertyTypeFlags::Name));
+        Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Float));
+        Schema.Fields.Add(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
+        Schema.Fields.Add(ScriptTest::ScalarField("Tag", EPropertyTypeFlags::Name));
         FManagedTypeDefinition Definition = ScriptTest::StructDefinition(Name, std::move(Schema));
-        Definition.Meta.push_back({ "Component", "" });
+        Definition.Meta.Add({ "Component", "" });
         return Definition;
     }
 
@@ -96,13 +96,13 @@ TEST(MissingComponents, HeldBytesReadBackThroughAnotherNameTable)
     Fill(Struct, Source);
 
     SMissingComponents Holder;
-    SHeldValue& Entry = Holder.Entries.emplace_back();
+    SHeldValue& Entry = Holder.Entries.EmplaceGetRef();
     Entry.TypeName = FName("SComp_GTestHeldBytes");
     Entry.Data.Capture(*Struct, Source);
     Ops->Delete(Source);
 
     SMissingComponents Copy = ThroughAnotherPackage(Holder);
-    ASSERT_EQ(Copy.Entries.size(), 1u);
+    ASSERT_EQ(Copy.Entries.Num(), 1);
     EXPECT_EQ(Copy.Entries[0].TypeName, FName("SComp_GTestHeldBytes"));
 
     void* Restored = Ops->New();
@@ -128,7 +128,7 @@ TEST(MissingComponents, ARemovedTypeIsHeldThenRestoredWhenItReturns)
     EXPECT_EQ(Ops->Has(Registry, Entity), 0);
     SMissingComponents* Holder = Registry.TryGet<SMissingComponents>(Entity);
     ASSERT_NE(Holder, nullptr);
-    ASSERT_EQ(Holder->Entries.size(), 1u);
+    ASSERT_EQ(Holder->Entries.Num(), 1);
     EXPECT_EQ(Holder->Entries[0].TypeName, FName("SComp_GTestHeldType")) << "held under the C# name, not the retired one";
 
     *Holder = ThroughAnotherPackage(*Holder);

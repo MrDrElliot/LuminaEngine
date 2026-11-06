@@ -24,7 +24,7 @@ namespace Lumina
         {
             return;
         }
-        Painters.insert_or_assign(AssetClass, std::move(Painter));
+        Painters.Add(AssetClass, std::move(Painter));
     }
 
     FAssetTilePainterFn* FAssetTilePainterRegistry::Find(CClass* AssetClass)
@@ -32,10 +32,10 @@ namespace Lumina
         // Most-derived first, matching the editor-tool registry, so a subclass can override its base.
         for (CClass* Current = AssetClass; Current != nullptr; Current = Cast<CClass>(Current->GetSuperStruct()))
         {
-            auto It = Painters.find(Current);
-            if (It != Painters.end())
+            auto It = Painters.Find(Current);
+            if (It != nullptr)
             {
-                return &It->second;
+                return &(*It);
             }
         }
         return nullptr;
@@ -126,7 +126,7 @@ namespace Lumina
             Out.bHasZeroLine = (ValueMin < 0.0f && ValueMax > 0.0f);
             Out.ZeroY        = Out.bHasZeroLine ? ToNormalizedY(0.0f) : 0.0f;
 
-            Out.KeyCount = Math::Min((int32)Curve.Keys.size(), kMaxCurveSamples);
+            Out.KeyCount = Math::Min(Curve.Keys.Num(), kMaxCurveSamples);
             for (int32 i = 0; i < Out.KeyCount; ++i)
             {
                 Out.KeyX[i] = (Curve.Keys[i].Time - TimeMin) / TimeSpan;
@@ -213,13 +213,13 @@ namespace Lumina
             Out.LoadState.store(FPackageThumbnail::EState::None, std::memory_order_relaxed);
             Out.ImageWidth  = Size;
             Out.ImageHeight = Size;
-            Out.ImageData.assign((size_t)Size * Size * BytesPerPixel, 0);
+            Out.ImageData.Init(0, IntCastChecked<int32>(static_cast<int64>(Size) * Size * BytesPerPixel));
 
             const FRGBA Background = ToRGBA8(ImVec4(0.16f, 0.16f, 0.17f, 1.0f));   // matches the tile frame
             const FRGBA CurveColor = ToRGBA8(EditorColors::Accent());
             const FRGBA AxisColor  = ToRGBA8(ImVec4(0.45f, 0.45f, 0.48f, 1.0f));
 
-            uint8* Pixels = Out.ImageData.data();
+            uint8* Pixels = Out.ImageData.GetData();
 
             // StoreDownsampledRGBA stores flipped and the upload flips back, so every write goes through Plot.
             auto Plot = [&](int32 X, int32 Y, const FRGBA& C)

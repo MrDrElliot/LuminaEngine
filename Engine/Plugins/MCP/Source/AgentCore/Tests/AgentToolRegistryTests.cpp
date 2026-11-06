@@ -6,7 +6,7 @@
 using namespace Lumina;
 using namespace Lumina::Agent;
 
-namespace
+namespace AgentToolRegistryTestsInternal
 {
     // The Tests module has reflection off, so params come from types the engine already reflects.
     using FParams = SNameComponent;
@@ -43,6 +43,8 @@ namespace
         return Tool.Invoke(&In, &Out);
     }
 }
+
+using namespace AgentToolRegistryTestsInternal;
 
 TEST(AgentToolRegistry, ARegisteredToolIsFoundAndCounted)
 {
@@ -97,7 +99,7 @@ TEST(AgentToolRegistry, ATextOnlyToolHasNoResultType)
         EToolEffect::ReadOnly, EToolThread::Any,
         [](const FParams& In)
         {
-            return FToolResult::Ok(FString("saw ") + In.Name.ToString().c_str());
+            return FToolResult::Ok(FString("saw ") + *In.Name.ToString());
         }));
 
     FTool Tool;
@@ -109,7 +111,7 @@ TEST(AgentToolRegistry, ATextOnlyToolHasNoResultType)
 
     const FToolResult Result = Tool.Invoke(&In, nullptr);
     EXPECT_FALSE(Result.bIsError);
-    EXPECT_NE(Result.Text.find("Lamp"), FString::npos);
+    EXPECT_NE(Result.Text.Find("Lamp"), Constants::kIndexNone);
 }
 
 TEST(AgentToolRegistry, AFailingToolReportsItselfWithoutThrowing)
@@ -162,13 +164,13 @@ TEST(AgentToolRegistry, ANullHandlerIsRefused)
 TEST(AgentToolRegistry, UnregisteringOneToolLeavesTheRest)
 {
     FScopedOwner Cleanup;
-    ASSERT_TRUE(RegisterEcho("test.first"));
-    ASSERT_TRUE(RegisterEcho("test.second"));
+    ASSERT_TRUE(RegisterEcho("test.Key"));
+    ASSERT_TRUE(RegisterEcho("test.Value"));
 
-    EXPECT_TRUE(FToolRegistry::Get().Unregister("test.first"));
-    EXPECT_FALSE(FToolRegistry::Get().Unregister("test.first"));
-    EXPECT_FALSE(FToolRegistry::Get().Contains("test.first"));
-    EXPECT_TRUE(FToolRegistry::Get().Contains("test.second"));
+    EXPECT_TRUE(FToolRegistry::Get().Unregister("test.Key"));
+    EXPECT_FALSE(FToolRegistry::Get().Unregister("test.Key"));
+    EXPECT_FALSE(FToolRegistry::Get().Contains("test.Key"));
+    EXPECT_TRUE(FToolRegistry::Get().Contains("test.Value"));
 }
 
 // Plugin unload and script reload lean on this, so an owner takes exactly its own tools away.

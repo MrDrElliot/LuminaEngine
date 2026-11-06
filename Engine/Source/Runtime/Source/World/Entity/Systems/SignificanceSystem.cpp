@@ -4,9 +4,6 @@
 
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Math/Frustum.h"
-#include "SystemSingletons.h"
-#include "TaskSystem/TaskSystem.h"
-#include "World/World.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
@@ -21,16 +18,7 @@ namespace Lumina
     static TConsoleVar<bool> CVarSignificanceEnabled("Significance.Enabled", true,
         "Score entity significance each frame. Off makes every lookup report full significance.");
 
-    void SSignificanceSystem::Configure()
-    {
-        RequireUpdate(EUpdateStage::FrameStart);
-        RequireUpdate(EUpdateStage::Paused);
-        Writes<SystemResource::Significance>();
-        Reads<STransformComponent, SStaticMeshComponent, SSkeletalMeshComponent, SDynamicMeshComponent>();
-        Reads<SAudioSourceComponent, SPathFollowComponent, SPerceptionComponent, SRVOAgentComponent>();
-    }
-
-    namespace
+    namespace SignificanceSystemInternal
     {
         // Below this a radius cannot divide the distance without producing a meaningless band.
         constexpr float kSignificanceMinRadius = 0.01f;
@@ -51,89 +39,53 @@ namespace Lumina
         }
     }
 
-    void SSignificanceSystem::OnStartup(const SSystemContext& Context)
+    void SSignificanceSystem::Configure()
     {
-
-        Context.GetRegistry().Ctx().Emplace<FSignificanceState>();
+        RequireUpdate(EUpdateStage::FrameStart);
+        RequireUpdate(EUpdateStage::Paused);
     }
 
     void SSignificanceSystem::OnUpdate(const SSystemContext& Context)
     {
+        using namespace SignificanceSystemInternal;
 
-        LUMINA_PROFILE_SCOPE();
+        FSignificanceState& SignificanceState = *State;
+        SignificanceState.bEnabled = CVarSignificanceEnabled.GetValue();
+        SignificanceState.bHasView = false;
 
-        FSignificanceState* StatePtr = Context.GetRegistry().Ctx().Find<FSignificanceState>();
-        if (StatePtr == nullptr)
-        {
-            return;
-        }
-
-        FSignificanceState& State = *StatePtr;
-        State.bEnabled = CVarSignificanceEnabled.GetValue();
-        State.bHasView = false;
-
-        if (!State.bEnabled)
+        if (!SignificanceState.bEnabled)
         {
             return;
         }
 
         // One frame old, which is what every broad-phase consumer of this already tolerates.
-        const FResolvedSceneView* Resolved = Context.GetRegistry().Ctx().Find<FResolvedSceneView>();
-        if (Resolved == nullptr || !Resolved->bHasView)
+        const FResolvedSceneView& Resolved = *ResolvedView;
+        if (!Resolved.bHasView)
         {
             return;
         }
+
+        const FVector3 ViewOrigin = Resolved.ViewVolume.GetViewPosition();
+        const FFrustum Frustum    = Resolved.ViewVolume.GetFrustum();
+
+        SignificanceState.ViewOrigin = ViewOrigin;
+        SignificanceState.bHasView   = true;
 
         // Only the components whose systems read a score, so static scenery and crowds nobody asks about cost nothing.
-        const ECS::FSparseSet* Consumers[] =
-        {
-            Context.CreateView<SAudioSourceComponent>().GetDriver(),
-            Context.CreateView<SPathFollowComponent>().GetDriver(),
-            Context.CreateView<SPerceptionComponent>().GetDriver(),
-            Context.CreateView<SRVOAgentComponent>().GetDriver(),
-        };
-
-        uint32 MaxIndex = 0;
-        bool bAnyConsumer = false;
-        for (const ECS::FSparseSet* Pool : Consumers)
-        {
-            if (Pool == nullptr || Pool->IsEmpty())
-            {
-                continue;
-            }
-            bAnyConsumer = true;
-            MaxIndex = Math::Max(MaxIndex, Pool->MaxLiveIndex());
-        }
-
-        const FVector3 ViewOrigin = Resolved->ViewVolume.GetViewPosition();
-        const FFrustum Frustum    = Resolved->ViewVolume.GetFrustum();
-
-        ++State.Stamp;
-        State.ViewOrigin = ViewOrigin;
-        State.bHasView   = true;
-
-        if (!bAnyConsumer)
+        TStampedEntityCache<FEntitySignificance>& Cache = SignificanceState.Scores;
+        if (!Cache.BeginPass(AudioSourceConsumers.View(), PathFollowConsumers.View(), PerceptionConsumers.View(),
+                             AvoidanceConsumers.View()))
         {
             return;
         }
 
-        if ((uint32)State.ByEntityIndex.size() <= MaxIndex)
-        {
-            State.ByEntityIndex.resize((size_t)MaxIndex + 1u);
-        }
-
-        auto TransformStorage = Context.GetStorage<STransformComponent>();
-        auto StaticStorage    = Context.GetStorage<SStaticMeshComponent>();
-        auto SkeletalStorage  = Context.GetStorage<SSkeletalMeshComponent>();
-        auto DynamicStorage   = Context.GetStorage<SDynamicMeshComponent>();
-
-        const uint32 Stamp = State.Stamp;
-        FEntitySignificance* Scores = State.ByEntityIndex.data();
+        const uint32 Stamp = Cache.Stamp;
+        FEntitySignificance* Scores = Cache.ByEntityIndex.GetData();
 
         // Every entity owns a distinct index, and one in two pools writes the same score twice, so the body never races.
-        const auto Score = [&](ECS::FEntity Entity)
+        const auto Score = [&](ECS::FEntity Entity, const auto&)
         {
-            const STransformComponent* Xform = Entity.IsTombstone() ? nullptr : TransformStorage.TryGet(Entity);
+            const STransformComponent* Xform = Transforms.TryGet<STransformComponent>(Entity);
             if (Xform == nullptr)
             {
                 return;
@@ -142,14 +94,14 @@ namespace Lumina
             const VTransform World = Xform->GetWorldTransformCached();
             const FVector3 Location = World.GetLocation();
 
-            const SMeshComponent* Mesh = StaticStorage.TryGet(Entity);
+            const SMeshComponent* Mesh = StaticMeshes.TryGet<SStaticMeshComponent>(Entity);
             if (Mesh == nullptr)
             {
-                Mesh = SkeletalStorage.TryGet(Entity);
+                Mesh = SkeletalMeshes.TryGet<SSkeletalMeshComponent>(Entity);
             }
             if (Mesh == nullptr)
             {
-                Mesh = DynamicStorage.TryGet(Entity);
+                Mesh = DynamicMeshes.TryGet<SDynamicMeshComponent>(Entity);
             }
 
             const float Radius   = WorldRadius(Mesh, World.GetScale());
@@ -165,36 +117,9 @@ namespace Lumina
             Out.bInView            = Frustum.IntersectsSphere(Location, Radius);
         };
 
-        for (const ECS::FSparseSet* Pool : Consumers)
-        {
-            if (Pool == nullptr || Pool->IsEmpty())
-            {
-                continue;
-            }
-
-            const ECS::FEntity* Dense = Pool->GetDenseData();
-            const uint32 Num = (uint32)Pool->GetDenseSize();
-            Task::ParallelForOrSerial(Num, kSignificanceParallelGrain, [&](uint32 Index)
-            {
-                Score(Dense[Index]);
-            }, 256);
-        }
-    }
-
-    namespace Significance
-    {
-        const FSignificanceState* GetState(const SSystemContext& Context)
-        {
-            return Context.GetRegistry().Ctx().Find<FSignificanceState>();
-        }
-
-        const FSignificanceState* GetState(CWorld* World)
-        {
-            if (World == nullptr)
-            {
-                return nullptr;
-            }
-            return World->GetEntityRegistry().Ctx().Find<FSignificanceState>();
-        }
+        AudioSourceConsumers.ParallelForEach(Score, kSignificanceParallelGrain);
+        PathFollowConsumers.ParallelForEach(Score, kSignificanceParallelGrain);
+        PerceptionConsumers.ParallelForEach(Score, kSignificanceParallelGrain);
+        AvoidanceConsumers.ParallelForEach(Score, kSignificanceParallelGrain);
     }
 }

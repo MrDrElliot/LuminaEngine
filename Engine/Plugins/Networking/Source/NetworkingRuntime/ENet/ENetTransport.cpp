@@ -82,8 +82,8 @@ namespace Lumina
 
         ENetPeer* FindPeer(FConnectionHandle Handle) const
         {
-            auto It = Peers.find(Handle.Value);
-            return It != Peers.end() ? It->second : nullptr;
+            auto It = Peers.Find(Handle.Value);
+            return It != nullptr ? (*It) : nullptr;
         }
 
         // A peer of 0 means broadcast, resolved at flush time since the peer may have gone away.
@@ -134,12 +134,13 @@ namespace Lumina
 
             if (LatencyMs > 0)
             {
-                FDelayedPacket& P = Delayed.emplace_back();
+                FDelayedPacket& P = Delayed.EmplaceGetRef();
                 P.Peer        = PeerHandle;
                 P.Channel     = Channel;
                 P.Mode        = Mode;
                 P.ReleaseTime = enet_time_get() + static_cast<uint32>(LatencyMs);
-                P.Data.assign(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
+                P.Data.Reset();
+                P.Data.Append(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
                 return true; // queued
             }
             return false; // loss didn't drop it and no latency -> send now
@@ -148,21 +149,21 @@ namespace Lumina
         // Constant latency keeps the queue ordered, so a due prefix is safe to flush and erase.
         void FlushDelayed()
         {
-            if (Delayed.empty())
+            if (Delayed.IsEmpty())
             {
                 return;
             }
             const uint32 Now = enet_time_get();
-            SIZE_T Count = 0;
-            while (Count < Delayed.size() && Delayed[Count].ReleaseTime <= Now)
+            int32 Count = 0;
+            while (Count < Delayed.Num() && Delayed[Count].ReleaseTime <= Now)
             {
                 FDelayedPacket& P = Delayed[Count];
-                SendImmediate(P.Peer, P.Channel, P.Mode, P.Data.data(), static_cast<SIZE_T>(P.Data.size()));
+                SendImmediate(P.Peer, P.Channel, P.Mode, P.Data.GetData(), static_cast<SIZE_T>(P.Data.Num()));
                 ++Count;
             }
             if (Count > 0)
             {
-                Delayed.erase(Delayed.begin(), Delayed.begin() + Count);
+                Delayed.RemoveAt(0, Count);
             }
         }
     };
@@ -184,7 +185,7 @@ namespace Lumina
                     enet_peer_disconnect_now(Peer, 0);
                 }
             }
-            if (!Impl->Peers.empty())
+            if (!Impl->Peers.IsEmpty())
             {
                 enet_host_flush(Impl->Host);
             }
@@ -240,9 +241,9 @@ namespace Lumina
         Impl->bIsServer = false;
 
         ENetAddress Address{};
-        if (enet_address_set_host(&Address, Params.Address.Host.c_str()) != 0)
+        if (enet_address_set_host(&Address, *Params.Address.Host) != 0)
         {
-            LOG_ERROR("FENetTransport::ConnectToServer: could not resolve host '{}'", Params.Address.Host.c_str());
+            LOG_ERROR("FENetTransport::ConnectToServer: could not resolve host '{}'", *Params.Address.Host);
             enet_host_destroy(Impl->Host);
             Impl->Host = nullptr;
             return FConnectionHandle::Invalid();
@@ -282,7 +283,7 @@ namespace Lumina
             enet_peer_disconnect_now(Peer, Reason);
             // disconnect_now emits no event; drop the mapping here.
             Peer->data = nullptr;
-            Impl->Peers.erase(Connection.Value);
+            Impl->Peers.Remove(Connection.Value);
         }
         else
         {
@@ -359,7 +360,7 @@ namespace Lumina
                         Id = static_cast<uint32>(reinterpret_cast<uintptr_t>(Event.peer->data));
                     }
 
-                    FNetworkEvent& Out = OutEvents.emplace_back();
+                    FNetworkEvent& Out = OutEvents.EmplaceGetRef();
                     Out.Type       = ENetworkEventType::Connected;
                     Out.Connection = FConnectionHandle{ Id };
                 }
@@ -369,11 +370,11 @@ namespace Lumina
                 {
                     const uint32 Id = static_cast<uint32>(reinterpret_cast<uintptr_t>(Event.peer->data));
 
-                    FNetworkEvent& Out = OutEvents.emplace_back();
+                    FNetworkEvent& Out = OutEvents.EmplaceGetRef();
                     Out.Type       = ENetworkEventType::Data;
                     Out.Connection = FConnectionHandle{ Id };
                     Out.Channel    = Event.channelID;
-                    Out.Data.assign(Event.packet->data, Event.packet->data + Event.packet->dataLength);
+                    Out.Data.Append(Event.packet->data, Event.packet->data + Event.packet->dataLength);
 
                     enet_packet_destroy(Event.packet);
                 }
@@ -383,11 +384,11 @@ namespace Lumina
                 {
                     const uint32 Id = static_cast<uint32>(reinterpret_cast<uintptr_t>(Event.peer->data));
 
-                    FNetworkEvent& Out = OutEvents.emplace_back();
+                    FNetworkEvent& Out = OutEvents.EmplaceGetRef();
                     Out.Type       = ENetworkEventType::Disconnected;
                     Out.Connection = FConnectionHandle{ Id };
 
-                    Impl->Peers.erase(Id);
+                    Impl->Peers.Remove(Id);
                     Event.peer->data = nullptr;
                 }
                 break;
@@ -431,14 +432,14 @@ namespace Lumina
 
     void FENetTransport::GetConnectionStats(TVector<FConnectionStats>& OutStats) const
     {
-        OutStats.clear();
+        OutStats.Reset();
         for (const auto& [Id, Peer] : Impl->Peers)
         {
             if (Peer == nullptr)
             {
                 continue;
             }
-            FConnectionStats& S = OutStats.emplace_back();
+            FConnectionStats& S = OutStats.EmplaceGetRef();
             S.ConnectionId    = Id;
             S.State           = ToConnectionState(Peer->state);
             S.RoundTripTimeMs = Peer->roundTripTime;

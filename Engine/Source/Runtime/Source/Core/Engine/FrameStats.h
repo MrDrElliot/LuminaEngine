@@ -34,5 +34,5 @@ namespace Lumina::FrameStats
     RUNTIME_API void Reset();
 
     // SinceSeconds limits it to frames that ended at or after that engine time, which lets one level be summarized on its own.
-    RUNTIME_API FSummary Summarize(uint32 WorstCount, double SinceSeconds = 0.0);
+    RUNTIME_API FSummary Summarize(int32 WorstCount, double SinceSeconds = 0.0);
 }

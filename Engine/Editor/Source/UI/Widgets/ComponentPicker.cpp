@@ -25,15 +25,15 @@ namespace Lumina::ComponentPicker
             const CPackage* Package = Struct->GetPackage();
             const FString PackageName = Package != nullptr ? Package->GetName().ToString() : FString();
             const FStringView View(PackageName);
-            const FStringView Module = View.starts_with(kTypesPackagePrefix) ? View.substr(kTypesPackagePrefix.size()) : FStringView();
-            if (Module.empty() || Module == kEnginePackageModule)
+            const FStringView Module = View.StartsWith(kTypesPackagePrefix) ? View.Mid(kTypesPackagePrefix.Len()) : FStringView();
+            if (Module.IsEmpty() || Module == kEnginePackageModule)
             {
                 return FString(kEnginePackageModule);
             }
 
-            const FString ModuleName(Module.data(), Module.size());
-            auto Plugin = PluginByModule.find(ModuleName);
-            return Plugin != PluginByModule.end() ? Plugin->second : ModuleName;
+            const FString ModuleName(Module.GetData(), Module.Len());
+            auto Plugin = PluginByModule.Find(ModuleName);
+            return Plugin != nullptr ? (*Plugin) : ModuleName;
         }
 
         THashMap<FString, FString> GatherPluginModules()
@@ -43,7 +43,7 @@ namespace Lumina::ComponentPicker
             {
                 for (const FPluginModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
                 {
-                    PluginByModule.emplace(Module.Name, FString(Plugin->GetName()));
+                    PluginByModule.TryAdd(Module.Name, FString(Plugin->GetName()));
                 }
             }
             return PluginByModule;
@@ -52,7 +52,7 @@ namespace Lumina::ComponentPicker
 
     void GatherItems(TVector<FPickerItem>& Out, const TFunction<bool(CStruct*)>& IsAlreadyPresent)
     {
-        Out.clear();
+        Out.Reset();
         const EntityScriptPicker::FScriptSourceIndex SourceIndex;
         const THashMap<FString, FString> PluginByModule = GatherPluginModules();
 
@@ -68,8 +68,8 @@ namespace Lumina::ComponentPicker
             const bool bManaged = Cast<CScriptStruct>(Struct) != nullptr;
             const FString Declared = Struct->HasMeta("Category") ? Struct->GetMeta("Category") : FString();
 
-            FPickerItem& Item = Out.emplace_back();
-            Item.Name      = FString(Struct->MakeDisplayName().c_str());
+            FPickerItem& Item = Out.EmplaceGetRef();
+            Item.Name      = FString(*Struct->MakeDisplayName());
             Item.Key       = FullName;
             Item.Icon      = bManaged ? LE_ICON_LANGUAGE_CSHARP : LE_ICON_LANGUAGE_CPP;
             Item.bDisabled = IsAlreadyPresent && IsAlreadyPresent(Struct);
@@ -83,7 +83,7 @@ namespace Lumina::ComponentPicker
             else
             {
                 const FString Origin = NativeOrigin(Struct, PluginByModule);
-                Item.Category = Declared.empty()
+                Item.Category = Declared.IsEmpty()
                     ? Lumina::Format("{}/{}", EntityScriptPicker::NativeCategory, Origin)
                     : Lumina::Format("{}/{}/{}", EntityScriptPicker::NativeCategory, Origin, Declared);
                 Item.Tooltip  = FullName;

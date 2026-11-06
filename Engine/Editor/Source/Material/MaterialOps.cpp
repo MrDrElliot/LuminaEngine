@@ -120,11 +120,11 @@ namespace Lumina::MaterialOps
             }
             if (CMaterialExpression_FunctionInput* In = Cast<CMaterialExpression_FunctionInput>(N.Get()))
             {
-                InputNodes.push_back(In);
+                InputNodes.Add(In);
             }
             else if (CMaterialFunctionOutput* Out = Cast<CMaterialFunctionOutput>(N.Get()))
             {
-                OutputNodes.push_back(Out);
+                OutputNodes.Add(Out);
             }
         }
 
@@ -138,8 +138,8 @@ namespace Lumina::MaterialOps
             return A->SortPriority < B->SortPriority;
         });
 
-        Function->Inputs.clear();
-        Function->Inputs.reserve(InputNodes.size());
+        Function->Inputs.Reset();
+        Function->Inputs.Reserve(InputNodes.Num());
         for (CMaterialExpression_FunctionInput* In : InputNodes)
         {
             SMaterialFunctionInput Decl;
@@ -147,18 +147,18 @@ namespace Lumina::MaterialOps
             Decl.Type         = In->InputType;
             Decl.DefaultValue = In->DefaultValue;
             Decl.Description  = In->Description;
-            Function->Inputs.push_back(Move(Decl));
+            Function->Inputs.Add(Move(Decl));
         }
 
-        Function->Outputs.clear();
-        Function->Outputs.reserve(OutputNodes.size());
+        Function->Outputs.Reset();
+        Function->Outputs.Reserve(OutputNodes.Num());
         for (CMaterialFunctionOutput* Out : OutputNodes)
         {
             SMaterialFunctionOutput Decl;
             Decl.Name        = Out->OutputName;
             Decl.Type        = Out->OutputType;
             Decl.Description = Out->Description;
-            Function->Outputs.push_back(Move(Decl));
+            Function->Outputs.Add(Move(Decl));
         }
     }
 }

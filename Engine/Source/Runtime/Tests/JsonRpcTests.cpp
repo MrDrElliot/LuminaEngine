@@ -7,15 +7,17 @@ using namespace Lumina::JsonRpc;
 
 namespace
 {
-    nlohmann::json Handle(FDispatcher& Dispatcher, const char* Message)
+    FJsonValue Handle(FDispatcher& Dispatcher, const char* Message)
     {
         const FString Reply = Dispatcher.HandleMessage(FStringView(Message));
-        if (Reply.empty())
+        if (Reply.IsEmpty())
         {
-            return nlohmann::json();
+            return FJsonValue();
         }
 
-        return nlohmann::json::parse(Reply.c_str(), Reply.c_str() + Reply.size(), nullptr, false);
+        FJsonValue Parsed;
+        EXPECT_TRUE(FJsonValue::Parse(Reply.View(), Parsed)) << *Reply;
+        return Parsed;
     }
 
     // FDispatcher owns a mutex, so it is neither copyable nor movable and has to be filled in place.
@@ -27,9 +29,9 @@ namespace
         });
     }
 
-    int32 ErrorCodeOf(const nlohmann::json& Reply)
+    int32 ErrorCodeOf(const FJsonValue& Reply)
     {
-        return Reply["error"]["code"].get<int32>();
+        return Reply["error"]["code"].AsInt32();
     }
 }
 
@@ -38,13 +40,13 @@ TEST(JsonRpc, ACallReachesItsHandlerAndEchoesTheId)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","params":{"value":7},"id":42})");
 
     EXPECT_EQ(Reply["jsonrpc"], "2.0");
     EXPECT_EQ(Reply["id"], 42);
     EXPECT_EQ(Reply["result"]["value"], 7);
-    EXPECT_FALSE(Reply.contains("error"));
+    EXPECT_FALSE(Reply.Contains("error"));
 }
 
 TEST(JsonRpc, AStringIdSurvivesUnchanged)
@@ -52,7 +54,7 @@ TEST(JsonRpc, AStringIdSurvivesUnchanged)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","id":"abc"})");
 
     EXPECT_EQ(Reply["id"], "abc");
@@ -65,7 +67,7 @@ TEST(JsonRpc, ANotificationIsAnsweredWithSilence)
     InstallEcho(Dispatcher);
 
     const FString Reply = Dispatcher.HandleMessage(FStringView(R"({"jsonrpc":"2.0","method":"echo"})"));
-    EXPECT_TRUE(Reply.empty());
+    EXPECT_TRUE(Reply.IsEmpty());
 }
 
 // A null id is a real id, so unlike an absent one it still gets a reply.
@@ -74,11 +76,11 @@ TEST(JsonRpc, ANullIdIsNotANotification)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","id":null})");
 
-    EXPECT_TRUE(Reply.contains("result"));
-    EXPECT_TRUE(Reply["id"].is_null());
+    EXPECT_TRUE(Reply.Contains("result"));
+    EXPECT_TRUE(Reply["id"].IsNull());
 }
 
 TEST(JsonRpc, AFailingNotificationIsStillSilent)
@@ -87,7 +89,7 @@ TEST(JsonRpc, AFailingNotificationIsStillSilent)
     InstallEcho(Dispatcher);
 
     const FString Reply = Dispatcher.HandleMessage(FStringView(R"({"jsonrpc":"2.0","method":"missing"})"));
-    EXPECT_TRUE(Reply.empty());
+    EXPECT_TRUE(Reply.IsEmpty());
 }
 
 TEST(JsonRpc, MalformedJsonReportsAParseErrorAgainstANullId)
@@ -95,10 +97,10 @@ TEST(JsonRpc, MalformedJsonReportsAParseErrorAgainstANullId)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0",)");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0",)");
 
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::ParseError));
-    EXPECT_TRUE(Reply["id"].is_null());
+    EXPECT_TRUE(Reply["id"].IsNull());
 }
 
 TEST(JsonRpc, AnUnknownMethodReportsMethodNotFound)
@@ -106,7 +108,7 @@ TEST(JsonRpc, AnUnknownMethodReportsMethodNotFound)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"nope","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"nope","id":1})");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::MethodNotFound));
 }
 
@@ -115,7 +117,7 @@ TEST(JsonRpc, TheWrongProtocolVersionIsRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"1.0","method":"echo","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"1.0","method":"echo","id":1})");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidRequest));
 }
 
@@ -124,7 +126,7 @@ TEST(JsonRpc, AMissingMethodIsRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","id":1})");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidRequest));
 }
 
@@ -133,7 +135,7 @@ TEST(JsonRpc, ScalarParamsAreRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","params":5,"id":1})");
 
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidParams));
@@ -144,7 +146,7 @@ TEST(JsonRpc, ArrayParamsAreAccepted)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","params":[1,2],"id":1})");
 
     EXPECT_EQ(Reply["result"][0], 1);
@@ -156,16 +158,16 @@ TEST(JsonRpc, OmittedParamsArriveAsAnEmptyObject)
     FDispatcher Dispatcher;
     Dispatcher.RegisterMethod("Tests", "shape", [](const FRequest& Request)
     {
-        nlohmann::json Result = nlohmann::json::object();
-        Result["object"] = Request.Params.is_object();
-        Result["empty"]  = Request.Params.empty();
+        FJsonValue Result = FJsonValue::MakeObject();
+        Result.Set("object", Request.Params.IsObject());
+        Result.Set("empty", Request.Params.IsEmpty());
         return FResponse::Success(Result);
     });
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"shape","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"shape","id":1})");
 
-    EXPECT_TRUE(Reply["result"]["object"]);
-    EXPECT_TRUE(Reply["result"]["empty"]);
+    EXPECT_TRUE(Reply["result"]["object"].AsBool());
+    EXPECT_TRUE(Reply["result"]["empty"].AsBool());
 }
 
 TEST(JsonRpc, ANonObjectRequestIsRejected)
@@ -173,7 +175,7 @@ TEST(JsonRpc, ANonObjectRequestIsRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"("just a string")");
+    const FJsonValue Reply = Handle(Dispatcher, R"("just a string")");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidRequest));
 }
 
@@ -182,7 +184,7 @@ TEST(JsonRpc, AnObjectIdIsRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"({"jsonrpc":"2.0","method":"echo","id":{"bad":true}})");
 
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidRequest));
@@ -197,7 +199,7 @@ TEST(JsonRpc, AThrowingHandlerBecomesAnInternalError)
         throw std::runtime_error("handler exploded");
     });
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"boom","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"boom","id":1})");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InternalError));
 }
 
@@ -209,11 +211,11 @@ TEST(JsonRpc, AHandlerCanReportItsOwnFailure)
         return FResponse::Failure(EErrorCode::InvalidParams, "That entity does not exist.");
     });
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"refuse","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"refuse","id":1})");
 
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidParams));
     EXPECT_EQ(Reply["error"]["message"], "That entity does not exist.");
-    EXPECT_FALSE(Reply["error"].contains("data"));
+    EXPECT_FALSE(Reply["error"].Contains("data"));
 }
 
 TEST(JsonRpc, ErrorDataIsCarriedThroughWhenSupplied)
@@ -221,12 +223,12 @@ TEST(JsonRpc, ErrorDataIsCarriedThroughWhenSupplied)
     FDispatcher Dispatcher;
     Dispatcher.RegisterMethod("Tests", "detail", [](const FRequest&)
     {
-        nlohmann::json Data = nlohmann::json::object();
-        Data["expected"] = "int32";
+        FJsonValue Data = FJsonValue::MakeObject();
+        Data.Set("expected", "int32");
         return FResponse::Failure(EErrorCode::InvalidParams, "Wrong type.", Data);
     });
 
-    const nlohmann::json Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"detail","id":1})");
+    const FJsonValue Reply = Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"detail","id":1})");
     EXPECT_EQ(Reply["error"]["data"]["expected"], "int32");
 }
 
@@ -235,12 +237,12 @@ TEST(JsonRpc, ABatchAnswersEveryCallInOrder)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"([{"jsonrpc":"2.0","method":"echo","params":{"n":1},"id":1},)"
         R"({"jsonrpc":"2.0","method":"echo","params":{"n":2},"id":2}])");
 
-    ASSERT_TRUE(Reply.is_array());
-    ASSERT_EQ(Reply.size(), 2u);
+    ASSERT_TRUE(Reply.IsArray());
+    ASSERT_EQ(Reply.Num(), 2);
     EXPECT_EQ(Reply[0]["id"], 1);
     EXPECT_EQ(Reply[1]["id"], 2);
 }
@@ -251,12 +253,12 @@ TEST(JsonRpc, ABatchOmitsNotificationsFromItsReply)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"([{"jsonrpc":"2.0","method":"echo"},)"
         R"({"jsonrpc":"2.0","method":"echo","id":9}])");
 
-    ASSERT_TRUE(Reply.is_array());
-    ASSERT_EQ(Reply.size(), 1u);
+    ASSERT_TRUE(Reply.IsArray());
+    ASSERT_EQ(Reply.Num(), 1);
     EXPECT_EQ(Reply[0]["id"], 9);
 }
 
@@ -268,7 +270,7 @@ TEST(JsonRpc, ABatchOfOnlyNotificationsIsAnsweredWithSilence)
     const FString Reply = Dispatcher.HandleMessage(FStringView(
         R"([{"jsonrpc":"2.0","method":"echo"},{"jsonrpc":"2.0","method":"echo"}])"));
 
-    EXPECT_TRUE(Reply.empty());
+    EXPECT_TRUE(Reply.IsEmpty());
 }
 
 TEST(JsonRpc, AnEmptyBatchIsRejected)
@@ -276,7 +278,7 @@ TEST(JsonRpc, AnEmptyBatchIsRejected)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher, "[]");
+    const FJsonValue Reply = Handle(Dispatcher, "[]");
     EXPECT_EQ(ErrorCodeOf(Reply), static_cast<int32>(EErrorCode::InvalidRequest));
 }
 
@@ -286,11 +288,11 @@ TEST(JsonRpc, ABatchIsolatesABadMember)
     FDispatcher Dispatcher;
     InstallEcho(Dispatcher);
 
-    const nlohmann::json Reply = Handle(Dispatcher,
+    const FJsonValue Reply = Handle(Dispatcher,
         R"([{"jsonrpc":"2.0","method":"echo","id":1},5])");
 
-    ASSERT_EQ(Reply.size(), 2u);
-    EXPECT_TRUE(Reply[0].contains("result"));
+    ASSERT_EQ(Reply.Num(), 2);
+    EXPECT_TRUE(Reply[0].Contains("result"));
     EXPECT_EQ(ErrorCodeOf(Reply[1]), static_cast<int32>(EErrorCode::InvalidRequest));
 }
 
@@ -310,7 +312,7 @@ TEST(JsonRpc, UnregisteringOneMethodLeavesTheRest)
     InstallEcho(Dispatcher);
     Dispatcher.RegisterMethod("Tests", "second", [](const FRequest&)
     {
-        return FResponse::Success(nlohmann::json());
+        return FResponse::Success(FJsonValue());
     });
 
     EXPECT_TRUE(Dispatcher.UnregisterMethod("echo"));
@@ -324,7 +326,7 @@ TEST(JsonRpc, UnregisteringAnOwnerDropsOnlyItsMethods)
 {
     FDispatcher Dispatcher;
 
-    const auto Empty = [](const FRequest&) { return FResponse::Success(nlohmann::json()); };
+    const auto Empty = [](const FRequest&) { return FResponse::Success(FJsonValue()); };
 
     Dispatcher.RegisterMethod("PluginA", "a.one", Empty);
     Dispatcher.RegisterMethod("PluginA", "a.two", Empty);
@@ -347,8 +349,8 @@ TEST(JsonRpc, ForEachMethodReportsTheOwner)
 
     Dispatcher.ForEachMethod([&](FStringView Method, FStringView Owner)
     {
-        SeenMethod = FString(Method.data(), Method.size());
-        SeenOwner  = FString(Owner.data(), Owner.size());
+        SeenMethod = FString(Method.GetData(), Method.Len());
+        SeenOwner  = FString(Owner.GetData(), Owner.Len());
         ++Count;
     });
 
@@ -373,10 +375,10 @@ TEST(JsonRpc, AHandlerMayRegisterDuringDispatch)
     {
         Dispatcher.RegisterMethod("Tests", "grown", [](const FRequest&)
         {
-            return FResponse::Success(nlohmann::json());
+            return FResponse::Success(FJsonValue());
         });
 
-        return FResponse::Success(nlohmann::json());
+        return FResponse::Success(FJsonValue());
     });
 
     Handle(Dispatcher, R"({"jsonrpc":"2.0","method":"grow","id":1})");

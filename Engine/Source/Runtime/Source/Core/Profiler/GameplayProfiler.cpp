@@ -55,8 +55,8 @@ namespace Lumina
         {
             // Fresh start so a stale partial frame can't leak in.
             FScopeLock Lock(Mutex);
-            GOpenStack.clear();
-            IndexOf.clear();
+            GOpenStack.Reset();
+            IndexOf.Reset();
             Current = FGameplayProfileFrame{};
         }
     }
@@ -64,9 +64,9 @@ namespace Lumina
     // Fills to HistorySize, then overwrites the oldest sample and advances Offset onto the next oldest.
     static void PushHistory(FProfilerHistory& History, float Value)
     {
-        if (History.Values.size() < FGameplayProfiler::HistorySize)
+        if (static_cast<uint32>(History.Values.Num()) < FGameplayProfiler::HistorySize)
         {
-            History.Values.push_back(Value);
+            History.Values.Add(Value);
             return;
         }
 
@@ -83,9 +83,9 @@ namespace Lumina
             return;
         }
         FScopeLock Lock(Mutex);
-        Current.Entries.clear();
-        IndexOf.clear();
-        GOpenStack.clear();
+        Current.Entries.Reset();
+        IndexOf.Reset();
+        GOpenStack.Reset();
         Current.TotalMs = 0.0;
         Current.FrameNumber = ++FrameCounter;
     }
@@ -109,24 +109,24 @@ namespace Lumina
         PushHistory(FrameTotalHistory, static_cast<float>(Total));
 
         // Every known scope advances each frame, so the rings stay aligned for a stable sparkline.
-        for (auto& Pair : EntryHistory)
+        for (auto& [Hash, History] : EntryHistory)
         {
-            const auto It = IndexOf.find(Pair.first);
-            const float Value = (It != IndexOf.end()) ? static_cast<float>(Current.Entries[It->second].InclusiveMs) : 0.0f;
-            PushHistory(Pair.second, Value);
+            const auto It = IndexOf.Find(Hash);
+            const float Value = (It != nullptr) ? static_cast<float>(Current.Entries[*It].InclusiveMs) : 0.0f;
+            PushHistory(History, Value);
         }
         for (const FGameplayProfileEntry& E : Current.Entries)
         {
-            if (EntryHistory.find(E.Hash) == EntryHistory.end())
+            if (!EntryHistory.Contains(E.Hash))
             {
-                PushHistory(EntryHistory[E.Hash], static_cast<float>(E.InclusiveMs));
+                PushHistory(EntryHistory.Add(E.Hash), static_cast<float>(E.InclusiveMs));
             }
         }
 
         // Swapped rather than copied; BeginFrame clears whatever Latest hands back.
         Latest.TotalMs     = Current.TotalMs;
         Latest.FrameNumber = Current.FrameNumber;
-        Latest.Entries.swap(Current.Entries);
+        swap(Latest.Entries, Current.Entries);
     }
 
     void FGameplayProfiler::BeginScope(FStringView Name)
@@ -136,22 +136,22 @@ namespace Lumina
             return;
         }
         FOpenScope Open;
-        Open.Name    = FFixedString(Name.data(), Name.size());
+        Open.Name    = FFixedString(Name.GetData(), Name.Len());
         Open.Hash    = HashName(Name);
         Open.StartMs = GameplayProfilerNowMs();
         Open.ChildMs = 0.0;
-        GOpenStack.push_back(std::move(Open));   // thread-local; no lock
+        GOpenStack.Add(std::move(Open));   // thread-local; no lock
     }
 
     void FGameplayProfiler::EndScope()
     {
-        if (!IsEnabled() || GOpenStack.empty())
+        if (!IsEnabled() || GOpenStack.IsEmpty())
         {
             return;
         }
 
-        FOpenScope Open = std::move(GOpenStack.back());
-        GOpenStack.pop_back();
+        FOpenScope Open = std::move(GOpenStack.Last());
+        GOpenStack.Pop();
 
         const double Duration = GameplayProfilerNowMs() - Open.StartMs;
         const double Self     = Duration - Open.ChildMs;
@@ -161,18 +161,18 @@ namespace Lumina
             FScopeLock Lock(Mutex);
 
             int32 Index;
-            const auto It = IndexOf.find(Open.Hash);
-            if (It != IndexOf.end())
+            const auto It = IndexOf.Find(Open.Hash);
+            if (It != nullptr)
             {
-                Index = It->second;
+                Index = (*It);
             }
             else
             {
-                Index = static_cast<int32>(Current.Entries.size());
+                Index = Current.Entries.Num();
                 FGameplayProfileEntry Entry;
                 Entry.Name = Open.Name;
                 Entry.Hash = Open.Hash;
-                Current.Entries.push_back(std::move(Entry));
+                Current.Entries.Add(std::move(Entry));
                 IndexOf[Open.Hash] = Index;
             }
 
@@ -183,16 +183,16 @@ namespace Lumina
         }
 
         // Charge this scope's time to its parent (thread-local nesting; no lock).
-        if (!GOpenStack.empty())
+        if (!GOpenStack.IsEmpty())
         {
-            GOpenStack.back().ChildMs += Duration;
+            GOpenStack.Last().ChildMs += Duration;
         }
     }
 
     const FProfilerHistory* FGameplayProfiler::GetEntryHistory(uint64 Hash) const
     {
-        const auto It = EntryHistory.find(Hash);
-        return It != EntryHistory.end() ? &It->second : nullptr;
+        const auto It = EntryHistory.Find(Hash);
+        return It != nullptr ? &(*It) : nullptr;
     }
 
     FGameplayProfileScopeRAII::FGameplayProfileScopeRAII(FStringView Name)

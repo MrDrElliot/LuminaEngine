@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "renderdoc_app.h"
-#include "Containers/String.h"
 
 namespace Lumina
 {
@@ -22,7 +21,6 @@ namespace Lumina
         
     private:
 
-        FString RenderDocExePath;
         RENDERDOC_API_1_1_2* RenderDocAPI = nullptr;
     };
 }

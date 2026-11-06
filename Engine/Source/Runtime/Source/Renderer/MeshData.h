@@ -120,7 +120,7 @@ namespace Lumina
         const float ErrorZ = Math::Abs((float)Out.Axis[2] / Scale - Axis.z);
 
         const int32 Quantized = (int32)(Scale * (Cutoff + ErrorX + ErrorY + ErrorZ) + 1.0f);
-        Out.Cutoff = (int8)Math::Clamp(Quantized, -(int32)MESHLET_CONE_SNORM_SCALE, (int32)MESHLET_CONE_DISABLED);
+        Out.Cutoff = (int8)Math::Clamp(Quantized, -MESHLET_CONE_SNORM_SCALE, MESHLET_CONE_DISABLED);
         return Out;
     }
 
@@ -130,7 +130,7 @@ namespace Lumina
         uint64 Count = 0;
         Ar << Count;
 
-        Cones.clear();
+        Cones.Reset();
 
         if (Ar.HasError() || Count == 0)
         {
@@ -146,7 +146,7 @@ namespace Lumina
             return;
         }
 
-        Cones.reserve((SIZE_T)Count);
+        Cones.Reserve(IntCastChecked<int32>(Count));
 
         for (uint64 i = 0; i < Count; ++i)
         {
@@ -158,7 +158,7 @@ namespace Lumina
             Ar << Cutoff;
             Ar << Axis;
 
-            Cones.push_back(Cutoff < 1.0f ? EncodeMeshletCone(Axis, Cutoff) : kDisabledMeshletCone);
+            Cones.Add(Cutoff < 1.0f ? EncodeMeshletCone(Axis, Cutoff) : kDisabledMeshletCone);
         }
     }
 
@@ -269,28 +269,28 @@ namespace Lumina
         TVector<FMeshletBonePalette>   MeshletBonePalettes;
         TVector<uint32>                MeshletBoneIndices;
 
-        FORCEINLINE bool IsEmpty() const { return Meshlets.empty(); }
+        FORCEINLINE bool IsEmpty() const { return Meshlets.IsEmpty(); }
 
         FORCEINLINE void Clear()
         {
-            Meshlets.clear();
-            VertexPositions.clear();
-            VertexAttributes.clear();
-            VertexUV1s.clear();
-            VertexColors.clear();
-            MeshletVertexRefs.clear();
+            Meshlets.Reset();
+            VertexPositions.Reset();
+            VertexAttributes.Reset();
+            VertexUV1s.Reset();
+            VertexColors.Reset();
+            MeshletVertexRefs.Reset();
             PositionGrid = {};
-            MeshletSkinnedVertices.clear();
-            MeshletTriangles.clear();
-            MeshletSpheres.clear();
-            MeshletCones.clear();
-            MeshletBonePalettes.clear();
-            MeshletBoneIndices.clear();
+            MeshletSkinnedVertices.Reset();
+            MeshletTriangles.Reset();
+            MeshletSpheres.Reset();
+            MeshletCones.Reset();
+            MeshletBonePalettes.Reset();
+            MeshletBoneIndices.Reset();
         }
 
         FORCEINLINE void ClearAndShrink()
         {
-            auto Drop = [](auto& V) { V.clear(); V.shrink_to_fit(); };
+            auto Drop = [](auto& V) { V.Reset(); V.Shrink(); };
             Drop(Meshlets);
             Drop(VertexPositions);
             Drop(VertexAttributes);
@@ -357,12 +357,12 @@ namespace Lumina
     // 64 vertices x 4 influences is the hard bound on one meshlet's distinct bones.
     constexpr uint32 kMeshletPaletteCapacity = 256;
 
-    using FMeshletPaletteScratch = TFixedVector<uint32, kMeshletPaletteCapacity>;
+    using FMeshletPaletteScratch = TInlineVector<uint32, kMeshletPaletteCapacity>;
 
     // Slot for GlobalBone, appending it when absent. A full palette folds onto slot 0 rather than growing.
     inline uint32 FindOrAddPaletteBone(FMeshletPaletteScratch& Palette, uint32 GlobalBone)
     {
-        for (uint32 i = 0; i < (uint32)Palette.size(); ++i)
+        for (int32 i = 0; i < Palette.Num(); ++i)
         {
             if (Palette[i] == GlobalBone)
             {
@@ -370,28 +370,28 @@ namespace Lumina
             }
         }
 
-        if (Palette.size() >= kMeshletPaletteCapacity)
+        if (static_cast<uint32>(Palette.Num()) >= kMeshletPaletteCapacity)
         {
             return 0u;
         }
 
-        Palette.push_back(GlobalBone);
-        return (uint32)Palette.size() - 1u;
+        Palette.Add(GlobalBone);
+        return (uint32)Palette.Num() - 1u;
     }
 
     // Appends Palette as the next meshlet's slice; call once per meshlet, in meshlet order.
     inline void AppendMeshletBonePalette(FMeshletData& Data, FMeshletPaletteScratch& Palette)
     {
         // Slot 0 is where every zero-weight influence lands, so a palette is never empty.
-        if (Palette.empty())
+        if (Palette.IsEmpty())
         {
-            Palette.push_back(0u);
+            Palette.Add(0u);
         }
 
-        FMeshletBonePalette& Out = Data.MeshletBonePalettes.emplace_back();
-        Out.Offset = (uint32)Data.MeshletBoneIndices.size();
-        Out.Count  = (uint32)Palette.size();
-        Data.MeshletBoneIndices.insert(Data.MeshletBoneIndices.end(), Palette.begin(), Palette.end());
+        FMeshletBonePalette& Out = Data.MeshletBonePalettes.EmplaceGetRef();
+        Out.Offset = (uint32)Data.MeshletBoneIndices.Num();
+        Out.Count  = (uint32)Palette.Num();
+        Data.MeshletBoneIndices.Append(Palette);
     }
 
     /** FMeshletHeaderGPU::DistanceFieldFlags bits. Mirrored in Includes/DistanceField.slang. */
@@ -672,9 +672,9 @@ namespace Lumina
         // Simplified levels move vertices and rewrite normals and UVs to fit; skinned meshes never do.
         bool                      bDestructiveLODs = true;
 
-        FORCEINLINE size_t GetNumSurfaces() const { return GeometrySurfaces.size(); }
-        FORCEINLINE size_t GetNumVertices() const { return Positions.size(); }
-        FORCEINLINE size_t GetNumIndices()  const { return Indices.size(); }
+        FORCEINLINE int32 GetNumSurfaces() const { return GeometrySurfaces.Num(); }
+        FORCEINLINE int32 GetNumVertices() const { return Positions.Num(); }
+        FORCEINLINE int32 GetNumIndices()  const { return Indices.Num(); }
         NODISCARD FORCEINLINE bool IsSkinnedMesh() const { return bSkinnedMesh; }
 
         // Synthetic interleaved vertex size; only meshopt fetch/overdraw analysis needs it.
@@ -683,45 +683,45 @@ namespace Lumina
             return bSkinnedMesh ? sizeof(FSourceSkinnedVertex) : sizeof(FSourceVertex);
         }
 
-        FORCEINLINE FVector2 GetUVAt(size_t Index) const { return Math::UnpackHalf2x16(UVs[Index]); }
-        FORCEINLINE void SetUVAt(size_t Index, FVector2 UV) { UVs[Index] = Math::PackHalf2x16(UV); }
+        FORCEINLINE FVector2 GetUVAt(int32 Index) const { return Math::UnpackHalf2x16(UVs[Index]); }
+        FORCEINLINE void SetUVAt(int32 Index, FVector2 UV) { UVs[Index] = Math::PackHalf2x16(UV); }
 
-        FORCEINLINE FVector2 GetUV1At(size_t Index) const { return Math::UnpackHalf2x16(UVs1[Index]); }
-        FORCEINLINE void SetUV1At(size_t Index, FVector2 UV) { UVs1[Index] = Math::PackHalf2x16(UV); }
+        FORCEINLINE FVector2 GetUV1At(int32 Index) const { return Math::UnpackHalf2x16(UVs1[Index]); }
+        FORCEINLINE void SetUV1At(int32 Index, FVector2 UV) { UVs1[Index] = Math::PackHalf2x16(UV); }
 
-        void ResizeVertices(size_t N)
+        void ResizeVertices(int32 N)
         {
-            Positions.resize(N);
-            Normals.resize(N);
-            Tangents.resize(N);
-            UVs.resize(N);
-            UVs1.resize(N);
-            Colors.resize(N);
+            Positions.SetNum(N);
+            Normals.SetNum(N);
+            Tangents.SetNum(N);
+            UVs.SetNum(N);
+            UVs1.SetNum(N);
+            Colors.SetNum(N);
             if (bSkinnedMesh)
             {
-                JointIndices.resize(N);
-                JointWeights.resize(N);
+                JointIndices.SetNum(N);
+                JointWeights.SetNum(N);
             }
         }
 
-        void ReserveVertices(size_t N)
+        void ReserveVertices(int32 N)
         {
-            Positions.reserve(N);
-            Normals.reserve(N);
-            Tangents.reserve(N);
-            UVs.reserve(N);
-            UVs1.reserve(N);
-            Colors.reserve(N);
+            Positions.Reserve(N);
+            Normals.Reserve(N);
+            Tangents.Reserve(N);
+            UVs.Reserve(N);
+            UVs1.Reserve(N);
+            Colors.Reserve(N);
             if (bSkinnedMesh)
             {
-                JointIndices.reserve(N);
-                JointWeights.reserve(N);
+                JointIndices.Reserve(N);
+                JointWeights.Reserve(N);
             }
         }
 
         void ClearVertices()
         {
-            auto Drop = [](auto& V) { V.clear(); V.shrink_to_fit(); };
+            auto Drop = [](auto& V) { V.Reset(); V.Shrink(); };
             Drop(Positions);
             Drop(Normals);
             Drop(Tangents);
@@ -734,19 +734,19 @@ namespace Lumina
 
         void AppendVertex(const FSourceVertex& V)
         {
-            Positions.push_back(V.Position);
-            Normals.push_back(V.Normal);
-            Tangents.push_back(V.Tangent);
-            UVs.push_back(V.UV);
-            UVs1.push_back(V.UV1);
-            Colors.push_back(V.Color);
+            Positions.Add(V.Position);
+            Normals.Add(V.Normal);
+            Tangents.Add(V.Tangent);
+            UVs.Add(V.UV);
+            UVs1.Add(V.UV1);
+            Colors.Add(V.Color);
         }
 
         void AppendVertex(const FSourceSkinnedVertex& V)
         {
             AppendVertex(static_cast<const FSourceVertex&>(V));
-            JointIndices.push_back(V.JointIndices);
-            JointWeights.push_back(V.JointWeights);
+            JointIndices.Add(V.JointIndices);
+            JointWeights.Add(V.JointWeights);
         }
 
         friend FArchive& operator << (FArchive& Ar, FMeshResource& Data)
@@ -793,7 +793,7 @@ namespace Lumina
                 LOG_ERROR("FMeshResource '{}': meshlet offsets point outside its data; the mesh loads empty", Data.Name);
                 Ar.SetHasError(true);
                 Data.MeshletData.ClearAndShrink();
-                Data.GeometrySurfaces.clear();
+                Data.GeometrySurfaces.Reset();
             }
 
             return Ar;
@@ -802,15 +802,15 @@ namespace Lumina
         bool HasConsistentMeshlets() const
         {
             const FMeshletData& M = MeshletData;
-            const uint64 NumMeshlets  = M.Meshlets.size();
-            const uint64 NumVertices  = bSkinnedMesh ? M.MeshletSkinnedVertices.size() : M.VertexPositions.size();
-            const uint64 NumTriangles = M.MeshletTriangles.size();
+            const uint64 NumMeshlets  = M.Meshlets.Num();
+            const uint64 NumVertices  = bSkinnedMesh ? M.MeshletSkinnedVertices.Num() : M.VertexPositions.Num();
+            const uint64 NumTriangles = M.MeshletTriangles.Num();
 
             if (!bSkinnedMesh)
             {
-                const bool bUV1sFit    = M.VertexUV1s.empty()   || M.VertexUV1s.size()   == NumVertices;
-                const bool bColorsFit  = M.VertexColors.empty() || M.VertexColors.size() == NumVertices;
-                if (M.VertexAttributes.size() != NumVertices || !bUV1sFit || !bColorsFit)
+                const bool bUV1sFit    = M.VertexUV1s.IsEmpty()   || static_cast<uint64>(M.VertexUV1s.Num())   == NumVertices;
+                const bool bColorsFit  = M.VertexColors.IsEmpty() || static_cast<uint64>(M.VertexColors.Num()) == NumVertices;
+                if (static_cast<uint64>(M.VertexAttributes.Num()) != NumVertices || !bUV1sFit || !bColorsFit)
                 {
                     return false;
                 }
@@ -848,7 +848,7 @@ namespace Lumina
                 {
                     const bool   bShort    = Meshlet.HasShortVertexRefs();
                     const uint64 RefWords  = bShort ? (Meshlet.VertexCount + 1u) / 2u : Meshlet.VertexCount;
-                    if ((uint64)Meshlet.VertexOffset + RefWords > M.MeshletVertexRefs.size())
+                    if ((uint64)Meshlet.VertexOffset + RefWords > static_cast<uint64>(M.MeshletVertexRefs.Num()))
                     {
                         return false;
                     }

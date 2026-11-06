@@ -7,7 +7,7 @@ namespace Grain
         Size[0] = X;
         Size[1] = Y;
         Size[2] = Z;
-        Cells.assign(size_t(X) * size_t(Y) * size_t(Z), uint8(EMaterial::Air));
+        Cells.Init(uint8(EMaterial::Air), X * Y * Z);
     }
 
     void FVoxelModel::Set(int32 X, int32 Y, int32 Z, EMaterial Material)
@@ -16,7 +16,7 @@ namespace Grain
         {
             return;
         }
-        Cells[size_t((Y * Size[2] + Z) * Size[0] + X)] = uint8(Material);
+        Cells[(Y * Size[2] + Z) * Size[0] + X] = uint8(Material);
     }
 
     void FVoxelModel::Box(int32 X0, int32 Y0, int32 Z0, int32 X1, int32 Y1, int32 Z1, EMaterial Material)
@@ -190,8 +190,8 @@ namespace Grain
 
     void FModelLibrary::Pack()
     {
-        GpuDescs.assign(size_t(kMaxModels), FModelDescGpu{});
-        GpuCells.clear();
+        GpuDescs.Init(FModelDescGpu{}, kMaxModels);
+        GpuCells.Reset();
 
         for (uint32 Index = 0; Index < uint32(EModel::Count); ++Index)
         {
@@ -201,14 +201,14 @@ namespace Grain
             Desc.SizeX = uint32(M.Size[0]);
             Desc.SizeY = uint32(M.Size[1]);
             Desc.SizeZ = uint32(M.Size[2]);
-            Desc.Base  = uint32(GpuCells.size());
+            Desc.Base  = uint32(GpuCells.Num());
 
             // Four cells to a word, so the shader reads one load per lookup.
-            const size_t Words = (M.Cells.size() + 3) / 4;
-            const size_t Start = GpuCells.size();
-            GpuCells.resize(Start + Words, 0u);
+            const int32 Words = (M.Cells.Num() + 3) / 4;
+            const int32 Start = GpuCells.Num();
+            GpuCells.SetNum(Start + Words, 0u);
 
-            for (size_t i = 0; i < M.Cells.size(); ++i)
+            for (int32 i = 0; i < M.Cells.Num(); ++i)
             {
                 GpuCells[Start + (i >> 2)] |= uint32(M.Cells[i]) << ((i & 3u) * 8u);
             }

@@ -9,11 +9,11 @@ namespace Lumina
 {
     FName CEnum::GetNameAtValue(uint64 Value)
     {
-        for (const auto& Pair : Names)
+        for (const auto& [EnumName, EnumValue] : Names)
         {
-            if (Pair.second == Value)
+            if (EnumValue == Value)
             {
-                return Pair.first;
+                return EnumName;
             }
         }
 
@@ -22,11 +22,11 @@ namespace Lumina
 
     uint64 CEnum::GetEnumValueByName(const FName& Name)
     {
-        for (const auto& Pair : Names)
+        for (const auto& [EnumName, EnumValue] : Names)
         {
-            if (Pair.first == Name)
+            if (EnumName == Name)
             {
-                return Pair.second;
+                return EnumValue;
             }
         }
 
@@ -42,7 +42,7 @@ namespace Lumina
             int64 NextValue = 1ll << Math::CountTrailingZeros64(Value);
             Value = Value & ~NextValue;
             
-            AppendFormat(BitfieldString, "{}{}", bWroteFirstFlag ? " | " : "", GetNameAtValue(NextValue).c_str());
+            AppendFormat(BitfieldString, "{}{}", bWroteFirstFlag ? " | " : "", *GetNameAtValue(NextValue));
             bWroteFirstFlag = true;
         }
         
@@ -53,16 +53,15 @@ namespace Lumina
     {
         const FString& FullString = FullName.ToString();
 
-        size_t DelimPos = FullString.find_last_of(L':');
-        if (DelimPos != std::wstring::npos && DelimPos > 0 && FullString[DelimPos - 1] == L':')
+        const int32 DelimPos = FullString.FindLast(':');
+        if (DelimPos > 0 && FullString[DelimPos - 1] == ':')
         {
-            DelimPos--;
-            FString ShortName = FullString.substr(DelimPos + 2);
-            Names.push_back(Lumina::Containers::MakePair(ShortName, Value));
+            FString ShortName = FullString.Mid(DelimPos + 1);
+            Names.Add(Lumina::Containers::MakePair(ShortName, Value));
         }
         else
         {
-            Names.push_back(Lumina::Containers::MakePair(FullName, Value));
+            Names.Add(Lumina::Containers::MakePair(FullName, Value));
         }
     }
 
@@ -76,12 +75,12 @@ namespace Lumina
 
     FFixedString CEnum::MakeDisplayName() const
     {
-        FFixedString DisplayName = GetName().c_str();
+        FFixedString DisplayName = *GetName();
 
         // Erasing unconditionally ate the first letter of any enum not following the convention.
-        if (DisplayName.size() >= 2 && DisplayName[0] == 'E' && std::isupper((unsigned char)DisplayName[1]))
+        if (DisplayName.Len() >= 2 && DisplayName[0] == 'E' && std::isupper((unsigned char)DisplayName[1]))
         {
-            DisplayName.erase(0, 1);
+            DisplayName.RemoveAt(0, 1);
         }
 
         return DisplayName;

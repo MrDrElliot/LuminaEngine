@@ -26,8 +26,8 @@ namespace
         Mip.RowPitch   = Width * 4;
         Mip.SlicePitch = Width * Height * 4;
 
-        Mip.Pixels.resize((size_t)Width * Height * 4);
-        for (size_t i = 0; i < Mip.Pixels.size(); ++i)
+        Mip.Pixels.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Width) * Height * 4));
+        for (int32 i = 0; i < Mip.Pixels.Num(); ++i)
         {
             Mip.Pixels[i] = (uint8)((i * 31u + Seed * 7u) & 0xFF);
         }
@@ -47,7 +47,7 @@ namespace
         Resource.ImageDescription.Format     = EFormat::RGBA8_UNORM;
         Resource.ImageDescription.LayerCount = 1;
 
-        Resource.Mips.resize(NumMips);
+        Resource.Mips.SetNum(NumMips);
         for (uint32 Mip = 0; Mip < NumMips; ++Mip)
         {
             const uint32 Size = BaseSize >> Mip;
@@ -135,11 +135,11 @@ TEST(TextureStreaming, NonPackageArchiveKeepsEveryMipInline)
     FMemoryReader Reader(Bytes);
     Reader << Loaded;
 
-    ASSERT_EQ(Loaded.Mips.size(), Source.Mips.size());
+    ASSERT_EQ(Loaded.Mips.Num(), Source.Mips.Num());
     EXPECT_EQ(Loaded.ImageDescription.FirstInlineMip, 0);
     EXPECT_FALSE(Loaded.IsStreamable());
 
-    for (size_t i = 0; i < Loaded.Mips.size(); ++i)
+    for (int32 i = 0; i < Loaded.Mips.Num(); ++i)
     {
         EXPECT_EQ(Loaded.Mips[i].Pixels, Source.Mips[i].Pixels) << "mip " << i << " did not round-trip";
     }
@@ -162,7 +162,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     TVector<TVector<uint8>> Expected;
     for (const FTextureResource::FMip& Mip : Texture->TextureResource->Mips)
     {
-        Expected.push_back(Mip.Pixels);
+        Expected.Add(Mip.Pixels);
     }
 
     const FFixedString Path = Package->GetPackagePath();
@@ -179,7 +179,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     uint64 ExpectedBulkBytes = 0;
     for (uint32 Mip = 0; Mip < FirstInlineMip; ++Mip)
     {
-        ExpectedBulkBytes += Expected[Mip].size();
+        ExpectedBulkBytes += Expected[Mip].Num();
     }
     EXPECT_EQ((uint64)Region.Size, ExpectedBulkBytes);
 
@@ -188,7 +188,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     {
         const FBulkDataRef& Ref = Texture->TextureResource->Mips[Mip].BulkRef;
         ASSERT_TRUE(Ref.IsValid()) << "mip " << Mip << " has no bulk ref";
-        EXPECT_EQ((uint64)Ref.Size, (uint64)Expected[Mip].size());
+        EXPECT_EQ((uint64)Ref.Size, (uint64)Expected[Mip].Num());
 
         TVector<uint8> Read;
         ASSERT_TRUE(Package->ReadBulkData(Ref, Read)) << "mip " << Mip << " could not be read back";
@@ -196,7 +196,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     }
 
     // Inline mips must NOT have been diverted to the region.
-    for (uint32 Mip = FirstInlineMip; Mip < (uint32)Texture->TextureResource->Mips.size(); ++Mip)
+    for (uint32 Mip = FirstInlineMip; Mip < (uint32)Texture->TextureResource->Mips.Num(); ++Mip)
     {
         EXPECT_FALSE(Texture->TextureResource->Mips[Mip].BulkRef.IsValid())
             << "mip " << Mip << " is inline and should carry no bulk ref";
@@ -208,7 +208,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     ASSERT_TRUE(CPackage::ReadPackageFile(Path, Container, &ReadRegion));
     EXPECT_EQ(ReadRegion.FileOffset, Region.FileOffset);
     EXPECT_EQ(ReadRegion.Size, Region.Size);
-    EXPECT_LT((uint64)Container.size(), ExpectedBulkBytes)
+    EXPECT_LT((uint64)Container.Num(), ExpectedBulkBytes)
         << "the inflated container should be far smaller than the mips it no longer holds";
 
     ASSERT_TRUE(CPackage::DestroyPackage(Package));
@@ -231,7 +231,7 @@ TEST(TextureStreaming, ReSaveAfterStreamOutPreservesMips)
     TVector<TVector<uint8>> Expected;
     for (const FTextureResource::FMip& Mip : Texture->TextureResource->Mips)
     {
-        Expected.push_back(Mip.Pixels);
+        Expected.Add(Mip.Pixels);
     }
 
     const FFixedString Path = Package->GetPackagePath();
@@ -243,8 +243,8 @@ TEST(TextureStreaming, ReSaveAfterStreamOutPreservesMips)
     // Simulate the streamer evicting every streamed mip's CPU copy.
     for (uint32 Mip = 0; Mip < FirstInlineMip; ++Mip)
     {
-        Texture->TextureResource->Mips[Mip].Pixels.clear();
-        Texture->TextureResource->Mips[Mip].Pixels.shrink_to_fit();
+        Texture->TextureResource->Mips[Mip].Pixels.Reset();
+        Texture->TextureResource->Mips[Mip].Pixels.Shrink();
     }
 
     ASSERT_TRUE(CPackage::SavePackage(Package, Path));

@@ -22,7 +22,7 @@ namespace Lumina
             return 0;
         }
 
-        int32 Count = (int32)Path.Corners.size();
+        int32 Count = Path.Corners.Num();
         if (Count > MaxCorners)
         {
             Count = MaxCorners;
@@ -41,7 +41,7 @@ namespace Lumina
         {
             return true;
         }
-        return Path.bPartial || Path.bTruncated || (int32)Path.Corners.size() > MaxCorners;
+        return Path.bPartial || Path.bTruncated || Path.Corners.Num() > MaxCorners;
     }
 
     ENavPathResult CNavigationSubsystem::GetPathResult(FVector3 Start, FVector3 End, int32 MaxCorners, FName Agent)
@@ -51,7 +51,7 @@ namespace Lumina
 
         // A route longer than the caller's buffer arrives valid but short, which is a truncation either way.
         if (Path.bValid && Path.Result == ENavPathResult::Success && MaxCorners > 0
-            && (int32)Path.Corners.size() > MaxCorners)
+            && Path.Corners.Num() > MaxCorners)
         {
             return ENavPathResult::Truncated;
         }

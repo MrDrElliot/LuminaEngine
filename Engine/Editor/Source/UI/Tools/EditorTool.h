@@ -167,7 +167,7 @@ namespace Lumina
         NODISCARD ImGuiID GetPrevDockspaceID() const { return PrevDockspaceID; }
         NODISCARD ImGuiID GetDesiredDockID() const { return DesiredDockID; }
         NODISCARD ImGuiWindowClass* GetWindowClass() { return &ToolWindowsClass; }
-        NODISCARD FFixedString GetToolWindowName(const FString& Name) const { return GetToolWindowName(Name.c_str(), CurrDockspaceID); }
+        NODISCARD FFixedString GetToolWindowName(const FString& Name) const { return GetToolWindowName(*Name, CurrDockspaceID); }
         NODISCARD static FFixedString GetToolWindowName(char const* ToolWindowName, ImGuiID InDockspaceID);
         virtual void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const;
 
@@ -282,7 +282,7 @@ namespace Lumina
 
         void DrawDrawerContent(bool bFocused);
 
-        void RegisterAction(FEditorAction Action) { EditorActions.push_back(std::move(Action)); }
+        void RegisterAction(FEditorAction Action) { EditorActions.Add(std::move(Action)); }
         const TVector<FEditorAction>& GetRegisteredActions() const { return EditorActions; }
         void DrawActionMenu(const char* MenuLabel, const char* Category);
 

@@ -5,7 +5,7 @@ namespace Lumina
 
     void CEdNodeGraphPin::RemoveConnection(CEdNodeGraphPin* Pin)
     {
-        TVectorRemove(Connections, Pin);
+        Connections.RemoveSingle(Pin);
     }
 
     void CEdNodeGraphPin::DisconnectFrom(CEdNodeGraphPin* OtherPin)
@@ -15,30 +15,17 @@ namespace Lumina
             return;
         }
 
-        auto it = Algo::Find(Connections, OtherPin);
-        if (it != Connections.end())
-        {
-            Connections.erase(it);
-        }
-
-        auto itOther = Algo::Find(OtherPin->Connections, this);
-        if (itOther != OtherPin->Connections.end())
-        {
-            OtherPin->Connections.erase(itOther);
-        }
+        Connections.RemoveSingle(OtherPin);
+        OtherPin->Connections.RemoveSingle(this);
     }
 
     void CEdNodeGraphPin::ClearConnections()
     {
         for (CEdNodeGraphPin* ConnectedPin : Connections)
         {
-            auto it = Algo::Find(ConnectedPin->Connections, this);
-            if (it != ConnectedPin->Connections.end())
-            {
-                ConnectedPin->Connections.erase(it);
-            }
+            ConnectedPin->Connections.RemoveSingle(this);
         }
 
-        Connections.clear();
+        Connections.Reset();
     }
 }

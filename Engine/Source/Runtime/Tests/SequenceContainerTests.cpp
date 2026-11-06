@@ -54,7 +54,7 @@ namespace LuminaSequenceTests
     {
         static_assert(sizeof(TArray<int, 4>) == 4 * sizeof(int));
         static_assert(std::is_trivially_copyable_v<TArray<int, 4>>);
-        static_assert(TArray<int, 4>::size() == 4);
+        static_assert(TArray<int, 4>::Num() == 4);
 
         constexpr TArray<int, 3> Values{ 1, 2, 3 };
         static_assert(Values[0] == 1);
@@ -70,14 +70,12 @@ namespace LuminaSequenceTests
 
         static_assert(std::is_same_v<decltype(std::declval<FMutable>()[0]), int&>);
         static_assert(std::is_same_v<decltype(std::declval<FConst>()[0]), const int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FMutable>().at(0)), int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FConst>().at(0)), const int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FMutable>().front()), int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FConst>().front()), const int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FMutable>().back()), int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FConst>().back()), const int&>);
-        static_assert(std::is_same_v<decltype(std::declval<FMutable>().data()), int*>);
-        static_assert(std::is_same_v<decltype(std::declval<FConst>().data()), const int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>()[0]), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>()[0]), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().Last()), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().Last()), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().GetData()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().GetData()), const int*>);
         static_assert(std::is_same_v<decltype(std::declval<FMutable>().begin()), int*>);
         static_assert(std::is_same_v<decltype(std::declval<FConst>().begin()), const int*>);
         static_assert(std::is_same_v<decltype(std::declval<FMutable>().end()), int*>);
@@ -88,11 +86,11 @@ namespace LuminaSequenceTests
     TEST(StaticArray, AccessorsAndIteration)
     {
         TArray<int, 4> Values{ 10, 20, 30, 40 };
-        EXPECT_EQ(Values.front(), 10);
-        EXPECT_EQ(Values.back(), 40);
-        EXPECT_EQ(Values.at(2), 30);
-        EXPECT_EQ(*Values.data(), 10);
-        EXPECT_FALSE(Values.empty());
+        EXPECT_EQ(Values[0], 10);
+        EXPECT_EQ(Values.Last(), 40);
+        EXPECT_EQ(Values[2], 30);
+        EXPECT_EQ(*Values.GetData(), 10);
+        EXPECT_FALSE(Values.IsEmpty());
 
         int Sum = 0;
         for (int Element : Values)
@@ -101,7 +99,7 @@ namespace LuminaSequenceTests
         }
         EXPECT_EQ(Sum, 100);
 
-        Values.fill(7);
+        Values.Fill(7);
         EXPECT_EQ(Values[0], 7);
         EXPECT_EQ(Values[3], 7);
     }
@@ -116,7 +114,7 @@ namespace LuminaSequenceTests
         EXPECT_FALSE(Left == Right);
         EXPECT_LT(Left, Right);
 
-        Left.swap(Right);
+        swap(Left, Right);
         EXPECT_EQ(Left[2], 4);
         EXPECT_EQ(Right[2], 3);
     }
@@ -129,32 +127,32 @@ namespace LuminaSequenceTests
         EXPECT_EQ(Second, 6);
 
         TArray<int, 0> Empty;
-        EXPECT_TRUE(Empty.empty());
-        EXPECT_EQ(Empty.size(), 0u);
+        EXPECT_TRUE(Empty.IsEmpty());
+        EXPECT_EQ(Empty.Num(), 0);
         EXPECT_EQ(Empty.begin(), Empty.end());
     }
 
     TEST(Deque, PushesAndPopsBothEnds)
     {
         TDeque<int> Values;
-        EXPECT_TRUE(Values.empty());
+        EXPECT_TRUE(Values.IsEmpty());
 
-        Values.push_back(2);
-        Values.push_back(3);
-        Values.push_front(1);
-        Values.push_front(0);
+        Values.PushLast(2);
+        Values.PushLast(3);
+        Values.PushFirst(1);
+        Values.PushFirst(0);
 
-        EXPECT_EQ(Values.size(), 4u);
-        EXPECT_EQ(Values.front(), 0);
-        EXPECT_EQ(Values.back(), 3);
+        EXPECT_EQ(Values.Num(), 4);
+        EXPECT_EQ(Values[0], 0);
+        EXPECT_EQ(Values.Last(), 3);
         EXPECT_EQ(Values[1], 1);
         EXPECT_EQ(Values[2], 2);
 
-        Values.pop_front();
-        EXPECT_EQ(Values.front(), 1);
-        Values.pop_back();
-        EXPECT_EQ(Values.back(), 2);
-        EXPECT_EQ(Values.size(), 2u);
+        Values.PopFirst();
+        EXPECT_EQ(Values[0], 1);
+        Values.PopLast();
+        EXPECT_EQ(Values.Last(), 2);
+        EXPECT_EQ(Values.Num(), 2);
     }
 
     // The ring wraps long before it grows, which is the case indexing has to get right.
@@ -163,21 +161,21 @@ namespace LuminaSequenceTests
         TDeque<int> Values;
         for (int Index = 0; Index < 8; ++Index)
         {
-            Values.push_back(Index);
+            Values.PushLast(Index);
         }
 
         for (int Round = 0; Round < 500; ++Round)
         {
-            EXPECT_EQ(Values.front(), Round);
-            Values.pop_front();
-            Values.push_back(Round + 8);
-            EXPECT_EQ(Values.size(), 8u);
-            EXPECT_EQ(Values.back(), Round + 8);
+            EXPECT_EQ(Values[0], Round);
+            Values.PopFirst();
+            Values.PushLast(Round + 8);
+            EXPECT_EQ(Values.Num(), 8);
+            EXPECT_EQ(Values.Last(), Round + 8);
         }
 
-        for (size_t Index = 0; Index < Values.size(); ++Index)
+        for (int32 Index = 0; Index < Values.Num(); ++Index)
         {
-            EXPECT_EQ(Values[Index], static_cast<int>(500 + Index));
+            EXPECT_EQ(Values[Index], 500 + Index);
         }
     }
 
@@ -186,29 +184,29 @@ namespace LuminaSequenceTests
         TDeque<int> Values;
         for (int Index = 0; Index < 8; ++Index)
         {
-            Values.push_back(Index);
+            Values.PushLast(Index);
         }
         for (int Index = 0; Index < 5; ++Index)
         {
-            Values.pop_front();
-            Values.push_back(100 + Index);
+            Values.PopFirst();
+            Values.PushLast(100 + Index);
         }
 
-        const size_t Before = Values.size();
+        const int32 Before = Values.Num();
         for (int Index = 0; Index < 200; ++Index)
         {
-            Values.push_back(1000 + Index);
+            Values.PushLast(1000 + Index);
         }
 
-        EXPECT_EQ(Values.size(), Before + 200);
-        EXPECT_EQ(Values.front(), 5);
-        EXPECT_EQ(Values.back(), 1199);
+        EXPECT_EQ(Values.Num(), Before + 200);
+        EXPECT_EQ(Values[0], 5);
+        EXPECT_EQ(Values.Last(), 1199);
 
         int Expected = 5;
         size_t Position = 0;
         for (; Position < 3; ++Position, ++Expected)
         {
-            EXPECT_EQ(Values[Position], Expected) << "order lost at " << Position;
+            EXPECT_EQ(Values[static_cast<int32>(Position)], Expected) << "order lost at " << Position;
         }
     }
 
@@ -217,7 +215,7 @@ namespace LuminaSequenceTests
         TDeque<int> Values;
         for (int Index = 0; Index < 5; ++Index)
         {
-            Values.push_back(Index);
+            Values.PushLast(Index);
         }
 
         int Sum = 0;
@@ -230,12 +228,12 @@ namespace LuminaSequenceTests
         TDeque<int> Copy = Values;
         EXPECT_TRUE(Copy == Values);
 
-        Copy.pop_back();
+        Copy.PopLast();
         EXPECT_FALSE(Copy == Values);
 
-        Values.clear();
-        EXPECT_TRUE(Values.empty());
-        EXPECT_EQ(Values.size(), 0u);
+        Values.Reset();
+        EXPECT_TRUE(Values.IsEmpty());
+        EXPECT_EQ(Values.Num(), 0);
     }
 
     TEST(Deque, DestroysEveryElementExactlyOnce)
@@ -245,13 +243,13 @@ namespace LuminaSequenceTests
             TDeque<FCounted> Values;
             for (int Index = 0; Index < 300; ++Index)
             {
-                Values.emplace_back(Index);
+                Values.EmplaceLast(Index);
             }
             EXPECT_EQ(FCounted::Live, 300);
 
             for (int Index = 0; Index < 150; ++Index)
             {
-                Values.pop_front();
+                Values.PopFirst();
             }
             EXPECT_EQ(FCounted::Live, 150);
         }
@@ -261,80 +259,80 @@ namespace LuminaSequenceTests
     TEST(Deque, MoveLeavesTheSourceUsable)
     {
         TDeque<int> Source;
-        Source.push_back(1);
-        Source.push_back(2);
+        Source.PushLast(1);
+        Source.PushLast(2);
 
         TDeque<int> Moved = std::move(Source);
-        EXPECT_EQ(Moved.size(), 2u);
-        EXPECT_TRUE(Source.empty());
+        EXPECT_EQ(Moved.Num(), 2);
+        EXPECT_TRUE(Source.IsEmpty());
 
-        Source.push_back(9);
-        EXPECT_EQ(Source.size(), 1u);
-        EXPECT_EQ(Source.front(), 9);
+        Source.PushLast(9);
+        EXPECT_EQ(Source.Num(), 1);
+        EXPECT_EQ(Source[0], 9);
     }
 
     TEST(Queue, IsFirstInFirstOut)
     {
         TQueue<int> Values;
-        EXPECT_TRUE(Values.empty());
+        EXPECT_TRUE(Values.IsEmpty());
 
-        Values.push(1);
-        Values.push(2);
-        Values.emplace(3);
+        Values.Enqueue(1);
+        Values.Enqueue(2);
+        Values.Emplace(3);
 
-        EXPECT_EQ(Values.size(), 3u);
-        EXPECT_EQ(Values.front(), 1);
-        EXPECT_EQ(Values.back(), 3);
+        EXPECT_EQ(Values.Num(), 3);
+        EXPECT_EQ(Values.Peek(), 1);
+        EXPECT_EQ(Values.GetContainer().Last(), 3);
 
-        Values.pop();
-        EXPECT_EQ(Values.front(), 2);
-        Values.pop();
-        Values.pop();
-        EXPECT_TRUE(Values.empty());
+        Values.Pop();
+        EXPECT_EQ(Values.Peek(), 2);
+        Values.Pop();
+        Values.Pop();
+        EXPECT_TRUE(Values.IsEmpty());
     }
 
     TEST(Queue, SwapsWithAnother)
     {
         TQueue<int> Left;
         TQueue<int> Right;
-        Left.push(1);
-        Right.push(8);
-        Right.push(9);
+        Left.Enqueue(1);
+        Right.Enqueue(8);
+        Right.Enqueue(9);
 
-        Left.swap(Right);
-        EXPECT_EQ(Left.size(), 2u);
-        EXPECT_EQ(Left.front(), 8);
-        EXPECT_EQ(Right.size(), 1u);
-        EXPECT_EQ(Right.front(), 1);
+        swap(Left, Right);
+        EXPECT_EQ(Left.Num(), 2);
+        EXPECT_EQ(Left.Peek(), 8);
+        EXPECT_EQ(Right.Num(), 1);
+        EXPECT_EQ(Right.Peek(), 1);
     }
 
     TEST(Stack, IsLastInFirstOut)
     {
         TStack<Lumina::FString> Values;
-        Values.push(Lumina::FString("a"));
-        Values.emplace("b");
+        Values.Push(Lumina::FString("a"));
+        Values.Emplace("b");
 
-        EXPECT_EQ(Values.size(), 2u);
-        EXPECT_EQ(Values.top(), Lumina::FString("b"));
+        EXPECT_EQ(Values.Num(), 2);
+        EXPECT_EQ(Values.Top(), Lumina::FString("b"));
 
-        Values.pop();
-        EXPECT_EQ(Values.top(), Lumina::FString("a"));
-        Values.pop();
-        EXPECT_TRUE(Values.empty());
+        Values.Pop();
+        EXPECT_EQ(Values.Top(), Lumina::FString("a"));
+        Values.Pop();
+        EXPECT_TRUE(Values.IsEmpty());
     }
 
     TEST(List, PushesBothEndsAndIterates)
     {
         TList<int> Values;
-        EXPECT_TRUE(Values.empty());
+        EXPECT_TRUE(Values.IsEmpty());
 
-        Values.push_back(2);
-        Values.push_back(3);
-        Values.push_front(1);
+        Values.AddTail(2);
+        Values.AddTail(3);
+        Values.AddHead(1);
 
-        EXPECT_EQ(Values.size(), 3u);
-        EXPECT_EQ(Values.front(), 1);
-        EXPECT_EQ(Values.back(), 3);
+        EXPECT_EQ(Values.Num(), 3);
+        EXPECT_EQ(Values.Head(), 1);
+        EXPECT_EQ(Values.Tail(), 3);
 
         std::vector<int> Seen;
         for (int Element : Values)
@@ -351,7 +349,7 @@ namespace LuminaSequenceTests
         std::vector<const int*> Addresses;
         for (int Index = 0; Index < 500; ++Index)
         {
-            Addresses.push_back(&Values.emplace_back(Index));
+            Addresses.push_back(&Values.EmplaceTail(Index));
         }
 
         auto It = Values.begin();
@@ -367,26 +365,26 @@ namespace LuminaSequenceTests
         TList<int> Values;
         for (int Index = 0; Index < 3; ++Index)
         {
-            Values.push_back(Index * 10);
+            Values.AddTail(Index * 10);
         }
 
         TList<int>::iterator Second = Values.begin();
         ++Second;
 
-        TList<int>::iterator Inserted = Values.insert(Second, 5);
+        TList<int>::iterator Inserted = Values.Insert(Second, 5);
         EXPECT_EQ(*Inserted, 5);
 
         TList<int>::iterator Expected = Values.begin();
         ++Expected;
         EXPECT_EQ(&*Inserted, &*Expected);
 
-        TList<int>::iterator Front = Values.insert(Values.begin(), -1);
+        TList<int>::iterator Front = Values.Insert(Values.begin(), -1);
         EXPECT_EQ(*Front, -1);
-        EXPECT_EQ(&*Front, &Values.front());
+        EXPECT_EQ(&*Front, &Values.Head());
 
-        TList<int>::iterator Back = Values.emplace(Values.end(), 99);
+        TList<int>::iterator Back = Values.Emplace(Values.end(), 99);
         EXPECT_EQ(*Back, 99);
-        EXPECT_EQ(&*Back, &Values.back());
+        EXPECT_EQ(&*Back, &Values.Tail());
 
         std::vector<int> Seen;
         for (int Element : Values)
@@ -394,7 +392,7 @@ namespace LuminaSequenceTests
             Seen.push_back(Element);
         }
         EXPECT_EQ(Seen, (std::vector<int>{ -1, 0, 5, 10, 20, 99 }));
-        EXPECT_EQ(Values.size(), 6u);
+        EXPECT_EQ(Values.Num(), 6);
     }
 
     TEST(List, ErasesAndPops)
@@ -402,22 +400,22 @@ namespace LuminaSequenceTests
         TList<int> Values;
         for (int Index = 0; Index < 5; ++Index)
         {
-            Values.push_back(Index);
+            Values.AddTail(Index);
         }
 
         for (auto It = Values.begin(); It != Values.end();)
         {
-            It = (*It % 2 == 0) ? Values.erase(It) : ++It;
+            It = (*It % 2 == 0) ? Values.Remove(It) : ++It;
         }
 
-        EXPECT_EQ(Values.size(), 2u);
-        EXPECT_EQ(Values.front(), 1);
-        EXPECT_EQ(Values.back(), 3);
+        EXPECT_EQ(Values.Num(), 2);
+        EXPECT_EQ(Values.Head(), 1);
+        EXPECT_EQ(Values.Tail(), 3);
 
-        Values.pop_front();
-        EXPECT_EQ(Values.front(), 3);
-        Values.pop_back();
-        EXPECT_TRUE(Values.empty());
+        Values.RemoveHead();
+        EXPECT_EQ(Values.Head(), 3);
+        Values.RemoveTail();
+        EXPECT_TRUE(Values.IsEmpty());
     }
 
     TEST(List, DestroysEveryNodeExactlyOnce)
@@ -427,14 +425,14 @@ namespace LuminaSequenceTests
             TList<FCounted> Values;
             for (int Index = 0; Index < 200; ++Index)
             {
-                Values.emplace_back(Index);
+                Values.EmplaceTail(Index);
             }
             EXPECT_EQ(FCounted::Live, 200);
 
-            Values.clear();
+            Values.Empty();
             EXPECT_EQ(FCounted::Live, 0);
 
-            Values.emplace_back(1);
+            Values.EmplaceTail(1);
             EXPECT_EQ(FCounted::Live, 1);
         }
         EXPECT_EQ(FCounted::Live, 0);
@@ -443,28 +441,28 @@ namespace LuminaSequenceTests
     TEST(List, CopyAndMoveAreIndependent)
     {
         TList<int> Source;
-        Source.push_back(1);
-        Source.push_back(2);
+        Source.AddTail(1);
+        Source.AddTail(2);
 
         TList<int> Copy = Source;
-        Copy.push_back(3);
-        EXPECT_EQ(Copy.size(), 3u);
-        EXPECT_EQ(Source.size(), 2u);
+        Copy.AddTail(3);
+        EXPECT_EQ(Copy.Num(), 3);
+        EXPECT_EQ(Source.Num(), 2);
 
         TList<int> Moved = std::move(Source);
-        EXPECT_EQ(Moved.size(), 2u);
-        EXPECT_TRUE(Source.empty());
+        EXPECT_EQ(Moved.Num(), 2);
+        EXPECT_TRUE(Source.IsEmpty());
 
-        Source.push_back(9);
-        EXPECT_EQ(Source.size(), 1u);
+        Source.AddTail(9);
+        EXPECT_EQ(Source.Num(), 1);
     }
 
     TEST(BitSet, SetsTestsAndCounts)
     {
         TBitSet<128> Bits;
-        EXPECT_EQ(Bits.size(), 128u);
+        EXPECT_EQ(Bits.Num(), 128);
         EXPECT_TRUE(Bits.None());
-        EXPECT_EQ(Bits.Count(), 0u);
+        EXPECT_EQ(Bits.Count(), 0);
 
         Bits.Set(0);
         Bits.Set(64);
@@ -474,7 +472,7 @@ namespace LuminaSequenceTests
         EXPECT_TRUE(Bits.Test(64));
         EXPECT_TRUE(Bits.Test(127));
         EXPECT_FALSE(Bits.Test(1));
-        EXPECT_EQ(Bits.Count(), 3u);
+        EXPECT_EQ(Bits.Count(), 3);
         EXPECT_TRUE(Bits.Any());
         EXPECT_FALSE(Bits.All());
         EXPECT_EQ(Bits.FindFirst(), 0u);
@@ -488,16 +486,16 @@ namespace LuminaSequenceTests
     {
         TBitSet<70> Bits;
         Bits.Set();
-        EXPECT_EQ(Bits.Count(), 70u);
+        EXPECT_EQ(Bits.Count(), 70);
         EXPECT_TRUE(Bits.All());
 
         Bits.Flip();
-        EXPECT_EQ(Bits.Count(), 0u);
+        EXPECT_EQ(Bits.Count(), 0);
         EXPECT_TRUE(Bits.None());
 
         TBitSet<3> Small;
         Small.Set();
-        EXPECT_EQ(Small.Count(), 3u);
+        EXPECT_EQ(Small.Count(), 3);
     }
 
     TEST(BitSet, ReferenceWritesBack)
@@ -523,14 +521,14 @@ namespace LuminaSequenceTests
         Right.Set(3);
 
         const TBitSet<32> And = Left & Right;
-        EXPECT_EQ(And.Count(), 1u);
+        EXPECT_EQ(And.Count(), 1);
         EXPECT_TRUE(And.Test(2));
 
         const TBitSet<32> Or = Left | Right;
-        EXPECT_EQ(Or.Count(), 3u);
+        EXPECT_EQ(Or.Count(), 3);
 
         const TBitSet<32> Xor = Left ^ Right;
-        EXPECT_EQ(Xor.Count(), 2u);
+        EXPECT_EQ(Xor.Count(), 2);
         EXPECT_FALSE(Xor.Test(2));
 
         EXPECT_TRUE(Left == Left);

@@ -105,8 +105,8 @@ namespace Lumina
                         break;
                     }
 
-                    const SIZE_T Count = Array->GetNum(Value);
-                    for (SIZE_T Index = 0; Index < Count; ++Index)
+                    const int32 Count = Array->Num(Value);
+                    for (int32 Index = 0; Index < Count; ++Index)
                     {
                         VisitPropertyImpl(Inner, Array->GetAt(Value, Index), Func, SoftFunc);
                     }
@@ -129,8 +129,8 @@ namespace Lumina
                         return Current;
                     };
 
-                    const SIZE_T Count = Map->GetNum(Value);
-                    for (SIZE_T Index = 0; Index < Count; ++Index)
+                    const int32 Count = Map->Num(Value);
+                    for (int32 Index = 0; Index < Count; ++Index)
                     {
                         if (FProperty* KeyProperty = Map->GetKeyProperty())
                         {
@@ -148,7 +148,7 @@ namespace Lumina
             case EPropertyTypeFlags::Optional:
                 {
                     const auto* Optional = static_cast<const FOptionalProperty*>(Property);
-                    if (Optional->GetInternalProperty() != nullptr && Optional->HasValue(Value))
+                    if (Optional->GetInternalProperty() != nullptr && Optional->IsSet(Value))
                     {
                         VisitPropertyImpl(Optional->GetInternalProperty(), Optional->GetValue(Value), Func, SoftFunc);
                     }

@@ -35,7 +35,7 @@ namespace
             Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.03f * (float)(i % 3), 0.12f, 0.02f),
                                                        FQuat(FVector3(0.1f, 0.05f * (float)(i % 4), 0.0f)), FVector3(1.0f));
             Skeleton.BoneNameToIndex[Bone.Name] = i;
-            Skeleton.Bones.push_back(Bone);
+            Skeleton.Bones.Add(Bone);
         }
         Skeleton.BuildBindPoseCache();
     }
@@ -56,10 +56,10 @@ namespace
             for (uint32 k = 0; k < NumKeys; ++k)
             {
                 const float T = Duration * (float)k / (float)(NumKeys - 1);
-                Rotation.Timestamps.push_back(T);
-                Rotation.Rotations.push_back(FQuat(FVector3(Math::Sin(T * 3.0f + Seed + b) * 0.4f, Math::Cos(T * 2.0f + b) * 0.3f, 0.1f * Seed)));
+                Rotation.Timestamps.Add(T);
+                Rotation.Rotations.Emplace(FVector3(Math::Sin(T * 3.0f + Seed + b) * 0.4f, Math::Cos(T * 2.0f + b) * 0.3f, 0.1f * Seed));
             }
-            Resource.Channels.push_back(Rotation);
+            Resource.Channels.Add(Rotation);
 
             if (b % 4 == 0)
             {
@@ -69,10 +69,10 @@ namespace
                 for (uint32 k = 0; k < NumKeys; ++k)
                 {
                     const float T = Duration * (float)k / (float)(NumKeys - 1);
-                    Translation.Timestamps.push_back(T);
-                    Translation.Translations.push_back(FVector3(0.03f, 0.12f + 0.02f * Math::Sin(T * 5.0f + Seed), 0.02f));
+                    Translation.Timestamps.Add(T);
+                    Translation.Translations.Emplace(0.03f, 0.12f + 0.02f * Math::Sin(T * 5.0f + Seed), 0.02f);
                 }
-                Resource.Channels.push_back(Translation);
+                Resource.Channels.Add(Translation);
             }
         }
 
@@ -182,9 +182,9 @@ TEST(AnimationBench, LocomotionRecipeAndKernels)
     BuildBenchSkeleton(Rig.Skeleton);
     for (int32 i = 0; i < 4; ++i)
     {
-        Rig.Clips.push_back(MakeBenchClip(Rig.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
+        Rig.Clips.Add(MakeBenchClip(Rig.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
     }
-    Rig.Mask.assign(kBenchBones, 0.0f);
+    Rig.Mask.Init(0.0f, kBenchBones);
     for (int32 i = 0; i < 89; ++i)
     {
         Rig.Mask[i] = 1.0f;
@@ -280,23 +280,23 @@ TEST(AnimationBench, BoneLODCutScaling)
     BuildBenchSkeleton(Rig.Skeleton);
     for (int32 i = 0; i < 4; ++i)
     {
-        Rig.Clips.push_back(MakeBenchClip(Rig.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
+        Rig.Clips.Add(MakeBenchClip(Rig.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
     }
-    Rig.Mask.assign(kBenchBones, 1.0f);
+    Rig.Mask.Init(1.0f, kBenchBones);
 
     // Depth first, where the asset is breadth first, so clip tracks and pose bones disagree the way a sorted layout makes them.
     TVector<int32> PoseToAsset;
     TVector<int32> Stack = { 0 };
-    while (!Stack.empty())
+    while (!Stack.IsEmpty())
     {
-        const int32 Bone = Stack.back();
-        Stack.pop_back();
-        PoseToAsset.push_back(Bone);
+        const int32 Bone = Stack.Last();
+        Stack.Pop();
+        PoseToAsset.Add(Bone);
         for (int32 Child : { 2 * Bone + 2, 2 * Bone + 1 })
         {
             if (Child < kBenchBones)
             {
-                Stack.push_back(Child);
+                Stack.Add(Child);
             }
         }
     }
@@ -318,8 +318,8 @@ TEST(AnimationBench, BoneLODCutScaling)
             if (bLayout)
             {
                 List.Skeleton    = &PoseSkeleton;
-                List.PoseToAsset = PoseToAsset.data();
-                List.AssetToPose = AssetToPose.data();
+                List.PoseToAsset = PoseToAsset.GetData();
+                List.AssetToPose = AssetToPose.GetData();
             }
             Anim::ExecuteTaskList(List, Matrices, nullptr);
         };
@@ -358,30 +358,30 @@ TEST(AnimationBench, LocomotionCrowdParallel)
         TVector<TUniquePtr<FSkeletonResource>> Skeletons;
         for (int32 s = 0; s < NumSkeletons; ++s)
         {
-            Skeletons.push_back(MakeUnique<FSkeletonResource>());
-            BuildBenchSkeleton(*Skeletons.back());
+            Skeletons.Add(MakeUnique<FSkeletonResource>());
+            BuildBenchSkeleton(*Skeletons.Last());
         }
 
         FBenchRig Shared;
         BuildBenchSkeleton(Shared.Skeleton);
         for (int32 i = 0; i < 4; ++i)
         {
-            Shared.Clips.push_back(MakeBenchClip(Shared.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
+            Shared.Clips.Add(MakeBenchClip(Shared.Skeleton, 1.2f + 0.1f * (float)i, (float)i));
         }
-        Shared.Mask.assign(kBenchBones, 1.0f);
+        Shared.Mask.Init(1.0f, kBenchBones);
 
         TVector<TUniquePtr<FBenchRig>> Rigs;
         for (int32 c = 0; c < Characters; ++c)
         {
-            Rigs.push_back(MakeUnique<FBenchRig>());
-            Rigs.back()->Clips = Shared.Clips;
-            Rigs.back()->Mask  = Shared.Mask;
+            Rigs.Add(MakeUnique<FBenchRig>());
+            Rigs.Last()->Clips = Shared.Clips;
+            Rigs.Last()->Mask  = Shared.Mask;
         }
 
         TVector<TVector<FMatrix4>> Outputs(Characters);
         const auto RunFrame = [&](int32 Frame)
         {
-            Task::ParallelFor((uint32)Characters, [&](uint32 c)
+            Jobs::ParallelFor((uint32)Characters, [&](uint32 c)
             {
                 thread_local FAnimTaskList List;
                 FBenchRig& Rig = *Rigs[c];
@@ -399,7 +399,7 @@ TEST(AnimationBench, LocomotionCrowdParallel)
         }
         const double FrameUs = NanosSince(Start) / Frames / 1000.0;
         std::printf("\n  %d characters on %u threads, %d skeleton(s): %8.1f us per frame, %6.2f us wall per character\n",
-                    Characters, GTaskSystem->GetNumTaskThreads(), NumSkeletons, FrameUs, FrameUs / Characters);
+                    Characters, Jobs::GetNumThreadSlots(), NumSkeletons, FrameUs, FrameUs / Characters);
     }
     SUCCEED();
 }

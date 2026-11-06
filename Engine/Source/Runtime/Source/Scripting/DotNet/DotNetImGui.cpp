@@ -53,8 +53,8 @@ namespace
             }
             else
             {
-                Heap.assign(Utf8, (size_t)Length);
-                Text = Heap.c_str();
+                Heap = FStringView(Utf8, (size_t)Length);
+                Text = *Heap;
             }
         }
         LE_NO_COPYMOVE(FLabel);
@@ -393,9 +393,9 @@ LUMINA_DOTNET_EXPORT(uint8, ImGui_Combo)(const char* Label, int32 LabelLen, int3
     LUMINA_IMGUI_GUARD(0)
     // The managed side separates items with NULs, and ImGui reads the list as ending at a double NUL.
     FString Separated(Items, (size_t)ItemsLen);
-    Separated.push_back('\0');
-    Separated.push_back('\0');
-    return ImGui::Combo(FLabel(Label, LabelLen), Current, Separated.c_str(), MaxVisibleItems) ? 1 : 0;
+    Separated.AppendChar('\0');
+    Separated.AppendChar('\0');
+    return ImGui::Combo(FLabel(Label, LabelLen), Current, *Separated, MaxVisibleItems) ? 1 : 0;
 }
 
 LUMINA_DOTNET_EXPORT(uint8, ImGui_Selectable)(const char* Label, int32 LabelLen, uint8 bSelected, int32 Flags, float Width, float Height)

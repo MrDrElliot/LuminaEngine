@@ -97,7 +97,6 @@ namespace LuminaVectorBench
     {
         std::printf("\nfootprint (bytes per container instance)\n");
         std::printf("  %-26s %10zu\n", "Lumina TVector<int>", sizeof(TVector<int>));
-        std::printf("  %-26s %10zu\n", "TVector<int>", sizeof(TVector<int>));
         std::printf("  %-26s %10zu\n", "std::vector<int>", sizeof(std::vector<int>));
         SUCCEED();
     }
@@ -119,9 +118,9 @@ namespace LuminaVectorBench
             TVector<int> Values;
             for (int Index = 0; Index < kIntCount; ++Index)
             {
-                Values.push_back(Index);
+                Values.Add(Index);
             }
-            GBenchSink += Values.back();
+            GBenchSink += Values.Last();
         });
 
         ReportHeader("push_back 1,000,000 int, no reserve (growth + relocation)");
@@ -149,9 +148,9 @@ namespace LuminaVectorBench
             Values.Reserve(kIntCount);
             for (int Index = 0; Index < kIntCount; ++Index)
             {
-                Values.push_back(Index);
+                Values.Add(Index);
             }
-            GBenchSink += Values.back();
+            GBenchSink += Values.Last();
         });
 
         ReportHeader("push_back 1,000,000 int, reserved (pure store path)");
@@ -187,9 +186,9 @@ namespace LuminaVectorBench
             TVector<FRelocatable> Values;
             for (int Index = 0; Index < kStructCount; ++Index)
             {
-                Values.push_back(FRelocatable(Index));
+                Values.Emplace(Index);
             }
-            GBenchSink += static_cast<uint64>(Values.back().Value);
+            GBenchSink += static_cast<uint64>(Values.Last().Value);
         });
 
         const double LuminaNoTrait = BestMillisOf(kRepeats, []
@@ -197,9 +196,9 @@ namespace LuminaVectorBench
             TVector<FNonRelocatable> Values;
             for (int Index = 0; Index < kStructCount; ++Index)
             {
-                Values.push_back(FNonRelocatable(Index));
+                Values.Emplace(Index);
             }
-            GBenchSink += static_cast<uint64>(Values.back().Value);
+            GBenchSink += static_cast<uint64>(Values.Last().Value);
         });
 
         ReportHeader("push_back 400,000 non-trivial struct, no reserve");
@@ -221,7 +220,7 @@ namespace LuminaVectorBench
             {
                 Values.insert(Values.begin(), Index);
             }
-            GBenchSink += Values.front();
+            GBenchSink += Values[0];
         });
 
         const double Lumina = BestMillisOf(kRepeats, []
@@ -229,9 +228,9 @@ namespace LuminaVectorBench
             TVector<int> Values;
             for (int Index = 0; Index < kInserts; ++Index)
             {
-                Values.insert(Values.begin(), Index);
+                Values.Insert(Index, 0);
             }
-            GBenchSink += Values.front();
+            GBenchSink += Values[0];
         });
 
         ReportHeader("insert at front 40,000 times (shift cost)");
@@ -265,13 +264,13 @@ namespace LuminaVectorBench
             Values.Reserve(kElements);
             for (int Index = 0; Index < kElements; ++Index)
             {
-                Values.push_back(Index);
+                Values.Add(Index);
             }
-            while (!Values.empty())
+            while (!Values.IsEmpty())
             {
-                Values.erase(Values.begin());
+                Values.RemoveAt(0);
             }
-            GBenchSink += Values.size();
+            GBenchSink += Values.Num();
         });
 
         const double LuminaSwap = BestMillisOf(kRepeats, []
@@ -280,13 +279,13 @@ namespace LuminaVectorBench
             Values.Reserve(kElements);
             for (int Index = 0; Index < kElements; ++Index)
             {
-                Values.push_back(Index);
+                Values.Add(Index);
             }
-            while (!Values.empty())
+            while (!Values.IsEmpty())
             {
                 Values.RemoveAtSwap(0);
             }
-            GBenchSink += Values.size();
+            GBenchSink += Values.Num();
         });
 
         ReportHeader("drain 60,000 elements from the front");
@@ -303,7 +302,7 @@ namespace LuminaVectorBench
         for (int Index = 0; Index < kIntCount; ++Index)
         {
             BaselineSource.push_back(Index);
-            LuminaSource.push_back(Index);
+            LuminaSource.Add(Index);
         }
 
         const double Baseline = BestMillisOf(kRepeats, [&BaselineSource]
@@ -320,7 +319,7 @@ namespace LuminaVectorBench
             for (int Attempt = 0; Attempt < 20; ++Attempt)
             {
                 TVector<int> Copy(LuminaSource);
-                GBenchSink += Copy.back();
+                GBenchSink += Copy.Last();
             }
         });
 
@@ -354,10 +353,10 @@ namespace LuminaVectorBench
             for (int Round = 0; Round < kRounds; ++Round)
             {
                 Lumina::Containers::TInlineVector<int, 4> Values;
-                Values.push_back(Round);
-                Values.push_back(Round + 1);
-                Values.push_back(Round + 2);
-                Total += Values.back();
+                Values.Add(Round);
+                Values.Add(Round + 1);
+                Values.Add(Round + 2);
+                Total += Values.Last();
             }
             GBenchSink += Total;
         });
@@ -374,10 +373,10 @@ namespace LuminaVectorBench
         constexpr int kRounds = 20'000;
 
         Lumina::Containers::TVector<int> Source;
-        Source.reserve(kChunk);
+        Source.Reserve(kChunk);
         for (int Index = 0; Index < kChunk; ++Index)
         {
-            Source.push_back(Index);
+            Source.Add(Index);
         }
 
         std::vector<int> BaselineSource(Source.begin(), Source.end());
@@ -396,12 +395,12 @@ namespace LuminaVectorBench
         const double Lumina = BestMillisOf(kRepeats, [&]
         {
             Lumina::Containers::TVector<int> Values;
-            Values.reserve(static_cast<size_t>(kChunk) * kRounds);
+            Values.Reserve(static_cast<size_t>(kChunk) * kRounds);
             for (int Round = 0; Round < kRounds; ++Round)
             {
                 Values.Append(Source);
             }
-            GBenchSink += Values.back();
+            GBenchSink += Values.Last();
         });
 
         ReportHeader("Append 20,000 x 256 int from a contiguous range, reserved");
@@ -416,8 +415,8 @@ namespace LuminaVectorBench
         TVector<int> LuminaValues;
         for (int Index = 0; Index < kIntCount; ++Index)
         {
-            EastlValues.push_back(Index);
-            LuminaValues.push_back(Index);
+            EastlValues.Add(Index);
+            LuminaValues.Add(Index);
         }
 
         const double Baseline = BestMillisOf(kRepeats, [&EastlValues]

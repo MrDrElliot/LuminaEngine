@@ -12,14 +12,14 @@ namespace Lumina::Scripting
     template<typename TString>
     int ReturnStringToCaller(const TString& String, char* Buffer, int Capacity)
     {
-        const int Length = static_cast<int>(String.size());
+        const int Length = static_cast<int>(String.Len());
         if (Buffer != nullptr && Capacity > 0)
         {
-            Memory::Memcpy(Buffer, String.data(), static_cast<size_t>(Length < Capacity ? Length : Capacity));
+            Memory::Memcpy(Buffer, String.GetData(), static_cast<size_t>(Length < Capacity ? Length : Capacity));
         }
         if (Buffer != nullptr && Length > Capacity)
         {
-            StashCallOverflow(Buffer, String.data(), static_cast<size_t>(Length));
+            StashCallOverflow(Buffer, String.GetData(), static_cast<size_t>(Length));
         }
         return Length;
     }

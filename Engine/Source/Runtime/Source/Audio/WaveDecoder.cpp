@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "WaveDecoder.h"
+#include "Audio/AudioMixer.h"
 
 #include "Core/Math/Scalar.h"
 #include "Log/Log.h"
@@ -85,7 +86,7 @@ namespace Lumina::Audio
 				Out.FormatTag = ReadU16(At + 24);
 			}
 
-			return Out.Channels != 0 && Out.SampleRate != 0 && Out.BitsPerSample != 0;
+			return Out.Channels != 0 && Out.Channels <= FAudioMixer::MaxChannels && Out.SampleRate != 0 && Out.BitsPerSample != 0;
 		}
 
 		EWaveSampleFormat ResolveSampleFormat(uint16 Tag, uint16 BitsPerSample)
@@ -274,7 +275,7 @@ namespace Lumina::Audio
 		}
 
 		const uint8* Src   = Samples + FrameOffset * BytesPerFrame;
-		const size_t Count = (size_t)(FrameCount * Info.NumChannels);
+		const size_t Count = FrameCount * Info.NumChannels;
 
 		switch (SampleFormat)
 		{

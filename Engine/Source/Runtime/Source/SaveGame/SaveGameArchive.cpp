@@ -78,16 +78,16 @@ namespace Lumina
                 return *this;
             }
 
-            if (const auto Found = WrittenObjects.find(Value); Found != WrittenObjects.end())
+            if (const auto Found = WrittenObjects.Find(Value); Found != nullptr)
             {
                 Kind = EObjectRecord::Repeat;
-                uint32 Index = Found->second;
+                uint32 Index = (*Found);
                 *this << Kind << Index;
                 return *this;
             }
 
             // Recorded before the payload, so an object that reaches itself writes a repeat instead of recursing.
-            WrittenObjects.emplace(Value, (uint32)WrittenObjects.size());
+            WrittenObjects.TryAdd(Value, (uint32)WrittenObjects.Num());
             Kind = EObjectRecord::Inline;
             FName ClassName = Value->GetClass()->GetName();
             *this << Kind << ClassName;
@@ -119,7 +119,7 @@ namespace Lumina
             {
                 uint32 Index = 0;
                 *this << Index;
-                Value = Index < ReadObjects.size() ? ReadObjects[Index] : nullptr;
+                Value = Index < static_cast<uint32>(ReadObjects.Num()) ? ReadObjects[Index] : nullptr;
                 break;
             }
         case EObjectRecord::Inline:
@@ -131,14 +131,14 @@ namespace Lumina
 
                 CClass* Class = FScriptableRegistry::ResolveClass(ClassName);
                 CObject* Object = Class != nullptr ? NewObject(Class, nullptr, NAME_None, FGuid::New(), OF_Transient) : nullptr;
-                ReadObjects.push_back(Object);
+                ReadObjects.Add(Object);
                 if (Object != nullptr)
                 {
                     SaveGame::SerializeObjectState(*this, Object);
                 }
                 else
                 {
-                    LOG_WARN("Save game: class '{}' no longer exists, so an object of it loads as null.", ClassName.c_str());
+                    LOG_WARN("Save game: class '{}' no longer exists, so an object of it loads as null.", *ClassName);
                 }
                 Seek(Start + Size);
                 Value = Object;
@@ -232,7 +232,7 @@ namespace Lumina
                 else if (Property != nullptr)
                 {
                     LOG_WARN("Save game: '{}.{}' changed type since it was saved, so it keeps its current value.",
-                        Struct->GetName().c_str(), Name.c_str());
+                        *Struct->GetName(), *Name);
                 }
                 Ar.Seek(Start + Size);
             }

@@ -16,14 +16,14 @@ namespace
     void PublishHealth(bool bWithArmor)
     {
         FScriptExportSchema Schema;
-        Schema.Fields.push_back(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Float));
-        Schema.Fields.push_back(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
+        Schema.Fields.Add(ScriptTest::ScalarField("Health", EPropertyTypeFlags::Float));
+        Schema.Fields.Add(ScriptTest::ScalarField("Label", EPropertyTypeFlags::String));
         if (bWithArmor)
         {
-            Schema.Fields.push_back(ScriptTest::ScalarField("Armor", EPropertyTypeFlags::Int32));
+            Schema.Fields.Add(ScriptTest::ScalarField("Armor", EPropertyTypeFlags::Int32));
         }
         FManagedTypeDefinition Definition = ScriptTest::StructDefinition("SComp_GTestHealth", std::move(Schema));
-        Definition.Meta.push_back({ "Component", "" });
+        Definition.Meta.Add({ "Component", "" });
         ScriptTest::PublishStructs({ Definition });
     }
 

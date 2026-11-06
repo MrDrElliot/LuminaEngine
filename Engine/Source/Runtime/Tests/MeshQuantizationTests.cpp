@@ -18,7 +18,7 @@ namespace
 
     FRoundTrip RoundTrip(const TVector<FVector3>& Positions)
     {
-        const FMeshPositionGrid Grid = ComputeMeshPositionGrid(Positions.data(), Positions.size());
+        const FMeshPositionGrid Grid = ComputeMeshPositionGrid(Positions.GetData(), Positions.Num());
 
         FRoundTrip Result;
         Result.Step = PositionGridScale(Grid.Exponent);
@@ -38,7 +38,7 @@ namespace
     TVector<FVector3> MakePatch(FVector3 Origin, float Extent)
     {
         TVector<FVector3> Out;
-        Out.reserve(MESHLET_MAX_VERTICES);
+        Out.Reserve(MESHLET_MAX_VERTICES);
 
         for (uint32 i = 0; i < MESHLET_MAX_VERTICES; ++i)
         {
@@ -47,9 +47,9 @@ namespace
             const float V = (float)((i / 4) % 4) / 3.0f;
             const float W = (float)((i / 16) % 4) / 3.0f;
 
-            Out.push_back(FVector3(Origin.x + (U - 0.5f) * Extent,
-                                   Origin.y + (V - 0.5f) * Extent,
-                                   Origin.z + (W - 0.5f) * Extent));
+            Out.Emplace(Origin.x + (U - 0.5f) * Extent,
+                        Origin.y + (V - 0.5f) * Extent,
+                        Origin.z + (W - 0.5f) * Extent);
         }
         return Out;
     }
@@ -118,7 +118,7 @@ TEST(MeshQuantization, EmptyMeshIsSafe)
 TEST(MeshQuantization, DecodeIsBitwiseReproducible)
 {
     const TVector<FVector3> Positions = MakePatch(FVector3(17.0f, -4.0f, 9.5f), 3.0f);
-    const FMeshPositionGrid Grid = ComputeMeshPositionGrid(Positions.data(), Positions.size());
+    const FMeshPositionGrid Grid = ComputeMeshPositionGrid(Positions.GetData(), Positions.Num());
 
     for (const FVector3& P : Positions)
     {
@@ -206,19 +206,19 @@ TEST(MeshQuantization, LegacyStaticVerticesFoldIntoSharedVertices)
     TVector<FLegacyMeshletVertex> Legacy;
     for (const auto& Triangle : MeshletCorners)
     {
-        LegacyMeshlets.push_back(MakeLegacyMeshlet((uint32)Legacy.size(), 3u));
+        LegacyMeshlets.Add(MakeLegacyMeshlet((uint32)Legacy.Num(), 3u));
         for (uint32 Corner : Triangle)
         {
-            Legacy.push_back(MakeLegacyVertex(Corners[Corner]));
+            Legacy.Add(MakeLegacyVertex(Corners[Corner]));
         }
     }
 
     FMeshletData Data;
     ConvertLegacyMeshletData(Data, LegacyMeshlets, Legacy, {});
 
-    EXPECT_EQ(Data.VertexPositions.size(), 4u);
-    EXPECT_TRUE(Data.VertexColors.empty());
-    EXPECT_TRUE(Data.VertexUV1s.empty());
+    EXPECT_EQ(Data.VertexPositions.Num(), 4);
+    EXPECT_TRUE(Data.VertexColors.IsEmpty());
+    EXPECT_TRUE(Data.VertexUV1s.IsEmpty());
     for (uint32 m = 0; m < 2u; ++m)
     {
         EXPECT_EQ(Data.Meshlets[m].VertexCount, 3u);
@@ -247,13 +247,13 @@ TEST(MeshQuantization, LegacySkinnedVerticesMoveOntoTheGrid)
         V.Base         = MakeLegacyVertex(Corner);
         V.JointIndices = 0x00010203u;
         V.JointWeights = 0x000000FFu;
-        Legacy.push_back(V);
+        Legacy.Add(V);
     }
 
     FMeshletData Data;
     ConvertLegacyMeshletData(Data, LegacyMeshlets, {}, Legacy);
 
-    ASSERT_EQ(Data.MeshletSkinnedVertices.size(), 3u);
+    ASSERT_EQ(Data.MeshletSkinnedVertices.Num(), 3);
     EXPECT_EQ(Data.Meshlets[0].BaseVertex, 0u);
     for (uint32 Local = 0; Local < 3u; ++Local)
     {

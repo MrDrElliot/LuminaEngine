@@ -16,7 +16,7 @@ namespace Lumina
         ++GMakeRangeCalls;
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Out.push_back(Index);
+            Out.Add(Index);
         }
     }
 
@@ -24,7 +24,7 @@ namespace Lumina
     {
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Out.push_back(ECS::FEntity::FromPacked((uint32)Index));
+            Out.Add(ECS::FEntity::FromPacked((uint32)Index));
         }
     }
 
@@ -32,7 +32,7 @@ namespace Lumina
     {
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Out.push_back(FVector3((float)Index, (float)Index * 2.0f, (float)Index * 3.0f));
+            Out.Emplace((float)Index, (float)Index * 2.0f, (float)Index * 3.0f);
         }
     }
 
@@ -41,7 +41,7 @@ namespace Lumina
     {
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Out.emplace_back(StaticClass()->GetDefaultObject<CInteropTestLibrary>());
+            Out.Emplace(StaticClass()->GetDefaultObject<CInteropTestLibrary>());
         }
     }
 
@@ -72,7 +72,7 @@ namespace Lumina
 
     int32 CInteropTestLibrary::BenchMeasureString(const FString& Text)
     {
-        return (int32)Text.length();
+        return Text.Len();
     }
 
     // Returned by reference, so the benchmark prices the crossing and not a native allocation per call.
@@ -100,10 +100,10 @@ namespace Lumina
 
         // Cycled rather than repeated, so a truncated or spliced result cannot read as correct.
         FString Text;
-        Text.reserve((size_t)Math::Max(Length, 0));
+        Text.Reserve(Math::Max(Length, 0));
         for (int32 Index = 0; Index < Length; ++Index)
         {
-            Text.push_back((char)('a' + (Index % 26)));
+            Text.AppendChar((char)('a' + (Index % 26)));
         }
         return Text;
     }
@@ -120,7 +120,7 @@ namespace Lumina
 
     float CInteropTestLibrary::ReadOpaqueValue(const SInteropOpaqueStruct& Opaque)
     {
-        return Opaque.Value + (float)Opaque.Label.length();
+        return Opaque.Value + (float)Opaque.Label.Len();
     }
 }
 

@@ -29,13 +29,13 @@ namespace
     {
         FSocketRig Rig;
         Rig.Skeleton = NewObject<CSkeleton>();
-        Rig.Skeleton->Sockets.push_back(MakeSocket("Grip", "Hand", 1.0f));
-        Rig.Skeleton->Sockets.push_back(MakeSocket("Back", "Spine", 2.0f));
+        Rig.Skeleton->Sockets.Add(MakeSocket("Grip", "Hand", 1.0f));
+        Rig.Skeleton->Sockets.Add(MakeSocket("Back", "Spine", 2.0f));
 
         Rig.Mesh = NewObject<CSkeletalMesh>();
         Rig.Mesh->Skeleton = Rig.Skeleton;
-        Rig.Mesh->Sockets.push_back(MakeSocket("Back", "Chest", 3.0f));
-        Rig.Mesh->Sockets.push_back(MakeSocket("Muzzle", "Hand", 4.0f));
+        Rig.Mesh->Sockets.Add(MakeSocket("Back", "Chest", 3.0f));
+        Rig.Mesh->Sockets.Add(MakeSocket("Muzzle", "Hand", 4.0f));
         return Rig;
     }
 }
@@ -68,7 +68,7 @@ TEST(MeshSocket, ActiveSocketsListTheMeshFirstAndDropShadowedSkeletonSockets)
     TVector<const SMeshSocket*> Active;
     Rig.Mesh->CollectActiveSockets(Active);
 
-    ASSERT_EQ(Active.size(), 3u);
+    ASSERT_EQ(Active.Num(), 3);
     EXPECT_EQ(Active[0]->SocketName, FName("Back"));
     EXPECT_EQ(Active[0]->BoneName, FName("Chest"));
     EXPECT_EQ(Active[1]->SocketName, FName("Muzzle"));
@@ -78,12 +78,12 @@ TEST(MeshSocket, ActiveSocketsListTheMeshFirstAndDropShadowedSkeletonSockets)
 TEST(MeshSocket, MeshWithoutSkeletonResolvesOnlyItsOwnSockets)
 {
     CSkeletalMesh* Mesh = NewObject<CSkeletalMesh>();
-    Mesh->Sockets.push_back(MakeSocket("Muzzle", "Hand", 1.0f));
+    Mesh->Sockets.Add(MakeSocket("Muzzle", "Hand", 1.0f));
 
     EXPECT_NE(Mesh->FindSocket(FName("Muzzle")), nullptr);
     EXPECT_EQ(Mesh->FindSocket(FName("Grip")), nullptr);
 
     TVector<const SMeshSocket*> Active;
     Mesh->CollectActiveSockets(Active);
-    EXPECT_EQ(Active.size(), 1u);
+    EXPECT_EQ(Active.Num(), 1);
 }

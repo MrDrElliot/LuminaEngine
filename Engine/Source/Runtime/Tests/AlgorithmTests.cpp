@@ -100,16 +100,16 @@ namespace LuminaAlgorithmTests
         TVector<FString> Values;
         for (int32 Index = 0; Index < 200; ++Index)
         {
-            Values.push_back(Lumina::Format("item-{:04}", (Index * 37) % 200));
+            Values.Add(Lumina::Format("item-{:04}", (Index * 37) % 200));
         }
 
         Algo::Sort(Values.begin(), Values.end());
 
-        for (size_t Index = 1; Index < Values.size(); ++Index)
+        for (int32 Index = 1; Index < Values.Num(); ++Index)
         {
             EXPECT_LE(Values[Index - 1], Values[Index]);
         }
-        EXPECT_EQ(Values.size(), 200u);
+        EXPECT_EQ(Values.Num(), 200);
     }
 
     TEST(AlgoSort, DrivenIntoItsHeapsortFallbackStillSorts)
@@ -159,13 +159,13 @@ namespace LuminaAlgorithmTests
         TVector<FString> Values;
         for (int32 Index = 0; Index < 500; ++Index)
         {
-            Values.push_back(Lumina::Format("a-fairly-long-string-that-heap-allocates-{}", (Index * 31) % 500));
+            Values.Add(Lumina::Format("a-fairly-long-string-that-heap-allocates-{}", (Index * 31) % 500));
         }
 
         Algo::StableSort(Values.begin(), Values.end());
 
-        EXPECT_EQ(Values.size(), 500u);
-        for (size_t Index = 1; Index < Values.size(); ++Index)
+        EXPECT_EQ(Values.Num(), 500);
+        for (int32 Index = 1; Index < Values.Num(); ++Index)
         {
             ASSERT_LE(Values[Index - 1], Values[Index]);
         }
@@ -403,9 +403,9 @@ namespace LuminaAlgorithmTests
     TVector<FNamed> MakeNamed()
     {
         TVector<FNamed> Items;
-        Items.push_back(FNamed{ "alpha", 5 });
-        Items.push_back(FNamed{ "beta", 20 });
-        Items.push_back(FNamed{ "gamma", 15 });
+        Items.Emplace("alpha", 5);
+        Items.Emplace("beta", 20);
+        Items.Emplace("gamma", 15);
         return Items;
     }
 
@@ -475,7 +475,7 @@ namespace LuminaAlgorithmTests
         TVector<FNamed*> Pointers;
         for (FNamed& Item : Storage)
         {
-            Pointers.push_back(&Item);
+            Pointers.Add(&Item);
         }
 
         EXPECT_TRUE(Algo::Contains(Pointers, FString("beta"), &FNamed::Name));

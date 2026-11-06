@@ -593,6 +593,7 @@ internal sealed class ScriptManager
         ScriptFunctionDispatch.Reset();        // [Function] bindings, which root user MethodInfos
         ScriptInvokerRegistry.Clear();         // generated invokers, which are delegates over user methods
         NativeObjectMarshal.ClearTypeCache();  // wrapper instantiations keyed by user parameter types
+        WorldResources.Clear();                // managed world resources, instances of user types
 
         // Every strong handle has to go before the unload, or it roots the generation the ALC is dropping.
         EntityScripts?.FreeAll();  // detaches only; the table drain below owns the script handles

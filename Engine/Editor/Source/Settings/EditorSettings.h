@@ -503,6 +503,16 @@ namespace Lumina
         bool bCompileOnSave = true;
     };
 
+    // What the content browser orders a folder's files by, with folders always listed first.
+    REFLECT()
+    enum class EContentBrowserSortMode : uint8
+    {
+        Name,
+        Type,
+        Size,
+        DateModified,
+    };
+
     // Content browser preferences.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Content Browser", Category = "Editor")
     class CContentBrowserSettings : public CDeveloperSettings
@@ -513,6 +523,12 @@ namespace Lumina
         /** Pixel size of asset tiles in the content browser. */
         PROPERTY(Editable, Category = "Layout", ClampMin = 32.0f, ClampMax = 256.0f)
         float TileSize = 86.0f;
+
+        PROPERTY(Editable, Category = "Layout")
+        EContentBrowserSortMode SortMode = EContentBrowserSortMode::Name;
+
+        PROPERTY(Editable, Category = "Layout")
+        bool bSortAscending = true;
     };
 
     // RmlUi editor preferences beyond the shared Code Editor ones.

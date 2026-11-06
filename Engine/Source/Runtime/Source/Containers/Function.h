@@ -7,8 +7,8 @@
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
 #include "Invoke.h"
-#include "Memory/Memcpy.h"
 #include "Memory/Construct.h"
+#include "Memory/Memcpy.h"
 
 namespace Lumina::Containers
 {
@@ -57,7 +57,7 @@ namespace Lumina::Containers
 
         struct FVTable
         {
-            TRet (*Invoke)(void* Storage, TArgs&&... Args);
+            TRet (*Invoke)(void* Storage, Private::TThunkArg<TArgs>... Args);
             void (*Destroy)(void* Storage) noexcept;
             void (*Copy)(void* Dest, const void* Source);
 
@@ -91,7 +91,7 @@ namespace Lumina::Containers
                 }
             }
 
-            static TRet InvokeThunk(void* Storage, TArgs&&... Args)
+            static TRet InvokeThunk(void* Storage, Private::TThunkArg<TArgs>... Args)
             {
                 return InvokeR<TRet>(*Target(Storage), std::forward<TArgs>(Args)...);
             }
@@ -136,7 +136,7 @@ namespace Lumina::Containers
                 Table.Invoke = &TOps::InvokeThunk;
                 Table.Destroy = &TOps::DestroyThunk;
                 Table.bInline = bInline;
-                Table.RelocateBytes = bInline ? sizeof(TCallable) : sizeof(void*);
+                Table.RelocateBytes = bInline ? (std::is_empty_v<TCallable> ? 0u : static_cast<uint32>(sizeof(TCallable))) : static_cast<uint32>(sizeof(void*));
 
                 if constexpr (bCopyable)
                 {
@@ -220,7 +220,7 @@ namespace Lumina::Containers
             if (this != &Other)
             {
                 TBasicFunction Temp(Other);
-                Swap(Temp);
+                ReplaceWith(Temp);
             }
 
             return *this;
@@ -233,8 +233,7 @@ namespace Lumina::Containers
         {
             if (this != &Other)
             {
-                Reset();
-                TakeFrom(Other);
+                ReplaceWith(Other);
             }
 
             return *this;
@@ -251,7 +250,7 @@ namespace Lumina::Containers
         TBasicFunction& operator=(TCallable&& Callable)
         {
             TBasicFunction Temp(std::forward<TCallable>(Callable));
-            Swap(Temp);
+            ReplaceWith(Temp);
             return *this;
         }
 
@@ -267,12 +266,12 @@ namespace Lumina::Containers
         /** True when the target sits in the inline buffer rather than on the heap. */
         NODISCARD bool IsInline() const noexcept { return VTable != nullptr && VTable->bInline; }
 
+        // Cleared before the target is destroyed, so a destructor that reaches back into this function finds it empty.
         void Reset() noexcept
         {
-            if (VTable != nullptr)
+            if (const FVTable* Old = std::exchange(VTable, nullptr))
             {
-                VTable->Destroy(&Storage);
-                VTable = nullptr;
+                Old->Destroy(&Storage);
             }
         }
 
@@ -314,6 +313,13 @@ namespace Lumina::Containers
             VTable = &FOps::kVTable;
         }
 
+        // The old target is moved aside and dies last, once this already holds the new one, so its destructor may reassign us.
+        void ReplaceWith(TBasicFunction& Replacement) noexcept
+        {
+            TBasicFunction Old(std::move(*this));
+            TakeFrom(Replacement);
+        }
+
         void TakeFrom(TBasicFunction& Other) noexcept
         {
             if (Other.VTable == nullptr)
@@ -321,13 +327,16 @@ namespace Lumina::Containers
                 return;
             }
 
+            // Only the target's own bytes, none for an empty one, since the rest of the inline buffer was never written.
             if (Other.VTable->Relocate != nullptr)
             {
                 Other.VTable->Relocate(&Storage, &Other.Storage);
             }
             else
             {
-                Memory::Memcpy(&Storage, &Other.Storage, Other.VTable->RelocateBytes);
+                const uint32 Bytes = Other.VTable->RelocateBytes;
+                [[assume(Bytes <= sizeof(FStorage))]];
+                Memory::Memcpy(&Storage, &Other.Storage, Bytes);
             }
 
             VTable = Other.VTable;

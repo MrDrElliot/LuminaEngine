@@ -85,8 +85,8 @@ namespace Lumina::Physics
 
         void AppendLine(TVector<FVector3>& Out, const b3Vec3& A, const b3Vec3& B)
         {
-            Out.push_back(Box3DUtils::FromB3Vec3(A));
-            Out.push_back(Box3DUtils::FromB3Vec3(B));
+            Out.Add(Box3DUtils::FromB3Vec3(A));
+            Out.Add(Box3DUtils::FromB3Vec3(B));
         }
 
         void AppendCircle(TVector<FVector3>& Out, const FVector3& Center, const FVector3& AxisU, const FVector3& AxisV, float Radius, int32 Segments)
@@ -96,8 +96,8 @@ namespace Lumina::Physics
             {
                 const float Angle = (Math::TwoPi<float>() * (float)i) / (float)Segments;
                 const FVector3 Point = Center + (AxisU * Math::Cos(Angle) + AxisV * Math::Sin(Angle)) * Radius;
-                Out.push_back(Previous);
-                Out.push_back(Point);
+                Out.Add(Previous);
+                Out.Add(Point);
                 Previous = Point;
             }
         }
@@ -133,8 +133,8 @@ namespace Lumina::Physics
             {
                 const float Angle = (Math::TwoPi<float>() * (float)i) / 4.0f;
                 const FVector3 Offset = (U * Math::Cos(Angle) + V * Math::Sin(Angle)) * Radius;
-                Out.push_back(A + Offset);
-                Out.push_back(B + Offset);
+                Out.Add(A + Offset);
+                Out.Add(B + Offset);
             }
 
             AppendCircle(Out, A, U, -Axis, Radius, Segments);
@@ -188,7 +188,7 @@ namespace Lumina::Physics
 
             for (int32 i = 0; i < Mesh->triangleCount; ++i)
             {
-                if ((int32)Out.size() >= kMaxDebugShapePoints)
+                if (Out.Num() >= kMaxDebugShapePoints)
                 {
                     break;
                 }
@@ -227,7 +227,7 @@ namespace Lumina::Physics
             {
                 for (int32 Column = 0; Column < Field->columnCount; ++Column)
                 {
-                    if ((int32)Out.size() >= kMaxDebugShapePoints)
+                    if (Out.Num() >= kMaxDebugShapePoints)
                     {
                         return;
                     }
@@ -235,13 +235,13 @@ namespace Lumina::Physics
                     const FVector3 Origin = SampleAt(Row, Column);
                     if (Column + 1 < Field->columnCount)
                     {
-                        Out.push_back(Origin);
-                        Out.push_back(SampleAt(Row, Column + 1));
+                        Out.Add(Origin);
+                        Out.Add(SampleAt(Row, Column + 1));
                     }
                     if (Row + 1 < Field->rowCount)
                     {
-                        Out.push_back(Origin);
-                        Out.push_back(SampleAt(Row + 1, Column));
+                        Out.Add(Origin);
+                        Out.Add(SampleAt(Row + 1, Column));
                     }
                 }
             }
@@ -404,7 +404,7 @@ namespace Lumina::Physics
 
     TVector<FVector3>& FBox3DDebugRenderer::TakeScratch()
     {
-        Scratch.clear();
+        Scratch.Reset();
         return Scratch;
     }
 
@@ -418,7 +418,7 @@ namespace Lumina::Physics
         void DebugDrawShape(void* UserShape, b3WorldTransform Transform, b3HexColor Color, void* Context)
         {
             const FBox3DDebugShape* Shape = static_cast<const FBox3DDebugShape*>(UserShape);
-            if (Shape == nullptr || Shape->LinePoints.empty())
+            if (Shape == nullptr || Shape->LinePoints.IsEmpty())
             {
                 return;
             }
@@ -432,7 +432,7 @@ namespace Lumina::Physics
                 return;
             }
 
-            Renderer.Segments(Shape->LinePoints.data(), (int32)Shape->LinePoints.size(), Translation,
+            Renderer.Segments(Shape->LinePoints.GetData(), Shape->LinePoints.Num(), Translation,
                               Box3DUtils::FromB3Quat(Transform.q), PackDebugColor(Color));
         }
 
@@ -474,7 +474,7 @@ namespace Lumina::Physics
 
             TVector<FVector3>& Points = Renderer.TakeScratch();
             AppendSphereLines(Points, b3Sphere{ P, Radius });
-            Renderer.Segments(Points.data(), (int32)Points.size(), PackDebugColor(Color));
+            Renderer.Segments(Points.GetData(), Points.Num(), PackDebugColor(Color));
         }
 
         void DebugDrawCapsule(b3Pos P1, b3Pos P2, float Radius, b3HexColor Color, float /*Alpha*/, void* Context)
@@ -483,7 +483,7 @@ namespace Lumina::Physics
 
             TVector<FVector3>& Points = Renderer.TakeScratch();
             AppendCapsuleLines(Points, b3Capsule{ P1, P2, Radius });
-            Renderer.Segments(Points.data(), (int32)Points.size(), PackDebugColor(Color));
+            Renderer.Segments(Points.GetData(), Points.Num(), PackDebugColor(Color));
         }
 
         void DrawBoxWireframe(FBox3DDebugRenderer& Renderer, const FVector3& Center, const FVector3& Extents, const FQuat& Rotation, uint32 Packed)

@@ -124,8 +124,8 @@ namespace Lumina::Filesystem
 
         NODISCARD FStringView GetExtension() const
         {
-            const size_t Dot = Name.find_last_of('.');
-            return Dot == FStringView::npos ? FStringView() : Name.substr(Dot);
+            const int32 Dot = Name.FindLastOf('.');
+            return Dot == Constants::kIndexNone ? FStringView() : Name.Mid(Dot);
         }
     };
 

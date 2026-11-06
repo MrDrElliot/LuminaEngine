@@ -13,16 +13,16 @@ namespace Lumina
     {
     public:
 
-        FPropertyHandle(void* InContainerPtr, FProperty* InProperty, int64 InIndex = 0);
-        FPropertyHandle(void* InContainerPtr, void* InDefaultContainerPtr, FProperty* InProperty, int64 InIndex = 0);
+        FPropertyHandle(void* InContainerPtr, FProperty* InProperty, int32 InIndex = 0);
+        FPropertyHandle(void* InContainerPtr, void* InDefaultContainerPtr, FProperty* InProperty, int32 InIndex = 0);
 
         /** Array-element handle; ContainerPtr is the array instance (resolved via GetAt per access,
          *  so it survives reallocation), InProperty is the element property. */
-        FPropertyHandle(FArrayProperty* InOwnerArray, void* InArrayPtr, void* InDefaultArrayPtr, FProperty* InElementProperty, int64 InIndex);
+        FPropertyHandle(FArrayProperty* InOwnerArray, void* InArrayPtr, void* InDefaultArrayPtr, FProperty* InElementProperty, int32 InIndex);
 
         /** Map-entry handle; ContainerPtr is the map instance, resolved by iteration Index each access. bInIsKey
          *  selects the key or value slot of that pair; InProperty is the key or value property accordingly. */
-        FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int64 InIndex, bool bInIsKey);
+        FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int32 InIndex, bool bInIsKey);
 
         /** Resolves to the property's value (the member itself, or the live array element). Null container yields null. */
         void* GetValuePtr() const;
@@ -74,7 +74,7 @@ namespace Lumina
         void* ContainerPtr;
         void* DefaultContainerPtr = nullptr;
         FProperty* Property;
-        int64 Index = 0;
+        int32 Index = 0;
 
         /** Non-null marks this as an array element; ContainerPtr is then the array instance. */
         FArrayProperty* OwnerArray = nullptr;

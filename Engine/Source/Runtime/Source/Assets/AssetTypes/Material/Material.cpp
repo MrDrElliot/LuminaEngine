@@ -45,32 +45,32 @@ namespace Lumina
             auto Append = [&Bytes](const void* Data, size_t Size)
             {
                 const uint8* Begin = (const uint8*)Data;
-                Bytes.insert(Bytes.end(), Begin, Begin + Size);
+                Bytes.Append(Begin, IntCastChecked<int32>(Size));
             };
 
-            const uint32 Count = (uint32)Blobs.size();
+            const uint32 Count = (uint32)Blobs.Num();
             Append(&Count, sizeof(Count));
             for (const SMaterialStageBlob& Blob : Blobs)
             {
-                const uint32 Words = (uint32)Blob.Spirv.size();
+                const uint32 Words = (uint32)Blob.Spirv.Num();
                 Append(&Blob.Stage, sizeof(Blob.Stage));
                 Append(&Words, sizeof(Words));
-                Append(Blob.Spirv.data(), Words * sizeof(uint32));
+                Append(Blob.Spirv.GetData(), Words * sizeof(uint32));
             }
             return Bytes;
         }
 
         bool UnpackStageBlobs(const TVector<uint8>& Bytes, TVector<SMaterialStageBlob>& OutBlobs)
         {
-            size_t Offset = 0;
+            int32 Offset = 0;
             auto Read = [&Bytes, &Offset](void* Out, size_t Size)
             {
-                if (Offset + Size > Bytes.size())
+                if (Size > static_cast<size_t>(Bytes.Num() - Offset))
                 {
                     return false;
                 }
-                Memory::Memcpy(Out, Bytes.data() + Offset, Size);
-                Offset += Size;
+                Memory::Memcpy(Out, Bytes.GetData() + Offset, Size);
+                Offset += static_cast<int32>(Size);
                 return true;
             };
 
@@ -80,23 +80,23 @@ namespace Lumina
                 return false;
             }
 
-            OutBlobs.clear();
-            OutBlobs.reserve(Count);
+            OutBlobs.Reset();
+            OutBlobs.Reserve(Count);
             for (uint32 i = 0; i < Count; ++i)
             {
-                SMaterialStageBlob& Blob = OutBlobs.emplace_back();
+                SMaterialStageBlob& Blob = OutBlobs.EmplaceGetRef();
                 uint32 Words = 0;
                 if (!Read(&Blob.Stage, sizeof(Blob.Stage)) || !Read(&Words, sizeof(Words)) || Blob.Stage >= (uint8)EMaterialShaderStage::Count)
                 {
                     return false;
                 }
-                Blob.Spirv.resize(Words);
-                if (!Read(Blob.Spirv.data(), Words * sizeof(uint32)))
+                Blob.Spirv.SetNum(Words);
+                if (!Read(Blob.Spirv.GetData(), Words * sizeof(uint32)))
                 {
                     return false;
                 }
             }
-            return Offset == Bytes.size();
+            return Offset == Bytes.Num();
         }
 
         // Test hosts run without an engine, and they simply compile every time.
@@ -168,12 +168,13 @@ namespace Lumina
             SMaterialStageBlob* Blob = FindStageBlob(Blobs, Stage);
             if (Blob == nullptr)
             {
-                Blob = &Blobs.emplace_back();
+                Blob = &Blobs.EmplaceGetRef();
                 Blob->Stage = (uint8)Stage;
             }
-            if (Blob->Spirv.data() != Spirv.data())
+            if (Blob->Spirv.GetData() != Spirv.GetData())
             {
-                Blob->Spirv.assign(Spirv.data(), Spirv.data() + Spirv.size());
+                Blob->Spirv.Reset();
+                Blob->Spirv.Append(Spirv.GetData(), Spirv.GetData() + Spirv.Num());
             }
         }
 
@@ -215,7 +216,7 @@ namespace Lumina
                 const EMaterialShaderStage Stage = (EMaterialShaderStage)s;
                 if (Material->IsStageRequired(Stage) && Material->GetStage(Stage) == FShaderH{})
                 {
-                    Missing += Missing.empty() ? "" : ", ";
+                    Missing += Missing.IsEmpty() ? "" : ", ";
                     Missing += GMaterialStages[s].Suffix;
                 }
             }
@@ -229,9 +230,9 @@ namespace Lumina
         void ReplaceAllTokens(FString& Source, const char* Token, const FString& Replacement)
         {
             const size_t TokenLength = strlen(Token);
-            for (size_t Pos = Source.find(Token); Pos != FString::npos; Pos = Source.find(Token, Pos + Replacement.size()))
+            for (int32 Pos = Source.Find(Token); Pos != Constants::kIndexNone; Pos = Source.Find(Token, Pos + Replacement.Len()))
             {
-                Source.replace(Pos, TokenLength, Replacement);
+                Source.RemoveAt(Pos, IntCastChecked<int32>(TokenLength)).InsertAt(Pos, Replacement);
             }
         }
 
@@ -252,7 +253,7 @@ namespace Lumina
 
             for (const FTemplateToken& Token : Tokens)
             {
-                if (OutSource.find(Token.Token) == FString::npos)
+                if (OutSource.Find(Token.Token) == Constants::kIndexNone)
                 {
                     LOG_ERROR("'{}' is missing [{}]; built-in material '{}' cannot build that stage.", Path, Token.Token, Owner);
                     return false;
@@ -269,7 +270,7 @@ namespace Lumina
             const FString TemplatePath = FString(kMaterialShaderDirectory) + TemplateFile;
 
             FString Source;
-            if (!LoadMaterialTemplate(TemplatePath, Tokens, Source, Material->GetName().c_str()))
+            if (!LoadMaterialTemplate(TemplatePath, Tokens, Source, *Material->GetName()))
             {
                 return;
             }
@@ -278,7 +279,7 @@ namespace Lumina
             Options.TemplateVirtualPath = TemplatePath;
             if (Define != nullptr)
             {
-                Options.MacroDefinitions.emplace_back(Define);
+                Options.MacroDefinitions.Emplace(Define);
             }
             if (EntryPoint != nullptr)
             {
@@ -287,7 +288,7 @@ namespace Lumina
 
             Compiler.CompilerShaderRaw(Move(Source), Move(Options), [Material, Stage](const FShaderHeader& Header) mutable
             {
-                Material->SetStageBinaries(Stage, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                Material->SetStageBinaries(Stage, TSpan<const uint32>(Header.Binaries.GetData(), Header.Binaries.Num()));
             });
         }
 
@@ -369,8 +370,8 @@ namespace Lumina
             TVector<SMaterialStageBlob> CompiledStages = Move(Stages);
             TVector<SMaterialShaderPermutation> CompiledPermutations = Move(Permutations);
             const uint64 CompiledHash = CompiledTemplateHash;
-            Stages.clear();
-            Permutations.clear();
+            Stages.Reset();
+            Permutations.Reset();
             CompiledTemplateHash = 0;
 
             CMaterialInterface::Serialize(Ar);
@@ -450,7 +451,7 @@ namespace Lumina
                 QueueEditorRecompile(this);
 #else
                 LOG_ERROR("Material '{}' has no shaders for templates {:016x}. Open the project in the editor once so they compile into the artifact cache, or cook the content.",
-                          GetPackage()->GetPackagePath().c_str(), GetShaderTemplateHash());
+                          *GetPackage()->GetPackagePath(), GetShaderTemplateHash());
                 SetCompileFailed(true);
 #endif
             }
@@ -518,7 +519,7 @@ namespace Lumina
         // A nulled texture leaves its index in the block, and the heap hands that index to the next texture made.
         {
             FRecursiveScopeLock Lock(TextureSlotMutex);
-            const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
+            const uint32 NumTextures = Math::Min<uint32>(ResolvedTextures.Num(), MAX_TEXTURES);
             for (uint32 i = 0; i < NumTextures; ++i)
             {
                 if (ResolvedTextures[i] == nullptr)
@@ -580,19 +581,19 @@ namespace Lumina
     bool CMaterial::GetParameterValue(EMaterialParameterType Type, const FName& Name, SMaterialParameter& Param)
     {
         Param = {};
-        auto It = ParameterLookup.find(Name);
-        if (It == ParameterLookup.end() || It->second.Type != Type)
+        auto It = ParameterLookup.Find(Name);
+        if (It == nullptr || It->Type != Type)
         {
             return false;
         }
-        Param = It->second;
+        Param = (*It);
         return true;
     }
 
     CTexture* CMaterial::GetTextureParameterTexture(const FName& Name, uint32 Index)
     {
         FRecursiveScopeLock Lock(TextureSlotMutex);
-        if (Index >= (uint32)Textures.size())
+        if (Index >= (uint32)Textures.Num())
         {
             return nullptr;
         }
@@ -604,12 +605,12 @@ namespace Lumina
     {
         FRecursiveScopeLock Lock(TextureSlotMutex);
 
-        if (Index >= (uint32)Textures.size())
+        if (Index >= (uint32)Textures.Num())
         {
             return RHI::Textures::DefaultResourceID();
         }
 
-        ResolvedTextures.resize(Textures.size());
+        ResolvedTextures.SetNum(Textures.Num());
         if (ResolvedTextures[Index] == nullptr && Textures[Index].IsValid())
         {
             ResolvedTextures[Index] = Textures[Index].LoadSynchronous();
@@ -617,7 +618,7 @@ namespace Lumina
             {
                 const FStringView Path = Textures[Index].GetPath();
                 LOG_WARN("Material '{}': texture slot {} failed to load (path '{}'); slot falls back to the placeholder.",
-                         GetName(), Index, Path.empty() ? FStringView("<empty>") : Path);
+                         GetName(), Index, Path.IsEmpty() ? FStringView("<empty>") : Path);
             }
         }
 
@@ -644,12 +645,12 @@ namespace Lumina
     {
         FRecursiveScopeLock Lock(TextureSlotMutex);
 
-        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+        const uint32 NumTextures = Math::Min<uint32>(Textures.Num(), MAX_TEXTURES);
         if (NumTextures == 0)
         {
             return true;
         }
-        ResolvedTextures.resize(Textures.size());
+        ResolvedTextures.SetNum(Textures.Num());
 
         // Resolved, empty, or failed for good, none of which change by asking again.
         auto IsSettled = [this](uint32 i)
@@ -711,7 +712,7 @@ namespace Lumina
                     FRecursiveScopeLock LoadLock(Self->TextureSlotMutex);
 
                     CTexture* Texture = Cast<CTexture>(Loaded);
-                    if (i < (uint32)Self->ResolvedTextures.size())
+                    if (i < (uint32)Self->ResolvedTextures.Num())
                     {
                         Self->ResolvedTextures[i] = Texture;
                     }
@@ -720,9 +721,9 @@ namespace Lumina
                     if (Texture == nullptr)
                     {
                         Self->UnresolvableTextureMask |= (1ull << i);
-                        const FStringView Path = i < (uint32)Self->Textures.size() ? Self->Textures[i].GetPath() : FStringView();
+                        const FStringView Path = i < (uint32)Self->Textures.Num() ? Self->Textures[i].GetPath() : FStringView();
                         LOG_WARN("Material '{}': texture slot {} failed to load (path '{}'); it stays on the placeholder.",
-                                 Self->GetName(), i, Path.empty() ? FStringView("<empty>") : Path);
+                                 Self->GetName(), i, Path.IsEmpty() ? FStringView("<empty>") : Path);
                     }
                 }
 
@@ -751,7 +752,7 @@ namespace Lumina
         bool bChanged = false;
         {
             FRecursiveScopeLock Lock(TextureSlotMutex);
-            const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
+            const uint32 NumTextures = Math::Min<uint32>(ResolvedTextures.Num(), MAX_TEXTURES);
             for (uint32 i = 0; i < NumTextures; ++i)
             {
                 if (const CTexture* Texture = ResolvedTextures[i].Get())
@@ -875,7 +876,7 @@ namespace Lumina
     void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
     {
         FRecursiveScopeLock Lock(ShaderStageMutex);
-        Stages.erase(Algo::RemoveIf(Stages, [Stage](const SMaterialStageBlob& Blob) { return Blob.Stage == (uint8)Stage; }), Stages.end());
+        Stages.RemoveAll([Stage](const SMaterialStageBlob& Blob) { return Blob.Stage == (uint8)Stage; });
         ReleaseEntries(TSpan<FShaderH>(&DefaultEntries[(size_t)Stage], 1));
     }
 
@@ -898,7 +899,7 @@ namespace Lumina
         SMaterialShaderPermutation* Permutation = FindPermutation(Key);
         if (Permutation == nullptr)
         {
-            Permutation = &Permutations.emplace_back();
+            Permutation = &Permutations.EmplaceGetRef();
             Permutation->Key = Key;
         }
 
@@ -937,7 +938,7 @@ namespace Lumina
         }
 
         ReleaseEntries(It->Entries);
-        Permutations.erase(It);
+        Permutations.RemoveAt(static_cast<int32>(It - Permutations.begin()));
         BumpShaderRevision();
     }
 
@@ -948,7 +949,7 @@ namespace Lumina
         // Moved unconditionally, since a compile in flight was dispatched against the outgoing numbering.
         ++PermutationGeneration;
 
-        if (Permutations.empty())
+        if (Permutations.IsEmpty())
         {
             return;
         }
@@ -956,7 +957,7 @@ namespace Lumina
         {
             ReleaseEntries(Permutation.Entries);
         }
-        Permutations.clear();
+        Permutations.Reset();
         BumpShaderRevision();
     }
 
@@ -974,7 +975,7 @@ namespace Lumina
     FName CMaterial::MakeStageEntryName(EMaterialShaderStage Stage, uint64 Key, bool bPermutation) const
     {
         const FString Base = GetName().ToString() + "_" + GetGUID().ToString() + StageDesc(Stage).Suffix;
-        return FName(bPermutation ? Format("{}_P{:016X}", Base, Key).c_str() : Base.c_str());
+        return FName(bPermutation ? *Format("{}_P{:016X}", Base, Key) : *Base);
     }
 
     void CMaterial::SwapStageEntry(FShaderH& Entry, const FName& EntryName, EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
@@ -1019,8 +1020,8 @@ namespace Lumina
         uint64 Key = 0;
         for (const SMaterialStaticSwitch& Switch : StaticSwitches)
         {
-            const auto Override = Overrides.find(Switch.ParameterName);
-            if (Override != Overrides.end() ? Override->second : Switch.bDefaultValue)
+            const auto Override = Overrides.Find(Switch.ParameterName);
+            if (Override != nullptr ? (*Override) : Switch.bDefaultValue)
             {
                 Key |= (1ull << Switch.BitIndex);
             }
@@ -1037,7 +1038,7 @@ namespace Lumina
     {
         // A compile dispatched before this one landed can still be writing Stages from a worker.
         FRecursiveScopeLock Lock(ShaderStageMutex);
-        return Algo::AnyOf(Stages, [](const SMaterialStageBlob& Blob) { return !Blob.Spirv.empty(); });
+        return Algo::AnyOf(Stages, [](const SMaterialStageBlob& Blob) { return !Blob.Spirv.IsEmpty(); });
     }
 
     void CMaterial::CommitSerializedShaders()
@@ -1046,21 +1047,21 @@ namespace Lumina
 
         for (const SMaterialStageBlob& Blob : Stages)
         {
-            if (!Blob.Spirv.empty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
+            if (!Blob.Spirv.IsEmpty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
             {
-                CommitShaderStage((EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.data(), Blob.Spirv.size()));
+                CommitShaderStage((EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.GetData(), Blob.Spirv.Num()));
             }
         }
 
         // By index, since a commit looks the permutation up again and must not hold an iterator across it.
-        for (size_t p = 0; p < Permutations.size(); ++p)
+        for (int32 p = 0; p < Permutations.Num(); ++p)
         {
-            for (size_t s = 0; s < Permutations[p].Stages.size(); ++s)
+            for (int32 s = 0; s < Permutations[p].Stages.Num(); ++s)
             {
                 const SMaterialStageBlob& Blob = Permutations[p].Stages[s];
-                if (!Blob.Spirv.empty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
+                if (!Blob.Spirv.IsEmpty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
                 {
-                    CommitPermutationStage(Permutations[p].Key, (EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.data(), Blob.Spirv.size()));
+                    CommitPermutationStage(Permutations[p].Key, (EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.GetData(), Blob.Spirv.Num()));
                 }
             }
         }
@@ -1102,7 +1103,7 @@ namespace Lumina
         FRecursiveScopeLock Lock(ShaderStageMutex);
         for (const SMaterialStageBlob& Blob : Blobs)
         {
-            CommitPermutationStage(Key, (EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.data(), Blob.Spirv.size()));
+            CommitPermutationStage(Key, (EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.GetData(), Blob.Spirv.Num()));
         }
         return true;
     }
@@ -1184,14 +1185,14 @@ namespace Lumina
     void CMaterial::BindTextureSlots()
     {
         // Resized rather than assigned, since the graph compile fills it before calling PostLoad.
-        ResolvedTextures.resize(Textures.size());
+        ResolvedTextures.SetNum(Textures.Num());
 
         // A recompile replaces the whole texture table, and a latch left set would suppress the async loads.
         bTextureLoadRequested   = false;
         UnresolvableTextureMask = 0;
 
         // Only untouched slots start on the placeholder, waiting for a consumer to demand them.
-        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+        const uint32 NumTextures = Math::Min<uint32>(Textures.Num(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumTextures; ++i)
         {
             MaterialUniforms.Textures[i] = BindlessIDOf(ResolvedTextures[i].Get());
@@ -1218,12 +1219,15 @@ namespace Lumina
         // Slot 0 is the reserved zero collection, so an unbound entry reads zeros without a sentinel.
         for (uint32 i = 0; i < MAX_MATERIAL_COLLECTIONS; ++i)
         {
-            CMaterialParameterCollection* Collection = i < (uint32)ParameterCollections.size() ? ParameterCollections[i].Get() : nullptr;
+            CMaterialParameterCollection* Collection = i < (uint32)ParameterCollections.Num() ? ParameterCollections[i].Get() : nullptr;
             int32 Slot = 0;
             if (IsValid(Collection))
             {
                 // Its own PostLoad may not have run yet, and the slot is what the shader indexes with.
-                Collection->PostLoad();
+                if (!CPackage::ConditionalPostLoad(Collection) && !Collection->HasAnyFlag(OF_WasLoaded))
+                {
+                    Collection->PostLoad();
+                }
                 Slot = Math::Max(Collection->GetCollectionIndex(), 0);
             }
             MaterialUniforms.CollectionIndices[i] = (uint32)Slot;
@@ -1232,8 +1236,8 @@ namespace Lumina
 
     void CMaterial::RebuildParameterLookup()
     {
-        ParameterLookup.clear();
-        ParameterLookup.reserve(Parameters.size());
+        ParameterLookup.Reset();
+        ParameterLookup.Reserve(Parameters.Num());
         for (const SMaterialParameter& Param : Parameters)
         {
             ParameterLookup[Param.ParameterName] = Param;
@@ -1248,8 +1252,8 @@ namespace Lumina
         {
             for (SMaterialStageBlob& Blob : Blobs)
             {
-                Blob.Spirv.clear();
-                Blob.Spirv.shrink_to_fit();
+                Blob.Spirv.Reset();
+                Blob.Spirv.Shrink();
             }
         };
         Drop(Stages);
@@ -1323,14 +1327,15 @@ namespace Lumina
         {
             if (!GIsHeadless)
             {
-                LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); the built-in material '{}' was not created.", Name.c_str());
+                LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); the built-in material '{}' was not created.", *Name);
             }
             return nullptr;
         }
 
         CMaterial* Material = NewObject<CMaterial>(nullptr, Name);
         Material->AddToRoot();
-        Material->Parameters.assign(InParameters.begin(), InParameters.end());
+        Material->Parameters.Reset();
+        Material->Parameters.Append(InParameters.begin(), InParameters.end());
 
         // A built-in material moves no vertices, so its world position offset is a no-op.
         const FString NoOffset = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
@@ -1348,7 +1353,7 @@ namespace Lumina
 
         Compiler->Flush();
         Material->PostLoad();
-        ReportBuiltinReadiness(Material, Name.c_str());
+        ReportBuiltinReadiness(Material, *Name);
         return Material;
     }
 
@@ -1393,7 +1398,7 @@ namespace Lumina
             FString Stamped;
             if (VFS::ReadFile(Stamped, CookedShaderTemplateHashPath))
             {
-                if (const uint64 Value = std::strtoull(Stamped.c_str(), nullptr, 16); Value != 0)
+                if (const uint64 Value = std::strtoull(*Stamped, nullptr, 16); Value != 0)
                 {
                     return Value;
                 }

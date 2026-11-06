@@ -106,16 +106,16 @@ namespace Lumina
         };
 
         FMetadataEntry* Owned = nullptr;
-        if (!Metadata.empty())
+        if (!Metadata.IsEmpty())
         {
-            Owned = (FMetadataEntry*)Arena.AllocateBytes(sizeof(FMetadataEntry) * Metadata.size(), alignof(FMetadataEntry));
-            for (size_t Index = 0; Index < Metadata.size(); ++Index)
+            Owned = (FMetadataEntry*)Arena.AllocateBytes(sizeof(FMetadataEntry) * Metadata.Num(), alignof(FMetadataEntry));
+            for (int32 Index = 0; Index < Metadata.Num(); ++Index)
             {
                 Owned[Index] = FMetadataEntry{ CopyString(Metadata[Index].Key), CopyString(Metadata[Index].Value) };
             }
         }
         return BuildCore(Arena, Owner, Name, Flags, OrderedParams, ReturnIndex, ParmsSize, Thunk,
-                         TSpan<const FMetadataEntry>(Owned, Metadata.size()));
+                         TSpan<const FMetadataEntry>(Owned, Metadata.Num()));
     }
 
     FFunction* FFunctionBuilder::BuildCore(FPropertyArena& Arena, CStruct* Owner, const FName& Name,
@@ -123,7 +123,7 @@ namespace Lumina
                                            int32 ReturnIndex, uint16 ParmsSize, FFunction::FNativeFuncPtr Thunk,
                                            TSpan<const FMetadataEntry> Metadata)
     {
-        const uint16 NumParams = (uint16)OrderedParams.size();
+        const uint16 NumParams = (uint16)OrderedParams.Num();
 
         // Every reader finds the return as the last parameter, so one anywhere else would be read as an argument.
         if (ReturnIndex >= 0 && ReturnIndex != (int32)NumParams - 1)
@@ -173,8 +173,8 @@ namespace Lumina
         Function->Flags       = Flags;
         Function->NumParams   = NumParams;
         Function->ParmsSize   = ParmsSize;
-        Function->Metadata    = Metadata.data();
-        Function->NumMetadata = (uint16)Metadata.size();
+        Function->Metadata    = Metadata.GetData();
+        Function->NumMetadata = (uint16)Metadata.Num();
 
         // The flag is the only record of a return, so it follows the index rather than whatever the caller passed.
         if (ReturnIndex >= 0)
@@ -216,17 +216,17 @@ namespace Lumina
         Function.Invoke(Context, Memory);
     }
 
-    size_t FFunctionFrame::OffsetOf(size_t Index) const
+    size_t FFunctionFrame::OffsetOf(int32 Index) const
     {
         const TSpan<FProperty* const> Params = Function.GetParams();
-        DEBUG_ASSERT(Index < Params.size());
-        return (size_t)Params[Index]->Offset;
+        DEBUG_ASSERT(Params.IsValidIndex(Index));
+        return Params[Index]->Offset;
     }
 
     size_t FFunctionFrame::ReturnOffset() const
     {
         const FProperty* Return = Function.GetReturnParam();
         DEBUG_ASSERT(Return != nullptr);
-        return (size_t)Return->Offset;
+        return Return->Offset;
     }
 }

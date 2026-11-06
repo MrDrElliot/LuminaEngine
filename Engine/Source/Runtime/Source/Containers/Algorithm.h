@@ -7,6 +7,7 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
+#include "ElementOps.h"
 #include "Memory/Construct.h"
 #include "Invoke.h"
 #include "Lumina.h"
@@ -82,9 +83,22 @@ namespace Lumina::Algo
         template <typename TIt>
         using TDiff = typename std::iterator_traits<TIt>::difference_type;
 
+        // Elements that are trivially relocatable but not trivially copyable relocate their bytes, rather than move three times.
         template <typename TIt>
-        constexpr void IterSwap(TIt Left, TIt Right)
+        inline constexpr bool bRelocateInPlace = std::contiguous_iterator<TIt>
+            && TIsTriviallyRelocatable_V<TValue<TIt>> && !std::is_trivially_copyable_v<TValue<TIt>>;
+
+        template <typename TIt>
+        FORCEINLINE constexpr void IterSwap(TIt Left, TIt Right)
         {
+            if constexpr (bRelocateInPlace<TIt>)
+            {
+                if !consteval
+                {
+                    ElementOps::SwapElements(*Left, *Right);
+                    return;
+                }
+            }
             TValue<TIt> Temp = std::move(*Left);
             *Left = std::move(*Right);
             *Right = std::move(Temp);
@@ -438,9 +452,21 @@ namespace Lumina::Algo
         return Best;
     }
 
+    // On a random-access range the step is a select rather than a branch, so a lookup never mispredicts.
     template <typename TIt, typename T, typename TPred = FLess>
     NODISCARD constexpr TIt LowerBound(TIt First, TIt Last, const T& Value, TPred Pred = {})
     {
+        if constexpr (std::random_access_iterator<TIt>)
+        {
+            for (Private::TDiff<TIt> Length = Last - First; Length > 0;)
+            {
+                const Private::TDiff<TIt> Half = Length / 2;
+                First += Pred(First[Half], Value) ? Length - Half : 0;
+                Length = Half;
+            }
+            return First;
+        }
+
         Private::TDiff<TIt> Remaining = Last - First;
         while (Remaining > 0)
         {
@@ -463,6 +489,17 @@ namespace Lumina::Algo
     template <typename TIt, typename T, typename TPred = FLess>
     NODISCARD constexpr TIt UpperBound(TIt First, TIt Last, const T& Value, TPred Pred = {})
     {
+        if constexpr (std::random_access_iterator<TIt>)
+        {
+            for (Private::TDiff<TIt> Length = Last - First; Length > 0;)
+            {
+                const Private::TDiff<TIt> Half = Length / 2;
+                First += Pred(Value, First[Half]) ? 0 : Length - Half;
+                Length = Half;
+            }
+            return First;
+        }
+
         Private::TDiff<TIt> Remaining = Last - First;
         while (Remaining > 0)
         {
@@ -512,6 +549,44 @@ namespace Lumina::Algo
     {
         inline constexpr int64 kInsertionSortThreshold = 24;
 
+        // Moves *It back before It - 1; guarded, so a comparator that is no strict weak order, such as NaN keys, stays in bounds.
+        template <typename TIt, typename TPred>
+        FORCEINLINE constexpr void InsertBackward(TIt First, TIt It, TPred& Pred)
+        {
+            using FValue = TValue<TIt>;
+            if constexpr (bRelocateInPlace<TIt>)
+            {
+                if !consteval
+                {
+                    alignas(FValue) unsigned char Staged[sizeof(FValue)];
+                    FValue* Element = std::to_address(It);
+                    std::memcpy(Staged, static_cast<void*>(Element), sizeof(FValue));
+                    const FValue& Key = *std::launder(reinterpret_cast<const FValue*>(Staged));
+
+                    TIt Hole = It - 1;
+                    while (Hole != First && Pred(Key, *(Hole - 1)))
+                    {
+                        --Hole;
+                    }
+
+                    FValue* Target = std::to_address(Hole);
+                    std::memmove(static_cast<void*>(Target + 1), static_cast<const void*>(Target), static_cast<size_t>(Element - Target) * sizeof(FValue));
+                    std::memcpy(static_cast<void*>(Target), Staged, sizeof(FValue));
+                    return;
+                }
+            }
+
+            FValue Key = std::move(*It);
+            TIt Hole = It;
+            do
+            {
+                *Hole = std::move(*(Hole - 1));
+                --Hole;
+            }
+            while (Hole != First && Pred(Key, *(Hole - 1)));
+            *Hole = std::move(Key);
+        }
+
         template <typename TIt, typename TPred>
         constexpr void InsertionSort(TIt First, TIt Last, TPred& Pred)
         {
@@ -522,17 +597,13 @@ namespace Lumina::Algo
 
             for (TIt It = First + 1; It != Last; ++It)
             {
-                TValue<TIt> Key = std::move(*It);
-                TIt Hole = It;
-                while (Hole != First && Pred(Key, *(Hole - 1)))
+                if (Pred(*It, *(It - 1)))
                 {
-                    *Hole = std::move(*(Hole - 1));
-                    --Hole;
+                    InsertBackward(First, It, Pred);
                 }
-
-                *Hole = std::move(Key);
             }
         }
+
 
         template <typename TIt, typename TPred>
         constexpr void SiftDown(TIt First, TDiff<TIt> Root, TDiff<TIt> Count, TPred& Pred)

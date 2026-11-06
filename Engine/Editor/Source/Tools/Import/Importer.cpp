@@ -11,22 +11,22 @@ namespace Lumina
 {
     void FImportResult::Finish(const FImportRequest& Request)
     {
-        if (Succeeded() && CreatedObjects.empty() && !Request.bReplaceExisting)
+        if (Succeeded() && CreatedObjects.IsEmpty() && !Request.bReplaceExisting)
         {
             Error = "The importer produced no assets.";
         }
 
         // Reverse order, since a generated graph must die before the material it back-references.
-        while (!CreatedObjects.empty())
+        while (!CreatedObjects.IsEmpty())
         {
-            CreatedObjects.pop_back();
+            CreatedObjects.Pop();
         }
 
         for (CPackage* Package : UnsavedPackages)
         {
             CFactory::DiscardNewPackage(Package);
         }
-        UnsavedPackages.clear();
+        UnsavedPackages.Reset();
     }
 
     namespace
@@ -35,11 +35,11 @@ namespace Lumina
 
         bool ExtensionsMatch(FStringView A, FStringView B)
         {
-            if (A.size() != B.size())
+            if (A.Len() != B.Len())
             {
                 return false;
             }
-            for (size_t i = 0; i < A.size(); ++i)
+            for (int32 i = 0; i < A.Len(); ++i)
             {
                 char CA = A[i];
                 char CB = B[i];
@@ -89,7 +89,7 @@ namespace Lumina
         {
             return;
         }
-        Importers.push_back(Importer);
+        Importers.Add(Importer);
     }
 
     CImporter* CImporterRegistry::FindImporterForExtension(FStringView Ext) const
@@ -185,7 +185,7 @@ namespace Lumina
             Importer->GetSupportedExtensions(Extensions);
         }
 
-        if (Extensions.empty())
+        if (Extensions.IsEmpty())
         {
             return FFixedString("All Files (*.*)\0*.*\0\0", 21);
         }
@@ -193,24 +193,24 @@ namespace Lumina
         FFixedString Patterns;
         for (const FStringView& Ext : Extensions)
         {
-            if (!Patterns.empty())
+            if (!Patterns.IsEmpty())
             {
-                Patterns.append(";");
+                Patterns.Append(";");
             }
-            Patterns.append("*").append(Ext.data(), Ext.length());
+            Patterns.Append("*").Append(Ext.GetData(), Ext.Len());
         }
 
         // Win32 filters are a double-null-terminated run of null-separated pairs.
         FFixedString Filter;
-        Filter.append("Supported Files (").append(Patterns).append(")");
-        Filter.push_back('\0');
-        Filter.append(Patterns);
-        Filter.push_back('\0');
-        Filter.append("All Files (*.*)");
-        Filter.push_back('\0');
-        Filter.append("*.*");
-        Filter.push_back('\0');
-        Filter.push_back('\0');
+        Filter.Append("Supported Files (").Append(Patterns).Append(")");
+        Filter.AppendChar('\0');
+        Filter.Append(Patterns);
+        Filter.AppendChar('\0');
+        Filter.Append("All Files (*.*)");
+        Filter.AppendChar('\0');
+        Filter.Append("*.*");
+        Filter.AppendChar('\0');
+        Filter.AppendChar('\0');
 
         return Filter;
     }

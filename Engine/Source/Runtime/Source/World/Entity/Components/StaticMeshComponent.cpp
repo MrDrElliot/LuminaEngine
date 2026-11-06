@@ -19,7 +19,7 @@ namespace Lumina
 
     CMaterialInterface* SStaticMeshComponent::GetMaterialForSlot(uint32 Slot) const
     {
-        if (Slot < MaterialOverrides.size())
+        if (Slot < static_cast<uint32>(MaterialOverrides.Num()))
         {
             if (CMaterialInterface* Interface = MaterialOverrides[Slot].Get())
             {

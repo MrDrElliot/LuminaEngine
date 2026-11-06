@@ -12,7 +12,7 @@ namespace Lumina
     {
         const uint32 Handle = NextHandle++;
         Entry.Handle = Handle;
-        Entries.push_back(std::move(Entry));
+        Entries.Add(std::move(Entry));
         return Handle;
     }
 
@@ -22,11 +22,11 @@ namespace Lumina
         {
             return;
         }
-        for (auto It = Entries.begin(); It != Entries.end(); ++It)
+        for (int32 i = 0; i < Entries.Num(); ++i)
         {
-            if (It->Handle == Handle)
+            if (Entries[i].Handle == Handle)
             {
-                Entries.erase(It);
+                Entries.RemoveAt(i);
                 return;
             }
         }

@@ -8,7 +8,7 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Templates/LuminaTemplate.h"
-#include "nlohmann/json.hpp"
+#include "Core/Json/Json.h"
 
 namespace Lumina
 {
@@ -63,7 +63,7 @@ namespace Lumina
         bool Set(FStringView Key, const T& Value);
 
         // Raw JSON access for advanced cases (e.g. the input-action map loader).
-        const nlohmann::json* GetRaw(FStringView Key) const;
+        const FJsonValue* GetRaw(FStringView Key) const;
 
     private:
 
@@ -72,29 +72,29 @@ namespace Lumina
         void LoadSettingsForClass(CClass* Class);
 
         // Loads (and caches) a settings JSON file; returns an empty object if absent/unparseable.
-        nlohmann::json& LoadSettingsFile(const FString& VFSPath);
+        FJsonValue& LoadSettingsFile(const FString& VFSPath);
 
-        bool SetRaw(FStringView Key, nlohmann::json Value);
+        bool SetRaw(FStringView Key, FJsonValue Value);
 
-        nlohmann::json* NavigateToNode(FStringView Key, bool bCreate);
-        const nlohmann::json* NavigateToNode(FStringView Key) const;
+        FJsonValue* NavigateToNode(FStringView Key, bool bCreate);
+        const FJsonValue* NavigateToNode(FStringView Key) const;
 
         // Resolves which file owns Key: explicit registration first,
         // then existing PathToFile entry, else "".
         FString FindOwnerFile(FStringView Key) const;
 
         // Walk a JSON subtree and record every leaf path under the file it lives in.
-        void IndexPathsForFile(const nlohmann::json& Obj, const FString& Prefix, const FString& File);
+        void IndexPathsForFile(const FJsonValue& Obj, const FString& Prefix, const FString& File);
 
-        nlohmann::json                              RootConfig;
-        THashMap<FString, nlohmann::json>           FileConfigs;        // VFS path -> parsed json
+        FJsonValue                                  RootConfig;
+        THashMap<FString, FJsonValue>               FileConfigs;        // VFS path -> parsed json
         THashMap<FString, FString>                  PathToFile;         // dotted-key prefix -> VFS path
 
         // Developer-settings state.
         THashMap<CClass*, CObject*>                 SettingsDefaults;   // class -> pristine code-default snapshot
         TVector<CClass*>                            DiscoveredSettings; // discovery/load order
         THashSet<CClass*>                           SettingsFileLoaded; // classes whose file values were applied
-        THashMap<FString, nlohmann::json>           SettingsFileCache;  // VFS path -> parsed settings file
+        THashMap<FString, FJsonValue>               SettingsFileCache;  // VFS path -> parsed settings file
     };
 
     // Template definitions.
@@ -102,25 +102,14 @@ namespace Lumina
     template<typename T>
     T FConfig::Get(FStringView Key, const T& Default) const
     {
-        const nlohmann::json* Node = NavigateToNode(Key);
-        if (Node != nullptr)
-        {
-            try
-            {
-                return Node->get<T>();
-            }
-            catch (...)
-            {
-                // Fall through to default, value type didn't match.
-            }
-        }
-
-        return Default;
+        const FJsonValue* Node = NavigateToNode(Key);
+        T Value;
+        return Node != nullptr && Node->TryGet(Value) ? Value : Default;
     }
 
     template<typename T>
     bool FConfig::Set(FStringView Key, const T& Value)
     {
-        return SetRaw(Key, nlohmann::json(Value));
+        return SetRaw(Key, FJsonValue(Value));
     }
 }

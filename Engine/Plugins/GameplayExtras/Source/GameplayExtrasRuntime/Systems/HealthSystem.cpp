@@ -7,52 +7,50 @@
 
 namespace Lumina
 {
-    // Heal broadcasts into script, so it runs at the sync point and the countdown is all this system touches.
+    // Heal broadcasts into script, so it runs deferred to the main thread and the countdown is all this system touches.
     void SHealthSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SHealthComponent>();
     }
 
     void SHealthSystem::OnUpdate(const SSystemContext& Context)
     {
-
         if (Context.GetWorldType() == EWorldType::Editor)
         {
             return;
         }
 
-        const float DeltaTime = (float)Context.GetDeltaTime();
+        const float DeltaTime = Context.GetDeltaTime();
         if (DeltaTime <= 0.0f)
         {
             return;
         }
 
-        ECS::FCommandBus& Bus = Context.GetCommandBus();
-        auto View = Context.CreateView<SHealthComponent>();
-        for (ECS::FEntity Entity : View)
+        Regenerators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SHealthComponent> HealthMut)
         {
-            SHealthComponent& Health = View.Get<SHealthComponent>(Entity);
-            if (Health.bDead || !Health.RegenPerSecond.IsSet())
+            const SHealthComponent& Current = HealthMut.Get();
+            if (Current.bDead || !Current.RegenPerSecond.IsSet() || Current.Health >= Current.MaxHealth)
             {
-                continue;
+                return;
             }
+            SHealthComponent& Health = HealthMut.GetMut();
 
             if (Health.RegenCooldown > 0.0f)
             {
                 Health.RegenCooldown -= DeltaTime;
-                continue;
+                return;
             }
 
             const float Amount = Health.RegenPerSecond.GetValue() * DeltaTime;
-            Bus.Enqueue([Entity, Amount](ECS::FRegistry& Registry)
+            Context.Defer([Entity, Amount](const SExclusiveContext& X)
             {
-                SHealthComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SHealthComponent>(Entity) : nullptr;
+                ECS::FRegistry& Registry = X.GetRegistry();
+                SHealthComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<ECS::Write<SHealthComponent>>(Entity) : nullptr;
                 if (Live != nullptr && !Live->bDead)
                 {
                     Live->Heal(Amount, ECS::NullEntity);
                 }
             });
-        }
+        });
     }
 }
