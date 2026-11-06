@@ -44,6 +44,12 @@ namespace Lumina::Box3DUtils
     // Inline, since a shape id only means something to the image holding the box3d copy that made it.
     FORCEINLINE bool ShouldProfileCollideWithShape(const SCollisionProfile& Profile, b3ShapeId ShapeId, bool bPermissive)
     {
+        // Box3D's mover and ray queries return sensors, which only report overlaps and must never block.
+        if (b3Shape_IsSensor(ShapeId))
+        {
+            return false;
+        }
+
         const SCollisionProfile Other = UnpackProfileUserData(b3Shape_GetUserData(ShapeId));
 
         // Strict mode already applied the other half of the pair test through the query filter itself.

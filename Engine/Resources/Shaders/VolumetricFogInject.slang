@@ -36,11 +36,8 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 // View space is +Z forward, so visible rays have ViewRay.z > 0; slices match the clustered light grid.
 float3 FroxelToWorld(uint3 Coord, float3 Jitter)
 {
-    float2 UV  = (float2(Coord.xy) + Jitter.xy) / float2(Pass().GridSize.xy);
-    float2 NDC = UV * 2.0 - 1.0;
-
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
+    float2 UV      = (float2(Coord.xy) + Jitter.xy) / float2(Pass().GridSize.xy);
+    float3 ViewRay = GetCameraViewRay(UV);
     float  Dist    = Froxel_SliceDistance(float(Coord.z) + Jitter.z, float(Pass().GridSize.z), Pass().NearPlane, Pass().FogRange);
     float3 ViewPos = ViewRay * (Dist / max(ViewRay.z, 1e-4));
     return mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;

@@ -1,5 +1,6 @@
 #pragma once
 #include "IFileSystem.h"
+#include "Containers/HashTable.h"
 
 namespace Lumina::VFS
 {

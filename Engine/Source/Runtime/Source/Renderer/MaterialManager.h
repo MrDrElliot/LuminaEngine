@@ -33,9 +33,7 @@ namespace Lumina::RHI
         void Release();
     };
 
-    /**
-     * Owns the GPU material table and hands out the slot index each CMaterialInterface carries.
-     */
+    // Owns the GPU material table and hands out the slot index each CMaterialInterface carries.
     class FMaterialManager final
     {
     public:
@@ -108,7 +106,7 @@ namespace Lumina::RHI
         uint32                                  NumMaterials = 0;
     };
 
-    /** The GPU table of parameter collections, capped and allocated once, with slot 0 reserved as zero. */
+    // The GPU table of parameter collections, capped and allocated once, with slot 0 reserved as zero.
     class FMaterialCollectionManager final
     {
     public:
@@ -117,14 +115,14 @@ namespace Lumina::RHI
         ~FMaterialCollectionManager();
         LE_NO_COPYMOVE(FMaterialCollectionManager);
 
-        /** A free slot, or Constants::kIndexNone when the table is full. The slot reads zero until Update. */
+        // Constants::kIndexNone when the table is full; the slot reads zero until Update.
         RUNTIME_API int32 Acquire();
 
         RUNTIME_API void Release(int32 Index);
 
         RUNTIME_API void Update(int32 Index, const FMaterialCollectionUniforms& Uniforms);
 
-        /** Writes ByteSize bytes at ByteOffset inside slot Index, for a single changed parameter. */
+        // For a single changed parameter.
         RUNTIME_API void UpdateRange(int32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
         RUNTIME_API GPUPtr GetBuffer() const { return CollectionBuffer.Gpu; }
@@ -138,7 +136,7 @@ namespace Lumina::RHI
         TVector<FMaterialCollectionUniforms>        Mirror;
         FGPUAllocation                              CollectionBuffer = {};
 
-        /** Starts at 1, since slot 0 is the reserved zero collection. */
+        // Starts at 1, since slot 0 is the reserved zero collection.
         int32                                       HighWater = 1;
     };
 }

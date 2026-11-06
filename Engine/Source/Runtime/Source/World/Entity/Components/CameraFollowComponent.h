@@ -7,7 +7,7 @@
 
 namespace Lumina
 {
-    // Makes a camera entity follow a target (SCameraRigSystem, after physics): eases toward Target + Offset,
+    // Makes a camera entity follow a target (CCameraRigSystem, after physics): eases toward Target + Offset,
     // optionally facing it. Lag is frame-rate independent (0 = snap). Pair with SCameraComponent; for a wall-aware boom use SSpringArmComponent.
     REFLECT(Component, Category = "Camera")
     struct RUNTIME_API SCameraFollowComponent

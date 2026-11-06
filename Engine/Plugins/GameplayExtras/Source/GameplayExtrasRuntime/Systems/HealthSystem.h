@@ -9,7 +9,7 @@ namespace Lumina
 
     // Drives SHealthComponent::RegenPerSecond and the post-damage cooldown that gates it.
     REFLECT()
-    class SHealthSystem : public CEntitySystem
+    class CHealthSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

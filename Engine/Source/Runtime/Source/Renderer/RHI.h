@@ -82,9 +82,7 @@ namespace Lumina::RHI
         Default = CPUWrite
     };
 
-    /** An address and the bytes a command may touch there. Commands that read or write memory take one of
-     *  these rather than a bare address, so the extent travels with the pointer and is checkable. An address
-     *  a shader merely dereferences stays a plain GPUPtr, since the RHI cannot know its extent. */
+    // Commands take a range rather than a bare GPUPtr so the extent they touch travels with the address and is checkable.
     struct FGPURange
     {
         GPUPtr Address = 0;
@@ -523,8 +521,7 @@ namespace Lumina::RHI
         FString PipelineCachePath;
     };
 
-    /** Observer for the debug-utils messenger, in addition to the log. Set BEFORE CreateDevice. Fires on
-     *  whichever thread the driver reports on, so the handler must be thread-safe. */
+    // Set before CreateDevice; the handler fires on whichever thread the driver reports on, so it must be thread-safe.
     enum class EValidationSeverity : uint8 { Verbose, Info, Warning, Error };
     using FValidationHandlerFn = void (*)(EValidationSeverity Severity, const char* Message, void* UserData);
     RUNTIME_API void SetValidationHandler(FValidationHandlerFn Handler, void* UserData);
@@ -607,8 +604,7 @@ namespace Lumina::RHI
         FTextureDesc        Desc    = {};                       // textures only
     };
 
-    /** Snapshot of every live RHI allocation. Takes the allocator locks and copies the whole ledger, so
-     *  this is a tool-rate call -- never per frame. */
+    // Takes the allocator locks and copies the whole ledger, so call it from tools and never per frame.
     RUNTIME_API void GetGPUAllocations(TVector<FGPUAllocationInfo>& Out);
 
 #endif
@@ -681,39 +677,38 @@ namespace Lumina::RHI
 
     RUNTIME_API bool            GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out);
 
-    /** The driver's own disassembly of each executable in the pipeline, when -dumpshaderisa armed capture
-     *  at creation. This is the only way to see what the load instructions actually became. */
+    // The driver's own disassembly of each executable, available only when -dumpshaderisa armed capture at creation.
     RUNTIME_API bool            GetPipelineDisassembly(FPipelineH Pipeline, TVector<FString>& Out);
 
-    /** True when pipelines are being created with internal-representation capture (costs creation time). */
+    // Internal-representation capture costs pipeline creation time.
     RUNTIME_API bool            IsShaderISACaptureEnabled();
 
 #if defined(LUMINA_WITH_GPU_PROFILING)
 
     //~ GPU timestamps. Indices are caller-assigned; give each frame in flight its own pool so a read never races the next frame's writes.
 
-    /** False when the device or the queue cannot timestamp, which makes every call below inert. */
+    // False when the device or the queue cannot timestamp, which makes every call below inert.
     RUNTIME_API bool         SupportsTimestamps();
 
-    /** Nanoseconds per tick, 0 when unsupported. Deltas are in ticks until scaled by this. */
+    // Nanoseconds per tick, 0 when unsupported.
     RUNTIME_API double       GetTimestampPeriodNs();
 
-    /** Arms recording. While off, CmdWriteTimestamp is a relaxed load and a branch. */
+    // While off, CmdWriteTimestamp is a relaxed load and a branch.
     RUNTIME_API void         SetTimestampCollection(bool bEnabled);
     RUNTIME_API bool         IsTimestampCollectionEnabled();
 
     RUNTIME_API FQueryPoolH  CreateTimestampPool(uint32 Capacity);
 
-    /** Reclaims a range for reuse. Vulkan requires it before any write, so record it first each frame. */
+    // Vulkan requires a reset before any write, so record it first each frame.
     RUNTIME_API void         CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count);
 
     // Host-side reset, legal anywhere a command reset inside a render pass is not. False when the device lacks hostQueryReset.
     RUNTIME_API bool         ResetTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count);
 
-    /** Writes the GPU tick at Stage into Index. No-op unless collection is armed. */
+    // No-op unless collection is armed.
     RUNTIME_API void         CmdWriteTimestamp(FCmdListH CL, FQueryPoolH Pool, uint32 Index, EStageFlags Stage);
 
-    /** Fills OutTicks, or returns false without blocking while the GPU has not reached the writes yet. */
+    // Returns false without blocking while the GPU has not reached the writes yet.
     RUNTIME_API bool         ReadTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count, TSpan<uint64> OutTicks);
 
 #endif
@@ -727,9 +722,7 @@ namespace Lumina::RHI
 
     RUNTIME_API FTextureDesc    GetTextureDesc(FTextureH Texture);
 
-    /** Command lists that have been opened and neither submitted nor reset. A resource retired while this
-     *  is non-zero may already be named by a recording no queue counter accounts for yet, so the retire
-     *  fence has to reach past the queue's current value. See PushRetire in RHICore.cpp. */
+    // Lists opened and neither submitted nor reset; while non-zero, PushRetire fences past the queue's current value.
     RUNTIME_API uint32          GetOpenCommandListCount(EQueueType Queue);
 
     RUNTIME_API uint32      HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture);
@@ -769,8 +762,7 @@ namespace Lumina::RHI
         // Not an aggregate, so a stale three-scalar { Dest, Source, Size } initializer fails to compile instead of brace-eliding into a zero-size copy.
         FBufferCopy(FGPURange InDest, FGPURange InSource) : Dest(InDest), Source(InSource) {}
     };
-    // Copies sharing a source and destination buffer collapse into one command, so keep entries that
-    // target the same buffer adjacent.
+    // Copies sharing a source and destination buffer collapse into one command, so keep those entries adjacent.
     RUNTIME_API void        CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies);
     RUNTIME_API void        CmdMemset(FCmdListH CL, FGPURange Dest, uint32 Value);
     RUNTIME_API void        CmdMemzero(FCmdListH CL, FGPURange Dest);
@@ -841,7 +833,7 @@ namespace Lumina::RHI
                            EStageFlags::Transfer, EAccessFlags::TransferRead | EAccessFlags::TransferWrite);
         }
 
-        /** Snapshotting a scene target into a scratch copy; only raster, shader and transfer writes reach one. */
+        // Snapshotting a scene target into a scratch copy; only raster, shader and transfer writes reach one.
         inline void SceneToTransfer(FCmdListH CL)
         {
             CmdBarrier(CL,
@@ -851,15 +843,14 @@ namespace Lumina::RHI
                 EStageFlags::Transfer, EAccessFlags::TransferRead | EAccessFlags::TransferWrite);
         }
 
-        /** Pairs with SceneToTransfer where the copy is only ever sampled, never fetched indirectly. */
+        // Pairs with SceneToTransfer where the copy is only ever sampled, never fetched indirectly.
         inline void TransferToShaders(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Transfer, EAccessFlags::TransferWrite,
                 EStageFlags::PixelShader | EStageFlags::Compute, EAccessFlags::ShaderRead);
         }
 
-        /** Uploads/clears feeding the GPU scene: consumed by the cull dispatches and the geometry front end. */
-        // Narrow variants: use only where every reader of every buffer written is in the destination.
+        // Uploads and clears feeding the cull dispatches and geometry front end, only where every reader is in the destination.
         inline void TransferToCompute(FCmdListH CL)
         {
             // ShaderWrite in the destination because cleared counters are then bumped by atomics.
@@ -869,7 +860,7 @@ namespace Lumina::RHI
                 EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite | EAccessFlags::IndirectRead);
         }
 
-        /** A cull dispatch whose output feeds later dispatches, the task/mesh stages, and indirect fetch. */
+        // A cull dispatch whose output feeds later dispatches, the task and mesh stages, and indirect fetch.
         inline void ComputeToGeometry(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,
@@ -878,7 +869,13 @@ namespace Lumina::RHI
                 EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite | EAccessFlags::IndirectRead);
         }
 
-        /** A dispatch that writes nothing but indirect arguments. */
+        inline void ComputeToCompute(FCmdListH CL)
+        {
+            CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,
+                           EStageFlags::Compute, EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite);
+        }
+
+        // A dispatch that writes nothing but indirect arguments.
         inline void ComputeToIndirect(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,

@@ -6,15 +6,22 @@
 #include "Input/InputQuery.h"
 #include "Scripting/EntityScript.h"
 #include "World/World.h"
+#include "CoroutineSystem.h"
 
 namespace Lumina
 {
-    void SInputSystem::Configure()
+    void CInputSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
+        RunsAfter<CCoroutineSystem>();
     }
 
-    void SInputSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CInputSystem::OnUpdate(const SSystemContext& Context)
+    {
+        Context.Defer([this](const SExclusiveContext& X) { Dispatch(X); });
+    }
+
+    void CInputSystem::Dispatch(const SExclusiveContext& Context)
     {
         const FInputContext* Ctx = Input::GetReceivingContext(Context.GetWorld());
         if (Ctx == nullptr)

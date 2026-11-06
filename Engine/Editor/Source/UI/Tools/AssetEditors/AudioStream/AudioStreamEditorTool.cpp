@@ -1,4 +1,5 @@
 #include "AudioStreamEditorTool.h"
+#include "UI/InfoTable.h"
 
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
@@ -322,15 +323,6 @@ namespace Lumina
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-            auto PropertyRow = [](const char* Label, const FString& Value)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(Label);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(*Value);
-            };
-
             const float Duration = Stream->GetDuration();
             char DurationStr[64];
             if (Duration >= 60.0f)
@@ -342,24 +334,15 @@ namespace Lumina
                 snprintf(DurationStr, sizeof(DurationStr), "%.2f s", Duration);
             }
 
-            PropertyRow("Duration", DurationStr);
-            PropertyRow("Sample Rate", Format("{}", Stream->SampleRate) + " Hz");
-            PropertyRow("Channels", Stream->NumChannels == 1 ? "1 (Mono)"
+            InfoTable::Row("Duration", DurationStr);
+            InfoTable::Row("Sample Rate", Format("{}", Stream->SampleRate) + " Hz");
+            InfoTable::Row("Channels", Stream->NumChannels == 1 ? "1 (Mono)"
                                   : Stream->NumChannels == 2 ? "2 (Stereo)"
                                   : Format("{}", Stream->NumChannels));
-            PropertyRow("Frames", Format("{}", Stream->NumFrames));
+            InfoTable::Row("Frames", Format("{}", Stream->NumFrames));
 
             const size_t SizeBytes = Stream->IsValid() ? Stream->AudioData->Bytes.Num() : 0;
-            char SizeStr[64];
-            if (SizeBytes >= Constants::kMiB)
-            {
-                snprintf(SizeStr, sizeof(SizeStr), "%.2f MB", (double)SizeBytes / double(Constants::kMiB));
-            }
-            else
-            {
-                snprintf(SizeStr, sizeof(SizeStr), "%.1f KB", (double)SizeBytes / double(Constants::kKiB));
-            }
-            PropertyRow("Source Size", SizeStr);
+            InfoTable::Row("Source Size", ImGuiX::FormatSize(SizeBytes));
 
             ImGui::EndTable();
         }

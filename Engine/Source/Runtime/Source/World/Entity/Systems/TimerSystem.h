@@ -7,7 +7,7 @@ namespace Lumina
 {
     // Advances the world's timers first at FrameStart, so timer callbacks fire at the first flush, before gameplay systems.
     REFLECT()
-    class STimerSystem : public CEntitySystem
+    class CTimerSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

@@ -35,10 +35,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     FEnvironmentParams Env = *Pass().Env;
 
     float2 UV      = (float2(DTid.xy) + 0.5) / float2(LutW, LutH);
-    float2 NDC     = UV * 2.0 - 1.0;
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
-    float3 RayDir  = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
+    float3 RayDir  = GetCameraWorldRayDir(UV);
 
     float3 SunDir      = Pass().SunDirection;
     // Same incident spectrum the sky integral uses, or the haze drifts off the sky it is meant to match.

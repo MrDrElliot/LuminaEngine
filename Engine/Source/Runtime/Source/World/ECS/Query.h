@@ -148,12 +148,12 @@ namespace Lumina::ECS
         NODISCARD bool Contains(FEntity Entity) const { return View().Contains(Entity); }
 
         template<typename TFunc>
-        void ForEach(TFunc Func) { ForEach(BoundRegistry(), std::move(Func)); }
+        void ForEach(TFunc Func) { ForEach(BoundRegistry(), Move(Func)); }
 
         const TVector<FEntity>& Collect() { return Collect(BoundRegistry()); }
 
         template<typename TFunc>
-        void ParallelForEach(TFunc&& Func, uint32 MinRange = 64, uint32 MinToSplit = 0) { ParallelForEach(BoundRegistry(), std::forward<TFunc>(Func), MinRange, MinToSplit); }
+        void ParallelForEach(TFunc&& Func, uint32 MinRange = 64, uint32 MinToSplit = 0) { ParallelForEach(BoundRegistry(), Forward<TFunc>(Func), MinRange, MinToSplit); }
 
         // Random access, only to the components the query names, only as it names them, and only on an entity the query matches.
         template<typename C>
@@ -200,10 +200,10 @@ namespace Lumina::ECS
         void ForEach(FRegistry& Registry, TFunc InFunc)
         {
             const FView QueryView = View(Registry);
-            auto&& Func = WithOptionals(Registry, std::move(InFunc));
+            auto&& Func = WithOptionals(Registry, Move(InFunc));
             if constexpr (!bHasFilters)
             {
-                QueryView.ForEach(std::move(Func));
+                QueryView.ForEach(Move(Func));
             }
             else
             {
@@ -280,11 +280,11 @@ namespace Lumina::ECS
         {
             if constexpr (!bHasOptionals)
             {
-                return std::forward<TFunc>(Func);
+                return Forward<TFunc>(Func);
             }
             else
             {
-                return MakeOptionalAdapter(Registry, std::forward<TFunc>(Func), FOptionals{});
+                return MakeOptionalAdapter(Registry, Forward<TFunc>(Func), FOptionals{});
             }
         }
 
@@ -292,7 +292,7 @@ namespace Lumina::ECS
         NODISCARD static auto MakeOptionalAdapter(FRegistry& Registry, TFunc&& Func, TTypeList<TOptionals...>)
         {
             using FAdapter = QueryInternal::TOptionalAdapter<TFunc, FArgs, FOptionals>;
-            return FAdapter{ std::forward<TFunc>(Func), decltype(FAdapter::Storages)(Registry.template FindStorage<QueryInternal::TOptionalComponent<TOptionals>>()...) };
+            return FAdapter{ Forward<TFunc>(Func), decltype(FAdapter::Storages)(Registry.template FindStorage<QueryInternal::TOptionalComponent<TOptionals>>()...) };
         }
 
         template<typename TOnMatch, typename... TFilterTerms>

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <string>
-
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Scripting/DotNet/ScriptReferences.h"
@@ -30,7 +28,6 @@ namespace Lumina::DotNet
     };
 
     FString Join(FStringView Left, FStringView Right);
-    FString ParentOf(FStringView Path);
 
     // A path the OS accepts, with native separators.
     FString NativePath(FStringView Path);

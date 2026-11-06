@@ -2,7 +2,6 @@
 
 #include "Tools/UI/ImGui/EditorColors.h"
 
-#include "ImGuiDrawUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -11,9 +10,11 @@
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/World.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "Containers/StringFormat.h"
 #include "FileSystem/FileSystem.h"
+#include "UI/InfoTable.h"
 
 
 namespace Lumina
@@ -347,27 +348,18 @@ namespace Lumina
             ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
 
-            auto Row = [](const char* Name, const FString& Value)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextDisabled("%s", Name);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(*Value);
-            };
-
-            Row("GPU memory", ImGuiX::FormatSize(Resource.MeshBuffers.GeometryBlock.Size));
-            Row("Meshlets", FormatCount(Resource.MeshletData.Meshlets.Num()) + " across all LODs");
-            Row("Bounds min", *Math::ToString(Bounds.Min));
-            Row("Bounds max", *Math::ToString(Bounds.Max));
+            InfoTable::Row("GPU memory", ImGuiX::FormatSize(Resource.MeshBuffers.GeometryBlock.Size));
+            InfoTable::Row("Meshlets", FormatCount(Resource.MeshletData.Meshlets.Num()) + " across all LODs");
+            InfoTable::Row("Bounds min", *Math::ToString(Bounds.Min));
+            InfoTable::Row("Bounds max", *Math::ToString(Bounds.Max));
             if (Field.IsValid())
             {
-                Row("Distance field", *Format("{} x {} x {}, {}", Field.Dimensions.x, Field.Dimensions.y, Field.Dimensions.z,
+                InfoTable::Row("Distance field", *Format("{} x {} x {}, {}", Field.Dimensions.x, Field.Dimensions.y, Field.Dimensions.z,
                                              *ImGuiX::FormatSize(Field.GetSizeBytes())));
             }
             else
             {
-                Row("Distance field", "Not built");
+                InfoTable::Row("Distance field", "Not built");
             }
             ImGui::EndTable();
         }
@@ -606,10 +598,6 @@ namespace Lumina
         ImGui::EndMenu();
     }
 
-    void FStaticMeshEditorTool::OnAssetLoadFinished()
-    {
-    }
-
     void FStaticMeshEditorTool::OnAssetDataChangedExternally()
     {
         FAssetEditorTool::OnAssetDataChangedExternally();
@@ -691,6 +679,48 @@ namespace Lumina
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();
             }
+
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu(LE_ICON_CUBE_OUTLINE " Virtual Geometry"))
+        {
+            CStaticMesh* Mesh = Cast<CStaticMesh>(Asset.Get());
+            const FMeshResource& Resource = Mesh->GetMeshResource();
+
+            uint32 VoxelSlots = 0;
+            uint32 Slots      = 0;
+            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                Slots = Math::Max(Slots, Surface.NumLODs);
+                for (uint32 Slot = 0; Slot < Surface.NumLODs && Slot < MAX_MESH_LODS; ++Slot)
+                {
+                    VoxelSlots += Surface.IsVoxelLOD(Slot) ? 1u : 0u;
+                }
+            }
+
+            if (Mesh->HasClusterLOD())
+            {
+                ImGuiX::Text("Cluster hierarchy, {0} slots, {1} meshlets", Slots, Resource.MeshletData.Meshlets.Num());
+            }
+            else
+            {
+                ImGuiX::Text("Discrete LODs, {0} slots", Slots);
+            }
+            ImGuiX::Text("Voxel levels: {0}", VoxelSlots);
+            ImGui::Separator();
+
+            if (ImGui::MenuItem(LE_ICON_REFRESH " Rebuild Virtual Geometry"))
+            {
+                // Rebuilt from the baked finest level, so it needs no source file.
+                if (Mesh->RebuildVirtualGeometry())
+                {
+                    Asset->GetPackage()->MarkDirty();
+                    PropertyTable.MarkDirty();
+                }
+            }
+            ImGuiX::TextTooltip("{}", "Rebuild the meshlets, cluster hierarchy and voxel levels from the settings in "
+                                      "Mesh Properties > Virtual Geometry.");
 
             ImGui::EndMenu();
         }

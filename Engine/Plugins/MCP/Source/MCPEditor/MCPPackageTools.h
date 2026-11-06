@@ -3,6 +3,11 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Threading/Sync.h"
+#include "Core/Threading/Thread.h"
+#include "Platform/Process/PlatformProcess.h"
+
+#include <atomic>
 
 #include "MCPPackageTools.generated.h"
 
@@ -227,6 +232,55 @@ namespace Lumina
 
     namespace MCP
     {
+        enum class EPackageStage : uint8
+        {
+            Idle,
+            Cooking,
+            Building,
+            Succeeded,
+            Failed,
+        };
+
+        struct FPackageSession
+        {
+            FMutex Mutex;
+            TVector<FString> Lines;
+            int32 Warnings = 0;
+
+            std::atomic<EPackageStage> Stage{ EPackageStage::Idle };
+            FString Error;
+            FString Configuration;
+            FString OutputDirectory;
+            FString Executable;
+            int32 AssetsCooked = 0;
+            TVector<SPackageChunkInfo> Chunks;
+            double StartSeconds = 0.0;
+            std::atomic<double> EndSeconds{ 0.0 };
+
+            FThread Worker;
+
+            void Append(FStringView Line);
+            void Finish(bool bSucceeded, const FString& InError);
+        };
+
+        struct FPackageGameSession
+        {
+            Platform::FProcessHandle Process;
+            FString Executable;
+            FString LogPath;
+            double StartSeconds = 0.0;
+            double EndSeconds = 0.0;
+        };
+
+        // Owned by FMCPEditorModule, which joins the build worker before the DLL unloads.
+        struct FPackageToolsState
+        {
+            FPackageSession Build;
+            FPackageGameSession Game;
+
+            void JoinWorker();
+        };
+
         void RegisterPackageTools(FStringView Owner);
     }
 }

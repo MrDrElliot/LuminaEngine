@@ -11,6 +11,7 @@
 #include "Core/Threading/Thread.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
+#include "Paths/Paths.h"
 
 namespace Lumina::Shaders
 {
@@ -75,11 +76,7 @@ namespace Lumina::Shaders
             return;
         }
 
-        FString Root(VirtualRoot.GetData(), VirtualRoot.Len());
-        while (!Root.IsEmpty() && Root.Last() == '/')
-        {
-            Root.LeftChopInline(1);
-        }
+        FString Root(Paths::TrimTrailingSeparators(VirtualRoot));
 
         FScopeLock Lock(GMutex);
         for (const FString& Existing : GExtraRoots)
@@ -94,11 +91,7 @@ namespace Lumina::Shaders
 
     void UnregisterSearchRoot(FStringView VirtualRoot)
     {
-        FString Root(VirtualRoot.GetData(), VirtualRoot.Len());
-        while (!Root.IsEmpty() && Root.Last() == '/')
-        {
-            Root.LeftChopInline(1);
-        }
+        const FString Root(Paths::TrimTrailingSeparators(VirtualRoot));
 
         FScopeLock Lock(GMutex);
         GExtraRoots.RemoveSingle(Root);

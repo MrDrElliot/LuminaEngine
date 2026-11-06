@@ -135,3 +135,12 @@ float3 EncodeDisplayGamma(float3 X)
     static const float INV_GAMMA = 1.0 / 2.2;
     return pow(max(X, 0.0), float3(INV_GAMMA));
 }
+
+// The exact inverse of the hardware sRGB decode, so an sRGB texture's texel reaches the display as authored.
+float3 EncodeSRGB(float3 Linear)
+{
+    const float3 C    = saturate(Linear);
+    const float3 Low  = C * 12.92;
+    const float3 High = 1.055 * pow(C, float3(1.0 / 2.4)) - 0.055;
+    return lerp(High, Low, float3(C <= float3(0.0031308)));
+}

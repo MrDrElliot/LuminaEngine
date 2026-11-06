@@ -20,7 +20,7 @@ namespace Lumina
         Failed    = 4, // Last query returned no valid path.
     };
 
-    // Drives an entity along a navmesh path; SPathFollowSystem fills the paired controller's MoveInput from
+    // Drives an entity along a navmesh path; CPathFollowSystem fills the paired controller's MoveInput from
     // the direction to the next corner. Target via SetTargetLocation/SetTargetEntity; replans past RepathDistance.
     REFLECT(Component, Category = "AI")
     struct RUNTIME_API SPathFollowComponent
@@ -202,7 +202,7 @@ namespace Lumina
         /** The route was longer than PathCorners; the system repaths on arrival at the last stored corner. */
         bool        bPathTruncated = false;
 
-        /** Latched outcome of the most recent path query. Updated by SPathFollowSystem. */
+        /** Latched outcome of the most recent path query. Updated by CPathFollowSystem. */
         EPathFollowStatus Status = EPathFollowStatus::None;
 
         /** Resets to 0 on a successful query, increments on every failed query. */

@@ -34,6 +34,11 @@ struct FCullInstancesArgs
     GPUSpan<uint>              OutPreSkinCursor;
     // One per workgroup of consecutive retained slots; empty disables the skip.
     GPUSpan<FInstanceBlockBounds> BlockBounds;
+
+    // Retained slots the camera sees too small to draw as meshlets, which the proxy pass splats instead. Empty turns proxies off.
+    GPUSpan<uint>              OutProxyList;
+    // The proxy pass's indirect draw, whose second word counts the list.
+    GPUSpan<uint>              OutProxyDrawArgs;
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 
@@ -216,6 +221,28 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Radius *= Widen;
     }
 
+    const uint Layers = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
+
+    // Too small for its meshlets, the instance leaves this path for one splat the proxy pass draws off the retained slot alone.
+    const bool bProxyCandidate = !bSkinned && !bNoCull && !Cull.HasFlag(EInstanceFlags::ShadowOnly) && Cull.HasFlag(EInstanceFlags::HasGeometry)
+                              && Pass().OutProxyList.Count > 0u && (Scene().CullData.VirtualGeometryFlags & VG_FLAG_PROXIES) != 0u
+                              && Scene().CullData.ProxyTransitionPixels > 0.0;
+    if (bProxyCandidate && ProjectedDiameterPixels(Center, Radius) < Scene().CullData.ProxyTransitionPixels)
+    {
+        // Only what the camera could see, since the proxy pass draws the list without a cull of its own.
+        const FCullView Camera = GetCullView(0u);
+        if (NumViews > 0u && (Camera.LayerMask & Layers) != 0u && !Camera.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY)
+            && FrustumContainsSphere(Camera.FrustumPlanes, Center, Radius))
+        {
+            const uint ProxySlot = AppendReserve(Pass().OutProxyDrawArgs.At(1u), Pass().OutProxyList.Count, 0u);
+            if (ProxySlot != kAppendFull)
+            {
+                Pass().OutProxyList.Set(ProxySlot, SlotIdx);
+            }
+        }
+        return;
+    }
+
     // Past the table this reads garbage counts that BuildMeshletBlocks would append against unbounded.
     if (!Pass().SurfaceDescs.Contains(Cull.SurfaceDescIndex))
     {
@@ -253,7 +280,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bFoliage    = Cull.HasFlag(EInstanceFlags::Foliage);
     const uint CustomDepthStencil = Cull.CustomDepthStencil;
     const bool bCustomDepth       = (CustomDepthStencil & CUSTOM_DEPTH_ENABLED_BIT) != 0u;
-    const uint Layers      = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
@@ -317,18 +343,20 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     {
         FCullView View = GetCullView(v);
 
-        uint2 Range   = uint2(0u, 0u);
-        uint  Emitted = 0u;
+        uint2 Range     = uint2(0u, 0u);
+        uint  Emitted   = 0u;
+        uint  DrawBound = 0u;
 
         if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster, bFoliage, bCustomDepth, Layers))
         {
             if (bSelectPerView)
             {
-                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, Cull.SphereBounds, MaxScale) : uint2(0u, 0u);
+                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, Cull.SphereBounds, MaxScale, DrawBound) : uint2(0u, 0u);
             }
             else
             {
-                Range = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
+                Range     = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
+                DrawBound = SurfaceMeshletCount;
             }
 
             // Clamped here, so the builder inherits a range that is already in bounds.
@@ -343,8 +371,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         {
             FRenderBucket* Bucket = Pass().OutBuckets.At(v * Pass().NumBatches + DrawID);
 
-            // One reservation per emitted meshlet, since every pass that rasterizes the batch draws the same list.
-            InterlockedAdd(Bucket.DrawCapacity, Emitted);
+            // One reservation per meshlet the cut can draw, since every pass that rasterizes the batch draws the same list.
+            InterlockedAdd(Bucket.DrawCapacity, min(DrawBound, Emitted));
 
             // Rounded up per instance because blocks never span instances.
             const uint Blocks = (Emitted + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;

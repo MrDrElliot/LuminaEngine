@@ -48,7 +48,6 @@ namespace Lumina::MeshletHeaderSlab
         constexpr uint64 kNullGeometryBytes = 4096;
         RHI::FGPUAllocation GNullGeometry = {};
 
-        /** Caller holds GMutex. */
         void EnsureNullGeometryLocked()
         {
             if (GNullGeometry.Gpu != 0)
@@ -71,7 +70,7 @@ namespace Lumina::MeshletHeaderSlab
             RHI::UploadBuffer(GNullGeometry, Zeroes.GetData(), (SIZE_T)kNullGeometryBytes);
         }
 
-        /** Caller holds GMutex and has called EnsureNullGeometryLocked. */
+        // Caller holds GMutex and has called EnsureNullGeometryLocked.
         FMeshletHeaderGPU MakeNullHeader()
         {
             FMeshletHeaderGPU Header = {};
@@ -173,7 +172,7 @@ namespace Lumina::MeshletHeaderSlab
             }
         }
 
-        /** Creates the slab and burns slot 0 on the null header. Caller holds GMutex. */
+        // Creates the slab and burns slot 0 on the null header.
         void EnsureInitializedLocked()
         {
             if (GSlab.Gpu != 0)
@@ -252,7 +251,7 @@ namespace Lumina::MeshletHeaderSlab
 
     namespace
     {
-        /** Caller holds GMutex. Skips a slot rewritten since the retire was requested. */
+        // Skips a slot rewritten since the retire was requested.
         void WriteNullLocked(uint32 Slot, uint32 ExpectedVersion)
         {
             if (Slot == kNullSlot || Slot >= GCapacity || GSlab.Gpu == 0)
@@ -276,7 +275,6 @@ namespace Lumina::MeshletHeaderSlab
             }
         }
 
-        /** Caller holds GMutex. */
         uint32 VersionOfLocked(uint32 Slot)
         {
             return Slot < static_cast<uint32>(GSlotVersion.Num()) ? GSlotVersion[Slot] : 0u;

@@ -8,6 +8,7 @@
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Events/CollisionEvent.h"
 #include "World/Subsystems/WorldSettings.h"
 
 using namespace Lumina;
@@ -45,6 +46,14 @@ namespace
             Body.AngularDamping = 0.0f;
             if (bCollider) { Registry->Emplace<SSphereColliderComponent>(Entity).Radius = 0.5f; }
             return Entity;
+        }
+
+        void SpawnFloor()
+        {
+            const ECS::FEntity Floor = Registry->Create();
+            Registry->Emplace<STransformComponent>(Floor).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
+            Registry->Emplace<SRigidBodyComponent>(Floor).BodyType = EBodyType::Static;
+            Registry->Emplace<SBoxColliderComponent>(Floor).HalfExtent = FVector3(20.0f, 0.5f, 20.0f);
         }
 
         SRayCastSettings Ray(float X = 0.0f)
@@ -415,10 +424,7 @@ namespace
 
 TEST_F(PhysicsSceneLifecycle, CharacterLandingAndJumpReachTheDelegateAndTheQueue)
 {
-    const ECS::FEntity Floor = Registry->Create();
-    Registry->Emplace<STransformComponent>(Floor).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
-    Registry->Emplace<SRigidBodyComponent>(Floor).BodyType = EBodyType::Static;
-    Registry->Emplace<SBoxColliderComponent>(Floor).HalfExtent = FVector3(20.0f, 0.5f, 20.0f);
+    SpawnFloor();
 
     const ECS::FEntity Character = Registry->Create();
     Registry->Emplace<STransformComponent>(Character).SetLocation(FVector3(0.0f, 3.0f, 0.0f));
@@ -473,10 +479,7 @@ TEST_F(PhysicsSceneLifecycle, CharacterLandingAndJumpReachTheDelegateAndTheQueue
 
 TEST_F(PhysicsSceneLifecycle, CharacterSpawnedOnTheFloorDoesNotReportALanding)
 {
-    const ECS::FEntity Floor = Registry->Create();
-    Registry->Emplace<STransformComponent>(Floor).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
-    Registry->Emplace<SRigidBodyComponent>(Floor).BodyType = EBodyType::Static;
-    Registry->Emplace<SBoxColliderComponent>(Floor).HalfExtent = FVector3(20.0f, 0.5f, 20.0f);
+    SpawnFloor();
 
     const ECS::FEntity Character = Registry->Create();
     Registry->Emplace<STransformComponent>(Character).SetLocation(FVector3(0.0f, 0.0f, 0.0f));
@@ -496,6 +499,66 @@ TEST_F(PhysicsSceneLifecycle, CharacterSpawnedOnTheFloorDoesNotReportALanding)
     EXPECT_EQ(Counter.Landings, 0) << "a character placed on the ground never arrived there";
 }
 
+// A character the mover leaves standing inside a trigger stays overlapped until the trigger goes away.
+TEST_F(PhysicsSceneLifecycle, ACharacterStandingInATriggerStaysOverlapped)
+{
+    SpawnFloor();
+
+    for (const EBodyType TriggerType : { EBodyType::Static, EBodyType::Dynamic })
+    {
+        const ECS::FEntity Character = Registry->Create();
+        Registry->Emplace<STransformComponent>(Character).SetLocation(FVector3(0.0f, 0.0f, 0.0f));
+        Registry->Emplace<SCharacterPhysicsComponent>(Character);
+        Registry->Emplace<SCharacterMovementComponent>(Character);
+
+        ECS::TEventReader<SCollisionEvent> Reader;
+        int32 Begins = 0;
+        int32 Ends = 0;
+        auto Step = [&](int32 Steps)
+        {
+            for (int32 Index = 0; Index < Steps; ++Index)
+            {
+                Scene->Update(Dt);
+                Scene->DispatchPendingEvents();
+                World->FlushCommands();
+                for (const SCollisionEvent& Event : ECS::ReadEvents(World->GetEvents(), Reader))
+                {
+                    if (Event.Entity == Character)
+                    {
+                        Begins += Event.Kind == ECollisionEventKind::OverlapBegin;
+                        Ends += Event.Kind == ECollisionEventKind::OverlapEnd;
+                    }
+                }
+                World->GetEvents().Advance();
+            }
+        };
+        Step(60);
+
+        const FVector3 Standing = Registry->Get<SCharacterPhysicsComponent>(Character).Character->Position;
+        const ECS::FEntity Trigger = Registry->Create();
+        Registry->Emplace<STransformComponent>(Trigger).SetLocation(Standing);
+        SRigidBodyComponent& Body = Registry->Emplace<SRigidBodyComponent>(Trigger);
+        Body.BodyType = TriggerType;
+        Body.bUseGravity = false;
+        SSphereColliderComponent& Sphere = Registry->Emplace<SSphereColliderComponent>(Trigger);
+        Sphere.Radius = 3.0f;
+        Sphere.bIsTrigger = true;
+
+        Step(60);
+        EXPECT_EQ(Begins, 1) << "trigger body type " << (int)TriggerType;
+        EXPECT_EQ(Ends, 0) << "the character never left the trigger, body type " << (int)TriggerType;
+        EXPECT_NEAR(Math::Length(Registry->Get<SCharacterPhysicsComponent>(Character).Character->Position - Standing), 0.0f, 0.001f)
+            << "a trigger never pushes the character out of itself";
+
+        Registry->Destroy(Trigger);
+        Step(2);
+        EXPECT_EQ(Begins, 1);
+        EXPECT_EQ(Ends, 1) << "destroying the trigger ends the overlap, body type " << (int)TriggerType;
+
+        Registry->Destroy(Character);
+    }
+}
+
 namespace
 {
     // The lowest point of the character's capsule, which crouching and standing must leave where it is.
@@ -509,10 +572,7 @@ namespace
 // Crouching keeps the feet down, and standing waits under a low ceiling until the ceiling is gone.
 TEST_F(PhysicsSceneLifecycle, CrouchKeepsTheFeetAndWaitsForRoomToStand)
 {
-    const ECS::FEntity Floor = Registry->Create();
-    Registry->Emplace<STransformComponent>(Floor).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
-    Registry->Emplace<SRigidBodyComponent>(Floor).BodyType = EBodyType::Static;
-    Registry->Emplace<SBoxColliderComponent>(Floor).HalfExtent = FVector3(20.0f, 0.5f, 20.0f);
+    SpawnFloor();
 
     const ECS::FEntity Character = Registry->Create();
     Registry->Emplace<STransformComponent>(Character).SetLocation(FVector3(0.0f, 1.0f, 0.0f));

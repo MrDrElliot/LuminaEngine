@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-/// <summary>Blittable event payload from native; mirrors <c>Lumina::RmlUi::FUIEventData</c> byte-for-byte.</summary>
+// Mirrors Lumina::RmlUi::FUIEventData byte for byte.
 [StructLayout(LayoutKind.Sequential)]
 internal struct UIEventData
 {
@@ -19,7 +19,7 @@ internal struct UIEventData
     public int Pad;
 }
 
-/// <summary>The kind of UI event. Values mirror RmlUi's <c>EventId</c> (see ID.h).</summary>
+// Values mirror the RmlUi EventId in ID.h.
 public enum UIEventType
 {
     Invalid = 0,
@@ -31,10 +31,7 @@ public enum UIEventType
     Change, Submit, TabChange,
 }
 
-/// <summary>
-/// A UI event delivered to an <see cref="UIElement.On"/> / <see cref="UIElement.OnClick(System.Action{UIEvent})"/>
-/// handler. A snapshot read-only view; capture what you need (it is not valid past the handler).
-/// </summary>
+// A read-only snapshot that is not valid past the handler.
 public readonly struct UIEvent
 {
     private readonly ulong World;
@@ -46,25 +43,23 @@ public readonly struct UIEvent
         this.Data = Data;
     }
 
-    /// <summary>The kind of event (also implied by the type you subscribed to).</summary>
     public UIEventType Type => (UIEventType)Data.Id;
 
-    /// <summary>The deepest element the event originated on.</summary>
+    // The deepest element the event originated on.
     public ref readonly UIElement Target => ref UIElement.Hold(new(World, Data.TargetElement));
 
-    /// <summary>The element the listener is attached to (where bubbling currently is).</summary>
+    // The element the listener is attached to, where bubbling currently is.
     public ref readonly UIElement Current => ref UIElement.Hold(new(World, Data.CurrentElement));
 
-    /// <summary>Mouse button for mouse events: 0 = left, 1 = right, 2 = middle; -1 if not a mouse event.</summary>
+    // 0 left, 1 right, 2 middle, or -1 for a non-mouse event.
     public int MouseButton => Data.MouseButton;
 
-    /// <summary>Cursor X in the document's layout space (0 if not a mouse event).</summary>
+    // Cursor position in the document's layout space, 0 for a non-mouse event.
     public float MouseX => Data.MouseX;
 
-    /// <summary>Cursor Y in the document's layout space (0 if not a mouse event).</summary>
     public float MouseY => Data.MouseY;
 
-    /// <summary>RmlUi key identifier for key events (0 if not a key event).</summary>
+    // RmlUi key identifier, 0 for a non-key event.
     public int KeyIdentifier => Data.KeyIdentifier;
 
     public bool Ctrl  => (Data.Modifiers & 0x1) != 0;

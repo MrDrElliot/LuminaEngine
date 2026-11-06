@@ -757,6 +757,12 @@ public:
         return m_isConnected.load( std::memory_order_acquire );
     }
 
+    // Lumina patch, zero until the data socket is listening.
+    uint32_t GetListenPort() const
+    {
+        return m_listenPort.load( std::memory_order_acquire );
+    }
+
     tracy_force_inline void SetProgramName( const char* name )
     {
         m_programNameLock.lock();
@@ -1013,6 +1019,8 @@ private:
     UdpBroadcast* m_broadcast;
     bool m_noExit;
     uint32_t m_userPort;
+    // Lumina patch, the bound data port, so a process can point tracy-capture at itself when 8086 belongs to another.
+    std::atomic<uint32_t> m_listenPort { 0 };
     std::atomic<uint32_t> m_zoneId;
     int64_t m_samplingPeriod;
 

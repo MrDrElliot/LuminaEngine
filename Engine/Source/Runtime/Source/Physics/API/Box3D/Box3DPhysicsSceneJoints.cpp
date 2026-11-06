@@ -485,8 +485,9 @@ namespace Lumina::Physics
         Desc.Anchor = JointPose.GetLocation() + Component->PivotOffset;
         Desc.Axis = Math::Rotate(JointPose.GetRotation(), Component->Axis);
         Desc.AnchorB = Desc.Anchor;
-        Desc.MinLimit = Component->LowerLimit;
-        Desc.MaxLimit = Component->UpperLimit;
+        const bool bAngularLimits = Desc.Type == EPhysicsConstraintType::Hinge;
+        Desc.MinLimit = bAngularLimits ? Math::Radians(Component->LowerLimit) : Component->LowerLimit;
+        Desc.MaxLimit = bAngularLimits ? Math::Radians(Component->UpperLimit) : Component->UpperLimit;
         Desc.HalfConeAngle = Math::Radians(Component->ConeHalfAngle);
         Desc.bHasLimits = Component->bLimited;
         Desc.MaxFriction = Component->Friction;

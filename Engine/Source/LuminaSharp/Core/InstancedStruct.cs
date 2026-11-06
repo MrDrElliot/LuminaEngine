@@ -3,7 +3,7 @@ using LuminaSharp;
 
 namespace Lumina;
 
-/// A view over a native FInstancedStruct, which owns a reflected struct value whose type is chosen at runtime.
+// View over a native FInstancedStruct, which owns a struct value whose type is chosen at runtime.
 [global::LuminaSharp.NativeSlotView]
 public readonly unsafe struct FInstancedStruct
 {
@@ -14,15 +14,15 @@ public readonly unsafe struct FInstancedStruct
         Address = address;
     }
 
-    /// False when the view has no storage, as opposed to holding no value.
+    // False when the view has no storage, as opposed to holding no value.
     public bool IsBound => Address != 0;
 
-    /// The stored struct's registered name, empty when nothing is stored.
+    // Empty when nothing is stored.
     public string TypeName => IsBound ? Native.InstancedStructGetType(Address) : string.Empty;
 
     public bool IsValid => IsBound && Native.InstancedStructGetMemory(Address) != IntPtr.Zero;
 
-    /// True when the stored value is T or derives from it.
+    // True when the stored value is T or derives from it.
     public bool Is<T>() where T : struct, INativeStruct<T>
         => IsBound && Native.InstancedStructIsA(Address, T.NativeName) != 0;
 
@@ -56,7 +56,6 @@ public readonly unsafe struct FInstancedStruct
         return new InvalidOperationException($"Instanced struct holds {(Held.Length == 0 ? "nothing" : Held)}, not a {Expected}.");
     }
 
-    /// Replaces the value with a fresh default-constructed T and returns the view of it.
     public T InitializeAs<T>() where T : struct, INativeStruct<T>
     {
         if (IsBound)
@@ -66,7 +65,6 @@ public readonly unsafe struct FInstancedStruct
         return Get<T>();
     }
 
-    /// Replaces the value with a fresh default-constructed instance of a runtime-named struct.
     public void InitializeAs(string StructName)
     {
         if (IsBound)
@@ -75,7 +73,6 @@ public readonly unsafe struct FInstancedStruct
         }
     }
 
-    /// Destroys the stored value, leaving the slot empty.
     public void Reset()
     {
         if (IsBound)
@@ -85,7 +82,7 @@ public readonly unsafe struct FInstancedStruct
     }
 }
 
-/// A view over a native TInstancedStruct, whose stored value always derives from TBase.
+// The stored value always derives from TBase.
 public readonly unsafe struct TInstancedStruct<TBase> where TBase : struct, INativeStruct<TBase>
 {
     private readonly FInstancedStruct Inner;
@@ -121,6 +118,5 @@ public readonly unsafe struct TInstancedStruct<TBase> where TBase : struct, INat
 
     public void Reset() => Inner.Reset();
 
-    /// Drops the compile-time base, for code that handles any instanced struct.
     public FInstancedStruct AsUntyped() => Inner;
 }

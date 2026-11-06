@@ -1,4 +1,5 @@
 ﻿#include "Containers/StringFormat.h"
+#include "World/World.h"
 #include "AnimationEditorTool.h"
 #include "TimelineDrawing.h"
 #include "World/ECS/Registry.h"
@@ -7,7 +8,6 @@
 #include "Core/Math/Math.h"
 #include <imgui_internal.h>
 
-#include "ImGuiDrawUtils.h"
 #include "implot.h"
 #include "Animation/AnimNotify.h"
 #include "Core/Object/InstancedStruct.h"
@@ -141,10 +141,6 @@ namespace Lumina
         {
             CreatePreviewEntity();
         }
-    }
-
-    void FAnimationEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
     }
 
     void FAnimationEditorTool::OnAssetLoadFinished()
@@ -335,19 +331,7 @@ namespace Lumina
 
         if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo Control"))
         {
-            const char* operations[] = { "Translate", "Rotate", "Scale" };
-            static int currentOp = 0;
-
-            if (ImGui::Combo("##", &currentOp, operations, IM_ARRAYSIZE(operations)))
-            {
-                switch (currentOp)
-                {
-                case 0: GuizmoOp = ImGuizmo::TRANSLATE; break;
-                case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
-                case 2: GuizmoOp = ImGuizmo::SCALE;     break;
-                }
-            }
-
+            DrawGizmoOperationCombo(GuizmoOp);
             ImGui::EndMenu();
         }
 
@@ -653,18 +637,10 @@ namespace Lumina
 
             if (ImGui::BeginPopupContextItem("track_ctx"))
             {
-                static char RenameBuf[128];
-                if (ImGui::IsWindowAppearing())
-                {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Resource->NotifyTracks[t]);
-                }
-                ImGui::SetNextItemWidth(160);
-                if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
+                if (const FName NewName = Timeline::DrawRenameField("Name", 160, RenameBuffer, Resource->NotifyTracks[t], Resource->NotifyTracks); !NewName.IsNone())
                 {
                     // A lane owns its entries by name, so they have to be re-tagged or they orphan.
                     const FName PreviousName = Resource->NotifyTracks[t];
-                    const FName NewName = FName(RenameBuf);
-
                     Resource->NotifyTracks[t] = NewName;
                     for (FAnimationNotify& N : Resource->Notifies)
                     {
@@ -1182,15 +1158,9 @@ namespace Lumina
             {
                 SelectedCurve = i;
 
-                static char RenameBuf[128];
-                if (ImGui::IsWindowAppearing())
+                if (const FName NewName = Timeline::DrawRenameField("Name", 180, RenameBuffer, Curve.Name); !NewName.IsNone())
                 {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Curve.Name);
-                }
-                ImGui::SetNextItemWidth(180);
-                if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
-                {
-                    Curve.Name = FName(RenameBuf);
+                    Curve.Name = NewName;
                     MarkAnimationDirty();
                 }
 

@@ -9,9 +9,9 @@
 namespace Lumina
 {
 
-    // Places rig cameras (follow, spring arm) on settled transforms before SCameraSystem; with both, the spring arm wins.
+    // Places rig cameras (follow, spring arm) on settled transforms before CCameraSystem; with both, the spring arm wins.
     REFLECT()
-    class SCameraRigSystem : public CEntitySystem
+    class RUNTIME_API CCameraRigSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

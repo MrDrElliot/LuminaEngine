@@ -42,7 +42,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const bool   bSky   = Raw <= 0.0;
     const float2 UV     = (float2(Pixel) + 0.5) / float2(Pass().Width, Pass().Height);
     const float3 Camera = GetCameraPosition();
-    const float3 Far    = ReconstructWorldPos(UV, bSky ? 1e-4 : Raw, GetInverseCameraProjection(), GetInverseCameraView());
+    const float3 Far    = ReconstructWorldPos(UV, bSky ? 1e-4 : Raw);
     const float3 ToFar  = Far - Camera;
     const float3 Dir    = normalize(ToFar);
     const float  Dist   = bSky ? kHazeSkyDistance : length(ToFar);

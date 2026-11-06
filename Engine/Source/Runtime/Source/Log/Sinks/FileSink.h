@@ -1,25 +1,23 @@
 #pragma once
 
-#include <cstdio>
-
 #include "Log/LogFormat.h"
 #include "Log/LogSink.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 
 namespace Lumina
 {
-    class FFileSink : public Logging::ILogSink
+    class RUNTIME_API FFileSink : public Logging::ILogSink
     {
     public:
 
         FFileSink(const FString& InBasePath, uint64 InMaxFileBytes, uint32 InMaxFiles);
-        ~FFileSink() override;
         FFileSink(const FFileSink&) = delete;
         FFileSink& operator=(const FFileSink&) = delete;
         FFileSink(FFileSink&&) = delete;
         FFileSink& operator=(FFileSink&&) = delete;
 
-        NODISCARD bool IsOpen() const { return Handle != nullptr; }
+        NODISCARD bool IsOpen() const { return Handle.IsValid(); }
         NODISCARD const FString& GetBasePath() const { return BasePath; }
 
         // Moves the live file to NewBasePath, carrying this run's lines with it. Used once the
@@ -35,13 +33,13 @@ namespace Lumina
         void Rotate();
 
         void RotateExisting();
-        void OpenCurrent(const char* Mode);
+        void OpenCurrent(Filesystem::ECreateMode Mode);
 
-        FString             BasePath;
-        std::FILE*          Handle       = nullptr;
-        uint64              WrittenBytes = 0;
-        uint64              MaxFileBytes = 0;
-        uint32              MaxFiles     = 0;
-        Logging::FLogBuffer Batch;
+        FString                 BasePath;
+        Filesystem::FFileHandle Handle;
+        uint64                  WrittenBytes = 0;
+        uint64                  MaxFileBytes = 0;
+        uint32                  MaxFiles     = 0;
+        Logging::FLogBuffer     Batch;
     };
 }

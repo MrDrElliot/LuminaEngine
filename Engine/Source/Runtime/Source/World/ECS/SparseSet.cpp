@@ -199,7 +199,7 @@ namespace Lumina::ECS
         const uint32 OldPageShift = PayloadPageShift;
         const uint32 OldPageMask = PayloadPageMask;
         uint8* OldPacked = PackedData;
-        TVector<uint8*> OldPages = std::move(PayloadPages);
+        TVector<uint8*> OldPages = Move(PayloadPages);
 
         auto OldValueAt = [&](uint32 DenseIndex) -> uint8*
         {

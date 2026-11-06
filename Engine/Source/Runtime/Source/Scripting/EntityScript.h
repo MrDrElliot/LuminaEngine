@@ -39,7 +39,7 @@ namespace Lumina
         PostPhysics = 1,
     };
 
-    /// Base for a script attached to a single entity.
+    /// Base for a script attached to one entity, whose scripts run every pass in ascending UpdatePriority, ties in attach order, C++ and C# alike on the parallel and serial paths.
     REFLECT(Scriptable)
     class RUNTIME_API CEntityScript : public CObject
     {
@@ -108,7 +108,7 @@ namespace Lumina
         FUNCTION()
         CWorld* GetWorld() const { return OwningWorld; }
 
-        /** Set once by the driver at attach, before OnAttach runs. */
+        // Set once by the driver at attach, before OnAttach runs.
         void SetOwner(ECS::FEntity InEntity, CWorld* InWorld)
         {
             OwningEntity = InEntity;
@@ -134,6 +134,13 @@ namespace Lumina
         void MarkFaulted();
 
         bool ShouldTick() const { return bReady && !bFaulted; }
+
+        FUNCTION()
+        int32 GetUpdatePriority() const { return UpdatePriority; }
+
+        // Lower runs first among the entity's scripts, a change after attach reordering them from the next pass on.
+        FUNCTION()
+        void SetUpdatePriority(int32 InPriority);
 
         // OnReloaded is what a reload delivers, so the replacement carries on where the original was rather than attaching again.
         void OnReinstanced(CObject& Previous) override;
@@ -274,6 +281,8 @@ namespace Lumina
         bool bReady = false;
         bool bFaulted = false;
 
+        int32 UpdatePriority = 0;
+
         // The Sync values PollSync last saw, built on first use and only for a C++ script.
         FPropertySnapshot* SyncSnapshot = nullptr;
 
@@ -316,7 +325,7 @@ namespace Lumina
         // A detached copy of Source's values with no owner and no lifecycle, for script data held outside a world.
         RUNTIME_API CEntityScript* Clone(CEntityScript* Source);
 
-        /** Drains pending OnReady (PrePhysics only), then runs OnUpdate on the scripts declaring Phase. */
+        // Drains pending OnReady (PrePhysics only), then runs OnUpdate on the scripts declaring Phase.
         RUNTIME_API void Tick(ECS::FRegistry& Registry, float DeltaTime,
             EScriptUpdatePhase Phase = EScriptUpdatePhase::PrePhysics);
 
@@ -332,10 +341,19 @@ namespace Lumina
         // Bumped by anything that changes which scripts are attached or able to tick, so a batched update knows when to stop.
         RUNTIME_API void NoteStructureChange();
 
-        /** Runs OnFixedUpdate on every ready script. Driven at the physics rate. */
+        // Report, once per class and world, a ParallelUpdate script in the parallel pass on this thread that broke its promise through Call.
+#if defined(LE_SHIPPING)
+        inline void CheckParallelAccess(ECS::FEntity, const char*) {}
+        inline void CheckParallelStructureChange(const char*) {}
+#else
+        RUNTIME_API void CheckParallelAccess(ECS::FEntity Entity, const char* Call);
+        RUNTIME_API void CheckParallelStructureChange(const char* Call);
+#endif
+
+        // Runs OnFixedUpdate on every ready script. Driven at the physics rate.
         RUNTIME_API void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime);
 
-        /** Runs OnDetach and drops every script on Entity. */
+        // Runs OnDetach and drops every script on Entity.
         RUNTIME_API void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // Walks a snapshot, so an OnDetach that adds or removes scripts cannot invalidate the pool underneath.
@@ -343,26 +361,26 @@ namespace Lumina
 
         // Lookup and mutation by class, which finds a C++ script the same way as a C# one.
 
-        /** The first script on Entity whose class IS-A ScriptClass, or null. */
+        // The first script on Entity whose class is or derives from ScriptClass, or null.
         RUNTIME_API CEntityScript* Find(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass);
 
-        /** Appends every script on Entity whose class IS-A ScriptClass. */
+        // Appends every script on Entity whose class is or derives from ScriptClass.
         RUNTIME_API void FindAll(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass,
             TVector<CEntityScript*>& Out);
 
-        /** Runs OnDetach on Script and removes it from its entity. Returns false if it was not attached. */
+        // Runs OnDetach on Script and removes it from its entity. Returns false if it was not attached.
         RUNTIME_API bool Remove(ECS::FRegistry& Registry, ECS::FEntity Entity, CEntityScript* Script);
 
         /// Delivers OnReloaded to every C# script in every world, a C++ script having nothing to reload.
         RUNTIME_API void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation);
 
-        /** Materializes scripts held back at load because their class was missing, returning the count. */
+        // Materializes scripts held back at load because their class was missing, returning the count.
         RUNTIME_API int32 ResolvePendingScripts(ECS::FRegistry& Registry);
 
-        /** Delivers one input event to every script on Entity. */
+        // Delivers one input event to every script on Entity.
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 
-        /** Delivers OnAction for each of ChangedActionIndices to every script on Entity. */
+        // Delivers OnAction for each of ChangedActionIndices to every script on Entity.
         RUNTIME_API void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputActionState* States,
             int32 Count, TSpan<const int32> ChangedActionIndices);
 

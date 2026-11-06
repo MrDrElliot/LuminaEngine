@@ -151,42 +151,6 @@ namespace Lumina
         return bClicked;
     }
 
-    static bool ClosestParamOnAxisToRay(const FVector3& Anchor, const FVector3& Axis,
-                                        const FVector3& RayOrigin, const FVector3& RayDirection, float& OutT)
-    {
-        const FVector3 ToAnchor = Anchor - RayOrigin;
-        const float AxisDotRay = Math::Dot(Axis, RayDirection);
-        const float Denominator = 1.0f - AxisDotRay * AxisDotRay;
-        if (Math::Abs(Denominator) < 1e-5f)
-        {
-            return false;
-        }
-
-        OutT = (AxisDotRay * Math::Dot(RayDirection, ToAnchor) - Math::Dot(Axis, ToAnchor)) / Denominator;
-        return true;
-    }
-
-    static bool RayHitsSphere(const FVector3& Origin, const FVector3& Direction, const FVector3& Center, float Radius, float& OutT)
-    {
-        const FVector3 ToOrigin = Origin - Center;
-        const float B = Math::Dot(ToOrigin, Direction);
-        const float C = Math::Dot(ToOrigin, ToOrigin) - Radius * Radius;
-
-        if (C > 0.0f && B > 0.0f)
-        {
-            return false;
-        }
-
-        const float Discriminant = B * B - C;
-        if (Discriminant < 0.0f)
-        {
-            return false;
-        }
-
-        OutT = Math::Max(0.0f, -B - Math::Sqrt(Discriminant));
-        return true;
-    }
-
     FMeshCollisionEditing::FMeshCollisionEditing(FTransactionManager& InTransactions)
         : Transactions(InTransactions)
     {
@@ -817,13 +781,15 @@ namespace Lumina
             switch (Primitive.Type)
             {
             case ECollisionPrimitiveType::Sphere:
-                bHit = RayHitsSphere(RayOrigin, RayDirection, Primitive.Center, Primitive.Radius, Distance);
+                bHit = ShapeHandles::RayHitsSphere(RayOrigin, RayDirection, Primitive.Center, Primitive.Radius, Distance);
                 break;
 
             case ECollisionPrimitiveType::Capsule:
-                // Approximated by its bounding box, which is exact enough for the only user, picking.
-                bHit = ShapeHandles::RayHitsBox(RayOrigin, RayDirection, Matrix,
-                    FVector3(Primitive.Radius, Primitive.HalfHeight + Primitive.Radius, Primitive.Radius), Distance);
+                {
+                    const FVector3 Axis = Math::Normalize(FVector3(Matrix[1]));
+                    bHit = ShapeHandles::RayHitsCapsule(RayOrigin, RayDirection, Primitive.Center - Axis * Primitive.HalfHeight,
+                        Primitive.Center + Axis * Primitive.HalfHeight, Primitive.Radius, Distance);
+                }
                 break;
 
             case ECollisionPrimitiveType::ConvexHull:
@@ -910,7 +876,7 @@ namespace Lumina
         }
 
         float AxisDistance = 0.0f;
-        if (!ClosestParamOnAxisToRay(Handle.Anchor, Handle.Axis, RayOrigin, RayDirection, AxisDistance))
+        if (!ShapeHandles::ClosestParamOnAxisToRay(Handle.Anchor, Handle.Axis, RayOrigin, RayDirection, AxisDistance))
         {
             return;
         }

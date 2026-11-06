@@ -13,7 +13,7 @@ namespace Lumina
     {
         constexpr float kFilterPi = 3.14159265358979323846f;
 
-        /** Longest delay a Delay node can address, and therefore the buffer it allocates up front. */
+        // Longest delay a Delay node can address, and therefore the buffer it allocates up front.
         constexpr float kMaxDelaySeconds = 2.0f;
 
         class FOnePoleOperator : public IAudioGraphOperator
@@ -26,8 +26,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
                 , bHighPass(bInHighPass)
             {}
-
-            void Reset() override { State = 0.0f; }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -78,12 +76,6 @@ namespace Lumina
                 , GainDecibelsIn(Params.FloatIn(4))
                 , Out(Params.AudioOut(0))
             {}
-
-            void Reset() override
-            {
-                X1 = X2 = Y1 = Y2 = 0.0f;
-                bCoefficientsValid = false;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -262,12 +254,6 @@ namespace Lumina
                 Line.Initialize((uint32)(kMaxDelaySeconds * (float)Params.SampleRate));
             }
 
-            void Reset() override
-            {
-                Line.Clear();
-                DelaySamples.Reset();
-            }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 const float TargetDelay = Math::Clamp(*DelayTimeIn * (float)Context.SampleRate, 1.0f, Line.GetMaxDelay());
@@ -310,8 +296,6 @@ namespace Lumina
                 , DriveIn(Params.FloatIn(1))
                 , Out(Params.AudioOut(0))
             {}
-
-            void Reset() override { Drive.Reset(); }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {

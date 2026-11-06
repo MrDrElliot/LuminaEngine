@@ -268,7 +268,7 @@ namespace Lumina::SequencerEditModeInternal
             SCurveKey Moved = Curve->Keys[Index];
             Moved.Time = NewTime;
             Curve->Keys.RemoveAt(Index);
-            const auto Where = std::upper_bound(Curve->Keys.begin(), Curve->Keys.end(), NewTime, [](float Value, const SCurveKey& Other) { return Value < Other.Time; });
+            const auto Where = Algo::UpperBound(Curve->Keys, NewTime, [](float Value, const SCurveKey& Other) { return Value < Other.Time; });
             const int32 Landed = (int32)(Where - Curve->Keys.begin());
             Curve->Keys.Insert(Moved, Landed);
             Curve->ComputeAutoTangents();
@@ -279,7 +279,7 @@ namespace Lumina::SequencerEditModeInternal
             SSequenceEventKey Moved = Events->Keys[Index];
             Moved.Time = NewTime;
             Events->Keys.RemoveAt(Index);
-            const auto Where = std::upper_bound(Events->Keys.begin(), Events->Keys.end(), NewTime, [](float Value, const SSequenceEventKey& Other) { return Value < Other.Time; });
+            const auto Where = Algo::UpperBound(Events->Keys, NewTime, [](float Value, const SSequenceEventKey& Other) { return Value < Other.Time; });
             const int32 Landed = (int32)(Where - Events->Keys.begin());
             Events->Keys.Insert(Moved, Landed);
             return Landed;

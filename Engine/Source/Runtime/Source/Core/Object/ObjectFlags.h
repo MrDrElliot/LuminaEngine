@@ -8,24 +8,21 @@ namespace Lumina
     enum EObjectFlags
     {
         OF_None                 = 0,
-        /** Not saved. */
+        // Not saved.
         OF_Transient            = BIT(0),
         OF_Rooted               = BIT(1),
-        /** Class default object. */
         OF_DefaultObject        = BIT(2),
         OF_NeedsLoad            = BIT(3),
         OF_Loading              = BIT(4),
-        /** PostLoad still owed; does not re-deserialize. */
+        // PostLoad still owed, without deserializing again.
         OF_NeedsPostLoad        = BIT(5),
         OF_WasLoaded            = BIT(6),
-        /** Visible outside its package (assets). */
+        // Visible outside its package, as assets are.
         OF_Public               = BIT(7),
         OF_MarkedDestroy        = BIT(8),
-        /** Carries script-appended properties in its trailing block, so its destructor must reach through
-         *  its class to tear them down. Set by StaticAllocateObject only when the class actually appended
-         *  storage-owning properties, which keeps every native object's destructor off the class entirely. */
+        // Set only when the class appended storage-owning script properties, so native destructors never consult the class.
         OF_ScriptProperties     = BIT(9),
-        /** OnDestroy has run. Separate from OF_MarkedDestroy, which the shutdown sweep sets a phase early. */
+        // OnDestroy has run, unlike OF_MarkedDestroy, which the shutdown sweep sets a phase early.
         OF_DestroyStarted       = BIT(10),
     };
 

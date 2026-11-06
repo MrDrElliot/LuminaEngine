@@ -7,18 +7,10 @@
 
 namespace Lumina
 {
-    /**
-     * Mips at or below this on their long edge stay inline in the export and are always resident, so a
-     * texture is never blank and never needs IO to be drawn -- the worst a streamed-out 4K texture looks
-     * is like a 256px one. Everything above streams.
-     *
-     * 256 is chosen so the inline tail is negligible (~87 KiB for a 4K BC7, against ~21 MiB streamed)
-     * while still being a usable image at distance. Raising it costs resident memory on EVERY texture;
-     * lowering it makes the pop-in more visible.
-     */
+    // Mips at or below this long edge stay inline and always resident, so a streamed-out texture is never blank.
     constexpr uint32 kInlineMipMaxDimension = 256;
 
-    /** Imported file bytes, so a re-cook starts pristine. Editor-only, bulk-held, NOT resident after load. */
+    // Imported file bytes for a pristine re-cook, editor-only and not resident after load.
     struct FTextureSourceFile
     {
         TVector<uint8> Bytes;
@@ -67,14 +59,12 @@ namespace Lumina
             uint32 RowPitch;
             uint32 SlicePitch;
 
-            /** Resident bytes. Empty for a streamed mip that isn't currently loaded -- the size then lives
-             *  in BulkRef, not here, so never infer "this mip doesn't exist" from an empty Pixels. */
+            // Empty for a streamed-out mip, so never infer from it that the mip does not exist.
             TVector<uint8> Pixels;
 
-            /** Where this mip lives in the package's bulk region; invalid for an inline mip. */
+            // Invalid for an inline mip.
             FBulkDataRef BulkRef;
 
-            /** Byte count regardless of residency. */
             uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Pixels.Num(); }
         };
 
@@ -87,10 +77,7 @@ namespace Lumina
 
             uint16       LayerCount = 1;
 
-            /** Mips [0, FirstInlineMip) live in the package's bulk region and stream; [FirstInlineMip,
-             *  NumMips) are inline and always resident. 0 means the whole chain is inline, which is what
-             *  every pre-PACKAGE_BULK_DATA asset, every texture array, and every texture small enough not to
-             *  be worth splitting look like. */
+            // Mips below this stream from the bulk region, and 0 means the whole chain is inline.
             uint8        FirstInlineMip = 0;
 
             // Set from CTexture::bNeverStream before a write; the split it produces is what persists.
@@ -127,8 +114,7 @@ namespace Lumina
 
         TInlineVector<FMip, 1>  Mips;
 
-        /** First mip currently uploaded to the GPU. Starts at FirstInlineMip after load and walks toward 0
-         *  as the streamer promotes. Runtime state -- never serialized. */
+        // Runtime only, starting at FirstInlineMip and walking toward 0 as the streamer promotes.
         uint8                   ResidentFirstMip = 0;
 
         uint32 GetNumMips() const   { return ImageDescription.NumMips    > 0 ? (uint32)ImageDescription.NumMips    : 1u; }
@@ -137,11 +123,9 @@ namespace Lumina
 
         uint32 MipIndex(uint32 Layer, uint32 Mip) const { return Layer * GetNumMips() + Mip; }
 
-        /** True when some of this texture's mips live on disk rather than in memory. */
         bool IsStreamable() const { return ImageDescription.FirstInlineMip > 0; }
 
-        /** Dimensions of a given mip of the full chain. Used to size the image when only part of the chain
-         *  is resident: an image holding mips [K, NumMips) is created at mip K's dimensions. */
+        // Sizes an image holding only mips [K, NumMips), which is created at mip K's dimensions.
         FUIntVector2 MipExtent(uint32 Mip) const
         {
             const uint32 W = ImageDescription.Extent.x >> Mip;
@@ -149,18 +133,7 @@ namespace Lumina
             return FUIntVector2(W > 0 ? W : 1u, H > 0 ? H : 1u);
         }
 
-        /** How many mips the GPU image holds given the current residency. */
-        uint32 GetResidentMipCount() const
-        {
-            const uint32 NumMips = GetNumMips();
-            return ResidentFirstMip < NumMips ? NumMips - ResidentFirstMip : 1u;
-        }
-
-        /** Bytes the GPU image occupies at the current residency, summed from the mips themselves rather
-         *  than re-derived from the format -- BC block math and RowPitch disagree here (RowPitch counts
-         *  block rows, Height counts texels), and the per-mip sizes are exact. */
-        /** Bytes the GPU image WOULD occupy if it held mips [FirstMip, NumMips). The budgeter needs to
-         *  price a residency it has not applied yet, so this is separate from CalcResidentSizeBytes. */
+        // Prices a residency the budgeter has not applied yet.
         uint64 CalcSizeBytesFromMip(uint32 FirstMip) const
         {
             const uint32 NumMips   = GetNumMips();
@@ -181,6 +154,7 @@ namespace Lumina
             return Total;
         }
 
+        // Summed per mip because BC block rows make RowPitch disagree with Height.
         uint64 CalcResidentSizeBytes() const
         {
             const uint32 NumMips   = GetNumMips();
@@ -201,7 +175,7 @@ namespace Lumina
             return Total;
         }
 
-        /** Bytes the GPU image would occupy fully resident. */
+        // Bytes the GPU image would occupy fully resident.
         uint64 CalcFullSizeBytes() const
         {
             return Algo::Sum(Mips, &FMip::SizeBytes);
@@ -213,13 +187,7 @@ namespace Lumina
                 [](const FMip& Mip) { return Mip.SizeBytes(); });
         }
 
-        /** Cook-time policy: index of the first mip small enough to keep inline.
-         *
-         *  Arrays used to be excluded here (returning 0 = never streamable) because residency went through
-         *  Release+Create for them, which would have moved the bindless slot every material had already
-         *  baked. They stream now -- Textures::Recreate has an array overload that repoints the slot, and
-         *  every layer's tail is kept inline by the same modulo the 2D path uses. The saving is the whole
-         *  point: a 4K BC7 array of 3 layers is 64 MB fully resident and ~260 KB at its tail. */
+        // Cook-time index of the first mip small enough to keep inline.
         static uint8 ComputeFirstInlineMip(const FDescription& Desc)
         {
             if (Desc.bNeverStream)

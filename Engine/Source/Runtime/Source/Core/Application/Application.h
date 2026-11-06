@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Core/LuminaMacros.h"
-#include "Core/Engine/Engine.h"
 #include "Events/EventProcessor.h"
 #include "Memory/SmartPtr.h"
 

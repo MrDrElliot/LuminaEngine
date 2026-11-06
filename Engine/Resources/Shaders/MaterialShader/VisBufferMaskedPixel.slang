@@ -38,7 +38,7 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
 [shader("fragment")]
 uint FragmentMain(FMaskedVertexOutput Input, VIS_ID_INPUT) : SV_Target0
 {
-    if (!MaskedVisKeep(Input))
+    if (!MaskedIsVoxelSplat(Input) && !MaskedVisKeep(Input))
     {
         discard;
     }

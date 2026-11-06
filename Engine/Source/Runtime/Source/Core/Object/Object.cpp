@@ -2,6 +2,7 @@
 #include "Object.h"
 #include "Class.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Package/Package.h"
 

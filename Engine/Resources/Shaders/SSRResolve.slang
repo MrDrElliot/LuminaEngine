@@ -55,7 +55,7 @@ float4 SampleTraceTexel(int2 Texel, float Depth, float3 Normal, float Roughness,
     float4       Color = Pass().Chain.SampleLevel(Samplers::LinearClamp, UV, MipLevel);
 
     // Undoes the luminance compression the trace applied before filtering.
-    Color.rgb /= max(1.0 - dot(Color.rgb, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    Color.rgb = FireflyUntonemap(Color.rgb);
 
     const float DepthWeight     = exp(-abs(Depth - SampleDepth) * kDepthFactor);
     const float NormalWeight    = exp(-saturate(1.0 - dot(Normal, SampleSurface.xyz)) * kNormalFactor);

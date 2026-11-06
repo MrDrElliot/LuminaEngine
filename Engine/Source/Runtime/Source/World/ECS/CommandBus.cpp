@@ -16,13 +16,14 @@ namespace Lumina::ECS
         {
             void   (*Apply)(void*, FRegistry*);
             uint32 Stride;
+            uint32 RecordOrder;
         };
         static_assert(sizeof(FCommandHeader) <= HeaderSize, "The command header must fit its reserved space.");
 
         // A flush that keeps spawning commands this many times over is a feedback loop, not a backlog.
         constexpr uint32 MaxFlushRounds = 64;
 
-        thread_local bool GThreadDeferring = false;
+        thread_local FCommandBus::FThreadState GThreadState;
 
         size_t AlignUp(size_t Value, size_t Alignment)
         {
@@ -47,17 +48,19 @@ namespace Lumina::ECS
 
     bool FCommandBus::IsThreadDeferring()
     {
-        return GThreadDeferring;
+        return GThreadState.bDeferring;
     }
 
-    void FCommandBus::SetThreadDeferring(bool bDefer)
+    FCommandBus::FThreadState FCommandBus::ExchangeThreadState(const FThreadState& State)
     {
-        GThreadDeferring = bDefer;
+        const FThreadState Previous = GThreadState;
+        GThreadState = State;
+        return Previous;
     }
 
     bool FCommandBus::ShouldDefer()
     {
-        return GThreadDeferring || !Threading::IsMainThread();
+        return GThreadState.bDeferring || !Threading::IsMainThread();
     }
 
     FCommandBus::FSlot& FCommandBus::LocalSlot()
@@ -70,13 +73,13 @@ namespace Lumina::ECS
     FEntity FCommandBus::Create()
     {
         const FEntity Entity = Registry.ReserveEntity();
-        LocalSlot().Creates.Add(Entity);
+        LocalSlot().Creates.Add({ Entity, GThreadState.RecordOrder });
         return Entity;
     }
 
     void FCommandBus::Destroy(FEntity Entity)
     {
-        LocalSlot().Destroys.Add(Entity);
+        LocalSlot().Destroys.Add({ Entity, GThreadState.RecordOrder });
     }
 
     void* FCommandBus::AllocateCommand(FApplyFn Apply, size_t PayloadSize)
@@ -98,6 +101,7 @@ namespace Lumina::ECS
                     FCommandHeader* Header = reinterpret_cast<FCommandHeader*>(Command);
                     Header->Apply  = Apply;
                     Header->Stride = static_cast<uint32>(Stride);
+                    Header->RecordOrder = GThreadState.RecordOrder;
                     return Command + HeaderSize;
                 }
                 ++Slot.ActiveBlock;
@@ -111,31 +115,59 @@ namespace Lumina::ECS
         }
     }
 
-    void FCommandBus::RunCommands(FSlot& Slot, FRegistry* Target)
+    uint32 FCommandBus::RunCommands(FRegistry* Target)
     {
         // Detached first, so a command that records more lands in fresh blocks instead of the ones being walked.
-        TVector<FBlock> Running;
-        swap(Running, Slot.Blocks);
-        Slot.ActiveBlock = 0;
-        Slot.NumCommands = 0;
-
-        for (FBlock& Block : Running)
+        TVector<TVector<FBlock>> Running(Slots.Num());
+        TVector<FCommandHeader*> Commands;
+        for (int32 Index = 0; Index < Slots.Num(); ++Index)
         {
-            size_t Offset = 0;
-            while (Offset < Block.Used)
+            FSlot& Slot = Slots[Index];
+            swap(Running[Index], Slot.Blocks);
+            Slot.ActiveBlock = 0;
+            Slot.NumCommands = 0;
+            for (const FBlock& Block : Running[Index])
             {
-                FCommandHeader* Header = reinterpret_cast<FCommandHeader*>(Block.Data + Offset);
-                const uint32 Stride = Header->Stride;
-                Header->Apply(Block.Data + Offset + HeaderSize, Target);
-                Offset += Stride;
+                for (size_t Offset = 0; Offset < Block.Used; Offset += reinterpret_cast<FCommandHeader*>(Block.Data + Offset)->Stride)
+                {
+                    Commands.Add(reinterpret_cast<FCommandHeader*>(Block.Data + Offset));
+                }
             }
-            Block.Used = 0;
         }
 
-        for (const FBlock& Block : Running)
+        Algo::StableSort(Commands, [](const FCommandHeader* A, const FCommandHeader* B) { return A->RecordOrder < B->RecordOrder; });
+        for (FCommandHeader* Header : Commands)
         {
-            Slot.Blocks.Add(Block);
+            Header->Apply(reinterpret_cast<uint8*>(Header) + HeaderSize, Target);
         }
+
+        for (int32 Index = 0; Index < Slots.Num(); ++Index)
+        {
+            for (FBlock& Block : Running[Index])
+            {
+                Block.Used = 0;
+                Slots[Index].Blocks.Add(Block);
+            }
+        }
+        return static_cast<uint32>(Commands.Num());
+    }
+
+    template<typename TFunc>
+    uint32 FCommandBus::ApplyEntities(TVector<FOrderedEntity> FSlot::* List, TFunc&& Apply)
+    {
+        TVector<FOrderedEntity> Pending;
+        for (FSlot& Slot : Slots)
+        {
+            Pending.Append((Slot.*List));
+            (Slot.*List).Reset();
+        }
+
+        Algo::StableSort(Pending, [](const FOrderedEntity& A, const FOrderedEntity& B) { return A.RecordOrder < B.RecordOrder; });
+        for (const FOrderedEntity& Ordered : Pending)
+        {
+            Apply(Ordered.Entity);
+        }
+        return static_cast<uint32>(Pending.Num());
     }
 
     void FCommandBus::FreeBlocks(FSlot& Slot)
@@ -167,39 +199,11 @@ namespace Lumina::ECS
         DEBUG_ASSERT(Threading::IsMainThread());
 
         uint32 Applied = 0;
-        TVector<FEntity> Pending;
         for (uint32 Round = 0; Round < MaxFlushRounds && HasPending(); ++Round)
         {
-            for (FSlot& Slot : Slots)
-            {
-                Pending.Reset();
-                swap(Pending, Slot.Creates);
-                for (FEntity Entity : Pending)
-                {
-                    Registry.MaterializeReserved(Entity);
-                }
-                Applied += static_cast<uint32>(Pending.Num());
-            }
-
-            for (FSlot& Slot : Slots)
-            {
-                if (Slot.NumCommands != 0)
-                {
-                    Applied += Slot.NumCommands;
-                    RunCommands(Slot, &Registry);
-                }
-            }
-
-            for (FSlot& Slot : Slots)
-            {
-                Pending.Reset();
-                swap(Pending, Slot.Destroys);
-                for (FEntity Entity : Pending)
-                {
-                    Registry.Destroy(Entity);
-                }
-                Applied += static_cast<uint32>(Pending.Num());
-            }
+            Applied += ApplyEntities(&FSlot::Creates, [this](FEntity Entity) { Registry.MaterializeReserved(Entity); });
+            Applied += RunCommands(&Registry);
+            Applied += ApplyEntities(&FSlot::Destroys, [this](FEntity Entity) { Registry.Destroy(Entity); });
         }
 
         if (HasPending())
@@ -213,16 +217,13 @@ namespace Lumina::ECS
     {
         for (FSlot& Slot : Slots)
         {
-            for (FEntity Entity : Slot.Creates)
+            for (const FOrderedEntity& Created : Slot.Creates)
             {
-                Registry.ReleaseReserved(Entity);
+                Registry.ReleaseReserved(Created.Entity);
             }
             Slot.Creates.Reset();
             Slot.Destroys.Reset();
-            if (Slot.NumCommands != 0)
-            {
-                RunCommands(Slot, nullptr);
-            }
         }
+        RunCommands(nullptr);
     }
 }

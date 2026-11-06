@@ -51,12 +51,12 @@ namespace Lumina
 
     // Resolves a world velocity for each entity a consumer reads, from the physics body, the character mover, or a difference.
     REFLECT()
-    class RUNTIME_API SKinematicsSystem : public CEntitySystem
+    class RUNTIME_API CKinematicsSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
 
-        // PrePhysics, not PostPhysics, so SAnimationSystem reads this the same frame it is written.
+        // PrePhysics, not PostPhysics, so CAnimationSystem reads this the same frame it is written.
         void Configure() override;
 
         // Every frame, since the stamp and the enabled flag are global state its readers check.

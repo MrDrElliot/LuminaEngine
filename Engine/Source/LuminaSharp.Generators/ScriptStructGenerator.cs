@@ -13,12 +13,6 @@ namespace LuminaSharp.Generators;
 [Generator]
 public sealed class ScriptStructGenerator : IIncrementalGenerator
 {
-    private const string ReflectAttribute = "LuminaSharp.ReflectAttribute";
-    private const string ExtendsInterface = "LuminaSharp.IExtends<TBase>";
-    private const string ComponentInterface = "LuminaSharp.IComponent<TSelf>";
-    private const string RootInterface = "LuminaSharp.INativeStruct<TSelf>";
-    private const string PropertyAttribute = "LuminaSharp.PropertyAttribute";
-
     private static readonly DiagnosticDescriptor NotPartial = new(
         id: "LUM0110",
         title: "Script struct must be partial",
@@ -35,49 +29,62 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private sealed record Model(string Name, SourceSpot Where, DiagnosticDescriptor? Error, string Hint = "", string Source = "", string? ReadAccess = null);
+
     public void Initialize(IncrementalGeneratorInitializationContext Context)
     {
-        IncrementalValueProvider<ImmutableArray<INamedTypeSymbol?>> Structs = Context.SyntaxProvider
+        IncrementalValueProvider<ImmutableArray<Model?>> Structs = Context.SyntaxProvider
             .CreateSyntaxProvider(
                 static (Node, _) => Node is StructDeclarationSyntax { BaseList: not null, AttributeLists.Count: > 0 },
-                static (Syntax, _) => Syntax.SemanticModel.GetDeclaredSymbol((StructDeclarationSyntax)Syntax.Node) as INamedTypeSymbol)
-            .Where(static Symbol => Symbol != null && IsNativeBackedStruct(Symbol))
+                static (Syntax, _) => Syntax.SemanticModel.GetDeclaredSymbol((StructDeclarationSyntax)Syntax.Node) is INamedTypeSymbol Symbol && IsNativeBackedStruct(Symbol) ? Describe(Symbol) : null)
+            .Where(static Struct => Struct != null)
             .Collect();
 
-        Context.RegisterSourceOutput(Structs, static (Output, Symbols) =>
+        Context.RegisterSourceOutput(Structs, static (Output, Models) =>
         {
-            foreach (INamedTypeSymbol Symbol in Symbols.Distinct(SymbolEqualityComparer.Default).Cast<INamedTypeSymbol>())
+            foreach (Model Struct in Models.Distinct().Cast<Model>().Where(Struct => Struct.Error == null))
             {
-                Emit(Output, Symbol);
+                Output.AddSource(Struct.Hint + ".ScriptStruct.g.cs", SourceText.From(Struct.Source, Encoding.UTF8));
+                if (Struct.ReadAccess != null)
+                {
+                    Output.AddSource(Struct.Hint + ".ReadAccess.g.cs", SourceText.From(Struct.ReadAccess, Encoding.UTF8));
+                }
+            }
+        });
+
+        Context.RegisterSourceOutput(Structs.Combine(Context.CompilationProvider), static (Output, Input) =>
+        {
+            foreach (Model Struct in Input.Left.Distinct().Cast<Model>().Where(Struct => Struct.Error != null))
+            {
+                Output.ReportDiagnostic(Diagnostic.Create(Struct.Error!, Struct.Where.ToLocation(Input.Right), Struct.Name));
             }
         });
     }
 
     private static bool IsNativeBackedStruct(INamedTypeSymbol Symbol)
     {
-        return Symbol.GetAttributes().Any(Data => Data.AttributeClass?.ToDisplayString() == ReflectAttribute)
-            && Symbol.AllInterfaces.Any(Interface => Interface.OriginalDefinition.ToDisplayString() is ExtendsInterface or ComponentInterface
-                || (Interface.OriginalDefinition.ToDisplayString() == RootInterface && SymbolEqualityComparer.Default.Equals(Interface.TypeArguments[0], Symbol)));
+        return ScriptPropertyClassifier.FindAttribute(Symbol, ScriptPropertyTypeNames.ReflectAttribute) != null
+            && Symbol.AllInterfaces.Any(Interface => Interface.OriginalDefinition.ToDisplayString() is ScriptPropertyTypeNames.Extends or ScriptPropertyTypeNames.Component
+                || (Interface.OriginalDefinition.ToDisplayString() == ScriptPropertyTypeNames.NativeStructRoot && SymbolEqualityComparer.Default.Equals(Interface.TypeArguments[0], Symbol)));
     }
 
-    private static void Emit(SourceProductionContext Output, INamedTypeSymbol Symbol)
+    private static Model Describe(INamedTypeSymbol Symbol)
     {
-        Location Where = Symbol.Locations.FirstOrDefault() ?? Location.None;
+        SourceSpot Where = SourceSpot.Of(Symbol);
         bool bPartial = Symbol.DeclaringSyntaxReferences.All(Reference =>
             Reference.GetSyntax() is StructDeclarationSyntax Declaration && Declaration.Modifiers.Any(SyntaxKind.PartialKeyword));
         if (!bPartial)
         {
-            Output.ReportDiagnostic(Diagnostic.Create(NotPartial, Where, Symbol.Name));
-            return;
+            return new Model(Symbol.Name, Where, NotPartial);
         }
         if (Symbol.ContainingType != null)
         {
-            Output.ReportDiagnostic(Diagnostic.Create(Nested, Where, Symbol.Name));
-            return;
+            return new Model(Symbol.Name, Where, Nested);
         }
 
         string Name = Symbol.Name;
         string Namespace = Symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : Symbol.ContainingNamespace.ToDisplayString();
+        string Hint = (Namespace.Length > 0 ? Namespace + "." : string.Empty) + Name;
         var Source = new StringBuilder();
         Source.AppendLine("// <auto-generated/>");
         Source.AppendLine("#nullable enable");
@@ -85,12 +92,10 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
         {
             Source.Append("namespace ").Append(Namespace).AppendLine(";");
         }
-        if (IsComponent(Symbol))
+        if (ScriptPropertyClassifier.IsComponent(Symbol))
         {
             EmitComponent(Source, Symbol, Symbol.GetMembers("CopyFrom").IsEmpty);
-            Output.AddSource(Name + ".ScriptStruct.g.cs", SourceText.From(Source.ToString(), Encoding.UTF8));
-            Output.AddSource(Name + ".ReadAccess.g.cs", SourceText.From(ReadAccess(Symbol), Encoding.UTF8));
-            return;
+            return new Model(Name, Where, null, Hint, Source.ToString(), ReadAccess(Symbol));
         }
         Source.Append("partial struct ").Append(Name).Append(" : global::LuminaSharp.INativeStruct<").Append(Name).AppendLine(">");
         Source.AppendLine("{");
@@ -107,13 +112,7 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
             Source.Append("    public readonly void CopyFrom(").Append(Name).AppendLine(" Source) => global::LuminaSharp.Native.StructAssign(Handle, Source.Handle, NativeName);");
         }
         Source.AppendLine("}");
-
-        Output.AddSource(Name + ".ScriptStruct.g.cs", SourceText.From(Source.ToString(), Encoding.UTF8));
-    }
-
-    private static bool IsComponent(INamedTypeSymbol Symbol)
-    {
-        return Symbol.AllInterfaces.Any(Interface => Interface.OriginalDefinition.ToDisplayString() == ComponentInterface);
+        return new Model(Name, Where, null, Hint, Source.ToString());
     }
 
     // A component is only ever reached in place, so its own address is the storage, and the private constructor only satisfies field initializers.
@@ -150,7 +149,7 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
             ITypeSymbol? FieldType = Stored switch
             {
                 IFieldSymbol { IsStatic: false, IsConst: false, IsImplicitlyDeclared: false } Field => Field.Type,
-                IPropertySymbol { IsStatic: false } Property when IsStoredProperty(Property) => Property.Type,
+                IPropertySymbol { IsStatic: false } Property when ScriptPropertyClassifier.FindAttribute(Property, ScriptPropertyTypeNames.PropertyAttribute) != null => Property.Type,
                 _ => null,
             };
             if (FieldType == null)
@@ -173,11 +172,6 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
             }
         }
         Source.AppendLine("    }");
-    }
-
-    private static bool IsStoredProperty(IPropertySymbol Property)
-    {
-        return Property.GetAttributes().Any(Data => Data.AttributeClass?.ToDisplayString() == PropertyAttribute);
     }
 
     // Beside the generic extensions in LuminaSharp, so it is found in the same scope wherever Read<T> is.

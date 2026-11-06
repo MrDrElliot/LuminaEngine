@@ -20,17 +20,6 @@ FEnvPushConstants* Pass() { return GetPassArgs<FEnvPushConstants>(); }
 struct FragmentInput  { float4 Position : SV_Position; float2 UV : TEXCOORD0; };
 struct FragmentOutput { float4 Color : SV_Target0; };
 
-// GetInverseCameraProjection undoes the projection's Y flip; RayClip.z is arbitrary after normalizing.
-float3 GetViewRay(float2 UV)
-{
-    float2 NDC      = UV * 2.0 - 1.0;
-    float4 RayClip  = float4(NDC, 1.0, 1.0);
-    float4 RayView  = mul(GetInverseCameraProjection(), RayClip);
-    RayView.xyz    /= RayView.w;
-    float3 RayWorld = mul(GetInverseCameraView(), float4(RayView.xyz, 0.0)).xyz;
-    return normalize(RayWorld);
-}
-
 [shader("fragment")]
 FragmentOutput FragmentMain(FragmentInput Input)
 {
@@ -52,7 +41,7 @@ FragmentOutput FragmentMain(FragmentInput Input)
     else
     {
         // HDRI reads its source equirect directly, since the cube is too coarse full-screen.
-        float3 RayDir = GetViewRay(Input.UV);
+        float3 RayDir = GetCameraWorldRayDir(Input.UV);
         if (SkyMode == SKY_MODE_HDRI)
         {
             // Shared with EquirectToCubemap.slang so the visible sky lines up with the cube-derived IBL under any yaw.

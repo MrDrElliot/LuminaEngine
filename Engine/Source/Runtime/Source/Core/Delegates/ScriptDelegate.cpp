@@ -3,6 +3,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Atomic.h"
 #include "Containers/HashTable.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptCallback.h"
 
 namespace Lumina
@@ -24,7 +25,7 @@ namespace Lumina
         void FreeManagedListener(void* Context)
         {
             --GLiveManagedBindings;
-            Scripting::FreeManagedHandle(Context);
+            DotNet::FreeManagedHandle(Context);
         }
 
         // The context is the callback's token, and the payload pointer crosses as its value.

@@ -38,7 +38,7 @@ namespace Lumina
 
     // Reciprocal velocity obstacle avoidance over every entity carrying SRVOAgentComponent.
     REFLECT()
-    class RUNTIME_API SRVOAvoidanceSystem : public CEntitySystem
+    class RUNTIME_API CRVOAvoidanceSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
@@ -51,10 +51,7 @@ namespace Lumina
 
     private:
 
-        ECS::TQuery<ECS::Write<SRVOAgentComponent>, ECS::Read<STransformComponent>> Avoiders;
-        ECS::TQuery<ECS::Read<SCharacterPhysicsComponent>> Characters;
-        ECS::TQuery<ECS::Read<SCharacterMovementComponent>> Movers;
-        ECS::TQuery<ECS::Write<SCharacterControllerComponent>> Controllers;
+        ECS::TQuery<ECS::Write<SRVOAgentComponent>, ECS::Read<STransformComponent>, ECS::Optional<ECS::Read<SCharacterPhysicsComponent>>, ECS::Optional<ECS::Read<SCharacterMovementComponent>>, ECS::Optional<ECS::Write<SCharacterControllerComponent>>> Avoiders;
         ECS::TQuery<ECS::Read<SNavMeshComponent>> NavMeshes;
         TRes<FSignificanceState> SignificanceState;
 

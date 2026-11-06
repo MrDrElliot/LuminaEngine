@@ -3,7 +3,6 @@
 #include "World/ECS/Registry.h"
 
 #include "Containers/Vector.h"
-#include "Core/Engine/Engine.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/RenderLayers.h"
 #include "Renderer/ViewVolume.h"
@@ -17,7 +16,7 @@ namespace Lumina
 
     class CMaterialInterface;
 
-    // Interpolation curve for blending the active camera (SCameraSystem::SetActiveCamera);
+    // Interpolation curve for blending the active camera (CCameraSystem::SetActiveCamera);
     // EvaluateCameraBlend maps normalized [0..1] time onto [0..1].
     REFLECT()
     enum class ECameraBlendFunction : uint8
@@ -84,7 +83,7 @@ namespace Lumina
         }
 
         // Bake the resolved (possibly blended) view into the view volume without writing authored FOV, so
-        // direct matrix consumers (editor gizmo, CPU picking) match the rendered view. Called by SCameraSystem.
+        // direct matrix consumers (editor gizmo, CPU picking) match the rendered view. Called by CCameraSystem.
         void SetResolvedView(const FVector3& Position, const FVector3& ViewDirection, const FVector3& UpDirection, float InFOV)
         {
             ViewVolume.SetFOV(InFOV);

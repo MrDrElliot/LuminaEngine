@@ -14,10 +14,17 @@ namespace Lumina::Scripting
 
 namespace Lumina
 {
+    class CObject;
     class CScriptEnum;
     class CScriptStruct;
     class CStruct;
     struct FComponentOps;
+
+    namespace Scripting
+    {
+        // Frees a rebuilt script type's name for its replacement, numbered by its internal index since it stays alive until reinstancing ends.
+        void RenameSupersededType(CObject& Type);
+    }
 
     // Every [Reflect] C# struct, minted once as a CScriptStruct under its name and the native struct it extends, if any.
     class RUNTIME_API FScriptStructRegistry
@@ -63,7 +70,6 @@ namespace Lumina
         TVector<TUniquePtr<FComponentOps>> ComponentOps;
 
         uint64 Generation = 0;
-        uint32 SupersededSerial = 0;
     };
 
     // Every [Reflect] C# enum, minted once as a CScriptEnum under its name. Its members are replaced in place on a reload.

@@ -19,6 +19,15 @@ namespace Lumina
         return Cull;
     }
 
+    FInstanceProxy FScenePrimitiveSet::MakeFoliageProxy(const FFoliageTypeResolve& Type, uint32 SurfaceIndex)
+    {
+        if (Type.Surfaces == nullptr || SurfaceIndex >= (uint32)Type.Surfaces->Num())
+        {
+            return FInstanceProxy{};
+        }
+        return (*Type.Surfaces)[SurfaceIndex].Proxy;
+    }
+
     FInstanceStatic FScenePrimitiveSet::MakeFoliageStatic(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, uint32 EntityID, uint32 MeshletVisibilityBase)
     {
         FInstanceStatic Static = {};
@@ -359,6 +368,7 @@ namespace Lumina
                     RetainedCullEntries[Binding.InstanceSlot] = MakeFoliageCull(Binding, Type, Baked[i].SphereBounds, bHidden);
                     RetainedTransforms[Binding.InstanceSlot]  = Packed;
                     RetainedStatic[Binding.InstanceSlot]      = MakeFoliageStatic(Binding, Type, EntityID, kNoMeshletVisibility);
+                    RetainedProxies[Binding.InstanceSlot]     = MakeFoliageProxy(Type, s);
                 }
             }
         }, 4096);
@@ -397,7 +407,8 @@ namespace Lumina
             {
                 bInstanceChanged |= StoreIfChanged(RetainedTransforms[Slot], Packed);
             }
-            const bool bStaticChanged = StoreIfChanged(RetainedStatic[Slot], MakeFoliageStatic(Binding, Type, EntityID, RetainedStatic[Slot].MeshletVisibilityBase));
+            const bool bProxyChanged  = StoreIfChanged(RetainedProxies[Slot], MakeFoliageProxy(Type, s));
+            const bool bStaticChanged = StoreIfChanged(RetainedStatic[Slot], MakeFoliageStatic(Binding, Type, EntityID, RetainedStatic[Slot].MeshletVisibilityBase)) || bProxyChanged;
 
             if (!bMarkDirect)
             {
@@ -582,7 +593,7 @@ namespace Lumina
         uint32 NumBlocks = 0;
         for (const FFoliageEntityState& State : PendingFoliageReleases)
         {
-            NumBlocks += ((uint32)State.Instances.Num() + kInstancesPerBlock - 1u) / kInstancesPerBlock;
+            NumBlocks += RenderUtils::GetGroupCount((uint32)State.Instances.Num(), kInstancesPerBlock);
         }
         if ((uint32)FoliageReleaseBlocks.Num() < NumBlocks)
         {

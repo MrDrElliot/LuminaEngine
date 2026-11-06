@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.CompilerServices;
-using System.Text;
 
 namespace LuminaSharp;
 
@@ -10,9 +9,6 @@ public static unsafe class NativeMarshal
     // Lumina::FString: 16-byte SSO/heap union, last byte = mode (top bit set => heap, ptr@0 size@8 as uint32).
     private const int FStringFlagOffset = 15;
     private const int FStringSSOCapacity = 15;
-
-    // Longer than this => treated as a corrupt read, not a multi-gigabyte allocation.
-    private const long MaxNativeStringBytes = 64 * 1024 * 1024;
 
     /// <summary>Transcodes a native FString to a managed string in place (no crossing); decodes the SSO/heap union.</summary>
     public static string ReadString(nint FStringPtr)
@@ -37,12 +33,7 @@ public static unsafe class NativeMarshal
             Length = FStringSSOCapacity - Flag;     // the mode byte counts the slack, not the length
         }
 
-        if (Data == null || Length <= 0 || Length >= MaxNativeStringBytes)
-        {
-            return string.Empty;
-        }
-
-        return Encoding.UTF8.GetString(Data, (int)Length);
+        return Interop.GetString(Data, (int)Math.Min(Length, int.MaxValue));
     }
 
     /// <summary>A zero-copy span over a native TVector&lt;T&gt; embedded at Container+Offset (blittable element).</summary>

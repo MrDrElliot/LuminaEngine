@@ -148,6 +148,7 @@ namespace Lumina::SessionOps
 
     EDITOR_API void ForEachTab(const TFunction<void(const FTabInfo&)>& Functor);
     EDITOR_API bool FocusTab(FStringView Name, FString& OutError);
+    EDITOR_API bool OpenToolPanel(FStringView Name, FString& OutError);
 
     //~ The node graph canvas a tab shows, such as a material or animation graph editor's.
 

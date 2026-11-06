@@ -14,12 +14,12 @@
 
 namespace Lumina
 {
-    void SCameraSystem::Configure()
+    void CCameraSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
         // Everything that moves a camera in the same stage goes first, so the resolved view is this frame's.
-        RunsAfter<SCameraRigSystem, SSocketAttachmentSystem, STweenSystem, SCoroutineSystem>();
+        RunsAfter<CCameraRigSystem, CSocketAttachmentSystem, CTweenSystem, CCoroutineSystem>();
     }
 
     float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha)
@@ -155,12 +155,12 @@ namespace Lumina
         }
     }
 
-    void SCameraSystem::OnStartup(const SExclusiveContext& Context)
+    void CCameraSystem::OnStartup(const SExclusiveContext& Context)
     {
         Context.GetRegistry().GetSignals<SCameraComponent>().OnConstruct.Connect<&CameraSystemInternal::NewCameraConstructed>();
     }
 
-    void SCameraSystem::OnUpdate(const SSystemContext& Context)
+    void CCameraSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace CameraSystemInternal;
 
@@ -343,7 +343,7 @@ namespace Lumina
         CameraState.bHasResolvedView = true;
     }
 
-    void SCameraSystem::ResolveActiveCameraView(ECS::FRegistry& Registry)
+    void CCameraSystem::ResolveActiveCameraView(ECS::FRegistry& Registry)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -368,7 +368,7 @@ namespace Lumina
         }
     }
 
-    void SCameraSystem::SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime, ECameraBlendFunction Function)
+    void CCameraSystem::SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime, ECameraBlendFunction Function)
     {
         FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
 
@@ -398,7 +398,7 @@ namespace Lumina
         State.ActiveCameraEntity = Entity;
     }
 
-    void SCameraSystem::SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect)
+    void CCameraSystem::SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect)
     {
         FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
         State.OverlayFade      = Math::Clamp(Fade, 0.0f, 1.0f);
@@ -406,17 +406,17 @@ namespace Lumina
         State.OverlayLetterbox = Math::Max(LetterboxAspect, 0.0f);
     }
 
-    ECS::FEntity SCameraSystem::GetActiveCameraEntity(ECS::FRegistry& Registry)
+    ECS::FEntity CCameraSystem::GetActiveCameraEntity(ECS::FRegistry& Registry)
     {
         return Registry.Ctx().Get<FCameraGlobalState>().ActiveCameraEntity;
     }
 
-    SCameraComponent* SCameraSystem::GetActiveCamera(ECS::FRegistry& Registry)
+    SCameraComponent* CCameraSystem::GetActiveCamera(ECS::FRegistry& Registry)
     {
         return Registry.TryGet<ECS::Write<SCameraComponent>>(GetActiveCameraEntity(Registry));
     }
 
-    uint32 SCameraSystem::PlayCameraShake(ECS::FRegistry& Registry, const SCameraShakeParams& Params)
+    uint32 CCameraSystem::PlayCameraShake(ECS::FRegistry& Registry, const SCameraShakeParams& Params)
     {
         FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
 
@@ -444,7 +444,7 @@ namespace Lumina
         return S.Handle;
     }
 
-    void SCameraSystem::StopCameraShake(ECS::FRegistry& Registry, uint32 Handle)
+    void CCameraSystem::StopCameraShake(ECS::FRegistry& Registry, uint32 Handle)
     {
         if (Handle == 0)
         {
@@ -462,7 +462,7 @@ namespace Lumina
         }
     }
 
-    void SCameraSystem::StopAllCameraShakes(ECS::FRegistry& Registry)
+    void CCameraSystem::StopAllCameraShakes(ECS::FRegistry& Registry)
     {
         Registry.Ctx().Get<FCameraGlobalState>().Shakes.Reset();
     }

@@ -4,10 +4,9 @@
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/Class.h"
 #include "Memory/Memory.h"
-#include "Scripting/ScriptCallback.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
-#include <algorithm>
 
 namespace Lumina
 {
@@ -19,7 +18,7 @@ namespace Lumina
         {
             if (Payload.Kind == EGameplayMessagePayload::Managed)
             {
-                Scripting::FreeManagedHandle(const_cast<void*>(Payload.Data));
+                DotNet::FreeManagedHandle(const_cast<void*>(Payload.Data));
             }
         }
 
@@ -169,6 +168,7 @@ namespace Lumina
 
         FScopeLock Lock(Mutex);
         const uint64 Id = NextId++;
+        Listener.Id = Id;
         ById.TryAdd(Id, Listener);
         if (Params.Owner.IsNull())
         {
@@ -200,6 +200,7 @@ namespace Lumina
             RemoveId(ByOwner, Listener.Owner.GetPacked(), Id);
         }
         Retired.Add(Listener);
+        ++Removals;
         return true;
     }
 
@@ -242,6 +243,7 @@ namespace Lumina
             ById.Reset();
             ByChannel.Reset();
             ByOwner.Reset();
+            ++Removals;
         }
         DestroyRetired();
     }
@@ -316,8 +318,8 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        TVector<uint32> ChannelChain;
-        for (int32 Tag = Channel; Tag != 0 && static_cast<uint32>(ChannelChain.Num()) < kMaxTagDepth; Tag = FHierarchicalTagRegistry::Get().GetParent(Tag))
+        TInlineVector<uint32, kMaxTagDepth> ChannelChain;
+        for (uint32 Tag = Channel; Tag != 0 && static_cast<uint32>(ChannelChain.Num()) < kMaxTagDepth; Tag = FHierarchicalTagRegistry::Get().GetParent(Tag))
         {
             ChannelChain.Add(Tag);
         }
@@ -335,27 +337,19 @@ namespace Lumina
             ++DispatchDepth;
         }
 
-        TVector<uint64> Ids;
+        FListenerSnapshot Listeners;
         if (Route == EGameplayMessageRoute::Broadcast)
         {
             for (uint32 Tag : ChannelChain)
             {
-                Ids.Reset();
-                {
-                    FScopeLock Lock(Mutex);
-                    auto It = ByChannel.Find(Tag);
-                    if (It != nullptr)
-                    {
-                        Ids = (*It);
-                    }
-                }
                 Message.Channel = Tag;
-                DeliverTo(Ids, Message, ChannelChain, false);
+                const uint64 SnapshotRemovals = SnapshotListeners(ByChannel, Tag, Message, ChannelChain, false, Listeners);
+                DeliverTo(Listeners, SnapshotRemovals, Message, Channel, false);
             }
         }
         else
         {
-            TVector<ECS::FEntity> Nodes;
+            TInlineVector<ECS::FEntity, 32> Nodes;
             const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
             if (Route == EGameplayMessageRoute::Up)
             {
@@ -377,17 +371,9 @@ namespace Lumina
             const int32 First = (bIncludeSelf || Route == EGameplayMessageRoute::To) ? 0 : 1;
             for (int32 i = First; i < Nodes.Num(); ++i)
             {
-                Ids.Reset();
-                {
-                    FScopeLock Lock(Mutex);
-                    auto It = ByOwner.Find(Nodes[i].GetPacked());
-                    if (It != nullptr)
-                    {
-                        Ids = (*It);
-                    }
-                }
                 Message.Target = Nodes[i].GetPacked();
-                if (!Ids.IsEmpty() && DeliverTo(Ids, Message, ChannelChain, true))
+                const uint64 SnapshotRemovals = SnapshotListeners(ByOwner, Message.Target, Message, ChannelChain, true, Listeners);
+                if (DeliverTo(Listeners, SnapshotRemovals, Message, Channel, true))
                 {
                     break;
                 }
@@ -401,42 +387,46 @@ namespace Lumina
         DestroyRetired();
     }
 
-    bool FGameplayMessageBus::DeliverTo(const TVector<uint64>& Ids, FGameplayMessage& Message, const TVector<uint32>& ChannelChain, bool bRouted)
+    uint64 FGameplayMessageBus::SnapshotListeners(const THashMap<uint32, TVector<uint64>>& Index, uint32 Key, const FGameplayMessage& Message, TSpan<const uint32> ChannelChain, bool bRouted, FListenerSnapshot& Out) const
     {
-        for (uint64 Id : Ids)
+        Out.Reset();
+        FScopeLock Lock(Mutex);
+        auto It = Index.Find(Key);
+        if (It != nullptr)
         {
-            FListener Listener;
+            // A broadcast walks the channel's ancestors itself, so here it is only the exact level that matters.
+            const uint32 SentChannel = ChannelChain[0];
+            for (uint64 Id : *It)
             {
-                FScopeLock Lock(Mutex);
-                auto It = ById.Find(Id);
-                if (It == nullptr)
+                const FListener& Listener = *ById.Find(Id);
+                if (Listener.Type != 0 && Listener.Type != Message.Type)
                 {
                     continue;
                 }
-                Listener = (*It);
-            }
 
-            if (Listener.Type != 0 && Listener.Type != Message.Type)
-            {
-                continue;
+                const bool bReaches = bRouted
+                    ? (Listener.Match == EHierarchicalTagMatch::Exact ? Listener.Channel == SentChannel : Algo::Contains(ChannelChain, Listener.Channel))
+                    : (Listener.Match == EHierarchicalTagMatch::Partial || Message.Channel == SentChannel);
+                if (bReaches)
+                {
+                    Out.Add(Listener);
+                }
             }
+        }
+        return Removals.load();
+    }
 
-            // A broadcast walks the channel's ancestors itself, so here it is only the exact level that matters.
-            const uint32 SentChannel = ChannelChain[0];
-            bool bReaches;
-            if (bRouted)
+    bool FGameplayMessageBus::DeliverTo(const FListenerSnapshot& Listeners, uint64 SnapshotRemovals, const FGameplayMessage& Message, uint32 SentChannel, bool bRouted)
+    {
+        for (const FListener& Listener : Listeners)
+        {
+            if (Removals.load() != SnapshotRemovals)
             {
-                bReaches = Listener.Match == EHierarchicalTagMatch::Exact
-                    ? Listener.Channel == SentChannel
-                    : std::find(ChannelChain.begin(), ChannelChain.end(), Listener.Channel) != ChannelChain.end();
-            }
-            else
-            {
-                bReaches = Listener.Match == EHierarchicalTagMatch::Partial || Message.Channel == SentChannel;
-            }
-            if (!bReaches)
-            {
-                continue;
+                FScopeLock Lock(Mutex);
+                if (ById.Find(Listener.Id) == nullptr)
+                {
+                    continue;
+                }
             }
 
             FGameplayMessage Delivered = Message;

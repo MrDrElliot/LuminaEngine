@@ -17,6 +17,49 @@ namespace Lumina
 {
     RUNTIME_API FConfig* GConfig;
 
+    namespace
+    {
+        // False only when the file cannot be read; an unparseable file logs and yields an empty object.
+        bool ReadJsonFile(const FString& VFSPath, FJsonValue& Out)
+        {
+            FString Result;
+            if (!VFS::ReadFile(Result, VFSPath))
+            {
+                return false;
+            }
+
+            FJsonParseError Error;
+            if (!FJsonValue::Parse(Result.View(), Out, &Error))
+            {
+                LOG_ERROR("FConfig: failed to parse {0} ({1})", *VFSPath, Error.Message);
+                Out = FJsonValue::MakeObject();
+            }
+            return true;
+        }
+
+        // Returns false and leaves Out empty for an empty key.
+        bool SplitDottedKey(FStringView Key, TVector<FString>& Out)
+        {
+            Out.Reset();
+            if (Key.IsEmpty())
+            {
+                return false;
+            }
+
+            size_t Start = 0;
+            for (int32 i = 0; i < Key.Len(); ++i)
+            {
+                if (Key[i] == '.')
+                {
+                    Out.Emplace(Key.GetData() + Start, Key.GetData() + i);
+                    Start = i + 1;
+                }
+            }
+            Out.Emplace(Key.GetData() + Start, Key.GetData() + Key.Len());
+            return !Out.IsEmpty();
+        }
+    }
+
     void FConfig::DiscoverAndLoadSettings()
     {
         CClass* BaseClass = CDeveloperSettings::StaticClass();
@@ -77,25 +120,14 @@ namespace Lumina
             return;
         }
 
-        const FString& FilePath = Class->GetMeta("ConfigFile");
-        FString Result;
-        if (!VFS::ReadFile(Result, FilePath))
+        FJsonValue* FileJson = FindOrLoadSettingsFile(Class->GetMeta("ConfigFile"));
+        if (FileJson == nullptr)
         {
             return; // not available yet; retry on a later pass
         }
 
-        FJsonValue FileJson;
-        FJsonParseError Error;
-        if (!FJsonValue::Parse(Result.View(), FileJson, &Error))
-        {
-            LOG_ERROR("FConfig: failed to parse settings file {0} ({1})", *FilePath, Error.Message);
-            FileJson = FJsonValue::MakeObject();
-        }
-
-        FJsonValue& Cached = SettingsFileCache.Add(FilePath, Move(FileJson));
-
         const FString Section = GetSettingsSection(Class);
-        if (FJsonValue* SectionNode = Cached.Find(Section.View()))
+        if (FJsonValue* SectionNode = FileJson->Find(Section.View()))
         {
             FJsonStructuredArchive::LoadStruct(*SectionNode, Class, Class->GetDefaultObject());
         }
@@ -115,27 +147,19 @@ namespace Lumina
         return Name;
     }
 
-    FJsonValue& FConfig::LoadSettingsFile(const FString& VFSPath)
+    FJsonValue* FConfig::FindOrLoadSettingsFile(const FString& VFSPath)
     {
-        auto It = SettingsFileCache.Find(VFSPath);
-        if (It != nullptr)
+        if (FJsonValue* Cached = SettingsFileCache.Find(VFSPath))
         {
-            return (*It);
+            return Cached;
         }
 
-        FJsonValue Parsed = FJsonValue::MakeObject();
-        FString Result;
-        if (VFS::ReadFile(Result, VFSPath))
+        FJsonValue Parsed;
+        if (!ReadJsonFile(VFSPath, Parsed))
         {
-            FJsonParseError Error;
-            if (!FJsonValue::Parse(Result.View(), Parsed, &Error))
-            {
-                LOG_ERROR("FConfig: failed to parse settings file {0} ({1})", *VFSPath, Error.Message);
-                Parsed = FJsonValue::MakeObject();
-            }
+            return nullptr;
         }
-
-        return SettingsFileCache.FindOrAdd(VFSPath, Move(Parsed));
+        return &SettingsFileCache.Add(VFSPath, Move(Parsed));
     }
 
     void FConfig::SaveSettings(CClass* SettingsClass)
@@ -152,7 +176,8 @@ namespace Lumina
         }
 
         const FString& FilePath = SettingsClass->GetMeta("ConfigFile");
-        FJsonValue& FileJson = LoadSettingsFile(FilePath);
+        FJsonValue* Loaded = FindOrLoadSettingsFile(FilePath);
+        FJsonValue& FileJson = Loaded != nullptr ? *Loaded : SettingsFileCache.Add(FilePath, FJsonValue::MakeObject());
         if (!FileJson.IsObject())
         {
             FileJson = FJsonValue::MakeObject();
@@ -185,31 +210,6 @@ namespace Lumina
         return It == nullptr ? nullptr : (*It);
     }
 
-    namespace
-    {
-        // Returns false and leaves Out empty for an empty key.
-        bool SplitDottedKey(FStringView Key, TVector<FString>& Out)
-        {
-            Out.Reset();
-            if (Key.IsEmpty())
-            {
-                return false;
-            }
-
-            size_t Start = 0;
-            for (int32 i = 0; i < Key.Len(); ++i)
-            {
-                if (Key[i] == '.')
-                {
-                    Out.Emplace(Key.GetData() + Start, Key.GetData() + i);
-                    Start = i + 1;
-                }
-            }
-            Out.Emplace(Key.GetData() + Start, Key.GetData() + Key.Len());
-            return !Out.IsEmpty();
-        }
-    }
-
     void FConfig::LoadPath(FStringView ConfigPath)
     {
         // Iterating a missing directory makes the VFS warn on every first run, so ask first.
@@ -225,22 +225,11 @@ namespace Lumina
                 return;
             }
 
-            FString Result;
-            if (!VFS::ReadFile(Result, Info.VirtualPath))
-            {
-                return;
-            }
-
             FJsonValue Parsed;
-            FJsonParseError Error;
-            if (!FJsonValue::Parse(Result.View(), Parsed, &Error))
+            if (!ReadJsonFile(FString(*Info.VirtualPath, Info.VirtualPath.Len()), Parsed))
             {
-                LOG_ERROR("FConfig: failed to parse {0} ({1})", *Info.VirtualPath, Error.Message);
                 return;
             }
-
-            FString FilePath(*Info.VirtualPath, Info.VirtualPath.Len());
-            IndexPathsForFile(Parsed, FString(), FilePath);
 
             // Later files take precedence, which is the intended project-overrides-engine layering.
             for (const FJsonMember& Member : Parsed.Members())
@@ -255,106 +244,10 @@ namespace Lumina
                     RootConfig.Set(Member.Key.View(), Member.Value);
                 }
             }
-
-            FileConfigs.Add(FilePath, Move(Parsed));
         });
     }
 
-    void FConfig::IndexPathsForFile(const FJsonValue& Obj, const FString& Prefix, const FString& File)
-    {
-        for (const auto& [Name, Value] : Obj.Members())
-        {
-            const FString Key = Name.ToString();
-            const FString FullPath = Prefix.IsEmpty() ? Key : (Prefix + "." + Key);
-
-            PathToFile.Add(FullPath, File);
-
-            if (Value.IsObject())
-            {
-                IndexPathsForFile(Value, FullPath, File);
-            }
-        }
-    }
-
-    const FJsonValue* FConfig::GetRaw(FStringView Key) const
-    {
-        return NavigateToNode(Key);
-    }
-
-    bool FConfig::SetRaw(FStringView Key, FJsonValue Value)
-    {
-        TVector<FString> Parts;
-        if (!SplitDottedKey(Key, Parts))
-        {
-            return false;
-        }
-
-        FString OwnerFile = FindOwnerFile(Key);
-        if (OwnerFile.IsEmpty())
-        {
-            LOG_WARN("FConfig::Set: no owner file for '{0}' (register the setting first or load a config file containing it)", *FString(Key.GetData(), Key.Len()));
-            return false;
-        }
-
-        // Every level but the last is forced to an object, replacing whatever scalar stood in the way.
-        const auto SetPath = [&](FJsonValue& Root, FJsonValue Leaf)
-        {
-            if (!Root.IsObject())
-            {
-                Root = FJsonValue::MakeObject();
-            }
-            FJsonValue* Current = &Root;
-            for (int32 i = 0; i + 1 < Parts.Num(); ++i)
-            {
-                FJsonValue* Next = Current->Find(Parts[i].View());
-                if (Next == nullptr || !Next->IsObject())
-                {
-                    Next = &Current->Set(Parts[i].View(), FJsonValue::MakeObject());
-                }
-                Current = Next;
-            }
-            Current->Set(Parts.Last().View(), Move(Leaf));
-        };
-
-        SetPath(RootConfig, Value);
-
-        // Mirror into the owner file's tree, then flush.
-        FJsonValue& File = FileConfigs.FindOrAdd(OwnerFile);
-        SetPath(File, Move(Value));
-
-        // Track the new key so future Get->Set round-trips know its owner.
-        PathToFile.Add(FString(Key.GetData(), Key.Len()), OwnerFile);
-
-        return VFS::WriteFile(OwnerFile, File.ToString(4).View());
-    }
-
-    FString FConfig::FindOwnerFile(FStringView Key) const
-    {
-        // Did this exact key (or any ancestor) come from a known file?
-        FString KeyStr(Key.GetData(), Key.Len());
-        auto It = PathToFile.Find(KeyStr);
-        if (It != nullptr)
-        {
-            return (*It);
-        }
-
-        FString Cursor = KeyStr;
-        int32 LastDot = Cursor.FindLastOf('.');
-        while (LastDot != Constants::kIndexNone)
-        {
-            Cursor = Cursor.Mid(0, LastDot);
-            It = PathToFile.Find(Cursor);
-            if (It != nullptr)
-            {
-                return (*It);
-            }
-            LastDot = Cursor.FindLastOf('.');
-        }
-
-        return FString();
-    }
-
-    FJsonValue* FConfig::NavigateToNode(FStringView Key, bool bCreate)
+    const FJsonValue* FConfig::NavigateToNode(FStringView Key) const
     {
         TVector<FString> Parts;
         if (!SplitDottedKey(Key, Parts))
@@ -362,30 +255,16 @@ namespace Lumina
             return nullptr;
         }
 
-        FJsonValue* Current = &RootConfig;
-        for (int32 i = 0; i < Parts.Num(); ++i)
+        const FJsonValue* Current = &RootConfig;
+        for (const FString& Part : Parts)
         {
-            const bool bLast = (i + 1 == Parts.Num());
-
-            if (FJsonValue* Next = Current->Find(Parts[i].View()))
-            {
-                Current = Next;
-                continue;
-            }
-
-            if (!bCreate || !(Current->IsObject() || Current->IsNull()))
+            Current = Current->Find(Part.View());
+            if (Current == nullptr)
             {
                 return nullptr;
             }
-
-            Current = &Current->Set(Parts[i].View(), bLast ? FJsonValue() : FJsonValue::MakeObject());
         }
         return Current;
-    }
-
-    const FJsonValue* FConfig::NavigateToNode(FStringView Key) const
-    {
-        return const_cast<FConfig*>(this)->NavigateToNode(Key, false);
     }
 
 }

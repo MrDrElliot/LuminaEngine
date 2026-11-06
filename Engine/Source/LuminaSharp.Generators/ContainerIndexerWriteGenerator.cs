@@ -1,4 +1,4 @@
-using System.Linq;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -9,8 +9,6 @@ namespace LuminaSharp.Generators;
 [Generator]
 public sealed class ContainerIndexerWriteGenerator : IIncrementalGenerator
 {
-    private const string VectorType = "Lumina.TVector<T>";
-
     private static readonly DiagnosticDescriptor MarshalledIndexerWrite = new(
         id: "LUM0201",
         title: "Write through a marshalled TVector indexer",
@@ -71,7 +69,7 @@ public sealed class ContainerIndexerWriteGenerator : IIncrementalGenerator
         }
 
         INamedTypeSymbol Owner = Indexer.ContainingType;
-        if (Owner.OriginalDefinition.ToDisplayString() != VectorType || Owner.TypeArguments.Length != 1)
+        if (Owner.OriginalDefinition.ToDisplayString() != ScriptPropertyTypeNames.TVector || Owner.TypeArguments.Length != 1)
         {
             return null;
         }
@@ -92,19 +90,15 @@ public sealed class ContainerIndexerWriteGenerator : IIncrementalGenerator
         {
             return false;
         }
+        // A script struct that needs marshalling holds a managed field, so the unmanaged check already covers it.
         if (!Type.IsUnmanagedType)
         {
             return true;
         }
-        if (Type is INamedTypeSymbol { IsGenericType: true } Generic)
-        {
-            return Generic.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
-                || Generic.ContainingNamespace?.ToDisplayString() == "Lumina";
-        }
-        if (Type.GetAttributes().Any(Attribute => Attribute.AttributeClass?.Name == "NativeSlotViewAttribute"))
-        {
-            return true;
-        }
-        return Type.AllInterfaces.Any(Interface => Interface.Name == "ISoftObjectReference");
+        return Type is INamedTypeSymbol { IsGenericType: true } Generic
+                && (Generic.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T || Generic.ContainingNamespace?.ToDisplayString() == "Lumina")
+            || ScriptPropertyClassifier.FindAttribute(Type, ScriptPropertyTypeNames.NativeSlotViewAttribute) != null
+            || ScriptPropertyClassifier.IsSoftObjectReference(Type)
+            || ScriptPropertyClassifier.IsStructHandle(Type);
     }
 }

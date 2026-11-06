@@ -245,6 +245,7 @@ namespace Lumina
 		SetBus,
 		SetPriority,
 		UpdateListener,
+		SetListenerEnabled,
 	};
 
 	enum class EAudioStopMode : uint8

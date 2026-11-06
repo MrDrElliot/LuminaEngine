@@ -39,7 +39,7 @@ namespace Lumina::Scripting
     struct FScriptExportField
     {
         FName                         Name;
-        /** Author-declared Lumina::EPropertyFlags from [Property] specifiers, OR'd onto the minted property. */
+        // Author-declared Lumina::EPropertyFlags from [Property] specifiers, OR'd onto the minted property.
         uint32                        Flags = 0;
         TSharedPtr<FScriptExportType> Type;
         FScriptExportMeta             Meta;      ///< Editor display data, rebuilt per load.
@@ -68,15 +68,15 @@ namespace Lumina::Scripting
         FName                         BaseName;
     };
 
-    /** One [Function] method: its name, and its parameters as the fields of its call frame. */
+    // One [Function] method, its name and its parameters as the fields of its call frame.
     struct FScriptExportFunction
     {
         FName                        Name;
 
-        /** Arguments in declaration order, with the return value last when there is one. */
+        // Arguments in declaration order, with the return value last when there is one.
         TVector<FScriptExportField>  Params;
 
-        /** Index into Params of the return value, or -1 for a function that returns nothing. */
+        // Index into Params of the return value, or -1 for a function that returns nothing.
         int32                        ReturnIndex = -1;
 
         // EFunctionFlags the declaration adds, such as where a C# [Rpc] method runs.

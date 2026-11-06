@@ -1,7 +1,6 @@
 #pragma once
 
 #include <concepts>
-#include <cstring>
 #include <initializer_list>
 #include <type_traits>
 
@@ -10,6 +9,7 @@
 #include "Containers/String.h"
 #include "Containers/StringView.h"
 #include "Containers/Vector.h"
+#include "Memory/Memcpy.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
@@ -72,7 +72,7 @@ namespace Lumina
             if (IsHeap())
             {
                 int32 Length;
-                std::memcpy(&Length, Data + 8, sizeof(Length));
+                Memory::Memcpy(&Length, Data + 8, sizeof(Length));
                 return Length;
             }
             return static_cast<uint8>(Data[kTagIndex]);
@@ -83,7 +83,7 @@ namespace Lumina
             if (IsHeap())
             {
                 const char* Heap;
-                std::memcpy(&Heap, Data, sizeof(Heap));
+                Memory::Memcpy(&Heap, Data, sizeof(Heap));
                 return Heap;
             }
             return Data;
@@ -265,14 +265,14 @@ namespace Lumina
         FORCEINLINE void SetPayload(T Value) noexcept
         {
             static_assert(sizeof(T) <= 8);
-            std::memcpy(Storage, &Value, sizeof(T));
+            Memory::Memcpy(Storage, &Value, sizeof(T));
         }
 
         template <typename T>
         NODISCARD FORCEINLINE T GetPayload() const noexcept
         {
             T Value;
-            std::memcpy(&Value, Storage, sizeof(T));
+            Memory::Memcpy(&Value, Storage, sizeof(T));
             return Value;
         }
 

@@ -78,8 +78,8 @@ namespace Lumina::NavTest
     struct FNavWorld
     {
         CWorld*            World = nullptr;
-        SNavMeshSystem*    System = nullptr;
-        SPathFollowSystem* Follow = nullptr;
+        CNavMeshSystem*    System = nullptr;
+        CPathFollowSystem* Follow = nullptr;
         ECS::FEntity       Volume;
 
         ECS::FRegistry& Registry() const { return World->GetEntityRegistry(); }
@@ -120,14 +120,14 @@ namespace Lumina::NavTest
         void Start(bool bWithPathFollow = false)
         {
             Nav().bBakeRequested = true;
-            System = NewObject<SNavMeshSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            System = NewObject<CNavMeshSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             System->SetOwningWorld(World);
             System->ConfigureSystem();
             World->Systems.Add(System);
             System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
             if (bWithPathFollow)
             {
-                Follow = NewObject<SPathFollowSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+                Follow = NewObject<CPathFollowSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
                 Follow->SetOwningWorld(World);
                 Follow->ConfigureSystem();
                 World->Systems.Add(Follow);

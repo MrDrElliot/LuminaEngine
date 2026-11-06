@@ -16,8 +16,8 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "FileSystem/FileSystem.h"
-#include "MCPEditorModule.h"
 #include "MCPGraphTools.h"
+#include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "Particles/ParticleGraphModules.h"
 #include "Particles/ParticleOps.h"
@@ -41,7 +41,7 @@ namespace Lumina::MCP
         bool ResolveSystem(const FString& Guid, EParticleAccess Access, TStrongObjectPtr<CParticleSystem>& Held, CParticleSystem*& Out, FString& OutError)
         {
             CObject* Asset = nullptr;
-            if (!Agent::ResolveAssetObject(FStringView(Guid), Asset, OutError))
+            if (!ResolveEditableAsset(FStringView(Guid), Asset, OutError))
             {
                 return false;
             }
@@ -51,12 +51,6 @@ namespace Lumina::MCP
             {
                 OutError = Lumina::Format("'{}' is a {}, not a particle system or emitter.", Guid, Asset->GetClass()->GetName());
                 return false;
-            }
-
-            // An unheld asset is freed when any short-lived ref drops, such as a compile job's, so keep it as a tab would.
-            if (MCP::FServer* Server = FMCPEditorModule::GetServer())
-            {
-                Server->KeepLoaded(Asset);
             }
 
             if (EmitterAsset != nullptr)
@@ -241,13 +235,10 @@ namespace Lumina::MCP
         // A shared emitter asset lives in its own package, and an emitter asset's wrapping system has none.
         void MarkSystemDirty(CParticleSystem* System, int32 Emitter = Constants::kIndexNone)
         {
-            const bool bEmitter = Emitter >= 0 && Emitter < System->Emitters.Num();
-            for (const CObject* Edited : { (const CObject*)System, bEmitter ? (const CObject*)System->Emitters[Emitter].Get() : nullptr })
+            MarkAssetDirty(System);
+            if (Emitter >= 0 && Emitter < System->Emitters.Num())
             {
-                if (CPackage* Package = Edited != nullptr ? Edited->GetPackage() : nullptr)
-                {
-                    Package->MarkDirty();
-                }
+                MarkAssetDirty(System->Emitters[Emitter].Get());
             }
         }
 

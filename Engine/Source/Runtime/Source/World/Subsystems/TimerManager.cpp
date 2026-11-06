@@ -2,8 +2,6 @@
 #include "TimerManager.h"
 #include "World/ECS/Registry.h"
 
-#include <algorithm>
-
 #include "Log/Log.h"
 #include "Memory/SmartPtr.h"
 
@@ -17,14 +15,14 @@ namespace Lumina
     FTimerHandle FTimerManager::SetTimer(float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
-        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, ECS::NullEntity, std::move(Callback));
+        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, ECS::NullEntity, Move(Callback));
         return Out;
     }
 
     FTimerHandle FTimerManager::SetTimerForEntity(ECS::FEntity Owner, float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
-        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, Owner, std::move(Callback));
+        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, Owner, Move(Callback));
         return Out;
     }
 
@@ -135,7 +133,7 @@ namespace Lumina
         }
 
         // Swap-out callbacks so re-entrant SetTimer/ClearTimer from within the callback is well-defined.
-        FTimerCallback NativeCallback = std::move(Timer.NativeCallback);
+        FTimerCallback NativeCallback = Move(Timer.NativeCallback);
         const bool     bLoop          = Timer.bLoop;
         const float    Rate           = Timer.Rate;
 
@@ -157,7 +155,7 @@ namespace Lumina
         FTimer& Live = Registry.Get<ECS::Write<FTimer>>(Entity);
         if (bLoop && !Live.bPendingDestroy)
         {
-            Live.NativeCallback = std::move(NativeCallback);
+            Live.NativeCallback = Move(NativeCallback);
             Live.Remaining     += Rate;
             if (Live.Remaining <= 0.0f)
             {
@@ -198,7 +196,7 @@ namespace Lumina
 
     void FTimerManager::FireDue()
     {
-        TVector<ECS::FEntity> Due = std::move(DueTimers);
+        TVector<ECS::FEntity> Due = Move(DueTimers);
         DueTimers.Reset();
         for (ECS::FEntity Entity : Due)
         {
@@ -222,7 +220,7 @@ namespace Lumina
         Timer.Remaining      = (FirstDelay >= 0.0f) ? FirstDelay : Rate;
         Timer.bLoop          = bLoop;
         Timer.Owner          = Owner;
-        Timer.NativeCallback = std::move(NativeCallback);
+        Timer.NativeCallback = Move(NativeCallback);
         return Entity;
     }
 }

@@ -1,14 +1,13 @@
 #include "MCPAnimGraphTools.h"
 
-#include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Animation/AnimGraphOps.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Core/Object/Class.h"
-#include "Core/Object/Package/Package.h"
 #include "MCPGraphTools.h"
+#include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "Session/SessionOps.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
@@ -37,7 +36,7 @@ namespace Lumina::MCP
         bool ResolveAnimGraphCanvas(const FString& Guid, const TVector<int64>& GraphPath, EAnimGraphAccess Access,
             FAnimGraphTarget& Out, FString& OutError)
         {
-            if (!Agent::ResolveAsset<CAnimationGraph>(FStringView(Guid), Out.Asset, OutError))
+            if (!ResolveEditableAsset(FStringView(Guid), Out.Asset, OutError))
             {
                 return false;
             }
@@ -80,14 +79,6 @@ namespace Lumina::MCP
                 SessionOps::AdoptNodeGraph(Out.Asset, Canvas);
             }
             return true;
-        }
-
-        void MarkAnimGraphDirty(const FAnimGraphTarget& Target)
-        {
-            if (CPackage* Package = Target.Asset->GetPackage())
-            {
-                Package->MarkDirty();
-            }
         }
 
         bool SetAnimGraphPropertyFromJson(CObject* Object, const FString& Path, const FString& ValueJson,
@@ -269,7 +260,7 @@ namespace Lumina::MCP
             Out.Id = Node->GetNodeID();
             CollectPins(Node, Out.Pins);
 
-            MarkAnimGraphDirty(Target);
+            MarkAssetDirty(Target.Asset);
 
             return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
         }
@@ -300,7 +291,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MarkAnimGraphDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Removed node {}.", In.Node));
                 });
@@ -329,7 +320,7 @@ namespace Lumina::MCP
                             return Agent::FToolResult::Error(Error);
                         }
 
-                        MarkAnimGraphDirty(Target);
+                        MarkAssetDirty(Target.Asset);
 
                         return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
                             In.FromNode, In.FromPin, In.ToNode, In.ToPin));
@@ -340,7 +331,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MarkAnimGraphDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Disconnected {}.{}.", In.Node, In.Pin));
                 });
@@ -374,7 +365,7 @@ namespace Lumina::MCP
                     }
 
                     NodeGraphOps::NotifyNodeValuesChanged(Target.Canvas);
-                    MarkAnimGraphDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Node {} {} is now {}.",
                         In.Node, In.Path, Out.Current));
@@ -419,7 +410,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MarkAnimGraphDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Transition {} -> {} {} is now {}.",
                         In.FromNode, In.ToNode, In.Path, Out.Current));
@@ -462,7 +453,7 @@ namespace Lumina::MCP
                             Out.Errors.Num(), Out.Errors.IsEmpty() ? FString() : Out.Errors[0]));
                     }
 
-                    MarkAnimGraphDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s).",
                         Out.Warnings.Num()));

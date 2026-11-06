@@ -48,47 +48,26 @@ namespace Lumina
         // Section key a class persists under within its grouped ConfigFile (class name sans leading 'C').
         static FString GetSettingsSection(CClass* SettingsClass);
 
-        // ---- Generic JSON config (used for input-action maps + cooked/launch metadata) ----
+        // ---- Generic JSON config (read-only, e.g. Project.Name) ----
 
-        // Loads every .json under the VFS dir; top-level keys merge into root, source path recorded so Set() writes back.
+        // Loads every .json under the VFS dir; top-level keys merge into root, later files overriding earlier ones.
         void LoadPath(FStringView ConfigPath);
 
         // Typed read of a dotted key; missing key returns the Default arg.
         template<typename T>
         T Get(FStringView Key, const T& Default = T{}) const;
 
-        // Generic typed write. Updates the in-memory tree and writes the
-        // owning file to disk. Returns false if no owner file can be inferred.
-        template<typename T>
-        bool Set(FStringView Key, const T& Value);
-
-        // Raw JSON access for advanced cases (e.g. the input-action map loader).
-        const FJsonValue* GetRaw(FStringView Key) const;
-
     private:
 
-        // Reads one (already-discovered) settings class's file section into its CDO and marks it loaded. The
-        // caller decides whether to skip already-loaded classes (DiscoverAndLoadSettings) or force (ReloadSettings).
+        // Reads one settings class's file section into its CDO and marks it loaded, unless the file is not readable yet.
         void LoadSettingsForClass(CClass* Class);
 
-        // Loads (and caches) a settings JSON file; returns an empty object if absent/unparseable.
-        FJsonValue& LoadSettingsFile(const FString& VFSPath);
+        // Cached parse of a settings file, or null while it cannot be read; an unparseable file caches an empty object.
+        FJsonValue* FindOrLoadSettingsFile(const FString& VFSPath);
 
-        bool SetRaw(FStringView Key, FJsonValue Value);
-
-        FJsonValue* NavigateToNode(FStringView Key, bool bCreate);
         const FJsonValue* NavigateToNode(FStringView Key) const;
 
-        // Resolves which file owns Key: explicit registration first,
-        // then existing PathToFile entry, else "".
-        FString FindOwnerFile(FStringView Key) const;
-
-        // Walk a JSON subtree and record every leaf path under the file it lives in.
-        void IndexPathsForFile(const FJsonValue& Obj, const FString& Prefix, const FString& File);
-
         FJsonValue                                  RootConfig;
-        THashMap<FString, FJsonValue>               FileConfigs;        // VFS path -> parsed json
-        THashMap<FString, FString>                  PathToFile;         // dotted-key prefix -> VFS path
 
         // Developer-settings state.
         THashMap<CClass*, CObject*>                 SettingsDefaults;   // class -> pristine code-default snapshot
@@ -105,11 +84,5 @@ namespace Lumina
         const FJsonValue* Node = NavigateToNode(Key);
         T Value;
         return Node != nullptr && Node->TryGet(Value) ? Value : Default;
-    }
-
-    template<typename T>
-    bool FConfig::Set(FStringView Key, const T& Value)
-    {
-        return SetRaw(Key, FJsonValue(Value));
     }
 }

@@ -579,5 +579,6 @@ namespace Lumina
 
         // The first surface under a point, in the game world when one runs, else the editor's; GNoGroundHeight over nothing.
         float GroundHeightAt(float X, float Z);
+        float GroundHeightAt(CWorld* World, float X, float Z);
     }
 }

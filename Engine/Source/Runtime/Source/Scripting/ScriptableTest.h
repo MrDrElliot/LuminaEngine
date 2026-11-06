@@ -60,6 +60,7 @@ namespace Lumina
         void OnReady() override       { ++ReadyCount; Record('R'); }
         void OnUpdate(float Dt) override      { ++UpdateCount; AccumulatedTime += Dt; }
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
+        void OnInput(SInputEvent Event) override { Record('I'); }
         void OnDetach() override      { ++DetachCount; if (DetachHook != nullptr) { DetachHook(*this, HookContext); } }
 
         // Appends Phase and Label to a test's log, so a test can read back the order callbacks ran in. Unreflected.
@@ -137,7 +138,7 @@ namespace Lumina
         uint64 LastThreadID = 0;
     };
 
-    /** Throwaway owner of a strong reference, so a test can assign out of the object being released. */
+    // Throwaway owner of a strong reference, so a test can assign out of the object being released.
     REFLECT()
     class RUNTIME_API CObjectRefTest : public CObject
     {
@@ -147,7 +148,7 @@ namespace Lumina
         TStrongObjectPtr<CObject> Child;
     };
 
-    /** Throwaway counter of its own teardown, so a test can prove OnDestroy is not reentered. */
+    // Throwaway counter of its own teardown, so a test can prove OnDestroy is not reentered.
     REFLECT()
     class RUNTIME_API CDestroyCountTest : public CObject
     {
@@ -389,7 +390,7 @@ namespace Lumina
         }
     };
 
-    /** Records what its own constructor could see, so a test can prove identity lands before the body runs. */
+    // Records what its own constructor could see, so a test can prove identity lands before the body runs.
     REFLECT()
     class RUNTIME_API CConstructorIdentityTest : public CObject
     {

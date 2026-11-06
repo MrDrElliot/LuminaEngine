@@ -43,6 +43,11 @@ namespace Lumina
         return GModule != nullptr ? &GModule->Server : nullptr;
     }
 
+    MCP::FPackageToolsState* FMCPEditorModule::GetPackageTools()
+    {
+        return GModule != nullptr ? &GModule->PackageTools : nullptr;
+    }
+
     void FMCPEditorModule::StartupModule()
     {
         GModule = this;
@@ -91,6 +96,7 @@ namespace Lumina
         // The transport owns a thread that calls back into this DLL, so it has to stop before unload.
         FCoreDelegates::OnEngineShutdownStarted.Remove(ShutdownStartedHandle);
         Server.Stop();
+        PackageTools.JoinWorker();
 
         GModule = nullptr;
     }

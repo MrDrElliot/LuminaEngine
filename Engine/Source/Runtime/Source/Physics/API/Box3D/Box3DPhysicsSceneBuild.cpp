@@ -11,6 +11,7 @@
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Log/Log.h"
+#include "Physics/CollisionGen.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
@@ -158,7 +159,7 @@ namespace Lumina::Physics
             bColliderIsTrigger = TCC->bIsTrigger;
             ResolvedMaterial = TCC->PhysicsMaterial.Get();
 
-            WarnTaperedCapsuleOnce();
+            LOG_WARN_ONCE("Tapered capsule colliders are approximated by a cone hull under Box3D; the rounded caps are lost.");
 
             const b3HullData* Hull = GetOrCreateTaperedCylinderHull(TCC->HalfHeight * UniformScale, TCC->TopRadius * UniformScale, TCC->BottomRadius * UniformScale);
             if (Hull == nullptr)
@@ -243,7 +244,6 @@ namespace Lumina::Physics
                     LOG_ERROR("Failed to build the mesh collision of the MeshCollider on Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
-                bMustBeStatic = Collision->IsConcave();
             }
             else if (MC->bConvex)
             {
@@ -272,8 +272,8 @@ namespace Lumina::Physics
                 Shape.Mesh = MeshData;
                 Shape.Scale = Box3DUtils::ToB3Vec3(Scale);
                 Out.Shapes.Add(Shape);
-                bMustBeStatic = true;
             }
+            bMustBeStatic = CollisionGen::IsConcaveMeshCollider(*Mesh, MC->bConvex);
         }
         else if (const SDynamicMeshColliderComponent* DMC = Registry.TryGet<SDynamicMeshColliderComponent>(Entity))
         {

@@ -1,4 +1,5 @@
 #include "ProfilerEditorTool.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "ProfilerViewCommon.h"
 
 #include "imgui.h"
@@ -9,22 +10,6 @@ namespace Lumina
 {
     namespace
     {
-        void FormatBytes(uint64 Bytes, char* Out, size_t Capacity)
-        {
-            if (Bytes >= Constants::kMiB)
-            {
-                snprintf(Out, Capacity, "%.1f MiB", (double)Bytes / double(Constants::kMiB));
-            }
-            else if (Bytes >= 1024ull)
-            {
-                snprintf(Out, Capacity, "%.1f KiB", (double)Bytes / double(Constants::kKiB));
-            }
-            else
-            {
-                snprintf(Out, Capacity, "%llu B", (unsigned long long)Bytes);
-            }
-        }
-
         // Read at a glance only; the thresholds mark what is worth opening rather than what is wrong.
         ImVec4 CostColor(double Ms)
         {
@@ -111,7 +96,6 @@ namespace Lumina
             }
         }
 
-        char Buffer[32];
         for (const FAssetLoadStat& Stat : Stats)
         {
             const FString Name = Stat.Name.ToString();
@@ -140,8 +124,7 @@ namespace Lumina
             if (bShowSize)
             {
                 ImGui::TableNextColumn();
-                FormatBytes(Stat.Bytes, Buffer, sizeof(Buffer));
-                ImGui::TextUnformatted(Buffer);
+                ImGuiX::TextUnformatted(ImGuiX::FormatSize(Stat.Bytes));
                 if (ImGui::IsItemHovered())
                 {
                     ImGui::SetTooltip("%u exports, %u imports", Stat.Exports, Stat.Imports);

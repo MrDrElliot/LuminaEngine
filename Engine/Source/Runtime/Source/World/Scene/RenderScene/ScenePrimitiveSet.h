@@ -270,6 +270,7 @@ namespace Lumina
         const FInstanceCullEntry*   GetRetainedCullEntries() const { return RetainedCullEntries.GetData(); }
         const FTransform3x4*        GetRetainedTransforms() const { return RetainedTransforms.GetData(); }
         const FInstanceStatic*      GetRetainedStatic() const     { return RetainedStatic.GetData(); }
+        const FInstanceProxy*       GetRetainedProxies() const    { return RetainedProxies.GetData(); }
         uint32                      GetRetainedSlotCount() const  { return (uint32)RetainedCullEntries.Num(); }
         uint32                      GetSkinnedIndexExtent() const { return SkinnedIndexExtent; }
 
@@ -317,6 +318,16 @@ namespace Lumina
 
         // Keeps a terrain's blocks through a frame it skips, such as one whose textures are still being created.
         void KeepGrassSpecies(ECS::FEntity Terrain);
+
+        struct FMeshletDemand
+        {
+            uint64 Words    = 0;
+            uint64 Meshlets = 0;
+        };
+
+        // Every grass blade active at its largest LOD, which the CPU cull entries cannot show since the scatter activates them on the GPU.
+        FMeshletDemand GetGrassMeshletDemand() const;
+        uint32         GetGrassSlotCount() const { return GrassSlotCount; }
 
         // Retained slot ranges (base, count) the grass scatter fills on the GPU, which the CPU arrays only hold as zeros.
         void GetGPUWrittenSlotRanges(TVector<FUIntVector2>& Out) const
@@ -516,6 +527,9 @@ namespace Lumina
         TVector<FTransform3x4>              RetainedTransforms;
         TVector<FInstanceStatic>            RetainedStatic;
 
+        // Parallel to RetainedStatic and uploaded with it, the splat each slot draws as once too small for meshlets.
+        TVector<FInstanceProxy>             RetainedProxies;
+
         TVector<uint32>                     InstanceFreeSlots;
         // Cull entry and transform.
         TVector<uint32>                     DirtyInstanceSlots;
@@ -538,6 +552,7 @@ namespace Lumina
         void    UpdateMeshletVisibility(uint32 Slot);
         // Meshlets in the slot's largest LOD, zero for an inactive slot.
         uint32  LargestLODMeshletsOf(uint32 Slot) const;
+        uint32  LargestLODMeshletsOfSurface(uint32 SurfaceDescIndex) const;
         void    ReleaseMeshletVisibility(uint32 Slot);
         void    FreeMeshletVisibilityRange(uint32 Base, uint32 Words);
 
@@ -704,6 +719,7 @@ namespace Lumina
 
         static FInstanceCullEntry   MakeFoliageCull(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, const FVector4& WorldSphere, bool bHidden);
         static FInstanceStatic      MakeFoliageStatic(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, uint32 EntityID, uint32 MeshletVisibilityBase);
+        static FInstanceProxy       MakeFoliageProxy(const FFoliageTypeResolve& Type, uint32 SurfaceIndex);
 
         void    SyncFoliage(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity);
         // Fills FoliageTypeScratch for this sync and reports whether the type table changed shape.

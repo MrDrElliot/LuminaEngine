@@ -2,14 +2,12 @@
 
 #include "AudioLibrary.h"
 
-#include "Assets/AssetTypes/Audio/AudioGraph.h"
-#include "Assets/AssetTypes/Audio/AudioStream.h"
-#include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "Audio/AudioContext.h"
 #include "Audio/AudioGlobals.h"
+#include "Audio/AudioReverb.h"
 #include "Audio/AudioSettings.h"
+#include "Audio/SoundPlayback.h"
 #include "Config/Config.h"
-#include "Core/Object/Cast.h"
 
 namespace Lumina
 {
@@ -21,31 +19,6 @@ namespace Lumina
             const int32 Index = Math::Clamp((int32)Bus, 0, (int32)NumAudioBuses - 1);
             return (EAudioBus)Index;
         }
-
-        SAudioHandle PlayResolved(CSoundBase* Sound, const SAudioPlayParams& Params)
-        {
-            if (Sound == nullptr || !Sound->IsPlayable())
-            {
-                return SAudioHandle::Invalid();
-            }
-
-            // A graph played this way gets a voice handle but no instance, so it takes no parameters.
-            if (CAudioGraph* Graph = Cast<CAudioGraph>(Sound))
-            {
-                const FAudioDeviceInfo DeviceInfo = Audio::Context().GetDeviceInfo();
-                const uint32 SampleRate = DeviceInfo.SampleRate != 0 ? DeviceInfo.SampleRate : 48000;
-
-                TSharedPtr<FAudioGraphInstance> Instance = Graph->CreateInstance(SampleRate, 2);
-                return Instance ? Audio::Context().PlayAudioGraph(Instance, Params) : SAudioHandle::Invalid();
-            }
-
-            if (CAudioStream* Stream = Cast<CAudioStream>(Sound))
-            {
-                return Audio::Context().PlayAudio(Stream->GetAudioData(), Params);
-            }
-
-            return SAudioHandle::Invalid();
-        }
     }
 
     SAudioHandle CAudioLibrary::PlaySound2D(CSoundBase* Sound, float Volume, float Pitch, bool bLoop)
@@ -54,7 +27,7 @@ namespace Lumina
         Params.Volume = Volume;
         Params.Pitch = Pitch;
         Params.bLooping = bLoop;
-        return PlayResolved(Sound, Params);
+        return Audio::PlaySound(Sound, Params).Handle;
     }
 
     SAudioHandle CAudioLibrary::PlaySoundAtLocation(CSoundBase* Sound, FVector3 Location, float Volume,
@@ -68,13 +41,13 @@ namespace Lumina
         Params.Position = Location;
         Params.Attenuation.MinDistance = MinDistance;
         Params.Attenuation.MaxDistance = MaxDistance;
-        return PlayResolved(Sound, Params);
+        return Audio::PlaySound(Sound, Params).Handle;
     }
 
     SAudioHandle CAudioLibrary::PlaySoundEx(CSoundBase* Sound, SAudioPlayParams Params)
     {
         Params.Bus = SafeBus(Params.Bus);
-        return PlayResolved(Sound, Params);
+        return Audio::PlaySound(Sound, Params).Handle;
     }
 
     SAudioPlayParams CAudioLibrary::DefaultPlayParams()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/LuminaMacros.h"
+#include "Core/Templates/LuminaTemplate.h"
 #include "ModuleAPI.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
@@ -118,7 +119,7 @@ namespace Lumina::Jobs
             T* Out = nullptr;
 
             template<typename U>
-            void return_value(U&& Value) { *Out = std::forward<U>(Value); }
+            void return_value(U&& Value) { *Out = Forward<U>(Value); }
         };
 
         template<>
@@ -149,7 +150,7 @@ namespace Lumina::Jobs
             ForkDetail::FJoinAwaiter await_transform(ForkDetail::FJoinTag) noexcept { return { *this }; }
 
             template<typename TAwaitable>
-            TAwaitable&& await_transform(TAwaitable&& Awaitable) const noexcept { return std::forward<TAwaitable>(Awaitable); }
+            TAwaitable&& await_transform(TAwaitable&& Awaitable) const noexcept { return Forward<TAwaitable>(Awaitable); }
 
             static void* operator new(std::size_t Size) { return ForkDetail::AllocateFrame(Size); }
             static void operator delete(void* Memory, std::size_t Size) noexcept { ForkDetail::FreeFrame(Memory, Size); }
@@ -232,7 +233,7 @@ namespace Lumina::Jobs
             T await_resume() noexcept
             {
                 T* Value = std::launder(reinterpret_cast<T*>(Storage));
-                T Result = std::move(*Value);
+                T Result = Move(*Value);
                 Value->~T();
                 return Result;
             }
@@ -301,16 +302,16 @@ namespace Lumina::Jobs
             using TResult = std::invoke_result_t<TFunc, TArgs...>;
             if constexpr (bIsTask<TResult>)
             {
-                co_return co_await Call(std::move(Func)(std::move(Args)...));
+                co_return co_await Call(Move(Func)(Move(Args)...));
             }
             else if constexpr (std::is_void_v<TResult>)
             {
-                std::move(Func)(std::move(Args)...);
+                Move(Func)(Move(Args)...);
                 co_return;
             }
             else
             {
-                co_return std::move(Func)(std::move(Args)...);
+                co_return Move(Func)(Move(Args)...);
             }
         }
 
@@ -322,19 +323,19 @@ namespace Lumina::Jobs
     template<ForkDetail::CPlainCallable TFunc>
     NODISCARD auto Fork(TFunc&& Func)
     {
-        return Fork(ForkDetail::OwnedCall<std::decay_t<TFunc>>(std::forward<TFunc>(Func)));
+        return Fork(ForkDetail::OwnedCall<std::decay_t<TFunc>>(Forward<TFunc>(Func)));
     }
 
     template<typename T, ForkDetail::CPlainCallable TFunc>
     NODISCARD auto Fork(T* Out, TFunc&& Func)
     {
-        return Fork(Out, ForkDetail::OwnedCall<std::decay_t<TFunc>>(std::forward<TFunc>(Func)));
+        return Fork(Out, ForkDetail::OwnedCall<std::decay_t<TFunc>>(Forward<TFunc>(Func)));
     }
 
     template<ForkDetail::CPlainCallable TFunc>
     NODISCARD auto Call(TFunc&& Func)
     {
-        return Call(ForkDetail::OwnedCall<std::decay_t<TFunc>>(std::forward<TFunc>(Func)));
+        return Call(ForkDetail::OwnedCall<std::decay_t<TFunc>>(Forward<TFunc>(Func)));
     }
 
     namespace ForkDetail
@@ -347,11 +348,11 @@ namespace Lumina::Jobs
             {
                 if constexpr (bDirect<TFunc, TArgs...>)
                 {
-                    return std::forward<TFunc>(Func)(std::forward<TArgs>(Args)...);
+                    return Forward<TFunc>(Func)(Forward<TArgs>(Args)...);
                 }
                 else
                 {
-                    return OwnedCall<std::decay_t<TFunc>, std::decay_t<TArgs>...>(std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+                    return OwnedCall<std::decay_t<TFunc>, std::decay_t<TArgs>...>(Forward<TFunc>(Func), Forward<TArgs>(Args)...);
                 }
             }();
             auto Handle = Task.Release();
@@ -365,7 +366,7 @@ namespace Lumina::Jobs
     auto SyncWait(EJobPriority Band, TFunc&& Func, TArgs&&... Args)
     {
         using T = ForkDetail::TResultOf<std::decay_t<TFunc>, std::decay_t<TArgs>...>;
-        auto Handle = ForkDetail::MakeRoot(Band, std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+        auto Handle = ForkDetail::MakeRoot(Band, Forward<TFunc>(Func), Forward<TArgs>(Args)...);
         if constexpr (std::is_void_v<T>)
         {
             ForkDetail::RunRootAndWait(Handle.promise());
@@ -382,14 +383,14 @@ namespace Lumina::Jobs
     template<typename TFunc, typename... TArgs>
     auto SyncWait(TFunc&& Func, TArgs&&... Args)
     {
-        return SyncWait(EJobPriority::Normal, std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+        return SyncWait(EJobPriority::Normal, Forward<TFunc>(Func), Forward<TArgs>(Args)...);
     }
 
     // Queues Func(Args...) as a task and returns at once. Func and Args are copied into the task, so a capturing lambda is safe.
     template<typename TFunc, typename... TArgs>
     void Spawn(EJobPriority Band, TFunc&& Func, TArgs&&... Args)
     {
-        auto Handle = ForkDetail::MakeRoot(Band, std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+        auto Handle = ForkDetail::MakeRoot(Band, Forward<TFunc>(Func), Forward<TArgs>(Args)...);
         ForkDetail::SpawnRoot(Handle.promise());
     }
 
@@ -489,7 +490,7 @@ namespace Lumina::Jobs
     template<typename TFunc, typename... TArgs>
     void Spawn(EJobPriority Band, FTaskEvent& Done, TFunc&& Func, TArgs&&... Args)
     {
-        auto Handle = ForkDetail::MakeRoot(Band, std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+        auto Handle = ForkDetail::MakeRoot(Band, Forward<TFunc>(Func), Forward<TArgs>(Args)...);
         Handle.promise().Root.OnDone    = [](void* Event) { static_cast<FTaskEvent*>(Event)->Signal(); };
         Handle.promise().Root.OnDoneCtx = &Done;
         ForkDetail::SpawnRoot(Handle.promise());
@@ -500,7 +501,7 @@ namespace Lumina::Jobs
     void Spawn(EJobPriority Band, FLatch& Done, TFunc&& Func, TArgs&&... Args)
     {
         Done.Add(1);
-        auto Handle = ForkDetail::MakeRoot(Band, std::forward<TFunc>(Func), std::forward<TArgs>(Args)...);
+        auto Handle = ForkDetail::MakeRoot(Band, Forward<TFunc>(Func), Forward<TArgs>(Args)...);
         Handle.promise().Root.OnDone    = [](void* Latch) { static_cast<FLatch*>(Latch)->CountDown(); };
         Handle.promise().Root.OnDoneCtx = &Done;
         ForkDetail::SpawnRoot(Handle.promise());

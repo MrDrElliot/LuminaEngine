@@ -47,13 +47,6 @@ float GeometrySchlickGGX_IBL(float NdotV, float Roughness)
     return NdotV / (NdotV * (1.0 - K) + K);
 }
 
-float GeometrySmith_IBL(float3 N, float3 V, float3 L, float Roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX_IBL(NdotV, Roughness) * GeometrySchlickGGX_IBL(NdotL, Roughness);
-}
-
 // Clamps the Fresnel envelope to max(1 - R, F0) so rough surfaces lose the rim but metals keep their tint.
 float3 FresnelSchlickRoughness(float CosTheta, float3 F0, float Roughness)
 {

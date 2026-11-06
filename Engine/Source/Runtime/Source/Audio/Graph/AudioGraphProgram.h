@@ -9,7 +9,7 @@ namespace Lumina
 {
     class FArchive;
 
-    /** Starting value written into a slot on reset, covering both literals and unconnected pin defaults. */
+    // Starting value written into a slot on reset, covering both literals and unconnected pin defaults.
     struct FAudioGraphSlotInit
     {
         EAudioGraphType Type = EAudioGraphType::Invalid;
@@ -19,30 +19,30 @@ namespace Lumina
         int32           IntValue   = 0;
         bool            BoolValue  = false;
 
-        /** Index into the owning asset's ReferencedWaves, or Constants::kIndexNone. */
+        // Index into the owning asset's ReferencedWaves, or Constants::kIndexNone.
         int32           WaveIndex  = -1;
 
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FAudioGraphSlotInit& Data);
     };
 
-    /** One operator to build, with every pin already resolved to an arena slot. */
+    // One operator to build, with every pin already resolved to an arena slot.
     struct FAudioGraphNodeInstance
     {
-        /** Registry key of the operator class, e.g. "Sine". */
+        // Registry key of the operator class, e.g. "Sine".
         FName OperatorName;
 
-        /** Arena slot per declared input pin, in the registered descriptor's order. */
+        // Arena slot per declared input pin, in the registered descriptor's order.
         TVector<uint16> InputSlots;
 
         TVector<uint16> OutputSlots;
 
-        /** Editor node id this came from, so a debug overlay can map execution back to the canvas. */
+        // Editor node id this came from, so a debug overlay can map execution back to the canvas.
         int64 SourceNodeID = 0;
 
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FAudioGraphNodeInstance& Data);
     };
 
-    /** A named value gameplay can read or write on a live instance. */
+    // A named value gameplay can read or write on a live instance.
     struct FAudioGraphParameterDecl
     {
         FName           Name;
@@ -56,7 +56,7 @@ namespace Lumina
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FAudioGraphParameterDecl& Data);
     };
 
-    /** Per type slot counts, indexed by EAudioGraphType. */
+    // Per type slot counts, indexed by EAudioGraphType.
     struct FAudioGraphSlotCounts
     {
         static constexpr uint32 NumTypes = (uint32)EAudioGraphType::Wave + 1;
@@ -66,18 +66,17 @@ namespace Lumina
         uint16 Get(EAudioGraphType Type) const { return Counts[(uint32)Type]; }
         void Set(EAudioGraphType Type, uint16 Value) { Counts[(uint32)Type] = Value; }
 
-        /** Reserves the next slot of Type and returns it. */
         uint16 Allocate(EAudioGraphType Type) { return Counts[(uint32)Type]++; }
 
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FAudioGraphSlotCounts& Data);
     };
 
-    /** Flat executable form of an audio graph, with nodes in execution order and every wire an arena slot. */
+    // Flat executable form of an audio graph, with nodes in execution order and every wire an arena slot.
     struct RUNTIME_API FAudioGraphProgram
     {
         uint16 Version = kAudioGraphProgramVersion;
 
-        /** Topologically sorted, so executing front to back satisfies every dependency. */
+        // Topologically sorted, so executing front to back satisfies every dependency.
         TVector<FAudioGraphNodeInstance> Nodes;
 
         TVector<FAudioGraphSlotInit> SlotInits;
@@ -87,11 +86,11 @@ namespace Lumina
 
         FAudioGraphSlotCounts SlotCounts;
 
-        /** Audio slots the graph's left and right output pins land in. */
+        // Audio slots the graph's left and right output pins land in.
         uint16 OutputLeftSlot  = kAudioGraphInvalidSlot;
         uint16 OutputRightSlot = kAudioGraphInvalidSlot;
 
-        /** Trigger slot the graph raises when the voice has nothing left to play. */
+        // Trigger slot the graph raises when the voice has nothing left to play.
         uint16 FinishedSlot = kAudioGraphInvalidSlot;
 
         bool IsValid() const { return Version == kAudioGraphProgramVersion && !Nodes.IsEmpty(); }

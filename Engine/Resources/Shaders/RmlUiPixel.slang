@@ -4,7 +4,7 @@
 struct PSInput
 {
     float4 Position : SV_Position;
-    float4 Colour   : COLOR;
+    float4 Color    : COLOR;
     float2 UV       : TEXCOORD0;
     nointerpolation uint DrawIndex : TEXCOORD1;
 };
@@ -43,15 +43,15 @@ float4 SampleColorStops(FUiDraw Draw, float T)
         T = First + (T - First) - Span * floor((T - First) / Span);
     }
 
-    float4 Colour = StopColor(Base);
+    float4 Color = StopColor(Base);
     for (uint i = 1u; i < Count; ++i)
     {
         const float P0 = StopPosition(Base + i - 1u);
         const float P1 = StopPosition(Base + i);
         const float W  = (P1 > P0) ? saturate((T - P0) / (P1 - P0)) : step(P1, T);
-        Colour = lerp(Colour, StopColor(Base + i), W);
+        Color = lerp(Color, StopColor(Base + i), W);
     }
-    return Colour;
+    return Color;
 }
 
 // RmlUi gives gradient geometry element-local pixel UVs, the same space as every shape parameter.
@@ -73,20 +73,10 @@ float GradientCoordinate(FUiDraw Draw, float2 P)
     const float2 Up    = Draw.ShaderParams.zw;
     const float2 Right = float2(-Up.y, Up.x);
     const float2 D     = P - Draw.ShaderParams.xy;
-    const float  Turns = atan2(dot(D, Right), dot(D, Up)) * (1.0 / 6.28318530718);
+    const float  Turns = atan2(dot(D, Right), dot(D, Up)) * (1.0 / TWO_PI);
     return Turns - floor(Turns);
 }
 
-// Signed distance to a rounded box centered on the origin, negative inside.
-float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
-{
-    float2 Pair   = (P.x > 0.0) ? Radii.yz : Radii.xw;   // right pair (TR, BR) or left pair (TL, BL)
-    float  Radius = (P.y > 0.0) ? Pair.y : Pair.x;
-    float2 Q      = abs(P) - HalfExtent + Radius;
-    return min(max(Q.x, Q.y), 0.0) + length(max(Q, 0.0)) - Radius;
-}
-
-// Multiplied coverage instead of a discard keeps corners antialiased and intersects nested clips.
 float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
 {
     const uint Count  = UI_CLIP_COUNT(Draw.ClipMaskRange);
@@ -95,13 +85,7 @@ float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
     float Coverage = 1.0;
     for (uint i = 0u; i < Count; ++i)
     {
-        FUiClipMask Mask = Pass().ClipMasks.Get(Offset + i);
-        float Distance   = SdRoundedBox(UiClipLocal(Mask, FragCoord) - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
-
-        // Distance is in mask space, so the screen-space derivative still converts it into target pixels.
-        float Width = max(fwidth(Distance), 1e-5);
-        float Cover = saturate(0.5 - Distance / Width);
-        Coverage *= (Mask.Params.x != 0.0) ? (1.0 - Cover) : Cover;
+        Coverage *= UiClipMaskCoverage(Pass().ClipMasks.Get(Offset + i), FragCoord);
     }
     return Coverage;
 }
@@ -125,7 +109,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     const bool bStraight = Draw.ShaderType == kUIShaderTexturedStraight || Draw.ShaderType == kUIShaderTexturedStraightSRGB;
     if (Draw.ShaderType != kUIShaderTextured && !bStraight)
     {
-        return Input.Colour * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV)) * Coverage;
+        return Input.Color * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV)) * Coverage;
     }
 
     float4 Texel = Draw.Texture.Sample(Draw.Sampler, Input.UV);
@@ -137,5 +121,5 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     {
         Texel.rgb *= Texel.a;
     }
-    return Input.Colour * Texel * Coverage;
+    return Input.Color * Texel * Coverage;
 }

@@ -10,10 +10,10 @@
 
 namespace Lumina
 {
-    void SPerceptionSystem::Configure()
+    void CPerceptionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        RunsBefore<SPathFollowSystem, SEntityScriptSystem>();
+        RunsBefore<CPathFollowSystem, CEntityScriptSystem>();
     }
 
     namespace PerceptionSystemInternal
@@ -201,12 +201,12 @@ namespace Lumina
         }
     }
 
-    bool SPerceptionSystem::HasWork(const SSystemContext& Context)
+    bool CPerceptionSystem::HasWork(const SSystemContext& Context)
     {
         return AnyQueryHasRows(Perceivers);
     }
 
-    void SPerceptionSystem::OnUpdate(const SSystemContext& Context)
+    void CPerceptionSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace PerceptionSystemInternal;
 

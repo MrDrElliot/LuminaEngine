@@ -103,10 +103,6 @@ namespace Lumina
         });
     }
 
-    void FSettingsEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FSettingsEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("What's Listed",

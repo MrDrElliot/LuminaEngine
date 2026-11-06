@@ -26,6 +26,7 @@
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "Config/EngineSettings.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Progress/SlowTask.h"
 #include "Core/Threading/Thread.h"
@@ -232,7 +233,7 @@ namespace Lumina
 
     namespace
     {
-        // FindObject only sees loaded objects, so a multi-asset run needs its own claim set.
+        // Reserved rather than merely probed, so a concurrent import into the same folder cannot pick the same name.
         class FUniquePathAllocator
         {
         public:
@@ -245,44 +246,24 @@ namespace Lumina
 
             FFixedString Claim(const FFixedString& Desired)
             {
-                if (IsFree(Desired))
+                if (Desired == Owned && !bOwnedClaimed && FindObject<CPackage>(Owned) == nullptr)
                 {
-                    Claimed.Add(Desired);
-                    return Desired;
+                    bOwnedClaimed = true;
+                    return Owned;
                 }
-
-                for (uint32 N = 1; N < 10000; ++N)
-                {
-                    FFixedString Candidate = Desired;
-                    Candidate.Append("_").Append(Format("{}", N));
-                    if (IsFree(Candidate))
-                    {
-                        Claimed.Add(Candidate);
-                        return Candidate;
-                    }
-                }
-                return Desired;
+                return Import::PathReservations::Reserve(Desired);
             }
 
         private:
 
-            // A file nothing has loaded and another import's reservation hold a name too, or this run would write over them.
-            bool IsFree(const FFixedString& Path) const
-            {
-                if (Claimed.Contains(Path))
-                {
-                    return false;
-                }
-                return Path == Owned ? FindObject<CPackage>(Path) == nullptr : Import::PathReservations::IsFree(Path);
-            }
-
-            FFixedString           Owned;
-            THashSet<FFixedString> Claimed;
+            FFixedString Owned;
+            bool         bOwnedClaimed = false;
         };
 
         void AppendCreateFailure(FImportResult& OutResult, FStringView Path)
         {
             OutResult.Error += (OutResult.Error.IsEmpty() ? "Could not create " : ", ") + FString(Path.GetData(), Path.Len());
+            Import::PathReservations::Release(Path);
         }
 
         size_t CountMaterialSlots(const FMeshResource& Resource)
@@ -1160,11 +1141,20 @@ namespace Lumina
         Options.Scale             = Scale;
         Options.bSkipFinalization = bSkipFinalization;
         Options.DistanceField     = DistanceField;
+        Options.VirtualGeometry   = VirtualGeometry;
         return Options;
     }
 
     bool CMeshImporter::ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress)
     {
+        // The project decides what a new mesh ships with, and the dialog lets this import differ.
+        if (const CRendererSettings* Renderer = GetDefault<CRendererSettings>())
+        {
+            VirtualGeometry.bClusterLOD             = Renderer->bClusterLODByDefault;
+            VirtualGeometry.bVoxelFarRepresentation = Renderer->bVoxelFarByDefault;
+            VirtualGeometry.VoxelResolution         = (uint32)Math::Clamp(Renderer->DefaultVoxelResolution, 4, 128);
+        }
+
         // User transforms and heavy passes are deferred to BuildAssets; only the skeleton's bone set re-parses.
         FMeshImportOptions PreviewOptions;
         PreviewOptions.bOptimize         = false;
@@ -1309,7 +1299,7 @@ namespace Lumina
         else
         {
             DestinationDir = Request.DestinationPath.Mid(0, LastSlashPos + 1);
-            BaseName       = Request.DestinationPath.Mid(LastSlashPos + 1, Constants::kIndexNone);
+            BaseName       = Request.DestinationPath.Mid(LastSlashPos + 1);
         }
         // A reimport names its package file, and any other dot belongs to the name the destination reserved.
         if (VFS::HasExtension(BaseName, ".lasset"))
@@ -1469,6 +1459,7 @@ namespace Lumina
             NewMesh->Materials.SetNum(IntCastChecked<int32>(CountMaterialSlots(*MeshResource)));
             NewMesh->SourcePath            = FString(*Request.SourcePath);
             NewMesh->DistanceFieldSettings = DistanceField;
+            NewMesh->VirtualGeometrySettings = VirtualGeometry;
             NewMesh->MeshResources         = Move(MeshResource);
 
             // Bake the exact box now, while the raw float positions are still around to measure.
@@ -1602,7 +1593,12 @@ namespace Lumina
                 {
                     CreatedObjects.Add(Texture);
                 }
-                else if (bImportMaterials)
+                else if (W.bNeedsCook)
+                {
+                    Import::PathReservations::Release(W.PackagePath);
+                }
+
+                if (Texture == nullptr && bImportMaterials)
                 {
                     // Skipped because the asset already existed, or a duplicate destination in this batch.
                     Texture = LoadObject<CTexture>(W.PackagePath);
@@ -1781,6 +1777,10 @@ namespace Lumina
             {
                 CreatedObjects.Add(Prefab);
             }
+            else
+            {
+                Import::PathReservations::Release(PrefabPath);
+            }
         }
 
         if (Progress)
@@ -1788,7 +1788,7 @@ namespace Lumina
             Progress->UpdateMessage("Saving packages...");
         }
 
-        const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.Num());
+        const float SaveStep = kSaveBudget / (float)Math::Max<size_t>(1, CreatedObjects.Num());
         for (const TStrongObjectPtr<CObject>& Created : CreatedObjects)
         {
             CObject* Object = Created.Get();
@@ -1904,7 +1904,8 @@ namespace Lumina
         Options.bImportTextures   = false;
 
         // Taken from the ASSET, since otherwise a mesh with a distance field loses it on every reimport.
-        Options.DistanceField = Mesh->DistanceFieldSettings;
+        Options.DistanceField   = Mesh->DistanceFieldSettings;
+        Options.VirtualGeometry = Mesh->VirtualGeometrySettings;
 
         RebindReimportSkinning(Mesh);
 
@@ -2002,7 +2003,7 @@ namespace Lumina
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInner |
                 ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-            const float Height = std::min<float>(180.0f, (SourceData.Resources.Num() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
+            const float Height = Math::Min<float>(180.0f, (SourceData.Resources.Num() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
             if (ImGui::BeginTable("MeshStatsTable", 4, Flags, ImVec2(0, Height)))
             {
                 ImGui::TableSetupScrollFreeze(0, 1);
@@ -2021,8 +2022,8 @@ namespace Lumina
                         const FMeshResource& Resource = *SourceData.Resources[i];
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn(); ImGui::TextUnformatted(*Resource.Name);
-                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", ImGuiX::FormatSize(Resource.GetNumVertices()));
-                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", ImGuiX::FormatSize(Resource.Indices.Num()));
+                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", Resource.GetNumVertices());
+                        ImGui::TableNextColumn(); ImGuiX::Text("{0}", Resource.Indices.Num());
                         ImGui::TableNextColumn(); ImGuiX::Text("{0}", Resource.GeometrySurfaces.Num());
                     }
                 }

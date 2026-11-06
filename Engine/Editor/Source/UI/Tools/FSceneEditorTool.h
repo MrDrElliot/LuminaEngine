@@ -169,7 +169,7 @@ namespace Lumina
         // The world the outliner, details and selection inspect, which the world editor can point at another live world.
         NODISCARD CWorld* GetObservedWorld() const { return ObservedWorld != nullptr ? ObservedWorld : World.Get(); }
         NODISCARD bool IsInspectingForeignWorld() const { return ObservedWorld != nullptr && ObservedWorld != World.Get(); }
-        NODISCARD ECS::FRegistry& GetSceneRegistry() const { return GetObservedWorld()->GetEntityRegistry(); }
+        NODISCARD ECS::FRegistry& GetSceneRegistry() const;
 
         void SetSingleSelectedEntity(ECS::FEntity Entity);
         void AddSelectedEntity(ECS::FEntity Entity);
@@ -283,7 +283,6 @@ namespace Lumina
 
         void ProcessComponentEditRequests();
 
-        void OnPrePropertyChangeEvent(const FPropertyChangedEvent& Event);
         void OnPostPropertyChangeEvent(const FPropertyChangedEvent& Event);
         void BeginPropertyEditTransaction(CStruct* ComponentType);
         void RecordPrefabOverrideSnapshot(const TVector<ECS::FEntity>& Entities);

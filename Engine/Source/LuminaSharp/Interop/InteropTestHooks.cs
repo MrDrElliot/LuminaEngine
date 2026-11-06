@@ -108,6 +108,7 @@ internal sealed class FrameMarshalTarget : NativeObject
 // Kept off FrameMarshalTarget so the overload refusal cannot cost the dispatcher tests their own methods.
 internal sealed class OverloadedFunctionTarget
 {
+#pragma warning disable LUM0130
     [Function]
     public void Ambiguous(int Value)
     {
@@ -117,6 +118,7 @@ internal sealed class OverloadedFunctionTarget
     public void Ambiguous(float Value)
     {
     }
+#pragma warning restore LUM0130
 
     [Function]
     public void Unambiguous()

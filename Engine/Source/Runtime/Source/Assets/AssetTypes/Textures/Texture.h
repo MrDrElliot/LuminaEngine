@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Core/Object/Object.h"
-#include "Memory/RefCounted.h"
 #include "Memory/SmartPtr.h"
 #include "Renderer/RenderResource.h"
 #include "Renderer/TextureData.h"

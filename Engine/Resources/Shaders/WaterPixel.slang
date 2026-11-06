@@ -217,7 +217,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
                 if (RayDist > SampleDist && (RayDist - SampleDist) < StepLen * 3.0)
                 {
                     // Geometry under the surface is hidden from a reflection off it, so a hit down there is a miss.
-                    float3 HitWorld = mul(GetInverseCameraView(), float4(ReconstructViewPos(Suv, SampleRaw, GetInverseCameraProjection()), 1.0)).xyz;
+                    float3 HitWorld = ReconstructWorldPos(Suv, SampleRaw);
                     if (HitWorld.y < WaterPlaneY - 0.25)
                     {
                         break;

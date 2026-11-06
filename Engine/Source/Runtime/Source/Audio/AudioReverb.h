@@ -6,23 +6,23 @@
 
 namespace Lumina
 {
-	/** Runtime reverb parameters. Every field is atomically published to the mixer. */
+	// Runtime reverb parameters. Every field is atomically published to the mixer.
 	struct FAudioReverbParams
 	{
-		/** Decay length. 0 = tiny room, 1 = cathedral. */
+		// Decay length. 0 = tiny room, 1 = cathedral.
 		float RoomSize = 0.5f;
 
-		/** High-frequency absorption in the tail. */
+		// High-frequency absorption in the tail.
 		float Damping = 0.5f;
 
-		/** Stereo spread of the tail. Ignored for non-stereo output. */
+		// Stereo spread of the tail. Ignored for non-stereo output.
 		float Width = 1.0f;
 
-		/** Gain of the reverb return. 0 = silent. */
+		// Gain of the reverb return. 0 = silent.
 		float WetLevel = 0.35f;
 	};
 
-	/** Freeverb-style comb/allpass network emitting the wet signal only, so the caller owns the wet/dry mix. */
+	// Freeverb-style comb/allpass network emitting the wet signal only, so the caller owns the wet/dry mix.
 	class RUNTIME_API FAudioReverb
 	{
 	public:
@@ -32,9 +32,6 @@ namespace Lumina
 		// Sizes every delay line for the device rate. Allocates, so keep it off the audio thread.
 		bool Initialize(uint32 Channels, uint32 SampleRate);
 		void Shutdown();
-
-		// Silences the tail without reallocating, so it is safe on the audio thread.
-		void Clear();
 
 		bool IsInitialized() const { return bInitialized; }
 		uint32 GetChannelCount() const { return ChannelCount; }

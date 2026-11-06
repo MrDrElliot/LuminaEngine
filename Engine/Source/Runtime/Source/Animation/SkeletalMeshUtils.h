@@ -1,22 +1,19 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
-
-
-#include "Containers/Vector.h"
+#include "World/ECS/Hierarchy.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
-#include "Renderer/SkeletonResource.h"
-#include "World/Scene/RenderScene/SceneRenderTypes.h"
 
 namespace Lumina
 {
     class CSkeleton;
+    struct FPackedBoneTransform;
     struct FSkeletonResource;
     struct SFollowerPoseComponent;
     struct SSkeletalMeshComponent;
     struct SStaticMeshComponent;
+    namespace ECS { class FRegistry; }
 }
 
 namespace Lumina::SkeletalUtils
@@ -100,5 +97,5 @@ namespace Lumina::SkeletalUtils
 
     // Packs NumBones skinning matrices into the 32-byte GPU layout the skinning shaders read. OutBones is
     // written straight through, so the render gather aims this at its own arena slice and stages nothing.
-    RUNTIME_API void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FBoneTransform* OutBones);
+    RUNTIME_API void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FPackedBoneTransform* OutBones);
 }

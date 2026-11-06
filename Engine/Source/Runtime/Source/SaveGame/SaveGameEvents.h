@@ -15,7 +15,7 @@ namespace Lumina
         Load,
     };
 
-    // Queued for the world's SSaveGameSystem, which saves or loads at its next update, so any system on any thread may ask.
+    // Queued for the world's CSaveGameSystem, which saves or loads at its next update, so any system on any thread may ask.
     REFLECT(Event)
     struct RUNTIME_API SSaveGameRequestEvent
     {

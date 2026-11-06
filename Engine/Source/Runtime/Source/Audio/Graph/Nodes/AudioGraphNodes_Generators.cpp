@@ -44,7 +44,7 @@ namespace Lumina
             return 0.0f;
         }
 
-        /** Shared phase accumulator for the four oscillators. */
+        // Shared phase accumulator for the four oscillators.
         class FOscillatorBase : public IAudioGraphOperator
         {
         public:
@@ -55,12 +55,6 @@ namespace Lumina
                 , SyncIn(Params.TriggerIn(2))
                 , Out(Params.AudioOut(0))
             {}
-
-            void Reset() override
-            {
-                Phase = 0.0f;
-                Frequency.Reset();
-            }
 
         protected:
 
@@ -212,12 +206,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
             {}
 
-            void Reset() override
-            {
-                Random = FAudioGraphRandom();
-                Algo::Fill(PinkState, 0.0f);
-            }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 const bool bPink = *TypeIn == 1;
@@ -274,13 +262,6 @@ namespace Lumina
                 , LoopedOut(Params.TriggerOut(3))
                 , TimeOut(Params.FloatOut(4))
             {}
-
-            void Reset() override
-            {
-                Wave     = nullptr;
-                Position = 0.0;
-                bPlaying = false;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -419,13 +400,6 @@ namespace Lumina
                 {
                     Waves[Index] = Params.WaveIn(kFixedInputs + Index);
                 }
-            }
-
-            void Reset() override
-            {
-                Random  = FAudioGraphRandom();
-                bPicked = false;
-                Current = 0;
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override

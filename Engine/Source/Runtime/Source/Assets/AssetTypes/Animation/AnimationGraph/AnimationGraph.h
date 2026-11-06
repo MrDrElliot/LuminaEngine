@@ -35,16 +35,16 @@ namespace Lumina
     REFLECT()
     enum class EAnimTransitionSource : uint8
     {
-        /** The graph parameter named by Parameter Name. */
+        // The graph parameter named by Parameter Name.
         Parameter,
 
-        /** Seconds the state machine has spent in its current state, so a state can time itself out. */
+        // Seconds the state machine has spent in its current state, so a state can time itself out.
         TimeInState,
 
-        /** A curve carried by the current state's pose, named by Curve Name. */
+        // A curve carried by the current state's pose, named by Curve Name.
         Curve,
 
-        /** 1 once the current state's first play-once clip reaches its end, 0 while it plays. */
+        // 1 once the current state's first play-once clip reaches its end, 0 while it plays.
         ClipFinished,
     };
 
@@ -75,7 +75,7 @@ namespace Lumina
         bool IsResolved() const { return Type != EAnimParamValueType::Unresolved; }
     };
 
-    /** Unresolved for anything a parameter cannot read: containers, structs, strings, delegates. */
+    // Unresolved for anything a parameter cannot read, such as containers, structs, strings and delegates.
     RUNTIME_API EAnimParamValueType AnimParamValueTypeFromProperty(const FProperty* Property);
 
     FORCEINLINE float ReadAnimParamScalar(const uint8* Base, const FAnimGraphParamBinding& Binding)
@@ -155,11 +155,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Field on the graph's parameter struct this asset reference is read from. */
+        // Field on the graph's parameter struct this asset reference is read from.
         PROPERTY(Hidden)
         FName Name;
 
-        /** Asset kind the consuming node expects. */
+        // Asset kind the consuming node expects.
         PROPERTY(Hidden)
         EAnimObjectParamType Type = EAnimObjectParamType::Animation;
     };
@@ -249,11 +249,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Name of the bone to weight. Must exist in the graph's skeleton. */
+        // Must exist in the graph's skeleton.
         PROPERTY(Editable, Category = "Bone Mask", Picker = "Bone")
         FName BoneName;
 
-        /** Blend weight applied to this bone (0 = base, 1 = overlay). */
+        // Zero keeps the base pose and one takes the overlay.
         PROPERTY(Editable, Category = "Bone Mask", ClampMin = 0.0f, ClampMax = 1.0f)
         float Weight = 1.0f;
     };
@@ -264,11 +264,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Identifier referenced by Layered Blend Per Bone nodes. */
+        // Identifier referenced by Layered Blend Per Bone nodes.
         PROPERTY(Editable, Category = "Bone Mask")
         FName Name;
 
-        /** Per-bone weight entries; unlisted bones default to zero. */
+        // Unlisted bones default to zero.
         PROPERTY(Editable, Category = "Bone Mask")
         TVector<SAnimGraphBoneMaskBone> Bones;
     };
@@ -385,7 +385,7 @@ namespace Lumina
     };
 
     // Runtime anim-graph asset: compiled bytecode + referenced resources/metadata. Editor compiles a
-    // CAnimationGraphNodeGraph into this; SAnimationSystem runs it each frame via FAnimationGraphVM.
+    // CAnimationGraphNodeGraph into this; CAnimationSystem runs it each frame via FAnimationGraphVM.
     REFLECT()
     class RUNTIME_API CAnimationGraph : public CObject
     {
@@ -410,7 +410,7 @@ namespace Lumina
         // Swapping the parameter struct moves every offset, so re-link rather than trust the old ones.
         void PostPropertyChange(FProperty* ChangedProperty) override { LinkParameters(); }
 
-        /** The parameter block's type, or null when none is assigned. */
+        // Null when no parameter struct is assigned.
         CStruct* GetParameterStruct() const { return ParameterStruct.GetScriptStruct(); }
 
         // Resolves every parameter name to an offset in the parameter struct; call after either changes.
@@ -418,83 +418,79 @@ namespace Lumina
 
         bool IsCompiled() const { return !Bytecode.IsEmpty(); }
 
-        /** Skeleton every pose produced by this graph is authored against. */
+        // Skeleton every pose produced by this graph is authored against.
         PROPERTY(Editable, Category = "Animation")
         TStrongObjectPtr<CSkeleton> Skeleton;
 
-        /** Parameter block this graph reads. The instance's values are the authored defaults. */
+        // Parameter block this graph reads, whose instance values are the authored defaults.
         PROPERTY(Editable, Category = "Animation")
         FInstancedStruct ParameterStruct;
 
-        /** Animation clips referenced by SampleAnim opcodes, indexed by clip index. */
+        // Indexed by the clip index of SampleAnim opcodes.
         PROPERTY(Hidden)
         TVector<TStrongObjectPtr<CAnimation>> Clips;
 
-        /** Blend spaces referenced by SampleBlendSpace opcodes, indexed by blend-space index. */
+        // Indexed by the blend-space index of SampleBlendSpace opcodes.
         PROPERTY(Hidden)
         TVector<TStrongObjectPtr<CBlendSpace>> BlendSpaces;
 
-        /** Script- and editor-tweakable parameters that drive the graph. */
         TVector<FAnimGraphParameter> Parameters;
 
-        /** Object-valued inputs; the runtime fills these so nodes can swap which asset they sample. */
+        // Filled at runtime so nodes can swap which asset they sample.
         PROPERTY(Hidden)
         TVector<SAnimGraphObjectParameter> ObjectParameters;
 
-        /** Assets referenced by LoadObjectConst, so a static pin still flows through an object register. */
+        // Assets referenced by LoadObjectConst, so a static pin still flows through an object register.
         PROPERTY(Hidden)
         TVector<TStrongObjectPtr<CObject>> ObjectConstants;
 
-        /** Offsets into the blackboard struct, parallel to Parameters / ObjectParameters. Transient. */
+        // Transient offsets into the blackboard struct, parallel to Parameters and ObjectParameters.
         TVector<FAnimGraphParamBinding> ParamBindings;
         TVector<FAnimGraphParamBinding> ObjectParamBindings;
 
-        /** Curve slots to register even when no node reads them, so a runtime-chosen clip can drive them. */
+        // Curve slots to register even when no node reads them, so a runtime-chosen clip can drive them.
         PROPERTY(Editable, Category = "Animation")
         TVector<FName> DeclaredCurves;
 
-        /** Editor-authored bone mask definitions; resolved into BoneMasks at compile. */
+        // Resolved into BoneMasks at compile.
         PROPERTY(Editable, Category = "Bone Masks")
         TVector<SAnimGraphBoneMaskDef> BoneMaskDefs;
 
-        /** Compiled per-bone weight arrays referenced by BlendMasked opcodes. */
+        // Referenced by BlendMasked opcodes.
         TVector<FAnimGraphBoneMask> BoneMasks;
 
-        /** State machines referenced by EvalStateMachine opcodes, indexed by machine index. */
+        // Indexed by the machine index of EvalStateMachine opcodes.
         TVector<FAnimGraphStateMachine> StateMachines;
 
-        /** Curve slots carried by every pose in this graph: the union of the referenced clips' curves
-         *  and any name a Get/Set Curve node uses. Slot index is what the bytecode addresses. */
+        // Union of the referenced clips' curves and any Get or Set Curve name, addressed by slot index in the bytecode.
         TVector<FName> CurveNames;
 
-        /** Curve slot bindings for Clips / BlendSpaces, parallel to those arrays. */
+        // Parallel to Clips and BlendSpaces.
         TVector<FAnimGraphClipCurveMap> ClipCurveMaps;
         TVector<FAnimGraphBlendSpaceCurveMap> BlendSpaceCurveMaps;
 
-        /** Compiled instruction stream consumed by FAnimationGraphVM. */
+        // Instruction stream consumed by FAnimationGraphVM.
         TVector<uint8> Bytecode;
 
-        /** Register-file and persistent-state sizing produced by the compiler. */
         uint16 NumObjectRegisters = 0;
         uint16 NumScalarRegisters = 0;
         uint16 NumPoseRegisters = 0;
         uint16 NumStateSlots = 0;
 
-        /** Sync groups referenced by AdvanceClock opcodes; members share one normalized phase. */
+        // Sync groups referenced by AdvanceClock opcodes, whose members share one normalized phase.
         uint16 NumSyncGroups = 0;
 
-        /** Per-instance smoothing records the Inertialization and Dead Blending nodes address. */
+        // Per-instance smoothing records the Inertialization and Dead Blending nodes address.
         uint16 NumInertializerNodes = 0;
         uint16 NumDeadBlendNodes = 0;
 
-        /** Montage slot names referenced by EvalSlot opcodes, indexed by slot index. */
+        // Montage slot names indexed by the slot index of EvalSlot opcodes.
         TVector<FName> SlotNames;
 
-        /** Pose snapshot slots, indexed by the Save / Load Pose Snapshot opcodes. */
+        // Indexed by the Save and Load Pose Snapshot opcodes.
         TVector<FName> PoseSnapshotNames;
 
-        /** Opcode layout the bytecode was compiled against (kAnimBytecodeVersion); the VM refuses
-         *  mismatches instead of misparsing. 0 = compiled before versioning existed. */
+        // The kAnimBytecodeVersion compiled against, which the VM refuses on mismatch, and 0 from before versioning.
         uint16 BytecodeVersion = 0;
     };
 }

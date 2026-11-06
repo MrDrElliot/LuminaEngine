@@ -161,7 +161,7 @@ namespace Lumina
         FTweenHandle   Handle;
     };
 
-    /** Per-world tween runner, advanced once per frame by STweenSystem. */
+    /** Per-world tween runner, advanced once per frame by CTweenSystem. */
     class RUNTIME_API FTweenManager : public ECS::FResource
     {
     public:

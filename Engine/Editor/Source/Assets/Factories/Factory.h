@@ -89,6 +89,11 @@ namespace Lumina
     protected:
         
         virtual bool DrawCreationDialogue(FStringView Path, bool& bShouldClose) { return true; }
-        
+
+        static void DrawCreationDialogueTitle(const char* Title);
+
+        // True when Create is pressed, while Cancel sets bShouldClose.
+        static bool DrawCreationDialogueButtons(bool bCanCreate, bool& bShouldClose);
+
     };
 }

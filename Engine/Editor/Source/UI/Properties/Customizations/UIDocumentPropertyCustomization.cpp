@@ -172,28 +172,19 @@ namespace Lumina
             const FFixedString Selected = EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedFilePath() : FFixedString();
             const bool bSelectionFits = IsDocumentPath(FStringView(*Selected, Selected.Len()));
 
-            ImGui::BeginDisabled(!bSelectionFits);
-            if (ImGui::Button(LE_ICON_ARROW_LEFT_CIRCLE "##UseSelected", AssetPickerFilter::kButtonSize))
+            if (AssetPickerFilter::DrawUseSelectedButton(bSelectionFits, "Select an .rml in the Content Browser to use it here."))
             {
                 const FString NewPath(*Selected, Selected.Len());
                 Assign([Ref, NewPath] { Ref->SetPath(NewPath); });
             }
-            ImGui::EndDisabled();
-            ImGuiX::TextTooltip("{}", bSelectionFits
-                ? "Use the document selected in the Content Browser."
-                : "Select an .rml in the Content Browser to use it here.");
+
+            ImGui::SameLine();
+
+            AssetPickerFilter::DrawBrowseButton(ResolvedView);
 
             ImGui::SameLine();
 
             ImGui::BeginDisabled(!bHasDocument);
-
-            if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", AssetPickerFilter::kButtonSize) && EditorUI != nullptr)
-            {
-                EditorUI->BrowseToAsset(ResolvedView);
-            }
-            ImGuiX::TextTooltip("{}", "Show this document in the Content Browser.");
-
-            ImGui::SameLine();
 
             if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", AssetPickerFilter::kButtonSize))
             {
@@ -203,15 +194,10 @@ namespace Lumina
 
             ImGui::SameLine();
 
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-            if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##Clear", AssetPickerFilter::kButtonSize))
+            if (AssetPickerFilter::DrawClearButton("Clear the document."))
             {
                 Assign([Ref] { Ref->Reset(); });
             }
-            ImGui::PopStyleColor(3);
-            ImGuiX::TextTooltip("{}", "Clear the document.");
 
             ImGui::EndDisabled();
             ImGui::EndGroup();

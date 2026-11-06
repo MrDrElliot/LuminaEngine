@@ -38,8 +38,14 @@ namespace Lumina::MCP
             return FString(Text);
         }
 
-        FString Clipped(Text.Left(MaxBytes));
-        Clipped += Format(" [{} more bytes]", Text.Len() - MaxBytes);
+        int32 Kept = MaxBytes;
+        while (Kept > 0 && (static_cast<uint8>(Text[Kept]) & 0xC0) == 0x80)
+        {
+            --Kept;
+        }
+
+        FString Clipped(Text.Left(Kept));
+        Clipped += Format(" [{} more bytes]", Text.Len() - Kept);
         return Clipped;
     }
 

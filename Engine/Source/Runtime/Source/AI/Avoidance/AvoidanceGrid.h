@@ -9,6 +9,25 @@
 
 namespace Lumina::Avoidance
 {
+    constexpr int64 GridMinCellBudget  = 16384;
+    constexpr int64 GridCellsPerSource = 16;
+
+    // Grows CellSize until DimX * DimZ fits a budget proportional to Count and returns the size used.
+    inline float FitGridDims(float ExtentX, float ExtentZ, float CellSize, int32 Count, int32& OutDimX, int32& OutDimZ)
+    {
+        const int64 Budget = Math::Min(Math::Max((int64)Count * GridCellsPerSource, GridMinCellBudget), (int64)INT32_MAX - 1);
+        float Size = Math::Max(CellSize, Math::Max(ExtentX, ExtentZ) / (float)Budget);
+        // The clamp keeps a non-finite extent from looping forever.
+        const auto Dim = [&](float Extent) { return Math::Clamp<int64>((int64)(Extent / Size) + 1, 1, Budget); };
+        while (Dim(ExtentX) * Dim(ExtentZ) > Budget)
+        {
+            Size *= 2.0f;
+        }
+        OutDimX = (int32)Dim(ExtentX);
+        OutDimZ = (int32)Dim(ExtentZ);
+        return Size;
+    }
+
     struct FAvoidanceGrid
     {
         float OriginX    = 0.0f;
@@ -52,9 +71,6 @@ namespace Lumina::Avoidance
                 return;
             }
 
-            const float Size = CellSize > 0.01f ? CellSize : 0.01f;
-            InvCellSize = 1.0f / Size;
-
             float MinX = PosX[0], MaxX = PosX[0];
             float MinZ = PosZ[0], MaxZ = PosZ[0];
             for (int32 i = 1; i < Count; ++i)
@@ -67,8 +83,7 @@ namespace Lumina::Avoidance
 
             OriginX = MinX;
             OriginZ = MinZ;
-            DimX = Math::Max((int32)((MaxX - MinX) * InvCellSize) + 1, 1);
-            DimZ = Math::Max((int32)((MaxZ - MinZ) * InvCellSize) + 1, 1);
+            InvCellSize = 1.0f / FitGridDims(MaxX - MinX, MaxZ - MinZ, Math::Max(CellSize, 0.01f), Count, DimX, DimZ);
 
             const int32 Cells = DimX * DimZ;
             CellStart.Init(0, Cells + 1);
@@ -86,8 +101,7 @@ namespace Lumina::Avoidance
             SortedIndices.SetNum(Count);
             SortedPosX.SetNum(Count);
             SortedPosZ.SetNum(Count);
-            Cursor.Reset();
-            Cursor.Append(CellStart.begin(), CellStart.end());
+            Cursor = CellStart;
 
             for (int32 i = 0; i < Count; ++i)
             {

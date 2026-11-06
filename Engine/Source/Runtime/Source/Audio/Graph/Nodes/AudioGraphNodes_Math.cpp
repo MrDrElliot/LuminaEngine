@@ -237,8 +237,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
             {}
 
-            void Reset() override { Smoothed.Reset(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Smoothed.Begin(*Value, Context.NumFrames);

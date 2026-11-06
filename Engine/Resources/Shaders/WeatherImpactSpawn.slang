@@ -76,14 +76,14 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     FRainSplash Splash;
     Splash.Position      = Impact.Position;
     Splash.SpawnTime     = Pass().Time;
-    Splash.PackedNormal  = PackUnitVector(Impact.Surface == kSurfaceWater ? float3(0.0, 1.0, 0.0) : normalize(Impact.Normal));
+    Splash.PackedNormal  = PackNormal(Impact.Surface == kSurfaceWater ? float3(0.0, 1.0, 0.0) : normalize(Impact.Normal));
     Splash.PackedLightRG = 0u;
     Splash.PackedLightB  = 0u;
     Splash.Seed          = 0u;
 
     if (Water >= kMinSplashWater)
     {
-        const float3 Normal = UnpackUnitVector(Splash.PackedNormal);
+        const float3 Normal = UnpackNormal(Splash.PackedNormal);
         const float3 Light  = RainLightAt(Impact.Position + Normal * 0.1);
         const float  Scale  = Impact.Scale * lerp(0.35, 1.0, saturate(Water)) * (Impact.Surface == kSurfaceWater ? 1.0 : 0.55);
         Splash.PackedLightRG = PackHalf2(Light.rg);

@@ -7,26 +7,26 @@ namespace Lumina
 {
     class FNavMesh;
 
-    /** Keeps a bounded set of baked tiles resident in an FNavMesh, following focus points.
-     *  The baked set stays with its owner; this only decides what is paged in. */
+    // Pages a bounded set of baked tiles into an FNavMesh around focus points, while the baked set stays with its owner.
     class RUNTIME_API FNavTileStreamer
     {
     public:
 
         struct FSettings
         {
-            /** Hard ceiling on resident tiles. Must not exceed what FNavMesh was initialized with. */
+            // Hard ceiling on resident tiles, no more than FNavMesh was initialized with.
             int32 MaxResidentTiles = 1024;
 
-            /** Tiles within this of a focus point are wanted. Zero or less keeps every tile resident. */
+            // Tiles within this of a focus point are wanted, and zero or less keeps every tile resident.
             float LoadRadius = 0.0f;
 
-            /** Resident tiles survive out to LoadRadius times this, so a focus point sitting on a tile
-             *  boundary does not page the same tile in and out every frame. */
+            // Resident tiles survive out to LoadRadius times this, so a focus point on a tile boundary does not thrash.
             float KeepRadiusScale = 1.25f;
 
-            /** Bounds how long one mutation window can hold off queries. */
+            // Bounds how long one mutation window can hold off queries.
             int32 MaxOpsPerTick = 8;
+
+            bool operator==(const FSettings&) const = default;
         };
 
         struct FStats
@@ -36,11 +36,14 @@ namespace Lumina
             int32 Added    = 0;
             int32 Removed  = 0;
 
-            /** Wanted tiles that did not fit the budget. Nonzero means paths can fail at range. */
+            // Wanted tiles that did not fit the budget, where nonzero means paths can fail at range.
             int32 Starved  = 0;
 
             // Tiles the mesh already held that this took ownership of, rather than re-adding.
             int32 Adopted  = 0;
+
+            // Wanted tiles the mesh refused to add, which stay out until the baked set changes.
+            int32 Rejected = 0;
         };
 
         void Reset(const FVector3& InOrigin, float InTileWorldSize);
@@ -48,7 +51,10 @@ namespace Lumina
 
         bool IsConfigured() const { return TileWorldSize > 0.0f; }
 
-        /** Tiles is the authoritative baked set, read but never retained. */
+        // Forces the next Update to do a full pass, for when the baked set changed under it.
+        void Invalidate() { bSettled = false; Rejected.Reset(); }
+
+        // Tiles is the authoritative baked set, read but never retained.
         FStats Update(FNavMesh& Mesh, const TVector<SNavTileData>& Tiles, const TVector<FVector3>& FocusPoints, const FSettings& Settings);
 
         int32 GetResidentCount() const { return Resident.Num(); }
@@ -56,9 +62,30 @@ namespace Lumina
 
     private:
 
+        struct FCandidate
+        {
+            int32 Index = 0;
+            int32 X = 0;
+            int32 Y = 0;
+            float Distance = 0.0f;
+        };
+
+        bool CanSkipPass(const TVector<FVector3>& FocusPoints, const FSettings& Settings) const;
+
         FVector3            Origin = FVector3(0.0f);
         float               TileWorldSize = 0.0f;
         THashSet<uint64>    Resident;
+
+        // Keys whose blob the mesh refused, so they are not copied and re-validated every tick.
+        THashSet<uint64>    Rejected;
+
+        TVector<FCandidate> Wanted;
+        THashSet<uint64>    WantedKeys;
+
+        // Inputs of the last full pass, which left nothing to page while bSettled holds.
+        TVector<FVector3>   SettledFocus;
+        FSettings           SettledSettings;
+        bool                bSettled = false;
 
         // Ticks left before the starvation warning may be logged again.
         int32               StarvedLogCooldown = 0;

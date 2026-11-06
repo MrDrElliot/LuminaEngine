@@ -39,7 +39,6 @@ namespace Lumina
         }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override {}
         void Update(const FUpdateContext& UpdateContext) override;
         void EndFrame() override;
         bool OnEvent(FEvent& Event) override;
@@ -84,6 +83,9 @@ namespace Lumina
 
         // Folders first under every mode, and entries the mode cannot tell apart fall back to name order.
         EDITOR_API static void SortListing(TVector<FListingEntry>& Entries, EContentBrowserSortMode Mode, bool bAscending);
+
+        // Appends Folder's browsable entries, and with bRecursive those of every visible subfolder too.
+        EDITOR_API static void ReadFolderListing(FStringView Folder, bool bRecursive, TVector<FListingEntry>& OutEntries);
 
     private:
 
@@ -198,6 +200,7 @@ namespace Lumina
         TVector<FListingEntry>      Listing;
         FFixedString                ListingFolder;
         bool                        bListingStale = true;
+        bool                        bListingRecursive = false;
 
         TUniquePtr<FPropertyTable>  ImportSettingsTable;
 

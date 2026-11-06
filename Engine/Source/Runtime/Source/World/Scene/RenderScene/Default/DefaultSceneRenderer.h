@@ -351,6 +351,8 @@ namespace Lumina
                 TVector<FMeshDrawCommand>        DrawCommands;
                 TVector<uint32>                  OpaqueDrawList;
                 TVector<uint32>                  TranslucentDrawList;
+                bool                             bHasBlendedTranslucency   = false;   // drawn by the WBOIT pass and its resolve
+                bool                             bHasUnorderedTranslucency = false;   // additive or modulate
                 TVector<FDeferredMaterialEntry>  DeferredMaterials;   // distinct opaque slots for the deferred pass
                 FSceneCullContext                SceneCullContext;
 
@@ -371,6 +373,8 @@ namespace Lumina
 
                     uint32                      MeshletVisibilityWords = 0;
                     uint64                      LargestLODMeshlets = 0;
+                    FScenePrimitiveSet::FMeshletDemand GrassMeshlets;
+                    uint32                      GrassSlotCount = 0;
 
                     // Moved instances the extract wrote straight to GPU-visible memory, scattered after the uploads above.
                     RHI::FGPURange              StreamRecords;
@@ -900,6 +904,8 @@ namespace Lumina
         // Custom depth instances drawn again from the camera with nothing occluding them, then their stencil values resolved.
         void CustomDepthStencilPass(RHI::FCmdListH CL);
         void DrawVisBufferBatches(RHI::FCmdListH CL, uint32 ViewIndex, EMeshletSlice Slice, const FUIntVector2& Extent, EFormat VisFormat);
+        // Splats the far proxies the cull listed this frame into the open VisBuffer pass, once per frame after the meshlets.
+        void DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat);
         static FShaderH GetVisBufferPixelShader();
         const char* FindMissingMeshletDrawBuffer() const;
         void VisBufferClassifyPass(RHI::FCmdListH CL);
@@ -1162,13 +1168,14 @@ namespace Lumina
         bool TrackSceneGrowth(const FFrameData& Frame);
         void ReservePreSkinBuffers(RHI::FCmdListH CL, uint32 PreSkinWanted);
         void ReserveMeshletDrawBuffers(RHI::FCmdListH CL, const FFrameData& Frame, uint32 DrawListWanted);
-        void ReserveVisibleInstanceBuffers(RHI::FCmdListH CL, const FFrameData& Frame);
+        void ReserveVisibleInstanceBuffers(RHI::FCmdListH CL, const FFrameData& Frame, bool bAfterCameraCut);
         void ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor);
         void LogCullOverflow();
         void UploadLightData(FFrameData& Frame);
         void PublishSceneRoot(RHI::FCmdListH CL, FFrameData& Frame);
         void PublishViewImageIndices(FFrameData& Frame);
         uint32 CullOverflowLogCounter = 0;
+        uint32 CullStatsLogCounter    = 0;
 
         // Serial pre-pass so the parallel gather is pure reads; O(queued components).
         void ResolveDirtyMeshComponents();
@@ -1346,6 +1353,7 @@ namespace Lumina
 
         // The sole authority: nothing rasterizes a meshlet this did not keep.
         void MeshletCullPass(RHI::FCmdListH CL, EMeshletSlice Slice, bool bCascadePhase = false);
+        void CopyCullTotalsForReadback(RHI::FCmdListH CL);
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
 
@@ -1793,7 +1801,13 @@ namespace Lumina
         uint32                        BlockBoundsNumBlocks   = 0;
         FSceneBuffer RetainedTransformBuffer { "Retained.Transforms", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer RetainedStaticBuffer { "Retained.Static", 1.5f, EBufferInit::Zeroed };
+        // Parallel to the static buffer, the splat each slot draws as once it is too small for meshlets.
+        FSceneBuffer RetainedProxyBuffer { "Retained.Proxies", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer SurfaceDescBuffer { "Retained.SurfaceDescs", 1.5f, EBufferInit::Zeroed };
+        // Slots CullInstances turned into proxies this frame, and the indirect draw that splats them.
+        TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyList", 1.5f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyDrawArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyDrawArgs", 1.0f);
+        uint32 ProxyListCapacity = 0;
         // One arena per frame slot, since the next frame's upload can run on compute while this frame's passes still read poses.
         TArray<FSceneBuffer, RHI::kFramesInFlight> BoneArenaRing = MakeSceneRing<RHI::kFramesInFlight>("Skinning.BoneArena", 1.5f);
         // The upload serial each slot's arena last matched the mirror at, so it knows which dirty ranges it missed.
@@ -1927,7 +1941,7 @@ namespace Lumina
         // Cascades the atlas and pyramid are sized for; PrepareRender reallocates when ActiveCascadeCount moves.
         int32                                               CascadeAtlasCount = 0;
 
-        static constexpr uint32                             kTotalsSlots = 8;
+        static constexpr uint32                             kTotalsSlots = 9;
 
         // Must match HISTOGRAM_BINS in LuminanceHistogram.slang and its TILE_DIM^2 thread count.
         static constexpr uint32                             kLuminanceHistogramBins = 256;
@@ -1977,12 +1991,14 @@ namespace Lumina
         // Highest demand seen this session, which sizes the lists for the frames after a camera cut.
         uint32                                              BlockListPeak = 0;
         uint32                                              DrawListPeak = 0;
+        uint32                                              VisiblePeak = 0;
         FVector3                                            LastCullOrigin = FVector3(0.0f);
         bool                                                bHasLastCullOrigin = false;
         uint32                                              CameraCutFramesLeft = 0;
         // A load appends before its readback lands, so the lists hold the whole scene for the frames in between.
         uint32                                              SceneFloorFramesLeft = 0;
         uint32                                              LastSceneVisibilityWords = 0;
+        uint32                                              LastSceneGrassSlots = 0;
         FDemandWindow                                       PreSkinDemand;
         FDemandWindow                                       VisibleInstanceDemand;
         FDemandWindow                                       DrawListDemand;

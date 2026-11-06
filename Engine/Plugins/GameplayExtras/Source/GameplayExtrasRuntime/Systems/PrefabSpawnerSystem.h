@@ -9,7 +9,7 @@ namespace Lumina
 {
 
     REFLECT()
-    class SPrefabSpawnerSystem : public CEntitySystem
+    class CPrefabSpawnerSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

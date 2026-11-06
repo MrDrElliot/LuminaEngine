@@ -11,7 +11,7 @@
 #include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
 
-#include <algorithm>
+#include "Containers/Algorithm.h"
 
 namespace Lumina::ECS
 {
@@ -125,7 +125,7 @@ namespace Lumina::ECS
             const TComponentStorage<T> Storage = AssureStorage<T>();
             if constexpr (CDataComponent<T>)
             {
-                T& Value = Storage.Emplace(Entity, std::forward<TArgs>(Args)...);
+                T& Value = Storage.Emplace(Entity, Forward<TArgs>(Args)...);
                 Storage.GetSet()->Signals.OnConstruct.Broadcast(*this, Entity);
                 return Value;
             }
@@ -146,7 +146,7 @@ namespace Lumina::ECS
 
             if constexpr (CDataComponent<T>)
             {
-                T& Value = Storage.EmplaceOrReplace(Entity, std::forward<TArgs>(Args)...);
+                T& Value = Storage.EmplaceOrReplace(Entity, Forward<TArgs>(Args)...);
                 (bExisted ? Signals.OnUpdate : Signals.OnConstruct).Broadcast(*this, Entity);
                 return Value;
             }
@@ -169,7 +169,7 @@ namespace Lumina::ECS
                 {
                     return *Existing;
                 }
-                T& Value = Storage.Emplace(Entity, std::forward<TArgs>(Args)...);
+                T& Value = Storage.Emplace(Entity, Forward<TArgs>(Args)...);
                 Storage.GetSet()->Signals.OnConstruct.Broadcast(*this, Entity);
                 return Value;
             }
@@ -291,7 +291,7 @@ namespace Lumina::ECS
             DEBUG_ASSERT(Storage.Contains(Entity), "Patch on a component the entity does not have");
             const uint32 DenseIndex = Storage.GetSet()->GetDenseIndex(Entity);
             T& Value = Storage.GetAtDense(DenseIndex);
-            (std::forward<decltype(Mutators)>(Mutators)(Value), ...);
+            (Forward<decltype(Mutators)>(Mutators)(Value), ...);
             Storage.GetSet()->MarkWritten(DenseIndex);
             Storage.GetSet()->Signals.OnUpdate.Broadcast(*this, Entity);
             return Value;
@@ -446,7 +446,7 @@ namespace Lumina::ECS
                 {
                     Order[Index] = Begin + Index;
                 }
-                std::sort(Order.begin(), Order.end(), [&](int32 A, int32 B)
+                Algo::Sort(Order, [&](int32 A, int32 B)
                 {
                     return Compare(std::as_const(Storage.GetAtDense(static_cast<uint32>(A))), std::as_const(Storage.GetAtDense(static_cast<uint32>(B))));
                 });
@@ -509,7 +509,7 @@ namespace Lumina::ECS
         template<typename Self> NODISCARD FORCEINLINE auto& Ctx(this Self&& S) { return S.Context; }
 
         template<typename T, typename... TArgs>
-        T& EmplaceSingleton(TArgs&&... Args) { return Context.Emplace<T>(std::forward<TArgs>(Args)...); }
+        T& EmplaceSingleton(TArgs&&... Args) { return Context.Emplace<T>(Forward<TArgs>(Args)...); }
 
         template<typename T> NODISCARD FORCEINLINE T& GetSingleton() { return Context.Get<T>(); }
         template<typename T> NODISCARD FORCEINLINE const T& GetSingleton() const { return Context.Get<T>(); }

@@ -23,7 +23,7 @@ namespace Lumina
     {
         TStrongObjectPtr<CAnimationMontage> Montage;
 
-        /** Identifies this play through the montage; reusing the asset later gets a fresh id. */
+        // Identifies this play through the montage; reusing the asset later gets a fresh id.
         uint32 InstanceID = 0;
 
         float Position = 0.0f;
@@ -37,10 +37,10 @@ namespace Lumina
 
         int32 CurrentSection = Constants::kIndexNone;
 
-        /** Section the playhead jumps to at the end of the current one, overriding the authored link. */
+        // Section the playhead jumps to at the end of the current one, overriding the authored link.
         FName QueuedSection;
 
-        /** Indices into the montage's NotifyStates whose window the playhead was inside last update. */
+        // Indices into the montage's NotifyStates whose window the playhead was inside last update.
         TVector<int32> ActiveNotifyStates;
 
         // Stopped or cut off by another montage rather than played through, carried into the blend out and end events.
@@ -84,26 +84,26 @@ namespace Lumina
         // Started, blending out and ended since the animation system last sent them, oldest first.
         TVector<FAnimMontageTransition> Transitions;
 
-        /** Starts a montage, blending out anything already playing on a slot it uses. Returns its id. */
+        // Starts a montage, blending out anything already playing on a slot it uses. Returns its id.
         uint32 Play(CAnimationMontage* Montage, float PlayRate = 1.0f, const FName& StartSection = FName());
 
-        /** Blends the montage out. A negative BlendOutTime uses the montage's own. */
+        // Blends the montage out. A negative BlendOutTime uses the montage's own.
         void Stop(const CAnimationMontage* Montage, float BlendOutTime = -1.0f);
 
         void StopAll(float BlendOutTime = -1.0f);
 
-        /** Drops every instance without blending; used when the graph goes away. */
+        // Drops every instance without blending; used when the graph goes away.
         void Reset();
 
-        /** Moves the playhead to the named section's start. False when the section does not exist. */
+        // Moves the playhead to the named section's start. False when the section does not exist.
         bool JumpToSection(const CAnimationMontage* Montage, const FName& SectionName);
 
-        /** Overrides which section follows the one currently playing, for combo chaining. */
+        // Overrides which section follows the one currently playing, for combo chaining.
         bool SetNextSection(const CAnimationMontage* Montage, const FName& SectionName);
 
         bool IsPlaying(const CAnimationMontage* Montage) const;
 
-        /** True while any montage is contributing weight. */
+        // True while any montage is contributing weight.
         bool HasActive() const;
 
         FName GetCurrentSection(const CAnimationMontage* Montage) const;
@@ -111,10 +111,10 @@ namespace Lumina
         float GetWeight(const CAnimationMontage* Montage) const;
         void  SetPlayRate(const CAnimationMontage* Montage, float PlayRate);
 
-        /** Advances every instance, fires notifies into OutEvents, and reaps finished instances. */
+        // Advances every instance, fires notifies into OutEvents, and reaps finished instances.
         void Update(float DeltaTime, TVector<FAnimNotifyEvent>* OutEvents);
 
-        /** Contributions for one slot, oldest first, so later instances layer on top. */
+        // Contributions for one slot, oldest first, so later instances layer on top.
         void GatherSlot(const FName& SlotName, TVector<FAnimMontageSlotContribution>& OutContributions) const;
 
     private:

@@ -9,6 +9,7 @@
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/AssetEditors/Animation/AnimPreview.h"
+#include "UI/Tools/AssetEditors/Animation/TimelineDrawing.h"
 
 namespace Lumina
 {
@@ -33,7 +34,6 @@ namespace Lumina
         void OnPostUndoRedo() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void OnAssetLoadFinished() override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
@@ -101,6 +101,7 @@ namespace Lumina
         int32 LaneAddTrack = 0;
         int32 SelectedNotifyTrack = 0;
         float TrackScroll = 0.0f;
+        Timeline::FRenameBuffer RenameBuffer = {};
 
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;

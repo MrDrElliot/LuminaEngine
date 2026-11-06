@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "TerrainSculptSystem.h"
+#include "Memory/Memcpy.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
 
@@ -326,7 +327,7 @@ namespace Lumina
         {
             const float* SrcRow = &Terrain.Heightmap[(SnapMinY + Y) * Res + SnapMinX];
             float*       DstRow = &Snapshot[Y * SnapW];
-            std::memcpy(DstRow, SrcRow, size_t(SnapW) * sizeof(float));
+            Memory::Memcpy(DstRow, SrcRow, size_t(SnapW) * sizeof(float));
         }
 
         const int32 RowCount = Rect.w - Rect.y + 1;

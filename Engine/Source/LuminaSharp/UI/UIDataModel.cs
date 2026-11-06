@@ -342,7 +342,7 @@ public sealed unsafe class UIDataModel : IDisposable
         }
 
         object Value = Scalar.VarType == Lumina.EUIVarType.String
-            ? (StrLen > 0 ? Marshal.PtrToStringUTF8(Str, StrLen) ?? string.Empty : string.Empty)
+            ? Interop.GetString((byte*)Str, StrLen)
             : ConvertNumber(Scalar.ValueType, Number);
 
         _applyingFromNative = true;
@@ -380,7 +380,7 @@ public sealed unsafe class UIDataModel : IDisposable
         object?[] Call = Command.Parameters.Length == 0 ? Array.Empty<object?>() : new object?[Command.Parameters.Length];
         for (int Index = 0; Index < Call.Length; ++Index)
         {
-            string Arg = Index < ArgCount ? (Marshal.PtrToStringUTF8(Args[Index].Ptr, Args[Index].Len) ?? string.Empty) : string.Empty;
+            string Arg = Index < ArgCount ? Interop.GetString((byte*)Args[Index].Ptr, Args[Index].Len) : string.Empty;
             Call[Index] = ConvertArg(Arg, Command.Parameters[Index].ParameterType);
         }
 

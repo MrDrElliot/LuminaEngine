@@ -20,7 +20,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     }
 
     const float  T       = Age / kSplashLifetime;
-    const float3 Normal  = UnpackUnitVector(Splash.PackedNormal);
+    const float3 Normal  = UnpackNormal(Splash.PackedNormal);
     const float2 LightRG = UnpackHalf2(Splash.PackedLightRG);
     const float3 Color   = float3(LightRG, f16tof32(Splash.PackedLightB)) * W.RainTint.rgb * W.RainLook.y;
     // Faded out right at the lens, where a centimeter ring would fill the screen, and past where a crown is resolvable.
@@ -58,7 +58,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
         WeatherRandom(Seed);
         WeatherRandom(Seed);
     }
-    const float Angle  = WeatherRandom(Seed) * 6.2831853;
+    const float Angle  = WeatherRandom(Seed) * TWO_PI;
     const float Up     = (1.1 + 1.1 * WeatherRandom(Seed)) * sqrt(Size);
     const float Spread = (0.4 + 0.8 * WeatherRandom(Seed)) * sqrt(Size);
 

@@ -12,6 +12,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Platform/Time/PlatformTime.h"
+#include "Core/Profiler/Profile.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/SmartPtr.h"
 
@@ -104,12 +105,20 @@ namespace Lumina::MCP
             return ExitCode == 0;
         }
 
+        Agent::FToolResult TracyExportFailed(const FString& CaptureFile, const FString& LastLine)
+        {
+            return Agent::FToolResult::Error(Lumina::Format("tracy-csvexport failed on the trace at {} ({}); record again.",
+                CaptureFile, LastLine.IsEmpty() ? FString("no output") : LastLine));
+        }
+
         // Rows repeat a name when several source sites share it, so totals are summed by name.
-        void ReadTracyZones(const FString& Executable, const FString& Arguments, bool bGpuRows, THashMap<FString, FProfilerZoneTotals>& Out)
+        bool ReadTracyZones(const FString& Executable, const FString& Arguments, bool bGpuRows, THashMap<FString, FProfilerZoneTotals>& Out,
+                            FString& OutLastLine)
         {
             bool bHeader = true;
-            RunTracyTool(Executable, Arguments, [&](FStringView Line)
+            return RunTracyTool(Executable, Arguments, [&](FStringView Line)
             {
+                OutLastLine = FString(Line.GetData(), Line.Len());
                 if (bHeader)
                 {
                     bHeader = false;
@@ -117,15 +126,20 @@ namespace Lumina::MCP
                 }
 
                 const TVector<FStringView> Fields = SplitProfilerFields(Line);
+                if (Fields.Num() < (bGpuRows ? 4 : 9))
+                {
+                    return;
+                }
+
                 FProfilerZoneTotals& Totals = Out.FindOrAdd(FString(Fields[0].GetData(), Fields[0].Len()));
-                if (bGpuRows && Fields.Num() >= 4)
+                if (bGpuRows)
                 {
                     const double Ns = ProfilerNumber(Fields[3]);
                     Totals.TotalNs += Ns;
                     Totals.MaxNs = Math::Max(Totals.MaxNs, Ns);
                     Totals.Count += 1;
                 }
-                else if (!bGpuRows && Fields.Num() >= 9)
+                else
                 {
                     Totals.TotalNs += ProfilerNumber(Fields[3]);
                     Totals.Count += (int64)ProfilerNumber(Fields[5]);
@@ -189,6 +203,17 @@ namespace Lumina::MCP
                 return false;
             }
 
+#if defined(TRACY_ENABLE)
+            const uint32 ListenPort = tracy::GetProfiler().GetListenPort();
+#else
+            const uint32 ListenPort = 0;
+#endif
+            if (ListenPort == 0)
+            {
+                OutError = "This editor's Tracy client is not listening, so there is nothing to capture.";
+                return false;
+            }
+
             FString Directory = Paths::GetEngineDirectory() + "/Saved/Profiling";
             Paths::CreateDirectories(FStringView(*Directory, Directory.Len()));
 
@@ -199,7 +224,7 @@ namespace Lumina::MCP
             FProfilerCaptureJob* Running = ProfilerJob.get();
             const int32 CaptureSeconds = (int32)Math::Ceil(Math::Clamp(Seconds, 1.0f, MaxProfilerCaptureSeconds));
             Running->Seconds = CaptureSeconds;
-            Running->Worker = FThread([Running, CaptureSeconds, bUncapFrameRate]()
+            Running->Worker = FThread([Running, CaptureSeconds, bUncapFrameRate, ListenPort]()
             {
                 const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
                 bool bCapLifted = false;
@@ -218,7 +243,7 @@ namespace Lumina::MCP
                 }
 
                 const bool bRan = RunTracyTool(TracyToolPath("tracy-capture"),
-                    Lumina::Format("-o \"{}\" -a 127.0.0.1 -f -s {}", Running->File, CaptureSeconds),
+                    Lumina::Format("-o \"{}\" -a 127.0.0.1 -p {} -f -s {}", Running->File, ListenPort, CaptureSeconds),
                     [Running](FStringView Line)
                     {
                         if (ContainsTextFold(Line, "error") || ContainsTextFold(Line, "cannot"))
@@ -277,19 +302,24 @@ namespace Lumina::MCP
             const FString Export = TracyToolPath("tracy-csvexport");
             THashMap<FString, FProfilerZoneTotals> Cpu;
             THashMap<FString, FProfilerZoneTotals> Gpu;
-            ReadTracyZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", TracySeparator, bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu);
+            FString ExportLine;
+            if (!ReadTracyZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", TracySeparator, bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu, ExportLine))
+            {
+                return TracyExportFailed(Out.CaptureFile, ExportLine);
+            }
             if (Cpu.IsEmpty())
             {
                 return Agent::FToolResult::Error(Lumina::Format(
                     "Tracy could not read the trace at {}; record again.", Out.CaptureFile));
             }
-            ReadTracyZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", TracySeparator, Out.CaptureFile), true, Gpu);
+            FString GpuExportLine;
+            const bool bGpuExported = ReadTracyZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", TracySeparator, Out.CaptureFile), true, Gpu, GpuExportLine);
 
             // A frame's self time is only what its children leave over, so frame totals always come from inclusive times.
             THashMap<FString, FProfilerZoneTotals> Inclusive;
-            if (bSelfTime)
+            if (bSelfTime && !ReadTracyZones(Export, Lumina::Format("-s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), false, Inclusive, ExportLine))
             {
-                ReadTracyZones(Export, Lumina::Format("-s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), false, Inclusive);
+                return TracyExportFailed(Out.CaptureFile, ExportLine);
             }
             const THashMap<FString, FProfilerZoneTotals>& Totals = bSelfTime ? Inclusive : Cpu;
 
@@ -310,11 +340,17 @@ namespace Lumina::MCP
             Out.Cpu = RankProfilerZones(Cpu, Out.Frames, Top, Filter);
             Out.Gpu = RankProfilerZones(Gpu, Out.Frames, Top, Filter);
 
-            return Agent::FToolResult::Ok(Lumina::Format(
+            FString Message = Lumina::Format(
                 "{} frames, {:.2f} ms apart ({:.0f} fps). The frame zone took {:.2f} ms ({:.2f} ms max), with {:.2f} ms more waiting "
                 "on the GPU and {:.2f} ms in the frame limiter per frame. Trace saved to {}.",
                 Out.Frames, Out.PeriodMs, 1000.0f / Math::Max(Out.PeriodMs, 0.001f), Out.FrameMs, Out.MaxFrameMs, Out.GpuWaitMs,
-                Out.LimiterMs, Out.CaptureFile));
+                Out.LimiterMs, Out.CaptureFile);
+            if (!bGpuExported)
+            {
+                Message += Lumina::Format(" The GPU export failed ({}), so GPU pass timings are unavailable.",
+                    GpuExportLine.IsEmpty() ? FString("no output") : GpuExportLine);
+            }
+            return Agent::FToolResult::Ok(Message);
         }
 
         // One zone event from an unwrapped export, with its name interned.
@@ -357,8 +393,10 @@ namespace Lumina::MCP
             TVector<FString> Names;
             TVector<FProfilerZoneEvent> Events;
             bool bHeader = true;
-            RunTracyTool(TracyToolPath("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), [&](FStringView Line)
+            FString ExportLine;
+            const bool bExported = RunTracyTool(TracyToolPath("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), [&](FStringView Line)
             {
+                ExportLine = FString(Line.GetData(), Line.Len());
                 if (bHeader)
                 {
                     bHeader = false;
@@ -385,6 +423,10 @@ namespace Lumina::MCP
                 Event.Duration = (int64)ProfilerNumber(Fields[4]);
                 Event.Thread = (int32)ProfilerNumber(Fields[5]);
             }, TracyUnwrapTimeoutMs);
+            if (!bExported)
+            {
+                return TracyExportFailed(Out.CaptureFile, ExportLine);
+            }
 
             const auto FrameName = NameIds.Find(FString(TracyFrameZone));
             if (FrameName == nullptr)

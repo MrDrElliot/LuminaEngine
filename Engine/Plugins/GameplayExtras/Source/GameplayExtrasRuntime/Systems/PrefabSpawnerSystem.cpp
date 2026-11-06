@@ -22,12 +22,12 @@ namespace Lumina
     }
 
     // Instantiate runs deferred to the main thread, since it creates entities and fires construct hooks, so only the timers are touched here.
-    void SPrefabSpawnerSystem::Configure()
+    void CPrefabSpawnerSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
     }
 
-    void SPrefabSpawnerSystem::OnStartup(const SExclusiveContext& Context)
+    void CPrefabSpawnerSystem::OnStartup(const SExclusiveContext& Context)
     {
         if (Context.GetWorldType() == EWorldType::Editor)
         {
@@ -54,18 +54,27 @@ namespace Lumina
         }
     }
 
-    void SPrefabSpawnerSystem::OnUpdate(const SSystemContext& Context)
+    void CPrefabSpawnerSystem::OnUpdate(const SSystemContext& Context)
     {
+        if (Context.GetWorldType() == EWorldType::Editor)
+        {
+            return;
+        }
+
         const float DeltaTime = Context.GetDeltaTime();
 
         Spawners.ForEach([&](ECS::FEntity Entity, ECS::TMut<SPrefabSpawnerComponent> SpawnComponentMut, const STransformComponent& Transform)
         {
-            SPrefabSpawnerComponent& SpawnComponent = SpawnComponentMut.GetMut();
-            if (Math::Max(SpawnComponent.SpawnTimeRange.x, SpawnComponent.SpawnTimeRange.y) <= 0.0f)
+            const SPrefabSpawnerComponent& Current = SpawnComponentMut.Get();
+            if (Math::Max(Current.SpawnTimeRange.x, Current.SpawnTimeRange.y) <= 0.0f)
             {
-                SpawnComponent.TimeUntilNextSpawn = 0.0f;
+                if (Current.TimeUntilNextSpawn != 0.0f)
+                {
+                    SpawnComponentMut.GetMut().TimeUntilNextSpawn = 0.0f;
+                }
                 return;
             }
+            SPrefabSpawnerComponent& SpawnComponent = SpawnComponentMut.GetMut();
 
             if (SpawnComponent.TimeUntilNextSpawn <= 0.0f)
             {

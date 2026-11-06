@@ -918,9 +918,7 @@ namespace Lumina
                     const float Components[3] = { (float)Position.x, (float)Position.y, (float)Position.z };
                     for (float Component : Components)
                     {
-                        uint32 Bits;
-                        memcpy(&Bits, &Component, sizeof(Bits));
-                        PositionHash = (PositionHash ^ Bits) * 0x100000001B3ull;
+                        PositionHash = (PositionHash ^ std::bit_cast<uint32>(Component)) * 0x100000001B3ull;
                     }
                 }
                 Key.Add((uint32)(PositionHash & 0xFFFFFFFFu));

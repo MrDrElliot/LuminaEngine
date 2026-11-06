@@ -1,11 +1,6 @@
 ﻿#include "Containers/StringFormat.h"
 #include "RuntimePCH.h"
-#include <algorithm>
-#include <iterator>
 #include "FileSink.h"
-
-#include <cstdio>
-#include "Platform/Filesystem/PlatformFilesystem.h"
 
 namespace Lumina
 {
@@ -39,56 +34,36 @@ namespace Lumina
     {
         // Up front, so each run gets its own file.
         RotateExisting();
-        OpenCurrent("wb");
-    }
-
-    FFileSink::~FFileSink()
-    {
-        if (Handle != nullptr)
-        {
-            std::fclose(Handle);
-            Handle = nullptr;
-        }
+        OpenCurrent(Filesystem::ECreateMode::CreateAlways);
     }
 
     void FFileSink::RotateExisting()
     {
-        // Walk down so each rename lands on a free slot.
+        // Walk down so each move lands on a free slot, replacing the oldest at MaxFiles.
         for (uint32 Index = MaxFiles; Index > 0; --Index)
         {
-            const FString Source = MakeRotatedPath(BasePath, Index - 1);
-            const FString Target = MakeRotatedPath(BasePath, Index);
-
-            if (Index == MaxFiles)
-            {
-                std::remove(*Target);
-            }
-            std::rename(*Source, *Target);
+            Filesystem::Move(MakeRotatedPath(BasePath, Index - 1), MakeRotatedPath(BasePath, Index));
         }
     }
 
-    void FFileSink::OpenCurrent(const char* Mode)
+    void FFileSink::OpenCurrent(Filesystem::ECreateMode Mode)
     {
-        // The Logs folder is ours to make; fopen won't create the directory.
+        // The Logs folder is ours to make, since opening a file won't create the directory.
         Filesystem::MakeParentDirectoryTree(BasePath);
 
-        Handle = std::fopen(*BasePath, Mode);
-        if (Handle != nullptr)
+        Handle = Filesystem::Open(BasePath, Filesystem::EAccess::Write, Mode, Filesystem::EShare::Read, Filesystem::EHint::Sequential);
+        if (Handle.IsValid())
         {
-            std::setvbuf(Handle, nullptr, _IOFBF, 64 * 1024);
+            Handle.Seek(0, Filesystem::ESeek::End);
         }
     }
 
     void FFileSink::Rotate()
     {
-        if (Handle != nullptr)
-        {
-            std::fclose(Handle);
-            Handle = nullptr;
-        }
+        Handle.Close();
 
         RotateExisting();
-        OpenCurrent("wb");
+        OpenCurrent(Filesystem::ECreateMode::CreateAlways);
 
         WrittenBytes = 0;
     }
@@ -101,12 +76,7 @@ namespace Lumina
         }
 
         Flush();
-
-        if (Handle != nullptr)
-        {
-            std::fclose(Handle);
-            Handle = nullptr;
-        }
+        Handle.Close();
 
         const FString OldPath = BasePath;
         BasePath = NewBasePath;
@@ -115,20 +85,20 @@ namespace Lumina
         Filesystem::MakeParentDirectoryTree(BasePath);
         RotateExisting();
 
-        // Carry the boot lines across. rename fails across volumes, so fall back to a copy.
-        if (std::rename(*OldPath, *BasePath) != 0)
+        // Carry the boot lines across. A move can fail across volumes, so fall back to a copy.
+        if (!Filesystem::Move(OldPath, BasePath))
         {
             Filesystem::Copy(OldPath, BasePath, true);
             Filesystem::RemoveFile(OldPath);
         }
 
         // Appends, since the moved file already holds everything written so far.
-        OpenCurrent("ab");
+        OpenCurrent(Filesystem::ECreateMode::OpenAlways);
     }
 
     void FFileSink::Write(const Logging::FLogRecord& Record)
     {
-        if (Handle == nullptr)
+        if (!Handle.IsValid())
         {
             return;
         }
@@ -148,15 +118,13 @@ namespace Lumina
 
     void FFileSink::Flush()
     {
-        if (Handle == nullptr || Batch.IsEmpty())
+        if (!Handle.IsValid() || Batch.IsEmpty())
         {
             return;
         }
 
-        std::fwrite(Batch.Data(), 1, Batch.Size(), Handle);
-
-        // To the OS rather than the disk, so it survives a crash without paying for a sync.
-        std::fflush(Handle);
+        // Straight to the OS rather than the disk, so it survives a crash without paying for a sync.
+        Handle.Write(Batch.Data(), Batch.Size());
 
         WrittenBytes += Batch.Size();
         Batch.Clear();

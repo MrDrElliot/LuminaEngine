@@ -24,6 +24,16 @@ internal sealed class ChangeFilterTestSystem : CEntitySystem
     public TQuery<Write<SNameComponent>> NameWriters = new();
 }
 
+#pragma warning disable LUM0112
+internal sealed class ParallelWriteTestSystem : CEntitySystem
+#pragma warning restore LUM0112
+{
+    [Changed<STransformComponent>]
+    public TQuery<Read<STransformComponent>> Moved = new();
+
+    public TQuery<Write<STransformComponent>> Movers = new();
+}
+
 internal static unsafe class ChangeFilterTestHooks
 {
     private static ChangeFilterTestSystem? Resolve(IntPtr Handle) => GCHandle.FromIntPtr(Handle).Target as ChangeFilterTestSystem;
@@ -133,6 +143,62 @@ internal static unsafe class ChangeFilterTestHooks
         Tested.NameWriters.ForEach(Visit);
         Tested.NameWriters.ParallelForEach(Visit, 1);
         return Visited;
+    }
+
+    // Splits one Write walk over every transform by Id % 4 into a mutable write, a real SetIfChanged, an equal SetIfChanged and a read.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static IntPtr Test_ChangeFilterParallelWrite(IntPtr NativeSystem, int* OutResults)
+    {
+        var Tested = new ParallelWriteTestSystem();
+        Tested.BindNativeHandle(NativeSystem);
+        Tested.BindSystemParams();
+
+        int FirstRun = 0;
+        Tested.Moved.ForEach((FEntity Entity, Read<STransformComponent> Transform) => ++FirstRun);
+
+        int Visited = 0;
+        int Stamped = 0;
+        int Kept = 0;
+        Tested.Movers.ParallelForEach((FEntity Entity, Write<STransformComponent> Transform) =>
+        {
+            switch (Entity.Id % 4)
+            {
+                case 0:
+                    Transform.Value.LocalTransform.Location.X = 1.0f;
+                    break;
+                case 1:
+                    Interlocked.Add(ref Stamped, Transform.SetIfChanged(static (in STransformComponent Row) => ref Row.LocalTransform.Location.X, 2.0f) ? 1 : 0);
+                    break;
+                case 2:
+                    Interlocked.Add(ref Kept, Transform.SetIfChanged(static (in STransformComponent Row) => ref Row.LocalTransform.Location.X, 0.0f) ? 0 : 1);
+                    break;
+                default:
+                    _ = Transform.AsRead.Value.LocalTransform.Location.X;
+                    break;
+            }
+            Interlocked.Increment(ref Visited);
+        });
+
+        int Changed = 0;
+        int Unwritten = 0;
+        Tested.Moved.ForEach((FEntity Entity, Read<STransformComponent> Transform) =>
+        {
+            ++Changed;
+            Unwritten += Entity.Id % 4 >= 2 ? 1 : 0;
+        });
+
+        int Rerun = 0;
+        Tested.Moved.ForEach((FEntity Entity, Read<STransformComponent> Transform) => ++Rerun);
+
+        OutResults[0] = FirstRun;
+        OutResults[1] = Visited;
+        OutResults[2] = Stamped;
+        OutResults[3] = Kept;
+        OutResults[4] = Changed;
+        OutResults[5] = Unwritten;
+        OutResults[6] = Rerun;
+        return GCHandle.ToIntPtr(GCHandle.Alloc(Tested));
     }
 
     [ManagedExport]

@@ -43,20 +43,20 @@ namespace Lumina
 
     namespace
     {
-        /** Max samples in a curve preview. Fixed so both backends can use a stack array. */
+        // Fixed so both backends can use a stack array.
         constexpr int32 kMaxCurveSamples = 128;
 
         // Breathing room, so the curve extremes are not welded to the border.
         constexpr float kInsetFraction = 0.12f;
 
-        // Both axes normalized to [0,1] with Y flipped so 0 is the TOP, shared by tile and thumbnail paths.
+        // Both axes normalized to [0,1] with Y flipped so 0 is the top, shared by tile and thumbnail paths.
         struct FCurveSamples
         {
             float X[kMaxCurveSamples] = {};
             float Y[kMaxCurveSamples] = {};
             int32 Count = 0;
 
-            // Valid only when zero falls INSIDE the value range, since a clamped baseline reads as part of the shape.
+            // Valid only when zero falls inside the value range, since a clamped baseline reads as part of the shape.
             bool  bHasZeroLine = false;
             float ZeroY = 0.0f;
 
@@ -134,8 +134,6 @@ namespace Lumina
             }
         }
 
-        //~ Live tile painter -------------------------------------------------------------------------
-
         void PaintCurveTile(CObject* Asset, ImDrawList& DrawList, const ImVec2& Min, const ImVec2& Max)
         {
             const CCurveAsset* CurveAsset = Cast<CCurveAsset>(Asset);
@@ -190,8 +188,6 @@ namespace Lumina
             }
         }
 
-        //~ CPU thumbnail rasterizer ------------------------------------------------------------------
-
         struct FRGBA { uint8 R, G, B, A; };
 
         FRGBA ToRGBA8(const ImVec4& C)
@@ -200,7 +196,7 @@ namespace Lumina
             return FRGBA{ Chan(C.x), Chan(C.y), Chan(C.z), Chan(C.w) };
         }
 
-        // A curve is a FUNCTION, so filling each column between adjacent samples needs no line algorithm.
+        // A curve is a function, so filling each column between adjacent samples needs no line algorithm.
         bool PaintCurveThumbnail(CObject* Asset, uint32 Size, FPackageThumbnail& Out)
         {
             const CCurveAsset* CurveAsset = Cast<CCurveAsset>(Asset);

@@ -11,7 +11,7 @@ namespace Lumina
 {
     // Drives SInterpolatingMovementComponent and SSineWaveMovementComponent in game worlds.
     REFLECT()
-    class RUNTIME_API SMovementComponentSystem : public CEntitySystem
+    class RUNTIME_API CMovementComponentSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

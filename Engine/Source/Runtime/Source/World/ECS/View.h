@@ -373,7 +373,7 @@ namespace Lumina::ECS
             {
                 if (Group != nullptr)
                 {
-                    ForEachGroupedRange(0, Group->Num, std::move(Func));
+                    ForEachGroupedRange(0, Group->Num, Move(Func));
                     return;
                 }
             }
@@ -381,11 +381,11 @@ namespace Lumina::ECS
             // A write handle needs its row's dense slot, which only the indexed walk carries.
             if constexpr (bIsDirectScan && !bHandleAt<0>)
             {
-                ForEachDirect(std::move(Func));
+                ForEachDirect(Move(Func));
             }
             else
             {
-                ForEachFiltered(std::move(Func));
+                ForEachFiltered(Move(Func));
             }
         }
 
@@ -402,7 +402,7 @@ namespace Lumina::ECS
             {
                 if (Group != nullptr)
                 {
-                    ForEachGroupedRange(Begin, End, std::move(Func));
+                    ForEachGroupedRange(Begin, End, Move(Func));
                     return;
                 }
             }
@@ -795,14 +795,14 @@ namespace Lumina::ECS
         {
             if constexpr (std::is_const_v<TIncludeAt<0>> && CDataComponent<TBareAt<0>>)
             {
-                ForEachDirectScan([Inner = std::move(Func)](FEntity Entity, TBareAt<0>& Value) mutable
+                ForEachDirectScan([Inner = Move(Func)](FEntity Entity, TBareAt<0>& Value) mutable
                 {
                     InvokeEntityCallback(Inner, Entity, std::as_const(Value));
                 });
             }
             else
             {
-                ForEachDirectScan(std::move(Func));
+                ForEachDirectScan(Move(Func));
             }
         }
 
@@ -811,21 +811,21 @@ namespace Lumina::ECS
         {
             if constexpr (FilterCount == 0)
             {
-                Lumina::Get<0>(Includes).ForEachDense(std::move(Func));
+                Lumina::Get<0>(Includes).ForEachDense(Move(Func));
             }
             else
             {
                 // The probes go in by value too, so the predicate carries its pages rather than a pointer.
                 Lumina::Get<0>(Includes).ForEachDenseWhere(
                     [Probes = MakeFilterProbes()](FEntity Entity) { return !Probes.Rejects(Entity); },
-                    std::move(Func));
+                    Move(Func));
             }
         }
 
         template<typename TFunc>
         FORCEINLINE void ForEachFiltered(TFunc Func) const
         {
-            ForEachInRange(0, Driver->GetDenseSize(), std::move(Func));
+            ForEachInRange(0, Driver->GetDenseSize(), Move(Func));
         }
 
         TTuple<TComponentStorage<TBareComponent<TInclude>>...> Includes{};

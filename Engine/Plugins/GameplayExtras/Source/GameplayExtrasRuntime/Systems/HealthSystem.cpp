@@ -8,12 +8,12 @@
 namespace Lumina
 {
     // Heal broadcasts into script, so it runs deferred to the main thread and the countdown is all this system touches.
-    void SHealthSystem::Configure()
+    void CHealthSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
-    void SHealthSystem::OnUpdate(const SSystemContext& Context)
+    void CHealthSystem::OnUpdate(const SSystemContext& Context)
     {
         if (Context.GetWorldType() == EWorldType::Editor)
         {

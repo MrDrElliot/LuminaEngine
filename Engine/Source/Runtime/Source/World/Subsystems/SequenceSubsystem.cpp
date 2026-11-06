@@ -166,7 +166,7 @@ namespace Lumina
         CWorld* World = GetWorld();
         if (World != nullptr)
         {
-            SCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), Fade, Color, LetterboxAspect);
+            CCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), Fade, Color, LetterboxAspect);
         }
     }
 }

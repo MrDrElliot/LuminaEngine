@@ -1,16 +1,6 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Reads the per-frame scene snapshot, never live state, so LightCull and the base-pass lookup bin the same frustum.
-float3 ScreenToView(float2 ScreenCoord)
-{
-    float2 UV       = ScreenCoord / float2(Scene().ScreenSize.xy);
-    float4 NDC      = float4(UV * 2.0 - 1.0, 1.0, 1.0);
-    float4 ViewCoord = mul(GetInverseCameraProjection(), NDC);
-    ViewCoord       /= ViewCoord.w;
-    return ViewCoord.xyz;
-}
-
 float3 LineIntersectionWithZPlane(float3 StartPoint, float3 EndPoint, float ZDistance)
 {
     float3 Direction = EndPoint - StartPoint;
@@ -46,8 +36,9 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float2 MinTileSS  = float2(Tile.xy) * TileSize;
     float2 MaxTileSS  = float2(Tile.xy + 1) * TileSize;
 
-    float3 MinTile = ScreenToView(MinTileSS);
-    float3 MaxTile = ScreenToView(MaxTileSS);
+    // Reads the per-frame scene snapshot, never live state, so LightCull and the base-pass lookup bin the same frustum.
+    float3 MinTile = GetCameraViewRay(MinTileSS / float2(ScreenSize));
+    float3 MaxTile = GetCameraViewRay(MaxTileSS / float2(ScreenSize));
 
     // Positive view Z, and must match the log distribution ComputeClusterIndex inverts.
     float SliceNear = ZNear * pow(ZFar / ZNear, float(Tile.z)     / float(GridSize.z));

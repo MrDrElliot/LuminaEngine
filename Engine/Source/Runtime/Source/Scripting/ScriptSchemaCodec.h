@@ -8,7 +8,7 @@ namespace Lumina::Scripting
 {
     // Reads the schema wire outside the .NET host, so the codec can be tested without booting a runtime.
 
-    /** Decodes a managed-written schema buffer. False on a bad header, a truncation, or a record desync. */
+    // Decodes a managed-written schema buffer. False on a bad header, a truncation, or a record desync.
     RUNTIME_API bool ParseSchemaBlob(const TVector<uint8>& Blob, FScriptExportSchema& OutSchema);
 
     struct FManagedTypeDefinition;

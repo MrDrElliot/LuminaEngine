@@ -513,7 +513,7 @@ namespace Lumina
             }
         }
 
-        std::swap(StreamedLastFrame, StreamedThisFrame);
+        ElementOps::SwapElements(StreamedLastFrame, StreamedThisFrame);
         StreamedThisFrame.Clear();
 
         if (!StoppedScratch.IsEmpty())

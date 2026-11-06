@@ -4,6 +4,7 @@
 #include "Core/Object/Class.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/ViewVolume.h"
+#include "UI/Tools/AssetEditors/ShapeHandles.h"
 #include "World/Entity/Components/CameraComponent.h"
 
 #include <imgui_internal.h>
@@ -425,18 +426,13 @@ namespace Lumina
         case EHandleConstraint::Axis:
             {
                 // The captured axis, not the live one, so orbiting mid-drag cannot re-aim the constraint.
-                const FVector3 Axis = State.GrabAxis;
-                const FVector3 ToAnchor = State.GrabAnchor - RayOrigin;
-
-                const float AxisDotRay = Math::Dot(Axis, RayDirection);
-                const float Denominator = 1.0f - AxisDotRay * AxisDotRay;
-                if (Math::Abs(Denominator) < kEpsilon)
+                float AlongAxis = 0.0f;
+                if (!ShapeHandles::ClosestParamOnAxisToRay(State.GrabAnchor, State.GrabAxis, RayOrigin, RayDirection, AlongAxis))
                 {
                     return false;
                 }
 
-                const float AlongAxis = (AxisDotRay * Math::Dot(RayDirection, ToAnchor) - Math::Dot(Axis, ToAnchor)) / Denominator;
-                OutPosition = State.GrabAnchor + Axis * AlongAxis;
+                OutPosition = State.GrabAnchor + State.GrabAxis * AlongAxis;
                 return true;
             }
 

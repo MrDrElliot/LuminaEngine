@@ -65,8 +65,7 @@ namespace Lumina
                                     : (Env.SkyMode == ESkyMode::Gradient)   ? GSkyMode_Gradient
                                     : (Env.SkyMode == ESkyMode::HDRI)       ? GSkyMode_HDRI
                                                                             : GSkyMode_Dynamic;
-            float SkyModeAsFloat;
-            std::memcpy(&SkyModeAsFloat, &SkyModeBits, sizeof(float));
+            const float SkyModeAsFloat = std::bit_cast<float>(SkyModeBits);
 
             EnvironmentParams.SolidSkyColor = FVector4(Env.SolidSkyColor, 0.0f);
             EnvironmentParams.ZenithColor   = FVector4(Env.ZenithColor, Env.HorizonExponent);

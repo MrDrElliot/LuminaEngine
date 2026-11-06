@@ -25,7 +25,7 @@ namespace Lumina::Fmt
         Space,
     };
 
-    /** One replacement field's specifier, already parsed. Width and Precision are -1 when absent. */
+    // One replacement field's specifier, already parsed. Width and Precision are -1 when absent.
     struct FFormatSpec
     {
         int32        Width      = -1;
@@ -38,7 +38,7 @@ namespace Lumina::Fmt
         bool         bZeroPad   = false;
     };
 
-    /** Growable character sink; the data pointer moves on writes, so never hold one across a write. */
+    // Growable character sink; the data pointer moves on writes, so never hold one across a write.
     class FFormatBuffer
     {
     public:
@@ -116,7 +116,7 @@ namespace Lumina::Fmt
             Used += Count;
         }
 
-        /** Hands back a writable run of Count bytes; follow with Advance once the real length is known. */
+        // Hands back a writable run of Count bytes; follow with Advance once the real length is known.
         FORCEINLINE char* ReserveTail(int32 Count)
         {
             if (Count > Cap - Used)
@@ -159,7 +159,7 @@ namespace Lumina::Fmt
         }
     };
 
-    /** Formats into a stack buffer and only reaches the allocator when the text outgrows it. */
+    // Formats into a stack buffer and only reaches the allocator when the text outgrows it.
     template <size_t InlineCapacity = 256, ContainerAllocatorType TAllocator = FHeapAllocator>
     class TInlineFormatBuffer final : public FFormatBuffer
     {
@@ -205,7 +205,7 @@ namespace Lumina::Fmt
         char Storage[InlineCapacity];
     };
 
-    /** Writes into a caller-owned array and drops whatever does not fit. */
+    // Writes into a caller-owned array and drops whatever does not fit.
     class FFixedFormatBuffer final : public FFormatBuffer
     {
     public:
@@ -281,7 +281,7 @@ namespace Lumina::Fmt
         uint32            Count  = 0;
     };
 
-    /** Anything that is not arithmetic, a pointer or string-like reaches formatting through this. */
+    // Anything that is not arithmetic, a pointer or string-like reaches formatting through this.
     template <typename T>
     concept CustomFormattable = requires(FFormatBuffer& Out, const T& Value, const FFormatSpec& Spec)
     {
@@ -508,7 +508,7 @@ namespace Lumina::Fmt
             return Digits <= kMaxFieldDigits;
         }
 
-        /** Walks the format string the way the runtime parser does, but only to reject bad input. */
+        // Walks the format string the way the runtime parser does, but only to reject bad input.
         constexpr void ValidateFormatString(FStringView Fmt, const EFormatArgType* Types, size_t TypeCount)
         {
             int32 Index = 0;
@@ -697,7 +697,7 @@ namespace Lumina::Fmt
         }
     }
 
-    /** A format string checked where it is written, so a bad one is a compile error, not a bad log line. */
+    // A format string checked where it is written, so a bad one is a compile error, not a bad log line.
     template <typename... TArgs>
     class TFormatString
     {
@@ -723,7 +723,7 @@ namespace Lumina::Fmt
         FStringView Value;
     };
 
-    /** Opts a format string out of the compile-time check, for text that only exists at runtime. */
+    // Opts a format string out of the compile-time check, for text that only exists at runtime.
     struct FRuntimeFormatString
     {
         FStringView Value;
@@ -736,7 +736,7 @@ namespace Lumina::Fmt
         return FRuntimeFormatString(Text);
     }
 
-    /** The parser and every value writer sit behind this one symbol, compiled once for the whole engine. */
+    // The parser and every value writer sit behind this one symbol, compiled once for the whole engine.
     RUNTIME_API void VFormatTo(FFormatBuffer& Out, FStringView Fmt, FFormatArgs Args);
 
     RUNTIME_API void WriteAligned(FFormatBuffer& Out, FStringView Text, const FFormatSpec& Spec);

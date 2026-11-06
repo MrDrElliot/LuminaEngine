@@ -47,7 +47,7 @@ namespace Lumina
 
         uint32 ChunksFor(int32 DenseSlots, uint32 ChunkSize)
         {
-            return ((uint32)DenseSlots + ChunkSize - 1u) / ChunkSize;
+            return RenderUtils::GetGroupCount((uint32)DenseSlots, ChunkSize);
         }
     }
 
@@ -1157,7 +1157,7 @@ namespace Lumina
                 for (uint32 Face = 0; Face < 6; ++Face)
                 {
                     SetFace(Face);
-                    ShadowData.ViewProjection[Face] = LightView.ToReverseDepthViewProjectionMatrix();
+                    ShadowData.ViewProjection[Face] = LightView.ToStandardDepthViewProjectionMatrix();
 
                     // A face no view reaches keeps no tile, which the shaders read as unshadowed.
                     FLightShadow& Shadow   = ShadowData.Shadow[Face];
@@ -1202,7 +1202,7 @@ namespace Lumina
                 const float ShadowNear = Math::Max(Req.Attenuation * 0.01f, 0.1f);
                 FViewVolume ViewVolume(Req.OuterFOVDegrees * 2.0f, 1.0f, ShadowNear, Req.Attenuation);
                 ViewVolume.SetView(Req.Position, Req.Direction, Req.Up);
-                ShadowData.ViewProjection[0] = ViewVolume.ToReverseDepthViewProjectionMatrix();
+                ShadowData.ViewProjection[0] = ViewVolume.ToStandardDepthViewProjectionMatrix();
 
                 FLightShadow& Shadow   = ShadowData.Shadow[0];
                 Shadow.AtlasUVOffset   = Tile.UVOffset;
@@ -1219,11 +1219,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::NotifyMaxLightsHit()
     {
-        // Every overflowing frame lands here, so the log hears about it once.
-        static TAtomic<bool> bWarned{false};
-        if (!bWarned.exchange(true, std::memory_order_relaxed))
-        {
-            LOG_WARN("[Rendering] More than {} lights reach the view, so the rest are left out.", MAX_LIGHTS);
-        }
+        LOG_WARN_ONCE("[Rendering] More than {} lights reach the view, so the rest are left out.", MAX_LIGHTS);
     }
 }

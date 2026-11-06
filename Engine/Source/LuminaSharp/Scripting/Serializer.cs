@@ -9,13 +9,13 @@ namespace LuminaSharp;
 // Writes a type's schema, its fields' types and metadata and its functions, which the native ScriptSchemaCodec reads.
 internal static class Serializer
 {
-    /// <summary>'LSCH'. Mirrors Lumina::Scripting::kScriptSchemaMagic.</summary>
+    // 'LSCH', mirroring Lumina::Scripting::kScriptSchemaMagic.
     private const uint SchemaMagic = 0x4843534Cu;
 
     // Mirrors Lumina::Scripting::kScriptSchemaVersion, bumped only when an existing field changes meaning, type or position.
     private const ushort SchemaVersion = 3;
 
-    /// <summary>Mirrors Lumina::Scripting::EScriptSchemaRecord.</summary>
+    // Mirrors Lumina::Scripting::EScriptSchemaRecord.
     private enum ERecord : byte
     {
         Field = 0,

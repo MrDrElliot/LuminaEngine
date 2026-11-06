@@ -9,7 +9,7 @@
 
 namespace Lumina
 {
-    // Per-world scheduler for latent coroutine waits and script waits, ticked once a frame by SCoroutineSystem.
+    // Per-world scheduler for latent coroutine waits and script waits, ticked once a frame by CCoroutineSystem.
     class RUNTIME_API FCoroutineManager : public ECS::FResource
     {
     public:

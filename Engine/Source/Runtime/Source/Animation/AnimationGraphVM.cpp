@@ -6,6 +6,7 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Containers/Algorithm.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Memory/Memcpy.h"
 #include "Physics/PhysicsScene.h"
@@ -324,7 +325,7 @@ namespace Lumina
                 }
                 if (++Stamp == 0u)
                 {
-                    std::fill(Stamps.begin(), Stamps.end(), 0u);
+                    Algo::Fill(Stamps, 0u);
                     Stamp = 1u;
                 }
             }

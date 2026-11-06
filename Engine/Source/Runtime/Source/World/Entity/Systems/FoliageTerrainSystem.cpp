@@ -9,7 +9,7 @@
 
 namespace Lumina
 {
-    void SFoliageTerrainSystem::Configure()
+    void CFoliageTerrainSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
@@ -28,7 +28,7 @@ namespace Lumina
         };
     }
 
-    void SFoliageTerrainSystem::OnUpdate(const SSystemContext&)
+    void CFoliageTerrainSystem::OnUpdate(const SSystemContext&)
     {
         using FoliageTerrainSystemInternal::FTerrainDirty;
 

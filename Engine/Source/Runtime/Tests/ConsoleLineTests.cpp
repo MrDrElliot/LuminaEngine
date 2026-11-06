@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include "Containers/StringFormat.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "GUID/GUID.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
 using namespace Lumina;
@@ -54,8 +56,7 @@ TEST(ConsoleConfig, SavedValueIsRestoredOnLoad)
 {
     FConsoleRegistry& Registry = FConsoleRegistry::Get();
     const float Original = Registry.GetAs<float>("DebugDraw.MaxDistance");
-    const FString Path = Filesystem::GetTempDirectory() + "/LuminaConsoleConfigTest.json";
-    Filesystem::RemoveFile(Path);
+    const FString Path = Filesystem::GetTempDirectory() + Format("/LuminaConsoleConfigTest_{}.json", FGuid::New());
 
     ASSERT_TRUE(Registry.SetAs<float>("DebugDraw.MaxDistance", 123.5f));
     ASSERT_TRUE(Registry.SaveToFile(Path));

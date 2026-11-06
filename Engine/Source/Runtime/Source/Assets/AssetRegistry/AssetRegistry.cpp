@@ -12,6 +12,7 @@
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/Package/PackageNameTable.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
@@ -53,10 +54,7 @@ namespace Lumina
                 Out = Paths::GetEngineInstallDirectory();
             }
             if (Out.IsEmpty()) return {};
-            while (!Out.IsEmpty() && Out.Last() == '/')
-            {
-                Out.LeftChopInline(1);
-            }
+            Out.SetLen(Paths::TrimTrailingSeparators(Out).Len());
             Out += "/Intermediates/AssetRegistry.bin";
             return Out;
         }

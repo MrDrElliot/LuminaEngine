@@ -25,13 +25,13 @@ namespace Lumina
         }
     }
 
-    void SBlockoutSystem::Configure()
+    void CBlockoutSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    bool SBlockoutSystem::Rebuild(SBlockoutComponent& Shape, SDynamicMeshComponent& Mesh, bool bKeepCPUData)
+    bool CBlockoutSystem::Rebuild(SBlockoutComponent& Shape, SDynamicMeshComponent& Mesh, bool bKeepCPUData)
     {
         using BlockoutSystemInternal::ApplyMaterial;
 
@@ -60,7 +60,7 @@ namespace Lumina
         return Mesh.Commit();
     }
 
-    void SBlockoutSystem::OnUpdate(const SSystemContext& Context)
+    void CBlockoutSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace BlockoutSystemInternal;
 

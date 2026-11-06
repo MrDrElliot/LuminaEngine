@@ -474,13 +474,6 @@ uint WangHash(uint x)
     return x;
 }
 
-uint PCGHash(uint state)
-{
-    state = state * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
 float RandUnit(inout uint state)
 {
     state = PCGHash(state);
@@ -492,6 +485,16 @@ float RandSigned(inout uint state)
     return RandUnit(state) * 2.0 - 1.0;
 }
 
+float3 RandOnUnitSphere(inout uint state)
+{
+    float u = RandUnit(state);
+    float v = RandUnit(state);
+    float theta = u * TWO_PI;
+    float phi   = acos(2.0 * v - 1.0);
+    float sinPhi = sin(phi);
+    return float3(sinPhi * cos(theta), sinPhi * sin(theta), cos(phi));
+}
+
 float3 RandInUnitSphere(inout uint state)
 {
     [unroll]
@@ -501,22 +504,7 @@ float3 RandInUnitSphere(inout uint state)
         if (dot(p, p) <= 1.0) return p;
     }
     // Falls back to a surface point after four rejections.
-    float u = RandUnit(state);
-    float v = RandUnit(state);
-    float theta = u * 6.2831853;
-    float phi   = acos(2.0 * v - 1.0);
-    float sinPhi = sin(phi);
-    return float3(sinPhi * cos(theta), sinPhi * sin(theta), cos(phi));
-}
-
-float3 RandOnUnitSphere(inout uint state)
-{
-    float u = RandUnit(state);
-    float v = RandUnit(state);
-    float theta = u * 6.2831853;
-    float phi   = acos(2.0 * v - 1.0);
-    float sinPhi = sin(phi);
-    return float3(sinPhi * cos(theta), sinPhi * sin(theta), cos(phi));
+    return RandOnUnitSphere(state);
 }
 
 // Turns a color about the gray axis, which shifts its hue while keeping its brightness.
@@ -531,7 +519,7 @@ float3 RotateHue(float3 Color, float Angle)
 float3 RandDirectionInCone(inout uint state, float3 forward, float3 right, float3 up, float halfAngle)
 {
     float angle = halfAngle * RandUnit(state);
-    float t = RandUnit(state) * 6.2831853;
+    float t = RandUnit(state) * TWO_PI;
     float s = sin(angle);
     return up * cos(angle) + (right * cos(t) + forward * sin(t)) * s;
 }
@@ -724,14 +712,14 @@ float3 SampleEmitterShape(inout uint state, uint shape, float3 shapeSize, float 
     {
         // Cone opening along up; base radius = x, height = y.
         float h = RandUnit(state);
-        float t = RandUnit(state) * 6.2831853;
+        float t = RandUnit(state) * TWO_PI;
         float rAt = shapeSize.x * h;
         float3 offset = (right * cos(t) + forward * sin(t)) * rAt + up * (shapeSize.y * h);
         return offset;
     }
     else if (shape == EMITTER_SHAPE_RING)
     {
-        float t = RandUnit(state) * 6.2831853;
+        float t = RandUnit(state) * TWO_PI;
         float outer = shapeSize.x;
         float inner = min(shapeSize.y, outer);
         float r = lerp(inner, outer, RandUnit(state));
@@ -739,7 +727,7 @@ float3 SampleEmitterShape(inout uint state, uint shape, float3 shapeSize, float 
     }
     else // EMITTER_SHAPE_DISK
     {
-        float t = RandUnit(state) * 6.2831853;
+        float t = RandUnit(state) * TWO_PI;
         float outer = shapeSize.x;
         float inner = min(shapeSize.y, outer);
         float r = lerp(inner, outer, sqrt(RandUnit(state)));

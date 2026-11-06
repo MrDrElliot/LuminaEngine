@@ -18,10 +18,7 @@ namespace Lumina
         EGamepadFamily DetectFamily(const FString& Name)
         {
             FString Lower = Name;
-            for (char& C : Lower)
-            {
-                C = (char)std::tolower((unsigned char)C);
-            }
+            Lower.ToLower();
             auto Has = [&Lower](const char* Token) { return Lower.Find(Token) != Constants::kIndexNone; };
 
             if (Has("xbox") || Has("xinput"))

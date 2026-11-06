@@ -10,7 +10,7 @@
 
 namespace Lumina
 {
-    // The client's render clock behind the server, advanced by SNetMovementInterpSystem from what SNetworkSystem last received.
+    // The client's render clock behind the server, advanced by CNetMovementInterpSystem from what CNetworkSystem last received.
     struct FNetInterpClock : ECS::FResource
     {
         double LatestServerTime   = 0.0;
@@ -19,9 +19,9 @@ namespace Lumina
         bool   bInitialized       = false;
     };
 
-    // Writes each proxy's interpolated pose from its FRepTransform ring in PostPhysics, apart from the exclusive SNetworkSystem so it can overlap other systems.
+    // Writes each proxy's interpolated pose from its FRepTransform ring in PostPhysics, apart from the exclusive CNetworkSystem so it can overlap other systems.
     REFLECT()
-    class NETWORKINGRUNTIME_API SNetMovementInterpSystem : public CEntitySystem
+    class NETWORKINGRUNTIME_API CNetMovementInterpSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

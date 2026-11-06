@@ -29,6 +29,9 @@ namespace Lumina
         // Display resolution RGBA16F with storage and color attachment use, which the upscaler fills completely.
         FRenderTexture Output;
 
+        // Identifies the view across frames, so an upscaler keeps one feature and history per view.
+        const void* ViewKey = nullptr;
+
         FUIntVector2 RenderSize  = FUIntVector2(0);
         FUIntVector2 DisplaySize = FUIntVector2(0);
 
@@ -71,8 +74,8 @@ namespace Lumina
         // Records into CL. Every input is readable and Output writable, and Output must be complete when it returns.
         virtual void Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs) = 0;
 
-        // The view it was evaluating for went away, so per-view state such as a feature handle can be freed.
-        virtual void ReleaseViewResources() {}
+        // The view ViewKey named went away or stopped using this upscaler, so its state such as a feature handle can be freed.
+        virtual void ReleaseViewResources(const void* ViewKey) {}
     };
 
     struct RUNTIME_API FUpscalerRegistry

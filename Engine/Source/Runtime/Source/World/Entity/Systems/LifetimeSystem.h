@@ -11,7 +11,7 @@
 namespace Lumina
 {
     REFLECT()
-    class RUNTIME_API SLifetimeSystem : public CEntitySystem
+    class RUNTIME_API CLifetimeSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

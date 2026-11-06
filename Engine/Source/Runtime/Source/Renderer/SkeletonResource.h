@@ -8,7 +8,7 @@
 
 namespace Lumina
 {
-    /** The bone hierarchy a skinned mesh poses against. Owned by the skeleton asset, not by the mesh. */
+    // The bone hierarchy a skinned mesh poses against, owned by the skeleton asset rather than the mesh.
     struct RUNTIME_API FSkeletonResource : INonCopyable
     {
         struct FBoneInfo

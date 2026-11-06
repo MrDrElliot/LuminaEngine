@@ -351,8 +351,7 @@ namespace Lumina
                 PC.bStep          = Step > 0u || Interaction.bFirstPassSteps ? 1u : 0u;
                 DispatchCompute(CL, SimShader, PC, Groups, Groups);
 
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                RHI::Barriers::ComputeToCompute(CL);
             }
         }
 

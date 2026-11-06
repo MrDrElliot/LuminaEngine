@@ -307,17 +307,42 @@ struct FCustomPrimitiveData
     property float4 AsColor     { get { return float4(unpack_u8u32(Packed)) / 255.0; } }
 }
 
-// Mirror of Lumina::FSurfaceDescGPU (80 B). kNoSurfaceDesc means the LOD is fixed (skinned, forced, or LODs off).
+// Mirror of Lumina::FSurfaceDescGPU (208 B). kNoSurfaceDesc means the LOD is fixed (skinned, forced, or LODs off).
 static const uint kNoSurfaceDesc = NO_SURFACE_DESC_INDEX;
 
 struct FSurfaceDesc
 {
     uint  LODMeshletOffset[MESHLET_MAX_LODS];
     uint  LODMeshletCount[MESHLET_MAX_LODS];
-    // Mesh-local error per LOD, non-decreasing, so the first one a view cannot accept ends the walk.
+    // Mesh-local error per LOD, non-decreasing, so the first one a view cannot accept ends the walk. A cluster slot's smallest self error.
     float LODError[MESHLET_MAX_LODS];
+    // A cluster slot's largest parent error, non-decreasing with the slot.
+    float LODParentError[MESHLET_MAX_LODS];
     uint  NumLODs;
-    uint  _Pad;
+    uint  Flags;
+    // The mesh LOD distance scale, multiplied into every error above and into the per-meshlet bounds at selection time.
+    float LODErrorMultiplier;
+    uint  _Pad1;
+
+    property bool bClusterLOD { get { return (Flags & SURFACE_DESC_CLUSTER_LOD) != 0u; } }
+    bool IsVoxelSlot(uint Slot)       { return (Flags & (1u << (SURFACE_DESC_VOXEL_SHIFT + Slot))) != 0u; }
+    bool HasVoxelParent(uint Slot)    { return (Flags & (1u << (SURFACE_DESC_VOXEL_PARENT_SHIFT + Slot))) != 0u; }
+}
+
+// Mirror of Lumina::FMeshletLODBounds (48 B), one per meshlet of a cluster LOD mesh.
+struct FMeshletLODBounds
+{
+    float3 SelfCenter;
+    float  SelfRadius;
+    float3 ParentCenter;
+    float  ParentRadius;
+    float  SelfError;
+    float  ParentError;
+    uint   Flags;
+    uint   Level;
+
+    property bool bVoxel       { get { return (Flags & MESHLET_LOD_FLAG_VOXEL) != 0u; } }
+    property bool bVoxelParent { get { return (Flags & MESHLET_LOD_FLAG_VOXEL_PARENT) != 0u; } }
 }
 
 // Mirror of Lumina::FMeshlet.
@@ -332,6 +357,7 @@ struct FMeshlet
     property uint TriangleCount    { get { return (PackedCounts >> MESHLET_TRIANGLE_COUNT_SHIFT) & MESHLET_COUNT_MASK; } }
     property uint LODIndex         { get { return (PackedCounts >> MESHLET_LOD_SHIFT) & MESHLET_LOD_MASK; } }
     property bool bShortVertexRefs { get { return ((PackedCounts >> MESHLET_SHORT_REFS_SHIFT) & 1u) != 0u; } }
+    property bool bVoxel           { get { return ((PackedCounts >> MESHLET_VOXEL_SHIFT) & 1u) != 0u; } }
 };
 
 // Built from the float exponent field rather than exp2 so C++ and the shader produce identical bits.
@@ -464,6 +490,13 @@ struct FMeshletHeader
 
     int4            PositionGrid;
 
+    // Per meshlet, read only while Flags carries MESH_HEADER_FLAG_CLUSTER_LOD.
+    FMeshletLODBounds* LODBounds;
+    uint            Flags;
+    uint            _Pad0;
+
+    property bool bClusterLOD { get { return (Flags & MESH_HEADER_FLAG_CLUSTER_LOD) != 0u; } }
+
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
     property float3 LocalBoundsMin    { get { return float3(LocalMinX, LocalMinY, LocalMinZ); } }
@@ -516,6 +549,17 @@ struct FInstanceStatic
     // Only meaningful when the cull entry has bCustomLayers.
     uint            RenderLayers;
 }
+
+// Mirror of Lumina::FInstanceProxy (32 B), the splat a retained slot draws as once it is too small for meshlets.
+struct FInstanceProxy
+{
+    float3 LocalCenter;
+    float  LocalRadius;
+    uint   PackedNormal;
+    uint   PackedUV;
+    uint   Color;
+    uint   Flags;
+};
 
 // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
 static const uint kNoMeshletVisibility = 0u;
@@ -949,9 +993,10 @@ struct FCullData
     float    CullFarPlane;
     // Render layers the primary camera draws, for passes that cull without a cull view.
     uint     CameraLayerMask;
-    // Holds the struct at a 16-byte multiple, which the members after it in FSceneGlobalData rely on.
-    uint     _CullPad1;
-    uint     _CullPad2;
+    // VG_FLAG_* bits, the project's virtual geometry toggles.
+    uint     VirtualGeometryFlags;
+    // Projected diameter in pixels under which an instance leaves the meshlet path for its far proxy.
+    float    ProxyTransitionPixels;
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.
@@ -1123,19 +1168,33 @@ struct FSceneGlobalData
     GPUSpan<FWeatherData>   Weather;
 };
 
+// Octahedral fold of a direction onto [-1, 1]^2, the shared core of every oct packer here.
+float2 OctEncode(float3 N)
+{
+    float3 d = normalize(N);
+    float2 e = d.xy * (1.0 / (abs(d.x) + abs(d.y) + abs(d.z)));
+    if (d.z < 0.0)
+    {
+        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e;
+}
+
+float3 OctDecode(float2 e)
+{
+    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
+    float t = max(-n.z, 0.0);
+    n.xy -= float2(n.x >= 0.0 ? t : -t, n.y >= 0.0 ? t : -t);
+    return normalize(n);
+}
+
 // Matches Lumina::PackTangent, and the bitangent is cross(N, tangent) * sign.
 float4 UnpackTangent(uint Packed)
 {
     int sx = bitfieldExtract(int(Packed),  0, 15);
     int sy = bitfieldExtract(int(Packed), 15, 15);
-    float2 e = float2(sx, sy) * (1.0 / 16383.0);
-
-    float3 t = float3(e, 1.0 - abs(e.x) - abs(e.y));
-    float ht = max(-t.z, 0.0);
-    t.xy -= float2(t.x >= 0.0 ? ht : -ht, t.y >= 0.0 ? ht : -ht);
-
     float Sign = ((Packed >> 30u) & 1u) != 0u ? 1.0 : -1.0;
-    return float4(normalize(t), Sign);
+    return float4(OctDecode(float2(sx, sy) * (1.0 / 16383.0)), Sign);
 }
 
 // Octahedral 16-16 unit normal, matching Lumina::UnpackNormal.
@@ -1143,37 +1202,20 @@ float3 UnpackNormal(uint Packed)
 {
     int sx = bitfieldExtract(int(Packed),  0, 16);
     int sy = bitfieldExtract(int(Packed), 16, 16);
-    float2 e = float2(sx, sy) * (1.0 / 32767.0);
-
-    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
-    float hn = max(-n.z, 0.0);
-    n.xy -= float2(n.x >= 0.0 ? hn : -hn, n.y >= 0.0 ? hn : -hn);
-    return normalize(n);
+    return OctDecode(float2(sx, sy) * (1.0 / 32767.0));
 }
 
 // Inverse of UnpackNormal, matching Lumina::PackNormal.
 uint PackNormal(float3 n)
 {
-    float3 d = normalize(n);
-    float2 e = d.xy * (1.0 / (abs(d.x) + abs(d.y) + abs(d.z)));
-    if (d.z < 0.0)
-    {
-        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    int2 q = int2(round(clamp(e, -1.0, 1.0) * 32767.0));
+    int2 q = int2(round(clamp(OctEncode(n), -1.0, 1.0) * 32767.0));
     return (uint(q.x) & 0xFFFFu) | ((uint(q.y) & 0xFFFFu) << 16);
 }
 
 // Inverse of UnpackTangent, 15-15 signed octahedral plus a handedness sign at bit 30.
 uint PackTangent(float4 t)
 {
-    float3 d = normalize(t.xyz);
-    float2 e = d.xy * (1.0 / (abs(d.x) + abs(d.y) + abs(d.z)));
-    if (d.z < 0.0)
-    {
-        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    int2 q = int2(round(clamp(e, -1.0, 1.0) * 16383.0));
+    int2 q = int2(round(clamp(OctEncode(t.xyz), -1.0, 1.0) * 16383.0));
     uint Packed = (uint(q.x) & 0x7FFFu) | ((uint(q.y) & 0x7FFFu) << 15);
     if (t.w >= 0.0)
     {
@@ -1185,30 +1227,35 @@ uint PackTangent(float4 t)
 // Unlike PackNormal, keeps the oct coords as floats so they survive alpha blending.
 float2 OctEncode01(float3 N)
 {
-    N = normalize(N);
-    float2 e = N.xy * (1.0 / (abs(N.x) + abs(N.y) + abs(N.z)));
-    if (N.z < 0.0)
-    {
-        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    return e * 0.5 + 0.5;
+    return OctEncode(N) * 0.5 + 0.5;
 }
 
 float3 OctDecode01(float2 Enc)
 {
-    float2 e = Enc * 2.0 - 1.0;
-    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
-    float t = max(-n.z, 0.0);
-    n.xy -= float2(n.x >= 0.0 ? t : -t, n.y >= 0.0 ? t : -t);
-    return normalize(n);
+    return OctDecode(Enc * 2.0 - 1.0);
 }
 
 
+uint PackHalf2(float2 V)
+{
+    return f32tof16(V.x) | (f32tof16(V.y) << 16u);
+}
+
+float2 UnpackHalf2(uint P)
+{
+    return float2(f16tof32(P & 0xFFFFu), f16tof32(P >> 16u));
+}
+
 float2 UnpackUV(uint Packed)
 {
-    uint Lo = Packed & 0xFFFFu;
-    uint Hi = Packed >> 16u;
-    return float2(f16tof32(Lo), f16tof32(Hi));
+    return UnpackHalf2(Packed);
+}
+
+uint PCGHash(uint State)
+{
+    State = State * 747796405u + 2891336453u;
+    uint Word = ((State >> ((State >> 28u) + 4u)) ^ State) * 277803737u;
+    return (Word >> 22u) ^ Word;
 }
 
 // Cofactor-form inverse-transpose. The indexing is row-wise, and reading columns yields inverse(A).
@@ -1251,23 +1298,13 @@ float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
         float4(0.0, 0.0, 0.0, 1.0));
 }
 
-// The step VogelDiskSample takes between consecutive taps, 2 * PI * (1 - 1 / PHI).
+// The angle between consecutive Vogel disk taps, 2 * PI * (1 - 1 / PHI).
 static const float kVogelGoldenAngle = 2.399963229728653;
 
 // Turns a tap's unit direction by a precomputed (cos, sin), so a loop pays one sincos instead of one per tap.
 float2 RotateVogel(float2 Dir, float2 Step)
 {
     return float2(Dir.x * Step.x - Dir.y * Step.y, Dir.x * Step.y + Dir.y * Step.x);
-}
-
-float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)
-{
-    float GoldenAngle = 2.0 * PI * (1.0 - 1.0 / PHI);
-    float r           = sqrt((float(SampleIndex) + 0.5) / float(SamplesCount));
-    float theta       = float(SampleIndex) * GoldenAngle + Angle;
-    float s, c;
-    sincos(theta, s, c);
-    return float2(r * c, r * s);
 }
 
 // Triangular-PDF dither (Gjol/Playdead) in a fixed pattern, since a per-frame one flickers wherever a later pass quantizes coarsely.
@@ -1278,6 +1315,12 @@ float3 ScreenSpaceDither(float2 ScreenPos)
     float3 R0 = frac(S0 / float3(103.0, 71.0, 97.0));
     float3 R1 = frac(S1 / float3(89.0, 113.0, 127.0));
     return (R0 + R1 - 1.0) / 255.0;
+}
+
+// Jimenez's interleaved gradient noise in its fixed screen-space pattern.
+float FixedInterleavedGradientNoise(float2 PixelPos)
+{
+    return frac(52.9829189 * frac(dot(PixelPos, float2(0.06711056, 0.00583715))));
 }
 
 uint4 UnpackUIntToUVec4(uint Packed)
@@ -1305,11 +1348,6 @@ float4 GetLightColor(FLight Light)
     return UnpackColor(Light.Color);
 }
 
-bool IsApproximatelyEqual(float a, float b, float EPSILON)
-{
-    return abs(a - b) <= (abs(a) < abs(b) ? abs(b) : abs(a)) * EPSILON;
-}
-
 float max3(float3 V)
 {
     return max(max(V.x, V.y), V.z);
@@ -1323,26 +1361,6 @@ bool HasFlag(uint Value, uint Flag)
 bool HasFlag(uint Value, ELightFlags Flag)
 {
     return (Value & (uint)Flag) != 0u;
-}
-
-bool HasAllFlags(uint Value, uint Flag)
-{
-    return (Value & Flag) == Flag;
-}
-
-uint SetFlag(uint Value, uint Flag)
-{
-    return Value | Flag;
-}
-
-uint ClearFlag(uint Value, uint Flag)
-{
-    return Value & (~Flag);
-}
-
-uint ToggleFlag(uint Value, uint Flag)
-{
-    return Value ^ Flag;
 }
 
 // Rec. 709 luma, the single luminance definition for the engine.

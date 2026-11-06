@@ -3,6 +3,7 @@
 #include <cfloat>
 #include "AI/Navigation/NavClusterGraph.h"
 #include "AI/Navigation/NavTypes.h"
+#include "Core/Math/Random.h"
 #include "Core/Threading/Sync.h"
 
 class dtNavMesh;
@@ -12,7 +13,7 @@ namespace Lumina
 {
     struct SNavTileData;
 
-    /** World-space AABB of a loaded nav tile + its grid coords. */
+    // World-space AABB of a loaded nav tile and its grid coords.
     struct FNavTileBounds
     {
         FVector3   Min = FVector3( FLT_MAX);
@@ -21,7 +22,7 @@ namespace Lumina
         int32       Y = 0;
     };
 
-    /** Snapshot of cached debug data sizes. Cheap; safe to call every frame. */
+    // Snapshot of cached debug data sizes, cheap enough to call every frame.
     struct FNavDebugStats
     {
         int32 LoadedTiles    = 0;
@@ -30,7 +31,7 @@ namespace Lumina
         int32 OffMeshLinks   = 0;
     };
 
-    /** Runtime navmesh: dtNavMesh + atomic-flag CAS query pool. Construct on main thread; query from any. */
+    // Runtime navmesh over dtNavMesh with an atomic-flag query pool, constructed on the main thread and queried from any.
     class RUNTIME_API FNavMesh
     {
     public:
@@ -43,11 +44,10 @@ namespace Lumina
         FNavMesh(FNavMesh&&) = delete;
         FNavMesh& operator=(FNavMesh&&) = delete;
 
-        /** Empty mesh sized for MaxResidentTiles; tiles arrive through AddTile. */
+        // Empty mesh sized for MaxResidentTiles, with tiles arriving through AddTile.
         bool Initialize(const FVector3& Origin, float TileWorldSize, int32 MaxResidentTiles, int32 MaxPolysPerTile);
 
-        /** Tiles is consumed; each blob is copied into Detour memory. Every non-empty tile is made resident,
-         *  so MaxResidentTiles must be at least that many. */
+        // Consumes Tiles and makes every non-empty one resident, so MaxResidentTiles must be at least that many.
         bool Initialize(const FVector3& Origin, float TileWorldSize, int32 MaxResidentTiles, int32 MaxPolysPerTile, TVector<SNavTileData>&& Tiles);
 
         void Shutdown();
@@ -57,12 +57,12 @@ namespace Lumina
         bool ProjectPoint(const FVector3& World, const FVector3& Extents, const FNavQueryFilter& Filter, FVector3& Out) const;
         bool FindPath(const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavPath& Out) const;
 
-        /** Walks the surface from Start toward End. False when the query could not run; Out.bHit says whether a wall stopped it. */
+        // Walks the surface from Start toward End, returning false when the query could not run, and Out.bHit says whether a wall stopped it.
         bool Raycast(const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, SNavRaycastResult& Out) const;
 
         bool FindRandomPoint(const FVector3& Center, float Radius, const FNavQueryFilter& Filter, FVector3& Out) const;
 
-        /** NewBlob is consumed; empty removes the tile. Serializes against in-flight queries itself. */
+        // Consumes NewBlob, where empty removes the tile, and serializes against in-flight queries itself.
         bool RebuildTile(int32 TileX, int32 TileY, TVector<uint8>&& NewBlob);
 
         // One tile in a batched swap, where an empty blob removes the tile.
@@ -76,18 +76,17 @@ namespace Lumina
         // Every swap lands under one exclusive hold, so a batch waits on in-flight queries once. Returns how many landed.
         int32 RebuildTiles(const TVector<FTileSwap>& Swaps);
 
-        /** Pages a baked tile in. Fails if the resident pool is full or the blob does not match this layout. */
+        // Pages a baked tile in, failing if the resident pool is full or the blob does not match this layout.
         bool AddTile(int32 TileX, int32 TileY, const TVector<uint8>& Blob);
 
-        /** Pages a tile out. True when the slot is free afterwards, including when it already was. */
+        // Pages a tile out, returning true when the slot is free afterwards, including when it already was.
         bool RemoveTile(int32 TileX, int32 TileY);
 
         bool HasTile(int32 TileX, int32 TileY) const;
 
         int32 GetResidentTileCount() const;
 
-        /** Bumped whenever a tile is added or removed. An FNavPath carries the value it was found
-         *  against, so a follower can tell the ground moved under it. */
+        // Bumped whenever a tile is added or removed, so a follower holding an FNavPath can tell the ground moved under it.
         uint64 GetTopologyEpoch() const { return TopologyEpoch.load(std::memory_order_acquire); }
 
         // Starts a replacement mesh past the one it replaces, so a path or cache stamped against the old mesh sees a change.
@@ -99,23 +98,23 @@ namespace Lumina
         // Y is ignored because a tile spans the whole bake, and a ring overflow reports changed.
         bool HasTileChangedSince(uint64 SinceEpoch, const FVector3& Min, const FVector3& Max) const;
 
-        /** Iterates the cached flat triangle list (skip the dtNavMesh traversal cost). */
+        // Iterates the cached flat triangle list, skipping the dtNavMesh traversal cost.
         using FTriangleVisitor = TMoveOnlyFunction<void(const FVector3&, const FVector3&, const FVector3&, uint8)>;
         void ForEachTriangle(FTriangleVisitor Visitor) const;
 
-        /** Visitor MUST be thread-safe; invoked concurrently. */
+        // Invoked concurrently, so the visitor has to be thread-safe.
         using FParallelTriangleVisitor = TFunction<void(const FVector3&, const FVector3&, const FVector3&, uint8)>;
         void ParallelForEachTriangle(const FParallelTriangleVisitor& Visitor) const;
 
-        /** Outer perimeter of each poly (neis[edge]==0). Excludes internal poly-to-poly edges. */
+        // Outer perimeter of each poly, excluding internal poly-to-poly edges.
         using FBoundaryEdgeVisitor = TFunction<void(const FVector3& A, const FVector3& B, uint8 Area)>;
         void ForEachBoundaryEdge(const FBoundaryEdgeVisitor& Visitor) const;
 
-        /** Off-mesh connection start/end pairs (jump links, teleporters, etc.). */
+        // Off-mesh connection start and end pairs, such as jump links and teleporters.
         using FOffMeshLinkVisitor = TFunction<void(const FVector3& Start, const FVector3& End)>;
         void ForEachOffMeshLink(const FOffMeshLinkVisitor& Visitor) const;
 
-        /** Loaded tile world-AABBs from dtMeshTile::header. */
+        // Loaded tile world AABBs from dtMeshTile::header.
         using FTileBoundsVisitor = TFunction<void(const FNavTileBounds&)>;
         void ForEachLoadedTile(const FTileBoundsVisitor& Visitor) const;
 
@@ -126,15 +125,17 @@ namespace Lumina
         void RelabelClusters();
         void AdoptClusterLabels();
 
-        /** Marks the debug draw caches stale. Rebuilding them walks every poly, so it waits for a reader. */
+        // Marks the debug draw caches stale, and rebuilding them walks every poly, so it waits for a reader.
         void InvalidateDebugCache();
 
     private:
 
         struct FQuerySlot
         {
-            dtNavMeshQuery*     Query = nullptr;
-            std::atomic<bool>   Busy{ false };
+            dtNavMeshQuery*                  Query = nullptr;
+            std::atomic<bool>                Busy{ false };
+            FNavClusterGraph::FSearchScratch ClusterScratch;
+            FRandomStream                    Rng;
 
             FQuerySlot() = default;
             ~FQuerySlot() = default;
@@ -145,6 +146,8 @@ namespace Lumina
             FQuerySlot(FQuerySlot&& Other) noexcept
                 : Query(Other.Query)
                 , Busy(Other.Busy.load(std::memory_order_relaxed))
+                , ClusterScratch(Move(Other.ClusterScratch))
+                , Rng(Other.Rng)
             {
                 Other.Query = nullptr;
             }
@@ -153,6 +156,8 @@ namespace Lumina
             {
                 Query = Other.Query;
                 Busy.store(Other.Busy.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                ClusterScratch = Move(Other.ClusterScratch);
+                Rng = Other.Rng;
                 Other.Query = nullptr;
                 return *this;
             }
@@ -202,12 +207,12 @@ namespace Lumina
 
         void WaitForSwaps() const;
 
-        /** All three assume TopologyLock is already held exclusively. Owned is a Detour allocation the mesh takes over. */
+        // All three assume TopologyLock is held exclusively, and Owned is a Detour allocation the mesh takes over.
         bool AddTileLocked(uint8* Owned, int32 Size);
         bool RemoveTileLocked(int32 TileX, int32 TileY);
         void RecordTileChangeLocked(int32 TileX, int32 TileY);
 
-        /** Rebuilds the debug caches if stale. Main thread only, like every reader of them. */
+        // Rebuilds the debug caches if stale, on the main thread only like every reader of them.
         void EnsureDebugCache() const;
 
     private:
@@ -217,8 +222,7 @@ namespace Lumina
         // Written only under the exclusive topology lock, alongside the tiles it describes.
         FNavClusterGraph                    Clusters;
 
-        // Shared by every query, exclusive for tile mutation. addTile rewrites the link arrays of up to
-        // eight neighbours, so a tile swap is never local and the whole mesh is the only safe granularity.
+        // addTile rewrites the links of up to eight neighbors, so tile mutation locks the whole mesh exclusively.
         mutable FSharedMutex                TopologyLock;
         std::atomic<uint32>                 PendingSwaps{ 0 };
         std::atomic<uint32>                 RelabelsInFlight{ 0 };
@@ -242,15 +246,15 @@ namespace Lumina
         mutable FMutex                      DebugCacheLock;
         mutable std::atomic<bool>           bDebugCacheDirty{ true };
 
-        // Flat cache: 3 vec3 per tri in Verts; 1 area byte per tri.
+        // Three verts and one area byte per triangle.
         mutable TVector<FVector3>          CachedTriVerts;
         mutable TVector<uint8>              CachedTriAreas;
 
-        // 2 vec3 per edge in Verts; 1 area byte per edge. Boundary = poly outer perimeter.
+        // Two verts and one area byte per poly outer perimeter edge.
         mutable TVector<FVector3>          CachedBoundaryVerts;
         mutable TVector<uint8>              CachedBoundaryAreas;
 
-        // 2 vec3 per link (Start, End).
+        // Start and End per link.
         mutable TVector<FVector3>          CachedOffMeshVerts;
 
         mutable TVector<FNavTileBounds>     CachedTileBounds;
@@ -260,7 +264,7 @@ namespace Lumina
         bool                                bReady = false;
     };
 
-    /** Probes into the baked tile layout, so tests can assert it without including Detour. */
+    // Probes into the baked tile layout, so tests can assert it without including Detour.
     namespace NavMeshTesting
     {
         RUNTIME_API bool TileLinksAreAligned(const TVector<uint8>& Blob);

@@ -53,19 +53,19 @@ namespace Lumina
         }
     }
 
-    void SSocketAttachmentSystem::Configure()
+    void CSocketAttachmentSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
-        RunsAfter<SAnimationSystem, SEntityScriptSystem>();
+        RunsAfter<CAnimationSystem, CEntityScriptSystem>();
     }
 
-    bool SSocketAttachmentSystem::HasWork(const SSystemContext& Context)
+    bool CSocketAttachmentSystem::HasWork(const SSystemContext& Context)
     {
         return AnyQueryHasRows(Attachments);
     }
 
-    void SSocketAttachmentSystem::OnUpdate(const SSystemContext& Context)
+    void CSocketAttachmentSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace SocketAttachmentSystemInternal;
 

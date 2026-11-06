@@ -11,14 +11,14 @@
 namespace Lumina
 {
 
-    /** Typed storage every wire in a live graph instance points into. */
+    // Typed storage every wire in a live graph instance points into.
     class RUNTIME_API FAudioGraphArena
     {
     public:
 
         void Initialize(const FAudioGraphSlotCounts& Counts, uint32 InBlockFrames);
 
-        /** Drops the previous block's trigger events. Audio slots are not recleared, see Execute. */
+        // Drops the previous block's trigger events. Audio slots are not recleared, see Execute.
         void BeginBlock();
 
         uint32 GetBlockFrames() const { return BlockFrames; }
@@ -65,7 +65,7 @@ namespace Lumina
         uint32 WaveCount     = 0;
     };
 
-    /** Everything an operator needs to bind its pins at construction. */
+    // Everything an operator needs to bind its pins at construction.
     struct RUNTIME_API FAudioGraphOperatorBuildParams
     {
         const FAudioGraphNodeInstance*  Node       = nullptr;
@@ -98,17 +98,14 @@ namespace Lumina
         uint16 OutputSlot(uint32 Pin) const;
     };
 
-    /** One block of DSP for one node. Constructed once per instance, executed once per block. */
+    // One block of DSP for one node. Constructed once per instance, executed once per block.
     class RUNTIME_API IAudioGraphOperator
     {
     public:
 
         virtual ~IAudioGraphOperator() = default;
 
-        /** Returns the operator to its start state without reallocating. */
-        virtual void Reset() {}
-
-        /** Runs on the audio device thread, so it must not allocate, lock or block. */
+        // Runs on the audio device thread, so it must not allocate, lock or block.
         virtual void Execute(const FAudioGraphBlockContext& Context) = 0;
 
         // Every audio output must be written in full each block; the arena does not reclear them.
@@ -116,7 +113,7 @@ namespace Lumina
 
     using FAudioGraphOperatorFactory = TFunction<TUniquePtr<IAudioGraphOperator>(const FAudioGraphOperatorBuildParams&)>;
 
-    /** Pin types an operator reads and writes, in the order its Execute indexes them. */
+    // Pin types an operator reads and writes, in the order its Execute indexes them.
     struct FAudioGraphOperatorSignature
     {
         TVector<EAudioGraphType> Inputs;
@@ -126,18 +123,18 @@ namespace Lumina
         EAudioGraphType Variadic = EAudioGraphType::Invalid;
     };
 
-    /** A runtime operator, addressed by the name compiled programs store. */
+    // A runtime operator, addressed by the name compiled programs store.
     struct FAudioGraphNodeClass
     {
         FName Name;
 
-        /** The editor node declaring this operator must present pins matching it, or the compile errors. */
+        // The editor node declaring this operator must present pins matching it, or the compile errors.
         FAudioGraphOperatorSignature Signature;
 
         FAudioGraphOperatorFactory Factory;
     };
 
-    /** Every node type the engine and its plugins offer, keyed by the name compiled programs store. */
+    // Every node type the engine and its plugins offer, keyed by the name compiled programs store.
     class RUNTIME_API FAudioGraphNodeRegistry
     {
     public:
@@ -157,11 +154,11 @@ namespace Lumina
 
     namespace AudioGraph
     {
-        /** Builds the operator for Params.Node, or null when the program names a node this build lacks. */
+        // Builds the operator for Params.Node, or null when the program names a node this build lacks.
         RUNTIME_API TUniquePtr<IAudioGraphOperator> CreateOperator(const FAudioGraphOperatorBuildParams& Params);
     }
 
-    /** Declares a node class at static init; the registrar's name only has to be unique in its file. */
+    // Declares a node class at static init; the registrar's name only has to be unique in its file.
     struct RUNTIME_API FAudioGraphNodeRegistrar
     {
         FAudioGraphNodeRegistrar(FAudioGraphNodeClass&& NodeClass);

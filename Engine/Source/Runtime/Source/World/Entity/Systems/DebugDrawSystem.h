@@ -35,7 +35,7 @@ namespace Lumina
 
     // Publishes FDebugDrawState once per frame, ahead of every other system, in editor and game worlds.
     REFLECT()
-    class RUNTIME_API SDebugDrawSystem : public CEntitySystem
+    class RUNTIME_API CDebugDrawSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

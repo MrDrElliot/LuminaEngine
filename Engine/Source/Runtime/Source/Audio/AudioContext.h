@@ -1,8 +1,6 @@
 #pragma once
 
 #include "AudioTypes.h"
-#include "AudioCommand.h"
-#include "AudioReverb.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
@@ -12,6 +10,7 @@ namespace Lumina
 {
     class FProceduralAudioStream;
     class FAudioGraphInstance;
+    struct FAudioReverbParams;
 
 	namespace Audio
 	{

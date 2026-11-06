@@ -5,6 +5,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/VirtualGeometrySettings.h"
 #include "Memory/SmartPtr.h"
 #include "Mesh.generated.h"
 
@@ -66,6 +67,12 @@ namespace Lumina
          *  48^3 field is well under a second, but scales cubically with Resolution. */
         void BuildDistanceField();
 
+        // Rebuilds the meshlets, LODs and virtual geometry from the baked finest level using VirtualGeometrySettings, so no source file is needed.
+        bool RebuildVirtualGeometry();
+
+        // Whether the baked meshlets carry a cluster hierarchy.
+        bool HasClusterLOD() const;
+
         uint32 GetNumMaterials() const { return (uint32)Materials.Num(); }
         CMaterialInterface* GetMaterialAtSlot(int32 Slot) const;
         void SetMaterialAtSlot(int32 Slot, CMaterialInterface* NewMaterial);
@@ -115,6 +122,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Distance Field", DisplayName = "Settings")
         SDistanceFieldBuildSettings DistanceFieldSettings;
 
+        // Cluster hierarchy and voxel build inputs, applied by the mesh editor's Rebuild Virtual Geometry action. Seeded from the import dialog.
+        PROPERTY(Editable, Category = "Virtual Geometry", DisplayName = "Settings")
+        SVirtualGeometryBuildSettings VirtualGeometrySettings;
+
         /** File this mesh was last imported from, so "Reimport From File..." can open on it. Empty for
          *  procedurally generated meshes and for assets imported before this was recorded. Matches the
          *  SourcePath that CTexture / CFont / CAudioStream already keep. */
@@ -134,7 +145,7 @@ namespace Lumina
         uint32 Count = 0;
         for (const FGeometrySurface& Surface : MeshResources->GeometrySurfaces)
         {
-            std::forward<TCallable>(Lambda)(Surface, Count);
+            Forward<TCallable>(Lambda)(Surface, Count);
             ++Count;
         }
     }

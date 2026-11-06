@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Threading;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -11,8 +12,6 @@ namespace LuminaSharp.Generators;
 [Generator]
 public sealed class ComponentStorageGenerator : IIncrementalGenerator
 {
-    private const string ComponentInterface = "LuminaSharp.IComponent<TSelf>";
-
     private static readonly DiagnosticDescriptor HeldByValue = new(
         id: "LUM0120",
         title: "Component held by value",
@@ -46,8 +45,9 @@ public sealed class ComponentStorageGenerator : IIncrementalGenerator
         return Node is VariableDeclaratorSyntax or ParameterSyntax or ForEachStatementSyntax or SingleVariableDesignationSyntax
             or MethodDeclarationSyntax or LocalFunctionStatementSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
             or DelegateDeclarationSyntax or OperatorDeclarationSyntax or ConversionOperatorDeclarationSyntax
+            or AnonymousFunctionExpressionSyntax
             or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax or DefaultExpressionSyntax
-            or ArgumentSyntax or ArrayTypeSyntax or TupleTypeSyntax or TupleExpressionSyntax
+            or WithExpressionSyntax or ArgumentSyntax or ArrayTypeSyntax or TupleTypeSyntax or TupleExpressionSyntax
             || Node.IsKind(SyntaxKind.DefaultLiteralExpression);
     }
 
@@ -79,10 +79,12 @@ public sealed class ComponentStorageGenerator : IIncrementalGenerator
                     : null;
 
             case MethodDeclarationSyntax or LocalFunctionStatementSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
-                or DelegateDeclarationSyntax or OperatorDeclarationSyntax or ConversionOperatorDeclarationSyntax:
+                or DelegateDeclarationSyntax or OperatorDeclarationSyntax or ConversionOperatorDeclarationSyntax
+                or AnonymousFunctionExpressionSyntax:
                 return ValidateReturn(Node, Model, Cancel);
 
-            case ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax or DefaultExpressionSyntax:
+            case ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax or DefaultExpressionSyntax
+                or WithExpressionSyntax:
             {
                 ITypeSymbol? Created = Model.GetTypeInfo(Node, Cancel).Type;
                 return Created != null && IsComponent(Created) ? Diagnostic.Create(CreatedAsValue, Node.GetLocation(), Created.Name) : null;
@@ -122,7 +124,9 @@ public sealed class ComponentStorageGenerator : IIncrementalGenerator
 
     private static Diagnostic? ValidateReturn(SyntaxNode Node, SemanticModel Model, CancellationToken Cancel)
     {
-        ISymbol? Declared = Model.GetDeclaredSymbol(Node, Cancel);
+        ISymbol? Declared = Node is AnonymousFunctionExpressionSyntax
+            ? Model.GetSymbolInfo(Node, Cancel).Symbol
+            : Model.GetDeclaredSymbol(Node, Cancel);
         (ITypeSymbol? Returned, bool bByRef) = Declared switch
         {
             IMethodSymbol Method => (Method.ReturnType, Method.ReturnsByRef || Method.ReturnsByRefReadonly),
@@ -162,13 +166,8 @@ public sealed class ComponentStorageGenerator : IIncrementalGenerator
         }
         if (Type is ITypeParameterSymbol Parameter)
         {
-            return Parameter.ConstraintTypes.Any(IsComponentInterface);
+            return Parameter.ConstraintTypes.Any(ScriptPropertyClassifier.IsComponentInterface);
         }
-        return Type.TypeKind == TypeKind.Struct && Type.AllInterfaces.Any(IsComponentInterface);
-    }
-
-    private static bool IsComponentInterface(ITypeSymbol Interface)
-    {
-        return Interface.OriginalDefinition.ToDisplayString() == ComponentInterface;
+        return ScriptPropertyClassifier.IsComponent(Type);
     }
 }

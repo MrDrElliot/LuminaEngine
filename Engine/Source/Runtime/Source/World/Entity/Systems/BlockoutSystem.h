@@ -11,7 +11,7 @@ namespace Lumina
 {
     /** Meshes every SBlockoutComponent whose parameters moved, and every one a load left unbuilt. */
     REFLECT()
-    class RUNTIME_API SBlockoutSystem : public CEntitySystem
+    class RUNTIME_API CBlockoutSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

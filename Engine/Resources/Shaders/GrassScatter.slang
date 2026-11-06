@@ -172,7 +172,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     }
 
     // Yaw about world up, then tilted toward the surface normal by AlignToNormal.
-    const float Yaw = P->bRandomYaw != 0u ? Hash01(CellHash ^ 0x85EBCA6Bu) * 6.2831853 : 0.0;
+    const float Yaw = P->bRandomYaw != 0u ? Hash01(CellHash ^ 0x85EBCA6Bu) * TWO_PI : 0.0;
     const float4 YawQuat = float4(0.0, sin(Yaw * 0.5), 0.0, cos(Yaw * 0.5));
 
     const float3 Up = float3(0.0, 1.0, 0.0);

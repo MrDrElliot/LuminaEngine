@@ -13,10 +13,10 @@
 
 namespace Lumina
 {
-    /** Maximum number of paintable layers the renderer blends in the terrain pixel shader. */
+    // Paintable layers the terrain pixel shader blends.
     constexpr uint32 GTerrainMaxLayers = 4;
 
-    // 7x7 quads = 49 quads, 8x8 verts (64), 98 tris -- fits MESHLET_MAX_VERTICES/TRIANGLES.
+    // 7x7 quads give 64 verts and 98 tris, which fits MESHLET_MAX_VERTICES and MESHLET_MAX_TRIANGLES.
     constexpr int32 GTerrainMeshletQuads        = 7;
     constexpr int32 GTerrainMeshletVertsPerSide = GTerrainMeshletQuads + 1;
     constexpr int32 GTerrainMeshletMaxQuads     = GTerrainMeshletQuads * GTerrainMeshletQuads;
@@ -29,7 +29,7 @@ namespace Lumina
         return Math::Max(1, (Resolution - 1 + QuadsPerChunk - 1) / QuadsPerChunk);
     }
 
-    /** Mirror of FTerrainRenderParams in TerrainBase{Vertex,Pixel}Pass.slang. */
+    // Mirrors FTerrainRenderParams in TerrainBase{Vertex,Pixel}Pass.slang.
     struct alignas(16) FTerrainRenderParams
     {
         FVector2   OriginXZ        = FVector2(0.0f);
@@ -51,7 +51,7 @@ namespace Lumina
     };
     VERIFY_SSBO_ALIGNMENT(FTerrainRenderParams);
 
-    /** Mirror of FTerrainNormalParams in TerrainNormalCompute.slang. */
+    // Mirrors FTerrainNormalParams in TerrainNormalCompute.slang.
     struct alignas(16) FTerrainNormalParams
     {
         int32   Resolution   = 0;
@@ -66,7 +66,7 @@ namespace Lumina
     };
     VERIFY_SSBO_ALIGNMENT(FTerrainNormalParams);
 
-    /** Per-chunk metadata: tight world AABBs + meshlet range. Cull pass tests against frustum/HiZ. */
+    // Tight world bounds and meshlet range of one chunk, which the cull pass tests against the frustum and HiZ.
     struct alignas(16) FTerrainChunkInfo
     {
         FVector3   BoundsMin       = FVector3(0.0f);
@@ -86,7 +86,7 @@ namespace Lumina
     };
     VERIFY_SSBO_ALIGNMENT(FTerrainChunkInfo);
 
-    /** Per-meshlet sub-region of its parent chunk's quad grid; cull pass appends survivors. */
+    // One meshlet's sub-region of its chunk's quad grid; the cull pass appends survivors.
     struct alignas(16) FTerrainMeshletInfo
     {
         FVector3   BoundsMin       = FVector3(0.0f);
@@ -105,7 +105,7 @@ namespace Lumina
     };
     VERIFY_SSBO_ALIGNMENT(FTerrainMeshletInfo);
 
-    /** Survivor slot from terrain cull; consumed by VS via SV_InstanceID. */
+    // Survivor slot from terrain cull, read by the VS through SV_InstanceID.
     struct alignas(8) FTerrainVisibleMeshlet
     {
         uint32  ChunkIndex   = 0u;
@@ -115,20 +115,20 @@ namespace Lumina
 
     struct FTerrainGPUState
     {
-        /** R32_FLOAT mirror of CPU Heightmap. */
+        // R32_FLOAT mirror of the CPU heightmap.
         FSceneImage     HeightmapTexture;
 
-        /** RGBA8 normal; derived on GPU. */
+        // RGBA8 normals derived on the GPU.
         FSceneImage     NormalTexture;
 
-        /** R8_UNORM array, one slice per layer. */
+        // R8_UNORM array, one slice per layer.
         FSceneImage     LayerWeightTexture;
 
         RHI::FGPUAllocation    ChunkInfoBuffer;
         RHI::FGPUAllocation    MeshletInfoBuffer;
         RHI::FGPUAllocation    VisibleMeshletBuffer;
 
-        /** Single FDrawIndirectArguments slot; cull atomic-increments InstanceCount. */
+        // One FDrawIndirectArguments slot whose InstanceCount the cull atomically increments.
         RHI::FGPUAllocation    IndirectDrawBuffer;
 
         uint32  AllocatedResolution = 0;
@@ -137,10 +137,7 @@ namespace Lumina
         uint32  AllocatedMeshletCount = 0;
     };
 
-    /**
-     * Per (terrain, species) scatter state. The instances themselves live in the retained arrays, so all
-     * that is owned here is the append cursor the scatter atomically bumps.
-     */
+    // Per terrain and species scatter state; instances live in the retained arrays, so only the append cursor is owned here.
     struct FGrassGPUState
     {
         // Last frame's cursor, so the retire pass can deactivate exactly the slots that fell out of use.

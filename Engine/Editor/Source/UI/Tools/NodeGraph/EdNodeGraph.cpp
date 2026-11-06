@@ -2556,8 +2556,8 @@ namespace Lumina
         ChoiceCurrent    = Current;
         ChoiceAnchor     = ImVec2(Min.x, Max.y);
         ChoiceWidth      = Max.x - Min.x;
-        Choices          = std::move(InChoices);
-        OnChoiceChosen   = std::move(OnChosen);
+        Choices          = Move(InChoices);
+        OnChoiceChosen   = Move(OnChosen);
         bOpenChoicePopup = true;
     }
 

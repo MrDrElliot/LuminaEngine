@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cstring>
-#include <iosfwd>
 #include "Containers/Format.h"
 #include "Containers/StaticArray.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Templates/Optional.h"
+#include "Memory/Memcpy.h"
 
 namespace Lumina
 {
@@ -37,10 +36,6 @@ namespace Lumina
 
         bool operator==(const FGuid& Other) const noexcept { return LowWord() == Other.LowWord() && HighWord() == Other.HighWord(); }
         bool operator!=(const FGuid& Other) const noexcept { return !(*this == Other); }
-        bool operator<(const FGuid& other) const noexcept;
-        bool operator<=(const FGuid& other) const noexcept;
-        bool operator>(const FGuid& other) const noexcept;
-        bool operator>=(const FGuid& other) const noexcept;
         std::strong_ordering operator<=>(const FGuid& other) const noexcept = default;
     
         FString ToString(bool uppercase = true, bool includeDashes = true) const;
@@ -63,13 +58,10 @@ namespace Lumina
             Ar.Serialize(Guid.Bytes.GetData(), Guid.Bytes.Num());
             return Ar;
         }
-        
-        friend RUNTIME_API std::ostream& operator<<(std::ostream& os, const FGuid& guid);
-        friend RUNTIME_API std::istream& operator>>(std::istream& is, FGuid& guid);
-    
+
     private:
-        uint64 LowWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.GetData(), sizeof(Word)); return Word; }
-        uint64 HighWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.GetData() + sizeof(Word), sizeof(Word)); return Word; }
+        uint64 LowWord() const noexcept { uint64 Word; Memory::Memcpy(&Word, Bytes.GetData(), sizeof(Word)); return Word; }
+        uint64 HighWord() const noexcept { uint64 Word; Memory::Memcpy(&Word, Bytes.GetData() + sizeof(Word), sizeof(Word)); return Word; }
 
         ByteArray Bytes{};
 

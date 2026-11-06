@@ -7,7 +7,7 @@
 
 namespace Lumina
 {
-    // Sphere-parallel: one plane broadcast across eight spheres, the transpose of the per-object test.
+    // Broadcasts one plane across eight spheres, the transpose of the per-object test.
     FORCEINLINE uint32 FrustumInsideMask8(const FFrustum& F, SIMD::VFloat8 CX, SIMD::VFloat8 CY,
                                           SIMD::VFloat8 CZ, SIMD::VFloat8 R)
     {
@@ -30,14 +30,14 @@ namespace Lumina
 
     struct FSceneCullContext
     {
-        /** World-space sphere for a shadow-casting light's influence region. */
+        // World-space sphere bounding a shadow-casting light's influence.
         struct FLightSphere
         {
             FVector3   Center;
             float       Radius;
         };
 
-        /** Main camera frustum. Anything inside this passes unconditionally. */
+        // Main camera frustum; anything inside it passes unconditionally.
         FFrustum Frustum;
 
         FFrustum SunShadowFrustum;
@@ -132,7 +132,7 @@ namespace Lumina
                 return true;
             }
 
-            // Visible to a preview/capture camera: keep regardless of shadow casting.
+            // Visible to a preview or capture camera, so kept regardless of shadow casting.
             for (const FFrustum& CaptureFrustum : CaptureFrusta)
             {
                 if (CaptureFrustum.IntersectsSphere(Center, Radius))

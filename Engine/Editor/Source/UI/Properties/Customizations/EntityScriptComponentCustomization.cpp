@@ -192,12 +192,7 @@ namespace Lumina
             ImGuiX::TextTooltip("{}", "Copy the script's type name.");
 
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-            const bool bRemove = ImGui::Button(LE_ICON_CLOSE_CIRCLE "##RemoveEntityScript", AssetPickerFilter::kButtonSize);
-            ImGui::PopStyleColor(3);
-            if (bRemove)
+            if (AssetPickerFilter::DrawClearButton("Remove this script."))
             {
                 PendingMutation = [Component, Index]
                 {
@@ -212,7 +207,6 @@ namespace Lumina
                 };
                 bWasChanged = true;
             }
-            ImGuiX::TextTooltip("{}", "Remove this script.");
 
             if (bOpen && Script != nullptr && Script->GetClass() != nullptr)
             {

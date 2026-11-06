@@ -6,6 +6,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/Cast.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Reflection/Type/ObjectReferenceVisitor.h"
 #include "Events/EventProcessor.h"
 #include "Memory/SmartPtr.h"
@@ -13,15 +14,16 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImViewGuizmo.h"
 #include "Transactions/EditorTransaction.h"
-#include "World/World.h"
-#include "World/ECS/Registry.h"
+#include "World/ECS/Entity.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 
 namespace Lumina
 {
     class CEdNodeGraph;
+    class CPackage;
     class CStruct;
+    class CWorld;
     class FInputViewport;
     class FProperty;
     class FSceneEditorTool;
@@ -137,9 +139,8 @@ namespace Lumina
         virtual void Initialize();
         virtual void Deinitialize(const FUpdateContext& UpdateContext);
         virtual void OnInitialize() = 0;
-        virtual void OnDeinitialize(const FUpdateContext& UpdateContext) = 0;
+        virtual void OnDeinitialize(const FUpdateContext& UpdateContext) {}
         virtual void Update(const FUpdateContext& UpdateContext);
-        virtual void WorldUpdate(const FUpdateContext& UpdateContext) {}
         virtual void EndFrame() {}
         void OnScriptsReloaded(const Scripting::FScriptReload& Reload) override {}
 
@@ -229,7 +230,7 @@ namespace Lumina
         NODISCARD bool ShouldSuppressViewportClickInput() const;
 
         // True when this tool, not the running game, drives the viewport camera and its gizmo, grid and focus companions.
-        NODISCARD virtual bool HasEditorCameraControl() const { return HasWorld() && !World->IsGameWorld(); }
+        NODISCARD virtual bool HasEditorCameraControl() const;
 
         virtual void FocusViewportToEntity(ECS::FEntity Entity);
 
@@ -282,7 +283,7 @@ namespace Lumina
 
         void DrawDrawerContent(bool bFocused);
 
-        void RegisterAction(FEditorAction Action) { EditorActions.Add(std::move(Action)); }
+        void RegisterAction(FEditorAction Action) { EditorActions.Add(Move(Action)); }
         const TVector<FEditorAction>& GetRegisteredActions() const { return EditorActions; }
         void DrawActionMenu(const char* MenuLabel, const char* Category);
 
@@ -311,7 +312,7 @@ namespace Lumina
     protected:
 
         // Play and Simulate run on a transient world that is discarded on stop, so only an editor world is transacted.
-        bool CanTransact() const { return World != nullptr && World->GetWorldType() == EWorldType::Editor; }
+        bool CanTransact() const;
 
         virtual void BeginTransaction();
 

@@ -223,7 +223,7 @@ dtStatus dtNavMeshQuery::init(const dtNavMesh* nav, const int maxNodes)
 	return DT_SUCCESS;
 }
 
-dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*frand)(),
+dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*frand)(void* context), void* frandContext,
 										 dtPolyRef* randomRef, float* randomPt) const
 {
 	dtAssert(m_nav);
@@ -242,7 +242,7 @@ dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*fr
 		// Choose random tile using reservoi sampling.
 		const float area = 1.0f; // Could be tile area too.
 		tsum += area;
-		const float u = frand();
+		const float u = frand(frandContext);
 		if (u*tsum <= area)
 			tile = t;
 	}
@@ -278,7 +278,7 @@ dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*fr
 
 		// Choose random polygon weighted by area, using reservoi sampling.
 		areaSum += polyArea;
-		const float u = frand();
+		const float u = frand(frandContext);
 		if (u*areaSum <= polyArea)
 		{
 			poly = p;
@@ -300,8 +300,8 @@ dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*fr
 		dtVcopy(&verts[j*3],v);
 	}
 	
-	const float s = frand();
-	const float t = frand();
+	const float s = frand(frandContext);
+	const float t = frand(frandContext);
 	
 	float pt[3];
 	dtRandomPointInConvexPoly(verts, poly->vertCount, areas, s, t, pt);
@@ -315,7 +315,7 @@ dtStatus dtNavMeshQuery::findRandomPoint(const dtQueryFilter* filter, float (*fr
 }
 
 dtStatus dtNavMeshQuery::findRandomPointAroundCircle(dtPolyRef startRef, const float* centerPos, const float maxRadius,
-													 const dtQueryFilter* filter, float (*frand)(),
+													 const dtQueryFilter* filter, float (*frand)(void* context), void* frandContext,
 													 dtPolyRef* randomRef, float* randomPt) const
 {
 	dtAssert(m_nav);
@@ -385,7 +385,7 @@ dtStatus dtNavMeshQuery::findRandomPointAroundCircle(dtPolyRef startRef, const f
 			}
 			// Choose random polygon weighted by area, using reservoi sampling.
 			areaSum += polyArea;
-			const float u = frand();
+			const float u = frand(frandContext);
 			if (u*areaSum <= polyArea)
 			{
 				randomTile = bestTile;
@@ -483,8 +483,8 @@ dtStatus dtNavMeshQuery::findRandomPointAroundCircle(dtPolyRef startRef, const f
 		dtVcopy(&verts[j*3],v);
 	}
 	
-	const float s = frand();
-	const float t = frand();
+	const float s = frand(frandContext);
+	const float t = frand(frandContext);
 	
 	float pt[3];
 	dtRandomPointInConvexPoly(verts, randomPoly->vertCount, areas, s, t, pt);

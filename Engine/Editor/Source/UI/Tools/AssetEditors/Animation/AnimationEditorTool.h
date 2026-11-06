@@ -11,6 +11,7 @@
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/AssetEditors/Animation/AnimPreview.h"
+#include "UI/Tools/AssetEditors/Animation/TimelineDrawing.h"
 
 namespace Lumina
 {
@@ -36,7 +37,6 @@ namespace Lumina
         void OnAssetDataChangedExternally() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void OnAssetLoadFinished() override;
         void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
@@ -102,6 +102,8 @@ namespace Lumina
 
         // Clip time captured when the "add notify" lane popup opens.
         float       LaneAddTime = 0.0f;
+
+        Timeline::FRenameBuffer RenameBuffer = {};
 
         // Pulses briefly when the playhead crosses a notify during in-editor playback,
         // so authored events visibly fire while previewing. Maps notify index -> flash age.

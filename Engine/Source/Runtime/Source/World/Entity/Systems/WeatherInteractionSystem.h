@@ -19,7 +19,7 @@ namespace Lumina
 
     // Tracks every Weather Interactor's contact spheres against water and ground, and soaks the entity in the weather.
     REFLECT()
-    class RUNTIME_API SWeatherInteractionSystem : public CEntitySystem
+    class RUNTIME_API CWeatherInteractionSystem : public CEntitySystem
     {
         GENERATED_BODY()
 

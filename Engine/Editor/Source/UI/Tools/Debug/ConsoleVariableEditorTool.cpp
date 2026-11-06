@@ -44,10 +44,6 @@ namespace Lumina
         });
     }
 
-    void FConsoleVariableEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FConsoleVariableEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("What this is",
@@ -208,8 +204,8 @@ namespace Lumina
                     }
 
                     char Tmp[512];
-                    size_t Copy = std::min<size_t>(sizeof(Tmp) - 1, Buffer.Len());
-                    std::memcpy(Tmp, Buffer.GetData(), Copy);
+                    size_t Copy = Math::Min<size_t>(sizeof(Tmp) - 1, Buffer.Len());
+                    Memory::Memcpy(Tmp, Buffer.GetData(), Copy);
                     Tmp[Copy] = '\0';
 
                     if (ImGui::InputText("##Val", Tmp, sizeof(Tmp), ImGuiInputTextFlags_EnterReturnsTrue))

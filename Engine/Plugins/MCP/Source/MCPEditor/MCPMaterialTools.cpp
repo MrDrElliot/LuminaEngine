@@ -1,12 +1,12 @@
 #include "MCPMaterialTools.h"
 
-#include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
 #include "Asset/AssetOps.h"
 #include "MCPGraphTools.h"
+#include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -37,7 +37,7 @@ namespace Lumina::MCP
 
         bool ResolveMaterial(const FString& Guid, FMaterialTarget& Out, FString& OutError)
         {
-            if (!Agent::ResolveAssetObject(FStringView(Guid), Out.Asset, OutError))
+            if (!ResolveEditableAsset(FStringView(Guid), Out.Asset, OutError))
             {
                 return false;
             }
@@ -60,14 +60,6 @@ namespace Lumina::MCP
             }
 
             return true;
-        }
-
-        void MarkMaterialDirty(const FMaterialTarget& Target)
-        {
-            if (CPackage* Package = Target.Asset->GetPackage())
-            {
-                Package->MarkDirty();
-            }
         }
 
         void RegisterMaterialListNodeTypes(FStringView Owner)
@@ -244,7 +236,7 @@ namespace Lumina::MCP
             Out.Id = Node->GetNodeID();
             CollectPins(Node, Out.Pins);
 
-            MarkMaterialDirty(Target);
+            MarkAssetDirty(Target.Asset);
 
             return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}.", In.NodeType, Out.Id));
         }
@@ -275,7 +267,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MarkMaterialDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Removed node {}.", In.Node));
                 });
@@ -304,7 +296,7 @@ namespace Lumina::MCP
                             return Agent::FToolResult::Error(Error);
                         }
 
-                        MarkMaterialDirty(Target);
+                        MarkAssetDirty(Target.Asset);
 
                         return Agent::FToolResult::Ok(Lumina::Format("Connected {}.{} to {}.{}.",
                             In.FromNode, In.FromPin, In.ToNode, In.ToPin));
@@ -315,7 +307,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MarkMaterialDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Disconnected {}.{}.", In.Node, In.Pin));
                 });
@@ -382,7 +374,7 @@ namespace Lumina::MCP
                     Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
                     Out.Current = After.ToString();
 
-                    MarkMaterialDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Node {} {} is now {}.",
                         In.Node, In.Path, Out.Current));
@@ -424,7 +416,7 @@ namespace Lumina::MCP
                         Out.Warnings.Add(Lumina::Format("{} {}", Item.Name, Item.Description));
                     }
 
-                    MarkMaterialDirty(Target);
+                    MarkAssetDirty(Target.Asset);
 
                     if (!Result.bSuccess)
                     {

@@ -19,12 +19,6 @@ namespace Lumina
                 , Out(Params.TriggerOut(0))
             {}
 
-            void Reset() override
-            {
-                Countdown = 0.0f;
-                bRunning  = false;
-            }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 StartCursor.Reset();
@@ -84,8 +78,6 @@ namespace Lumina
                 , Out(Params.TriggerOut(0))
             {}
 
-            void Reset() override { PendingCount = 0; }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Cursor.Reset();
@@ -137,8 +129,6 @@ namespace Lumina
                 , ResetIn(Params.TriggerIn(1))
                 , Out(Params.TriggerOut(0))
             {}
-
-            void Reset() override { bFired = false; }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -228,8 +218,6 @@ namespace Lumina
                 , WrappedOut(Params.TriggerOut(1))
             {}
 
-            void Reset() override { Count = 0; }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 InCursor.Reset();
@@ -286,12 +274,6 @@ namespace Lumina
                 , NextOut(Params.TriggerOut(1))
             {}
 
-            void Reset() override
-            {
-                Random = FAudioGraphRandom();
-                Value  = 0.0f;
-            }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Random.SeedOnce(*SeedIn);
@@ -335,12 +317,6 @@ namespace Lumina
                 , RisingOut(Params.TriggerOut(0))
                 , FallingOut(Params.TriggerOut(1))
             {}
-
-            void Reset() override
-            {
-                bAbove  = false;
-                bPrimed = false;
-            }
 
             void Execute(const FAudioGraphBlockContext&) override
             {
@@ -388,12 +364,6 @@ namespace Lumina
                 {
                     Outs[Index] = Params.TriggerOut(Index);
                 }
-            }
-
-            void Reset() override
-            {
-                Random  = FAudioGraphRandom();
-                Current = kNoneSelected;
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override
@@ -456,8 +426,6 @@ namespace Lumina
                 , FailOut(Params.TriggerOut(1))
             {}
 
-            void Reset() override { Random = FAudioGraphRandom(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Random.SeedOnce(*SeedIn);
@@ -495,8 +463,6 @@ namespace Lumina
                 , StartOpenIn(Params.BoolIn(3))
                 , Out(Params.TriggerOut(0))
             {}
-
-            void Reset() override { bPrimed = false; }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -548,8 +514,6 @@ namespace Lumina
                 , FalseOut(Params.TriggerOut(1))
             {}
 
-            void Reset() override { bPrimed = false; }
-
             void Execute(const FAudioGraphBlockContext&) override
             {
                 const bool bNow = *ValueIn != 0;
@@ -587,12 +551,6 @@ namespace Lumina
                 , Out(Params.IntOut(0))
                 , NextOut(Params.TriggerOut(1))
             {}
-
-            void Reset() override
-            {
-                Random = FAudioGraphRandom();
-                Offset = 0;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -646,13 +604,6 @@ namespace Lumina
                 , BarOut(Params.TriggerOut(2))
                 , BeatIndexOut(Params.IntOut(3))
             {}
-
-            void Reset() override
-            {
-                bRunning  = false;
-                Countdown = 0.0f;
-                Tick      = 0;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {

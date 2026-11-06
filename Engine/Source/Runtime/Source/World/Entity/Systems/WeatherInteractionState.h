@@ -52,7 +52,7 @@ namespace Lumina
         float  WaterlineWetness = 0.0f;
     };
 
-    // What every Weather Interactor did this frame, written by SWeatherInteractionSystem into the registry context.
+    // What every Weather Interactor did this frame, written by CWeatherInteractionSystem into the registry context.
     struct FWeatherInteractionState : ECS::FResource
     {
         TVector<FWeatherContact>         Contacts;

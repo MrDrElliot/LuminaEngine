@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Assets/AssetTypes/Sequence/Sequence.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/ECS/Entity.h"
 #include "World/Subsystems/WorldSubsystem.h"
@@ -9,6 +8,7 @@
 namespace Lumina
 {
     class CSequence;
+    struct SSequenceFiredEvent;
 
     // Sequence playback and the events sequences fire.
     REFLECT()

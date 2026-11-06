@@ -10,7 +10,7 @@ namespace Lumina
 
     // Bakes static physics bodies for collision-enabled foliage types; rebakes when instances change.
     REFLECT()
-    class RUNTIME_API SFoliageCollisionSystem : public CEntitySystem
+    class RUNTIME_API CFoliageCollisionSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

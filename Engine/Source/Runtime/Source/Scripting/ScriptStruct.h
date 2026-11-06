@@ -9,9 +9,9 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Field.h"
 #include "Core/Object/ScriptClass.h"
-#include "Core/Object/ScriptEnum.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
 #include "Scripting/ScriptExports.h"
 
@@ -191,9 +191,9 @@ namespace Lumina
         TVector<FProperty*>                            OwnProperties;
         CStruct*                                       NativeBase = nullptr;
 
-        TVector<Scripting::FScriptArrayElementDesc*>   ElementDescs;
-        TVector<Scripting::FScriptMapElementDesc*>     MapDescs;
-        TVector<Scripting::FScriptOptionalDesc*>       OptionalDescs;
+        TVector<TUniquePtr<Scripting::FScriptArrayElementDesc>>   ElementDescs;
+        TVector<TUniquePtr<Scripting::FScriptMapElementDesc>>     MapDescs;
+        TVector<TUniquePtr<Scripting::FScriptOptionalDesc>>       OptionalDescs;
         bool                                           bRuntimeFreed = false;
     };
 
@@ -204,7 +204,7 @@ namespace Lumina::Scripting
     // Appends a script type's properties to its minted class as real FPropertys in the trailing block, so it must run before the class's CDO exists.
     RUNTIME_API uint32 AppendScriptPropertiesToClass(CScriptClass* Target, const FScriptExportSchema& Schema);
 
-    /** Drops a minted class's layout records. Only safe once the class has no live instances. */
+    // Drops a minted class's layout records. Only safe once the class has no live instances.
     RUNTIME_API void ForgetScriptClassLayout(CScriptClass* Target);
 
     // Resets every [SkipHotReload] property on Object to its class default after a reload carried the rest across.

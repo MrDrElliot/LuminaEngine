@@ -138,17 +138,6 @@ namespace Lumina::PlatformTime
         SleepNanoseconds(static_cast<int64>(Milliseconds) * 1000000ll);
     }
 
-    void SleepMicroseconds(uint32 Microseconds) noexcept
-    {
-        if (Microseconds == 0)
-        {
-            YieldThread();
-            return;
-        }
-
-        SleepNanoseconds(static_cast<int64>(Microseconds) * 1000ll);
-    }
-
     void YieldThread() noexcept
     {
         sched_yield();

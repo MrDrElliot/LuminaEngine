@@ -164,35 +164,21 @@ namespace Lumina
 
         // Outside any disabled block, since this is most useful exactly when the slot is empty.
         const SAssetId Selected = IdOf(EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedAsset() : nullptr, RequiredGroup);
-        ImGui::BeginDisabled(!Selected.IsValid());
-        if (ImGui::Button(LE_ICON_ARROW_LEFT_CIRCLE "##UseSelected", AssetPickerFilter::kButtonSize))
+        if (AssetPickerFilter::DrawUseSelectedButton(Selected.IsValid(), "Select a grouped asset in the Content Browser to use it here."))
         {
             Assign(Selected);
         }
-        ImGui::EndDisabled();
-        ImGuiX::TextTooltip("{}", Selected.IsValid() ? "Use the asset selected in the Content Browser." : "Select a grouped asset in the Content Browser to use it here.");
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(Data == nullptr);
-        if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", AssetPickerFilter::kButtonSize) && EditorUI != nullptr && Data != nullptr)
-        {
-            EditorUI->BrowseToAsset(FStringView(*Data->Path, Data->Path.Len()));
-        }
-        ImGui::EndDisabled();
-        ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");
+        AssetPickerFilter::DrawBrowseButton(Data != nullptr ? FStringView(*Data->Path, Data->Path.Len()) : FStringView());
 
         ImGui::SameLine();
         ImGui::BeginDisabled(!bHasId);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-        if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##Clear", AssetPickerFilter::kButtonSize))
+        if (AssetPickerFilter::DrawClearButton("Clear the id."))
         {
             Assign({});
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
-        ImGuiX::TextTooltip("{}", "Clear the id.");
 
         ImGui::EndGroup();
         ImGui::PopID();

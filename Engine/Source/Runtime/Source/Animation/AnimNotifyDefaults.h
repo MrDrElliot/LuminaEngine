@@ -1,8 +1,5 @@
 ﻿#pragma once
 
-#include "World/ECS/Registry.h"
-
-
 #include "AnimNotify.h"
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
@@ -23,15 +20,15 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Wave or audio graph to play. */
+        // Wave or audio graph to play.
         PROPERTY(Editable, Category = "Sound")
         TStrongObjectPtr<CSoundBase> Sound;
 
-        /** Socket or bone to play at. Empty plays at the entity's origin. */
+        // Socket or bone to play at. Empty plays at the entity's origin.
         PROPERTY(Editable, Category = "Sound", Picker = "Socket")
         FString Socket;
 
-        /** Extra offset, in the socket's space when one is named, else the entity's. */
+        // Extra offset, in the socket's space when one is named, else the entity's.
         PROPERTY(Editable, Category = "Sound")
         FVector3 Offset = FVector3(0.0f);
 
@@ -44,7 +41,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sound")
         EAudioBus Bus = EAudioBus::SFX;
 
-        /** Off plays a flat 2D one-shot, ignoring the socket position. */
+        // Off plays a flat 2D one-shot, ignoring the socket position.
         PROPERTY(Editable, Category = "Sound")
         bool bSpatialized = true;
 
@@ -62,19 +59,19 @@ namespace Lumina
         PROPERTY(Editable, Category = "Particle System")
         TStrongObjectPtr<CParticleSystem> ParticleSystem;
 
-        /** Socket or bone to play at. Empty plays at the entity's origin. */
+        // Socket or bone to play at. Empty plays at the entity's origin.
         PROPERTY(Editable, Category = "Particle System", Picker = "Socket")
         FString Socket;
 
-        /** Emitter offset in the spawned effect's local space. */
+        // Emitter offset in the spawned effect's local space.
         PROPERTY(Editable, Category = "Particle System")
         FVector3 Offset = FVector3(0.0f);
 
-        /** Parent the effect to the socket so it follows; off leaves it where it fired. */
+        // Parent the effect to the socket so it follows; off leaves it where it fired.
         PROPERTY(Editable, Category = "Particle System")
         bool bAttachToSocket = true;
 
-        /** Seconds before the spawned entity is destroyed. 0 leaves it alive for something else to clean up. */
+        // Seconds before the spawned entity is destroyed. 0 leaves it alive for something else to clean up.
         PROPERTY(Editable, Category = "Particle System", Units = "s", ClampMin = 0.0f)
         float Lifetime = 2.0f;
 
@@ -102,7 +99,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Log")
         FString Message = "AnimNotifyState";
 
-        /** Also log every frame the window is open, which is noisy but shows Alpha advancing. */
+        // Also log every frame the window is open, which is noisy but shows Alpha advancing.
         PROPERTY(Editable, Category = "Log")
         bool bLogTick = false;
 

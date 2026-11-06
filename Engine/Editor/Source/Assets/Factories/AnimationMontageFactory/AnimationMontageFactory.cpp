@@ -23,10 +23,7 @@ namespace Lumina
             SelectedAnimationGUID.Invalidate();
         }
 
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), LE_ICON_BONE " Select Skeleton");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        DrawCreationDialogueTitle(LE_ICON_BONE " Select Skeleton");
 
         ImGui::SetNextItemWidth(-1.0f);
         ImGuiX::AssetReferenceCombo("##Skeleton", CSkeleton::StaticClass(), SelectedSkeletonGUID, LE_ICON_BONE);
@@ -36,27 +33,11 @@ namespace Lumina
         ImGui::SetNextItemWidth(-1.0f);
         ImGuiX::AssetReferenceCombo("##Animation", CAnimation::StaticClass(), SelectedAnimationGUID, LE_ICON_ANIMATION);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        const float ButtonWidth = 110.0f;
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - ButtonWidth * 2 - Spacing);
-
-        bool bConfirm = false;
-        ImGui::BeginDisabled(!SelectedSkeletonGUID.IsValid());
-        if (ImGui::Button(LE_ICON_CHECK " Create", ImVec2(ButtonWidth, 0)))
-        {
-            bConfirm = true;
-        }
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        if (ImGui::Button(LE_ICON_CLOSE " Cancel", ImVec2(ButtonWidth, 0)))
+        const bool bConfirm = DrawCreationDialogueButtons(SelectedSkeletonGUID.IsValid(), bShouldClose);
+        if (bShouldClose)
         {
             SelectedSkeletonGUID.Invalidate();
             SelectedAnimationGUID.Invalidate();
-            bShouldClose = true;
         }
 
         return bConfirm;

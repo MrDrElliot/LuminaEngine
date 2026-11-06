@@ -1,4 +1,5 @@
 #include "FontEditorTool.h"
+#include "UI/InfoTable.h"
 
 #include "Assets/AssetTypes/Font/Font.h"
 #include "Core/Object/Cast.h"
@@ -102,30 +103,17 @@ namespace Lumina
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
-                auto Row = [](const char* Label, const FString& Value)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(Label);
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(*Value);
-                };
+                InfoTable::Row("Family", FontAsset->FamilyName.IsEmpty() ? "Unknown" : FontAsset->FamilyName);
+                InfoTable::Row("Style", FontAsset->StyleName.IsEmpty() ? "Unknown" : FontAsset->StyleName);
+                InfoTable::Row("Glyphs", Format("{}", FontAsset->NumGlyphs));
+                InfoTable::Row("Scalable", FontAsset->bIsScalable ? "Yes" : "No");
+                InfoTable::Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
 
-                Row("Family", FontAsset->FamilyName.IsEmpty() ? "Unknown" : FontAsset->FamilyName);
-                Row("Style", FontAsset->StyleName.IsEmpty() ? "Unknown" : FontAsset->StyleName);
-                Row("Glyphs", Format("{}", FontAsset->NumGlyphs));
-                Row("Scalable", FontAsset->bIsScalable ? "Yes" : "No");
-                Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
-
-                const int32 Bytes = FontAsset->GetFontData().Num();
-                FString SizeStr = static_cast<uint64>(Bytes) >= Constants::kMiB
-                    ? Format("{}", Bytes / Constants::kMiB) + " MB"
-                    : Format("{}", Bytes / Constants::kKiB) + " KB";
-                Row("File Size", SizeStr);
+                InfoTable::Row("File Size", ImGuiX::FormatSize(FontAsset->GetFontData().Num()));
 
                 if (!FontAsset->SourcePath.IsEmpty())
                 {
-                    Row("Source", FontAsset->SourcePath);
+                    InfoTable::Row("Source", FontAsset->SourcePath);
                 }
 
                 ImGui::EndTable();

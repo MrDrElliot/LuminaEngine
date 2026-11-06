@@ -235,13 +235,13 @@ namespace Lumina
 
         Component->SyncedRenderDataVersion = Component->LoadRenderDataVersion();
 
-        Work.OldDynamicData    = std::move(Prim.DynamicRenderData);
+        Work.OldDynamicData    = Move(Prim.DynamicRenderData);
         Prim.DynamicRenderData = Component->LoadRenderData();
 
         const FDynamicMeshRenderData* Data = Prim.DynamicRenderData.get();
         if (Data == nullptr || Data->MeshletHeaderSlot == 0 || Data->Surfaces.IsEmpty())
         {
-            Work.NewDynamicData = std::move(Prim.DynamicRenderData);
+            Work.NewDynamicData = Move(Prim.DynamicRenderData);
             return true;
         }
 
@@ -373,6 +373,7 @@ namespace Lumina
         RetainedCullEntries.Reset();
         RetainedTransforms.Reset();
         RetainedStatic.Reset();
+        RetainedProxies.Reset();
         InstanceFreeSlots.Reset();
         DirtyInstanceSlots.Reset();
         DeactivatedSlots.Reset();
@@ -466,6 +467,7 @@ namespace Lumina
         RetainedCullEntries.Reserve(MeshCount);
         RetainedTransforms.Reserve(MeshCount);
         RetainedStatic.Reserve(MeshCount);
+        RetainedProxies.Reserve(MeshCount);
 
         PrimitiveSyncScratch.Reset();
         PrimitiveSyncScratch.Reserve(MeshCount);

@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "AudioGlobals.h"
+#include "AudioReverb.h"
 
 #include "ProceduralAudioStream.h"
 

@@ -151,11 +151,13 @@ namespace Lumina
         }
         else if (Event.IsA<FMouseScrolledEvent>())
         {
-            MouseZ = Event.As<FMouseScrolledEvent>().GetOffset();
+            const float Offset = Event.As<FMouseScrolledEvent>().GetOffset();
+            MouseZ += Offset;
+            LastUsedDevice = EInputDevice::KeyboardMouse;
 
             SInputEvent Ev;
             Ev.Type   = EInputEventType::MouseScroll;
-            Ev.Scroll = MouseZ;
+            Ev.Scroll = Offset;
             Ev.MouseX = MouseX;
             Ev.MouseY = MouseY;
             FrameEvents.Add(Ev);

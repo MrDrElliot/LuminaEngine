@@ -18,7 +18,7 @@ float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
     }
     else if (Args.DisplayMode == IMGUI_DISPLAY_LINEAR)
     {
-        Texel.rgb = ImGuiEncodeSRGB(Texel.rgb * max(Args.Exposure, 0.0));
+        Texel.rgb = EncodeSRGB(Texel.rgb * max(Args.Exposure, 0.0));
     }
 
     // ImGui tints are already display-encoded, so multiplying after the transform keeps a tinted HDR image matching an untinted one.

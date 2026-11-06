@@ -493,10 +493,7 @@ namespace Lumina
                 const FName Name = Minted->GetName();
                 GMintedClasses().Remove(Name);
                 Minted->bSuperseded = true;
-
-                static uint32 ReplacementCounter = 0;
-                const FString Retired = FString("REPLACED_") + *Name;
-                Minted->Rename(FName(*Retired, ++ReplacementCounter), Minted->GetPackage());
+                Scripting::RenameSupersededType(*Minted);
 
                 Replacements.Emplace(Name, Minted);
             }

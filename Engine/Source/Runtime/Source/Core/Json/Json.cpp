@@ -61,7 +61,7 @@ namespace Lumina
 
         FORCEINLINE bool KeyEquals(const FJsonString& Stored, FStringView Key)
         {
-            return Stored.Len() == Key.Len() && std::memcmp(Stored.CStr(), Key.GetData(), static_cast<size_t>(Key.Len())) == 0;
+            return Stored.Len() == Key.Len() && Memory::Memcmp(Stored.CStr(), Key.GetData(), static_cast<size_t>(Key.Len())) == 0;
         }
 
         FORCEINLINE int32 GrownCapacity(int32 Max, int32 Needed)
@@ -170,7 +170,7 @@ namespace Lumina
             if (Source->Index != nullptr)
             {
                 Block->Index = static_cast<int32*>(Memory::Malloc(static_cast<size_t>(Source->IndexSlots) * sizeof(int32)));
-                std::memcpy(Block->Index, Source->Index, static_cast<size_t>(Source->IndexSlots) * sizeof(int32));
+                Memory::Memcpy(Block->Index, Source->Index, static_cast<size_t>(Source->IndexSlots) * sizeof(int32));
                 Block->IndexSlots = Source->IndexSlots;
             }
             return Block;
@@ -274,7 +274,7 @@ namespace Lumina
             {
                 Block = ResizeObjectBlock(Block, GrownCapacity(Block != nullptr ? Block->Max : 0, (Block != nullptr ? Block->Num : 0) + 1));
             }
-            FJsonMember* Placed = new (Block->Items() + Block->Num) FJsonMember{ std::move(Key), std::move(Value) };
+            FJsonMember* Placed = new (Block->Items() + Block->Num) FJsonMember{ Move(Key), Move(Value) };
             ++Block->Num;
             IndexAppended(*Block);
             return Placed->Value;
@@ -286,7 +286,7 @@ namespace Lumina
             {
                 Block = ResizeArrayBlock(Block, GrownCapacity(Block != nullptr ? Block->Max : 0, (Block != nullptr ? Block->Num : 0) + 1));
             }
-            FJsonValue* Placed = new (Block->Items() + Block->Num) FJsonValue(std::move(Value));
+            FJsonValue* Placed = new (Block->Items() + Block->Num) FJsonValue(Move(Value));
             ++Block->Num;
             return *Placed;
         }
@@ -452,7 +452,7 @@ namespace Lumina
                     Max = Max == 0 ? 64 : Max * 2;
                     Data = static_cast<T*>(Memory::Realloc(Data, static_cast<size_t>(Max) * sizeof(T)));
                 }
-                new (Data + Num) T(std::move(Value));
+                new (Data + Num) T(Move(Value));
                 ++Num;
             }
 
@@ -477,7 +477,7 @@ namespace Lumina
         {
             const int32 Count = Stack.Num - Base;
             FArrayBlock* Block = ResizeArrayBlock(nullptr, Count);
-            std::memcpy(static_cast<void*>(Block->Items()), Stack.Release(Base), static_cast<size_t>(Count) * sizeof(FJsonValue));
+            Memory::Memcpy(static_cast<void*>(Block->Items()), Stack.Release(Base), static_cast<size_t>(Count) * sizeof(FJsonValue));
             Block->Num = Count;
             return Block;
         }
@@ -486,7 +486,7 @@ namespace Lumina
         {
             const int32 Count = Stack.Num - Base;
             FObjectBlock* Block = ResizeObjectBlock(nullptr, Count);
-            std::memcpy(static_cast<void*>(Block->Items()), Stack.Release(Base), static_cast<size_t>(Count) * sizeof(FJsonMember));
+            Memory::Memcpy(static_cast<void*>(Block->Items()), Stack.Release(Base), static_cast<size_t>(Count) * sizeof(FJsonMember));
             Block->Num = Count;
             return Block;
         }
@@ -513,7 +513,7 @@ namespace Lumina
                     Object.Index[Slot] = Member + 1;
                     continue;
                 }
-                Members[Entry - 1].Value = std::move(Members[Member].Value);
+                Members[Entry - 1].Value = Move(Members[Member].Value);
                 Folded.Add(Member);
             }
 
@@ -543,13 +543,13 @@ namespace Lumina
         }
         else
         {
-            std::memcpy(Data, Other.Data, sizeof(Data));
+            Memory::Memcpy(Data, Other.Data, sizeof(Data));
         }
     }
 
     FJsonString::FJsonString(FJsonString&& Other) noexcept
     {
-        std::memcpy(Data, Other.Data, sizeof(Data));
+        Memory::Memcpy(Data, Other.Data, sizeof(Data));
         Other.Data[0] = 0;
         Other.Data[kTagIndex] = 0;
     }
@@ -559,7 +559,7 @@ namespace Lumina
         if (this != &Other)
         {
             FJsonString Copy(Other);
-            *this = std::move(Copy);
+            *this = Move(Copy);
         }
         return *this;
     }
@@ -569,7 +569,7 @@ namespace Lumina
         if (this != &Other)
         {
             Release();
-            std::memcpy(Data, Other.Data, sizeof(Data));
+            Memory::Memcpy(Data, Other.Data, sizeof(Data));
             Other.Data[0] = 0;
             Other.Data[kTagIndex] = 0;
         }
@@ -582,7 +582,7 @@ namespace Lumina
         {
             if (Length > 0)
             {
-                std::memcpy(Data, Text, static_cast<size_t>(Length));
+                Memory::Memcpy(Data, Text, static_cast<size_t>(Length));
             }
             Data[Length] = 0;
             Data[kTagIndex] = static_cast<char>(Length);
@@ -590,10 +590,10 @@ namespace Lumina
         }
 
         char* Heap = static_cast<char*>(Memory::Malloc(static_cast<size_t>(Length) + 1));
-        std::memcpy(Heap, Text, static_cast<size_t>(Length));
+        Memory::Memcpy(Heap, Text, static_cast<size_t>(Length));
         Heap[Length] = 0;
-        std::memcpy(Data, &Heap, sizeof(Heap));
-        std::memcpy(Data + 8, &Length, sizeof(Length));
+        Memory::Memcpy(Data, &Heap, sizeof(Heap));
+        Memory::Memcpy(Data + 8, &Length, sizeof(Length));
         Data[kTagIndex] = static_cast<char>(kHeapMarker);
     }
 
@@ -602,7 +602,7 @@ namespace Lumina
         if (IsHeap())
         {
             void* Heap;
-            std::memcpy(&Heap, Data, sizeof(Heap));
+            Memory::Memcpy(&Heap, Data, sizeof(Heap));
             Memory::Free(Heap);
             Data[0] = 0;
             Data[kTagIndex] = 0;
@@ -631,7 +631,7 @@ namespace Lumina
 
     FJsonValue::FJsonValue(FJsonValue&& Other) noexcept
     {
-        std::memcpy(Storage, Other.Storage, sizeof(Storage));
+        Memory::Memcpy(Storage, Other.Storage, sizeof(Storage));
         Type = Other.Type;
         Other.Type = EJsonType::Null;
     }
@@ -641,7 +641,7 @@ namespace Lumina
         if (this != &Other)
         {
             FJsonValue Copy(Other);
-            *this = std::move(Copy);
+            *this = Move(Copy);
         }
         return *this;
     }
@@ -651,9 +651,9 @@ namespace Lumina
     {
         if (this != &Other)
         {
-            FJsonValue Detached(std::move(Other));
+            FJsonValue Detached(Move(Other));
             Release();
-            std::memcpy(Storage, Detached.Storage, sizeof(Storage));
+            Memory::Memcpy(Storage, Detached.Storage, sizeof(Storage));
             Type = Detached.Type;
             Detached.Type = EJsonType::Null;
         }
@@ -674,7 +674,7 @@ namespace Lumina
             SetPayload(JsonInternal::CopyObjectBlock(static_cast<const JsonInternal::FObjectBlock*>(Other.PointerPayload())));
             break;
         default:
-            std::memcpy(Storage, Other.Storage, sizeof(Storage));
+            Memory::Memcpy(Storage, Other.Storage, sizeof(Storage));
             break;
         }
         Type = Other.Type;
@@ -962,7 +962,7 @@ namespace Lumina
     {
         EnsureArray();
         JsonInternal::FArrayBlock* Block = static_cast<JsonInternal::FArrayBlock*>(PointerPayload());
-        FJsonValue& Placed = JsonInternal::AppendElement(Block, std::move(Value));
+        FJsonValue& Placed = JsonInternal::AppendElement(Block, Move(Value));
         SetPayload(Block);
         return Placed;
     }
@@ -975,11 +975,11 @@ namespace Lumina
         if (Existing != Constants::kIndexNone)
         {
             FJsonValue& Slot = Block->Items()[Existing].Value;
-            Slot = std::move(Value);
+            Slot = Move(Value);
             return Slot;
         }
         FJsonString OwnedKey(Key);
-        FJsonValue& Placed = JsonInternal::AppendMember(Block, std::move(OwnedKey), std::move(Value));
+        FJsonValue& Placed = JsonInternal::AppendMember(Block, Move(OwnedKey), Move(Value));
         SetPayload(Block);
         return Placed;
     }
@@ -994,7 +994,7 @@ namespace Lumina
             return Block->Items()[Existing].Value;
         }
         FJsonString OwnedKey(Key);
-        FJsonValue& Placed = JsonInternal::AppendMember(Block, std::move(OwnedKey), FJsonValue());
+        FJsonValue& Placed = JsonInternal::AppendMember(Block, Move(OwnedKey), FJsonValue());
         SetPayload(Block);
         return Placed;
     }
@@ -1082,7 +1082,7 @@ namespace Lumina
         {
             if (Type == Other.Type)
             {
-                return IsDouble() ? GetPayload<double>() == Other.GetPayload<double>() : std::memcmp(Storage, Other.Storage, 8) == 0;
+                return IsDouble() ? GetPayload<double>() == Other.GetPayload<double>() : Memory::Memcmp(Storage, Other.Storage, 8) == 0;
             }
             if (IsDouble() || Other.IsDouble())
             {
@@ -1284,7 +1284,7 @@ namespace Lumina
 
         bool ParseWord(const char* Word, int32 Length)
         {
-            if (End - Cursor < Length || std::memcmp(Cursor, Word, static_cast<size_t>(Length)) != 0)
+            if (End - Cursor < Length || Memory::Memcmp(Cursor, Word, static_cast<size_t>(Length)) != 0)
             {
                 return Fail("invalid literal");
             }
@@ -1355,11 +1355,11 @@ namespace Lumina
                 }
                 if (Repeat != Constants::kIndexNone)
                 {
-                    MemberStack.Data[Repeat].Value = std::move(Child);
+                    MemberStack.Data[Repeat].Value = Move(Child);
                 }
                 else
                 {
-                    MemberStack.Push(FJsonMember{ std::move(Key), std::move(Child) });
+                    MemberStack.Push(FJsonMember{ Move(Key), Move(Child) });
                 }
 
                 if (Cursor < End && *Cursor == ',')
@@ -1424,7 +1424,7 @@ namespace Lumina
                 {
                     return false;
                 }
-                ValueStack.Push(std::move(Child));
+                ValueStack.Push(Move(Child));
 
                 if (Cursor < End && *Cursor == ',')
                 {
@@ -1848,7 +1848,7 @@ namespace Lumina
 
         FORCEINLINE void PutText(const char* Text, int64 Count)
         {
-            std::memcpy(Room(Count), Text, static_cast<size_t>(Count));
+            Memory::Memcpy(Room(Count), Text, static_cast<size_t>(Count));
             Length += Count;
         }
 
@@ -1913,7 +1913,7 @@ namespace Lumina
 
             if (DigitCount <= Point && Point <= 15)
             {
-                std::memcpy(Write, Digits, static_cast<size_t>(DigitCount));
+                Memory::Memcpy(Write, Digits, static_cast<size_t>(DigitCount));
                 Write += DigitCount;
                 std::memset(Write, '0', static_cast<size_t>(Point - DigitCount));
                 Write += Point - DigitCount;
@@ -1922,10 +1922,10 @@ namespace Lumina
             }
             else if (0 < Point && Point <= 15)
             {
-                std::memcpy(Write, Digits, static_cast<size_t>(Point));
+                Memory::Memcpy(Write, Digits, static_cast<size_t>(Point));
                 Write += Point;
                 *Write++ = '.';
-                std::memcpy(Write, Digits + Point, static_cast<size_t>(DigitCount - Point));
+                Memory::Memcpy(Write, Digits + Point, static_cast<size_t>(DigitCount - Point));
                 Write += DigitCount - Point;
             }
             else if (-4 < Point && Point <= 0)
@@ -1934,7 +1934,7 @@ namespace Lumina
                 *Write++ = '.';
                 std::memset(Write, '0', static_cast<size_t>(-Point));
                 Write += -Point;
-                std::memcpy(Write, Digits, static_cast<size_t>(DigitCount));
+                Memory::Memcpy(Write, Digits, static_cast<size_t>(DigitCount));
                 Write += DigitCount;
             }
             else
@@ -1943,7 +1943,7 @@ namespace Lumina
                 if (DigitCount > 1)
                 {
                     *Write++ = '.';
-                    std::memcpy(Write, Digits + 1, static_cast<size_t>(DigitCount - 1));
+                    Memory::Memcpy(Write, Digits + 1, static_cast<size_t>(DigitCount - 1));
                     Write += DigitCount - 1;
                 }
                 const int32 Shown = Point - 1;

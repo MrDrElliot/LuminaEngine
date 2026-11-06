@@ -92,7 +92,7 @@ bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Count, out uint
 }
 
 // The LOD after the one Current starts at, empty when there is none or the instance cannot re-select.
-uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current)
+uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current, bool bVoxels, inout bool bForceAll)
 {
     const uint DescIndex = Inst.SurfaceDescIndex;
     if (DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
@@ -100,19 +100,36 @@ uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current)
         return uint2(0u, 0u);
     }
     const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
-    const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
+    const uint NumLODs = SelectableLODCount(Desc, bVoxels);
     if (NumLODs == 0u)
     {
         return uint2(0u, 0u);
     }
 
     uint Pick = NumLODs;
-    for (uint Lod = 0u; Lod + 1u < NumLODs; ++Lod)
+    if (Desc.bClusterLOD)
     {
-        if (Desc.LODMeshletOffset[Lod] == Current.x)
+        // A cluster range drops to the coarsest slot it already spans, then one slot up, each drawn whole since the cut no longer holds.
+        const uint End = Current.x + Current.y;
+        for (uint Slot = 0u; Slot < NumLODs; ++Slot)
         {
-            Pick = Lod + 1u;
-            break;
+            if (Desc.LODMeshletOffset[Slot] + Desc.LODMeshletCount[Slot] == End)
+            {
+                Pick = (bForceAll || Desc.LODMeshletOffset[Slot] == Current.x) ? Slot + 1u : Slot;
+                break;
+            }
+        }
+        bForceAll = true;
+    }
+    else
+    {
+        for (uint Lod = 0u; Lod + 1u < NumLODs; ++Lod)
+        {
+            if (Desc.LODMeshletOffset[Lod] == Current.x)
+            {
+                Pick = Lod + 1u;
+                break;
+            }
         }
     }
     if (Pick >= NumLODs)
@@ -240,12 +257,13 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
     // Only an instance that does not fit steps down, one LOD at a time, so a short frame degrades the overflow and nothing else.
     uint Slot;
+    bool bForceAll = false;
     if (!TryReserveRun(BucketIndex, Bucket, Range.y, Slot))
     {
         bool bFitted = false;
         for (uint Step = 0u; Step < (uint)MESHLET_MAX_LODS && !bFitted; ++Step)
         {
-            const uint2 Coarser = NextCoarserRange(Inst, Range);
+            const uint2 Coarser = NextCoarserRange(Inst, Range, VoxelFarEnabled(), bForceAll);
             if (Coarser.y == 0u || Coarser.y >= Range.y)
             {
                 break;
@@ -259,8 +277,9 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         }
     }
 
-    const uint Count  = Range.y;
-    const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+    const uint Count     = Range.y;
+    const uint Blocks    = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+    const uint ForceBits = bForceAll ? MESHLET_BLOCK_FORCE_ALL_BIT : 0u;
     for (uint b = 0u; b < Blocks; ++b)
     {
         const uint First = b * MESHLET_CULL_GROUP_SIZE;
@@ -268,7 +287,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         FMeshletBlock Block;
         Block.InstanceID         = InstanceID;
         Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First,
-                                                       min(MESHLET_CULL_GROUP_SIZE, Count - First));
+                                                       min(MESHLET_CULL_GROUP_SIZE, Count - First)) | ForceBits;
         Pass().OutBlockList.Set(Slot + b, Block);
     }
 }

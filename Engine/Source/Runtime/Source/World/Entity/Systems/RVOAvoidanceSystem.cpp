@@ -25,19 +25,19 @@ namespace Lumina
         constexpr FVector3 GDebugLift(0.0f, 0.15f, 0.0f);
     }
 
-    void SRVOAvoidanceSystem::Configure()
+    void CRVOAvoidanceSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        // The preferred velocity it avoids around is what SPathFollowSystem writes.
-        RunsAfter<SPathFollowSystem>();
+        // The preferred velocity it avoids around is what CPathFollowSystem writes.
+        RunsAfter<CPathFollowSystem>();
     }
 
-    bool SRVOAvoidanceSystem::HasWork(const SSystemContext& Context)
+    bool CRVOAvoidanceSystem::HasWork(const SSystemContext& Context)
     {
         return AnyQueryHasRows(Avoiders);
     }
 
-    void SRVOAvoidanceSystem::OnUpdate(const SSystemContext& Context)
+    void CRVOAvoidanceSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace RVOAvoidanceSystemInternal;
 
@@ -88,14 +88,14 @@ namespace Lumina
             const FVector3 Position = AvoiderView.Get<ECS::Read<STransformComponent>>(Entity).GetWorldLocationCached();
 
             float CharacterRadius = 0.5f;
-            if (const SCharacterPhysicsComponent* Character = Characters.TryGet<SCharacterPhysicsComponent>(Entity))
+            if (const SCharacterPhysicsComponent* Character = Avoiders.TryGet<SCharacterPhysicsComponent>(Entity))
             {
                 CharacterRadius = Character->Radius;
             }
 
             float    Speed = 5.0f;
             FVector3 Velocity(0.0f);
-            if (const SCharacterMovementComponent* Movement = Movers.TryGet<SCharacterMovementComponent>(Entity))
+            if (const SCharacterMovementComponent* Movement = Avoiders.TryGet<SCharacterMovementComponent>(Entity))
             {
                 Speed    = Movement->MoveSpeed;
                 Velocity = Movement->Velocity;
@@ -237,7 +237,7 @@ namespace Lumina
 
             if (Agent.bDriveCharacterController)
             {
-                if (SCharacterControllerComponent* Controller = Controllers.TryGet<SCharacterControllerComponent>(Entity))
+                if (SCharacterControllerComponent* Controller = Avoiders.TryGet<SCharacterControllerComponent>(Entity))
                 {
                     const float MaxSpeed = Agents.MaxSpeed[i];
                     if (MaxSpeed > 1e-4f)

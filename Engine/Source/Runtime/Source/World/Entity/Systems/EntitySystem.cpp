@@ -28,15 +28,6 @@ namespace Lumina
 
         thread_local FConstructingSystem GConstructing;
 
-        template<typename T>
-        void AddUnique(TVector<T>& Ids, const T& Id)
-        {
-            if (!Algo::Contains(Ids, Id))
-            {
-                Ids.Add(Id);
-            }
-        }
-
         enum class EManagedParamKind : uint32
         {
             Bound       = 0,
@@ -230,27 +221,21 @@ namespace Lumina
 
     void DeclareParamRead(FSystemAccess& Access, uint32 TypeId, bool bComponent, int32 Membership)
     {
-        EntitySystemInternal::AddUnique(Access.Reads, TypeId);
+        Access.Reads.AddUnique(TypeId);
         if (bComponent)
         {
-            EntitySystemInternal::AddUnique(Access.ComponentAccesses, FComponentAccess{ TypeId, Membership, false });
-            if (!Algo::Contains(Access.Pools, static_cast<ECS::FComponentTypeID>(TypeId)))
-            {
-                Access.Pools.Add(static_cast<ECS::FComponentTypeID>(TypeId));
-            }
+            Access.ComponentAccesses.AddUnique(FComponentAccess{ TypeId, Membership, false });
+            Access.Pools.AddUnique(static_cast<ECS::FComponentTypeID>(TypeId));
         }
     }
 
     void DeclareParamWrite(FSystemAccess& Access, uint32 TypeId, bool bComponent, int32 Membership)
     {
-        EntitySystemInternal::AddUnique(Access.Writes, TypeId);
+        Access.Writes.AddUnique(TypeId);
         if (bComponent)
         {
-            EntitySystemInternal::AddUnique(Access.ComponentAccesses, FComponentAccess{ TypeId, Membership, true });
-            if (!Algo::Contains(Access.Pools, static_cast<ECS::FComponentTypeID>(TypeId)))
-            {
-                Access.Pools.Add(static_cast<ECS::FComponentTypeID>(TypeId));
-            }
+            Access.ComponentAccesses.AddUnique(FComponentAccess{ TypeId, Membership, true });
+            Access.Pools.AddUnique(static_cast<ECS::FComponentTypeID>(TypeId));
         }
     }
 
@@ -259,30 +244,24 @@ namespace Lumina
         FAccessMembership Membership;
         Membership.With.Append(With, With + NumWith);
         Membership.Without.Append(Without, Without + NumWithout);
-        Access.Memberships.Add(std::move(Membership));
+        Access.Memberships.Add(Move(Membership));
         return Access.Memberships.Num() - 1;
     }
 
     void DeclareParamPool(FSystemAccess& Access, uint32 TypeId)
     {
-        if (!Algo::Contains(Access.Pools, static_cast<ECS::FComponentTypeID>(TypeId)))
-        {
-            Access.Pools.Add(static_cast<ECS::FComponentTypeID>(TypeId));
-        }
+        Access.Pools.AddUnique(static_cast<ECS::FComponentTypeID>(TypeId));
     }
 
     void DeclareParamTracked(FSystemAccess& Access, uint32 TypeId)
     {
-        if (!Algo::Contains(Access.TrackedPools, static_cast<ECS::FComponentTypeID>(TypeId)))
-        {
-            Access.TrackedPools.Add(static_cast<ECS::FComponentTypeID>(TypeId));
-        }
+        Access.TrackedPools.AddUnique(static_cast<ECS::FComponentTypeID>(TypeId));
     }
 
     void DeclareParamSends(FSystemAccess& Access, uint32 TypeId)
     {
-        EntitySystemInternal::AddUnique(Access.Writes, TypeId);
-        EntitySystemInternal::AddUnique(Access.SentEvents, TypeId);
+        Access.Writes.AddUnique(TypeId);
+        Access.SentEvents.AddUnique(TypeId);
     }
 
     bool CEntitySystem::HasWork(const SSystemContext&)
@@ -317,26 +296,17 @@ namespace Lumina
 
     void CEntitySystem::RunsAfterSystem(FName System)
     {
-        if (!Algo::Contains(After, System))
-        {
-            After.Add(System);
-        }
+        After.AddUnique(System);
     }
 
     void CEntitySystem::RunsBeforeSystem(FName System)
     {
-        if (!Algo::Contains(Before, System))
-        {
-            Before.Add(System);
-        }
+        Before.AddUnique(System);
     }
 
     void CEntitySystem::JoinSet(FName Set)
     {
-        if (!Algo::Contains(Sets, Set))
-        {
-            Sets.Add(Set);
-        }
+        Sets.AddUnique(Set);
     }
 
     void CEntitySystem::DeclareWrite(FName Component)

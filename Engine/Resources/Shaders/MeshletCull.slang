@@ -31,6 +31,7 @@ struct FMeshletCullArgs
     GPUSpan<uint>          ReceiverMask;
     // Word 3 is how many blocks BuildMeshletCullArgs gave each group.
     GPUSpan<uint4>         CullDispatch;
+    GPUSpan<FSurfaceDesc>  SurfaceDescs;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
@@ -41,6 +42,8 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 static const uint kBlockTwoPhase        = 1u;
 static const uint kBlockWasVisible      = 2u;
 static const uint kBlockDeferredCascade = 4u;
+// The block build fell back to a whole slot, so every meshlet draws without the cluster cut.
+static const uint kBlockForceAll        = 8u;
 
 // A group culls up to MESHLET_CULL_GROUP_SIZE blocks, so a block holding one cube's meshlet no longer idles 31 lanes.
 groupshared uint gsBlockArg[MESHLET_CULL_GROUP_SIZE];
@@ -144,7 +147,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         {
             Block = Pass().BlockList.Get(BlockIdx);
         }
-        Flags = (bTwoPhase ? kBlockTwoPhase : 0u) | (bDeferredCascade ? kBlockDeferredCascade : 0u);
+        Flags = (bTwoPhase ? kBlockTwoPhase : 0u) | (bDeferredCascade ? kBlockDeferredCascade : 0u)
+              | ((Block.PackedBaseAndCount & MESHLET_BLOCK_FORCE_ALL_BIT) != 0u ? kBlockForceAll : 0u);
     }
 
     FGPUInstance* Inst = Instances() + Block.InstanceID;
@@ -231,12 +235,16 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
             // Late also tests what early drew, since that test is what writes next frame's flag and bits.
             if (bLate || bEmitPhase)
             {
-                const FMeshletCullContext Ctx = MakeMeshletCullContext(Instances() + KeepInstance);
+                FMeshletCullContext Ctx = MakeMeshletCullContext(Instances() + KeepInstance);
+                if (Ctx.bSelectsLOD && Pass().SurfaceDescs.Contains(Ctx.SurfaceDescIndex))
+                {
+                    Ctx.LODErrorMultiplier = Pass().SurfaceDescs.At(Ctx.SurfaceDescIndex).LODErrorMultiplier;
+                }
                 FMeshletBoundsCache Cache     = MakeMeshletBoundsCache();
                 const FCullView View          = CullViews().GetAligned(KeepArg / NumDraws);
 
                 // No Hi-Z in the early replay, since the late phase never re-emits what the early phase drew.
-                bool bVisible = TestMeshletAgainstView(Ctx, View, KeepMeshlet, Cache, bLate);
+                bool bVisible = TestMeshletAgainstView(Ctx, View, KeepMeshlet, Cache, bLate, (OwnerFlags & kBlockForceAll) != 0u);
                 if (bVisible && (OwnerFlags & kBlockDeferredCascade) != 0u && Ctx.bPosedBounds)
                 {
                     bVisible = !IsShadowUnreceived(View.CascadeIndex, Cache.WorldCenter, Cache.WorldRadius);

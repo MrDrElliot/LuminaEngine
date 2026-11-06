@@ -62,7 +62,7 @@ namespace Lumina
                 {
                     TVector<float> Resampled(NeededHeights);
                     ResampleGrid(Terrain.Heightmap.GetData(), OldRes, Resampled.GetData(), NewRes);
-                    Terrain.Heightmap = std::move(Resampled);
+                    Terrain.Heightmap = Move(Resampled);
 
                     const int32 LayerCount = Terrain.Layers.Num();
                     if (LayerCount > 0 && static_cast<size_t>(Terrain.LayerWeights.Num()) == size_t(LayerCount) * OldCount)
@@ -73,7 +73,7 @@ namespace Lumina
                             ResampleGrid(Terrain.LayerWeights.GetData() + size_t(L) * OldCount, OldRes,
                                          NewWeights.GetData() + size_t(L) * NeededHeights, NewRes);
                         }
-                        Terrain.LayerWeights = std::move(NewWeights);
+                        Terrain.LayerWeights = Move(NewWeights);
                         Terrain.CPUState.bFullWeightsDirty = true;
                     }
                 }
@@ -226,7 +226,7 @@ namespace Lumina
                 for (int32 Row = 0; Row < RegionH; ++Row)
                 {
                     const float* Src = Terrain.Heightmap.GetData() + size_t(OutRectMin.y + Row) * Res + OutRectMin.x;
-                    std::memcpy(Out.HeightBytes.GetData() + size_t(Row) * RegionW, Src, size_t(RegionW) * sizeof(float));
+                    Memory::Memcpy(Out.HeightBytes.GetData() + size_t(Row) * RegionW, Src, size_t(RegionW) * sizeof(float));
                 }
             }
 

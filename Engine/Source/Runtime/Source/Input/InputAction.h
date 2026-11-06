@@ -39,6 +39,11 @@ namespace Lumina
         GamepadRightTrigger,
     };
 
+    inline bool IsGamepadSource(EInputAxisSource Source)
+    {
+        return Source >= EInputAxisSource::GamepadLeftX && Source <= EInputAxisSource::GamepadRightTrigger;
+    }
+
     // The channel of an Axis2D action a binding feeds. The other types only use X.
     REFLECT()
     enum class EInputAxisChannel : uint8

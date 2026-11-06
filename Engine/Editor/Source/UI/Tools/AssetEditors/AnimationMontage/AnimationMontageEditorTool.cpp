@@ -1,4 +1,5 @@
 ﻿#include "Containers/StringFormat.h"
+#include "World/World.h"
 #include "AnimationMontageEditorTool.h"
 #include "UI/Tools/AssetEditors/Animation/TimelineDrawing.h"
 #include "World/ECS/Registry.h"
@@ -131,10 +132,6 @@ namespace Lumina
         {
             CreatePreviewEntity();
         }
-    }
-
-    void FAnimationMontageEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
     }
 
     void FAnimationMontageEditorTool::OnAssetLoadFinished()
@@ -682,15 +679,9 @@ namespace Lumina
 
             if (ImGui::BeginPopupContextItem("slot_ctx"))
             {
-                static char RenameBuf[128];
-                if (ImGui::IsWindowAppearing())
+                if (const FName NewName = Timeline::DrawRenameField("Slot Name", 160, RenameBuffer, Track.SlotName); !NewName.IsNone())
                 {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Track.SlotName);
-                }
-                ImGui::SetNextItemWidth(160);
-                if (ImGui::InputText("Slot Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
-                {
-                    Track.SlotName = FName(RenameBuf);
+                    Track.SlotName = NewName;
                     MarkMontageDirty();
                 }
                 ImGui::Separator();
@@ -756,16 +747,9 @@ namespace Lumina
 
             if (ImGui::BeginPopupContextItem("lane_ctx"))
             {
-                static char RenameBuf[128];
-                if (ImGui::IsWindowAppearing())
-                {
-                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", *Montage->NotifyTracks[n]);
-                }
-                ImGui::SetNextItemWidth(160);
-                if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
+                if (const FName NewName = Timeline::DrawRenameField("Name", 160, RenameBuffer, Montage->NotifyTracks[n], Montage->NotifyTracks); !NewName.IsNone())
                 {
                     const FName PreviousName = Montage->NotifyTracks[n];
-                    const FName NewName(RenameBuf);
                     Montage->NotifyTracks[n] = NewName;
                     for (SAnimMontageNotify& N : Montage->Notifies)
                     {

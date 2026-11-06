@@ -198,17 +198,6 @@ namespace Lumina::PlatformTime
         ::Sleep(static_cast<DWORD>(Milliseconds));
     }
 
-    void SleepMicroseconds(uint32 Microseconds) noexcept
-    {
-        if (Microseconds == 0)
-        {
-            YieldThread();
-            return;
-        }
-
-        ::Sleep(static_cast<DWORD>((Microseconds + 999u) / 1000u));
-    }
-
     // The Sleep(0) fallback hands over the whole quantum and cost the job system roughly 4x.
     void YieldThread() noexcept
     {

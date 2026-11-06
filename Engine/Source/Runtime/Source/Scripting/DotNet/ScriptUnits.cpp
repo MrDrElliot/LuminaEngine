@@ -2,8 +2,7 @@
 #include "ScriptUnits.h"
 #include "DotNetHost.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include <string>
-#include <cstring>
+#include <cstdio>
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
@@ -27,12 +26,6 @@ namespace Lumina::DotNet
         }
         Result.Append(Right.GetData(), Right.Len());
         return Result;
-    }
-
-    FString ParentOf(FStringView Path)
-    {
-        const int32 Slash = Path.FindLastOf("/\\");
-        return Slash == Constants::kIndexNone ? FString() : FString(Path.GetData(), Slash);
     }
 
     // File name without directory or extension, which for a managed assembly is also its simple name.
@@ -90,7 +83,7 @@ namespace Lumina::DotNet
             }
 
             Src.Path = FStringView(P.GetData(), P.Len());
-            Out.Add(std::move(Src));
+            Out.Add(Move(Src));
         });
     }
     
@@ -161,7 +154,7 @@ namespace Lumina::DotNet
             ApplyScriptReferences(Unit, Plugin->GetDescriptorPath(), PluginDir);
 
             PluginNames.Add(Unit.Name);
-            Units.Add(std::move(Unit));
+            Units.Add(Move(Unit));
         }
 
         {
@@ -184,7 +177,7 @@ namespace Lumina::DotNet
                 }
             }
             Game.Deps = PluginNames;
-            Units.Add(std::move(Game));
+            Units.Add(Move(Game));
         }
 
         {
@@ -192,11 +185,11 @@ namespace Lumina::DotNet
             Engine.Name = "Engine";
             Engine.DiskDir = Paths::GetEngineResourceDirectory() + "/Scripts";
             // Engine example scripts live next to the engine binaries (a sibling of DotNet/Managed, not in it).
-            const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
+            const FString ExeDir = Paths::Parent(Platform::GetCurrentProcessPath());
             Engine.BinaryDir       = NativePath(Join(ExeDir, "DotNet"));
             Engine.IntermediateDir = NativePath(Join(ExeDir, "DotNet/obj/Engine"));
             Engine.AssemblyPath    = Engine.BinaryDir + "/Engine.dll";
-            Units.Add(std::move(Engine));
+            Units.Add(Move(Engine));
         }
 
         return Units;
@@ -264,23 +257,21 @@ namespace Lumina::DotNet
                     Unit.References.Add(Join(ScriptsDir, Reference.AsString()));
                 }
             }
-            Units.Add(std::move(Unit));
+            Units.Add(Move(Unit));
         }
         return Units;
     }
 
     // So frequent reloads do not churn the files and the IDE does not reload projects each time.
-    void WriteTextIfChanged(FStringView Path, const std::string& Content)
+    void WriteTextIfChanged(FStringView Path, const FString& Content)
     {
         FString Existing;
-        if (Filesystem::ReadFile(Existing, Path)
-            && static_cast<size_t>(Existing.Len()) == Content.size()
-            && ::memcmp(Existing.GetData(), Content.data(), Content.size()) == 0)
+        if (Filesystem::ReadFile(Existing, Path) && Existing == Content)
         {
             return;
         }
 
-        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Content.data()), IntCastChecked<int32>(Content.size()));
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Content.GetData()), Content.Len());
         if (Filesystem::WriteFile(Path, Bytes))
         {
             LOG_DISPLAY("Generated C# script project: {}", Path);
@@ -293,7 +284,7 @@ namespace Lumina::DotNet
     }
 
     // Stable across regenerations, so the IDE does not treat each regen as a brand-new project.
-    std::string MakeStableGuid(const FString& Seed)
+    FString MakeStableGuid(const FString& Seed)
     {
         auto Fnv = [](const char* S, uint64 Basis) -> uint64
         {
@@ -319,7 +310,7 @@ namespace Lumina::DotNet
             "{%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
             Bytes[0], Bytes[1], Bytes[2], Bytes[3], Bytes[4], Bytes[5], Bytes[6], Bytes[7],
             Bytes[8], Bytes[9], Bytes[10], Bytes[11], Bytes[12], Bytes[13], Bytes[14], Bytes[15]);
-        return std::string(Buf);
+        return FString(Buf);
     }
 
     // The absolute path of the generated IDE project for a unit ("<DiskDir>/<Name>.Scripts.csproj").
@@ -329,9 +320,9 @@ namespace Lumina::DotNet
     }
 
     // Matches the runtime cross-assembly references exactly, so IntelliSense sees the same graph.
-    std::string BuildCsprojXml(const FScriptUnit& Unit, const TVector<FScriptUnit>& AllUnits, const FString& LuminaSharpDll)
+    FString BuildCsprojXml(const FScriptUnit& Unit, const TVector<FScriptUnit>& AllUnits, const FString& LuminaSharpDll)
     {
-        std::string Xml;
+        FString Xml;
         Xml += "<Project Sdk=\"Microsoft.NET.Sdk\">\n";
         Xml += "  <!-- GENERATED for IDE IntelliSense only (run \"dotnet.genprojects\" to refresh).\n";
         Xml += "       Scripts are compiled at runtime by the engine; this project is never the runtime\n";
@@ -343,25 +334,25 @@ namespace Lumina::DotNet
         Xml += "    <EnableDefaultItems>true</EnableDefaultItems>\n";
         // Generated reflected-type bindings read properties through raw pointers.
         Xml += "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n";
-        Xml += "    <AssemblyName>" + std::string(*Unit.Name) + "</AssemblyName>\n";
+        Xml += "    <AssemblyName>" + Unit.Name + "</AssemblyName>\n";
         // An IDE build produces the same artifact and nothing lands in the engine library's output.
         if (!Unit.BinaryDir.IsEmpty())
         {
             Xml += "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n";
-            Xml += "    <OutputPath>" + std::string(*Unit.BinaryDir) + "/</OutputPath>\n";
+            Xml += "    <OutputPath>" + Unit.BinaryDir + "/</OutputPath>\n";
         }
         if (!Unit.IntermediateDir.IsEmpty())
         {
-            Xml += "    <IntermediateOutputPath>" + std::string(*Unit.IntermediateDir) + "/</IntermediateOutputPath>\n";
+            Xml += "    <IntermediateOutputPath>" + Unit.IntermediateDir + "/</IntermediateOutputPath>\n";
         }
         Xml += "  </PropertyGroup>\n";
         Xml += "  <ItemGroup>\n";
         Xml += "    <Reference Include=\"LuminaSharp\">\n";
-        Xml += "      <HintPath>" + std::string(*LuminaSharpDll) + "</HintPath>\n";
+        Xml += "      <HintPath>" + LuminaSharpDll + "</HintPath>\n";
         Xml += "    </Reference>\n";
         // The generator the runtime compile loads; without it partial NativeCall bodies are missing.
         Xml += "    <Analyzer Include=\""
-            + std::string(*NativePath(Join(ParentOf(LuminaSharpDll), "LuminaSharp.Generators.dll")))
+            + NativePath(Join(Paths::Parent(LuminaSharpDll), "LuminaSharp.Generators.dll"))
             + "\" />\n";
         // Matches the imports ScriptCompiler adds to every runtime compile, so LoadObject<T> and bare specifiers resolve the same in the IDE.
         Xml += "    <Using Include=\"LuminaSharp.ObjectCore\" Static=\"true\" />\n";
@@ -374,20 +365,20 @@ namespace Lumina::DotNet
             Xml += "  <ItemGroup>\n";
             for (const FScriptPackageRef& Package : Unit.Declared.Packages)
             {
-                Xml += "    <PackageReference Include=\"" + std::string(*Package.Name)
-                    + "\" Version=\"" + std::string(*Package.Version) + "\" />\n";
+                Xml += "    <PackageReference Include=\"" + Package.Name
+                    + "\" Version=\"" + Package.Version + "\" />\n";
             }
             for (const FString& Assembly : Unit.Declared.Assemblies)
             {
                 const FString Stem = StemOf(Assembly);
-                Xml += "    <Reference Include=\"" + std::string(*Stem) + "\">\n";
-                Xml += "      <HintPath>" + std::string(*NativePath(Assembly)) + "</HintPath>\n";
+                Xml += "    <Reference Include=\"" + Stem + "\">\n";
+                Xml += "      <HintPath>" + NativePath(Assembly) + "</HintPath>\n";
                 Xml += "    </Reference>\n";
             }
             Xml += "  </ItemGroup>\n";
         }
 
-        std::string Refs;
+        FString Refs;
         for (const FString& DepName : Unit.Deps)
         {
             const FScriptUnit* Dep = nullptr;
@@ -403,9 +394,9 @@ namespace Lumina::DotNet
             {
                 continue; // the dependency ships no scripts on disk; nothing to reference
             }
-            Refs += "    <ProjectReference Include=\"" + std::string(*UnitProjectPath(*Dep)) + "\" />\n";
+            Refs += "    <ProjectReference Include=\"" + UnitProjectPath(*Dep) + "\" />\n";
         }
-        if (!Refs.empty())
+        if (!Refs.IsEmpty())
         {
             Xml += "  <ItemGroup>\n" + Refs + "  </ItemGroup>\n";
         }
@@ -422,7 +413,7 @@ namespace Lumina::DotNet
             return;
         }
 
-        struct FSlnEntry { std::string Name; std::string Path; std::string Guid; };
+        struct FSlnEntry { FString Name; FString Path; FString Guid; };
         TVector<FSlnEntry> Entries;
         for (const FScriptUnit& Unit : Units)
         {
@@ -434,7 +425,7 @@ namespace Lumina::DotNet
             {
                 continue;
             }
-            Entries.Emplace(std::string(*Unit.Name) + ".Scripts", std::string(*UnitProjectPath(Unit)), MakeStableGuid(Unit.Name));
+            Entries.Emplace(Unit.Name + ".Scripts", UnitProjectPath(Unit), MakeStableGuid(Unit.Name));
         }
         if (Entries.IsEmpty())
         {
@@ -442,13 +433,13 @@ namespace Lumina::DotNet
         }
 
         const char* CsProjTypeGuid = "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}";
-        std::string Sln;
+        FString Sln;
         Sln += "\xEF\xBB\xBF";
         Sln += "Microsoft Visual Studio Solution File, Format Version 12.00\n";
         Sln += "# Visual Studio Version 17\n";
         for (const FSlnEntry& Entry : Entries)
         {
-            Sln += "Project(\"" + std::string(CsProjTypeGuid) + "\") = \"" + Entry.Name + "\", \"" + Entry.Path + "\", \"" + Entry.Guid + "\"\n";
+            Sln += "Project(\"" + FString(CsProjTypeGuid) + "\") = \"" + Entry.Name + "\", \"" + Entry.Path + "\", \"" + Entry.Guid + "\"\n";
             Sln += "EndProject\n";
         }
         Sln += "Global\n";
@@ -623,7 +614,7 @@ namespace Lumina::DotNet
         }
 
         const FString ExePath = NativePath(Platform::GetCurrentProcessPath());
-        const FString Dll = NativePath(Join(ParentOf(ExePath), "DotNet/Managed/LuminaSharp.dll"));
+        const FString Dll = NativePath(Join(Paths::Parent(ExePath), "DotNet/Managed/LuminaSharp.dll"));
 
         // The same unit graph the runtime compiles, so the IDE view matches what actually builds.
         const TVector<FScriptUnit> Units = BuildScriptUnits();
@@ -633,7 +624,6 @@ namespace Lumina::DotNet
             {
                 continue;
             }
-            std::error_code Ec;
             if (!Filesystem::Exists(Unit.DiskDir))
             {
                 continue;

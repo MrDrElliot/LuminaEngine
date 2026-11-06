@@ -140,9 +140,9 @@ namespace Lumina
             return;
         }
 
-        SDataTableRow Moved = std::move(Rows[From]);
+        SDataTableRow Moved = Move(Rows[From]);
         Rows.RemoveAt(From);
-        Rows.Insert(std::move(Moved), To);
+        Rows.Insert(Move(Moved), To);
     }
 
     void CDataTable::ClearRows()

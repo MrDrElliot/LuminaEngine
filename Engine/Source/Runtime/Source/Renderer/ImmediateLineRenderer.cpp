@@ -107,19 +107,6 @@ namespace Lumina
         Channel.LastDemand = (uint32)Math::Min<uint64>(Demand, (uint64)kMaxVerts);
     }
 
-    uint64 FImmediateLineRenderer::GetResidentBytes() const
-    {
-        uint64 Bytes = 0;
-        for (const FChannel& Channel : Channels)
-        {
-            for (uint32 Slot = 0; Slot < kSlots; ++Slot)
-            {
-                Bytes += (uint64)Channel.SlotCapacity[Slot] * sizeof(FSimpleElementVertex);
-            }
-        }
-        return Bytes;
-    }
-
     FSimpleElementVertex* FImmediateLineRenderer::Reserve(FChannel& Channel, uint32 Count)
     {
         if (!Channel.bOpen.load(std::memory_order_acquire))

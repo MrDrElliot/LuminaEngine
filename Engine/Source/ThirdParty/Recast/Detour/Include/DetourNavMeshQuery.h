@@ -454,10 +454,11 @@ public:
 	/// Polygons are chosen weighted by area. The search runs in linear related to number of polygon.
 	///  @param[in]		filter			The polygon filter to apply to the query.
 	///  @param[in]		frand			Function returning a random number [0..1).
+	///  @param[in]		frandContext	Passed to frand on every call.
 	///  @param[out]	randomRef		The reference id of the random location.
 	///  @param[out]	randomPt		The random location. 
 	/// @returns The status flags for the query.
-	dtStatus findRandomPoint(const dtQueryFilter* filter, float (*frand)(),
+	dtStatus findRandomPoint(const dtQueryFilter* filter, float (*frand)(void* context), void* frandContext,
 							 dtPolyRef* randomRef, float* randomPt) const;
 
 	/// Returns random location on navmesh within the reach of specified location.
@@ -468,11 +469,12 @@ public:
 	///  @param[in]		maxRadius		The radius of the search circle. [Units: wu]
 	///  @param[in]		filter			The polygon filter to apply to the query.
 	///  @param[in]		frand			Function returning a random number [0..1).
+	///  @param[in]		frandContext	Passed to frand on every call.
 	///  @param[out]	randomRef		The reference id of the random location.
 	///  @param[out]	randomPt		The random location. [(x, y, z)]
 	/// @returns The status flags for the query.
 	dtStatus findRandomPointAroundCircle(dtPolyRef startRef, const float* centerPos, const float maxRadius,
-										 const dtQueryFilter* filter, float (*frand)(),
+										 const dtQueryFilter* filter, float (*frand)(void* context), void* frandContext,
 										 dtPolyRef* randomRef, float* randomPt) const;
 	
 	/// Finds the closest point on the specified polygon.

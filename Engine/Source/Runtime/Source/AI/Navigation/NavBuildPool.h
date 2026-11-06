@@ -86,11 +86,11 @@ namespace Lumina
     {
         if (Pool != nullptr)
         {
-            Pool->ParallelFor(Num, std::forward<TFunc>(Func));
+            Pool->ParallelFor(Num, Forward<TFunc>(Func));
         }
         else
         {
-            Jobs::ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
+            Jobs::ParallelFor(Num, Forward<TFunc>(Func), MinRange, Priority);
         }
     }
 }

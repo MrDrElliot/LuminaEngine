@@ -43,7 +43,6 @@ namespace Lumina::PlatformTime
     /** Waits the requested span rather than rounding it up to a scheduler tick. For frame pacing. */
     RUNTIME_API void SleepPrecise(double InSeconds) noexcept;
     RUNTIME_API void SleepMilliseconds(uint32 Milliseconds) noexcept;
-    RUNTIME_API void SleepMicroseconds(uint32 Microseconds) noexcept;
 
     /** Gives the rest of this time slice to another runnable thread on the same core. */
     RUNTIME_API void YieldThread() noexcept;

@@ -27,7 +27,7 @@ namespace Lumina
 
     void CSkeleton::SetSkeletonResource(TUniquePtr<FSkeletonResource>&& NewResource)
     {
-        SkeletonResource = std::move(NewResource);
+        SkeletonResource = Move(NewResource);
         BumpSocketGeneration();
 
         // Derived caches key on (skeleton, generation), so one that arrived without a cache reads empty.

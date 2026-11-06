@@ -12,7 +12,7 @@ namespace Lumina
 {
 
     REFLECT()
-    class RUNTIME_API SBuoyancySystem : public CEntitySystem
+    class RUNTIME_API CBuoyancySystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

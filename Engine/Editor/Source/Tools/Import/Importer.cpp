@@ -32,26 +32,6 @@ namespace Lumina
     namespace
     {
         CImporterRegistry* GImporterRegistry = nullptr;
-
-        bool ExtensionsMatch(FStringView A, FStringView B)
-        {
-            if (A.Len() != B.Len())
-            {
-                return false;
-            }
-            for (int32 i = 0; i < A.Len(); ++i)
-            {
-                char CA = A[i];
-                char CB = B[i];
-                if (CA >= 'A' && CA <= 'Z') { CA = (char)(CA + ('a' - 'A')); }
-                if (CB >= 'A' && CB <= 'Z') { CB = (char)(CB + ('a' - 'A')); }
-                if (CA != CB)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
     }
 
     void CImporter::PostCreateCDO()
@@ -66,7 +46,7 @@ namespace Lumina
 
         return Algo::AnyOf(Extensions, [&Ext](const FStringView& Supported)
         {
-            return ExtensionsMatch(Supported, Ext);
+            return EqualsIgnoreCase(Supported, Ext);
         });
     }
 

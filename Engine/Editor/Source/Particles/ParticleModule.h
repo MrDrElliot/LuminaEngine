@@ -10,6 +10,7 @@
 namespace Lumina
 {
     class FParticleCompiler;
+    struct SCurve;
 
     /** Stage of the per-particle simulation a module contributes code to. */
     enum class EParticleModuleStage : uint8
@@ -52,10 +53,7 @@ namespace Lumina
         /** Emit this module's HLSL into the compiler's active (stage-matched) chunk. */
         virtual void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) {}
 
-        /** Whether this class appears in the add-module palette. The palette is discovered by reflection,
-         *  so every CParticleModule subclass shows up by default -- including an intermediate base a plugin
-         *  defines to share code between several real modules, which is not something anyone can usefully
-         *  add to a stack. Such a base overrides this to false; concrete modules never need to. */
+        // An intermediate base shared by several real modules overrides this to false to stay out of the palette.
         virtual bool IsPaletteVisible() const { return true; }
 
         // Objects in the package that belong to this module alone, which copying the emitter has to copy too.
@@ -78,5 +76,7 @@ namespace Lumina
         static FString Lit(const FVector2& V);
         static FString Lit(const FVector3& V);
         static FString Lit(const FVector4& V);
+
+        static FString OverLifeExpr(FParticleCompiler& Compiler, const char* Name, const SCurve& Curve);
     };
 }

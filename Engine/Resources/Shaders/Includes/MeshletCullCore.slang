@@ -22,6 +22,11 @@ struct FMeshletCullContext
     bool     bShadowOnly;
     bool     bTwoSided;
     bool     bCustomDepth;
+    // The views pick this instance's LOD, so a cluster mesh draws its cut rather than the pinned slot whole.
+    bool     bSelectsLOD;
+    uint     SurfaceDescIndex;
+    // The mesh LOD distance scale, applied to the per-meshlet bounds like the slot table applies it to its errors.
+    float    LODErrorMultiplier;
     uint     Layers;
     float4x4 Model;
     float    MaxScale;
@@ -49,6 +54,9 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bShadowOnly = I.HasFlag(EInstanceFlags::ShadowOnly);
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
     Ctx.bCustomDepth = I.bCustomDepth;
+    Ctx.bSelectsLOD = I.SurfaceDescIndex != kNoSurfaceDesc;
+    Ctx.SurfaceDescIndex   = I.SurfaceDescIndex;
+    Ctx.LODErrorMultiplier = 1.0;
     Ctx.Layers      = I.RenderLayers;
 
     Ctx.Model = I.ModelMatrix;
@@ -155,9 +163,53 @@ void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FM
     ApplyMeshletCone(Ctx, Header.Cones[C.MeshletIdx], C);
 }
 
+// Distance from the view to the nearest point of a group sphere, the same measure the slot pick used.
+float ClusterReach(FCullView View, float4x4 Model, float MaxScale, float3 LocalCenter, float LocalRadius)
+{
+    if (View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD))
+    {
+        return 1.0;
+    }
+    const float3 WorldCenter = mul(Model, float4(LocalCenter, 1.0)).xyz;
+    return max(length(WorldCenter - View.ViewOrigin) - LocalRadius * MaxScale, 0.0);
+}
+
+// In the cut when the view accepts the group a meshlet came from but not the group it belongs to, and siblings share both bit for bit.
+bool PassesClusterCut(FMeshletHeader* Header, FMeshletCullContext Ctx, FCullView View, uint MeshletIdx)
+{
+    const FMeshletLODBounds Bounds = loadAligned<16>(Header.LODBounds + MeshletIdx);
+    const bool bVoxels = VoxelFarEnabled();
+    if (Bounds.bVoxel && !bVoxels)
+    {
+        return false;
+    }
+
+    // A zero scale pins the finest level, which only the source geometry's zero error passes.
+    const float ErrorScale = View.LODErrorScale * Ctx.MaxScale * Ctx.LODErrorMultiplier;
+    if (ErrorScale <= 0.0)
+    {
+        return Bounds.SelfError == 0.0;
+    }
+
+    const float SelfReach = ClusterReach(View, Ctx.Model, Ctx.MaxScale, Bounds.SelfCenter, Bounds.SelfRadius);
+    if (Bounds.SelfError * ErrorScale > SelfReach)
+    {
+        return false;
+    }
+
+    const float ParentError = (Bounds.bVoxelParent && !bVoxels) ? MESHLET_LOD_ERROR_INFINITE : Bounds.ParentError;
+    if (ParentError >= MESHLET_LOD_ERROR_INFINITE)
+    {
+        return true;
+    }
+
+    const float ParentReach = ClusterReach(View, Ctx.Model, Ctx.MaxScale, Bounds.ParentCenter, Bounds.ParentRadius);
+    return ParentError * ErrorScale > ParentReach;
+}
+
 // The early phase must not Hi-Z cull, since a meshlet dropped there is never redrawn by the late phase.
 bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
-                            uint MeshletIdx, inout FMeshletBoundsCache Cache, bool bApplyHiZ)
+                            uint MeshletIdx, inout FMeshletBoundsCache Cache, bool bApplyHiZ, bool bSkipClusterCut = false)
 {
     FMeshletHeader* Header = MeshletHeaders().At(Ctx.HeaderSlot);
 
@@ -176,6 +228,12 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
     {
         // Bounded by the header's count, which is 0 for a dead mesh's null header, so stale instances cannot index freed geometry.
         bKeep = MeshletIdx < Header.MeshletCount;
+
+        // Before the sphere loads, since most of a cluster range sits outside the cut and never needs them.
+        if (bKeep && !bSkipClusterCut && Ctx.bSelectsLOD && Header.bClusterLOD)
+        {
+            bKeep = PassesClusterCut(Header, Ctx, View, MeshletIdx);
+        }
 
         if (bKeep)
         {

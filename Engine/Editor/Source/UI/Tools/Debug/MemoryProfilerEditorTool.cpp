@@ -11,6 +11,7 @@
 #include "Platform/Process/PlatformProcess.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RenderResource.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Containers/StringFormat.h"
@@ -22,12 +23,23 @@ namespace Lumina
         constexpr uint32 kHistorySamples = 240;     // ~60s at the 0.25s refresh tick.
         constexpr float  kMemoryRefreshSeconds = 0.25f;
 
+        constexpr ImVec4 kTextureSeries(0.55f, 0.80f, 0.95f, 1.0f);
+        constexpr ImVec4 kBufferSeries(0.95f, 0.78f, 0.55f, 1.0f);
+        constexpr ImVec4 kVRAMSeries(0.95f, 0.70f, 0.40f, 1.0f);
+        constexpr ImVec4 kRSSSeries(0.40f, 0.80f, 0.55f, 1.0f);
+        constexpr ImVec4 kTrackedSeries(0.40f, 1.0f, 0.60f, 1.0f);
+        constexpr ImVec4 kRetainedSeries(0.85f, 0.72f, 0.45f, 1.0f);
+        constexpr ImVec4 kCachedSeries(0.70f, 0.62f, 0.42f, 1.0f);
+        constexpr ImVec4 kMappedSeries(0.66f, 0.78f, 0.95f, 1.0f);
+        constexpr ImVec4 kExternalSeries(0.90f, 0.55f, 0.55f, 1.0f);
+        constexpr ImVec4 kCRTHeapSeries(0.95f, 0.65f, 0.35f, 1.0f);
+
         // Green under load, amber as it fills, red when nearly out.
         ImVec4 UsageColor(float Fraction)
         {
-            if (Fraction > 0.85f) { return ImVec4(0.90f, 0.32f, 0.28f, 1.0f); }
-            if (Fraction > 0.65f) { return ImVec4(0.92f, 0.70f, 0.25f, 1.0f); }
-            return ImVec4(0.30f, 0.78f, 0.45f, 1.0f);
+            if (Fraction > 0.85f) { return EditorColors::Danger(); }
+            if (Fraction > 0.65f) { return EditorColors::Warning(); }
+            return EditorColors::Success();
         }
 
 #if LUMINA_MEMORY_TRACKING
@@ -218,7 +230,7 @@ namespace Lumina
                 if (!History.IsEmpty())
                 {
                     ImPlot::PushStyleColor(ImPlotCol_Line, Color);
-                    ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(Color.x, Color.y, Color.z, 0.25f));
+                    ImPlot::PushStyleColor(ImPlotCol_Fill, EditorColors::WithAlpha(Color, 0.25f));
                     ImPlot::PlotShaded(Id, History.GetData(), History.Num(), 0.0);
                     ImPlot::PlotLine(Id, History.GetData(), History.Num());
                     ImPlot::PopStyleColor(2);
@@ -372,13 +384,13 @@ namespace Lumina
         const float CardW = (ImGui::GetContentRegionAvail().x - Spacing) * 0.5f;
         const float CardH = 104.0f;
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.14f, 0.16f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::WindowBg());
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
 
         // CPU card
         ImGui::BeginChild("##CPUCard", ImVec2(CardW, CardH), true);
         {
-            ImGui::TextColored(ImVec4(0.66f, 0.78f, 0.95f, 1.0f), LE_ICON_CPU_64_BIT " CPU MEMORY");
+            ImGui::TextColored(EditorColors::SectionHeader(), LE_ICON_CPU_64_BIT " CPU MEMORY");
             ImGui::Separator();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
             ImGui::TextUnformatted(*ImGuiX::FormatSize(Process));
@@ -388,11 +400,11 @@ namespace Lumina
             ImGui::TextDisabled("process (RSS)");
 
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "%s tracked", *ImGuiX::FormatSize(Tracked));
+            ImGui::TextColored(kTrackedSeries, "%s tracked", *ImGuiX::FormatSize(Tracked));
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "  %s retained", *ImGuiX::FormatSize(Retained));
+            ImGui::TextColored(kRetainedSeries, "  %s retained", *ImGuiX::FormatSize(Retained));
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.9f, 0.55f, 0.55f, 1.0f), "  %s external", *ImGuiX::FormatSize(External));
+            ImGui::TextColored(kExternalSeries, "  %s external", *ImGuiX::FormatSize(External));
             ImGuiX::TextTooltip("tracked = ledger live bytes\n"
                                 "retained = rpmalloc mapped - tracked (caches + fragmentation; freed, not returned to OS)\n"
                                 "external = RSS - rpmalloc mapped (GPU driver host memory, CRT malloc, code/stacks)");
@@ -404,7 +416,7 @@ namespace Lumina
         // GPU card
         ImGui::BeginChild("##GPUCard", ImVec2(CardW, CardH), true);
         {
-            ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), LE_ICON_EXPANSION_CARD " GPU MEMORY");
+            ImGui::TextColored(EditorColors::SectionHeader(), LE_ICON_EXPANSION_CARD " GPU MEMORY");
             ImGui::SameLine();
             ImGui::TextDisabled("%s", bDeviceInfoValid ? *DeviceInfo.Name : "");
 
@@ -442,15 +454,15 @@ namespace Lumina
         const float HalfW = (ImGui::GetContentRegionAvail().x - Spacing) * 0.5f;
 
         ImGui::BeginChild("##VRAMTL", ImVec2(HalfW, 200), false);
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "VRAM usage");
-        DrawTimeline("##VRAMPlot", HistVRAM, ImVec4(0.95f, 0.70f, 0.40f, 1.0f), 160.0f);
+        ImGui::TextColored(EditorColors::SectionHeader(), "VRAM usage");
+        DrawTimeline("##VRAMPlot", HistVRAM, kVRAMSeries, 160.0f);
         ImGui::EndChild();
 
         ImGui::SameLine();
 
         ImGui::BeginChild("##RSSTL", ImVec2(0, 200), false);
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Process RSS");
-        DrawTimeline("##RSSPlot", HistRSS, ImVec4(0.40f, 0.80f, 0.55f, 1.0f), 160.0f);
+        ImGui::TextColored(EditorColors::SectionHeader(), "Process RSS");
+        DrawTimeline("##RSSPlot", HistRSS, kRSSSeries, 160.0f);
         ImGui::EndChild();
     }
 
@@ -458,7 +470,7 @@ namespace Lumina
 
     void FMemoryProfilerEditorTool::DrawGPUHeaps()
     {
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Device heaps");
+        ImGui::TextColored(EditorColors::SectionHeader(), "Device heaps");
         ImGui::Spacing();
 
         const ImGuiTableFlags Flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg;
@@ -483,7 +495,7 @@ namespace Lumina
                                  : "Host";
                 if (Heap.bReBAR)
                 {
-                    ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s", Kind);
+                    ImGui::TextColored(EditorColors::Success(), "%s", Kind);
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::SetTooltip("CPU-writable VRAM.");
@@ -571,7 +583,7 @@ namespace Lumina
     {
         const uint64 Attributed = GPUTextureBytes + GPUBufferBytes;
 
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Memory by purpose  " LE_ICON_INFORMATION);
+        ImGui::TextColored(EditorColors::SectionHeader(), "Memory by purpose  " LE_ICON_INFORMATION);
         ImGuiX::TextTooltip("Every live buffer and texture the RHI owns, grouped by the name its creating "
                             "site gave it (the part before the first dot). The heap totals above are device "
                             "truth and stay larger: they also carry the driver's own allocations, descriptor "
@@ -579,11 +591,11 @@ namespace Lumina
                             "Editor only -- game builds keep neither the names nor the texture ledger.");
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "%s", *ImGuiX::FormatSize(GPUTextureBytes));
+        ImGui::TextColored(kTextureSeries, "%s", *ImGuiX::FormatSize(GPUTextureBytes));
         ImGui::SameLine();
         ImGui::TextDisabled("textures");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "  %s", *ImGuiX::FormatSize(GPUBufferBytes));
+        ImGui::TextColored(kBufferSeries, "  %s", *ImGuiX::FormatSize(GPUBufferBytes));
         ImGui::SameLine();
         ImGui::TextDisabled("buffers");
         ImGui::SameLine();
@@ -619,7 +631,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(1);
                 const float Frac = Largest > 0 ? (float)((double)Row.Total() / (double)Largest) : 0.0f;
                 const float Share = Attributed > 0 ? (float)((double)Row.Total() / (double)Attributed) : 0.0f;
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.45f, 0.62f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, EditorColors::Accent());
                 ImGui::ProgressBar(Frac, ImVec2(-1, 0), *Format("{:.1f}%", Share * 100.0f));
                 ImGui::PopStyleColor();
 
@@ -629,7 +641,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(3);
                 if (Row.TextureCount > 0)
                 {
-                    ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "%s", *ImGuiX::FormatSize(Row.TextureBytes));
+                    ImGui::TextColored(kTextureSeries, "%s", *ImGuiX::FormatSize(Row.TextureBytes));
                     ImGui::SameLine();
                     ImGui::TextDisabled("(%u)", Row.TextureCount);
                 }
@@ -641,7 +653,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(4);
                 if (Row.BufferCount > 0)
                 {
-                    ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "%s", *ImGuiX::FormatSize(Row.BufferBytes));
+                    ImGui::TextColored(kBufferSeries, "%s", *ImGuiX::FormatSize(Row.BufferBytes));
                     ImGui::SameLine();
                     ImGui::TextDisabled("(%u)", Row.BufferCount);
                 }
@@ -752,11 +764,11 @@ namespace Lumina
                     ImGui::TableSetColumnIndex(1);
                     if (bTexture)
                     {
-                        ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "Texture");
+                        ImGui::TextColored(kTextureSeries, "Texture");
                     }
                     else
                     {
-                        ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "Buffer");
+                        ImGui::TextColored(kBufferSeries, "Buffer");
                     }
 
                     ImGui::TableSetColumnIndex(2);
@@ -816,7 +828,7 @@ namespace Lumina
         const size_t External = (Process > Mapped) ? (Process - Mapped) : 0;
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Composition  " LE_ICON_INFORMATION);
+        ImGui::TextColored(EditorColors::SectionHeader(), "Composition  " LE_ICON_INFORMATION);
         ImGuiX::TextTooltip("Where Process RSS lives. If 'retained' climbs, it's allocation churn -- rpmalloc "
                             "holding freed/fragmented spans (rank Top Call Sites by Total Allocs to find it). "
                             "If 'external' climbs, it's outside rpmalloc: GPU driver host memory or the CRT allocator.");
@@ -834,16 +846,16 @@ namespace Lumina
             }
         };
 
-        Row("Process RSS", Process, ImVec4(0.85f, 0.92f, 1.0f, 1.0f), "total resident");
-        Row("rpmalloc mapped", Mapped, ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "allocator's OS footprint");
-        Row("tracked live", Tracked, ImVec4(0.40f, 1.0f, 0.60f, 1.0f), "category ledger");
-        Row("retained", Retained, ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "caches + fragmentation (freed, not returned)");
-        Row("of which cached", Cached, ImVec4(0.70f, 0.62f, 0.42f, 1.0f), "rpmalloc global span cache");
-        Row("external", External, ImVec4(0.90f, 0.55f, 0.55f, 1.0f), "driver / CRT / code+stacks");
+        Row("Process RSS", Process, EditorColors::TextPrimary(), "total resident");
+        Row("rpmalloc mapped", Mapped, kMappedSeries, "allocator's OS footprint");
+        Row("tracked live", Tracked, kTrackedSeries, "category ledger");
+        Row("retained", Retained, kRetainedSeries, "caches + fragmentation (freed, not returned)");
+        Row("of which cached", Cached, kCachedSeries, "rpmalloc global span cache");
+        Row("external", External, kExternalSeries, "driver / CRT / code+stacks");
 
         if (Mapped == 0)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+            ImGui::TextColored(EditorColors::Warning(),
                 LE_ICON_ALERT " rpmalloc statistics are zero -- build with ENABLE_STATISTICS (Debug/Development).");
         }
 
@@ -852,15 +864,15 @@ namespace Lumina
         const float HalfW = (ImGui::GetContentRegionAvail().x - Spacing) * 0.5f;
 
         ImGui::BeginChild("##MappedTL", ImVec2(HalfW, 150), false);
-        ImGui::TextColored(ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "rpmalloc mapped (retained churn)");
-        DrawTimeline("##MappedPlot", HistMapped, ImVec4(0.66f, 0.78f, 0.95f, 1.0f), 110.0f);
+        ImGui::TextColored(kMappedSeries, "rpmalloc mapped (retained churn)");
+        DrawTimeline("##MappedPlot", HistMapped, kMappedSeries, 110.0f);
         ImGui::EndChild();
 
         ImGui::SameLine();
 
         ImGui::BeginChild("##ExternalTL", ImVec2(0, 150), false);
-        ImGui::TextColored(ImVec4(0.90f, 0.55f, 0.55f, 1.0f), "external (driver / CRT)");
-        DrawTimeline("##ExternalPlot", HistExternal, ImVec4(0.90f, 0.55f, 0.55f, 1.0f), 110.0f);
+        ImGui::TextColored(kExternalSeries, "external (driver / CRT)");
+        DrawTimeline("##ExternalPlot", HistExternal, kExternalSeries, 110.0f);
         ImGui::EndChild();
 
         ImGui::Spacing();
@@ -880,7 +892,7 @@ namespace Lumina
     void FMemoryProfilerEditorTool::DrawAddressSpace()
     {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Address Space  " LE_ICON_INFORMATION);
+        ImGui::TextColored(EditorColors::SectionHeader(), "Address Space  " LE_ICON_INFORMATION);
         ImGuiX::TextTooltip("Asks the OS what's actually mapped, so it covers memory the category "
                             "tracker structurally cannot see. 'NT / CRT heap' is the bucket for every "
                             "DLL that doesn't route through Memory::Malloc.");
@@ -924,10 +936,10 @@ namespace Lumina
 
         ImGui::Spacing();
         ImGui::TextDisabled("Committed");
-        Row("private", AddressSpace.PrivateCommitted, ImVec4(0.85f, 0.92f, 1.0f, 1.0f), "this process only");
-        Row("image", AddressSpace.ImageCommitted, ImVec4(0.62f, 0.68f, 0.78f, 1.0f), "code + data of loaded modules");
-        Row("mapped", AddressSpace.MappedCommitted, ImVec4(0.62f, 0.68f, 0.78f, 1.0f), "file mappings and shared sections");
-        Row("reserved", AddressSpace.Reserved, ImVec4(0.55f, 0.58f, 0.62f, 1.0f), "address space only, costs no RAM");
+        Row("private", AddressSpace.PrivateCommitted, EditorColors::TextPrimary(), "this process only");
+        Row("image", AddressSpace.ImageCommitted, EditorColors::TextDim(), "code + data of loaded modules");
+        Row("mapped", AddressSpace.MappedCommitted, EditorColors::TextDim(), "file mappings and shared sections");
+        Row("reserved", AddressSpace.Reserved, EditorColors::TextMuted(), "address space only, costs no RAM");
 
         // Whichever is largest tells you which trace to run, see BuildScripts/MemoryTrace.ps1.
         const uint64 Rpmalloc = Memory::GetCurrentMappedMemory();
@@ -938,18 +950,18 @@ namespace Lumina
 
         ImGui::Spacing();
         ImGui::TextDisabled("Private commit, by owner");
-        Row("rpmalloc", Rpmalloc, ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "engine allocator (the category table below)");
+        Row("rpmalloc", Rpmalloc, kMappedSeries, "engine allocator (the category table below)");
 
         if (AddressSpace.bHeapWalkValid)
         {
-            Row("NT / CRT heap", Heap, ImVec4(0.95f, 0.65f, 0.35f, 1.0f), "foreign DLLs: Slang, GPU driver, basisu, ucrtbase");
+            Row("NT / CRT heap", Heap, kCRTHeapSeries, "foreign DLLs: Slang, GPU driver, basisu, ucrtbase");
             ImGui::TextDisabled("%14s of that live, %s block overhead",
                 *ImGuiX::FormatSize((size_t)AddressSpace.HeapAllocated),
                 *ImGuiX::FormatSize((size_t)AddressSpace.HeapOverhead));
         }
         else if (bScanHeaps)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+            ImGui::TextColored(EditorColors::Warning(),
                 LE_ICON_ALERT " Heap walk failed (a heap refused to lock); CRT bytes are folded into unattributed.");
         }
         else
@@ -957,7 +969,7 @@ namespace Lumina
             ImGui::TextDisabled("%14s NT / CRT heap - not measured (heap walk off)", "?");
         }
 
-        Row("unattributed", Unattributed, ImVec4(0.90f, 0.55f, 0.55f, 1.0f), "raw VirtualAlloc: GPU driver, thread + fiber stacks");
+        Row("unattributed", Unattributed, kExternalSeries, "raw VirtualAlloc: GPU driver, thread + fiber stacks");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -970,7 +982,7 @@ namespace Lumina
 
 #if !LUMINA_MEMORY_TRACKING
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+        ImGui::TextColored(EditorColors::Warning(),
             LE_ICON_ALERT " CPU category tracking is compiled out in Shipping builds.");
 #else
         DrawControls();
@@ -990,7 +1002,7 @@ namespace Lumina
         else if (!CallSiteCategory.IsEmpty())
         {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+            ImGui::TextColored(EditorColors::Warning(),
                 LE_ICON_ALERT " Enable 'Capture call stacks' to see what allocates inside '%s'.",
                 *CallSiteCategory);
         }
@@ -1164,7 +1176,7 @@ namespace Lumina
 
         if (bHasBaseline && !Rows.IsEmpty() && Rows[0].DeltaBytes > 0)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+            ImGui::TextColored(EditorColors::Warning(),
                 LE_ICON_ALERT " Growing fastest: %s  (+%s)",
                 Rows[0].S->Name, *ImGuiX::FormatSize((size_t)Rows[0].DeltaBytes));
         }
@@ -1219,12 +1231,12 @@ namespace Lumina
                 }
                 else if (Row.DeltaBytes > 0)
                 {
-                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "+%s",
+                    ImGui::TextColored(EditorColors::Danger(), "+%s",
                         *ImGuiX::FormatSize((size_t)Row.DeltaBytes));
                 }
                 else if (Row.DeltaBytes < 0)
                 {
-                    ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "-%s",
+                    ImGui::TextColored(EditorColors::Success(), "-%s",
                         *ImGuiX::FormatSize((size_t)(-Row.DeltaBytes)));
                 }
                 else
@@ -1298,7 +1310,7 @@ namespace Lumina
         if (!CallSiteCategory.IsEmpty())
         {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.98f, 0.78f, 0.35f, 1.0f), LE_ICON_FILTER " %s", *CallSiteCategory);
+            ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_FILTER " %s", *CallSiteCategory);
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear filter"))
             {
@@ -1389,9 +1401,9 @@ namespace Lumina
         ImGui::TableHeadersRow();
 
         // The ranking metric is what the eye should land on first; the other column stays plain.
-        const ImVec4 RankedColor  = ImVec4(0.98f, 0.78f, 0.35f, 1.0f);
-        const ImVec4 SourceColor  = ImVec4(0.60f, 0.80f, 1.00f, 1.0f);   // frames carrying a file and line
-        const ImVec4 ForeignColor = ImVec4(0.60f, 0.60f, 0.65f, 1.0f);   // no source, so system or plumbing
+        const ImVec4 RankedColor  = EditorColors::AccentAlt();
+        const ImVec4 SourceColor  = EditorColors::Accent();    // frames carrying a file and line
+        const ImVec4 ForeignColor = EditorColors::TextDim();   // no source, so system or plumbing
 
         for (uint32 i = 0; i < NumSites; ++i)
         {

@@ -3,14 +3,6 @@
 
 namespace Lumina
 {
-
-    FVector3 FViewVolume::UpAxis        = FVector3(0.0f,  1.0f,  0.0f);
-    FVector3 FViewVolume::DownAxis      = FVector3(0.0f, -1.0f,  0.0f);
-    FVector3 FViewVolume::RightAxis     = FVector3(1.0f,  0.0f,  0.0f);
-    FVector3 FViewVolume::LeftAxis      = FVector3(-1.0f, 0.0f,  0.0f);
-    FVector3 FViewVolume::ForwardAxis   = FVector3(0.0f,  0.0f,  1.0f);
-    FVector3 FViewVolume::BackwardAxis  = FVector3(0.0f,  0.0f, -1.0f);
-    
     FViewVolume::FViewVolume(float fov, float aspect, float InNear, float InFar)
         : ViewPosition(FVector3(1.0))
         // Seeded so SetView's normalize/cross chain never sees uninitialized memory.
@@ -133,21 +125,7 @@ namespace Lumina
         return *this;
     }
 
-    FViewVolume& FViewVolume::Rotate(float Angle, FVector3 Axis)
-    {
-        float Radians   = Math::Radians(Angle);
-        FMatrix4 R     = Math::Rotate(FMatrix4(1), Radians, Axis);
-        
-        ForwardVector = Math::Normalize(R * FVector4(ForwardVector, 0));
-        UpVector      = Math::Normalize(R * FVector4(UpVector, 0));
-        
-        RightVector   = Math::Normalize(Math::Cross(UpVector, ForwardVector));
-
-        UpdateMatrices();
-        return *this;
-    }
-
-    FMatrix4 FViewVolume::ToReverseDepthViewProjectionMatrix() const
+    FMatrix4 FViewVolume::ToStandardDepthViewProjectionMatrix() const
     {
         // Standard-Z projection (not reverse-Z) for shadow face VPs; keeps Vulkan Y-flip.
         FMatrix4 P = Math::Perspective(Math::Radians(FOV), AspectRatio, Near, Far);

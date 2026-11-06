@@ -27,7 +27,7 @@ namespace Lumina
         {}
         virtual ~IRenderScene() = default;
 
-        //~ Required core -------------------------------------------------------------------
+        //~ Required core
 
         virtual void Init() = 0;
 
@@ -38,22 +38,19 @@ namespace Lumina
 
         virtual void Resize(const FUIntVector2& NewSize) = 0;
 
-        /**
-         * Sizes the primary view to the surface actually displaying it, in pixels, and stops it tracking
-         * the swapchain.
-         */
+        // Sizes the primary view in pixels to the surface displaying it and stops it tracking the swapchain.
         virtual void SetPrimaryViewSize(const FUIntVector2& SizePixels) {}
 
         // Pixel extent of the displayed image, which input, picking and deprojection are measured in.
         virtual FUIntVector2 GetRenderExtent() const = 0;
 
-        //~ Frame hooks ---------------------------------------------------------------------
+        //~ Frame hooks
 
         virtual void PrepareRender(uint8 FrameIndex) {}
 
         virtual void SetActivePostProcessMaterials(const TVector<CMaterialInterface*>& Materials) {}
 
-        //~ Display output ------------------------------------------------------------------
+        //~ Display output
 
         virtual uint32 GetDisplayResourceID() const { return Constants::kIndexNoneU32; }
 
@@ -62,7 +59,7 @@ namespace Lumina
 
         virtual RHI::FTextureH GetDisplayTexture() const { return {}; }
 
-        //~ Entity picking (editor) ---------------------------------------------------------
+        //~ Entity picking (editor)
 
         virtual ECS::FEntity GetEntityAtPixel(uint32 X, uint32 Y) const { return ECS::NullEntity; }
 
@@ -76,19 +73,19 @@ namespace Lumina
 
         virtual void SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport) {}
 
-        //~ Scene-capture views -------------------------------------------------------------
+        //~ Scene-capture views
 
         virtual int32 RegisterCaptureView(const FUIntVector2& Size) { return -1; }
         virtual bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) { return false; }
         virtual int32 GetCaptureDisplayResourceID(int32 Handle) const { return -1; }
 
-        //~ Render callbacks ----------------------------------------------------------------
+        //~ Render callbacks
 
         // A renderer that runs render callbacks builds their pipelines here, and the default creates none.
         virtual RHI::FPipelineH GetCallbackPipeline(const FRenderPipelineDesc& Desc, TSpan<const RHI::FColorTarget> ColorTargets, EFormat DepthFormat) { return {}; }
         virtual RHI::FPipelineH GetCallbackComputePipeline(FShaderH ComputeShader) { return {}; }
 
-        //~ Debug draw (IPrimitiveDrawInterface) --------------------------------------------
+        //~ Debug draw (IPrimitiveDrawInterface)
 
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override {}
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, bool bDepthTest, float Duration) override {}
@@ -97,7 +94,7 @@ namespace Lumina
 
         virtual void BeginImmediateLines() {}
 
-        //~ Stats / settings ----------------------------------------------------------------
+        //~ Stats and settings
 
         const FSceneRenderStats&  GetRenderStats() const        { return RenderStats; }
 

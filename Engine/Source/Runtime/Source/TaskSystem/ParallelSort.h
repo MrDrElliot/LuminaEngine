@@ -28,7 +28,7 @@ namespace Lumina::Task
                 {
                     for (size_t Index = 0; Index < Count; ++Index)
                     {
-                        ::new (Buffer + Index) FValue(std::move(First[Index]));
+                        ::new (Buffer + Index) FValue(Move(First[Index]));
                     }
                 }
                 co_return;

@@ -120,27 +120,6 @@ namespace Lumina
         }
     }
 
-    void FAudioGraphInstance::Rewind()
-    {
-        for (uint32 Index = 0; Index < MaxPublishedOutputs; ++Index)
-        {
-            PublishedTriggerCounts[Index].store(0, Atomic::MemoryOrderRelaxed);
-        }
-
-        for (TUniquePtr<IAudioGraphOperator>& Operator : Operators)
-        {
-            Operator->Reset();
-        }
-
-        ApplyInitialValues();
-
-        BlockCursor    = kAudioGraphBlockFrames;
-        BlockStartTime = 0.0;
-        bStarted       = false;
-        bFinished.store(false, Atomic::MemoryOrderRelease);
-        RenderedFrames.store(0, Atomic::MemoryOrderRelaxed);
-    }
-
     void FAudioGraphInstance::ApplyPendingParameters()
     {
         FAudioGraphParamCommand Command;

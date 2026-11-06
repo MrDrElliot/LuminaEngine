@@ -117,5 +117,12 @@ namespace Lumina
 			Cmd.Rotation  = Rotation;
 			return Cmd;
 		}
+
+		static FAudioCommand MakeSetListenerEnabled(uint32 ListenerIndex, bool bEnabled)
+		{
+			FAudioCommand Cmd = MakeBool(EAudioCommandType::SetListenerEnabled, SAudioHandle::Invalid(), bEnabled);
+			Cmd.ByteValue = (uint8)ListenerIndex;
+			return Cmd;
+		}
 	};
 }

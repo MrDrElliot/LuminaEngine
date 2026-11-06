@@ -27,6 +27,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/World.h"
 #include "Containers/StringFormat.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/EditorColors.h"

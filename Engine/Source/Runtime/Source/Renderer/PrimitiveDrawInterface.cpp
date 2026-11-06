@@ -2,8 +2,6 @@
 #include "PrimitiveDrawInterface.h"
 
 #include "Core/Math/Math.h"
-
-#include "ViewVolume.h"
 #include "Containers/Vector.h"
 
 namespace Lumina
@@ -366,13 +364,6 @@ namespace Lumina
         DrawLine(Corner2, Corner3, Color, Thickness, bDepthTest, Duration);
         DrawLine(Corner3, Corner4, Color, Thickness, bDepthTest, Duration);
         DrawLine(Corner4, Corner1, Color, Thickness, bDepthTest, Duration);
-            #endif
-    }
-
-    void IPrimitiveDrawInterface::DrawViewVolume(const FViewVolume& ViewVolume, const FVector4& Color, float Thickness, bool bDepthTest, float Duration)
-    {
-        #if !defined(LE_SHIPPING)
-        DrawFrustum(ViewVolume.GetViewProjectionMatrix(), ViewVolume.GetNear(), ViewVolume.GetFar(), Color, Thickness, bDepthTest, Duration);
             #endif
     }
 

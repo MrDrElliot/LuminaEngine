@@ -10,7 +10,6 @@
 #include "Platform/Process/PlatformProcess.h"
 #include "Scripting/DotNet/DotNetHost.h"
 
-#include <fstream>
 #include "Containers/StringFormat.h"
 #include "Containers/HashTable.h"
 
@@ -27,23 +26,6 @@ namespace Lumina
             LOG_INFO("[Packager] {}", *FString(Msg.GetData(), Msg.Len()));
         }
 
-        FString Join(FStringView Left, FStringView Right)
-        {
-            FString Result(Left.GetData(), Left.Len());
-            if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
-            {
-                Result.AppendChar('/');
-            }
-            Result.Append(Right.GetData(), Right.Len());
-            return Result;
-        }
-
-        FStringView StemOf(FStringView Name)
-        {
-            const int32 Dot = Name.FindLastOf('.');
-            return Dot == Constants::kIndexNone ? Name : Name.Mid(0, Dot);
-        }
-
         FString FileNameOf(FStringView Path)
         {
             const int32 Slash = Path.FindLastOf("/\\");
@@ -57,26 +39,9 @@ namespace Lumina
             return Filesystem::Copy(Src, Dst, true);
         }
 
-        bool EndsWithCI(FStringView Vp, FStringView Suffix)
-        {
-            if (Vp.Len() < Suffix.Len())
-            {
-                return false;
-            }
-            FStringView Tail = Vp.Mid(Vp.Len() - Suffix.Len());
-            for (int32 i = 0; i < Suffix.Len(); ++i)
-            {
-                char a = Tail[i]; char b = Suffix[i];
-                if (a >= 'A' && a <= 'Z') a = char(a - 'A' + 'a');
-                if (a != b) return false;
-            }
-            return true;
-        }
-
         // Mirror every non-.lasset /Game/ file under <OutDir>/Game/ for loose-files mode.
         size_t CopyLooseScripts(const FString& OutDir, const TFunction<void(FStringView)>& LogFunc)
         {
-            std::error_code Ec;
             size_t Count = 0;
 
             // Preserves the top-level dir name so loose files re-resolve under the same alias at runtime.
@@ -85,7 +50,7 @@ namespace Lumina
 
             for (const FLooseRoot& Root : Roots)
             {
-                const FString DstRoot = Join(OutDir, Root.Top);
+                const FFixedString DstRoot = Paths::Combine(OutDir, Root.Top);
                 Filesystem::MakeDirectoryTree(DstRoot);
 
                 const FString Alias(Root.Alias);
@@ -99,13 +64,13 @@ namespace Lumina
                     }
 
                     FStringView Vp(*Info.VirtualPath, Info.VirtualPath.Len());
-                    if (EndsWithCI(Vp, ".lasset"))
+                    if (EndsWithIgnoreCase(Vp, ".lasset"))
                     {
                         return;
                     }
 
                     // The C# host compiles sources directly, so generated projects and build output never ship.
-                    if (EndsWithCI(Vp, ".csproj")
+                    if (EndsWithIgnoreCase(Vp, ".csproj")
                         || Vp.Find("/obj/") != Constants::kIndexNone
                         || Vp.Find("/bin/") != Constants::kIndexNone)
                     {
@@ -124,7 +89,7 @@ namespace Lumina
                         return;
                     }
 
-                    const FString Dst = Join(DstRoot, Relative);
+                    const FFixedString Dst = Paths::Combine(DstRoot, Relative);
                     if (!Filesystem::WriteFile(Dst, TSpan<const uint8>(Bytes.GetData(), Bytes.Num())))
                     {
                         return;
@@ -200,7 +165,7 @@ namespace Lumina
                 Name.Append(Cfg);
                 Name.Append(".dll");
 
-                if (Filesystem::Exists(Join(SourceDir, Name)))
+                if (Filesystem::Exists(Paths::Combine(SourceDir, Name)))
                 {
                     return true;
                 }
@@ -216,7 +181,7 @@ namespace Lumina
             THashSet<FString> Names;
             for (const char* Root : { "Engine/Source", "Engine/Plugins", "Engine/Editor" })
             {
-                Filesystem::IterateDirectoryRecursive(Join(EngineDir, Root), [&Names](const Filesystem::FDirectoryEntry& Entry)
+                Filesystem::IterateDirectoryRecursive(Paths::Combine(EngineDir, Root), [&Names](const Filesystem::FDirectoryEntry& Entry)
                 {
                     const FStringView FileName = Entry.Name;
                     if (!Entry.IsDirectory() && FileName.EndsWith(BuildRulesSuffix))
@@ -268,7 +233,7 @@ namespace Lumina
                 {
                     return;
                 }
-                const FStringView Stem = StemOf(Entry.Name);
+                const FStringView Stem = VFS::RemoveExtension(Entry.Name);
                 const bool bUnwritten = !WrittenStems.Contains(FString(Stem.GetData(), Stem.Len()));
                 if (bUnwritten && (!ModuleOfSuffixedBinary(Stem).IsEmpty() || IsUnusedByGameDll(Entry.Name, ConfigSuffix)))
                 {
@@ -322,7 +287,7 @@ namespace Lumina
 
                 const FStringView FileName = Entry.Name;
                 const FStringView Ext      = Entry.GetExtension();
-                const FStringView Stem     = StemOf(FileName);
+                const FStringView Stem     = VFS::RemoveExtension(FileName);
 
                 const bool bExe = Ext == FStringView(".exe");
                 const bool bDll = Ext == FStringView(".dll");
@@ -409,10 +374,10 @@ namespace Lumina
                 const bool bToPlugins = bDll && Monolithic.bEnabled && !Monolithic.PluginsDirectory.IsEmpty() && ModuleOfSuffixedBinary(Stem).IsEmpty();
                 const FString DstDir = bToPlugins ? Monolithic.PluginsDirectory : FString(DestDir.GetData(), DestDir.Len());
 
-                if (CopyFileTo(Entry.FullPath, Join(DstDir, DstName)))
+                if (CopyFileTo(Entry.FullPath, Paths::Combine(DstDir, DstName)))
                 {
                     ++Copied;
-                    const FStringView DstStem = StemOf(FStringView(*DstName, DstName.Len()));
+                    const FStringView DstStem = VFS::RemoveExtension(FStringView(*DstName, DstName.Len()));
                     WrittenStems.Emplace(DstStem.GetData(), DstStem.Len());
                     LogPackager(LogFunc, *Format("  + {} -> {}{}",
                         FileName, bToPlugins ? "Plugins/" : "", *DstName));
@@ -457,7 +422,7 @@ namespace Lumina
             const FStringView OldDirectories[] = { "DotNet", "External" };
             for (const FStringView Directory : OldDirectories)
             {
-                const FString Path = Join(OutDir, Directory);
+                const FFixedString Path = Paths::Combine(OutDir, Directory);
                 if (Filesystem::Exists(Path) && Filesystem::RemoveTree(Path))
                 {
                     LogPackager(LogFunc, *Format("  - removed {}/ from the old layout", *FString(Directory.GetData(), Directory.Len())));
@@ -467,7 +432,7 @@ namespace Lumina
             const FStringView StagedDirectories[] = { "Managed", "Runtime", "Plugins" };
             for (const FStringView Directory : StagedDirectories)
             {
-                const FString Path = Join(DataDir, Directory);
+                const FFixedString Path = Paths::Combine(DataDir, Directory);
                 if (Filesystem::Exists(Path))
                 {
                     Filesystem::RemoveTree(Path);
@@ -477,7 +442,7 @@ namespace Lumina
             TVector<FString> ThirdParty;
             Filesystem::IterateDirectory(OutDir, [&ThirdParty](const Filesystem::FDirectoryEntry& Entry)
             {
-                if (!Entry.IsDirectory() && Entry.GetExtension() == FStringView(".dll") && ModuleOfSuffixedBinary(StemOf(Entry.Name)).IsEmpty())
+                if (!Entry.IsDirectory() && Entry.GetExtension() == FStringView(".dll") && ModuleOfSuffixedBinary(VFS::RemoveExtension(Entry.Name)).IsEmpty())
                 {
                     ThirdParty.Emplace(Entry.FullPath.GetData(), Entry.FullPath.Len());
                 }
@@ -504,17 +469,17 @@ namespace Lumina
                                const TFunction<void(FStringView)>& LogFunc)
         {
             // 1. The managed bootstrap alone, since scripts arrive prebuilt and the script compiler and its generators never run in a game.
-            const FString ManagedSrc = Join(BinariesDir, "DotNet/Managed");
-            const FString ManagedDst = Join(DataDir, "Managed");
+            const FFixedString ManagedSrc = Paths::Combine(BinariesDir, "DotNet/Managed");
+            const FFixedString ManagedDst = Paths::Combine(DataDir, "Managed");
             const FStringView BootstrapFiles[] = { "LuminaSharp.dll", "LuminaSharp.runtimeconfig.json" };
             size_t BootstrapCopied = 0;
             for (const FStringView File : BootstrapFiles)
             {
-                BootstrapCopied += CopyFileTo(Join(ManagedSrc, File), Join(ManagedDst, File)) ? 1 : 0;
+                BootstrapCopied += CopyFileTo(Paths::Combine(ManagedSrc, File), Paths::Combine(ManagedDst, File)) ? 1 : 0;
             }
             if (bStageSymbols)
             {
-                CopyFileTo(Join(ManagedSrc, "LuminaSharp.pdb"), Join(ManagedDst, "LuminaSharp.pdb"));
+                CopyFileTo(Paths::Combine(ManagedSrc, "LuminaSharp.pdb"), Paths::Combine(ManagedDst, "LuminaSharp.pdb"));
             }
             if (BootstrapCopied == std::size(BootstrapFiles))
             {
@@ -526,11 +491,11 @@ namespace Lumina
             }
 
             // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
-            const FString RuntimeSrc = Join(EngineInstallDir, "External/DotNet/runtime");
+            const FFixedString RuntimeSrc = Paths::Combine(EngineInstallDir, "External/DotNet/runtime");
             if (Filesystem::Exists(RuntimeSrc))
             {
                 LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
-                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Join(DataDir, "Runtime"));
+                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Paths::Combine(DataDir, "Runtime"));
                 LogPackager(LogFunc, *Format("DotNet: staged .NET runtime ({} file(s)).", N));
             }
             else
@@ -542,7 +507,7 @@ namespace Lumina
             TVector<DotNet::FPackagedScriptUnit> Units;
             DotNet::GatherScriptUnitsForPackaging(Units);
 
-            const FString& ScriptsDst = ManagedDst;
+            const FFixedString& ScriptsDst = ManagedDst;
             FString Manifest = "{\n  \"Units\": [\n";
             size_t Staged = 0;
             for (const DotNet::FPackagedScriptUnit& Unit : Units)
@@ -552,7 +517,7 @@ namespace Lumina
                     continue; // unit had no .cs / failed to emit -> nothing to ship
                 }
                 const FString DllName = Unit.Name + ".dll";
-                if (!CopyFileTo(Unit.DllSourcePath, Join(ScriptsDst, DllName)))
+                if (!CopyFileTo(Unit.DllSourcePath, Paths::Combine(ScriptsDst, DllName)))
                 {
                     LogPackager(LogFunc, *Format("DotNet: [warn] failed to stage script DLL {}", *DllName));
                     continue;
@@ -564,7 +529,7 @@ namespace Lumina
                     const FString PdbSrc = Unit.DllSourcePath.Mid(0, Unit.DllSourcePath.Len() - 4) + ".pdb";
                     if (Filesystem::Exists(PdbSrc))
                     {
-                        CopyFileTo(PdbSrc, Join(ScriptsDst, Unit.Name + ".pdb"));
+                        CopyFileTo(PdbSrc, Paths::Combine(ScriptsDst, Unit.Name + ".pdb"));
                     }
                 }
 
@@ -577,7 +542,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    if (!CopyFileTo(Reference, Join(ScriptsDst, FileName)))
+                    if (!CopyFileTo(Reference, Paths::Combine(ScriptsDst, FileName)))
                     {
                         LogPackager(LogFunc, *Format("DotNet: [warn] failed to stage script reference {}", *FileName));
                         continue;
@@ -608,7 +573,7 @@ namespace Lumina
             if (Staged > 0)
             {
                 const TSpan<const uint8> ManifestBytes(reinterpret_cast<const uint8*>(Manifest.GetData()), Manifest.Len());
-                Filesystem::WriteFile(Join(ScriptsDst, "scripts.manifest.json"), ManifestBytes);
+                Filesystem::WriteFile(Paths::Combine(ScriptsDst, "scripts.manifest.json"), ManifestBytes);
                 LogPackager(LogFunc, *Format("DotNet: staged {} prebuilt script assembly(ies) + manifest.", Staged));
             }
             else
@@ -670,14 +635,14 @@ namespace Lumina
             return Result;
         }
 
-        const FString BinariesDir = Join(Paths::GetEngineInstallDirectory(), "Binaries/Windows64");
+        const FFixedString BinariesDir = Paths::Combine(Paths::GetEngineInstallDirectory(), "Binaries/Windows64");
         const FString& DestDir    = Options.OutputDirectory;
 
         LogPackager(LogFunc, *Format("Copying {} binaries from {}",
             *Config, *BinariesDir));
 
         const THashSet<FString> EngineModules = CollectEngineModuleNames(Paths::GetEngineInstallDirectory());
-        const FString ProjectBinaries = ProjectDir.IsEmpty() ? FString() : Join(ProjectDir, "Binaries/Windows64");
+        const FFixedString ProjectBinaries = ProjectDir.IsEmpty() ? FFixedString() : Paths::Combine(ProjectDir, "Binaries/Windows64");
 
         // Shipping links the game into the engine application, which the build leaves in the project's Binaries.
         FMonolithicCopy Monolithic;
@@ -688,7 +653,7 @@ namespace Lumina
         EngineCopy.bCopyExecutable = !Monolithic.bEnabled;
 
         const FString DataDir = GetDataDirectory(FStringView(*DestDir, DestDir.Len()), FStringView(*PackageName, PackageName.Len()));
-        Monolithic.PluginsDirectory = Join(DataDir, "Plugins");
+        Monolithic.PluginsDirectory = FString(*Paths::Combine(DataDir, "Plugins"));
         EngineCopy.PluginsDirectory = Monolithic.PluginsDirectory;
 
         // Staged fresh each build, and an older package kept its DLLs, runtime and managed code beside the exe.

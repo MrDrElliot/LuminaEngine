@@ -7,7 +7,9 @@
 #include "Containers/ConcurrentQueue.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+#include "Renderer/MeshQuantization.h"
 #include "Renderer/MeshletHeaderSlab.h"
+#include "Renderer/Vertex.h"
 #include "World/ECS/EntityMap.h"
 #include "World/ECS/Registry.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
@@ -914,6 +916,80 @@ namespace Lumina
         return bReady;
     }
 
+    namespace
+    {
+        // The coarsest slot's vertices averaged into one splat, since that slot is what the proxy replaces.
+        FInstanceProxy ComputeSurfaceProxy(const FMeshResource& Resource, const FGeometrySurface& Surface)
+        {
+            FInstanceProxy Proxy = {};
+            Proxy.PackedNormal = PackNormal(FVector3(0.0f, 1.0f, 0.0f));
+            Proxy.PackedUV     = Math::PackHalf2x16(FVector2(0.5f, 0.5f));
+            Proxy.Color        = 0xFFFFFFFFu;
+
+            const FMeshletData& MD = Resource.MeshletData;
+            if (Surface.NumLODs == 0u || MD.IsEmpty())
+            {
+                return Proxy;
+            }
+
+            const uint32 Slot  = Math::Min(Surface.NumLODs, (uint32)MAX_MESH_LODS) - 1u;
+            const uint32 Begin = Surface.LODMeshletOffset[Slot];
+            const uint32 End   = Math::Min(Begin + Surface.LODMeshletCount[Slot], (uint32)MD.Meshlets.Num());
+
+            FVector3 CenterSum(0.0f);
+            FVector3 NormalSum(0.0f);
+            FVector2 UVSum(0.0f);
+            FVector4 ColorSum(0.0f);
+            uint32   Count = 0;
+            const bool bStatic = !Resource.bSkinnedMesh && MD.VertexAttributes.Num() == MD.VertexPositions.Num();
+            for (uint32 m = Begin; m < End; ++m)
+            {
+                const FMeshlet& M = MD.Meshlets[m];
+                if (!bStatic)
+                {
+                    CenterSum += MD.MeshletSpheres[m].Center;
+                    ++Count;
+                    continue;
+                }
+                for (uint32 v = 0; v < M.VertexCount; ++v)
+                {
+                    const uint32 Vertex = GetStaticVertexIndex(MD, M, v);
+                    CenterSum += DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[Vertex]);
+                    NormalSum += UnpackNormal(MD.VertexAttributes[Vertex].Normal);
+                    UVSum     += Math::UnpackHalf2x16(MD.VertexAttributes[Vertex].UV);
+                    ColorSum  += MD.VertexColors.IsEmpty() ? FVector4(1.0f) : UnpackColor(MD.VertexColors[Vertex]);
+                    ++Count;
+                }
+            }
+            if (Count == 0u)
+            {
+                return Proxy;
+            }
+
+            const float Inv = 1.0f / (float)Count;
+            Proxy.LocalCenter = CenterSum * Inv;
+            if (bStatic)
+            {
+                if (Math::Dot(NormalSum, NormalSum) > 1e-12f)
+                {
+                    Proxy.PackedNormal = PackNormal(Math::Normalize(NormalSum));
+                }
+                Proxy.PackedUV = Math::PackHalf2x16(UVSum * Inv);
+                Proxy.Color    = PackColor(ColorSum * Inv);
+            }
+
+            // Grown to the farthest meshlet sphere, so the splat covers everything the slot drew.
+            float Radius = 0.0f;
+            for (uint32 m = Begin; m < End; ++m)
+            {
+                const FMeshletSphere& S = MD.MeshletSpheres[m];
+                Radius = Math::Max(Radius, Math::Length(S.Center - Proxy.LocalCenter) + S.Radius);
+            }
+            Proxy.LocalRadius = Radius;
+            return Proxy;
+        }
+    }
+
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
     {
         ++Out.Generation;
@@ -951,12 +1027,16 @@ namespace Lumina
 
             R.NumLODs     = Surface.NumLODs;
             R.TexelFactor = Surface.TexelFactor;
+            R.LODFlags    = Surface.LODFlags;
+            R.LODErrorMultiplier = Mesh->LODDistanceScale;
+            R.Proxy       = ComputeSurfaceProxy(Resource, Surface);
 
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
                 R.LODMeshletOffset[LOD] = Surface.LODMeshletOffset[LOD];
                 R.LODMeshletCount[LOD]  = Surface.LODMeshletCount[LOD];
-                R.LODError[LOD]         = Surface.LODError[LOD] * Mesh->LODDistanceScale;
+                R.LODParentError[LOD]   = Surface.LODParentError[LOD];
+                R.LODError[LOD]         = Surface.LODError[LOD];
             }
 
             // -1 means unassigned, which IsValidIndex rejects so the slot falls through to the default.

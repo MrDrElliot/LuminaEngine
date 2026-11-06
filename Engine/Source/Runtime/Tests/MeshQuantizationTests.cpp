@@ -3,6 +3,8 @@
 #include "Core/Math/Math.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/MeshQuantization.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Versioning/CoreVersion.h"
 
 // Round-trip stays inside half a grid step and decode is bit-reproducible; Common.slang must match.
 
@@ -154,7 +156,7 @@ TEST(MeshQuantization, StructLayoutsMatchTheGPUMirrors)
     EXPECT_EQ(sizeof(FMeshVertexAttributes), 12u);
     EXPECT_EQ(sizeof(FMeshVertexPosition), 8u);
     EXPECT_EQ(sizeof(FMeshletSkinnedVertex), 36u);
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 176u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 192u);
 }
 
 // The shader unpacks the last word with the MESHLET_* shifts, so the bitfield order is part of the format.
@@ -263,4 +265,47 @@ TEST(MeshQuantization, LegacySkinnedVerticesMoveOntoTheGrid)
         EXPECT_NEAR(P.z, Corners[Local].z, 1e-5f);
         EXPECT_EQ(Data.MeshletSkinnedVertices[Local].JointIndices, 0x00010203u);
     }
+}
+
+// A file from before the four bit LOD field kept its short refs flag one bit lower, and the array is bulk copied, so the fix is a pass over it.
+TEST(MeshQuantization, LegacyMeshletWordRepacksOnLoad)
+{
+    constexpr uint32 kLegacyShortShift = 17u;
+    FMeshletData Written;
+    FMeshlet& M = Written.Meshlets.EmplaceGetRef();
+    M.VertexCount   = 4u;
+    M.TriangleCount = 2u;
+    M.LODIndex      = 5u;
+    {
+        uint32 Words[4];
+        memcpy(Words, &M, sizeof(Words));
+        Words[3] = (Words[3] & ((1u << MESHLET_LOD_SHIFT) - 1u)) | (5u << MESHLET_LOD_SHIFT) | (1u << kLegacyShortShift);
+        memcpy(&M, Words, sizeof(Words));
+    }
+    Written.MeshletVertexRefs.Append({ 0x00010000u, 0x00030002u });
+    Written.VertexPositions.SetNum(4);
+    Written.VertexAttributes.SetNum(4);
+    Written.MeshletTriangles.Append({ 0x00020100u, 0x00020301u });
+    Written.MeshletSpheres.SetNum(1);
+    Written.MeshletCones.SetNum(1);
+
+    TVector<uint8> Bytes;
+    {
+        FMemoryWriter Writer(Bytes);
+        Writer.SetFileVersion((int32)ELuminaEngineVersion::MESH_CLUSTER_LOD - 1);
+        Writer << Written;
+    }
+
+    FMeshletData Read;
+    FMemoryReader Reader(Bytes);
+    Reader.SetFileVersion((int32)ELuminaEngineVersion::MESH_CLUSTER_LOD - 1);
+    Reader << Read;
+
+    ASSERT_EQ(Read.Meshlets.Num(), 1);
+    EXPECT_EQ(Read.Meshlets[0].VertexCount, 4u);
+    EXPECT_EQ(Read.Meshlets[0].TriangleCount, 2u);
+    EXPECT_EQ(Read.Meshlets[0].LODIndex, 5u);
+    EXPECT_TRUE(Read.Meshlets[0].HasShortVertexRefs());
+    EXPECT_EQ(Read.Meshlets[0].bVoxel, 0u);
+    EXPECT_EQ(GetStaticVertexIndex(Read, Read.Meshlets[0], 3u), 3u);
 }

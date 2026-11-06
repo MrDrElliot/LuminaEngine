@@ -8,7 +8,6 @@
 
 #include "Containers/Function.h"
 #include "Core/Delegates/ScriptDelegate.h"
-#include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
 #include "Core/Serialization/Archiver.h"
 #include "Memory/Memory.h"

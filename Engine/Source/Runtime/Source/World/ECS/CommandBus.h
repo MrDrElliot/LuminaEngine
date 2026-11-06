@@ -5,7 +5,7 @@
 
 namespace Lumina::ECS
 {
-    // Each thread records into its own slot without a lock, and a flush applies creates, then commands in record order, then destroys.
+    // Each thread records into its own slot without a lock, and a flush applies creates, then commands, then destroys, each by record order then record sequence.
     class RUNTIME_API FCommandBus
     {
     public:
@@ -29,11 +29,11 @@ namespace Lumina::ECS
         {
             if constexpr (CDataComponent<T>)
             {
-                Enqueue([Entity, Value = T(std::forward<TArgs>(Args)...)](FRegistry& InRegistry) mutable
+                Enqueue([Entity, Value = T(Forward<TArgs>(Args)...)](FRegistry& InRegistry) mutable
                 {
                     if (InRegistry.IsValid(Entity))
                     {
-                        InRegistry.EmplaceOrReplace<T>(Entity, std::move(Value));
+                        InRegistry.EmplaceOrReplace<T>(Entity, Move(Value));
                     }
                 });
             }
@@ -65,7 +65,7 @@ namespace Lumina::ECS
         template<CDataComponent T, typename TFunc>
         void Patch(FEntity Entity, TFunc&& Mutator)
         {
-            Enqueue([Entity, Mutator = std::forward<TFunc>(Mutator)](FRegistry& InRegistry) mutable
+            Enqueue([Entity, Mutator = Forward<TFunc>(Mutator)](FRegistry& InRegistry) mutable
             {
                 if (InRegistry.IsValid(Entity) && InRegistry.TryGet<T>(Entity) != nullptr)
                 {
@@ -74,7 +74,7 @@ namespace Lumina::ECS
             });
         }
 
-        // Func takes FRegistry& or nothing, and runs on the flushing thread in this slot's record order.
+        // Func takes FRegistry& or nothing, and runs on the flushing thread in record order, then in this thread's record sequence.
         template<typename TFunc>
         void Enqueue(TFunc&& Func)
         {
@@ -82,7 +82,7 @@ namespace Lumina::ECS
             static_assert(alignof(TCallable) <= CommandAlignment, "A deferred command cannot be over-aligned.");
 
             void* Payload = AllocateCommand(&ApplyCallable<TCallable>, sizeof(TCallable));
-            new (Payload) TCallable(std::forward<TFunc>(Func));
+            new (Payload) TCallable(Forward<TFunc>(Func));
         }
 
         // Main thread only, while nothing else records. Commands recorded while applying run in the same flush.
@@ -97,18 +97,27 @@ namespace Lumina::ECS
         NODISCARD static bool ShouldDefer();
 
         NODISCARD static bool IsThreadDeferring();
-        static void SetThreadDeferring(bool bDefer);
+
+        struct FThreadState
+        {
+            bool   bDeferring  = false;
+
+            // A system's schedule index, so systems sharing a segment apply in schedule order whichever worker ran them.
+            uint32 RecordOrder = 0;
+        };
+
+        static FThreadState ExchangeThreadState(const FThreadState& State);
 
         struct FDeferScope
         {
-            explicit FDeferScope(bool bEnable) : bPrevious(IsThreadDeferring()) { SetThreadDeferring(bEnable || bPrevious); }
-            ~FDeferScope() { SetThreadDeferring(bPrevious); }
+            explicit FDeferScope(bool bEnable, uint32 RecordOrder = 0) : Previous(ExchangeThreadState({ bEnable || IsThreadDeferring(), RecordOrder })) {}
+            ~FDeferScope() { ExchangeThreadState(Previous); }
             FDeferScope(const FDeferScope&) = delete;
             FDeferScope& operator = (const FDeferScope&) = delete;
             FDeferScope(FDeferScope&&) = delete;
             FDeferScope& operator=(FDeferScope&&) = delete;
 
-            bool bPrevious;
+            FThreadState Previous;
         };
 
     private:
@@ -144,13 +153,19 @@ namespace Lumina::ECS
             size_t  Used     = 0;
         };
 
+        struct FOrderedEntity
+        {
+            FEntity Entity;
+            uint32  RecordOrder = 0;
+        };
+
         struct FSlot
         {
-            TVector<FBlock>  Blocks;
-            uint32           ActiveBlock = 0;
-            uint32           NumCommands = 0;
-            TVector<FEntity> Creates;
-            TVector<FEntity> Destroys;
+            TVector<FBlock>         Blocks;
+            uint32                  ActiveBlock = 0;
+            uint32                  NumCommands = 0;
+            TVector<FOrderedEntity> Creates;
+            TVector<FOrderedEntity> Destroys;
 
             // Keeps neighboring slots off one cache line, since each is written by a different thread.
             uint8            Padding[64] = {};
@@ -158,7 +173,11 @@ namespace Lumina::ECS
 
         void* AllocateCommand(FApplyFn Apply, size_t PayloadSize);
         FSlot& LocalSlot();
-        static void RunCommands(FSlot& Slot, FRegistry* Target);
+        uint32 RunCommands(FRegistry* Target);
+
+        template<typename TFunc>
+        uint32 ApplyEntities(TVector<FOrderedEntity> FSlot::* List, TFunc&& Apply);
+
         static void FreeBlocks(FSlot& Slot);
 
         FRegistry&      Registry;

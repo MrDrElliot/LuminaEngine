@@ -22,10 +22,7 @@ FCloudRay Cloud_SetupRay(FTexture2D Depth, int2 P, uint2 Size, float LayerBottom
     // One max-reduction tap at the half-res texel center covers its 2x2 full-res footprint; reverse-Z, so max is the closest surface.
     Ray.RawDepth = Depth.SampleLevel(Samplers::MaxReduction, UV, 0.0).r;
 
-    float2 NDC     = UV * 2.0 - 1.0;
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
-    Ray.Dir        = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
+    Ray.Dir = GetCameraWorldRayDir(UV);
 
     // Planet-relative, so the layer curves away to the horizon instead of running to infinity.
     float3 CamPos = GetCameraPosition();

@@ -23,9 +23,9 @@ namespace Lumina
     {
     public:
 
-        /** Internal number meaning "no numeric suffix". External numbers are stored as +1 of this. */
+        // Internal number meaning "no numeric suffix". External numbers are stored as +1 of this.
         static constexpr uint32 kNoNumber   = 0;
-        /** Index 0 is the empty name, which is why a default-constructed FName never touches the table. */
+        // Index 0 is the empty name, which is why a default-constructed FName never touches the table.
         static constexpr uint32 kNoName     = 0;
 
         using value_type = char;
@@ -34,7 +34,7 @@ namespace Lumina
 
         FName(const char* Str);
 
-        /** Construct from an explicit base name and external number, e.g. FName("Entity", 3) -> "Entity_3". */
+        // Construct from an explicit base name and external number, e.g. FName("Entity", 3) -> "Entity_3".
         FName(const char* Str, uint32 InNumber);
 
 #if PLATFORM_TCHAR_IS_WIDE
@@ -55,16 +55,16 @@ namespace Lumina
         uint32 GetID() const { return Index; }
         uint32 GetComparisonID() const { return Index; }
 
-        /** Content hash of the base string, identical in every run, for anything derived from a name that must not move between sessions. */
+        // Content hash of the base string, identical in every run, for anything derived from a name that must not move between sessions.
         uint64 GetStableHash() const;
 
-        /** Whether this name carries a numeric suffix (e.g. "Entity_3"). */
+        // Whether this name carries a numeric suffix (e.g. "Entity_3").
         bool HasNumber() const { return Number != kNoNumber; }
 
-        /** External number (the value shown after the underscore); 0 when HasNumber() is false. */
+        // External number (the value shown after the underscore); 0 when HasNumber() is false.
         uint32 GetNumber() const { return Number == kNoNumber ? 0 : Number - 1; }
 
-        /** Same base name with the numeric suffix stripped. */
+        // Same base name with the numeric suffix stripped.
         FName GetBaseName() const { return FName(Index); }
 
         // rebuilds a numbered name from parts stored separately, only valid where HasNumber() was true
@@ -113,7 +113,7 @@ namespace Lumina
         uint32 Number   = kNoNumber;
     };
 
-    /** The empty name, constant-initialized and never touching the table, so any static initializer may use it. */
+    // The empty name, constant-initialized and never touching the table, so any static initializer may use it.
     inline constexpr FName NAME_None{};
 
     template<>

@@ -77,6 +77,22 @@ namespace Lumina
             case EKey::LeftBracket:  return K::KI_OEM_4;
             case EKey::RightBracket: return K::KI_OEM_6;
             case EKey::GraveAccent:  return K::KI_OEM_3;
+            case EKey::World1:       return K::KI_OEM_102;
+            case EKey::KPEnter:      return K::KI_NUMPADENTER;
+            case EKey::KPDecimal:    return K::KI_DECIMAL;
+            case EKey::KPAdd:        return K::KI_ADD;
+            case EKey::KPSubtract:   return K::KI_SUBTRACT;
+            case EKey::KPMultiply:   return K::KI_MULTIPLY;
+            case EKey::KPDivide:     return K::KI_DIVIDE;
+            case EKey::KPEqual:      return K::KI_OEM_NEC_EQUAL;
+            case EKey::LeftSuper:    return K::KI_LWIN;
+            case EKey::RightSuper:   return K::KI_RWIN;
+            case EKey::Menu:         return K::KI_APPS;
+            case EKey::CapsLock:     return K::KI_CAPITAL;
+            case EKey::NumLock:      return K::KI_NUMLOCK;
+            case EKey::ScrollLock:   return K::KI_SCROLL;
+            case EKey::PrintScreen:  return K::KI_SNAPSHOT;
+            case EKey::Pause:        return K::KI_PAUSE;
             default:                 return K::KI_UNKNOWN;
             }
         }
@@ -99,6 +115,7 @@ namespace Lumina
             if (Context.IsCtrlDownRaw())  Mods |= KM_CTRL;
             if (Context.IsShiftDownRaw()) Mods |= KM_SHIFT;
             if (Context.IsAltDownRaw())   Mods |= KM_ALT;
+            if (Context.IsKeyDownRaw(EKey::LeftSuper) || Context.IsKeyDownRaw(EKey::RightSuper)) Mods |= KM_META;
             return Mods;
         }
 
@@ -110,6 +127,8 @@ namespace Lumina
             if (KeyEvent.IsShiftDown()) Mods |= KM_SHIFT;
             if (KeyEvent.IsAltDown())   Mods |= KM_ALT;
             if (KeyEvent.IsSuperDown()) Mods |= KM_META;
+            // GLFW lock mods never reach us; with num lock off no char event follows, so nothing is typed.
+            if (KeyEvent.GetKeyCode() >= EKey::KP0 && KeyEvent.GetKeyCode() <= EKey::KPDecimal) Mods |= KM_NUMLOCK;
             return Mods;
         }
     }

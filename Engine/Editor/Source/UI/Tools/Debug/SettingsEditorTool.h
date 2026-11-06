@@ -24,7 +24,6 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_COG; }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
 
         void Select(CClass* SettingsClass) { SelectedClass = SettingsClass; }
         

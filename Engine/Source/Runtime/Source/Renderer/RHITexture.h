@@ -64,56 +64,26 @@ namespace Lumina::RHI
         RUNTIME_API FManagedTexture Create(const FTexture2DArrayDesc& Desc);
         RUNTIME_API FManagedTexture Create(const FTexture3DDesc& Desc);
 
-        /** Rebuild the image behind Tex at a new size/mip count, KEEPING its bindless slot: the slot is
-         *  repointed rather than freed, because its ResourceID is baked into every material uniform block
-         *  that samples the texture and is never revisited. This is what makes mip streaming possible --
-         *  see the residency invariants in CTexture::ApplyMipResidency.
-         *
-         *  STAGED. The new image is created and Tex.Texture starts naming it, but the bindless slot keeps
-         *  pointing at the OLD image, which stays alive and keeps being sampled. Nothing is visible to a
-         *  shader until CommitRecreate arms the swap and the uploads it covers have actually executed on
-         *  the GPU. Repointing at create time -- what this used to do -- published an image whose texels
-         *  had never been written, because uploads do not flush until the next BeginFrame: a full
-         *  frame of undefined contents per promotion, and a lifetime hazard on the old image behind it.
-         *
-         *  So the sequence is fixed, and all three steps belong on one thread with no frame boundary
-         *  between them:  Recreate -> upload every mip -> CommitRecreate.
-         *
-         *  The array overload changes the mip count only; layer count is fixed at cook time and a caller
-         *  that wants a different one is describing a different texture. */
+        // Stages a new image that keeps the bindless slot; upload every mip and CommitRecreate on one thread within one frame.
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DArrayDesc& Desc);
 
-        /** Arm the swap staged by Recreate against the upload batch the caller just queued. The descriptor
-         *  is repointed, and the old image retired, once that batch has completed on the GPU -- polled by
-         *  TickPendingSwaps. No-op when nothing is staged (first-load Recreate falls through to Create). */
+        // The slot is repointed and the old image retired once the batch queued just before this completes on the GPU.
         RUNTIME_API void CommitRecreate(FManagedTexture& Tex);
 
-        /** Drop the swap staged by Recreate without publishing it: the staged image is retired and Tex goes
-         *  back to naming the one the bindless slot never stopped pointing at, so the texture is exactly
-         *  where it was before Recreate ran.
-         *
-         *  For a caller that discovers, after staging, that it cannot fill the replacement. The alternative
-         *  -- walking away from an unarmed entry -- freezes the slot forever: HasPendingSwap never clears,
-         *  so no further Recreate is allowed, and both images stay allocated. No-op when nothing is staged. */
+        // A staged swap left unarmed freezes the slot forever, so a caller that cannot fill it must abandon it.
         RUNTIME_API void AbandonRecreate(FManagedTexture& Tex);
 
-        /** Queue a GPU-side copy of one mip from the image the bindless slot STILL names into the staged
-         *  replacement. Both are alive across a staged swap, which is what makes this possible at all --
-         *  a mip that is already on the GPU should never be re-staged from the CPU just because the image
-         *  around it changed size. Returns false when nothing is staged. */
+        // Copies a mip already on the GPU into the staged image instead of restaging it from the CPU.
         RUNTIME_API bool CopyMipFromCurrent(const FManagedTexture& Tex, uint32 Layer, uint32 SrcMip, uint32 DstMip, uint32 Width, uint32 Height);
 
-        /** True while a staged replacement for this texture has not become visible yet. A caller that
-         *  drives residency should hold off rather than stack a second swap on the same slot. */
+        // A residency driver should wait for this to clear rather than stack a second swap on the slot.
         RUNTIME_API bool HasPendingSwap(const FManagedTexture& Tex);
 
-        /** Publishes every staged swap whose upload has landed. Driven from BeginFrame. */
+        // Publishes every staged swap whose upload has landed. Driven from BeginFrame.
         void TickPendingSwaps();
 
-        // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
-        // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.
-        // OffsetY stages a horizontal BAND -- see RHIUpload.h. False means the upload was DROPPED.
+        // Pass the mip's own Width and Height past mip 0, since a derived size faults the copy engine on non-power-of-two chains.
         RUNTIME_API bool UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
 
         RUNTIME_API bool Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);

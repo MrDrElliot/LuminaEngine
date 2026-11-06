@@ -3,10 +3,10 @@ using LuminaSharp;
 
 namespace Lumina;
 
-/// A reflected class handle guaranteed to be T or a class derived from it, mirroring native TSubclassOf.
+// A reflected class handle that is T or derived from it, mirroring native TSubclassOf.
 public readonly struct TSubclassOf<T> : IEquatable<TSubclassOf<T>> where T : NativeObject
 {
-    /// The native CClass pointer. A class is a permanent singleton, so this needs no lifetime handling.
+    // A class is a permanent singleton, so this pointer needs no lifetime handling.
     internal readonly IntPtr ClassPtr;
 
     internal TSubclassOf(IntPtr Class)
@@ -16,10 +16,10 @@ public readonly struct TSubclassOf<T> : IEquatable<TSubclassOf<T>> where T : Nat
 
     public bool IsValid => ClassPtr != IntPtr.Zero;
 
-    /// The class's registered name, empty when unset.
+    // Empty when unset.
     public string Name => IsValid ? Native.ClassGetName(ClassPtr) : string.Empty;
 
-    /// The class default object, or null when unset. Reads defaults without spawning an instance.
+    // Null when unset; reads defaults without spawning an instance.
     public T? GetDefaultObject()
     {
         if (!IsValid)
@@ -30,10 +30,10 @@ public readonly struct TSubclassOf<T> : IEquatable<TSubclassOf<T>> where T : Nat
         return Object == IntPtr.Zero ? null : Wrapper<T>.ForObject(Object);
     }
 
-    /// Widen to a base class handle. Native re-checks the base, so a wrong widen arrives there as invalid.
+    // Native re-checks the base, so a wrong widen arrives as invalid.
     public TSubclassOf<TBase> AsBase<TBase>() where TBase : NativeObject => new(ClassPtr);
 
-    /// Resolves a class by name. Invalid when nothing is registered under it; the assignment still checks the base.
+    // Invalid when nothing is registered under the name; the assignment still checks the base.
     public static TSubclassOf<T> FromName(string ClassName)
     {
         return string.IsNullOrEmpty(ClassName)
@@ -54,10 +54,10 @@ public readonly struct TSubclassOf<T> : IEquatable<TSubclassOf<T>> where T : Nat
     public override string ToString() => IsValid ? Name : "None";
 }
 
-/// A struct handle that is T or derived, mirroring native TSubStructOf. T is unconstrained since a reflected struct reaches C# as either a value struct or a wrapper class.
+// Mirrors native TSubStructOf; T is unconstrained since a reflected struct reaches C# as a value struct or a wrapper class.
 public readonly struct TSubStructOf<T> : IEquatable<TSubStructOf<T>>
 {
-    /// The native CStruct pointer. A struct type is a permanent singleton, so this needs no lifetime handling.
+    // A struct type is a permanent singleton, so this pointer needs no lifetime handling.
     internal readonly IntPtr StructPtr;
 
     internal TSubStructOf(IntPtr Struct)
@@ -67,10 +67,10 @@ public readonly struct TSubStructOf<T> : IEquatable<TSubStructOf<T>>
 
     public bool IsValid => StructPtr != IntPtr.Zero;
 
-    /// The struct's registered name, empty when unset. Pass it to FInstancedStruct.InitializeAs to build one.
+    // Empty when unset; pass it to FInstancedStruct.InitializeAs to build one.
     public string Name => IsValid ? Native.StructGetName(StructPtr) : string.Empty;
 
-    /// Resolves a struct by name, script-declared or native. The assignment still checks the base.
+    // Script-declared or native; the assignment still checks the base.
     public static TSubStructOf<T> FromName(string StructName)
     {
         return string.IsNullOrEmpty(StructName)

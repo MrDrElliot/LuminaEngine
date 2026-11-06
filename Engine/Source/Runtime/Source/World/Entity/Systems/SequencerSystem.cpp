@@ -9,13 +9,19 @@
 
 namespace Lumina
 {
-    void SSequencerSystem::Configure()
+    void CSequencerSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        RunsBefore<SAnimationSystem, SEntityScriptSystem>();
+        RunsBefore<CAnimationSystem, CEntityScriptSystem>();
     }
 
-    void SSequencerSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CSequencerSystem::OnUpdate(const SSystemContext& Context)
+    {
+        // Binding spawns prefabs and tracks write whatever they bind, so the walk waits for the flush on the main thread.
+        Context.Defer([this](const SExclusiveContext& X) { Advance(X); });
+    }
+
+    void CSequencerSystem::Advance(const SExclusiveContext& Context)
     {
         CWorld* World = Context.GetWorld();
         if (World == nullptr)

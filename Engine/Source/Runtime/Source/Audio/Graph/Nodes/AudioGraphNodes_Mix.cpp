@@ -20,8 +20,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
             {}
 
-            void Reset() override { Gain.Reset(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Gain.Begin(*GainIn, Context.NumFrames);
@@ -53,14 +51,6 @@ namespace Lumina
                 {
                     In[Channel]     = Params.AudioIn(Channel * 2);
                     GainIn[Channel] = Params.FloatIn(Channel * 2 + 1);
-                }
-            }
-
-            void Reset() override
-            {
-                for (FAudioGraphSmoothedFloat& Value : Gain)
-                {
-                    Value.Reset();
                 }
             }
 
@@ -108,8 +98,6 @@ namespace Lumina
                 , OutRight(Params.AudioOut(1))
             {}
 
-            void Reset() override { Pan.Reset(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Pan.Begin(Math::Clamp(*PanIn, -1.0f, 1.0f), Context.NumFrames);
@@ -144,8 +132,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
             {}
 
-            void Reset() override { Alpha.Reset(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Alpha.Begin(Math::Clamp(*AlphaIn, 0.0f, 1.0f), Context.NumFrames);
@@ -179,8 +165,6 @@ namespace Lumina
                 , OutLeft(Params.AudioOut(0))
                 , OutRight(Params.AudioOut(1))
             {}
-
-            void Reset() override { Width.Reset(); }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {

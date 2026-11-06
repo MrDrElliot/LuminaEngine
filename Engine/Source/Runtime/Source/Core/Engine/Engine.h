@@ -6,10 +6,7 @@
 #include "Core/Engine/EngineURL.h"
 #include "Memory/SmartPtr.h"
 #include "Core/Object/ObjectHandleTyped.h"
-#include "Core/Object/ObjectReinstancer.h"
-#include "Networking/INetworkTransport.h"
-#include "Assets/AssetRegistry/CookRoot.h"
-#include "Tools/UI/DevelopmentToolUI.h"
+#include "Networking/NetworkTypes.h"
 
 
 namespace Lumina
@@ -22,6 +19,10 @@ namespace Lumina
     class FApplication;
     class FWindow;
     class CWorld;
+    class INetworkTransport;
+    class IDevelopmentToolUI;
+    struct FCookRoot;
+    enum class EInputLayer : int32;
 }
 
 namespace Lumina
@@ -34,8 +35,8 @@ namespace Lumina
     {
     public:
         
-        FEngine() = default;
-        virtual ~FEngine() = default;
+        RUNTIME_API FEngine();
+        RUNTIME_API virtual ~FEngine();
         
         FEngine(const FEngine&) = delete;
         FEngine(FEngine&&) = delete;
@@ -239,6 +240,21 @@ namespace Lumina
         bool                    bCloseRequested = false;
         bool                    bEngineReadyToClose = false;
         bool                    bStartCookedRuntime = false;
+
+    private:
+
+        struct FBootTimer;
+        struct FStartupProject;
+
+        FStartupProject ResolveStartupProject(FBootTimer& Boot);
+        bool MountStartupFilesystems(FStartupProject& Startup, FBootTimer& Boot);
+        void InitializeCoreSystems(FBootTimer& Boot);
+        void InitializeRendererAndParallelSubsystems(FBootTimer& Boot);
+        void InitializeReflectionAndWorld(FBootTimer& Boot);
+        void InitializeEditorTools(FBootTimer& Boot);
+        void InitializeUserInterface(FBootTimer& Boot);
+        bool FinishBoot(bool bStartupSucceeded, FBootTimer& Boot);
+        bool LoadProjectModule();
     };
     
     RUNTIME_API extern FEngine* GEngine;

@@ -1845,6 +1845,7 @@ void Profiler::Worker()
             }
         }
     }
+    if( isListening ) m_listenPort.store( dataPort, std::memory_order_release );
     if( !isListening )
     {
         for(;;)

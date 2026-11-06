@@ -88,6 +88,8 @@ namespace Lumina
     // [CellStart[c], CellStart[c+1]). Reused across ticks.
     struct FNetGrid
     {
+        static constexpr int32 MaxDim = 512;
+
         FVector3        Origin;            // world min corner; X and Z used
         float           CellSize = 64.0f;
         int32           DimX     = 0;
@@ -99,6 +101,7 @@ namespace Lumina
         TVector<FVector3> SortedWorldPos;
         TVector<uint8>    SortedFlags;
         TVector<uint32>   SortedGuid;
+        TVector<int32>    Cursor;          // scatter scratch, size NumCells()
 
         int32 NumCells() const { return DimX * DimZ; }
 

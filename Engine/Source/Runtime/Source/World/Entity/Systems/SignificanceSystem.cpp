@@ -39,13 +39,13 @@ namespace Lumina
         }
     }
 
-    void SSignificanceSystem::Configure()
+    void CSignificanceSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    void SSignificanceSystem::OnUpdate(const SSystemContext& Context)
+    void CSignificanceSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace SignificanceSystemInternal;
 

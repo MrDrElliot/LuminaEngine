@@ -81,14 +81,6 @@ LUMINA_DOTNET_EXPORT(const void*, FindProperty)(const char* Type, int TLen, cons
     {
         return Found;
     }
-    
-    for (const CStruct* Super = Struct->GetSuperStruct(); Super != nullptr; Super = Super->GetSuperStruct())
-    {
-        if (FProperty* Found = Super->GetProperty(PropName))
-        {
-            return Found;
-        }
-    }
 
     LOG_ERROR("FindProperty: '{}' has no reflected property '{}'.", Struct->GetName(), PropName);
     return nullptr;

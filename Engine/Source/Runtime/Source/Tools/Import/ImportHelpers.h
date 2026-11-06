@@ -10,6 +10,7 @@
 #include "Platform/Platform.h"
 #include "Renderer/Format.h"
 #include "Renderer/MeshDistanceField.h"
+#include "Renderer/VirtualGeometrySettings.h"
 #include "Renderer/RHITexture.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Renderer/SkeletonResource.h"
@@ -170,7 +171,13 @@ namespace Lumina::Import
              *  voxelization pass in FinalizeMeshImportData. Off by default: the build is the single most
              *  expensive step of a mesh import, and most meshes never need a field. */
             SDistanceFieldBuildSettings DistanceField;
+
+            // Seeds CMesh::VirtualGeometrySettings and picks the meshlet build GenerateMeshlets runs.
+            SVirtualGeometryBuildSettings VirtualGeometry;
         };
+
+        // Copies the virtual geometry settings onto the resource's build inputs, which is all GenerateMeshlets reads.
+        RUNTIME_API void ApplyVirtualGeometrySettings(FMeshResource& Resource, const SVirtualGeometryBuildSettings& Settings);
 
         /** One source image, deduplicated by Key during parse. Embedded payloads are a VIEW into the
          *  parser's own buffer (Bytes) so a GLB's textures are never copied; a parser that cannot keep its

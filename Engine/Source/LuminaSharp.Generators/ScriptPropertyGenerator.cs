@@ -7,27 +7,10 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace LuminaSharp.Generators;
 
-/// <summary>
-/// Validates <c>[Property]</c> members. It emits nothing.
-///
-/// The accessors themselves are produced by <c>LuminaSharp.ScriptPropertyRewriter</c>, inside the engine's own
-/// Roslyn compilation, because a script property's value lives in NATIVE memory and a field cannot be a view
-/// over that -- only an accessor can. A source generator may only ADD members, never replace one, which is
-/// what used to force authors to write <c>public partial float Speed { get; set; }</c> and left nowhere to put
-/// a default (a partial property cannot have an initializer). The engine compiles scripts itself, so it
-/// rewrites the field into that property instead, and the author writes ordinary C#.
-///
-/// This analyzer still exists because the rewriter runs at RUN TIME: without it an unsupported member would
-/// look fine in the IDE and fail only on reload. Its job is to say the same thing the rewriter would, at the
-/// declaration, while you are typing it -- so it does not decide anything itself. Every judgement here comes
-/// from <see cref="ScriptPropertyClassifier"/>, the single copy the rewriter also runs on.
-/// </summary>
+// Validates [Property] members as they are typed; ScriptPropertyRewriter emits the accessors when scripts compile.
 [Generator]
 public sealed class ScriptPropertyGenerator : IIncrementalGenerator
 {
-    private const string PropertyAttribute = "LuminaSharp.PropertyAttribute";
-    private const string NativeObjectMetadataName = "LuminaSharp.NativeObject";
-
     private static readonly DiagnosticDescriptor UnsupportedType = new(
         id: "LUM0101",
         title: "Unsupported [Property] type",
@@ -39,7 +22,7 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor ContainerInitialized = new(
         id: "LUM0102",
         title: "Container [Property] cannot be initialized",
-        messageFormat: "[Property] '{0}' is a container, so it is a VIEW over storage native already owns and cannot be "
+        messageFormat: "[Property] '{0}' is a container, so it is a view over storage native already owns and cannot be "
                      + "assigned. Drop the initializer and fill it in OnReady (Add/Clear/RemoveAt).",
         category: "LuminaSharp",
         defaultSeverity: DiagnosticSeverity.Error,
@@ -48,10 +31,9 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor PartialProperty = new(
         id: "LUM0103",
         title: "[Property] should be a field",
-        messageFormat: "[Property] '{0}' is a partial property. That was the old shape, needed back when a source "
-                     + "generator produced the accessors; the engine now rewrites a plain field into the same thing. "
-                     + "Declare it as 'public {1} {0};' -- which also gives an initializer somewhere to live, and that "
-                     + "is what a default is.",
+        messageFormat: "[Property] '{0}' is a partial property, the old shape from when a source generator produced "
+                     + "the accessors. The engine now rewrites a plain field into the same thing, so declare it as "
+                     + "'public {1} {0};', which also gives the default an initializer to live in.",
         category: "LuminaSharp",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
@@ -95,10 +77,10 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
     {
         IncrementalValuesProvider<Diagnostic?> Diagnostics = context.SyntaxProvider
             .ForAttributeWithMetadataName(
-                PropertyAttribute,
+                ScriptPropertyTypeNames.PropertyAttribute,
                 static (_, _) => true,
-                static (Context, _) => ValidateSpecifiers(Context.TargetSymbol, Context.TargetNode, PropertyAttribute)
-                    ?? Validate(Context.TargetSymbol, Context.TargetNode, Context.SemanticModel.Compilation));
+                static (Context, _) => ValidateSpecifiers(Context.TargetSymbol, Context.TargetNode, ScriptPropertyTypeNames.PropertyAttribute)
+                    ?? Validate(Context.TargetSymbol, Context.TargetNode));
         IncrementalValuesProvider<Diagnostic?> FunctionDiagnostics = context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 ScriptPropertyTypeNames.FunctionAttribute,
@@ -145,13 +127,12 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         return null;
     }
 
-    private static Diagnostic? Validate(ISymbol Symbol, SyntaxNode Node, Compilation Compilation)
+    private static Diagnostic? Validate(ISymbol Symbol, SyntaxNode Node)
     {
         Location Location = Node.GetLocation();
-        bool bNativeOwner = DerivesFrom(Symbol.ContainingType, Compilation.GetTypeByMetadataName(NativeObjectMetadataName));
+        bool bNativeOwner = ScriptPropertyClassifier.IsNativeObject(Symbol.ContainingType);
 
-        // A partial property is the pre-rewriter shape. It still compiles in the IDE (nothing implements it
-        // there either), so without this it would fail only at script reload, with CS9248 and no explanation.
+        // Without this a partial property compiles in the IDE and fails only at reload with an unexplained CS9248.
         if (Symbol is IPropertySymbol Property)
         {
             if (IsPartial(Property))
@@ -174,8 +155,7 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
                 Classification.Rejection);
         }
 
-        // A container is a view over storage native owns, so assigning it is meaningless while its contents
-        // are fully editable. The rewriter refuses this too; reported here so it surfaces at the declaration.
+        // The rewriter refuses this too, but reporting it here surfaces it at the declaration.
         if (Classification.IsView && Declarator(Field, Node)?.Initializer != null)
         {
             return Diagnostic.Create(ContainerInitialized, Location, Field.Name);
@@ -251,18 +231,6 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         return !Owner.GetMembers("__lazyoff_" + Property.Name).IsEmpty || !Owner.GetMembers("__lazyprop_" + Property.Name).IsEmpty;
     }
 
-    private static bool DerivesFrom(INamedTypeSymbol? Type, INamedTypeSymbol? Base)
-    {
-        for (INamedTypeSymbol? Current = Type; Current != null && Base != null; Current = Current.BaseType)
-        {
-            if (SymbolEqualityComparer.Default.Equals(Current, Base))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static bool IsPartial(IPropertySymbol Property)
     {
         foreach (SyntaxReference Reference in Property.DeclaringSyntaxReferences)
@@ -276,9 +244,7 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         return false;
     }
 
-    /// <summary>The declarator for a field, which is where an initializer lives -- an <see cref="IFieldSymbol"/>
-    /// cannot see one. Normally the attribute's own target node; falls back through the symbol for the shapes
-    /// where it is not (several declarators sharing one <c>[Property]</c> field declaration).</summary>
+    // An IFieldSymbol cannot see its initializer, and several declarators can share one [Property] field declaration.
     private static VariableDeclaratorSyntax? Declarator(IFieldSymbol Field, SyntaxNode Node)
     {
         if (Node is VariableDeclaratorSyntax Direct)

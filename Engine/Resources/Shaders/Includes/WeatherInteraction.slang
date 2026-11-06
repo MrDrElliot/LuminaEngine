@@ -5,16 +5,9 @@ bool HasWeather() { return !Scene().Weather.IsEmpty(); }
 
 FWeatherData GetWeather() { return Scene().Weather.GetAligned(0u); }
 
-uint WeatherHash(uint V)
-{
-    uint State = V * 747796405u + 2891336453u;
-    uint Word  = ((State >> ((State >> 28u) + 4u)) ^ State) * 277803737u;
-    return (Word >> 22u) ^ Word;
-}
-
 float WeatherRandom(inout uint Seed)
 {
-    Seed = WeatherHash(Seed);
+    Seed = PCGHash(Seed);
     return float(Seed >> 8u) * (1.0 / 16777216.0);
 }
 

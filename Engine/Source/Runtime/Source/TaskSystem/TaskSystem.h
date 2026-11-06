@@ -4,7 +4,6 @@
 
 #include <iterator>
 #include <type_traits>
-#include <utility>
 
 namespace Lumina::Jobs
 {
@@ -85,7 +84,7 @@ namespace Lumina::Jobs
             return;
         }
         using TDecayed = std::decay_t<TFunc>;
-        TDecayed Stored = std::forward<TFunc>(Func);
+        TDecayed Stored = Forward<TFunc>(Func);
         ParallelDetail::Run(Num, MinRange, Band, ParallelDetail::MakeThunk<TDecayed>(), &Stored, ParallelDetail::CallSite<TDecayed>());
     }
 
@@ -94,7 +93,7 @@ namespace Lumina::Jobs
     {
         if (Num >= MinNumToSplit)
         {
-            ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Band);
+            ParallelFor(Num, Forward<TFunc>(Func), MinRange, Band);
             return;
         }
         ParallelDetail::InvokeRange(Func, 0, Num, GetThreadSlot());

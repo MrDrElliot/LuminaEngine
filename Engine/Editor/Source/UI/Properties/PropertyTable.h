@@ -30,7 +30,6 @@ namespace Lumina
     {
         CStruct*                    Type = nullptr;
         void*                       Instance = nullptr;
-        FPropertyChangedEventFn     PreChangeCallback;
         FPropertyChangedEventFn     PostChangeCallback;
         FPropertyChangedEventFn     StartChangeCallback;
         FPropertyChangedEventFn     FinishChangeCallback;
@@ -69,7 +68,6 @@ namespace Lumina
         void* GetObject() const { return Object; }
         void* GetDefaultObject() const { return DefaultObject; }
 
-        void SetPreEditCallback(FPropertyChangedEventFn Callback);
         void SetPostEditCallback(FPropertyChangedEventFn Callback);
         void SetStartEditCallback(FPropertyChangedEventFn Callback);
         void SetFinishEditCallback(FPropertyChangedEventFn Callback);

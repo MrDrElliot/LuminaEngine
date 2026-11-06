@@ -36,6 +36,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/World.h"
 #include "Log/Log.h"
 #include "Containers/StringFormat.h"
 
@@ -447,10 +448,6 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGuiX::TextTooltip("{}", "The preview mesh shows this pin as unlit color. Click to go back to the whole material.");
         }
-    }
-
-    void FMaterialEditorTool::OnAssetLoadFinished()
-    {
     }
     
     bool FMaterialEditorTool::NeedsCompile() const

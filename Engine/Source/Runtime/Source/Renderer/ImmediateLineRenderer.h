@@ -59,11 +59,6 @@ namespace Lumina
 
         void CloseFrame();
 
-        // Counts verts requested last frame, whether or not they fit.
-        uint32 GetLastDemand(EChannel Channel) const { return Channels[Channel].LastDemand; }
-
-        uint64 GetResidentBytes() const;
-
         //~ Producers ------------------------------------------------------------------------
 
         FORCEINLINE void Line(const FVector3& Start, const FVector3& End, uint32 PackedColor, EChannel Channel = DepthTested)

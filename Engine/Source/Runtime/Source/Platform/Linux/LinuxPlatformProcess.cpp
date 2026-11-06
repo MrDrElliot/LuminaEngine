@@ -9,7 +9,6 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <malloc.h>
-#include <sched.h>
 #include <spawn.h>
 #include <sys/file.h>
 #include <sys/wait.h>
@@ -55,20 +54,6 @@ namespace Lumina::Platform
             ::close(Descriptor);
 
             return Contents;
-        }
-
-        FString ReadSysfsValue(const char* Path)
-        {
-            FString Value = ReadWholeFile(Path);
-
-            const int32 Newline = Value.Find('\n');
-
-            if (Newline != Constants::kIndexNone)
-            {
-                Value.SetLen(Newline);
-            }
-
-            return Value;
         }
 
         TVector<FString> TokenizeArguments(const TCHAR* Params)
@@ -427,11 +412,6 @@ namespace Lumina::Platform
         return DLLHandle != nullptr && ::dlclose(DLLHandle) == 0;
     }
 
-    void* GetDLLExport(void* DLLHandle, const char* ProcName)
-    {
-        return DLLHandle != nullptr ? ::dlsym(DLLHandle, ProcName) : nullptr;
-    }
-
     void AddDLLDirectory(const FString& Directory)
     {
         for (const FString& Existing : GDLLSearchPaths)
@@ -454,14 +434,6 @@ namespace Lumina::Platform
 
         GDLLSearchPaths.Emplace(Directory);
         LOG_INFO("Pushing DLL Search Path: {0}", Directory);
-    }
-
-    void PopDLLDirectory()
-    {
-        if (!GDLLSearchPaths.IsEmpty())
-        {
-            GDLLSearchPaths.Pop();
-        }
     }
 
     void* LoadLibraryWithSearchPaths(const FString& Filename, const TVector<FString>& SearchPaths)
@@ -505,13 +477,6 @@ namespace Lumina::Platform
     FVoidFuncPtr LumGetProcAddress(void* Handle, const char* Procedure)
     {
         return reinterpret_cast<FVoidFuncPtr>(::dlsym(Handle, Procedure));
-    }
-
-
-    uint32 GetCurrentCoreNumber()
-    {
-        const int Core = ::sched_getcpu();
-        return Core < 0 ? 0u : static_cast<uint32>(Core);
     }
 
     FString GetRuntimeModulePath()
@@ -579,79 +544,6 @@ namespace Lumina::Platform
         }
 
         return Name;
-    }
-
-
-    const FCpuTopology& GetCpuTopology()
-    {
-        static FCpuTopology Topology = []
-        {
-            FCpuTopology T;
-
-            for (ECpuCoreType& Type : T.CoreTypes)
-            {
-                Type = ECpuCoreType::Unknown;
-            }
-
-            const long Online = ::sysconf(_SC_NPROCESSORS_ONLN);
-            T.NumLogicalCores = Online > 0 ? static_cast<uint32>(Online) : 1u;
-
-            uint64 Capacities[256] = {};
-            uint64 MaxCapacity = 0;
-            bool bHaveCapacities = false;
-
-            const uint32 Count = T.NumLogicalCores < 256 ? T.NumLogicalCores : 256;
-
-            for (uint32 Index = 0; Index < Count; ++Index)
-            {
-                char Path[128];
-                ::snprintf(Path, sizeof(Path), "/sys/devices/system/cpu/cpu%u/cpu_capacity", Index);
-
-                const FString Value = ReadSysfsValue(Path);
-
-                if (Value.IsEmpty())
-                {
-                    continue;
-                }
-
-                Capacities[Index] = ::strtoull(*Value, nullptr, 10);
-                bHaveCapacities = bHaveCapacities || Capacities[Index] > 0;
-                MaxCapacity = Capacities[Index] > MaxCapacity ? Capacities[Index] : MaxCapacity;
-            }
-
-            if (!bHaveCapacities || MaxCapacity == 0)
-            {
-                for (uint32 Index = 0; Index < Count; ++Index)
-                {
-                    T.CoreTypes[Index] = ECpuCoreType::Performance;
-                }
-
-                T.NumPerformance = T.NumLogicalCores;
-                T.bHybrid = false;
-
-                return T;
-            }
-
-            for (uint32 Index = 0; Index < Count; ++Index)
-            {
-                if (Capacities[Index] >= MaxCapacity)
-                {
-                    T.CoreTypes[Index] = ECpuCoreType::Performance;
-                    ++T.NumPerformance;
-                }
-                else
-                {
-                    T.CoreTypes[Index] = ECpuCoreType::Efficiency;
-                    ++T.NumEfficiency;
-                }
-            }
-
-            T.bHybrid = T.NumEfficiency > 0;
-
-            return T;
-        }();
-
-        return Topology;
     }
 
 
@@ -1093,13 +985,7 @@ namespace Lumina::Platform
             }
         }
 
-        static bool bWarned = false;
-
-        if (!bWarned)
-        {
-            bWarned = true;
-            LOG_WARN("Platform::OpenTerminalAt: no supported terminal emulator was found.");
-        }
+        LOG_WARN_ONCE("Platform::OpenTerminalAt: no supported terminal emulator was found.");
     }
 
 
@@ -1145,13 +1031,7 @@ namespace Lumina::Platform
 
             if (Zenity.IsEmpty())
             {
-                static bool bWarned = false;
-
-                if (!bWarned)
-                {
-                    bWarned = true;
-                    LOG_WARN("Platform file dialogs need zenity, which is not installed.");
-                }
+                LOG_WARN_ONCE("Platform file dialogs need zenity, which is not installed.");
 
                 return false;
             }
@@ -1208,7 +1088,7 @@ namespace Lumina::Platform
                 return false;
             }
 
-            OutPaths = std::move(Selected);
+            OutPaths = Move(Selected);
 
             return true;
         }
@@ -1237,7 +1117,7 @@ namespace Lumina::Platform
             return false;
         }
 
-        OutFiles = std::move(Selected);
+        OutFiles = Move(Selected);
 
         return true;
     }

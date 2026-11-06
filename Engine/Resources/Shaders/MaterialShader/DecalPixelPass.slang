@@ -23,7 +23,7 @@ float3 DecalSurfaceAt(float2 Pixel, float2 ScreenSize, out float RawDepth)
 {
     float2 UV = Pixel / ScreenSize;
     RawDepth = SampleDecalSceneDepth(UV);
-    return ReconstructWorldPos(UV, RawDepth, GetInverseCameraProjection(), GetInverseCameraView());
+    return ReconstructWorldPos(UV, RawDepth);
 }
 
 // The screen step toward whichever neighbor lies on the same surface, so a silhouette never becomes a gradient.

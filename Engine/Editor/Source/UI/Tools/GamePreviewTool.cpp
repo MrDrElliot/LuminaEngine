@@ -45,11 +45,6 @@ namespace Lumina
         //FEditorTool::SetupWorldForTool();//... Don't create editor entity.
     }
 
-    void FGamePreviewTool::DrawToolMenu(const FUpdateContext& UpdateContext)
-    {
-
-    }
-
     void FGamePreviewTool::DrawHelpMenu()
     {
         DrawHelpTextRow("Play (PIE)",

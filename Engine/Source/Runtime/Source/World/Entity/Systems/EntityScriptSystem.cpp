@@ -51,13 +51,13 @@ namespace Lumina
         }
     }
 
-    void SEntityScriptSystem::Configure()
+    void CEntityScriptSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::PostPhysics);
     }
 
-    void SEntityScriptSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CEntityScriptSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
         ECS::FRegistry& Registry = Context.GetRegistry();
 

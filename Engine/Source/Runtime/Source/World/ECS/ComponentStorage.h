@@ -181,7 +181,7 @@ namespace Lumina::ECS
             const uint32 DenseIndex = Set->AllocateSlot(Entity);
             if constexpr (!bEmpty)
             {
-                Memory::ConstructAt(&GetAtDense(DenseIndex), std::forward<TArgs>(Args)...);
+                Memory::ConstructAt(&GetAtDense(DenseIndex), Forward<TArgs>(Args)...);
                 return GetAtDense(DenseIndex);
             }
         }
@@ -198,7 +198,7 @@ namespace Lumina::ECS
                 {
                     T& Existing = GetAtDense(DenseIndex);
                     Memory::DestroyAt(&Existing);
-                    Memory::ConstructAt(&Existing, std::forward<TArgs>(Args)...);
+                    Memory::ConstructAt(&Existing, Forward<TArgs>(Args)...);
                     return Existing;
                 }
                 else
@@ -206,7 +206,7 @@ namespace Lumina::ECS
                     return;
                 }
             }
-            return Emplace(Entity, std::forward<TArgs>(Args)...);
+            return Emplace(Entity, Forward<TArgs>(Args)...);
         }
 
         template<typename... TArgs>
@@ -224,7 +224,7 @@ namespace Lumina::ECS
                     return;
                 }
             }
-            return Emplace(Entity, std::forward<TArgs>(Args)...);
+            return Emplace(Entity, Forward<TArgs>(Args)...);
         }
 
         bool RemoveEntity(FEntity Entity) const { return Set->RemoveEntity(Entity); }

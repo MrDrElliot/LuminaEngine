@@ -17,7 +17,7 @@ namespace Lumina
 
     // Registry-context singletons holding per-world state systems produce and consume; transient and never serialized.
 
-    // Resolved active view. SCameraSystem writes it at end of update (FrameEnd, or Paused in editor);
+    // Resolved active view. CCameraSystem writes it at end of update (FrameEnd, or Paused in editor);
     // CWorld::Extract reads + forwards it, keeping camera/post-process resolution in a system.
     struct FResolvedSceneView : ECS::FResource
     {
@@ -48,7 +48,7 @@ namespace Lumina
         float       RotFreqMul[3]     = { 1.0f, 1.0f, 1.0f };
     };
 
-    // Active-camera selection + cinematic blend, owned and ticked entirely by SCameraSystem. A non-zero
+    // Active-camera selection + cinematic blend, owned and ticked entirely by CCameraSystem. A non-zero
     // blend snapshots the displayed view and eases to the new camera over Duration; the resolved view is
     // stored back here each frame as the source for the next blend.
     REFLECT()

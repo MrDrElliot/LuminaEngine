@@ -13,7 +13,7 @@ namespace Lumina
 
     // Re-projects follow-terrain foliage over a terrain's edited region, in the editor and at runtime, so sculpting moves foliage live.
     REFLECT()
-    class RUNTIME_API SFoliageTerrainSystem : public CEntitySystem
+    class RUNTIME_API CFoliageTerrainSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

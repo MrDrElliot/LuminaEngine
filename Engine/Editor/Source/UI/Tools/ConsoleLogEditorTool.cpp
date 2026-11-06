@@ -228,8 +228,8 @@ namespace Lumina
 
         ImGui::Spacing();
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.04f, 0.05f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.82f, 0.82f, 0.78f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::FrameBg());
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
 
@@ -321,7 +321,7 @@ namespace Lumina
             if (SelectedMessages.Contains(Index))
             {
                 RowDrawList->ChannelsSetCurrent(0);
-                RowDrawList->AddRectFilled(RowMin, RowMax, IM_COL32(38, 79, 120, 255));
+                RowDrawList->AddRectFilled(RowMin, RowMax, EditorColors::U32(EditorColors::WithAlpha(EditorColors::Accent(), 0.35f)));
                 RowDrawList->ChannelsSetCurrent(1);
             }
 
@@ -339,7 +339,7 @@ namespace Lumina
 
                 if (bHasSource && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
-                    FEditorUI::OpenScriptInExternalEditor(FStringView(*SourcePath, SourcePath.Len()), SourceLine);
+                    ToolContext->OpenScriptInExternalEditor(FStringView(*SourcePath, SourcePath.Len()), SourceLine);
                 }
                 else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
@@ -429,7 +429,7 @@ namespace Lumina
 
             if (ImGui::MenuItem("Open Source", nullptr, false, SourceLine > 0))
             {
-                FEditorUI::OpenScriptInExternalEditor(FStringView(*SourcePath, SourcePath.Len()), SourceLine);
+                ToolContext->OpenScriptInExternalEditor(FStringView(*SourcePath, SourcePath.Len()), SourceLine);
             }
 
             ImGui::Separator();
@@ -469,11 +469,11 @@ namespace Lumina
     
         ImGui::Spacing();
 
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.04f, 0.04f, 0.05f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.85f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorColors::FrameBg());
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
 
-        ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f), ">");
+        ImGui::TextColored(EditorColors::Success(), ">");
         ImGui::SameLine(0, 6);
         ImGui::SetNextItemWidth(-1);
 
@@ -684,13 +684,13 @@ namespace Lumina
     {
         switch (Level)
         {
-            case ELogLevel::Error:      return ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
-            case ELogLevel::Warn:     return ImVec4(1.00f, 0.70f, 0.20f, 1.0f);
-            case ELogLevel::Info:     return ImVec4(0.90f, 0.90f, 0.90f, 1.0f);
-            case ELogLevel::Debug:    return ImVec4(0.45f, 0.80f, 1.00f, 1.0f);
-            case ELogLevel::Trace:    return ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
-            case ELogLevel::Critical: return ImVec4(1.00f, 0.10f, 0.10f, 1.0f);
-            default:                      return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+            case ELogLevel::Error:
+            case ELogLevel::Critical: return EditorColors::Danger();
+            case ELogLevel::Warn:     return EditorColors::Warning();
+            case ELogLevel::Info:     return EditorColors::TextPrimary();
+            case ELogLevel::Debug:    return EditorColors::Accent();
+            case ELogLevel::Trace:    return EditorColors::TextMuted();
+            default:                  return EditorColors::TextDim();
         }
     }
 
@@ -811,14 +811,14 @@ namespace Lumina
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::PanelBg());
+        ImGui::PushStyleColor(ImGuiCol_Border, EditorColors::Border());
 
         if (ImGui::BeginChild("##AutoComplete", ImVec2(InputWidth, 0.0f),
             ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
             ImGuiWindowFlags_NoNavFocus))
         {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Auto-Complete (%d matches)", AutoCompleteCandidates.Num());
+            ImGui::TextColored(EditorColors::TextDim(), "Auto-Complete (%d matches)", AutoCompleteCandidates.Num());
             ImGui::Separator();
 
             for (int32 i = 0; i < AutoCompleteCandidates.Num(); ++i)
@@ -829,7 +829,7 @@ namespace Lumina
                 
                 if (bIsSelected)
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.5f, 0.8f, 0.8f));
+                    ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::WithAlpha(EditorColors::Accent(), 0.8f));
                 }
 
                 ImGui::PushID(i);
@@ -841,18 +841,18 @@ namespace Lumina
 
                 ImGui::SameLine(0, 4);
 
-                ImGui::TextColored(ImVec4(0.8f, 1.0f, 0.8f, 1.0f), "%s", Candidate.Name.GetData());
+                ImGui::TextColored(EditorColors::TextPrimary(), "%s", Candidate.Name.GetData());
                 
                 if (!Candidate.CurrentValue.IsEmpty())
                 {
                     ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "= %s", *Candidate.CurrentValue);
+                    ImGui::TextColored(EditorColors::Accent(), "= %s", *Candidate.CurrentValue);
                 }
 
                 if (!Candidate.Description.IsEmpty())
                 {
                     ImGui::Indent(20.0f);
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", Candidate.Description.GetData());
+                    ImGui::TextColored(EditorColors::TextMuted(), "%s", Candidate.Description.GetData());
                     ImGui::Unindent(20.0f);
                 }
 
@@ -865,7 +865,7 @@ namespace Lumina
             }
 
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), LE_ICON_ARROW_UP_DOWN " Navigate  " LE_ICON_KEYBOARD_TAB " Accept  " LE_ICON_KEYBOARD_ESC " Cancel");
+            ImGui::TextColored(EditorColors::TextMuted(), LE_ICON_ARROW_UP_DOWN " Navigate  " LE_ICON_KEYBOARD_TAB " Accept  " LE_ICON_KEYBOARD_ESC " Cancel");
         }
         AutoCompleteOverlayHeight = ImGui::GetWindowHeight();
         ImGui::EndChild();
@@ -883,13 +883,13 @@ namespace Lumina
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 3));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::PanelBg());
+        ImGui::PushStyleColor(ImGuiCol_Border, EditorColors::Border());
 
         if (ImGui::BeginChild("##CommandHistory", ImVec2(InputWidth, Height),
             ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding))
         {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), LE_ICON_HISTORY " Command History (%d)", CommandHistory.Num());
+            ImGui::TextColored(EditorColors::TextDim(), LE_ICON_HISTORY " Command History (%d)", CommandHistory.Num());
             
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear"))
@@ -904,7 +904,7 @@ namespace Lumina
 
             if (CommandHistory.IsEmpty())
             {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No command history");
+                ImGui::TextColored(EditorColors::TextMuted(), "No command history");
             }
             else
             {

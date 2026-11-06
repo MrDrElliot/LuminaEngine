@@ -15,7 +15,7 @@ namespace Lumina
     static TConsoleVar<float> CVarDebugDrawDistance("DebugDraw.MaxDistance", 0.0f,
         "Prune debug sources further than this from the camera. 0 disables the distance test.");
 
-    void SDebugDrawSystem::Configure()
+    void CDebugDrawSystem::Configure()
     {
         #if !defined(LE_SHIPPING)
         RequireUpdate(EUpdateStage::FrameStart);
@@ -23,7 +23,7 @@ namespace Lumina
         #endif
     }
 
-    void SDebugDrawSystem::OnUpdate(const SSystemContext& Context)
+    void CDebugDrawSystem::OnUpdate(const SSystemContext& Context)
     {
         #if !defined(LE_SHIPPING)
         FDebugDrawState& State = *DrawState;
@@ -54,7 +54,7 @@ namespace Lumina
         #endif
     }
 
-    void SDebugDrawSystem::OnTeardown(const SExclusiveContext& Context)
+    void CDebugDrawSystem::OnTeardown(const SExclusiveContext& Context)
     {
         #if !defined(LE_SHIPPING)
         Context.GetRegistry().Ctx().Erase<FDebugDrawState>();

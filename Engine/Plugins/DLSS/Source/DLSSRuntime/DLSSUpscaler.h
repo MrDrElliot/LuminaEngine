@@ -21,17 +21,25 @@ namespace Lumina
         bool  IsTemporal() const override { return true; }
         float GetRenderScale(const FUIntVector2& DisplaySize, EUpscalerMode Mode, float RequestedScale) const override;
         void  Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs) override;
-        void  ReleaseViewResources() override;
+        void  ReleaseViewResources(const void* ViewKey) override;
 
-        // Waits for the GPU and releases the feature and NGX, which must happen while the device still exists.
+        // Waits for the GPU and releases every feature and NGX, which must happen while the device still exists.
         void Shutdown();
 
     private:
 
+        struct FFeature
+        {
+            NVSDK_NGX_Handle* Handle  = nullptr;
+            FUIntVector2      Render  = FUIntVector2(0);
+            FUIntVector2      Display = FUIntVector2(0);
+            int32             Quality = -1;
+        };
+
         // NGX can only start once the renderer has a device, so the first caller after that starts it.
         bool EnsureInitialized() const;
 
-        void ReleaseFeature();
+        static void ReleaseFeature(FFeature& Feature);
 
         mutable FMutex               Mutex;
         mutable bool                 bInitAttempted = false;
@@ -39,9 +47,6 @@ namespace Lumina
         mutable void*                InitializedDevice = nullptr;
         mutable NVSDK_NGX_Parameter* Parameters     = nullptr;
 
-        NVSDK_NGX_Handle* Feature        = nullptr;
-        FUIntVector2      FeatureRender  = FUIntVector2(0);
-        FUIntVector2      FeatureDisplay = FUIntVector2(0);
-        int32             FeatureQuality = -1;
+        THashMap<const void*, FFeature> Features;
     };
 }

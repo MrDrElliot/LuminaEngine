@@ -2,6 +2,7 @@
 #ifndef _WIN32
 
 #include "PlatformFilesystem.h"
+#include "Paths/Paths.h"
 
 #include <cerrno>
 #include <cstring>
@@ -920,11 +921,7 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        FStringView Trimmed = Path;
-        while (Trimmed.Len() > 1 && Trimmed.Last() == '/')
-        {
-            Trimmed.RemoveSuffix(1);
-        }
+        const FStringView Trimmed = Paths::TrimTrailingSeparators(Path);
 
         if (!IsDirectory(Trimmed))
         {

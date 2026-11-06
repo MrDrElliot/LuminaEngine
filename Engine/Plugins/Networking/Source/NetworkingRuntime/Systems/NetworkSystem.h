@@ -7,7 +7,7 @@ namespace Lumina
 {
     // Per-world networking driver.
     REFLECT()
-    class SNetworkSystem : public CExclusiveSystem
+    class CNetworkSystem : public CExclusiveSystem
     {
         GENERATED_BODY()
     public:

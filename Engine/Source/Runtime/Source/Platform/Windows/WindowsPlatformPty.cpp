@@ -284,12 +284,7 @@ namespace Lumina::Platform
                 DWORD Available = 0;
                 if (!PeekNamedPipe(OutputRead, nullptr, 0, nullptr, &Available, nullptr))
                 {
-                    static bool bPeekFailureLogged = false;
-                    if (!bPeekFailureLogged)
-                    {
-                        bPeekFailureLogged = true;
-                        LOG_WARN("[Pty] PeekNamedPipe failed ({}).", GetLastError());
-                    }
+                    LOG_WARN_ONCE("[Pty] PeekNamedPipe failed ({}).", GetLastError());
                     break;
                 }
 

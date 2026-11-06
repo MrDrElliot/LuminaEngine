@@ -60,7 +60,7 @@ namespace Lumina
         // Populates CachedGUID from Path, or repoints Path at the GUID's current location after a rename.
         bool TryResolve() const;
 
-        /** Blocking load through FAssetManager; returns nullptr on miss. */
+        // Blocking load through FAssetManager, returning nullptr on a miss.
         CObject* LoadSynchronous() const;
 
         // Runs Callback on the game thread once loaded, or right away with null when the path does not resolve.
@@ -82,8 +82,7 @@ namespace Lumina
     };
 
 
-    /** Typed soft pointer wrapping FSoftObjectPath; layout-identical to it
-     *  (single member, no vtable), the reflector relies on this. */
+    // The reflector relies on this being layout-identical to FSoftObjectPath, with one member and no vtable.
     template<typename T>
     struct TSoftObjectPtr
     {

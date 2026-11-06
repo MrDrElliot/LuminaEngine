@@ -1,8 +1,6 @@
 #include "Core/Threading/Thread.h"
-#include <string>
 #include "LuminaEditor.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include <fstream>
 #include <Core/Engine/Engine.h>
 #include <Core/Plugin/PluginManager.h>
 #include <Core/Progress/SlowTask.h>
@@ -320,13 +318,7 @@ namespace Lumina
         FProjectTemplateContext Ctx;
         Ctx.Name = FStringView(NewProjectName.GetData(), NewProjectName.Len());
         Ctx.NameUpper = Ctx.Name;
-        Algo::Transform(
-            Ctx.NameUpper,
-            Ctx.NameUpper.begin(),
-            [](unsigned char c)
-            {
-                return static_cast<char>(std::toupper(c));
-            });
+        Ctx.NameUpper.ToUpper();
         Ctx.Guid = FGuid::New().ToString(true, true);
         Ctx.Description = "A Lumina game project";
         Ctx.LuminaDir = EngineDir;
@@ -397,12 +389,6 @@ namespace Lumina
             return false;
         }
 
-        auto ToUpper = [](FString& S)
-        {
-            Algo::Transform(S, S.begin(),
-                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        };
-
         FPluginTemplateContext Ctx;
         Ctx.Name = NameStr;
         Ctx.Description = FStringView(Description.GetData(), Description.Len());
@@ -411,11 +397,11 @@ namespace Lumina
             Ctx.Description = "A Lumina plugin";
         }
         Ctx.NameUpper = Ctx.Name;
-        ToUpper(Ctx.NameUpper);
+        Ctx.NameUpper.ToUpper();
         Ctx.RuntimeModule = Ctx.Name; Ctx.RuntimeModule += "Runtime";
         Ctx.EditorModule  = Ctx.Name; Ctx.EditorModule  += "Editor";
-        Ctx.RuntimeModuleUpper = Ctx.RuntimeModule; ToUpper(Ctx.RuntimeModuleUpper);
-        Ctx.EditorModuleUpper  = Ctx.EditorModule;  ToUpper(Ctx.EditorModuleUpper);
+        Ctx.RuntimeModuleUpper = Ctx.RuntimeModule; Ctx.RuntimeModuleUpper.ToUpper();
+        Ctx.EditorModuleUpper  = Ctx.EditorModule;  Ctx.EditorModuleUpper.ToUpper();
 
         if (!CopyTemplateTree(TemplatePath, PluginDir,
             [&Ctx](FString& Text) { ReplacePluginTokens(Text, Ctx); },
@@ -439,20 +425,19 @@ namespace Lumina
         }
 
         // Streams each line under a [BuildTool] tag so the user sees progress without a console window.
-        const std::string ScriptPathStr(*Script, Script.Len());
-        const std::string ParamsStr = *Format("GenerateProjectFiles -Project=\"{}\"", ProjectDirectory);
-        const std::string WorkingDirStr(ProjectDirectory.GetData(), ProjectDirectory.Len());
+        const FString Params = Format("GenerateProjectFiles -Project=\"{}\"", ProjectDirectory);
+        const FString WorkingDirectory(ProjectDirectory.GetData(), ProjectDirectory.Len());
 
-        FThread([ScriptPathStr, ParamsStr, WorkingDirStr]()
+        FThread([Script, Params, WorkingDirectory]()
         {
             FScopedSlowTask Task(1.0f, "Generating project files", "Running LuminaBuildTool GenerateProjectFiles...");
 
-            LOG_INFO("[BuildTool] running {0} {1}", ScriptPathStr.c_str(), ParamsStr.c_str());
+            LOG_INFO("[BuildTool] running {0} {1}", *Script, *Params);
 
             const int ExitCode = Platform::RunProcessAndWaitCapture(
-                UTF8_TO_TCHAR(ScriptPathStr.c_str()),
-                UTF8_TO_TCHAR(ParamsStr.c_str()),
-                UTF8_TO_TCHAR(WorkingDirStr.c_str()),
+                UTF8_TO_TCHAR(*Script),
+                UTF8_TO_TCHAR(*Params),
+                UTF8_TO_TCHAR(*WorkingDirectory),
                 [](FStringView Line)
                 {
                     if (Line.IsEmpty())

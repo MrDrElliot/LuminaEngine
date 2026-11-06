@@ -91,20 +91,6 @@ namespace Lumina::Scripting
             return;
         }
 
-        // Resolved once; the host returns null until the assembly carrying it is up, so this keeps asking.
-        static void* Dispatcher = nullptr;
-        if (Dispatcher == nullptr)
-        {
-            Dispatcher = DotNet::ResolveManagedExport("InvokeScriptFunction");
-        }
-
-        if (Dispatcher == nullptr)
-        {
-            LOG_ERROR("Script function '{}' cannot run: the managed dispatcher is not available",
-                Function.GetFunctionName());
-            return;
-        }
-
         void* Instance = Scriptable::GetOrCreateInstance(Object);
         if (Instance == nullptr)
         {
@@ -121,8 +107,16 @@ namespace Lumina::Scripting
             return;
         }
 
-        using FDispatch = void (*)(void*, const void*, void*);
-        reinterpret_cast<FDispatch>(Dispatcher)(Instance, &Function, Frame);
+        static DotNet::TManagedExport<void (*)(void*, const void*, void*)> Dispatcher("InvokeScriptFunction");
+        auto* Dispatch = Dispatcher.Get();
+        if (Dispatch == nullptr)
+        {
+            LOG_ERROR("Script function '{}' cannot run: the managed dispatcher is not available",
+                Function.GetFunctionName());
+            return;
+        }
+
+        Dispatch(Instance, &Function, Frame);
     }
 
     namespace

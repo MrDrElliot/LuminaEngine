@@ -10,10 +10,10 @@ namespace Lumina
     REFLECT()
     enum class EScriptReloadReason : uint8
     {
-        /** The first compile of the session, before any world has ticked. */
+        // The first compile of the session, before any world has ticked.
         InitialLoad,
 
-        /** Someone asked for a reload: the editor hotkey, the toolbar, or the diagnostics tool. */
+        // Someone asked for a reload from the editor hotkey, the toolbar, or the diagnostics tool.
         Requested,
     };
 
@@ -26,15 +26,15 @@ namespace Lumina
         PROPERTY(Hidden)
         EScriptReloadReason Reason = EScriptReloadReason::Requested;
 
-        /** Editor, Game or Simulation, so a script can skip work that only matters while playing. */
+        // Editor, Game or Simulation, so a script can skip work that only matters while playing.
         PROPERTY(Hidden)
         EWorldType WorldType = EWorldType::None;
 
-        /** The entity this script is attached to, the same one GetOwningEntity returns. */
+        // The entity this script is attached to, the same one GetOwningEntity returns.
         PROPERTY(Hidden)
         ECS::FEntity Entity = ECS::NullEntity;
 
-        /** Generation of the script load context now live; it advances once per reload. */
+        // Generation of the script load context now live; it advances once per reload.
         PROPERTY(Hidden)
         int32 Generation = 0;
     };

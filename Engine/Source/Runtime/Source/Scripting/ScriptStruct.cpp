@@ -924,8 +924,7 @@ namespace Lumina
 
         if (Type.Kind == EPropertyTypeFlags::Vector && Type.ElementType)
         {
-            FScriptArrayElementDesc* Desc = Memory::New<FScriptArrayElementDesc>();
-            ElementDescs.Add(Desc);
+            FScriptArrayElementDesc* Desc = ElementDescs.EmplaceGetRef(MakeUnique<FScriptArrayElementDesc>()).Get();
             if (!ResolveElement(*Type.ElementType, Field.Name, *Desc))
             {
                 return false;
@@ -940,8 +939,7 @@ namespace Lumina
 
         if (Type.Kind == EPropertyTypeFlags::Optional && Type.ElementType)
         {
-            FScriptOptionalDesc* Desc = Memory::New<FScriptOptionalDesc>();
-            OptionalDescs.Add(Desc);
+            FScriptOptionalDesc* Desc = OptionalDescs.EmplaceGetRef(MakeUnique<FScriptOptionalDesc>()).Get();
             if (!ResolveElement(*Type.ElementType, Field.Name, Desc->Payload))
             {
                 return false;
@@ -956,8 +954,7 @@ namespace Lumina
 
         if (Type.Kind == EPropertyTypeFlags::Map && Type.KeyType && Type.ValueType)
         {
-            FScriptMapElementDesc* Desc = Memory::New<FScriptMapElementDesc>();
-            MapDescs.Add(Desc);
+            FScriptMapElementDesc* Desc = MapDescs.EmplaceGetRef(MakeUnique<FScriptMapElementDesc>()).Get();
             if (!ResolveElement(*Type.KeyType, Field.Name, Desc->Key)
                 || !ResolveElement(*Type.ValueType, Field.Name, Desc->Value))
             {
@@ -1243,24 +1240,9 @@ namespace Lumina
         GetPropertyArena().Reset();
         Unlink();
 
-        for (FScriptArrayElementDesc* Desc : ElementDescs)
-        {
-            Memory::Delete(Desc);
-        }
         ElementDescs.Reset();
-
-        for (FScriptMapElementDesc* Desc : MapDescs)
-        {
-            Memory::Delete(Desc);
-        }
         MapDescs.Reset();
-
-        for (FScriptOptionalDesc* Desc : OptionalDescs)
-        {
-            Memory::Delete(Desc);
-        }
         OptionalDescs.Reset();
-
     }
 
     void CScriptStruct::OnDestroy()

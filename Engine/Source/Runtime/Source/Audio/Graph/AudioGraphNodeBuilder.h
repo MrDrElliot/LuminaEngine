@@ -6,7 +6,7 @@
 
 namespace Lumina::AudioGraphOperators
 {
-    /** Pin ABI literal, so an operator's pin order reads next to the Execute that indexes it. */
+    // Pin ABI literal, so an operator's pin order reads next to the Execute that indexes it.
     inline FAudioGraphOperatorSignature Signature(
         std::initializer_list<EAudioGraphType> Inputs,
         std::initializer_list<EAudioGraphType> Outputs,
@@ -39,7 +39,7 @@ namespace Lumina::AudioGraphOperators
     inline constexpr EAudioGraphType PinWave    = EAudioGraphType::Wave;
 }
 
-/** Registers one operator at static init, binding its name and pin ABI to the class that renders it. */
+// Registers one operator at static init, binding its name and pin ABI to the class that renders it.
 #define LUMINA_AUDIO_GRAPH_OPERATOR(Symbol, OperatorClass, OperatorName, ...) \
     static const ::Lumina::FAudioGraphNodeRegistrar Symbol = []() -> ::Lumina::FAudioGraphNodeClass \
     { \

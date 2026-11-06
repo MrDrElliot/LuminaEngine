@@ -342,7 +342,7 @@ namespace Lumina
 
     void FEditorAssetDropRegistry::Register(FName AssetClass, FEditorAssetDropHandler Handler, bool bPlacesEntity)
     {
-        Handlers[AssetClass] = FEntry{ std::move(Handler), bPlacesEntity };
+        Handlers[AssetClass] = FEntry{ Move(Handler), bPlacesEntity };
     }
 
     const FEditorAssetDropHandler* FEditorAssetDropRegistry::FindHandler(FName AssetClass) const

@@ -68,7 +68,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Health")
         float MaxHealth = 100.0f;
 
-        /** Points restored per second by SHealthSystem; unset means the entity does not regenerate. */
+        /** Points restored per second by CHealthSystem; unset means the entity does not regenerate. */
         PROPERTY(Editable, Category = "Health")
         TOptional<float> RegenPerSecond;
 

@@ -25,12 +25,12 @@ namespace Lumina
         };
     }
 
-    void SBuoyancySystem::Configure()
+    void CBuoyancySystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
-    void SBuoyancySystem::OnUpdate(const SSystemContext& Context)
+    void CBuoyancySystem::OnUpdate(const SSystemContext& Context)
     {
         using BuoyancySystemInternal::FWaterPlane;
 

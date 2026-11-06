@@ -16,7 +16,7 @@ namespace Lumina
 {
 
     REFLECT()
-    class SAnimationSystem : public CEntitySystem
+    class CAnimationSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
@@ -31,13 +31,11 @@ namespace Lumina
     private:
 
         ECS::TQuery<ECS::Write<SSimpleAnimationComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> SimpleAnimators;
-        ECS::TQuery<ECS::Write<SAnimationGraphComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> GraphAnimators;
+        ECS::TQuery<ECS::Write<SAnimationGraphComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Optional<ECS::Read<STransformComponent>>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> GraphAnimators;
         ECS::TQuery<ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>> Meshes;
         ECS::TQuery<ECS::Write<SFollowerPoseComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>> Followers;
         ECS::TQuery<ECS::Read<SFollowerPoseComponent>> PoseLinks;
         ECS::TQuery<ECS::Write<SSkeletalMeshComponent>> LeaderMeshes;
-        ECS::TQuery<ECS::Read<STransformComponent>> Placements;
-        ECS::TQuery<ECS::Write<STransformComponent>> RootMotionTargets;
         TRes<FKinematicsState> KinematicsState;
         TRes<FWorldSettingsState> WorldSettings;
         ECS::TEventWriter<SAnimMontageStartedEvent> MontageStarted;

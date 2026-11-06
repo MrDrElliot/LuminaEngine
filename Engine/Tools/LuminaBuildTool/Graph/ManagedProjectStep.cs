@@ -66,7 +66,11 @@ public static class ManagedProjectStep
                 Action.DiscoverLatePrerequisites = () => EnumerateGeneratedBindings(Target, Project);
             }
 
-            Action.ProducedItems.Add(FileItem.Get(Project.OutputAssembly));
+            FileItem OutputAssembly = FileItem.Get(Project.OutputAssembly);
+            Action.ProducedItems.Add(OutputAssembly);
+
+            // Every configuration writes this one assembly but keeps its own history, so a rewrite by another configuration must rebuild.
+            Action.PrerequisiteItems.Add(OutputAssembly);
 
             yield return Action;
         }

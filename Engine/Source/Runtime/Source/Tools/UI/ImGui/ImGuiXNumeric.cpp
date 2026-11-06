@@ -2,7 +2,7 @@
 #include "imgui_internal.h"
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
+#include "Memory/Memcpy.h"
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -234,7 +234,7 @@ namespace Lumina::ImGuiX
                 Format = Info->PrintFmt;
             }
             ImGuiDataTypeStorage Previous;
-            std::memcpy(&Previous, Data, Info->Size);
+            Memory::Memcpy(&Previous, Data, Info->Size);
             const char* First = Text;
             while (*First == ' ' || *First == '\t')
             {
@@ -255,7 +255,7 @@ namespace Lumina::ImGuiX
                 return ImGui::DataTypeApplyFromText(Text, DataType, Data, Format);
             }
             if (!ApplyExpression(Text, DataType, Data)) return false;
-            return std::memcmp(&Previous, Data, Info->Size) != 0;
+            return Memory::Memcmp(&Previous, Data, Info->Size) != 0;
         }
 
         bool DrawExpressionText(const char* Label, ImGuiDataType DataType, void* Data, const char* Format,
@@ -280,7 +280,7 @@ namespace Lumina::ImGuiX
             {
                 BeginEdit(Id, DataType, Data, false);
                 Edit = FindEdit(Id);
-                std::memcpy(Edit->Buffer, LocalBuffer, sizeof(LocalBuffer));
+                Memory::Memcpy(Edit->Buffer, LocalBuffer, sizeof(LocalBuffer));
             }
 
             const bool Commit = Edit != nullptr && ImGui::IsItemDeactivated();

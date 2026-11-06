@@ -8,6 +8,8 @@
 #include "Tools/Image/ImageWrite.h"
 
 #include "Core/Engine/Engine.h"
+#include "Core/Math/Packing.h"
+#include "Memory/Memcpy.h"
 #include "Paths/Paths.h"
 #include "Renderer/Format.h"
 #include "Renderer/RHI.h"
@@ -37,48 +39,6 @@ namespace Lumina::Screenshot
             return Folder + "/Screenshot_" + Stamp + Ext;
         }
 
-        // IEEE 754 binary16 -> binary32.
-        FORCEINLINE float HalfToFloat(uint16 H)
-        {
-            const uint32 Sign = (H & 0x8000u) << 16;
-            uint32 Exp        = (H & 0x7C00u) >> 10;
-            uint32 Mant       = (H & 0x03FFu);
-
-            uint32 Bits;
-            if (Exp == 0)
-            {
-                if (Mant == 0)
-                {
-                    Bits = Sign;
-                }
-                else
-                {
-                    // Subnormal, so normalize.
-                    Exp = 1;
-                    while ((Mant & 0x0400u) == 0)
-                    {
-                        Mant <<= 1;
-                        --Exp;
-                    }
-                    Mant &= 0x03FFu;
-                    Bits = Sign | ((Exp + (127 - 15)) << 23) | (Mant << 13);
-                }
-            }
-            else if (Exp == 0x1F)
-            {
-                // Inf / NaN.
-                Bits = Sign | 0x7F800000u | (Mant << 13);
-            }
-            else
-            {
-                Bits = Sign | ((Exp + (127 - 15)) << 23) | (Mant << 13);
-            }
-
-            float Out;
-            std::memcpy(&Out, &Bits, sizeof(Out));
-            return Out;
-        }
-
         FSceneImage PickSourceImage(IRenderScene* Scene, ECaptureSource Source)
         {
             if (Scene == nullptr)
@@ -98,39 +58,73 @@ namespace Lumina::Screenshot
             return Renderer->GetDisplayImage();
         }
 
-        bool WritePNG(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,
-                      const uint8* Src, size_t RowPitch, FString& OutError)
+        bool ReadImageBytes(const FSceneImage& Image, TVector<uint8>& OutBytes, FString& OutError)
         {
-            TVector<uint8> Pixels(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 4u));
+            const uint64 Size = (uint64)Image.GetSizeX() * Image.GetSizeY() * RHI::Format::BytesPerBlock(Image.Desc.Format);
+            const RHI::FGPUAllocation Readback = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+            if (Readback.Gpu == 0)
+            {
+                OutError = "Failed to allocate a readback buffer.";
+                return false;
+            }
+            RHI::SetDebugName(Readback.Gpu, "Readback.Screenshot");
 
-            const bool bIsBGRA = (Format == EFormat::BGRA8_UNORM) || (Format == EFormat::SBGRA8_UNORM);
-            const bool bIsRGBA = (Format == EFormat::RGBA8_UNORM) || (Format == EFormat::SRGBA8_UNORM);
+            RHI::FCmdListH CL = RHI::OpenCommandList();
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+            RHI::CmdCopyTextureToMemory(CL, Image.Texture, RHI::FTextureSlice{}, Readback, Image.GetSizeX());
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
+            const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+            RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
 
-            if (!bIsBGRA && !bIsRGBA)
+            const uint8* Mapped = Readback.CpuAs<const uint8>();
+            if (Mapped != nullptr)
+            {
+                OutBytes.SetNum(IntCastChecked<int32>(Size));
+                Memory::Memcpy(OutBytes.GetData(), Mapped, (size_t)Size);
+            }
+            RHI::Retire(Readback);
+
+            if (Mapped == nullptr)
+            {
+                OutError = "Failed to map the readback buffer.";
+                return false;
+            }
+            return true;
+        }
+
+        // Returns false when Format is not an 8-bit RGBA or BGRA variant.
+        bool SwizzleToRGBA8(EFormat Format, TVector<uint8>& Pixels)
+        {
+            if (Format == EFormat::RGBA8_UNORM || Format == EFormat::SRGBA8_UNORM)
+            {
+                return true;
+            }
+            if (Format != EFormat::BGRA8_UNORM && Format != EFormat::SBGRA8_UNORM)
+            {
+                return false;
+            }
+            for (int32 i = 0; i + 3 < Pixels.Num(); i += 4)
+            {
+                const uint8 Blue = Pixels[i];
+                Pixels[i] = Pixels[i + 2];
+                Pixels[i + 2] = Blue;
+            }
+            return true;
+        }
+
+        bool WritePNG(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,
+                      TVector<uint8>& Pixels, FString& OutError)
+        {
+            if (!SwizzleToRGBA8(Format, Pixels))
             {
                 OutError = "Unsupported source format for PNG capture (need RGBA8/BGRA8 variant).";
                 return false;
-            }
-
-            for (uint32 Y = 0; Y < Height; ++Y)
-            {
-                const uint8* SrcRow = Src + static_cast<size_t>(Y) * RowPitch;
-                uint8*       DstRow = Pixels.GetData() + static_cast<size_t>(Y) * Width * 4u;
-
-                if (bIsBGRA)
-                {
-                    for (uint32 X = 0; X < Width; ++X)
-                    {
-                        DstRow[X * 4 + 0] = SrcRow[X * 4 + 2];
-                        DstRow[X * 4 + 1] = SrcRow[X * 4 + 1];
-                        DstRow[X * 4 + 2] = SrcRow[X * 4 + 0];
-                        DstRow[X * 4 + 3] = SrcRow[X * 4 + 3];
-                    }
-                }
-                else
-                {
-                    std::memcpy(DstRow, SrcRow, static_cast<size_t>(Width) * 4u);
-                }
             }
 
             if (!ImageWrite::WritePngFile(*OutPath, Width, Height, 4, Pixels.GetData(), Width * 4))
@@ -142,7 +136,7 @@ namespace Lumina::Screenshot
         }
 
         bool WriteHDR(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,
-                      const uint8* Src, size_t RowPitch, FString& OutError)
+                      const TVector<uint8>& Src, FString& OutError)
         {
             if (Format != EFormat::RGBA16_FLOAT)
             {
@@ -150,19 +144,15 @@ namespace Lumina::Screenshot
                 return false;
             }
 
-            TVector<float> Pixels(IntCastChecked<int32>(static_cast<int64>(Width) * Height * 3u));
+            const int32 NumPixels = IntCastChecked<int32>(static_cast<int64>(Width) * Height);
+            const uint16* Halves = reinterpret_cast<const uint16*>(Src.GetData());
+            TVector<float> Pixels(NumPixels * 3);
 
-            for (uint32 Y = 0; Y < Height; ++Y)
+            for (int32 Pixel = 0; Pixel < NumPixels; ++Pixel)
             {
-                const uint16* SrcRow = reinterpret_cast<const uint16*>(Src + static_cast<size_t>(Y) * RowPitch);
-                float*        DstRow = Pixels.GetData() + static_cast<size_t>(Y) * Width * 3u;
-
-                for (uint32 X = 0; X < Width; ++X)
-                {
-                    DstRow[X * 3 + 0] = HalfToFloat(SrcRow[X * 4 + 0]);
-                    DstRow[X * 3 + 1] = HalfToFloat(SrcRow[X * 4 + 1]);
-                    DstRow[X * 3 + 2] = HalfToFloat(SrcRow[X * 4 + 2]);
-                }
+                Pixels[Pixel * 3 + 0] = Math::Detail::HalfToFloat(Halves[Pixel * 4 + 0]);
+                Pixels[Pixel * 3 + 1] = Math::Detail::HalfToFloat(Halves[Pixel * 4 + 1]);
+                Pixels[Pixel * 3 + 2] = Math::Detail::HalfToFloat(Halves[Pixel * 4 + 2]);
             }
 
             if (!ImageWrite::WriteHdrFile(*OutPath, Width, Height, 3, Pixels.GetData()))
@@ -211,50 +201,16 @@ namespace Lumina::Screenshot
             }
         }
 
-        // Tightly-packed host readback of the whole image.
-        const uint64 TexelBytes = RHI::Format::BytesPerBlock(SrcImage.Desc.Format);
-        const uint64 ReadbackSize = (uint64)Out.ResolutionX * Out.ResolutionY * TexelBytes;
-        const RHI::FGPUAllocation Readback = RHI::Malloc(ReadbackSize, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
-        if (Readback.Gpu == 0)
+        TVector<uint8> Pixels;
+        bool bWriteOK = ReadImageBytes(SrcImage, Pixels, Out.ErrorMessage);
+        if (bWriteOK && Source == ECaptureSource::SceneHDR)
         {
-            Out.ErrorMessage = "Failed to allocate readback buffer.";
-            return Out;
+            bWriteOK = WriteHDR(ResolvedPath, Out.ResolutionX, Out.ResolutionY, SrcImage.Desc.Format, Pixels, Out.ErrorMessage);
         }
-        RHI::SetDebugName(Readback.Gpu, "Readback.Screenshot");
-
-        RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
-            RHI::EStageFlags::Transfer,
-            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-        RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback, Out.ResolutionX);
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-            RHI::EStageFlags::Host,
-            RHI::EAccessFlags::HostRead);
-        const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
-        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
-
-        const size_t RowPitch = (size_t)Out.ResolutionX * TexelBytes;
-        const uint8* Mapped = Readback.CpuAs<const uint8>();
-
-        bool bWriteOK = false;
-        if (Mapped == nullptr)
+        else if (bWriteOK)
         {
-            Out.ErrorMessage = "Failed to map readback buffer.";
+            bWriteOK = WritePNG(ResolvedPath, Out.ResolutionX, Out.ResolutionY, SrcImage.Desc.Format, Pixels, Out.ErrorMessage);
         }
-        else if (Source == ECaptureSource::SceneHDR)
-        {
-            bWriteOK = WriteHDR(ResolvedPath, Out.ResolutionX, Out.ResolutionY, SrcImage.Desc.Format,
-                                Mapped, RowPitch, Out.ErrorMessage);
-        }
-        else
-        {
-            bWriteOK = WritePNG(ResolvedPath, Out.ResolutionX, Out.ResolutionY, SrcImage.Desc.Format,
-                                Mapped, RowPitch, Out.ErrorMessage);
-        }
-
-        RHI::Retire(Readback);
 
         if (bWriteOK)
         {
@@ -295,7 +251,7 @@ namespace Lumina::Screenshot
             Opaque[i] = 255;
         }
 
-        if (WritePNG(ResolvedPath, Width, Height, EFormat::BGRA8_UNORM, Opaque.GetData(), (size_t)Width * 4u, Out.ErrorMessage))
+        if (WritePNG(ResolvedPath, Width, Height, EFormat::BGRA8_UNORM, Opaque, Out.ErrorMessage))
         {
             Out.bSuccess   = true;
             Out.OutputPath = ResolvedPath;
@@ -342,63 +298,17 @@ namespace Lumina::Screenshot
             return false;
         }
 
-        const EFormat Format = SrcImage.Desc.Format;
-        const bool bIsBGRA = (Format == EFormat::BGRA8_UNORM) || (Format == EFormat::SBGRA8_UNORM);
-        const bool bIsRGBA = (Format == EFormat::RGBA8_UNORM) || (Format == EFormat::SRGBA8_UNORM);
-        if (!bIsBGRA && !bIsRGBA)
+        OutWidth = SrcImage.GetSizeX();
+        OutHeight = SrcImage.GetSizeY();
+        if (!ReadImageBytes(SrcImage, OutRGBA, OutError))
+        {
+            return false;
+        }
+        if (!SwizzleToRGBA8(SrcImage.Desc.Format, OutRGBA))
         {
             OutError = "The display image is not an 8-bit color format.";
             return false;
         }
-
-        OutWidth = SrcImage.GetSizeX();
-        OutHeight = SrcImage.GetSizeY();
-        const uint64 ReadbackSize = (uint64)OutWidth * OutHeight * 4u;
-        const RHI::FGPUAllocation Readback = RHI::Malloc(ReadbackSize, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
-        if (Readback.Gpu == 0)
-        {
-            OutError = "Failed to allocate a readback buffer.";
-            return false;
-        }
-
-        RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
-            RHI::EStageFlags::Transfer,
-            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-        RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback, OutWidth);
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-            RHI::EStageFlags::Host,
-            RHI::EAccessFlags::HostRead);
-        const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
-        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
-
-        const uint8* Mapped = Readback.CpuAs<const uint8>();
-        if (Mapped == nullptr)
-        {
-            RHI::Retire(Readback);
-            OutError = "Failed to map the readback buffer.";
-            return false;
-        }
-
-        OutRGBA.SetNum(IntCastChecked<int32>(ReadbackSize));
-        if (bIsBGRA)
-        {
-            for (int32 Pixel = 0, Limit = IntCastChecked<int32>(static_cast<int64>(OutWidth) * OutHeight); Pixel < Limit; ++Pixel)
-            {
-                OutRGBA[Pixel * 4 + 0] = Mapped[Pixel * 4 + 2];
-                OutRGBA[Pixel * 4 + 1] = Mapped[Pixel * 4 + 1];
-                OutRGBA[Pixel * 4 + 2] = Mapped[Pixel * 4 + 0];
-                OutRGBA[Pixel * 4 + 3] = Mapped[Pixel * 4 + 3];
-            }
-        }
-        else
-        {
-            std::memcpy(OutRGBA.GetData(), Mapped, (size_t)ReadbackSize);
-        }
-
-        RHI::Retire(Readback);
         return true;
     }
 

@@ -42,7 +42,7 @@ namespace Lumina
         T* Emplace(TArgs&&... Args)
         {
             void* Storage = Allocate(sizeof(T), alignof(T));
-            T* Property = Memory::ConstructAt(static_cast<T*>(Storage), std::forward<TArgs>(Args)...);
+            T* Property = Memory::ConstructAt(static_cast<T*>(Storage), Forward<TArgs>(Args)...);
             Owned.Add(Property);
             return Property;
         }
@@ -52,7 +52,7 @@ namespace Lumina
         requires std::is_trivially_destructible_v<T>
         T* EmplaceData(TArgs&&... Args)
         {
-            return Memory::ConstructAt(static_cast<T*>(AllocateBytes(sizeof(T), alignof(T))), std::forward<TArgs>(Args)...);
+            return Memory::ConstructAt(static_cast<T*>(AllocateBytes(sizeof(T), alignof(T))), Forward<TArgs>(Args)...);
         }
 
         /** Raw arena storage, for the metadata table a script-minted property builds at runtime. */

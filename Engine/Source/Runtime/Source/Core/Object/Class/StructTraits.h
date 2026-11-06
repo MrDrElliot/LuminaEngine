@@ -83,7 +83,7 @@ namespace Lumina
         {
             Ops->Relocate = +[](void* Dest, void* Source)
             {
-                Memory::ConstructAt(static_cast<T*>(Dest), std::move(*static_cast<T*>(Source)));
+                Memory::ConstructAt(static_cast<T*>(Dest), Move(*static_cast<T*>(Source)));
                 static_cast<T*>(Source)->~T();
             };
         }

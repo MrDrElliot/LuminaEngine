@@ -16,13 +16,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    /**
-     * What changed about a script type's shape since the layout it currently carries.
-     *
-     * Kept apart so a reload does the least work that is actually correct: a retyped field has to rebuild the
-     * property block, but a reworded tooltip must not -- rebuilding refuses while instances are live, so
-     * treating every edit as structural is what used to make a metadata-only edit silently not take.
-     */
+    // Kept apart because a rebuild refuses while instances are live, so a metadata-only edit must not count as layout.
     enum class EScriptTypeDirty : uint8
     {
         None     = 0,
@@ -35,12 +29,7 @@ namespace Lumina
     ENUM_CLASS_FLAGS(EScriptTypeDirty);
 
 
-    /**
-     * A class whose layout was decided at runtime rather than by the C++ compiler.
-     *
-     * Everything a minted class needs beyond a native one lives here, so a native CClass -- which is nearly
-     * all of them -- carries none of it, and "is this type script-defined" is a cast rather than a flag.
-     */
+    // A class whose layout was decided at runtime, so asking whether a type is script-defined is a cast.
     class LUMINA_VISIBLE_TYPE CScriptClass : public CClass
     {
     public:
@@ -78,20 +67,15 @@ namespace Lumina
         // Set while a reload has replaced or removed it, and cleared if the same C# type comes back.
         bool bSuperseded = false;
 
-        /** The events this C# subclass overrides, as real functions on this class whose body is managed.
-         *
-         *  A map rather than a mask: an override is a function like any other, found by the name it is
-         *  declared under, which is what removes both the event ceiling and the agreed-index contract that
-         *  the shim and the C# attribute used to have to keep in step. */
+        // Overridden events as real functions with managed bodies, keyed by name so there is no event ceiling.
         THashMap<FName, FFunction*> ScriptOverrideFunctions;
 
-        /** The overriding function for Name, or null when the subclass leaves the native body in place. */
+        // Null when the subclass leaves the native body in place.
         NODISCARD RUNTIME_API const FFunction* FindScriptOverride(const FName& Name) const;
 
-        /** One bit per generated event slot, mirroring ScriptOverrideFunctions so a shim skips the name lookup. */
+        // One bit per generated event slot, mirroring ScriptOverrideFunctions so a shim skips the name lookup.
         TVector<uint64> ScriptOverrideSlots;
 
-        /** Whether the script overrides the event the generator assigned Slot. */
         NODISCARD bool HasScriptOverrideSlot(int32 Slot) const
         {
             const int32 Word = (size_t)((uint32)Slot >> 6);
@@ -104,48 +88,31 @@ namespace Lumina
         // The class metadata the C# attributes set last reload, so a removed or changed attribute does not linger on a reused class.
         TVector<FName> ScriptClassMetaKeys;
 
-        /** Every property appended from the script type's schema, in layout order. They live past the C++
-         *  shim the class was minted from. */
+        // Every property appended from the script type's schema, in layout order.
         TVector<FProperty*> ScriptProperties;
 
-        /** The subset of ScriptProperties whose values own storage, so they need construction/destruction over
-         *  the object's trailing block. Holds the properties themselves rather than any description of them:
-         *  each one knows how to build its own value (FProperty::ConstructValue), so adding a new property
-         *  kind teaches that kind and changes nothing here. */
+        // The subset of ScriptProperties whose values own storage and need constructing over the trailing block.
         TVector<FProperty*> ScriptLifecycleProperties;
 
-        /** Placement-constructs every script-appended property. Called from StaticAllocateObject once the
-         *  object's class is known, before PostInitProperties -- so a script's first callback sees valid
-         *  values rather than a memzeroed FString, which is a plausible-looking empty string that corrupts
-         *  on the first assignment. Returns whether anything was constructed, which is what stamps
-         *  OF_ScriptProperties and therefore what decides if the destructor comes back here at all. */
+        // Runs before PostInitProperties, and its result stamps OF_ScriptProperties so the destructor comes back here.
         RUNTIME_API bool ConstructScriptProperties(void* Object) const;
 
-        /** Mirror of the above, from ~CObjectBase. Must be kept in lockstep: a construct without its destruct
-         *  leaks, the reverse double-frees. */
+        // Must stay in lockstep with ConstructScriptProperties, or values leak or double-free.
         RUNTIME_API void DestructScriptProperties(void* Object) const;
 
-        /** Anchors the type that emitted ScriptProperties: its arena owns their storage, so the two die
-         *  together. Held as a CStruct because the concrete emitting type is the scripting layer's. */
+        // Anchors the type whose arena owns ScriptProperties, held as a CStruct since that type is the scripting layer's.
         TStrongObjectPtr<CStruct> LayoutRecord;
 
-        /** Size and alignment before the block was appended, to restore when it is rebuilt. */
+        // Size and alignment before the block was appended, to restore when it is rebuilt.
         uint32 ShimSize = 0;
         uint32 ShimAlign = 1;
 
-        /** Set once a block has been appended, which is what tells a first append from a rebuild. Not the
-         *  same as a non-empty ScriptProperties: a type may legitimately append nothing. */
+        // Tells a first append from a rebuild, since a type may legitimately append nothing.
         bool bHasAppendedBlock = false;
 
     };
 
-    /**
-     * Null unless Class was minted from a script type.
-     *
-     * Checks that the class has finished registering before asking what it is: bootstrap allocates objects
-     * from classes whose own ClassPrivate is not set yet, and IsA on one of those trips its assert. Nothing
-     * is minted that early, so an unregistered class is never a script class.
-     */
+    // Skips classes still registering, whose IsA would assert, since nothing is minted that early.
     FORCEINLINE const CScriptClass* ToScriptClass(const CClass* Class)
     {
         return (Class != nullptr && Class->GetClass() != nullptr) ? Cast<CScriptClass>(Class) : nullptr;
@@ -156,13 +123,7 @@ namespace Lumina
         return (Class != nullptr && Class->GetClass() != nullptr) ? Cast<CScriptClass>(Class) : nullptr;
     }
 
-    /**
-     * The script body overriding Name on this class, or null to run the C++ one.
-     *
-     * Called by the generated forwarding shim on every reflected virtual. A native class is not a
-     * CScriptClass at all and answers null from the cast, which is what keeps an unscripted call off the
-     * managed path without touching the map.
-     */
+    // Called by the generated shim on every reflected virtual, and null to run the C++ body.
     FORCEINLINE const FFunction* FindScriptOverride(const CClass* Class, const FName& Name)
     {
         const CScriptClass* ScriptClass = ToScriptClass(Class);

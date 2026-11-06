@@ -3,13 +3,13 @@
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/ECS/Entity.h"
-#include "World/Entity/Components/FoliageComponent.h"
 #include "World/Subsystems/WorldSubsystem.h"
 #include "EnvironmentSubsystem.generated.h"
 
 namespace Lumina
 {
     class CStaticMesh;
+    struct SFoliageInstance;
 
     // Terrain and foliage.
     REFLECT()

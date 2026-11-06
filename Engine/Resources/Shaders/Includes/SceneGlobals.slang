@@ -53,6 +53,13 @@ struct FSceneRoot
     // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
     GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
 
+    // The retained slot arrays, read by the far proxy pass since a proxy has no compacted instance.
+    GPUSpan<FTransform3x4>       RetainedTransforms;
+    GPUSpan<FInstanceStatic>     RetainedStatic;
+    GPUSpan<FInstanceProxy>      RetainedProxies;
+    // Retained slots CullInstances turned into proxies this frame, in proxy draw order.
+    GPUSpan<uint>                ProxyList;
+
     FTexture2D         BRDFLut;
     FTextureCube       SkyIrradiance;
     FMippedTextureCube SkyPrefilter;
@@ -123,6 +130,10 @@ extension FInstanceStatic
 GPUSpan<FMeshletDraw>        MeshletDrawList()       { return GetSceneRoot().MeshletDrawList; }
 GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVertices; }
 GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions() { return GetSceneRoot().PreSkinnedPrevPositions; }
+GPUSpan<FTransform3x4>       RetainedTransforms()    { return GetSceneRoot().RetainedTransforms; }
+GPUSpan<FInstanceStatic>     RetainedStatic()        { return GetSceneRoot().RetainedStatic; }
+GPUSpan<FInstanceProxy>      RetainedProxies()       { return GetSceneRoot().RetainedProxies; }
+GPUSpan<uint>                ProxyList()             { return GetSceneRoot().ProxyList; }
 GPUSpan<FMeshletSphere>      SkinnedMeshletBounds()  { return GetSceneRoot().SkinnedMeshletBounds; }
 GPUSpan<FMeshletCone>        SkinnedMeshletCones()   { return GetSceneRoot().SkinnedMeshletCones; }
 GPUSpan<FWidgetInstance>     Widgets()               { return GetSceneRoot().Widgets; }
@@ -652,21 +663,10 @@ float SineWave(float Speed, float Amplitude)
     return Amplitude * sin(MaterialTime() * Speed);
 }
 
-float3 ReconstructWorldPos(float2 UV, float Depth, float4x4 InvProj, float4x4 InvView)
-{
-    float4 Clip  = float4(UV * 2.0 - 1.0, Depth, 1.0);
-    float4 View  = mul(InvProj, Clip);
-    View        /= View.w;
-    float4 World = mul(InvView, View);
-    return World.xyz;
-}
-
-// Jimenez's interleaved gradient noise, shifted per frame so two subsamples see decorrelated patterns.
+// Shifted per frame so two subsamples see decorrelated patterns; zero phase is the fixed pattern.
 float InterleavedGradientNoise(float2 PixelPos)
 {
-    // Zero phase reproduces the fixed screen-space pattern exactly, which is what a lone frame wants.
-    const float2 Shifted = PixelPos + 5.588238 * float(Scene().TemporalPhase);
-    return frac(52.9829189 * frac(dot(Shifted, float2(0.06711056, 0.00583715))));
+    return FixedInterleavedGradientNoise(PixelPos + 5.588238 * float(Scene().TemporalPhase));
 }
 
 float3 ReconstructViewPos(float2 UV, float Depth, float4x4 InvProj)
@@ -674,6 +674,22 @@ float3 ReconstructViewPos(float2 UV, float Depth, float4x4 InvProj)
     float4 Clip = float4(UV * 2.0 - 1.0, Depth, 1.0);
     float4 View = mul(InvProj, Clip);
     return View.xyz / View.w;
+}
+
+float3 ReconstructWorldPos(float2 UV, float Depth)
+{
+    return mul(GetInverseCameraView(), float4(ReconstructViewPos(UV, Depth, GetInverseCameraProjection()), 1.0)).xyz;
+}
+
+// Unprojects at depth 1, so the result is a ray scaled to an arbitrary length, not a surface position.
+float3 GetCameraViewRay(float2 UV)
+{
+    return ReconstructViewPos(UV, 1.0, GetInverseCameraProjection());
+}
+
+float3 GetCameraWorldRayDir(float2 UV)
+{
+    return normalize(mul(GetInverseCameraView(), float4(GetCameraViewRay(UV), 0.0)).xyz);
 }
 
 // Mirrors the tile math in ClusterBuild/LightCull, and the clamps keep fragments nearer than ZNear inside Clusters().

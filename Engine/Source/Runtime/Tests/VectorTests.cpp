@@ -178,6 +178,27 @@ TEST(VectorBasics, EmplaceReturnsTheNewElement)
     EXPECT_EQ(&Added, &Values.Last());
 }
 
+TEST(VectorBasics, AddDefaultedGetRefPointsIntoTheGrownBuffer)
+{
+    TVector<int32> Values;
+    Values.AddDefaultedGetRef() = 11;
+    ASSERT_EQ(Values.Num(), 1);
+    EXPECT_EQ(Values[0], 11);
+
+    while (Values.Num() < Values.Max())
+    {
+        Values.Add(0);
+    }
+    const int32 FullNum = Values.Num();
+    const int32* OldData = Values.GetData();
+    int32& Added = Values.AddDefaultedGetRef();
+    ASSERT_NE(Values.GetData(), OldData);
+    Added = 22;
+    EXPECT_EQ(&Added, &Values[FullNum]);
+    EXPECT_EQ(Values[FullNum], 22);
+    EXPECT_EQ(Values[0], 11);
+}
+
 TEST(VectorBasics, ResizeDefaultInitializesAndShrinks)
 {
     TVector<int> Values;

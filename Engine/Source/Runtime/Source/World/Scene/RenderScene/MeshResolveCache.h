@@ -50,11 +50,20 @@ namespace Lumina
         uint32  NumLODs                             = 1;
         uint32  LODMeshletOffset[MAX_MESH_LODS]     = {};
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
-        // Mesh-local error per LOD, already scaled by the mesh's own LOD distance scale.
+        // Mesh-local error per LOD, raw, which LODErrorMultiplier scales at selection time.
         float   LODError[MAX_MESH_LODS]             = {};
+        // A cluster slot largest parent error, raw like LODError; zero on discrete LODs.
+        float   LODParentError[MAX_MESH_LODS]       = {};
+        // SURFACE_DESC_* bits copied from the surface.
+        uint32  LODFlags                            = 0;
+        // The mesh LOD distance scale, applied to every error above and to the per-meshlet bounds alike.
+        float   LODErrorMultiplier                  = 1.0f;
 
         // Mesh-local world size of one UV tile for the texture streamer; 0 = unknown. See FGeometrySurface::TexelFactor.
         float   TexelFactor                         = 0.0f;
+
+        // The splat this surface draws as once an instance of it is too small for meshlets, in mesh space.
+        FInstanceProxy Proxy                        = {};
 
         // What this resolve was taken from, since a recompile mints new shader entries and leaves the handles above on superseded code.
         CMaterialInterface* SourceMaterial        = nullptr;

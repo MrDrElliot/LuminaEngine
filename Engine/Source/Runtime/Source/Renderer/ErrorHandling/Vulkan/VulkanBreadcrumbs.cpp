@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 #include "Renderer/API/Vulkan/VulkanAllocator.h"
 
 namespace Lumina::RHI
@@ -139,7 +140,7 @@ namespace Lumina::RHI
 
         const size_t NameLength = Name != nullptr ? std::strlen(Name) : 0;
         const size_t Copied     = NameLength < MaxNameChars ? NameLength : MaxNameChars - 1;
-        std::memcpy(Entry.Name, Name != nullptr ? Name : "", Copied);
+        Memory::Memcpy(Entry.Name, Name != nullptr ? Name : "", Copied);
         Entry.Name[Copied] = 0;
 
         Entry.Depth    = Depth;

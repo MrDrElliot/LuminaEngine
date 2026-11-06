@@ -10,41 +10,21 @@ namespace Lumina
 {
     enum class EEventType : uint8
     {
-        None = 0,
-
         KeyPressed,
         KeyReleased,
-        KeyRepeat,
         CharInput,
-        CharInputMods,
-        
+
         MouseButtonPressed,
         MouseButtonReleased,
         MouseMoved,
         MouseScrolled,
-        MouseEntered,
-        MouseLeft,
 
         WindowResize,
         WindowClose,
         WindowFocus,
         WindowLostFocus,
-        WindowMoved,
-        WindowMaximized,
-        WindowMinimized,
-        WindowRestored,
-        WindowRefresh,
-        WindowContentScaleChanged,
-        FramebufferResize,
 
         FileDrop,
-
-        JoystickConnected,
-        JoystickDisconnected,
-
-        AppTick,
-        AppUpdate,
-        AppRender,
     };
     
     class FEvent
@@ -184,28 +164,6 @@ namespace Lumina
         uint32 Codepoint;
     };
 
-    class FCharInputModsEvent : public FEvent
-    {
-    public:
-        FCharInputModsEvent(uint32 InCodepoint, bool InCtrl, bool InShift, bool InAlt, bool InSuper)
-            : Codepoint(InCodepoint), bCtrl(InCtrl), bShift(InShift), bAlt(InAlt), bSuper(InSuper) {}
-        
-        uint32 GetCodepoint() const { return Codepoint; }
-        bool IsCtrlDown() const { return bCtrl; }
-        bool IsShiftDown() const { return bShift; }
-        bool IsAltDown() const { return bAlt; }
-        bool IsSuperDown() const { return bSuper; }
-        
-        EVENT_CLASS_TYPE(CharInputMods)
-        
-    private:
-        uint32 Codepoint;
-        bool bCtrl;
-        bool bShift;
-        bool bAlt;
-        bool bSuper;
-    };
-
     class FMouseMovedEvent : public FEvent
     {
     public:
@@ -273,18 +231,6 @@ namespace Lumina
         EVENT_CLASS_TYPE(MouseButtonReleased)
     };
 
-    class FMouseEnteredEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(MouseEntered)
-    };
-
-    class FMouseLeftEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(MouseLeft)
-    };
-
     class FWindowResizeEvent : public FEvent
     {
     public:
@@ -318,61 +264,6 @@ namespace Lumina
         EVENT_CLASS_TYPE(WindowLostFocus)
     };
 
-    class FWindowMovedEvent : public FEvent
-    {
-    public:
-        FWindowMovedEvent(int32 InX, int32 InY)
-            : X(InX), Y(InY) {}
-        
-        int32 GetX() const { return X; }
-        int32 GetY() const { return Y; }
-        
-        EVENT_CLASS_TYPE(WindowMoved)
-        
-    private:
-        int32 X, Y;
-    };
-
-    class FWindowMaximizedEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(WindowMaximized)
-    };
-
-    class FWindowMinimizedEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(WindowMinimized)
-    };
-
-    class FWindowRestoredEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(WindowRestored)
-    };
-
-    class FWindowRefreshEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(WindowRefresh)
-    };
-
-    class FWindowContentScaleChangedEvent : public FEvent
-    {
-    public:
-        FWindowContentScaleChangedEvent(float InXScale, float InYScale)
-            : XScale(InXScale), YScale(InYScale) {}
-        
-        float GetXScale() const { return XScale; }
-        float GetYScale() const { return YScale; }
-        
-        EVENT_CLASS_TYPE(WindowContentScaleChanged)
-        
-    private:
-        float XScale, YScale;
-    };
-    
-
     class FFileDropEvent : public FEvent
     {
     public:
@@ -393,59 +284,5 @@ namespace Lumina
         
         TVector<FFixedString> Paths;
         float MouseX, MouseY;
-    };
-
-    class FJoystickConnectedEvent : public FEvent
-    {
-    public:
-        FJoystickConnectedEvent(int32 InJoystickID)
-            : JoystickID(InJoystickID) {}
-        
-        int32 GetJoystickID() const { return JoystickID; }
-        
-        EVENT_CLASS_TYPE(JoystickConnected)
-        
-    private:
-        int32 JoystickID;
-    };
-
-    class FJoystickDisconnectedEvent : public FEvent
-    {
-    public:
-        FJoystickDisconnectedEvent(int32 InJoystickID)
-            : JoystickID(InJoystickID) {}
-        
-        int32 GetJoystickID() const { return JoystickID; }
-        
-        EVENT_CLASS_TYPE(JoystickDisconnected)
-        
-    private:
-        int32 JoystickID;
-    };
-
-    class FAppTickEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(AppTick)
-    };
-
-    class FAppUpdateEvent : public FEvent
-    {
-    public:
-        FAppUpdateEvent(float InDeltaTime)
-            : DeltaTime(InDeltaTime) {}
-        
-        float GetDeltaTime() const { return DeltaTime; }
-        
-        EVENT_CLASS_TYPE(AppUpdate)
-        
-    private:
-        float DeltaTime;
-    };
-
-    class FAppRenderEvent : public FEvent
-    {
-    public:
-        EVENT_CLASS_TYPE(AppRender)
     };
 }

@@ -142,7 +142,7 @@ namespace Lumina
         }
         if (Labels.Size[A] < Labels.Size[B])
         {
-            std::swap(A, B);
+            ElementOps::SwapElements(A, B);
         }
         Labels.Parent[B] = A;
         Labels.Size[A] += Labels.Size[B];
@@ -196,7 +196,7 @@ namespace Lumina
         }
 
         FScopeLock Lock(PendingLock);
-        PendingLabels = std::move(Fresh);
+        PendingLabels = Move(Fresh);
         PendingVersion = Version;
     }
 
@@ -211,7 +211,7 @@ namespace Lumina
         FScopeLock Lock(PendingLock);
         if (PendingVersion != 0 && PendingVersion == Version)
         {
-            Labels = std::move(PendingLabels);
+            Labels = Move(PendingLabels);
             LabelsExactAt = Version;
         }
         PendingLabels = FLabels{};
@@ -394,9 +394,9 @@ namespace Lumina
     }
 
     FNavClusterGraph::ERoute FNavClusterGraph::FindRoute(const dtNavMesh& Mesh, const dtQueryFilter& Filter, uint64 StartRef, uint64 EndRef,
-                                                         const FVector3& StartPos, const FVector3& EndPos, const std::atomic<uint32>& Abandon, TVector<FStep>& Out) const
+                                                         const FVector3& StartPos, const FVector3& EndPos, const std::atomic<uint32>& Abandon, FSearchScratch& Scratch) const
     {
-        Out.Reset();
+        Scratch.Route.Reset();
         const uint64 StartKey = KeyOf(Mesh, StartRef);
         const uint64 EndKey = KeyOf(Mesh, EndRef);
         if (StartKey == kNoKey || EndKey == kNoKey)
@@ -407,7 +407,7 @@ namespace Lumina
         const uint32 StartComponent = ComponentOf(StartKey);
         if (StartComponent == ComponentOf(EndKey))
         {
-            return Search(Mesh, Filter, StartKey, StartRef, EndKey, StartPos, EndPos, Abandon, Out);
+            return Search(Mesh, Filter, StartKey, StartRef, EndKey, StartPos, EndPos, Abandon, Scratch);
         }
 
         // A different island, so the route heads for the part of the start's island nearest the goal, searched in tile rings around the goal.
@@ -457,32 +457,24 @@ namespace Lumina
             }
         }
         const FVector3& NearestCenter = Tiles[TileOfKey(NearestKey)].Centers[ClusterOfKey(NearestKey)];
-        const ERoute Toward = Search(Mesh, Filter, StartKey, StartRef, NearestKey, StartPos, NearestCenter, Abandon, Out);
+        const ERoute Toward = Search(Mesh, Filter, StartKey, StartRef, NearestKey, StartPos, NearestCenter, Abandon, Scratch);
         return Toward == ERoute::Failed || Toward == ERoute::Abandoned ? Toward : ERoute::Unreachable;
     }
 
     FNavClusterGraph::ERoute FNavClusterGraph::Search(const dtNavMesh& Mesh, const dtQueryFilter& Filter, uint64 StartKey, uint64 StartRef, uint64 GoalKey,
-                                                      const FVector3& StartPos, const FVector3& GoalPos, const std::atomic<uint32>& Abandon, TVector<FStep>& Out) const
+                                                      const FVector3& StartPos, const FVector3& GoalPos, const std::atomic<uint32>& Abandon, FSearchScratch& Scratch) const
     {
-        struct FNode
-        {
-            uint64   Key;
-            uint64   EntryRef;
-            FVector3 Center;
-            float    Cost;
-            int32    Parent;
-            bool     bClosed;
-        };
-        struct FOpen
-        {
-            float Estimate;
-            int32 Node;
-        };
+        using FNode = FSearchScratch::FNode;
+        using FOpen = FSearchScratch::FOpen;
         auto Later = [](const FOpen& A, const FOpen& B) { return A.Estimate > B.Estimate; };
 
-        TVector<FNode> Nodes;
-        TVector<FOpen> Open;
-        THashMap<uint64, int32> NodeOfKey;
+        TVector<FNode>& Nodes = Scratch.Nodes;
+        TVector<FOpen>& Open = Scratch.Open;
+        THashMap<uint64, int32>& NodeOfKey = Scratch.NodeOfKey;
+        TVector<FStep>& Out = Scratch.Route;
+        Nodes.Reset();
+        Open.Reset();
+        NodeOfKey.Reset();
         Nodes.Emplace(StartKey, StartRef, StartPos, 0.0f, -1, false);
         NodeOfKey.TryAdd(StartKey, 0);
         Open.Emplace(Math::Length(StartPos - GoalPos), 0);
@@ -578,6 +570,6 @@ namespace Lumina
     bool FNavClusterGraph::HasPendingLabels() const { return false; }
     void FNavClusterGraph::AdoptPendingLabels() {}
     uint64 FNavClusterGraph::NearestPoly(const dtNavMesh&, uint64, const FVector3&) const { return 0; }
-    FNavClusterGraph::ERoute FNavClusterGraph::FindRoute(const dtNavMesh&, const dtQueryFilter&, uint64, uint64, const FVector3&, const FVector3&, const std::atomic<uint32>&, TVector<FStep>&) const { return ERoute::Failed; }
+    FNavClusterGraph::ERoute FNavClusterGraph::FindRoute(const dtNavMesh&, const dtQueryFilter&, uint64, uint64, const FVector3&, const FVector3&, const std::atomic<uint32>&, FSearchScratch&) const { return ERoute::Failed; }
 #endif
 }

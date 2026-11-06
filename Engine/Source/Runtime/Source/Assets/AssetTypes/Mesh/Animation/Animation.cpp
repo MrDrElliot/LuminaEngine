@@ -1,6 +1,5 @@
 ﻿#include "RuntimePCH.h"
 #include "Memory/MemoryTracking.h"
-#include <algorithm>
 #include "Animation.h"
 
 #include "Animation/BindPose.h"
@@ -79,8 +78,11 @@ namespace Lumina
                 && Math::Length(S - FVector3(1.0f)) < kRetargetTolerance;
         }
 
-        void ApplyRootFix(const FAnimationResource::FRetargetFix& Fix, FVector3& T, FQuat& R, FVector3& S)
+        void ApplyRootFix(const FAnimationResource::FRetargetFix& Fix, uint8 Touched, FVector3& T, FQuat& R, FVector3& S)
         {
+            if (!(Touched & TouchedT)) T = Fix.SourceBindT;
+            if (!(Touched & TouchedR)) R = Fix.SourceBindR;
+            if (!(Touched & TouchedS)) S = Fix.SourceBindS;
             AnimPose::DecomposeTRS(Fix.RootCorrection * AnimPose::ComposeTRS(T, R, S), T, R, S);
         }
 
@@ -257,7 +259,7 @@ namespace Lumina
         }
 
         // In pose order, so rotation batches land on consecutive bones and a bone LOD cut ends the walk.
-        std::sort(Resolved.AnimatedBones.begin(), Resolved.AnimatedBones.end(), [&Resolved](int32 A, int32 B)
+        Algo::Sort(Resolved.AnimatedBones, [&Resolved](int32 A, int32 B)
         {
             return Resolved.CompressedBones[A] < Resolved.CompressedBones[B];
         });
@@ -338,7 +340,7 @@ namespace Lumina
         }
 
         const FResolvedSkeleton* Result = NewSet.get();
-        ResolvedSkeletons.Add(std::move(NewSet));
+        ResolvedSkeletons.Add(Move(NewSet));
 
         // Old tables stay alive, since a reader may still be scanning one.
         TUniquePtr<FResolvedTable> Table = MakeUnique<FResolvedTable>();
@@ -347,7 +349,7 @@ namespace Lumina
             Table->Add(Resolved.get());
         }
         PublishedResolved.store(Table.get(), std::memory_order_release);
-        ResolvedTables.Add(std::move(Table));
+        ResolvedTables.Add(Move(Table));
 
         ActiveResolvedSkeleton.store(Result, std::memory_order_release);
         return Result;
@@ -501,13 +503,7 @@ namespace Lumina
 
             if (Fix.bRoot)
             {
-                FVector3 T = (Touched & Detail::TouchedT) ? ScratchT[i] : Fix.SourceBindT;
-                FQuat    R = (Touched & Detail::TouchedR) ? ScratchR[i] : Fix.SourceBindR;
-                FVector3 S = (Touched & Detail::TouchedS) ? ScratchS[i] : Fix.SourceBindS;
-                Detail::ApplyRootFix(Fix, T, R, S);
-                ScratchT[i] = T;
-                ScratchR[i] = R;
-                ScratchS[i] = S;
+                Detail::ApplyRootFix(Fix, Touched, ScratchT[i], ScratchR[i], ScratchS[i]);
                 ScratchTouched[i] = Detail::TouchedAll;
             }
             else if (Touched & Detail::TouchedT)
@@ -765,26 +761,26 @@ namespace Lumina
             }
 
             const FCompressedAnimBone& Track = Compressed.Bones[Fix.CompressedIndex];
-            const bool bHasT = Track.Translation.Format != EAnimTrackFormat::None;
-            const bool bHasR = Track.Rotation.Format != EAnimTrackFormat::None;
-            const bool bHasS = Track.Scale.Format != EAnimTrackFormat::None;
+            const uint8 Touched = (Track.Translation.Format != EAnimTrackFormat::None ? Detail::TouchedT : 0u)
+                                | (Track.Rotation.Format != EAnimTrackFormat::None ? Detail::TouchedR : 0u)
+                                | (Track.Scale.Format != EAnimTrackFormat::None ? Detail::TouchedS : 0u);
 
             if (Fix.bRoot)
             {
-                if (!bHasT && !bHasR && !bHasS)
+                if (Touched == 0)
                 {
                     continue;
                 }
 
-                FVector3 T = bHasT ? OutPose.GetTranslation(Fix.Bone) : Fix.SourceBindT;
-                FQuat    R = bHasR ? OutPose.GetRotation(Fix.Bone)    : Fix.SourceBindR;
-                FVector3 S = bHasS ? OutPose.GetScale(Fix.Bone)       : Fix.SourceBindS;
-                Detail::ApplyRootFix(Fix, T, R, S);
+                FVector3 T = OutPose.GetTranslation(Fix.Bone);
+                FQuat    R = OutPose.GetRotation(Fix.Bone);
+                FVector3 S = OutPose.GetScale(Fix.Bone);
+                Detail::ApplyRootFix(Fix, Touched, T, R, S);
                 OutPose.SetTranslation(Fix.Bone, T);
                 OutPose.SetRotation(Fix.Bone, R);
                 OutPose.SetScale(Fix.Bone, S);
             }
-            else if (bHasT)
+            else if (Touched & Detail::TouchedT)
             {
                 OutPose.SetTranslation(Fix.Bone, Detail::RetargetTranslation(Fix, OutPose.GetTranslation(Fix.Bone)));
             }
@@ -814,17 +810,14 @@ namespace Lumina
         float Alpha;
         Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
 
-        const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[CompressedIndex], Frame0, Frame1, Alpha);
+        Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[CompressedIndex], Frame0, Frame1, Alpha);
         const FAnimationResource::FRetargetFix* Fix = Detail::FindRetargetFix(*Resolved, BoneIndex);
         if (Fix != nullptr && Fix->bRoot && Decoded.Touched != 0)
         {
-            FVector3 T = (Decoded.Touched & Detail::TouchedT) ? Decoded.T : Fix->SourceBindT;
-            FQuat    R = (Decoded.Touched & Detail::TouchedR) ? Decoded.R : Fix->SourceBindR;
-            FVector3 S = (Decoded.Touched & Detail::TouchedS) ? Decoded.S : Fix->SourceBindS;
-            Detail::ApplyRootFix(*Fix, T, R, S);
-            OutT = T;
-            OutR = R;
-            OutS = S;
+            Detail::ApplyRootFix(*Fix, Decoded.Touched, Decoded.T, Decoded.R, Decoded.S);
+            OutT = Decoded.T;
+            OutR = Decoded.R;
+            OutS = Decoded.S;
             return;
         }
 

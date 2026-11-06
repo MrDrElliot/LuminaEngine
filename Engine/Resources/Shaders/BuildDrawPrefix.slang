@@ -33,15 +33,15 @@ struct FBuildDrawPrefixArgs
 };
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
-// Monotonic in Offset and never past Capacity, so the scaled windows tile the arena without overlapping.
+// Monotonic in Offset and never past Capacity, so the scaled windows tile the arena without overlapping, and spare room is shared out the same way.
 uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
 {
-    if (TotalDemand <= Capacity)
+    if (TotalDemand == 0u)
     {
-        return Offset;
+        return 0u;
     }
-    const float Scale = (float)Capacity / (float)TotalDemand;
-    return min((uint)floor((float)Offset * Scale), Capacity);
+    const double Scale = (double)Capacity / (double)TotalDemand;
+    return min((uint)floor((double)Offset * Scale), Capacity);
 }
 
 [shader("compute")]
@@ -109,6 +109,8 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
     Pass().OutTotals.Set(1u, (RequestedInstances > InstanceCapacity) ? 1u : 0u);
     Pass().OutTotals.Set(2u, DrawRunning);
     Pass().OutTotals.Set(3u, (DrawRunning > DrawCapacity) ? 1u : 0u);
+    // The cull args pass raises this to the list a short bucket would have needed, and the CPU sizes from the larger of the two.
+    Pass().OutTotals.Set(8u, 0u);
     Pass().OutTotals.Set(4u, BlockRunning);
     Pass().OutTotals.Set(5u, (BlockRunning > BlockCapacity) ? 1u : 0u);
 

@@ -4,27 +4,9 @@ using Microsoft.CodeAnalysis;
 
 namespace LuminaSharp.ScriptProperties;
 
-/// <summary>
-/// The one classifier that decides what a <c>[Property]</c> member's type means, shared by source between the
-/// IDE analyzer (LuminaSharp.Generators) and the rewriter that emits the accessors (LuminaSharp).
-///
-/// Why shared by source and not by reference. The generator is a Roslyn component: LuminaSharp references it
-/// with <c>ReferenceOutputAssembly="false"</c>, so it cannot see the generator's types, and the generator
-/// targets netstandard2.0 so it cannot see LuminaSharp's. Both, however, already reference
-/// Microsoft.CodeAnalysis and both classify <see cref="ITypeSymbol"/>s -- so one file, linked into both, is
-/// exactly the amount of sharing the constraint allows. Keep it dependency-free beyond Roslyn.
-///
-/// Why it has to be shared at all. The analyzer's whole job is to say, at the declaration, what the rewriter
-/// will say at script load. Two implementations of that answer drift, and they had: an element type was tested
-/// with <c>IsUnmanagedType</c> on the analyzer side and with "classifies as Blittable" on the rewriter side,
-/// which disagreed about nested containers (the IDE accepted <c>TVector&lt;TVector&lt;float&gt;&gt;</c>,
-/// the engine's compile refused it) and about enums (the IDE accepted <c>TVector&lt;EMode&gt;</c>, whose
-/// elements native mints 8 bytes wide while C# would read them 4 wide). There is now one answer.
-/// </summary>
+// Linked by source into both the analyzer and LuminaSharp so the two cannot disagree; keep it dependency-free beyond Roslyn.
 internal static class ScriptPropertyClassifier
 {
-    /// <summary>Classifies a member type. Never throws; an unsupported type comes back with a
-    /// <see cref="FScriptPropertyClassification.Rejection"/> explaining what to write instead.</summary>
     public static FScriptPropertyClassification Classify(ITypeSymbol Type)
     {
         if (IsComponent(Type))
@@ -50,10 +32,7 @@ internal static class ScriptPropertyClassifier
             return FScriptPropertyClassification.Of(EScriptAccess.Blittable);
         }
 
-        // Asset references (FSoftObjectPath, TSoftObjectPtr<T>; TStrongObjectPtr<T> is NOT one) are recognised by the
-        // interface they share, so a new asset-reference type needs nothing here. Checked before the unmanaged
-        // test at the bottom, which they would otherwise pass -- they are pointer-sized values, and reading
-        // them as raw bytes would not read the FSoftObjectPath native actually stores.
+        // Asset references are pointer-sized and would pass the unmanaged test, but native stores an FSoftObjectPath.
         if (IsSoftObjectReference(Type))
         {
             return FScriptPropertyClassification.Of(EScriptAccess.AssetPath);
@@ -67,7 +46,7 @@ internal static class ScriptPropertyClassifier
             return FScriptPropertyClassification.Of(EScriptAccess.NativeStruct);
         }
 
-        // Stays a managed field: it owns the script's subscriptions and polled state, which native cannot hold.
+        // Stays a managed field because it owns the script's subscriptions and polled state, which native cannot hold.
         if (DerivesFromInputBinding(Type))
         {
             return Type.IsAbstract
@@ -75,15 +54,13 @@ internal static class ScriptPropertyClassifier
                     "SInputBinding is abstract. Declare SInputAction for a button or SInputAxis for an axis.")
                 : FScriptPropertyClassification.Of(EScriptAccess.InputBinding);
         }
-        // The explicit mirror of Lumina::FString. Stored exactly as a C# `string` member is -- one native
-        // FString -- so it classifies the same; the difference is only which spelling the author wrote.
+        // Lumina.FString is stored as one native FString, exactly like a C# string member.
         if (Type.ToDisplayString() == ScriptPropertyTypeNames.FString)
         {
             return FScriptPropertyClassification.Of(EScriptAccess.String);
         }
 
-        // Named explicitly so the diagnostic can say which view type to write instead of falling through to
-        // the generic list. An array and a List<T> are managed copies; nothing else would explain that.
+        // Named explicitly so the diagnostic can say which view type to write instead.
         if (Type.TypeKind == TypeKind.Array && Type is IArrayTypeSymbol Array)
         {
             return FScriptPropertyClassification.Reject(
@@ -112,9 +89,7 @@ internal static class ScriptPropertyClassifier
                 case ScriptPropertyTypeNames.TInstancedStruct:
                     return FScriptPropertyClassification.Of(EScriptAccess.InstancedStruct);
 
-                // A hard object reference. Stored natively as an object property, so it keeps its target
-                // alive. Checked before the unmanaged test below: it is a bare pointer, so it would otherwise
-                // pass as blittable and be copied WITHOUT taking a reference.
+                // A bare pointer that would otherwise pass as blittable and be copied without taking a reference.
                 case ScriptPropertyTypeNames.ObjectPtr:
                     return FScriptPropertyClassification.Of(EScriptAccess.ObjectPtr);
 
@@ -137,8 +112,6 @@ internal static class ScriptPropertyClassifier
             }
         }
 
-        // Everything blittable -- numbers, bool, and the struct mirrors like FVector3/FTransform -- is read in
-        // place at the property's offset. Checked last so every special case above wins.
         // A struct declared in script may hold a string, which makes it managed without making it unsupported.
         if (!Type.IsUnmanagedType && Type.TypeKind != TypeKind.Struct)
         {
@@ -158,8 +131,7 @@ internal static class ScriptPropertyClassifier
     // A [Property(Component = ...)] member is a reference to the owner's component rather than a value of that type.
     public static FScriptPropertyClassification ClassifyMember(ISymbol Member, ITypeSymbol Type)
     {
-        bool bRefType = Type is INamedTypeSymbol { IsGenericType: true } Named
-            && Named.OriginalDefinition.ToDisplayString() == ScriptPropertyTypeNames.ComponentRef;
+        bool bRefType = IsComponentRef(Type);
         if (!BindsComponent(Member))
         {
             // Without this the reference reads as a script struct, and the advice to mark it [Reflect] leads nowhere.
@@ -177,7 +149,12 @@ internal static class ScriptPropertyClassifier
     public static bool IsComponent(ITypeSymbol Type)
     {
         return Type.TypeKind == TypeKind.Struct
-            && Type.AllInterfaces.Any(Interface => Interface.OriginalDefinition.ToDisplayString() == ScriptPropertyTypeNames.Component);
+            && Type.AllInterfaces.Any(IsComponentInterface);
+    }
+
+    public static bool IsComponentInterface(ITypeSymbol Interface)
+    {
+        return Interface.OriginalDefinition.ToDisplayString() == ScriptPropertyTypeNames.Component;
     }
 
     private static bool BindsComponent(ISymbol Member)
@@ -207,7 +184,7 @@ internal static class ScriptPropertyClassifier
 
     private static bool IsReflected(ITypeSymbol Type)
     {
-        return Type.GetAttributes().Any(Attribute => Attribute.AttributeClass?.ToDisplayString() == ScriptPropertyTypeNames.ReflectAttribute);
+        return FindAttribute(Type, ScriptPropertyTypeNames.ReflectAttribute) != null;
     }
 
     private static bool HasMirrorAttribute(ITypeSymbol Type)
@@ -351,7 +328,7 @@ internal static class ScriptPropertyClassifier
 
     private static FScriptPropertyClassification ClassifyList(EScriptAccess Access, ITypeSymbol Element)
     {
-        string? Why = ElementRejection(Element, "element", bMarshalled: true);
+        string? Why = ElementRejection(Element, "element");
         return Why != null
             ? FScriptPropertyClassification.Reject(Why)
             : FScriptPropertyClassification.List(Access, Element);
@@ -360,24 +337,15 @@ internal static class ScriptPropertyClassifier
     // Both sides route through ElementMarshal now, so a map carries the same element kinds a vector does.
     private static FScriptPropertyClassification ClassifyMap(ITypeSymbol Key, ITypeSymbol Value)
     {
-        string? Why = ElementRejection(Key, "key", bMarshalled: true)
-                   ?? ElementRejection(Value, "value", bMarshalled: true);
+        string? Why = ElementRejection(Key, "key")
+                   ?? ElementRejection(Value, "value");
         return Why != null
             ? FScriptPropertyClassification.Reject(Why)
             : FScriptPropertyClassification.Map(Key, Value);
     }
 
-    /// <summary>
-    /// Why <paramref name="Type"/> may not sit inside a container, or null if it may.
-    ///
-    /// The bar is higher than for a member, and deliberately so: a container element is stored in the native
-    /// buffer at the stride the ops table reports and copied by raw bytes, with none of the bookkeeping a
-    /// property setter would do. So an element must classify as <see cref="EScriptAccess.Blittable"/> -- NOT
-    /// merely pass <c>IsUnmanagedType</c>, which several supported MEMBER types also pass while meaning
-    /// something else in memory. Each of those gets its own message, because in every case there is a
-    /// specific right answer and the generic list would not name it.
-    /// </summary>
-    private static string? ElementRejection(ITypeSymbol Type, string Position, bool bMarshalled)
+    // Elements are copied by raw bytes with no setter bookkeeping, so passing IsUnmanagedType is not enough.
+    private static string? ElementRejection(ITypeSymbol Type, string Position)
     {
         FScriptPropertyClassification Classification = Classify(Type);
         if (Classification.Access == EScriptAccess.Blittable)
@@ -395,13 +363,12 @@ internal static class ScriptPropertyClassifier
             return null;
         }
 
-        // A marshalled container reads and writes each slot through the element's own accessors, so it can
-        // carry the two kinds whose managed value is not their native bytes.
-        if (bMarshalled && Type.ToDisplayString() == ScriptPropertyTypeNames.FString)
+        // A container goes through each element's own accessors, so it can carry these non-byte kinds.
+        if (Type.ToDisplayString() == ScriptPropertyTypeNames.FString)
         {
             return null;
         }
-        if (bMarshalled && Classification.Access is EScriptAccess.ObjectPtr or EScriptAccess.MarshalledStruct)
+        if (Classification.Access is EScriptAccess.ObjectPtr or EScriptAccess.MarshalledStruct)
         {
             return null;
         }
@@ -410,21 +377,14 @@ internal static class ScriptPropertyClassifier
         return Classification.Access switch
         {
             // A managed string cannot live in native memory; FString names the native slot instead.
-            EScriptAccess.String when bMarshalled =>
+            EScriptAccess.String =>
                 Prefix + "a managed string cannot live in native memory. Declare the element as "
                        + "Lumina.FString, which is the native string itself.",
 
-            EScriptAccess.String =>
-                Prefix + "it is a managed reference, which cannot live in native memory.",
-
-            // A bare wrapper is not a storable reference -- TStrongObjectPtr is what a native object slot holds.
-            EScriptAccess.Object when bMarshalled =>
+            // A bare wrapper is not a storable reference, since a native object slot holds a TStrongObjectPtr.
+            EScriptAccess.Object =>
                 Prefix + "a bare wrapper is not a storable reference. Declare the element as "
                        + $"TStrongObjectPtr<{Referenced(Type)}>, which is what the native slot holds.",
-
-            EScriptAccess.Object or EScriptAccess.ObjectPtr =>
-                Prefix + "it is an object reference, and copying it by bytes would store the pointer without "
-                       + "taking a reference.",
 
             EScriptAccess.AssetPath =>
                 Prefix + "an asset reference is stored as a path, not as bytes.",
@@ -440,10 +400,7 @@ internal static class ScriptPropertyClassifier
         };
     }
 
-    /// <summary>The list view that would accept <paramref name="Element"/>, for the array/List&lt;T&gt;
-    /// diagnostics. Best-effort advice: if the element is unusable in any container, TVector&lt;T&gt; is
-    /// still the right thing to name, and declaring it earns the specific message from
-    /// <see cref="ElementRejection"/>.</summary>
+    // Still names TVector<T> for an element no container accepts, since declaring it earns the specific rejection.
     private static string SuggestListView(ITypeSymbol Element)
     {
         EScriptAccess Access = Classify(Element).Access;
@@ -458,9 +415,7 @@ internal static class ScriptPropertyClassifier
         return $"TVector<{Display(Element)}>";
     }
 
-    /// <summary>The wrapper type an object reference points AT: the type argument of a TStrongObjectPtr&lt;T&gt;,
-    /// or the type itself for a bare wrapper. Advice that names TStrongObjectPtr&lt;T&gt; must not double-wrap an
-    /// element that already is one, or the suggested declaration would not compile either.</summary>
+    // Unwraps a TStrongObjectPtr so suggested declarations never double-wrap it.
     private static string Referenced(ITypeSymbol Type)
     {
         if (Type is INamedTypeSymbol Named && Named.IsGenericType
@@ -500,6 +455,25 @@ internal static class ScriptPropertyClassifier
         return false;
     }
 
+    public static bool IsNativeObject(ITypeSymbol Type)
+    {
+        return Type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() == ScriptPropertyTypeNames.NativeObject
+            || DerivesFromNativeObject(Type);
+    }
+
+    public static bool IsComponentRef(ITypeSymbol Type)
+    {
+        return Type is INamedTypeSymbol { IsGenericType: true } Named
+            && Named.OriginalDefinition.ToDisplayString() == ScriptPropertyTypeNames.ComponentRef;
+    }
+
+    // Another method of the same name in the same type that also carries the attribute, so both would generate one member name.
+    public static bool HasAttributedTwin(IMethodSymbol Method, string AttributeName)
+    {
+        return Method.ContainingType.GetMembers(Method.Name).OfType<IMethodSymbol>().Count(Candidate =>
+            FindAttribute(Candidate, AttributeName) != null) > 1;
+    }
+
     // A struct handle views native memory, so a member of its type is the embedded struct rather than a copy of its bytes.
     public static bool IsStructHandle(ITypeSymbol Type)
     {
@@ -509,15 +483,14 @@ internal static class ScriptPropertyClassifier
 
     private static string Display(ITypeSymbol Type) => Type.ToDisplayString();
 
-    /// <summary>The fallback explanation, for a type that matches nothing at all.</summary>
     public const string SupportedTypesHelp =
         "it cannot be viewed over native storage. Supported: numbers, bool, enums, engine struct mirrors, "
         + "a struct you declare whose every field is marked and blittable, string, Lumina.FString, "
-        + "Lumina.FName, asset references, object references, TVector<T> (of a plain value, an FString, or a "
-        + "TStrongObjectPtr<T>), and THashMap<K, V> of plain values.";
+        + "Lumina.FName, asset references, object references, and TVector<T> or THashMap<K, V> "
+        + "whose elements are plain values, enums, Lumina.FString, TStrongObjectPtr<T>, or a struct you declare.";
 }
 
-/// <summary>How one member's value is reached. Mirrors the native property kinds; see the rewriter's emitter.</summary>
+// Mirrors the native property kinds.
 internal enum EScriptAccess
 {
     Unsupported,
@@ -542,23 +515,17 @@ internal enum EScriptAccess
     InstancedStruct,
 }
 
-/// <summary>The result of <see cref="ScriptPropertyClassifier.Classify"/>: the access shape plus whatever type
-/// arguments the emitter needs, or a rejection explaining what to write instead.</summary>
 internal readonly struct FScriptPropertyClassification
 {
     public EScriptAccess Access { get; }
 
-    /// <summary>Element type for <see cref="EScriptAccess.ListView"/>. Null otherwise.</summary>
     public ITypeSymbol? Element { get; }
 
-    /// <summary>Key type for <see cref="EScriptAccess.MapView"/>, null otherwise.</summary>
     public ITypeSymbol? Key { get; }
 
-    /// <summary>Value type for <see cref="EScriptAccess.MapView"/>, null otherwise.</summary>
     public ITypeSymbol? Value { get; }
 
-    /// <summary>Why the type was refused, as a sentence completing "[Property] 'X' has type 'Y': ...".
-    /// Non-null exactly when <see cref="Access"/> is <see cref="EScriptAccess.Unsupported"/>.</summary>
+    // A sentence that completes the diagnostic after the property and its type are named.
     public string? Rejection { get; }
 
     private FScriptPropertyClassification(EScriptAccess Access, ITypeSymbol? Element, ITypeSymbol? Key,
@@ -584,26 +551,20 @@ internal readonly struct FScriptPropertyClassification
 
     public bool IsSupported => Access != EScriptAccess.Unsupported;
 
-    /// <summary>A container property: a view over storage native owns, so it has no setter and no default.</summary>
+    // A view over storage native owns, so it has no setter and no default.
     public bool IsView => ScriptPropertyTypeNames.IsViewAccess(Access);
 
     // Left a plain field by the rewriter; native mints the property and the serializer syncs it.
     public bool KeepsManagedField => Access == EScriptAccess.InputBinding;
 }
 
-/// <summary>
-/// Every type this layer matches by name, declared once.
-///
-/// They are Roslyn display strings because that is what the two classifying sites have to compare against;
-/// the runtime side (TypeLibrary) matches the same types with <c>typeof</c>, which cannot be spelled here --
-/// netstandard2.0, and no reference to LuminaSharp. <c>ScriptPropertyViews</c> on that side cross-checks its
-/// <c>typeof</c> table against the metadata names below, so renaming or moving one of these types fails loudly
-/// instead of silently un-matching.
-/// </summary>
+// Roslyn display strings, since this netstandard2.0 file cannot reference LuminaSharp to use typeof.
 internal static class ScriptPropertyTypeNames
 {
     public const string NativeObject = "LuminaSharp.NativeObject";
     public const string NativeStruct = "LuminaSharp.INativeStruct";
+    public const string NativeStructRoot = "LuminaSharp.INativeStruct<TSelf>";
+    public const string Extends = "LuminaSharp.IExtends<TBase>";
     public const string Component = "LuminaSharp.IComponent<TSelf>";
     public const string ComponentRef = "LuminaSharp.TComponentRef<T>";
     public const string SoftObjectReference = "LuminaSharp.ISoftObjectReference";
@@ -613,6 +574,7 @@ internal static class ScriptPropertyTypeNames
     public const string NativeTypeAttribute = "LuminaSharp.NativeTypeAttribute";
     public const string NativeLayoutAttribute = "LuminaSharp.NativeLayoutAttribute";
     public const string ReflectAttribute = "LuminaSharp.ReflectAttribute";
+    public const string NativeSlotViewAttribute = "LuminaSharp.NativeSlotViewAttribute";
 
     public const string PropertyAttribute = "LuminaSharp.PropertyAttribute";
     public const string FunctionAttribute = "LuminaSharp.FunctionAttribute";
@@ -627,13 +589,11 @@ internal static class ScriptPropertyTypeNames
     public const string List = "System.Collections.Generic.List<T>";
     public const string Dictionary = "System.Collections.Generic.Dictionary<TKey, TValue>";
 
-    /// <summary>Metadata (reflection) names for the view types, so the runtime-side table can prove it is
-    /// matching the same types this file matches by display name.</summary>
+    // ScriptPropertyViews checks its typeof table against these, so a renamed view type fails loudly.
     public const string TVectorMetadata = "Lumina.TVector`1";
     public const string THashMapMetadata = "Lumina.THashMap`2";
 
-    /// <summary>The access kinds that are container views. The runtime-side table asserts it covers exactly
-    /// these, so a view kind added to the classifier cannot be missed there.</summary>
+    // The runtime-side table asserts it covers exactly these view kinds.
     public static IReadOnlyList<EScriptAccess> ViewAccessKinds { get; } = new[]
     {
         EScriptAccess.ListView,

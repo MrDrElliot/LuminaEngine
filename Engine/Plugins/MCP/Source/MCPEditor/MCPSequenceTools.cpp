@@ -1,5 +1,6 @@
 #include "MCPSequenceTools.h"
 #include "MCPSceneTools.h"
+#include "MCPServer.h"
 #include "World/ECS/Registry.h"
 
 #include "Agent/AgentAssetResolve.h"
@@ -14,6 +15,7 @@
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Sequence/Sequence.h"
 #include "Assets/Factories/Factory.h"
+#include "Containers/Algorithm.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
@@ -29,6 +31,8 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
+
+#include <functional>
 
 namespace Lumina::MCP
 {
@@ -86,44 +90,6 @@ namespace Lumina::MCP
                 case ESequenceBindingKind::Spawn:  return "Spawn";
                 case ESequenceBindingKind::Camera: return "Camera";
                 default:                           return "Possess";
-            }
-        }
-
-        // Held for the session, since a loaded asset nothing references is freed the moment a player lets go of it, edits and all.
-        TVector<TStrongObjectPtr<CSequence>>& TouchedSequences()
-        {
-            static TVector<TStrongObjectPtr<CSequence>> Touched;
-            return Touched;
-        }
-
-        bool ResolveSequence(const FString& Reference, CSequence*& Out, FString& OutError)
-        {
-            CObject* Asset = nullptr;
-            if (!Agent::ResolveAssetObject(FStringView(Reference), Asset, OutError))
-            {
-                return false;
-            }
-
-            Out = Cast<CSequence>(Asset);
-            if (Out == nullptr)
-            {
-                OutError = Lumina::Format("'{}' is a {}, not a sequence.", Reference, Asset->GetClass()->GetName());
-                return false;
-            }
-
-            TVector<TStrongObjectPtr<CSequence>>& Touched = TouchedSequences();
-            if (std::find_if(Touched.begin(), Touched.end(), [Out](const TStrongObjectPtr<CSequence>& Held) { return Held.Get() == Out; }) == Touched.end())
-            {
-                Touched.Add(Out);
-            }
-            return true;
-        }
-
-        void MarkSequenceDirty(CSequence* Sequence)
-        {
-            if (CPackage* Package = Sequence->GetPackage())
-            {
-                Package->MarkDirty();
             }
         }
 
@@ -444,7 +410,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -472,7 +438,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -489,7 +455,7 @@ namespace Lumina::MCP
                     {
                         Sequence->LetterboxAspect = Math::Min(In.LetterboxAspect, 4.0f);
                     }
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
 
                     Out.Name = FString(*Sequence->GetName().ToString());
                     Out.Duration = Sequence->Duration;
@@ -509,7 +475,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -585,7 +551,7 @@ namespace Lumina::MCP
         {
             CSequence* Sequence = nullptr;
             FString Error;
-            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -621,7 +587,7 @@ namespace Lumina::MCP
 
             Out.Index = Sequence->Bindings.Num();
             Sequence->Bindings.Add(Binding);
-            MarkSequenceDirty(Sequence);
+            MarkAssetDirty(Sequence);
             return Agent::FToolResult::Ok(Lumina::Format("Binding {} is {}.", Out.Index, In.Name));
         }
 
@@ -630,7 +596,7 @@ namespace Lumina::MCP
             CSequence* Sequence = nullptr;
             FString Error;
             int32 Removed = Constants::kIndexNone;
-            if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Removed, Error))
+            if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Removed, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -680,7 +646,7 @@ namespace Lumina::MCP
             }
 
             Sequence->Bindings.RemoveAt(Removed);
-            MarkSequenceDirty(Sequence);
+            MarkAssetDirty(Sequence);
             Out.Index = Removed;
             return Agent::FToolResult::Ok(Lumina::Format("Removed binding {}.", Removed));
         }
@@ -702,7 +668,7 @@ namespace Lumina::MCP
             CSequence* Sequence = nullptr;
             FString Error;
             int32 Binding = Constants::kIndexNone;
-            if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
+            if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -750,7 +716,7 @@ namespace Lumina::MCP
                 }
             }
 
-            MarkSequenceDirty(Sequence);
+            MarkAssetDirty(Sequence);
             return Agent::FToolResult::Ok(Lumina::Format("Track {} is a {} track.", Out.Index, Type->Name));
         }
 
@@ -758,7 +724,7 @@ namespace Lumina::MCP
         {
             CSequence* Sequence = nullptr;
             FString Error;
-            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -767,7 +733,7 @@ namespace Lumina::MCP
             {
                 Out.Index = Sequence->Tracks.Num();
                 Sequence->Tracks.Reset();
-                MarkSequenceDirty(Sequence);
+                MarkAssetDirty(Sequence);
                 return Agent::FToolResult::Ok(Lumina::Format("Removed {} track(s).", Out.Index));
             }
 
@@ -776,7 +742,7 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error(Error);
             }
             Sequence->Tracks.RemoveAt(In.Track);
-            MarkSequenceDirty(Sequence);
+            MarkAssetDirty(Sequence);
             Out.Index = In.Track;
             return Agent::FToolResult::Ok(Lumina::Format("Removed track {}. Later tracks moved down one.", In.Track));
         }
@@ -803,7 +769,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -833,7 +799,7 @@ namespace Lumina::MCP
                     Agent::WriteProperty(Resolved.Property, Resolved.ValuePtr, Current);
                     Out.Previous = Previous.ToString();
                     Out.Current = Current.ToString();
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} is now {}.", In.Path, Out.Current));
                 });
         }
@@ -848,7 +814,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !CheckSequenceTrack(Sequence, In.Track, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -947,7 +913,7 @@ namespace Lumina::MCP
                         Out.KeyCount = Scalar->Curve.NumKeys();
                     }
 
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} now has {} key(s).", In.Channel, Out.KeyCount));
                 });
         }
@@ -988,7 +954,7 @@ namespace Lumina::MCP
             Cut.BlendTime = Math::Max(BlendTime, 0.0f);
             Kept.Add(Cut);
 
-            std::sort(Kept.begin(), Kept.end(), [](const SSequenceCameraCut& A, const SSequenceCameraCut& B) { return A.StartTime < B.StartTime; });
+            Algo::Sort(Kept, [](const SSequenceCameraCut& A, const SSequenceCameraCut& B) { return A.StartTime < B.StartTime; });
             Track->Cuts = Move(Kept);
 
             Sequence->Duration = Math::Max(Sequence->Duration, End);
@@ -1006,7 +972,7 @@ namespace Lumina::MCP
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Camera = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Camera, Camera, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !ParseSequenceBinding(Sequence, In.Camera, Camera, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1016,7 +982,7 @@ namespace Lumina::MCP
                     }
 
                     Out.Index = AddSequenceCut(Sequence, Camera, In.Start, In.End, In.BlendTime);
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} is live from {:.2f}s to {:.2f}s.", SequenceBindingName(Sequence, Camera), In.Start, In.End));
                 });
         }
@@ -1032,7 +998,7 @@ namespace Lumina::MCP
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Binding = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1048,12 +1014,12 @@ namespace Lumina::MCP
                     Key.Time = Math::Max(In.Time, 0.0f);
                     Key.Name = FName(*In.Name);
                     Key.Payload = In.Payload;
-                    auto Where = std::upper_bound(Track->Keys.begin(), Track->Keys.end(), Key.Time,
+                    auto Where = Algo::UpperBound(Track->Keys, Key.Time,
                         [](float Time, const SSequenceEventKey& Other) { return Time < Other.Time; });
                     Track->Keys.Insert(Key, static_cast<int32>(Where - Track->Keys.begin()));
 
                     Out.Index = TrackIndex;
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} fires at {:.2f}s.", In.Name, Key.Time));
                 });
         }
@@ -1069,7 +1035,7 @@ namespace Lumina::MCP
                     CSequence* Sequence = nullptr;
                     FString Error;
                     int32 Binding = Constants::kIndexNone;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error) || !ParseSequenceBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1097,7 +1063,7 @@ namespace Lumina::MCP
                     Track->Clips.Add(Clip);
 
                     Out.Index = TrackIndex;
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} starts at {:.2f}s.", Sound->GetName(), Clip.StartTime));
                 });
         }
@@ -1127,10 +1093,7 @@ namespace Lumina::MCP
 
             KeySequenceCurve(Found->Curve.Curve, Time, Value, Mode);
             Found->Curve.Curve.ComputeAutoTangents();
-            if (std::find(OutTracks.begin(), OutTracks.end(), FoundIndex) == OutTracks.end())
-            {
-                OutTracks.Add(FoundIndex);
-            }
+            OutTracks.AddUnique(FoundIndex);
         }
 
         void RegisterSequenceShot(FStringView Owner)
@@ -1144,7 +1107,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    if (!ResolveSequence(In.Sequence, Sequence, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -1316,10 +1279,7 @@ namespace Lumina::MCP
                         KeySequenceCurve(Shake->Intensity.Curve, In.Start - 0.001f, 0.0f, ECurveInterpMode::Constant);
                         KeySequenceCurve(Shake->Intensity.Curve, In.Start, In.Handheld, ECurveInterpMode::Constant);
                         KeySequenceCurve(Shake->Intensity.Curve, In.End, 0.0f, ECurveInterpMode::Constant);
-                        if (std::find(Out.Tracks.begin(), Out.Tracks.end(), ShakeIndex) == Out.Tracks.end())
-                        {
-                            Out.Tracks.Add(ShakeIndex);
-                        }
+                        Out.Tracks.AddUnique(ShakeIndex);
                     }
 
                     if (In.bCut)
@@ -1331,7 +1291,7 @@ namespace Lumina::MCP
 
                     Out.Camera = CameraName;
                     Out.CameraBinding = Camera;
-                    MarkSequenceDirty(Sequence);
+                    MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} covers {:.2f}s to {:.2f}s with {} key(s).", CameraName, In.Start, In.End, Keys.Num()));
                 });
         }
@@ -1369,7 +1329,7 @@ namespace Lumina::MCP
         {
             CSequence* Sequence = nullptr;
             FString Error;
-            if (!ResolveSequence(In.Sequence, Sequence, Error))
+            if (!ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -1424,7 +1384,7 @@ namespace Lumina::MCP
             }
 
             CSequence* Only = nullptr;
-            if (!In.Sequence.IsEmpty() && !ResolveSequence(In.Sequence, Only, Error))
+            if (!In.Sequence.IsEmpty() && !ResolveEditableAsset(FStringView(In.Sequence), Only, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -1497,7 +1457,7 @@ namespace Lumina::MCP
             }
 
             CSequence* Sequence = nullptr;
-            if (!In.Sequence.IsEmpty() && !ResolveSequence(In.Sequence, Sequence, Error))
+            if (!In.Sequence.IsEmpty() && !ResolveEditableAsset(FStringView(In.Sequence), Sequence, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }

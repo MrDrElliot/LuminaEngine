@@ -28,6 +28,16 @@ namespace Lumina::SessionOps
                 : nullptr;
         }
 
+        FEditorUI* RequireUI(FString& OutError)
+        {
+            FEditorUI* UI = FindUI();
+            if (UI == nullptr)
+            {
+                OutError = "The editor UI is not running.";
+            }
+            return UI;
+        }
+
         FWorldEditorTool* FindSceneEditor()
         {
             FEditorUI* UI = FindUI();
@@ -78,7 +88,7 @@ namespace Lumina::SessionOps
                 return RequireSceneTarget(OutError);
             }
 
-            FEditorUI* UI = FindUI();
+            FEditorUI* UI = RequireUI(OutError);
             return UI != nullptr ? UI->FindTab(Tab, OutError) : nullptr;
         }
     }
@@ -91,7 +101,7 @@ namespace Lumina::SessionOps
             return true;
         }
 
-        FEditorUI* UI = FindUI();
+        FEditorUI* UI = RequireUI(OutError);
         FEditorTool* Tool = UI != nullptr ? UI->FindTab(TabName, OutError) : nullptr;
         if (Tool == nullptr)
         {
@@ -451,27 +461,22 @@ namespace Lumina::SessionOps
 
     bool FocusTab(FStringView Name, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
-        if (UI == nullptr)
-        {
-            OutError = GNoSceneEditor;
-            return false;
-        }
-        return UI->FocusTab(Name, OutError);
+        FEditorUI* UI = RequireUI(OutError);
+        return UI != nullptr && UI->FocusTab(Name, OutError);
+    }
+
+    bool OpenToolPanel(FStringView Name, FString& OutError)
+    {
+        FEditorUI* UI = RequireUI(OutError);
+        return UI != nullptr && UI->OpenToolPanel(Name, OutError);
     }
 
     namespace
     {
         CEdNodeGraph* FindTabGraph(FStringView Tab, FString& OutError)
         {
-            FEditorUI* UI = FindUI();
-            if (UI == nullptr)
-            {
-                OutError = GNoSceneEditor;
-                return nullptr;
-            }
-
-            FEditorTool* Tool = UI->FindTab(Tab, OutError);
+            FEditorUI* UI = RequireUI(OutError);
+            FEditorTool* Tool = UI != nullptr ? UI->FindTab(Tab, OutError) : nullptr;
             if (Tool == nullptr)
             {
                 return nullptr;
@@ -565,14 +570,8 @@ namespace Lumina::SessionOps
 
     CWorld* GetTabWorld(FStringView Name, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
-        if (UI == nullptr)
-        {
-            OutError = GNoSceneEditor;
-            return nullptr;
-        }
-
-        FEditorTool* Tool = UI->FindTab(Name, OutError);
+        FEditorUI* UI = RequireUI(OutError);
+        FEditorTool* Tool = UI != nullptr ? UI->FindTab(Name, OutError) : nullptr;
         if (Tool == nullptr)
         {
             return nullptr;
@@ -587,13 +586,8 @@ namespace Lumina::SessionOps
 
     bool FloatTab(FStringView Name, const FVector2& ScreenPosition, const FVector2& Size, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
-        if (UI == nullptr)
-        {
-            OutError = GNoSceneEditor;
-            return false;
-        }
-        return UI->FloatTab(Name, ScreenPosition, Size, OutError);
+        FEditorUI* UI = RequireUI(OutError);
+        return UI != nullptr && UI->FloatTab(Name, ScreenPosition, Size, OutError);
     }
 
     bool BrowseContentFolder(FStringView Folder, FStringView Search, FString& OutError)
@@ -609,13 +603,8 @@ namespace Lumina::SessionOps
 
     bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
-        if (UI == nullptr)
-        {
-            OutError = GNoSceneEditor;
-            return false;
-        }
-        return UI->CloseTab(Name, bDiscardUnsaved, OutError);
+        FEditorUI* UI = RequireUI(OutError);
+        return UI != nullptr && UI->CloseTab(Name, bDiscardUnsaved, OutError);
     }
 
     TVector<FString> GetDirtyPackagePaths()
@@ -634,10 +623,9 @@ namespace Lumina::SessionOps
 
     bool SaveAll(uint32& OutSaved, TVector<FString>& OutFailedPaths, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
+        FEditorUI* UI = RequireUI(OutError);
         if (UI == nullptr)
         {
-            OutError = "The editor UI is not running.";
             return false;
         }
 
@@ -687,10 +675,9 @@ namespace Lumina::SessionOps
 
     bool Quit(EQuitUnsaved Unsaved, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
+        FEditorUI* UI = RequireUI(OutError);
         if (UI == nullptr)
         {
-            OutError = "The editor UI is not running.";
             return false;
         }
 
@@ -726,10 +713,9 @@ namespace Lumina::SessionOps
 
     bool OpenAsset(const FGuid& AssetGUID, FString& OutTabId, FString& OutError)
     {
-        FEditorUI* UI = FindUI();
+        FEditorUI* UI = RequireUI(OutError);
         if (UI == nullptr)
         {
-            OutError = "The editor UI is not running.";
             return false;
         }
 

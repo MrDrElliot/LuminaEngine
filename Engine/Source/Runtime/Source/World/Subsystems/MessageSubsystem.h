@@ -1,9 +1,8 @@
 #pragma once
 
 #include "Containers/Name.h"
-#include "Containers/Optional.h"
-#include "HierarchicalTags/GameplayMessageBus.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Memory/SmartPtr.h"
 #include "Scripting/ScriptCallback.h"
 #include "World/ECS/Entity.h"
 #include "World/Subsystems/WorldSubsystem.h"
@@ -11,6 +10,8 @@
 
 namespace Lumina
 {
+    class FGameplayMessageBus;
+
     // The world's gameplay message bus and event queue access, with typed sending and listening for C# built over these.
     REFLECT()
     class RUNTIME_API CMessageSubsystem : public CWorldSubsystem
@@ -18,6 +19,9 @@ namespace Lumina
         GENERATED_BODY()
 
     public:
+
+        CMessageSubsystem();
+        ~CMessageSubsystem() override;
 
         // The key C++ and C# senders share for a message type name.
         FUNCTION(ScriptInternal)
@@ -63,6 +67,6 @@ namespace Lumina
     private:
 
         // Built in OnInitialize, since it records deferred sends against the world's command bus.
-        TOptional<FGameplayMessageBus> Bus;
+        TUniquePtr<FGameplayMessageBus> Bus;
     };
 }

@@ -309,7 +309,7 @@ namespace Lumina::Avoidance
         Hash *= 2246822519u;
         Hash ^= Hash >> 13;
 
-        const float Angle = (float)(Hash & 0xFFFFu) * (6.28318531f / 65536.0f);
+        const float Angle = (float)(Hash & 0xFFFFu) * (Math::TwoPi<float>() / 65536.0f);
         PrefX += Math::Cos(Angle) * Magnitude;
         PrefZ += Math::Sin(Angle) * Magnitude;
     }

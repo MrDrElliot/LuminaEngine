@@ -16,9 +16,10 @@ namespace Lumina
     }
 
     FScopedInputMode::FScopedInputMode(FScopedInputMode&& Other) noexcept
-        : World(std::move(Other.World))
-        , Id(std::exchange(Other.Id, 0))
+        : World(Move(Other.World))
+        , Id(Other.Id)
     {
+        Other.Id = 0;
     }
 
     FScopedInputMode& FScopedInputMode::operator=(FScopedInputMode&& Other) noexcept
@@ -26,8 +27,9 @@ namespace Lumina
         if (this != &Other)
         {
             Reset();
-            World = std::move(Other.World);
-            Id = std::exchange(Other.Id, 0);
+            World = Move(Other.World);
+            Id = Other.Id;
+            Other.Id = 0;
         }
         return *this;
     }

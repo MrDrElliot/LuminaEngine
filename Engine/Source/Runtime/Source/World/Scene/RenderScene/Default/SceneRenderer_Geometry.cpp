@@ -270,8 +270,51 @@ namespace Lumina
                                  Extent, VisRT.Desc.Format);
         }
 
+        // Once per frame, in the camera's last geometry phase, since the proxies are not occlusion culled and need no replay.
+        const bool bTwoPhaseView = ViewIndex < static_cast<uint32>(Frame.Views.CullViews.Num())
+                                && (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) != 0u;
+        if (ViewIndex == 0u && (Phase == ECullPhase::Late || !bTwoPhaseView))
+        {
+            DrawFarProxies(CL, Extent, VisRT.Desc.Format);
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+    }
+
+    void FDefaultSceneRenderer::DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat)
+    {
+        static const FShaderH ProxyVertex = FShaderLibrary::Get("ProxyVisBufferVert.slang");
+        static const FShaderH ProxyPixel  = FShaderLibrary::Get("ProxyVisBufferPixel.slang");
+        if (ProxyVertex == nullptr || ProxyPixel == nullptr || !bCullBucketsValid)
+        {
+            return;
+        }
+
+        const uint8 Slot = CurrentFrameSlot;
+        if (!ProxyListRing[Slot] || !ProxyDrawArgsRing[Slot] || ProxyListCapacity == 0u || !RetainedProxyBuffer)
+        {
+            return;
+        }
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        if (Settings != nullptr && (!Settings->bFarProxies || Settings->ProxyTransitionPixels <= 0.0f))
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Far Proxies", tracy::Color::Red);
+        SCENE_GPU_SCOPE(CL, "Far Proxies");
+
+        FGraphicsPipelineKey Key;
+        Key.VS          = ProxyVertex;
+        Key.PS          = ProxyPixel;
+        Key.DepthFormat = EFormat::D32;
+        Key.ColorTargets.Add({ VisFormat, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        RHI::CmdDrawIndirect(CL, MakeArgs(), ProxyDrawArgsRing[Slot], 1u, sizeof(RHI::FDrawIndirectArguments));
     }
 
     void FDefaultSceneRenderer::CustomDepthStencilPass(RHI::FCmdListH CL)
@@ -436,7 +479,7 @@ namespace Lumina
 
         const FFrameData& Frame = *RenderFrame;
         const uint32 NumViews  = (uint32)Run.Views.Num();
-        const uint32 NumGroups = (NumViews + ViewsPerDraw - 1u) / ViewsPerDraw;
+        const uint32 NumGroups = RenderUtils::GetGroupCount(NumViews, ViewsPerDraw);
         const RHI::TGPUSpan<FShadowRasterViewGPU> AllViews = RHI::CopyTransientArray(Run.Views.GetData(), Run.Views.Num());
 
         const auto SetGroupViewports = [&](uint32 First)
@@ -1222,7 +1265,7 @@ namespace Lumina
                             {
                                 DeferFree(Buffer);
                             }
-                            Buffer = CreateSceneBuffer(std::max<uint64>(SizeBytes, 16ull), DebugName);
+                            Buffer = CreateSceneBuffer(Math::Max<uint64>(SizeBytes, 16ull), DebugName);
                         }
                     };
 
@@ -1619,7 +1662,7 @@ namespace Lumina
                 Push.Resolution         = (uint32)TerrainItem.Resolution;
                 Push.FullDensityDistance = Species.FullDensityDistance;
 
-                const uint32 Groups = (GridSide + 7u) / 8u;
+                const uint32 Groups = RenderUtils::GetGroupCount(GridSide, 8u);
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);
                 bAnyDispatched = true;
             }
@@ -1654,7 +1697,7 @@ namespace Lumina
                 Push.CullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(RetainedCullEntryBuffer, Item.SlotBase, Item.Capacity);
                 Push.Cursor      = { Item.Cursor };
                 Push.PrevCursor  = { Item.PrevCursor };
-                RHI::CmdDispatch(CL, MakeArgs(Push), (Item.Capacity + 63u) / 64u, 1u, 1u);
+                RHI::CmdDispatch(CL, MakeArgs(Push), RenderUtils::GetGroupCount(Item.Capacity, 64u), 1u, 1u);
             }
 
             // Four bytes each, kept on the GPU for the retire and copied out for the budget warning.

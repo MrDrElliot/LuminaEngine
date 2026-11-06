@@ -16,58 +16,29 @@ namespace Lumina
 {
     class CTexture;
 
-    /**
-     * Decides how much of each texture's mip chain is resident on the GPU.
-     *
-     * Textures load holding only their inline tail (see kInlineMipMaxDimension) and are promoted from there
-     * on demand -- by an explicit Pin (an editor tab wants the real thing) or by the renderer reporting how
-     * much of the screen the texture actually covers.
-     *
-     * Each frame runs Wanted -> Budgeted -> residency. WantedFirstMip is pure quality from coverage;
-     * BudgetedFirstMip reconciles it against the pool, shedding a single mip at a time across the whole
-     * set in retention order so the scene degrades uniformly rather than a few textures collapsing.
-     * Residency then follows Budgeted in both directions.
-     *
-     * The whole scheme rests on RHI::Textures::Recreate repointing the existing bindless heap slot instead
-     * of allocating a new one. A texture's ResourceID is baked into every material uniform block that
-     * samples it and is never revisited, so a residency change that moved the slot would silently repoint
-     * those materials at whatever landed there next. See project bindless-slot-lifetime notes.
-     */
+    // Decides how much of each texture's mip chain is resident, relying on Textures::Recreate keeping its bindless slot.
     class FTextureStreamingManager
     {
     public:
 
-        /** Optional-subsystem accessor, same contract as TryRender(): null when headless, during early
-         *  init, and after shutdown. Never asserts -- a texture built before the renderer exists has to be
-         *  able to skip registration rather than take the process down. */
+        // Null when headless, during early init and after shutdown, so a texture skips registration instead of asserting.
         RUNTIME_API static FTextureStreamingManager* TryGet();
 
         static void Initialize();
         static void Shutdown();
 
-        /** Called from CTexture::PostLoad once the inline tail is on the GPU. Ignores non-streamable
-         *  textures (fully inline chains) -- there is nothing to decide for them. */
+        // Called from CTexture::PostLoad, and ignores textures whose whole chain is inline.
         void RegisterTexture(CTexture* Texture);
         void UnregisterTexture(CTexture* Texture);
 
-        /** Hold Texture fully resident until a matching Unpin. Reference counted: two editor tabs on one
-         *  texture each hold their own claim, and the texture stays pinned until both are closed. Pinned
-         *  textures are exempt from budget eviction, so a pin is a promise, not a hint. */
+        // Reference counted, and a pinned texture is exempt from budget eviction.
         RUNTIME_API void Pin(CTexture* Texture);
         RUNTIME_API void Unpin(CTexture* Texture);
 
-        /** Per-frame: retire completed IO, apply residency changes, evict when over budget.
-         *  Game thread only -- it calls CTexture::ApplyMipResidency, which touches the RHI. */
+        // Game thread only, since applying residency touches the RHI.
         void Update();
 
-        /** GPU feedback, indexed by MATERIAL slot: Masks[Slot] is the OR of the absolute resolutions every
-         *  pixel shading that material needed (see RequestMaterialResolution in SceneGlobals.slang). One
-         *  atomic per pixel rather than one per texture sample, which is the whole reason it is keyed this
-         *  way; the per-texture demand is recovered here by expanding each material slot through the
-         *  uniform mirror's texture IDs, and a required RESOLUTION lands on the right mip for each texture
-         *  regardless of their differing sizes.
-         *
-         *  Called once per frame on the game thread with a readback that is kFramesInFlight old. */
+        // Masks is indexed by material slot and holds the resolutions its pixels needed, read back kFramesInFlight late.
         RUNTIME_API void SubmitMaterialFeedback(const uint32* Masks, uint32 Count);
 
         struct FStats
@@ -93,8 +64,7 @@ namespace Lumina
 
         RUNTIME_API FStats GetStats() const;
 
-        /** One row per registered texture, for the streaming debug tool. Copies rather than exposing the
-         *  live array, because the tool draws from the game thread while loads complete on workers. */
+        // Copied rather than live, because the debug tool draws while loads complete on workers.
         struct FTextureSnapshot
         {
             FName    Name;
@@ -117,8 +87,7 @@ namespace Lumina
 
             uint32   PinCount = 0;
 
-            /** GPU feedback, relative to current residency: bit N = "mip N of what is resident was
-             *  sampled". 0 with bFeedbackValid means nothing sampled it this readback. */
+            // Bit N means mip N of the resident chain was sampled.
             uint32   FeedbackMask  = 0;
             bool     bFeedbackValid = false;
             uint64   FramesSinceDemand = 0;
@@ -142,62 +111,47 @@ namespace Lumina
         {
             TWeakObjectPtr<CTexture> Texture;
 
-            /** Bytes the GPU image currently holds, cached so the budget sweep doesn't re-walk every mip. */
+            // Cached so the budget sweep does not re-walk every mip.
             uint64 ResidentBytes = 0;
             uint64 FullBytes     = 0;
 
             uint32 PinCount = 0;
 
-            /** Quality target, from coverage alone, ignoring the pool entirely. 0 == fully resident. */
+            // Quality target from coverage alone, where 0 is fully resident.
             uint8  WantedFirstMip = 0;
 
-            /** What the pool actually allows: starts at WantedFirstMip and is pushed coarser only when the
-             *  budget cannot hold everything. Keeping these separate is what stops the budgeter and the
-             *  quality policy overwriting each other -- with one field, "what we want" was indistinguishable
-             *  from "what we settled for", and the eviction pass had to clobber it every frame. */
+            // WantedFirstMip pushed coarser only when the budget cannot hold everything.
             uint8  BudgetedFirstMip = 0;
 
-            /** Highest residency the texture can drop to -- its inline tail. */
+            // The inline tail, the lowest residency the texture can drop to.
             uint8  TailFirstMip = 0;
 
-            /** Frame of the last non-trivial demand, for retention priority. */
+            // Frame of the last non-trivial demand, for retention priority.
             uint64 LastDemandFrame = 0;
 
-            /** Consecutive frames the budget has wanted this texture coarser than it currently is. A
-             *  dead-band against thrash: crossing a mip boundary while walking past a wall would otherwise
-             *  demote and re-promote every few frames, and each swap is a full image realloc + re-upload. */
+            // Dead band against demote and re-promote thrash at a mip boundary.
             uint16 FramesWantingCoarser = 0;
 
-            /** GPU feedback: the mip mask the shaders OR'd for this texture's heap slot, RELATIVE to what
-             *  is resident (bit 0 = "the finest mip I have is still not fine enough"). ~0u == the readback
-             *  reported nothing, which is different from "reported 0": not sampled at all. */
+            // Mip mask relative to residency, where bit 0 means the finest resident mip is not fine enough.
             uint32 FeedbackMask = 0u;
             bool   bFeedbackValid = false;
 
-            /** Frame the last non-empty feedback arrived, for the not-sampled-in-a-while decay. */
+            // Frame the last non-empty feedback arrived, for the not-sampled decay.
             uint64 LastFeedbackFrame = 0;
 
             bool   bLoadInFlight = false;
         };
 
-        /** One in-flight promotion. The worker only reads bytes off disk; the residency change itself is
-         *  applied on the game thread, because it touches the RHI and the CTexture. */
+        // The worker only reads bytes, and the residency change is applied on the game thread.
         struct FPendingLoad
         {
             TWeakObjectPtr<CTexture> Texture;
             uint8                    TargetFirstMip = 0;
 
-            /** Bytes for levels [TargetFirstMip, SourceFirstMip) of EVERY layer, laid out layer-major --
-             *  see SliceIndex. An array texture needs all of its layers before ApplyMipResidency will
-             *  accept the promotion (it rejects on any layer having empty pixels), so loading only
-             *  layer 0 leaves it retrying the same read forever, pinned at its inline tail. */
+            // Levels [TargetFirstMip, SourceFirstMip) of every layer in SliceIndex order, since an array promotes only whole.
             TVector<TVector<uint8>>  MipBytes;
 
-            /** Where each of those slices lives on disk, snapshotted on the GAME THREAD when the load is
-             *  issued. The worker must not reach back into the texture for them: a save refills
-             *  FMip::Pixels and a re-cook resizes Mips outright, and either one under a running read is a
-             *  use-after-free. Invalid here means the slice was handed over already resident in MipBytes
-             *  (or that there was nothing to read, which fails the load). */
+            // Taken on the game thread at issue because a save or re-cook would free them mid-read; invalid means already in MipBytes.
             TVector<FBulkDataRef>    MipRefs;
 
             // The package's bulk generation when those refs were taken; a save since then invalidates them.
@@ -222,28 +176,24 @@ namespace Lumina
         FStreamingTexture* Find(CTexture* Texture);
 
 
-        /** Turn this frame's coverage reports into WantedFirstMip. Pure quality, no budget. */
+        // Pure quality from coverage, ignoring the budget.
         void ComputeWantedMips();
 
-        /** Reconcile Wanted against the pool into BudgetedFirstMip. Under budget the two are identical;
-         *  over it, mips are shed ONE AT A TIME across the whole set in retention order, so the scene
-         *  degrades uniformly instead of a few textures collapsing to their tail. */
+        // Sheds one mip at a time across the set in retention order until the pool holds it.
         void ComputeBudgetedMips();
 
-        /** Bring residency down to BudgetedFirstMip. Never needs IO -- everything between the tail and the
-         *  current level is already in memory. */
+        // Never needs IO, since every mip between the tail and the current level is in memory.
         void ApplyDemotions();
 
-        /** Kick IO for textures below their budget, most-starved first. */
+        // Kicks IO for textures below their budget, most starved first.
         void IssuePromotions();
 
-        /** Apply completed loads and drop finished records. */
         void ProcessCompletedLoads();
 
-        /** Push the staged images' remaining host uploads, within this frame's shared budget. */
+        // Pushes staged host uploads within this frame's shared budget.
         void TickResidencyFills();
 
-        /** Higher = keep. Pinned is unbeatable; otherwise recent, high-coverage textures hold their mips. */
+        // Higher keeps, with pinned always winning and then recent high-coverage textures.
         static float RetentionPriority(const FStreamingTexture& Entry, uint64 FrameCounter);
 
         uint64 GetBudgetBytes() const;
@@ -256,10 +206,7 @@ namespace Lumina
         TVector<FStreamingTexture>              Textures;
         THashMap<CTexture*, uint32>             TextureToIndex;
 
-        /** Bindless sampled slot -> index into Textures. Rebuilt inside SubmitMaterialFeedback rather than
-         *  maintained, because a slot moves whenever a texture is recreated and a mapping that has to be
-         *  kept in sync is exactly what made the previous material-keyed attempt fail silently. Held as a
-         *  member only to keep its storage across frames. */
+        // Bindless slot to Textures index, rebuilt every submit because a slot moves when its texture is recreated.
         THashMap<uint32, uint32>                SlotToEntry;
 
         TVector<TUniquePtr<FPendingLoad>>       PendingLoads;
@@ -267,9 +214,7 @@ namespace Lumina
         // Sum of StagingBytes over PendingLoads; charged at issue, refunded when the load is retired.
         uint64                                  PendingLoadBytes = 0;
 
-        /** Host-upload bytes left this frame, reset at the top of Update and drawn down by BOTH the staged
-         *  fills and the newly applied loads. Shared deliberately: two stages each spending "the budget"
-         *  would land twice the spike MaxUploadMBPerFrame names. */
+        // Shared by staged fills and newly applied loads, so one frame never uploads more than MaxUploadMBPerFrame.
         uint64                                  FrameUploadBudget = 0;
 
         // Residency changes left this frame, promotions and demotions together. Meters image create/retire
@@ -279,14 +224,10 @@ namespace Lumina
         // Set when a promotion was refused because the pool was full, which lets demotions skip their dead band.
         bool                                    bPromotionBlockedByPool = false;
 
-        /** Where TickResidencyFills starts spending the frame's budget, advanced every frame. Registry
-         *  order alone let whatever sits early take all of it, every frame, forever -- see the comment
-         *  there. Purely a fairness hint: it indexes a list that registration reorders, and nothing about
-         *  correctness depends on where it lands. */
+        // Rotating start for TickResidencyFills, so early entries cannot take the whole budget every frame.
         int32                                   FillCursor = 0;
 
-        /** Guards Textures/TextureToIndex against registration from the async-load path and from
-         *  CTexture::OnDestroy, both of which can run while Update is walking the list. */
+        // Guards Textures and TextureToIndex against the async-load path and CTexture::OnDestroy.
         mutable FMutex                          Mutex;
 
         uint64  FrameCounter = 0;

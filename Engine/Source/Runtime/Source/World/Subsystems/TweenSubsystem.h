@@ -170,7 +170,7 @@ namespace Lumina
 
         void OnTeardown() override;
 
-        // The world's resource, so STweenSystem and this subsystem share one instance.
+        // The world's resource, so CTweenSystem and this subsystem share one instance.
         FTweenManager& GetTweenManager() { return *EnsureTweenManager(); }
 
     private:

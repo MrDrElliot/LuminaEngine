@@ -24,7 +24,7 @@ namespace Lumina
             }
 
             const float Reach         = LODReach(View, Sphere);
-            const float ErrorScale    = View.LODErrorScale * MaxScale;
+            const float ErrorScale    = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
 
             uint32 Picked = 0;
             for (uint32 i = 1; i < NumLODs; ++i)
@@ -756,9 +756,13 @@ namespace Lumina
             }
             ++NumLiveBatches;
 
-            if (DrawCommands[i].bTranslucent)
+            const FMeshDrawCommand& Command = DrawCommands[i];
+            if (Command.bTranslucent)
             {
                 TranslucentDrawList.Add(i);
+                const bool bUnordered = Command.bAdditive || Command.bModulate;
+                Frame.Geometry.bHasUnorderedTranslucency |= bUnordered;
+                Frame.Geometry.bHasBlendedTranslucency   |= !bUnordered;
             }
             else if (!DrawCommands[i].bMasked)
             {

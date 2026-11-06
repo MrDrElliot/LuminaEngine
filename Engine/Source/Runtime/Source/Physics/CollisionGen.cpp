@@ -308,4 +308,10 @@ namespace Lumina::Physics::CollisionGen
         }
         return false;
     }
+
+    bool IsConcaveMeshCollider(const CStaticMesh& Mesh, bool bConvex)
+    {
+        const SMeshCollision* Collision = Mesh.GetCollision();
+        return Collision != nullptr ? Collision->IsConcave() : !bConvex;
+    }
 }

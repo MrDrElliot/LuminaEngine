@@ -10,6 +10,7 @@
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Serialization/Archiver.h"
 #include "Renderer/SkeletonResource.h"
+#include "World/ECS/Entity.h"
 #include "AnimationGraphVM.generated.h"
 
 namespace Lumina

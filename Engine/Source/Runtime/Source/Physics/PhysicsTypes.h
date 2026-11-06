@@ -27,7 +27,7 @@ namespace Lumina
         Channel12   = BIT(14),
         Channel13   = BIT(15),
 
-        /** Every layer, which is what an unfiltered query means. */
+        // Every layer, which is what an unfiltered query means.
         All         = 0xFFFF,
     };
     
@@ -44,11 +44,11 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        /** Collision layer this body belongs to, determines which layers can see it. */
+        // Collision layer this body belongs to, determines which layers can see it.
         PROPERTY(Editable)
         ECollisionProfiles Layer    = ECollisionProfiles::Dynamic;
 
-        /** Bitmask of layers this body collides against. */
+        // Bitmask of layers this body collides against.
         PROPERTY(Editable)
         ECollisionProfiles Mask     = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
         
@@ -83,8 +83,7 @@ namespace Lumina
         Dynamic,
     };
 
-    /** Joint type for SPhysicsConstraintComponent / World.Physics constraints. Order is the wire contract
-        shared with the C# Physics facade and the native SConstraintDesc switch -- append only. */
+    // Append only, since the order is shared with the C# Physics facade and the native SConstraintDesc switch.
     REFLECT()
     enum class EPhysicsConstraintType : uint8
     {

@@ -22,7 +22,7 @@ namespace Lumina
 		constexpr uint32 kDefaultPeriodFrames = 480;
 		constexpr uint32 kPeriodsPerBuffer    = 4;
 
-		/** libasound resolved at runtime, so a machine without it loses audio rather than failing to launch. */
+		// libasound resolved at runtime, so a machine without it loses audio rather than failing to launch.
 		struct FAlsaApi
 		{
 			void* Library = nullptr;

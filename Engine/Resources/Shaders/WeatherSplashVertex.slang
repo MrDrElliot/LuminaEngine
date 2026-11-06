@@ -25,7 +25,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     }
 
     const float  T       = Age / Lifetime;
-    const float3 Normal  = UnpackUnitVector(Splash.PackedNormal);
+    const float3 Normal  = UnpackNormal(Splash.PackedNormal);
     const float2 LightRG = UnpackHalf2(Splash.PackedLightRG);
     const float3 Color   = float3(LightRG, f16tof32(Splash.PackedLightB & 0xFFFFu));
     // Faded right at the lens, where a splash would fill the screen.
@@ -63,8 +63,8 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
         }
 
         const float Segment = float(Element - 1u) + (Corner.x * 0.5 + 0.5);
-        const float Angle   = Segment / float(kCrownSegments) * 6.2831853;
-        const float Rise    = sin(3.14159 * saturate(T * 1.6));
+        const float Angle   = Segment / float(kCrownSegments) * TWO_PI;
+        const float Rise    = sin(PI * saturate(T * 1.6));
         const float Base    = 0.04 + 0.16 * Scale * sqrt(T);
         const float Radius  = lerp(Base, Base * 1.3, Corner.y);
         const float Height  = 0.18 * Scale * Rise * Corner.y;
@@ -87,7 +87,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     }
 
     uint Seed = Splash.Seed ^ (Droplet * 0x9E3779B9u);
-    const float Angle  = WeatherRandom(Seed) * 6.2831853;
+    const float Angle  = WeatherRandom(Seed) * TWO_PI;
     const float Up     = (0.7 + 0.6 * WeatherRandom(Seed)) * (1.0 + 1.1 * Scale);
     const float Spread = (0.3 + 0.7 * WeatherRandom(Seed)) * (0.4 + 0.6 * Scale);
 

@@ -8,7 +8,7 @@
 namespace Lumina
 {
     /**
-     * Third-person camera boom. Processed by SCameraRigSystem: it places the
+     * Third-person camera boom. Processed by CCameraRigSystem: it places the
      * camera entity a fixed distance behind a pivot (the Target entity, or the
      * camera's own position if unset), oriented by the control rotation. With
      * bDoCollisionTest the boom shortens via a physics sphere-cast so the camera

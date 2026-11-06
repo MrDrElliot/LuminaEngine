@@ -11,8 +11,7 @@ namespace Lumina
 
         namespace Internal
         {
-            /** Publishes the live device and returns the previous one, which the caller then owns.
-                Audio::Initialize/Shutdown own this; nothing else should call it. */
+            // Swaps in the live device and hands the previous one back to the caller, only Audio::Initialize and Shutdown call it.
             RUNTIME_API IAudioContext* SetContext(IAudioContext* Context);
         }
     }

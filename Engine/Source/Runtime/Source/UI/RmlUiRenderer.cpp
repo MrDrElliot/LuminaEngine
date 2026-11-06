@@ -296,8 +296,7 @@ namespace Lumina
                 continue;
             }
 
-            FreeLayers[i] = FreeLayers.Last();
-            FreeLayers.Pop();
+            FreeLayers.RemoveAtSwap(i);
             Candidate.LastUsedFrame = EngineFrameCounter;
             return Index;
         }
@@ -320,8 +319,7 @@ namespace Lumina
             }
             Stale.SampledSlot = RHI::kInvalidHeapSlot;
             Stale.Size = FUIntVector2(0, 0);
-            FreeLayers[i] = FreeLayers.Last();
-            FreeLayers.Pop();
+            FreeLayers.RemoveAtSwap(i);
         }
 
         uint32 LiveLayers = 0;
@@ -477,8 +475,7 @@ namespace Lumina
                 RHI::Textures::Release(Layer.Color);
                 Layer.SampledSlot = RHI::kInvalidHeapSlot;
                 Layer.Size = FUIntVector2(0, 0);
-                FreeLayers[i] = FreeLayers.Last();
-                FreeLayers.Pop();
+                FreeLayers.RemoveAtSwap(i);
                 continue;
             }
             ++i;
@@ -684,8 +681,7 @@ namespace Lumina
             if (Retired.Frame + GFramesInFlight <= EngineFrameCounter)
             {
                 ReleaseTextureNow(Retired.Handle);
-                DeferredTextureReleases[i] = DeferredTextureReleases.Last();
-                DeferredTextureReleases.Pop();
+                DeferredTextureReleases.RemoveAtSwap(i);
                 continue;
             }
             ++i;
@@ -1309,18 +1305,9 @@ namespace Lumina
         // Anything the stream names is withheld for the whole replay, or a composite scratch lands on its own source.
         auto Withhold = [&](uint32 Index)
         {
-            if (Index == kNoLayer)
+            if (Index != kNoLayer)
             {
-                return;
-            }
-            for (int32 i = 0; i < FreeLayers.Num(); ++i)
-            {
-                if (FreeLayers[i] == Index)
-                {
-                    FreeLayers[i] = FreeLayers.Last();
-                    FreeLayers.Pop();
-                    return;
-                }
+                FreeLayers.RemoveSingleSwap(Index);
             }
         };
 
@@ -2084,7 +2071,7 @@ namespace Lumina
         if (Transform)
         {
             // RmlUi defaults column-major (matches our matrices); RMLUI_MATRIX_ROW_MAJOR would require a transpose.
-            std::memcpy(Math::ValuePtr(UserTransform), Transform->data(), sizeof(float) * 16);
+            Memory::Memcpy(Math::ValuePtr(UserTransform), Transform->data(), sizeof(float) * 16);
         }
         else
         {

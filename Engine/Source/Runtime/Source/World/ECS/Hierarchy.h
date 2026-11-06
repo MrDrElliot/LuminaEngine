@@ -98,24 +98,19 @@ namespace Lumina::ECS
             }
         }
 
-        // Parents before children and siblings in order, without building the preorder.
+        // Parents before children and siblings in order, walking the links, so Func must not edit links under Root.
         template<typename TFunc>
         void ForEachDescendant(FEntity Root, TFunc&& Func) const
         {
-            TVector<FEntity> Pending;
-            for (FEntity Child = GetLastChild(Root); !Child.IsNull(); Child = GetPrevSibling(Child))
+            for (FEntity Current = GetFirstChild(Root); !Current.IsNull();)
             {
-                Pending.Add(Child);
-            }
-            while (!Pending.IsEmpty())
-            {
-                const FEntity Current = Pending.Last();
-                Pending.Pop();
                 Func(Current);
-                for (FEntity Child = GetLastChild(Current); !Child.IsNull(); Child = GetPrevSibling(Child))
+                FEntity Next = GetFirstChild(Current);
+                for (FEntity Up = Current; Next.IsNull() && !Up.IsNull() && Up != Root; Up = GetParent(Up))
                 {
-                    Pending.Add(Child);
+                    Next = GetNextSibling(Up);
                 }
+                Current = Next;
             }
         }
 

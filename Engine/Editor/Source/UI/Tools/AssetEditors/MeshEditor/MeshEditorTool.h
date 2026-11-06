@@ -35,7 +35,6 @@ namespace Lumina
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
-        void OnAssetLoadFinished() override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
 
         // Mesh-specific rows inside the shared Visualize menu (was the separate "Mesh Debug" menu).

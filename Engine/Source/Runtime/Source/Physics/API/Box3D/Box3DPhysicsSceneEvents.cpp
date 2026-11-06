@@ -1,5 +1,5 @@
 #include "RuntimePCH.h"
-#include <algorithm>
+#include "Containers/Algorithm.h"
 #include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
@@ -76,18 +76,18 @@ namespace Lumina::Physics
 
         auto FillPair = [&](FContactRecord& Record, b3ShapeId ShapeA, b3ShapeId ShapeB)
         {
-            const b3BodyId BodyA = b3Shape_GetBody(ShapeA);
-            const b3BodyId BodyB = b3Shape_GetBody(ShapeB);
+            // An end event can name a shape destroyed this step, so that side resolves to no body instead of a recycled slot.
+            const bool bValidA = b3Shape_IsValid(ShapeA);
+            const bool bValidB = b3Shape_IsValid(ShapeB);
+            const b3BodyId BodyA = bValidA ? b3Shape_GetBody(ShapeA) : b3_nullBodyId;
+            const b3BodyId BodyB = bValidB ? b3Shape_GetBody(ShapeB) : b3_nullBodyId;
 
-            void* UserA = b3Body_IsValid(BodyA) ? b3Body_GetUserData(BodyA) : nullptr;
-            void* UserB = b3Body_IsValid(BodyB) ? b3Body_GetUserData(BodyB) : nullptr;
-
-            Record.EntityA = UnpackEntity(UserA);
-            Record.EntityB = UnpackEntity(UserB);
-            Record.BodyIDA = UnpackHandle(UserA);
-            Record.BodyIDB = UnpackHandle(UserB);
-            Record.bSensorA = b3Shape_IsSensor(ShapeA);
-            Record.bSensorB = b3Shape_IsSensor(ShapeB);
+            Record.EntityA = EntityOfBody(BodyA);
+            Record.EntityB = EntityOfBody(BodyB);
+            Record.BodyIDA = HandleOfBody(BodyA);
+            Record.BodyIDB = HandleOfBody(BodyB);
+            Record.bSensorA = bValidA && b3Shape_IsSensor(ShapeA);
+            Record.bSensorB = bValidB && b3Shape_IsSensor(ShapeB);
             Record.VelocityA = b3Body_IsValid(BodyA) ? Box3DUtils::FromB3Vec3(b3Body_GetLinearVelocity(BodyA)) : FVector3(0.0f);
             Record.VelocityB = b3Body_IsValid(BodyB) ? Box3DUtils::FromB3Vec3(b3Body_GetLinearVelocity(BodyB)) : FVector3(0.0f);
         };
@@ -395,9 +395,8 @@ namespace Lumina::Physics
 
         PendingDrainScratch.Reset();
         swap(PendingDrainScratch, PendingRigidBodies);
-        std::sort(PendingDrainScratch.begin(), PendingDrainScratch.end());
-        const ECS::FEntity* UniqueEnd = std::unique(PendingDrainScratch.begin(), PendingDrainScratch.end());
-        PendingDrainScratch.SetNum(static_cast<int32>(UniqueEnd - PendingDrainScratch.begin()));
+        Algo::Sort(PendingDrainScratch);
+        PendingDrainScratch.SetNum(static_cast<int32>(Algo::Unique(PendingDrainScratch) - PendingDrainScratch.begin()));
         int32 Count = 0;
         for (ECS::FEntity Entity : PendingDrainScratch)
         {

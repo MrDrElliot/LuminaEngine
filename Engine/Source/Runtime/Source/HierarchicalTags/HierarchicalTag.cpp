@@ -22,6 +22,27 @@ namespace Lumina
             const int32 Word = static_cast<int32>(Bit >> 6);
             return Bit != 0 && Word < Words.Num() && ((Words[Word] >> (Bit & 63)) & 1) != 0;
         }
+
+        using FTagIds = TInlineVector<uint32, 8>;
+
+        FTagIds ResolveIds(const TVector<SHierarchicalTag>& Tags)
+        {
+            FTagIds Ids;
+            Ids.Reserve(Tags.Num());
+            for (const SHierarchicalTag& Tag : Tags)
+            {
+                Ids.Add(Tag.GetId());
+            }
+            return Ids;
+        }
+
+        // Owned ids must be resolved first, since resolving them registers every ancestor a query could name.
+        bool AnyMatches(const FTagIds& Owned, const SHierarchicalTag& Tag)
+        {
+            FHierarchicalTagRegistry& Registry = FHierarchicalTagRegistry::Get();
+            const uint32 Wanted = Registry.FindTag(Tag.TagName);
+            return Wanted != 0 && Algo::AnyOf(Owned, [&](uint32 Id) { return Registry.Matches(Id, Wanted); });
+        }
     }
 
     uint32 SHierarchicalTag::GetId() const
@@ -62,13 +83,7 @@ namespace Lumina
 
     bool SHierarchicalTagContainer::HasTag(const SHierarchicalTag& Tag) const
     {
-        const uint32 Wanted = Tag.GetId();
-        if (Wanted == 0)
-        {
-            return false;
-        }
-        FHierarchicalTagRegistry& Registry = FHierarchicalTagRegistry::Get();
-        return Algo::AnyOf(Tags, [&](const SHierarchicalTag& Owned) { return Registry.Matches(Owned.GetId(), Wanted); });
+        return HierarchicalTagInternal::AnyMatches(HierarchicalTagInternal::ResolveIds(Tags), Tag);
     }
 
     bool SHierarchicalTagContainer::HasTagExact(const SHierarchicalTag& Tag) const
@@ -78,12 +93,14 @@ namespace Lumina
 
     bool SHierarchicalTagContainer::HasAny(const SHierarchicalTagContainer& Other) const
     {
-        return Algo::AnyOf(Other.Tags, [this](const SHierarchicalTag& Tag) { return HasTag(Tag); });
+        const HierarchicalTagInternal::FTagIds Owned = HierarchicalTagInternal::ResolveIds(Tags);
+        return Algo::AnyOf(Other.Tags, [&](const SHierarchicalTag& Tag) { return HierarchicalTagInternal::AnyMatches(Owned, Tag); });
     }
 
     bool SHierarchicalTagContainer::HasAll(const SHierarchicalTagContainer& Other) const
     {
-        return Algo::AllOf(Other.Tags, [this](const SHierarchicalTag& Tag) { return HasTag(Tag); });
+        const HierarchicalTagInternal::FTagIds Owned = HierarchicalTagInternal::ResolveIds(Tags);
+        return Algo::AllOf(Other.Tags, [&](const SHierarchicalTag& Tag) { return HierarchicalTagInternal::AnyMatches(Owned, Tag); });
     }
 
     FHierarchicalTagMask::FHierarchicalTagMask(const SHierarchicalTagContainer& Container)

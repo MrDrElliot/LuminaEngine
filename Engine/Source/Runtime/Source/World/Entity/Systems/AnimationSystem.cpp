@@ -127,11 +127,11 @@ namespace Lumina
     }
 
     // Time advance, VM state and lazy init all mutate these, so they are declared Write, not Read.
-    void SAnimationSystem::Configure()
+    void CAnimationSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
-        RunsAfter<SKinematicsSystem>();
+        RunsAfter<CKinematicsSystem>();
     }
 
     // Diagnostic cross-check of the deferred executor against direct single-clip sampling.
@@ -181,7 +181,7 @@ namespace Lumina
                 return true;
             }
 
-            // The gather's metric rather than SSignificanceSystem's, since it sees the real culled bounds.
+            // The gather's metric rather than CSignificanceSystem's, since it sees the real culled bounds.
             const int16 Interval = (int16)Significance::IntervalForDistanceOverRadius(Mesh.LastDistanceOverRadius);
 
             if (Interval <= 1)
@@ -900,12 +900,12 @@ namespace Lumina
     }
 
 
-    bool SAnimationSystem::HasWork(const SSystemContext& Context)
+    bool CAnimationSystem::HasWork(const SSystemContext& Context)
     {
         return AnyQueryHasRows(SimpleAnimators, GraphAnimators);
     }
 
-    void SAnimationSystem::OnUpdate(const SSystemContext& Context)
+    void CAnimationSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace AnimationSystemInternal;
 
@@ -969,11 +969,11 @@ namespace Lumina
 
         if (bHasGraph)
         {
-            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
+            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent> MeshMut, const STransformComponent* Transform)
             {
                 SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
                 SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
-                UpdateGraph(Context, Entity, AnimGraph, Mesh, Placements.TryGet<STransformComponent>(Entity), DeltaTime, Now, SharedKinematics);
+                UpdateGraph(Context, Entity, AnimGraph, Mesh, Transform, DeltaTime, Now, SharedKinematics);
                 SendMontageEvents(MontageStarted, MontageBlendingOut, MontageEnded, Entity, AnimGraph.Montages);
 
                 // Run while this mesh is hot, instead of after a barrier that waits for every graph.
@@ -1093,7 +1093,7 @@ namespace Lumina
             return;
         }
 
-        // Serial because applying root motion marks the transform dirty, which is not ParallelFor-safe.
+        // Patched at the flush, so this system only reads transforms and runs beside the other transform readers.
         const auto ApplyRootMotion = [&](ECS::FEntity Entity, FRootMotionDelta& Delta)
         {
             if (!Delta.bHasMotion)
@@ -1108,12 +1108,14 @@ namespace Lumina
                 return;
             }
 
-            STransformComponent& Transform = RootMotionTargets.Get<STransformComponent>(Entity);
             FTransform DeltaTransform;
             DeltaTransform.SetLocation(Delta.Translation);
             DeltaTransform.SetRotation(Delta.Rotation);
             DeltaTransform.SetScale(FVector3(1.0f));
-            Transform.SetLocalTransform(Transform.LocalTransform * DeltaTransform);
+            Context.Patch<STransformComponent>(Entity, [DeltaTransform](STransformComponent& Transform)
+            {
+                Transform.SetLocalTransform(Transform.LocalTransform * DeltaTransform);
+            });
         };
 
         if (bHasSimple)
@@ -1127,7 +1129,7 @@ namespace Lumina
 
         if (bHasGraph)
         {
-            GraphAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent>)
+            GraphAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent>, const STransformComponent*)
             {
                 SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
                 ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);

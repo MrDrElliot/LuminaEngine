@@ -519,7 +519,7 @@ namespace Lumina::ECS
                 Info.Relocate = +[](const FComponentTypeInfo&, void* Dest, void* Source)
                 {
                     T* Moved = static_cast<T*>(Source);
-                    Memory::ConstructAt(static_cast<T*>(Dest), std::move(*Moved));
+                    Memory::ConstructAt(static_cast<T*>(Dest), Move(*Moved));
                     Memory::DestroyAt(Moved);
                 };
             }

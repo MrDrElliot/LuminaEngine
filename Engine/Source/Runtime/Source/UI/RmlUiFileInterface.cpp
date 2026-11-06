@@ -10,9 +10,9 @@
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 
 #include <cstdio>
-#include <cstring>
 
 namespace Lumina
 {
@@ -43,7 +43,7 @@ namespace Lumina
         void NoteStyleSheetRead(FStringView VirtualPath)
         {
             constexpr FStringView Extension(".rcss");
-            if (VirtualPath.Len() < Extension.Len() || VirtualPath.Mid(VirtualPath.Len() - Extension.Len()) != Extension)
+            if (!VirtualPath.EndsWith(Extension))
             {
                 return;
             }
@@ -87,28 +87,33 @@ namespace Lumina
             OutBytes = Font->GetFontData();
             return true;
         }
+
+        // Routes through VFS so PAK mounts work, and returns the path the bytes came from.
+        bool ReadRmlFile(const Rml::String& RawPath, TVector<uint8>& OutBytes, FFixedString& OutPath)
+        {
+            const FStringView Source(RawPath.c_str(), IntCastChecked<int32>(RawPath.size()));
+            OutPath = FFixedString(Source.GetData(), Source.Len());
+            if (TryReadFontAsset(RawPath, OutBytes) || VFS::ReadFile(OutBytes, Source))
+            {
+                return true;
+            }
+
+            // Fall back to virtual-path resolver for absolute editor paths.
+            OutPath = VFS::ResolveToVirtualPath(Source);
+            return VFS::ReadFile(OutBytes, FStringView(*OutPath, OutPath.Len()));
+        }
     }
 
     Rml::FileHandle FRmlUiFileInterface::Open(const Rml::String& Path)
     {
-        FStringView Source(Path.c_str(), IntCastChecked<int32>(Path.size()));
-
         TVector<uint8> Bytes;
-        if (!TryReadFontAsset(Path, Bytes) && !VFS::ReadFile(Bytes, Source))
+        FFixedString ReadPath;
+        if (!ReadRmlFile(Path, Bytes, ReadPath))
         {
-            // Fall back to virtual-path resolver for absolute editor paths.
-            const FFixedString Resolved = VFS::ResolveToVirtualPath(Source);
-            if (!VFS::ReadFile(Bytes, FStringView(*Resolved, Resolved.Len())))
-            {
-                LOG_WARN("[RmlUi] FileInterface::Open: '{}' not found.", Path.c_str());
-                return 0;
-            }
-            NoteStyleSheetRead(FStringView(*Resolved, Resolved.Len()));
+            LOG_WARN("[RmlUi] FileInterface::Open: '{}' not found.", Path.c_str());
+            return 0;
         }
-        else
-        {
-            NoteStyleSheetRead(Source);
-        }
+        NoteStyleSheetRead(FStringView(*ReadPath, ReadPath.Len()));
 
         FOpenedFile* File = new FOpenedFile{};
         File->Bytes  = Move(Bytes);
@@ -152,7 +157,7 @@ namespace Lumina
         const size_t ToCopy = (Size < Remaining) ? Size : Remaining;
         if (ToCopy > 0)
         {
-            std::memcpy(Buffer, File->Bytes.GetData() + File->Cursor, ToCopy);
+            Memory::Memcpy(Buffer, File->Bytes.GetData() + File->Cursor, ToCopy);
             File->Cursor += static_cast<int32>(ToCopy);
         }
         return ToCopy;
@@ -195,16 +200,11 @@ namespace Lumina
 
     bool FRmlUiFileInterface::LoadFile(const Rml::String& Path, Rml::String& OutData)
     {
-        // Routes through VFS so PAK mounts work.
-        FStringView Source(Path.c_str(), IntCastChecked<int32>(Path.size()));
         TVector<uint8> Bytes;
-        if (!TryReadFontAsset(Path, Bytes) && !VFS::ReadFile(Bytes, Source))
+        FFixedString ReadPath;
+        if (!ReadRmlFile(Path, Bytes, ReadPath))
         {
-            const FFixedString Resolved = VFS::ResolveToVirtualPath(Source);
-            if (!VFS::ReadFile(Bytes, FStringView(*Resolved, Resolved.Len())))
-            {
-                return false;
-            }
+            return false;
         }
         OutData.assign(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
         return true;

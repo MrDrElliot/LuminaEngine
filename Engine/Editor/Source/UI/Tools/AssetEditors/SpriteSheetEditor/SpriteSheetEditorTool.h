@@ -20,7 +20,6 @@ namespace Lumina
 
         void OnInitialize() override;
         void OnPostUndoRedo() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override {}
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
     private:

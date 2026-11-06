@@ -16,7 +16,7 @@ namespace Lumina
 
     // The audio device is a process singleton, but this is the only system that touches it within a world.
     REFLECT()
-    class RUNTIME_API SAudioSystem : public CEntitySystem
+    class RUNTIME_API CAudioSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

@@ -1,4 +1,5 @@
 #include "MCPStressTools.h"
+#include "MCPSceneTools.h"
 #include "World/ECS/Registry.h"
 
 #include "Agent/AgentAssetResolve.h"
@@ -17,7 +18,6 @@
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
-#include "World/WorldManager.h"
 
 #include "Core/Json/Json.h"
 
@@ -32,21 +32,13 @@ namespace Lumina::MCP
         constexpr const char* StressBodyName = "StressBody";
         constexpr const char* StressMoverName = "StressMover";
         constexpr const char* StressParticleName = "StressParticles";
-        constexpr float StressNoGround = -1.0e9f;
 
         CWorld* ResolveStressWorld(bool bEditorWorld, FString& OutLabel, FString& OutError)
         {
-            if (!bEditorWorld && GWorldManager != nullptr)
+            if (CWorld* Game = bEditorWorld ? nullptr : FindGameWorld())
             {
-                for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
-                {
-                    if (Context && Context->World.IsValid()
-                        && (Context->Type == EWorldType::Game || Context->Type == EWorldType::Simulation))
-                    {
-                        OutLabel = "Game";
-                        return Context->World.Get();
-                    }
-                }
+                OutLabel = "Game";
+                return Game;
             }
 
             OutLabel = "Editor";
@@ -68,12 +60,6 @@ namespace Lumina::MCP
                 Count += IsStressEntity(View.Get<SNameComponent>(Entity)) ? 1 : 0;
             }
             return Count;
-        }
-
-        float StressGroundAt(CWorld* World, float X, float Z)
-        {
-            const SRayResult Hit = World->GetPhysics()->Raycast(FVector3(X, 5000.0f, Z), FVector3(X, -5000.0f, Z), ECS::NullEntity);
-            return Hit.bHit ? Hit.Location.y : StressNoGround;
         }
 
         bool ResolveStressCenter(CWorld* World, const FString& Text, FVector2& OutCenter, FString& OutError)
@@ -251,8 +237,8 @@ namespace Lumina::MCP
             {
                 const bool bSpot = Index >= Math::Clamp(In.PointLights, 0, MaxPerCall);
                 const FVector2 Spot = PlaceStressPoint(Random, Center, In.AreaRadius, Camera, KeepClear);
-                const float Ground = StressGroundAt(World, Spot.x, Spot.y);
-                const FVector3 Location(Spot.x, (Ground > StressNoGround ? Ground : 0.0f) + VaryStress(Random, In.Height), Spot.y);
+                const float Ground = GroundHeightAt(World, Spot.x, Spot.y);
+                const FVector3 Location(Spot.x, (Ground > GNoGroundHeight ? Ground : 0.0f) + VaryStress(Random, In.Height), Spot.y);
                 const bool bShadows = Random.NextFloat() < ShadowFraction;
                 const bool bVolumetric = Random.NextFloat() < VolumetricFraction;
 
@@ -295,10 +281,10 @@ namespace Lumina::MCP
             for (int32 Index = 0; Index < CasterCount; ++Index)
             {
                 const FVector2 Spot = PlaceStressPoint(Random, Center, In.AreaRadius, Camera, KeepClear);
-                const float Ground = StressGroundAt(World, Spot.x, Spot.y);
+                const float Ground = GroundHeightAt(World, Spot.x, Spot.y);
                 const float Size = VaryStress(Random, In.CasterScale);
                 const FVector3 Scale(Size, Size * (0.5f + 1.5f * Random.NextFloat()), Size);
-                const FVector3 Location(Spot.x, (Ground > StressNoGround ? Ground : 0.0f) + Scale.y * 0.5f, Spot.y);
+                const FVector3 Location(Spot.x, (Ground > GNoGroundHeight ? Ground : 0.0f) + Scale.y * 0.5f, Spot.y);
                 const FVector3 Euler(0.0f, Random.NextFloat() * 360.0f, 0.0f);
 
                 const ECS::FEntity Entity = World->ConstructEntity(FName(StressCasterName), FTransform(Location, Euler, Scale));
@@ -317,9 +303,9 @@ namespace Lumina::MCP
                 constexpr float MinDrop = 5.0f;
                 constexpr float DropSpread = 25.0f;
                 const FVector2 Spot = PlaceStressPoint(Random, Center, In.AreaRadius, Camera, KeepClear);
-                const float Ground = StressGroundAt(World, Spot.x, Spot.y);
+                const float Ground = GroundHeightAt(World, Spot.x, Spot.y);
                 const float Size = VaryStress(Random, In.BodyScale);
-                const FVector3 Location(Spot.x, (Ground > StressNoGround ? Ground : 0.0f) + MinDrop + Random.NextFloat() * DropSpread, Spot.y);
+                const FVector3 Location(Spot.x, (Ground > GNoGroundHeight ? Ground : 0.0f) + MinDrop + Random.NextFloat() * DropSpread, Spot.y);
                 const FVector3 Euler(Random.NextFloat() * 360.0f, Random.NextFloat() * 360.0f, Random.NextFloat() * 360.0f);
 
                 const ECS::FEntity Entity = World->ConstructEntity(FName(StressBodyName), FTransform(Location, Euler, FVector3(Size)));
@@ -338,9 +324,9 @@ namespace Lumina::MCP
             for (int32 Index = 0; Index < MoverCount; ++Index)
             {
                 const FVector2 Spot = PlaceStressPoint(Random, Center, In.AreaRadius, Camera, KeepClear);
-                const float Ground = StressGroundAt(World, Spot.x, Spot.y);
+                const float Ground = GroundHeightAt(World, Spot.x, Spot.y);
                 const float Size = VaryStress(Random, In.BodyScale);
-                const FVector3 Location(Spot.x, (Ground > StressNoGround ? Ground : 0.0f) + 2.0f + Random.NextFloat() * 4.0f, Spot.y);
+                const FVector3 Location(Spot.x, (Ground > GNoGroundHeight ? Ground : 0.0f) + 2.0f + Random.NextFloat() * 4.0f, Spot.y);
 
                 const ECS::FEntity Entity = World->ConstructEntity(FName(StressMoverName), FTransform(Location, FVector3(0.0f), FVector3(Size)));
                 if (Entity == ECS::NullEntity)
@@ -359,8 +345,8 @@ namespace Lumina::MCP
             for (int32 Index = 0; Index < ParticleCount; ++Index)
             {
                 const FVector2 Spot = PlaceStressPoint(Random, Center, In.AreaRadius, Camera, KeepClear);
-                const float Ground = StressGroundAt(World, Spot.x, Spot.y);
-                const FVector3 Location(Spot.x, (Ground > StressNoGround ? Ground : 0.0f) + Random.NextFloat() * In.Height, Spot.y);
+                const float Ground = GroundHeightAt(World, Spot.x, Spot.y);
+                const FVector3 Location(Spot.x, (Ground > GNoGroundHeight ? Ground : 0.0f) + Random.NextFloat() * In.Height, Spot.y);
 
                 const ECS::FEntity Entity = World->ConstructEntity(FName(StressParticleName), FTransform(Location, FVector3(0.0f), FVector3(1.0f)));
                 if (Entity == ECS::NullEntity)

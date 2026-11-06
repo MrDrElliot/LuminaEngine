@@ -34,7 +34,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float3 CameraPos = GetCameraPosition();
     // Sky reconstructs at a tiny depth for a far point on its ray, while real geometry keeps its true distance.
     float  D        = RawDepth > 0.0 ? RawDepth : 1e-4;
-    float3 WorldPos = ReconstructWorldPos(UV, D, GetInverseCameraProjection(), GetInverseCameraView());
+    float3 WorldPos = ReconstructWorldPos(UV, D);
 
     float PlaneY = P.PlaneNormalAndHeight.w;
     float CamH   = CameraPos.y - PlaneY;   // < 0 underwater

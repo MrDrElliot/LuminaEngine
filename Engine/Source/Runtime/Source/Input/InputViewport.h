@@ -75,7 +75,6 @@ namespace Lumina
 
         // A game's developer overlay holds the keyboard, mouse and pad while open, freeing the cursor without touching the game's own mode.
         RUNTIME_API void SetDevOverlayCapturing(bool bCapturing);
-        RUNTIME_API bool IsDevOverlayCapturing() const { return bDevOverlayCapturing; }
 
         // A game world is the active viewport and holds game focus, so editor UI must leave the keyboard and mouse alone.
         RUNTIME_API bool IsGameOwningInput() const;

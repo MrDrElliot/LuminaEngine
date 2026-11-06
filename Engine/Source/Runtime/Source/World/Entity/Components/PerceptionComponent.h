@@ -14,7 +14,7 @@
 
 namespace Lumina
 {
-    // Gives an entity AI senses (sight, hearing, damage). SPerceptionSystem fills PerceivedTargets each tick;
+    // Gives an entity AI senses (sight, hearing, damage). CPerceptionSystem fills PerceivedTargets each tick;
     // OnTargetPerceived / OnTargetLost fire on transitions (C++ delegates + C# EntityScript callbacks).
     // Designed so a script can drive an AI with a few lines: GetClosestPerceivedTarget + GetLastKnownLocation.
     REFLECT(Component, Category = "AI")

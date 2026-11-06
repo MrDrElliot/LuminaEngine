@@ -188,7 +188,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "NavMesh|Bounds")
         FVector3 Extents = FVector3(64.0f, 16.0f, 64.0f);
 
-        /** Editor "Bake" button flag; consumed next tick by SNavMeshSystem. */
+        /** Editor "Bake" button flag; consumed next tick by CNavMeshSystem. */
         bool bBakeRequested = false;
 
         /** Baked tile blobs (empty = non-walkable tile). Serialized. */
@@ -218,7 +218,7 @@ namespace Lumina
         /** Transient; not serialized. */
         FNavMeshRuntime Runtime;
 
-        /** Request an async rebuild of this volume; consumed next tick by SNavMeshSystem. Script entry point
+        /** Request an async rebuild of this volume; consumed next tick by CNavMeshSystem. Script entry point
          *  for rebuilding navigation after spawning/moving geometry at runtime. */
         FUNCTION()
         void RequestRebuild() { bBakeRequested = true; }

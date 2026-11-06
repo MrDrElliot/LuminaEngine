@@ -2,12 +2,12 @@
 
 #include "Core/Math/Hash/Hash.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 
 #include <atomic>
 #include <cstdio>
-#include <cstring>
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
 
@@ -112,8 +112,8 @@ namespace Lumina
         }
 
         FDDCFileHeader Header{};
-        std::memcpy(&Header, Raw.GetData(), sizeof(Header));
-        if (std::memcmp(Header.Magic, kMagic, sizeof(kMagic)) != 0)
+        Memory::Memcpy(&Header, Raw.GetData(), sizeof(Header));
+        if (Memory::Memcmp(Header.Magic, kMagic, sizeof(kMagic)) != 0)
         {
             DropCorrupt("bad magic");
             return false;
@@ -163,14 +163,14 @@ namespace Lumina
         }
 
         FDDCFileHeader Header{};
-        std::memcpy(Header.Magic, kMagic, sizeof(kMagic));
+        Memory::Memcpy(Header.Magic, kMagic, sizeof(kMagic));
         Header.FileVersion = kFileVersion;
         Header.PayloadHash = Hash::XXHash::GetHash64(Bytes.GetData(), Bytes.Num());
 
         TVector<uint8> Framed;
         Framed.Reserve(sizeof(Header) + Bytes.Num());
         Framed.SetNum(sizeof(Header));
-        std::memcpy(Framed.GetData(), &Header, sizeof(Header));
+        Memory::Memcpy(Framed.GetData(), &Header, sizeof(Header));
         Framed.Append(Bytes);
 
         // A kill mid-write would otherwise leave a short file that TryGet accepts as truth.

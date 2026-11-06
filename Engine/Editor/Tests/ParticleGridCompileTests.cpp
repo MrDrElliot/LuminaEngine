@@ -131,6 +131,22 @@ TEST(ParticleGridCompile, ChannelNamesMustBeIdentifiers)
     EXPECT_TRUE(Compiler.HasErrors());
 }
 
+TEST(ParticleGridCompile, CustomCodeKeepsALastLineWithoutANewline)
+{
+    CParticleEmitterStack* Stack = MakeStack("/ParticleGridCompile/LastLine");
+    CParticleModule_CustomGrid* Custom = AddGridModule<CParticleModule_CustomGrid>(Stack, Stack->GridModules);
+    Custom->GridChannels.Emplace("Heat");
+    Custom->Code = "Cell.Heat *= 0.5;\r\nCell.Heat += 1.0;";
+
+    FParticleCompiler Compiler;
+    Stack->CompileStacks(Compiler);
+    ASSERT_FALSE(Compiler.HasErrors());
+
+    const FString Source = Expand(Compiler);
+    EXPECT_TRUE(Contains(Source, "\tCell.Heat *= 0.5;\n"));
+    EXPECT_TRUE(Contains(Source, "\tCell.Heat += 1.0;"));
+}
+
 TEST(ParticleGridCompile, ACellHoldsAtMostSixteenChannels)
 {
     CParticleEmitterStack* Stack = MakeStack("/ParticleGridCompile/Limit");

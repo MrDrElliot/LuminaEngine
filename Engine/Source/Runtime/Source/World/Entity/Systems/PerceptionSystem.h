@@ -19,7 +19,7 @@ namespace Lumina
 {
     // Runs every perceiver's senses and sends perceived/lost events, ahead of PathFollow so an AI reacts the same frame.
     REFLECT()
-    class RUNTIME_API SPerceptionSystem : public CEntitySystem
+    class RUNTIME_API CPerceptionSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

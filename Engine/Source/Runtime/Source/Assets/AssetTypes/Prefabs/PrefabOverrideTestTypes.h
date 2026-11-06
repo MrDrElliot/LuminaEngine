@@ -1,6 +1,6 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
+#include "World/ECS/Entity.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PrefabOverrideTestTypes.generated.h"
 
