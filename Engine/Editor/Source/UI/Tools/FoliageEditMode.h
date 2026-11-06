@@ -29,7 +29,6 @@ namespace Lumina
             return "Paint instanced foliage (grass, trees, rocks). Instances follow the terrain when you sculpt it.";
         }
 
-        void OnEnter(CWorld* World) override;
         void OnExit(CWorld* World) override;
 
         void DrawToolbar(CWorld* World, float ButtonSize) override;
@@ -38,10 +37,6 @@ namespace Lumina
 
         // Painting captures viewport input (suppress select/gizmo while in the mode).
         bool ConsumesViewportInput() const override { return true; }
-
-        /** Get the world's foliage component, creating the singleton foliage entity if needed.
-         *  OutEntity receives the owning entity, which callers need to route render dirty marks. */
-        static SFoliageComponent* FindOrCreateFoliage(CWorld* World, ECS::FEntity* OutEntity = nullptr);
 
     private:
         enum class EFoliageBrushMode : int32 { Paint = 0, Erase = 1 };
@@ -65,7 +60,8 @@ namespace Lumina
         uint32 RngState = 0x9E3779B9u;
         float  RandFloat();
 
-        SFoliageComponent* FindFoliage(CWorld* World) const;
+        static SFoliageComponent* FindFoliage(CWorld* World, ECS::FEntity* OutEntity = nullptr);
+        static SFoliageComponent* FindOrCreateFoliage(CWorld* World);
         STerrainComponent* FindTerrain(CWorld* World, FVector3& OutOrigin) const;
 
         // Project a world XZ onto the paint surface (terrain if present, else ground plane). Always succeeds.
@@ -74,15 +70,16 @@ namespace Lumina
         void PaintDab(CWorld* World, SFoliageComponent& Foliage, STerrainComponent* Terrain, const FVector3& TerrainOrigin, const FVector3& Center, float DeltaSeconds);
         void EraseDab(SFoliageComponent& Foliage, const FVector3& Center);
 
-        void DrawTypePanel(CWorld* World, SFoliageComponent& Foliage);
+        // Foliage is null until the first type is added, so entering the mode creates nothing outside undo.
+        void DrawTypePanel(CWorld* World, SFoliageComponent* Foliage);
 
         /** Both foliage caches, together. See MarkFoliageChanged in FoliageComponent.h for why. */
-        void MarkFoliageDirty(CWorld* World, SFoliageComponent& Foliage);
+        static void MarkFoliageDirty(CWorld* World);
 
         /** Points TypeSettings at the active SFoliageType, rebuilding only when the binding actually moved.
          *  Types is a TVector, so adding one can reallocate and leave the table holding a dangling pointer;
          *  the bound address is tracked rather than just the index for exactly that reason. */
-        void RebindTypeSettings(CWorld* World, SFoliageComponent& Foliage);
+        void RebindTypeSettings(CWorld* World, SFoliageComponent* Foliage);
 
         // Draws the active type's reflected properties, which is what gives the mesh slot the standard
         // asset picker and every numeric its PROPERTY clamp -- all of it was hand-rolled before, so the

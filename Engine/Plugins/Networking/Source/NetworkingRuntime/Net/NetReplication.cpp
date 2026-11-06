@@ -908,20 +908,53 @@ namespace Lumina::Net
         Batch.Append(Msg, IntCastChecked<int32>(MsgSize));
     }
 
+    void AppendCountedMessages(TVector<uint8>& Batch, ENetMessage Type, int32 NumEntries, TFunctionRef<bool(FNetArchive&, int32)> WriteEntry)
+    {
+        constexpr SIZE_T HeaderBytes = sizeof(uint8) + sizeof(uint16);
+        TVector<uint8> Entries;
+        TVector<uint8> Entry;
+        TVector<uint8> Message;
+        uint16 Count = 0;
+        auto Flush = [&]()
+        {
+            if (Count == 0)
+            {
+                return;
+            }
+            Message.Reset();
+            FNetArchive Writer(Message);
+            uint8 TypeByte = static_cast<uint8>(Type);
+            Writer << TypeByte;
+            Writer << Count;
+            Message.Append(Entries.GetData(), Entries.Num());
+            AppendFramedMessage(Batch, Message.GetData(), static_cast<SIZE_T>(Message.Num()));
+            Entries.Reset();
+            Count = 0;
+        };
+        for (int32 Index = 0; Index < NumEntries; ++Index)
+        {
+            Entry.Reset();
+            FNetArchive Writer(Entry);
+            if (!WriteEntry(Writer, Index))
+            {
+                continue;
+            }
+            if (HeaderBytes + Entries.Num() + Entry.Num() > MaxFramedMessageSize || Count == UINT16_MAX)
+            {
+                Flush();
+            }
+            Entries.Append(Entry.GetData(), Entry.Num());
+            ++Count;
+        }
+        Flush();
+    }
+
     void SendFramed(INetworkTransport& Transport, FConnectionHandle Connection, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
         static thread_local TVector<uint8> Framed;
         Framed.Reset();
         AppendFramedMessage(Framed, Msg, MsgSize);
         Transport.Send(Connection, Framed.GetData(), static_cast<SIZE_T>(Framed.Num()), Channel, Mode);
-    }
-
-    void BroadcastFramed(INetworkTransport& Transport, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
-    {
-        static thread_local TVector<uint8> Framed;
-        Framed.Reset();
-        AppendFramedMessage(Framed, Msg, MsgSize);
-        Transport.Broadcast(Framed.GetData(), static_cast<SIZE_T>(Framed.Num()), Channel, Mode);
     }
 
     void ForEachFramedMessage(const uint8* Data, SIZE_T Size, const TFunction<void(const uint8*, SIZE_T)>& Fn)
@@ -1110,21 +1143,18 @@ namespace Lumina::Net
         };
     }
 
-    void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg)
+    void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch)
     {
-        FNetArchive Writer(OutMsg);
-        uint8  Type  = static_cast<uint8>(ENetMessage::ObjectExport);
-        uint16 Count = static_cast<uint16>(Indices.Num());
-        Writer << Type;
-        Writer << Count;
-        for (uint32 Index : Indices)
+        AppendCountedMessages(Batch, ENetMessage::ObjectExport, Indices.Num(), [&](FNetArchive& Writer, int32 Entry)
         {
+            uint32 Index = Indices[Entry];
             auto It = Map.IndexToGuid.Find(Index);
-            if (It == nullptr) { continue; }
+            if (It == nullptr) { return false; }
             FGuid Guid = (*It);
             Writer << Index;
             Writer << Guid;
-        }
+            return true;
+        });
     }
 
     void ApplyObjectExport(FNetObjectMap& Map, const uint8* Data, SIZE_T Size)
@@ -1147,23 +1177,20 @@ namespace Lumina::Net
         }
     }
 
-    void BuildAssetExport(const FNetAssetMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg)
+    void BuildAssetExport(const FNetAssetMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch)
     {
-        FNetArchive Writer(OutMsg);
-        uint8  Type  = static_cast<uint8>(ENetMessage::AssetExport);
-        uint16 Count = static_cast<uint16>(Indices.Num());
-        Writer << Type;
-        Writer << Count;
-        for (uint32 Index : Indices)
+        AppendCountedMessages(Batch, ENetMessage::AssetExport, Indices.Num(), [&](FNetArchive& Writer, int32 Entry)
         {
+            uint32 Index = Indices[Entry];
             auto It = Map.IndexToRef.Find(Index);
-            if (It == nullptr) { continue; }
+            if (It == nullptr) { return false; }
             FString Path = It->Path;
             FString Guid = It->Guid;
             Writer << Index;
             Writer << Path;
             Writer << Guid;
-        }
+            return true;
+        });
     }
 
     void ApplyAssetExport(FNetAssetMap& Map, const uint8* Data, SIZE_T Size)
@@ -1188,21 +1215,18 @@ namespace Lumina::Net
         }
     }
 
-    void BuildNameExport(const FNetNameMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg)
+    void BuildNameExport(const FNetNameMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch)
     {
-        FNetArchive Writer(OutMsg);
-        uint8  Type  = static_cast<uint8>(ENetMessage::NameExport);
-        uint16 Count = static_cast<uint16>(Indices.Num());
-        Writer << Type;
-        Writer << Count;
-        for (uint32 Index : Indices)
+        AppendCountedMessages(Batch, ENetMessage::NameExport, Indices.Num(), [&](FNetArchive& Writer, int32 Entry)
         {
+            uint32 Index = Indices[Entry];
             auto It = Map.IndexToName.Find(Index);
-            if (It == nullptr) { continue; }
+            if (It == nullptr) { return false; }
             FString Str = It->ToString();
             Writer << Index;
             Writer << Str;
-        }
+            return true;
+        });
     }
 
     void ApplyNameExport(FNetNameMap& Map, const uint8* Data, SIZE_T Size)

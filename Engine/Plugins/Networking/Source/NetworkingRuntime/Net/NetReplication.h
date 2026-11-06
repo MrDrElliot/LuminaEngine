@@ -6,6 +6,7 @@
 #include "Platform/GenericPlatform.h"
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
+#include "Containers/FunctionRef.h"
 #include "Networking/NetworkTypes.h"
 
 namespace Lumina
@@ -21,6 +22,7 @@ namespace Lumina
     struct FNetWorldState;
     struct FComponentRepState;
     enum class ESendMode : uint8;
+    enum class ENetMessage : uint8;
 
     // Tag, this networked entity has replicated property changes pending (set by World.Net:MarkDirty).
     // The server sends a reliable PropertyUpdate for it next tick, then clears the tag.
@@ -129,12 +131,14 @@ namespace Lumina
         // Append one framed message to a batch buffer.
         void AppendFramedMessage(TVector<uint8>& Batch, const uint8* Msg, SIZE_T MsgSize);
 
+        // Append NumEntries as framed "Type, uint16 Count, entries" messages, split so each fits the frame. WriteEntry returns false to skip one.
+        void AppendCountedMessages(TVector<uint8>& Batch, ENetMessage Type, int32 NumEntries, TFunctionRef<bool(FNetArchive&, int32)> WriteEntry);
+
         // Send a single message as a 1-message batch (RPC, peer-id handshake).
         void SendFramed(INetworkTransport& Transport, FConnectionHandle Connection, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode);
-        void BroadcastFramed(INetworkTransport& Transport, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode);
 
         // Split a received batch into its framed messages.
-        void ForEachFramedMessage(const uint8* Data, SIZE_T Size, const TFunction<void(const uint8*, SIZE_T)>& Fn);
+        NETWORKINGRUNTIME_API void ForEachFramedMessage(const uint8* Data, SIZE_T Size, const TFunction<void(const uint8*, SIZE_T)>& Fn);
 
         //~ Net-index caches. A CObject/SUIDocumentRef reference is sent as a compact varint index; identity is
         //~ exported once and resolved in the sender's index space. Incoming maps are per-connection.
@@ -147,12 +151,12 @@ namespace Lumina
         // Entity ids alone, which every peer shares, for a payload that may be relayed past the peer that wrote it.
         void BindEntityIds(FNetArchive& Ar, FNetWorldState& State);
 
-        // Build/apply the index-to-identity export messages (reliable). Apply ingests into the sender's map.
-        void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg);
-        void ApplyObjectExport(FNetObjectMap& Map, const uint8* Data, SIZE_T Size);
-        void BuildAssetExport(const FNetAssetMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg);
-        void ApplyAssetExport(FNetAssetMap& Map, const uint8* Data, SIZE_T Size);
-        void BuildNameExport(const FNetNameMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg);
-        void ApplyNameExport(FNetNameMap& Map, const uint8* Data, SIZE_T Size);
+        // Build/apply the index-to-identity export messages (reliable). Build appends framed messages to a batch; Apply ingests one message into the sender's map.
+        NETWORKINGRUNTIME_API void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch);
+        NETWORKINGRUNTIME_API void ApplyObjectExport(FNetObjectMap& Map, const uint8* Data, SIZE_T Size);
+        NETWORKINGRUNTIME_API void BuildAssetExport(const FNetAssetMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch);
+        NETWORKINGRUNTIME_API void ApplyAssetExport(FNetAssetMap& Map, const uint8* Data, SIZE_T Size);
+        NETWORKINGRUNTIME_API void BuildNameExport(const FNetNameMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch);
+        NETWORKINGRUNTIME_API void ApplyNameExport(FNetNameMap& Map, const uint8* Data, SIZE_T Size);
     }
 }

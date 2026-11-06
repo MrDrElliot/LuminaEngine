@@ -105,29 +105,22 @@ namespace Lumina
         Clocks[(uint8)ECoroutineClock::Real]     += RealDeltaTime;
 
         // Swapped out, so a coroutine resumed here that waits again lands in the next tick rather than this one.
-        TVector<FWait> Current;
         {
             TScopeLock Guard(WaitLock);
-            Current = Move(Waits);
-            Waits.Reset();
+            ElementOps::SwapElements(Waits, TickingWaits);
         }
 
-        TVector<FWait> Kept;
-        Kept.Reserve(Current.Num());
-        for (FWait& Wait : Current)
+        TickingWaits.RemoveAll([this, bPaused](FWait& Wait)
         {
             if (!Wait.State)
             {
-                if (IsReady(Wait, bPaused))
+                if (!IsReady(Wait, bPaused))
                 {
-                    FWaitCallback Callback = Move(Wait.Callback);
-                    Callback(true);
+                    return false;
                 }
-                else
-                {
-                    Kept.Add(Move(Wait));
-                }
-                continue;
+                FWaitCallback Callback = Move(Wait.Callback);
+                Callback(true);
+                return true;
             }
 
             CoroDetail::FCoroutineState& State = *Wait.State.Get();
@@ -139,31 +132,28 @@ namespace Lumina
             const bool bDie = State.ShouldDieAtSuspension();
             if (!bDie && !IsReady(Wait, bPaused))
             {
-                if (State.IsWaitingOn(Wait.Serial))
+                return !State.IsWaitingOn(Wait.Serial);
+            }
+            if (State.ClaimWait(Wait.Serial))
+            {
+                if (bDie)
                 {
-                    Kept.Add(Move(Wait));
+                    State.DestroyAsCanceled();
                 }
-                continue;
+                else
+                {
+                    State.Resume();
+                }
             }
-            if (!State.ClaimWait(Wait.Serial))
-            {
-                continue;
-            }
-            if (bDie)
-            {
-                State.DestroyAsCanceled();
-            }
-            else
-            {
-                State.Resume();
-            }
-        }
+            return true;
+        });
 
         TScopeLock Guard(WaitLock);
-        for (FWait& Wait : Kept)
+        for (FWait& Wait : TickingWaits)
         {
             Waits.Add(Move(Wait));
         }
+        TickingWaits.Reset();
     }
 
     void FCoroutineManager::Clear()

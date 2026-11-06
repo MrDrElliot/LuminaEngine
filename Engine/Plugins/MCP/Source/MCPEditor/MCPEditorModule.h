@@ -3,6 +3,7 @@
 #include "Core/Delegates/Delegate.h"
 #include "Core/Module/ModuleInterface.h"
 #include "MCPPackageTools.h"
+#include "MCPProfilerTools.h"
 #include "MCPServer.h"
 
 namespace Lumina
@@ -18,11 +19,13 @@ namespace Lumina
         // Null until startup has run, and null again after shutdown.
         NODISCARD static MCP::FServer* GetServer();
         NODISCARD static MCP::FPackageToolsState* GetPackageTools();
+        NODISCARD static MCP::FProfilerToolsState* GetProfilerTools();
 
     private:
 
         MCP::FServer Server;
         MCP::FPackageToolsState PackageTools;
+        MCP::FProfilerToolsState ProfilerTools;
         FDelegateHandle ShutdownStartedHandle;
     };
 }

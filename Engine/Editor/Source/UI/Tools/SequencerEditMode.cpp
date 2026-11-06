@@ -3,6 +3,7 @@
 #include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Cast.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -373,6 +374,7 @@ namespace Lumina
 
     void FSequencerEditMode::OnExit(CWorld* World)
     {
+        EndDragEdit();
         bPlaying = false;
         bScrubbing = false;
         bDraggingKey = false;
@@ -459,6 +461,51 @@ namespace Lumina
         Details.reset();
         DetailsTarget = nullptr;
         bDetailsEdited = false;
+    }
+
+    void FSequencerEditMode::SerializeForUndo(FArchive& Ar, CObject* Object)
+    {
+        CSequence* Edited = static_cast<CSequence*>(Object);
+        Edited->GetClass()->SerializeProperties(Ar, Edited);
+
+        // A restore reads the Tracks list first, so this loop meets the tracks in the order they were written.
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Edited->Tracks)
+        {
+            if (Track.IsValid())
+            {
+                Track->GetClass()->SerializeProperties(Ar, Track.Get());
+            }
+        }
+    }
+
+    void FSequencerEditMode::BeginDragEdit(const char* Name)
+    {
+        if (DragEditName == nullptr && Context != nullptr)
+        {
+            DragEditName = Name;
+            Context->BeginModeObjectTransaction(Sequence.Get(), &SerializeForUndo);
+        }
+    }
+
+    void FSequencerEditMode::EndDragEdit()
+    {
+        if (DragEditName != nullptr)
+        {
+            Context->EndModeTransaction(DragEditName);
+            DragEditName = nullptr;
+        }
+    }
+
+    void FSequencerEditMode::OnPostUndoRedo(CWorld* World)
+    {
+        // The restore may have shrunk any list an index points into, and the details table holds a track by address.
+        ResetSelection();
+
+        if (bBound)
+        {
+            BindToWorld(World);
+            EvaluateAt(World, Math::Min(PlayTime, Sequence->Duration), true);
+        }
     }
 
     void FSequencerEditMode::RefreshAutoKeyWatch(CWorld* World)
@@ -569,6 +616,11 @@ namespace Lumina
 
     void FSequencerEditMode::DrawToolbar(CWorld* World, float)
     {
+        if (!ImGui::IsAnyItemActive())
+        {
+            EndDragEdit();
+        }
+
         if (!SequencerEditModeInternal::IsEditorWorld(World))
         {
             ImGui::TextDisabled(LE_ICON_FILMSTRIP " Sequences are authored in the editor world. Stop playing to edit.");
@@ -668,14 +720,14 @@ namespace Lumina
         {
             const int32 BindingIndex = PendingRemoveBinding;
             PendingRemoveBinding = Constants::kIndexNone;
-            RemoveBinding(World, BindingIndex);
+            EditSequence("Remove Sequence Binding", [&] { RemoveBinding(World, BindingIndex); });
         }
 
         if (PendingRemoveTrack != Constants::kIndexNone)
         {
             const int32 TrackIndex = PendingRemoveTrack;
             PendingRemoveTrack = Constants::kIndexNone;
-            RemoveTrack(World, TrackIndex);
+            EditSequence("Remove Sequence Track", [&] { RemoveTrack(World, TrackIndex); });
         }
 
         // Peeked first, so an asset drag never highlights the panel as a target.
@@ -783,6 +835,7 @@ namespace Lumina
         float DurationEntry = Sequence->Duration;
         if (ImGui::DragFloat("##Duration", &DurationEntry, 0.05f, 0.1f, 3600.0f, "Length %.2fs"))
         {
+            BeginDragEdit("Edit Sequence Length");
             Sequence->Duration = Math::Max(DurationEntry, 0.1f);
             MarkSequenceDirty();
 
@@ -804,6 +857,7 @@ namespace Lumina
         int32 RateEntry = Sequence->FrameRate;
         if (ImGui::DragInt("##FrameRate", &RateEntry, 0.2f, 1, 240, "%d fps"))
         {
+            BeginDragEdit("Edit Sequence Frame Rate");
             Sequence->FrameRate = Math::Clamp(RateEntry, 1, 240);
             MarkSequenceDirty();
         }
@@ -814,6 +868,7 @@ namespace Lumina
         float LetterboxEntry = Sequence->LetterboxAspect;
         if (ImGui::DragFloat("##Letterbox", &LetterboxEntry, 0.01f, 0.0f, 4.0f, LetterboxEntry > 0.0f ? "Bars %.2f" : "No bars"))
         {
+            BeginDragEdit("Edit Sequence Letterbox");
             Sequence->LetterboxAspect = Math::Clamp(LetterboxEntry, 0.0f, 4.0f);
             CommitEdit(World);
         }
@@ -863,7 +918,7 @@ namespace Lumina
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_CAMERA " New Camera"))
         {
-            AddCameraFromView(World);
+            EditSequence("Add Sequence Camera", [&] { AddCameraFromView(World); });
         }
         ImGuiX::TextTooltip("Add a cinematic camera where the editor camera is, keyed at the playhead and cut to from here.");
 
@@ -928,7 +983,7 @@ namespace Lumina
             const bool bDisabled = Choice.bNeedsBinding && SelectedBinding == Constants::kIndexNone;
             if (ImGui::MenuItem(Choice.Label, nullptr, false, !bDisabled))
             {
-                AddTrackOfClass(World, Choice.Class, Choice.bNeedsBinding ? SelectedBinding : Constants::kIndexNone);
+                EditSequence("Add Sequence Track", [&] { AddTrackOfClass(World, Choice.Class, Choice.bNeedsBinding ? SelectedBinding : Constants::kIndexNone); });
             }
             ImGuiX::TextTooltip("{}", bDisabled ? "Select a binding first." : Choice.Tooltip);
         }
@@ -1172,29 +1227,38 @@ namespace Lumina
                 SSequenceCameraCut& Cut = Track->Cuts[DraggingCut];
                 const float MinLength = Sequence->FrameToTime(1);
                 const float Time = Sequence->SnapToFrame(Math::Clamp(XToTime(MousePos.x), 0.0f, Duration));
+                float StartTime = Cut.StartTime;
+                float EndTime = Cut.EndTime;
 
                 if (DragEdge < 0)
                 {
-                    Cut.StartTime = Math::Min(Time, Cut.EndTime - MinLength);
+                    StartTime = Math::Min(Time, EndTime - MinLength);
                 }
                 else if (DragEdge > 0)
                 {
-                    Cut.EndTime = Math::Max(Time, Cut.StartTime + MinLength);
+                    EndTime = Math::Max(Time, StartTime + MinLength);
                 }
                 else
                 {
-                    const float Length = Cut.EndTime - Cut.StartTime;
-                    Cut.StartTime = Sequence->SnapToFrame(Math::Clamp(Time - DragGrabOffset, 0.0f, Math::Max(Duration - Length, 0.0f)));
-                    Cut.EndTime = Cut.StartTime + Length;
+                    const float Length = EndTime - StartTime;
+                    StartTime = Sequence->SnapToFrame(Math::Clamp(Time - DragGrabOffset, 0.0f, Math::Max(Duration - Length, 0.0f)));
+                    EndTime = StartTime + Length;
                 }
 
-                CommitEdit(World);
+                // A click that only selects the cut must not open a step, which would mark the level unsaved.
+                if (StartTime != Cut.StartTime || EndTime != Cut.EndTime)
+                {
+                    BeginDragEdit("Move Camera Cut");
+                    Cut.StartTime = StartTime;
+                    Cut.EndTime = EndTime;
+                    CommitEdit(World);
+                }
             }
         }
 
         if (PendingRemoval != Constants::kIndexNone)
         {
-            Track->Cuts.RemoveAt(PendingRemoval);
+            EditSequence("Remove Camera Cut", [&] { Track->Cuts.RemoveAt(PendingRemoval); });
             SelectedCut = Constants::kIndexNone;
             DraggingCut = Constants::kIndexNone;
             CommitEdit(World);
@@ -1418,6 +1482,7 @@ namespace Lumina
             // A key dropped onto another would merge with it, and the next frame's match could carry off the wrong one.
             else if (Math::Abs(DragTime - SelectedKeyTime) > KeyMatchEpsilon && !HasTransformKeyAt(Track, DragTime))
             {
+                BeginDragEdit("Move Sequence Key");
                 MoveTransformKeys(Track, SelectedKeyTime, DragTime);
                 SelectedKeyTime = DragTime;
                 CommitEdit(World);
@@ -1437,6 +1502,7 @@ namespace Lumina
                 const SKeyedCurve* Curve = FindCurve(Track);
                 if (Curve == nullptr || !HasKeyNear(*Curve, DragTime))
                 {
+                    BeginDragEdit("Move Sequence Key");
                     SelectedTrackKey = RetimeKey(Track, SelectedTrackKey, DragTime);
                     CommitEdit(World);
                 }
@@ -1481,7 +1547,7 @@ namespace Lumina
                 {
                     if (ImGui::MenuItem(Choice.Label, nullptr, Current == Choice.Mode))
                     {
-                        SetTransformKeyInterp(Track, SelectedKeyTime, Choice.Mode);
+                        EditSequence("Set Key Interpolation", [&] { SetTransformKeyInterp(Track, SelectedKeyTime, Choice.Mode); });
                         CommitEdit(World);
                     }
                 }
@@ -1511,7 +1577,7 @@ namespace Lumina
             {
                 if (ImGui::MenuItem(Track->bEnabled ? LE_ICON_EYE_OFF " Disable" : LE_ICON_EYE " Enable"))
                 {
-                    Track->bEnabled = !Track->bEnabled;
+                    EditSequence("Toggle Sequence Track", [&] { Track->bEnabled = !Track->bEnabled; });
                     CommitEdit(World);
                 }
 
@@ -1522,17 +1588,19 @@ namespace Lumina
 
                 if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track); Events != nullptr && ImGui::MenuItem(LE_ICON_FLAG " Add Event At Playhead"))
                 {
-                    SSequenceEventKey& Added = Events->Keys.EmplaceGetRef();
-                    Added.Time = Sequence->SnapToFrame(PlayTime);
-                    Added.Name = FName("Event");
-                    SelectedTrackKey = RetimeKey(Track, Events->Keys.Num() - 1, Added.Time);
+                    EditSequence("Add Sequence Event", [&]
+                    {
+                        SSequenceEventKey& Added = Events->Keys.EmplaceGetRef();
+                        Added.Time = Sequence->SnapToFrame(PlayTime);
+                        Added.Name = FName("Event");
+                        SelectedTrackKey = RetimeKey(Track, Events->Keys.Num() - 1, Added.Time);
+                    });
                     MarkSequenceDirty();
                 }
 
                 if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track); Audio != nullptr && ImGui::MenuItem(LE_ICON_MUSIC " Add Clip At Playhead"))
                 {
-                    SSequenceAudioClip& Clip = Audio->Clips.EmplaceGetRef();
-                    Clip.StartTime = Sequence->SnapToFrame(PlayTime);
+                    EditSequence("Add Audio Clip", [&] { Audio->Clips.EmplaceGetRef().StartTime = Sequence->SnapToFrame(PlayTime); });
                     SelectedTrackKey = Audio->Clips.Num() - 1;
                     MarkSequenceDirty();
                 }
@@ -1555,8 +1623,11 @@ namespace Lumina
                 {
                     if (ImGui::MenuItem(Choice.Label, nullptr, Curve->Keys[SelectedTrackKey].InterpMode == Choice.Mode))
                     {
-                        Curve->Keys[SelectedTrackKey].InterpMode = Choice.Mode;
-                        Curve->ComputeAutoTangents();
+                        EditSequence("Set Key Interpolation", [&]
+                        {
+                            Curve->Keys[SelectedTrackKey].InterpMode = Choice.Mode;
+                            Curve->ComputeAutoTangents();
+                        });
                         CommitEdit(World);
                     }
                 }
@@ -1591,9 +1662,12 @@ namespace Lumina
         if (SKeyedCurve* Curve = FindCurve(Track); Curve != nullptr && SelectedTrackKey >= 0 && SelectedTrackKey < Curve->NumKeys())
         {
             SCurveKey& Selected = Curve->Keys[SelectedTrackKey];
+            float Value = Selected.Value;
             ImGui::SetNextItemWidth(140.0f);
-            if (ImGui::DragFloat("Value", &Selected.Value, 0.01f))
+            if (ImGui::DragFloat("Value", &Value, 0.01f))
             {
+                BeginDragEdit("Edit Sequence Key");
+                Selected.Value = Value;
                 Curve->ComputeAutoTangents();
                 bChanged = true;
             }
@@ -1609,6 +1683,7 @@ namespace Lumina
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::InputText("Name", NameBuffer, sizeof(NameBuffer)))
             {
+                BeginDragEdit("Edit Sequence Event");
                 Selected.Name = FName(NameBuffer);
                 bChanged = true;
             }
@@ -1619,6 +1694,7 @@ namespace Lumina
             ImGui::SetNextItemWidth(220.0f);
             if (ImGui::InputText("Payload", PayloadBuffer, sizeof(PayloadBuffer)))
             {
+                BeginDragEdit("Edit Sequence Event");
                 Selected.Payload = PayloadBuffer;
                 bChanged = true;
             }
@@ -1631,23 +1707,35 @@ namespace Lumina
             ImGui::SetNextItemWidth(220.0f);
             if (ImGuiX::AssetReferenceCombo("##ClipSound", CSoundBase::StaticClass(), SoundGUID, LE_ICON_MUSIC))
             {
-                Clip.Sound = Cast<CSoundBase>(LoadObject<CObject>(SoundGUID));
+                EditSequence("Edit Audio Clip", [&] { Clip.Sound = Cast<CSoundBase>(LoadObject<CObject>(SoundGUID)); });
                 bChanged = true;
             }
 
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(110.0f);
-            bChanged |= ImGui::DragFloat("Volume", &Clip.Volume, 0.01f, 0.0f, 4.0f);
+            float Volume = Clip.Volume;
+            float Pitch = Clip.Pitch;
 
             ImGui::SameLine();
             ImGui::SetNextItemWidth(110.0f);
-            bChanged |= ImGui::DragFloat("Pitch", &Clip.Pitch, 0.01f, 0.01f, 4.0f);
+            const bool bVolumeChanged = ImGui::DragFloat("Volume", &Volume, 0.01f, 0.0f, 4.0f);
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110.0f);
+            const bool bPitchChanged = ImGui::DragFloat("Pitch", &Pitch, 0.01f, 0.01f, 4.0f);
+
+            if (bVolumeChanged || bPitchChanged)
+            {
+                BeginDragEdit("Edit Audio Clip");
+                Clip.Volume = Volume;
+                Clip.Pitch = Pitch;
+                bChanged = true;
+            }
         }
 
         if (DetailsTarget != Track || !Details)
         {
             Details = MakeUnique<FPropertyTable>(static_cast<CObject*>(Track));
             Details->SetShowSearchBar(false);
+            Details->SetStartEditCallback([this](const FPropertyChangedEvent&) { BeginDragEdit("Edit Sequence Track"); });
             Details->SetPostEditCallback([this](const FPropertyChangedEvent&) { bDetailsEdited = true; });
             DetailsTarget = Track;
             bDetailsEdited = false;
@@ -1754,7 +1842,7 @@ namespace Lumina
             return;
         }
 
-        Sequence->Duration = Math::Max(Times.Last(), 0.1f);
+        EditSequence("Fit Sequence Length", [&] { Sequence->Duration = Math::Max(Times.Last(), 0.1f); });
         MarkSequenceDirty();
 
         PlayTime = Math::Min(PlayTime, Sequence->Duration);
@@ -1808,9 +1896,12 @@ namespace Lumina
             return Existing;
         }
 
-        SSequenceBinding& Binding = Sequence->Bindings.EmplaceGetRef();
-        Binding.Name = EntityName;
-        Binding.Kind = ESequenceBindingKind::Possess;
+        EditSequence("Add Sequence Binding", [&]
+        {
+            SSequenceBinding& Binding = Sequence->Bindings.EmplaceGetRef();
+            Binding.Name = EntityName;
+            Binding.Kind = ESequenceBindingKind::Possess;
+        });
 
         MarkSequenceDirty();
         BindToWorld(World);
@@ -1949,14 +2040,17 @@ namespace Lumina
             return;
         }
 
-        CSequenceTrack_Transform* Track = FindOrCreateTransformTrack(BindingIndex);
-        const float Time = Sequence->SnapToFrame(PlayTime);
+        EditSequence("Key Transform", [&]
+        {
+            CSequenceTrack_Transform* Track = FindOrCreateTransformTrack(BindingIndex);
+            const float Time = Sequence->SnapToFrame(PlayTime);
 
-        SequencerEditModeInternal::KeyVector(Track->Location, Time, Transform->GetLocation(), false);
-        SequencerEditModeInternal::KeyVector(Track->Rotation, Time, Math::Degrees(Math::YawFirstEulerAngles(Transform->GetRotation())), false);
-        SequencerEditModeInternal::KeyVector(Track->Scale, Time, Transform->GetScale(), false);
-        Track->Rotation.UnwindAngles();
-        SequencerEditModeInternal::RefreshTangents(Track);
+            SequencerEditModeInternal::KeyVector(Track->Location, Time, Transform->GetLocation(), false);
+            SequencerEditModeInternal::KeyVector(Track->Rotation, Time, Math::Degrees(Math::YawFirstEulerAngles(Transform->GetRotation())), false);
+            SequencerEditModeInternal::KeyVector(Track->Scale, Time, Transform->GetScale(), false);
+            Track->Rotation.UnwindAngles();
+            SequencerEditModeInternal::RefreshTangents(Track);
+        });
 
         MarkSequenceDirty();
     }
@@ -1989,18 +2083,21 @@ namespace Lumina
             return;
         }
 
-        CSequenceTrack_Transform* Track = FindOrCreateTransformTrack(BindingIndex);
-        const float Time = Sequence->SnapToFrame(PlayTime);
+        EditSequence("Key From View", [&]
+        {
+            CSequenceTrack_Transform* Track = FindOrCreateTransformTrack(BindingIndex);
+            const float Time = Sequence->SnapToFrame(PlayTime);
 
-        Track->Location.bEnabled = true;
-        Track->Rotation.bEnabled = true;
-        SequencerEditModeInternal::KeyVector(Track->Location, Time, Location, true);
-        SequencerEditModeInternal::KeyVector(Track->Rotation, Time, Rotation, true);
-        Track->Rotation.UnwindAngles();
-        SequencerEditModeInternal::RefreshTangents(Track);
+            Track->Location.bEnabled = true;
+            Track->Rotation.bEnabled = true;
+            SequencerEditModeInternal::KeyVector(Track->Location, Time, Location, true);
+            SequencerEditModeInternal::KeyVector(Track->Rotation, Time, Rotation, true);
+            Track->Rotation.UnwindAngles();
+            SequencerEditModeInternal::RefreshTangents(Track);
 
-        // Scale stays unkeyed so a camera never inherits a stray scale from the editor entity.
-        Track->Scale.bEnabled = false;
+            // Scale stays unkeyed so a camera never inherits a stray scale from the editor entity.
+            Track->Scale.bEnabled = false;
+        });
 
         CommitEdit(World);
     }
@@ -2044,7 +2141,7 @@ namespace Lumina
         {
             if (CSequenceTrack_Transform* Track = FindTransformTrack(SelectedKeyBinding))
             {
-                SequencerEditModeInternal::DeleteTransformKeys(Track, SelectedKeyTime);
+                EditSequence("Delete Sequence Key", [&] { SequencerEditModeInternal::DeleteTransformKeys(Track, SelectedKeyTime); });
                 CommitEdit(World);
             }
             SelectedKeyBinding = Constants::kIndexNone;
@@ -2055,7 +2152,7 @@ namespace Lumina
         {
             if (CSequenceTrack* Track = Sequence->Tracks[SelectedTrack].Get())
             {
-                SequencerEditModeInternal::RemoveKey(Track, SelectedTrackKey);
+                EditSequence("Delete Sequence Key", [&] { SequencerEditModeInternal::RemoveKey(Track, SelectedTrackKey); });
                 CommitEdit(World);
             }
             SelectedTrackKey = Constants::kIndexNone;
@@ -2112,20 +2209,23 @@ namespace Lumina
             }
         }
 
-        CSequenceTrack_CameraCut* Track = FindOrCreateCameraCutTrack();
-
-        SSequenceCameraCut& Cut = Track->Cuts.EmplaceGetRef();
-        Cut.BindingIndex = SelectedBinding;
-        Cut.StartTime = Sequence->SnapToFrame(PlayTime);
-        Cut.EndTime = Math::Min(Cut.StartTime + 1.0f, Sequence->Duration);
-
-        // A zero-length cut can never contain the playhead, so it would be invisible and inert.
-        if (Cut.EndTime <= Cut.StartTime)
+        EditSequence("Add Camera Cut", [&]
         {
-            Cut.EndTime = Cut.StartTime + Sequence->FrameToTime(1);
-        }
+            CSequenceTrack_CameraCut* Track = FindOrCreateCameraCutTrack();
 
-        SelectedCut = Track->Cuts.Num() - 1;
+            SSequenceCameraCut& Cut = Track->Cuts.EmplaceGetRef();
+            Cut.BindingIndex = SelectedBinding;
+            Cut.StartTime = Sequence->SnapToFrame(PlayTime);
+            Cut.EndTime = Math::Min(Cut.StartTime + 1.0f, Sequence->Duration);
+
+            // A zero-length cut can never contain the playhead, so it would be invisible and inert.
+            if (Cut.EndTime <= Cut.StartTime)
+            {
+                Cut.EndTime = Cut.StartTime + Sequence->FrameToTime(1);
+            }
+
+            SelectedCut = Track->Cuts.Num() - 1;
+        });
         CommitEdit(World);
     }
 
@@ -2191,12 +2291,15 @@ namespace Lumina
             }
         }
 
-        const int32 Index = Curve->UpdateOrAddKey(Time, Value);
-        Curve->Keys[Index].InterpMode = ECurveInterpMode::Cubic;
-        Curve->ComputeAutoTangents();
+        EditSequence("Key Sequence Track", [&]
+        {
+            const int32 Index = Curve->UpdateOrAddKey(Time, Value);
+            Curve->Keys[Index].InterpMode = ECurveInterpMode::Cubic;
+            Curve->ComputeAutoTangents();
 
-        SelectedTrack = Algo::IndexOfIf(Sequence->Tracks, [Track](const TStrongObjectPtr<CSequenceTrack>& Other) { return Other.Get() == Track; });
-        SelectedTrackKey = Index;
+            SelectedTrack = Algo::IndexOfIf(Sequence->Tracks, [Track](const TStrongObjectPtr<CSequenceTrack>& Other) { return Other.Get() == Track; });
+            SelectedTrackKey = Index;
+        });
         CommitEdit(World);
     }
 

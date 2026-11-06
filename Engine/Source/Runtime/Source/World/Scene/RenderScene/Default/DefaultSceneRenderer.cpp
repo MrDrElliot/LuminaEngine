@@ -697,6 +697,13 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "GTAO Prefilter");
                     bGTAOPrefiltered = GTAOPass(CL, EGTAOStage::Prefilter);
                 }
+
+                // On graphics before the working depth goes to compute, and long before the lighting reads it.
+                if (bGTAOPrefiltered && IsScreenSpaceGITraced())
+                {
+                    SCENE_GPU_SCOPE(CL, "Screen Space GI");
+                    ScreenSpaceGIPass(CL);
+                }
                 const FSceneImage& GTAOWorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
 
                 RHI::FCmdListH ComputeCL = CL;
@@ -947,6 +954,13 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
                     ScreenSpaceReflectionsPass(CL);
+                }
+
+                // Lit opaque color before the atmosphere fogs it, which is what next frame's indirect diffuse bounces.
+                if (WantsScreenSpaceGI(*CurrentView))
+                {
+                    SCENE_GPU_SCOPE(CL, "Screen Space GI History");
+                    CaptureScreenSpaceGIHistory(CL);
                 }
 
                 // Before translucency, which fogs itself in BasePixelPass; this sees only opaque depth.
@@ -1209,8 +1223,9 @@ namespace Lumina
         // This view's own depth, since the sky pass discards wherever that depth holds geometry.
         Globals.SceneDepthIndex = (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
 
-        // The far shadow mask is traced from the primary camera's depth, which no other view shares.
-        Globals.GTAOSettings.SunShadowMaskIndex = Constants::kIndexNoneU32;
+        // The far shadow mask and indirect diffuse are traced from the primary camera's depth, which no other view shares.
+        Globals.GTAOSettings.SunShadowMaskIndex   = Constants::kIndexNoneU32;
+        Globals.GTAOSettings.IndirectDiffuseIndex = Constants::kIndexNoneU32;
 
         PublishFogGlobals(Globals);
         PublishWeatherGlobals(Globals);
@@ -1727,6 +1742,9 @@ namespace Lumina
         case ENamedImage::GTAO:               return "Scene.GTAO";
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
+        case ENamedImage::ScreenSpaceGITrace: return "Scene.ScreenSpaceGITrace";
+        case ENamedImage::ScreenSpaceGI:      return "Scene.ScreenSpaceGI";
+        case ENamedImage::ScreenSpaceGIHistory: return "Scene.ScreenSpaceGIHistory";
         case ENamedImage::SunFarShadowMask:   return "Scene.SunFarShadowMask";
         case ENamedImage::SSRTrace:           return "Scene.SSRTrace";
         case ENamedImage::SSRPyramid:         return "Scene.SSRPyramid";
@@ -1832,6 +1850,9 @@ namespace Lumina
         case ENamedImage::GTAO:
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
+        case ENamedImage::ScreenSpaceGITrace:
+        case ENamedImage::ScreenSpaceGI:
+        case ENamedImage::ScreenSpaceGIHistory:
         case ENamedImage::SunFarShadowMask:
         case ENamedImage::SSRTrace:
         case ENamedImage::SSRPyramid:
@@ -1923,6 +1944,16 @@ namespace Lumina
                                 RHI::EImageUsageFlags::Storage;
             return true;
         }
+
+        // Half resolution like the fog shafts, the history a blit of HDR the next frame's trace gathers from.
+        case ENamedImage::ScreenSpaceGITrace:
+        case ENamedImage::ScreenSpaceGI:
+        case ENamedImage::ScreenSpaceGIHistory:
+            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            OutDesc.Format    = EFormat::RGBA16_FLOAT;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | ((Image == ENamedImage::ScreenSpaceGIHistory)
+                                    ? RHI::EImageUsageFlags::TransferDst : RHI::EImageUsageFlags::Storage);
+            return true;
 
         case ENamedImage::SunFarShadowMask:
             OutDesc.Format = EFormat::R8_UNORM;
@@ -2067,6 +2098,18 @@ namespace Lumina
         Want(ENamedImage::GTAO,             bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAODenoise,      bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAOBlur,         bGTAO, /*bMipUAVs*/ true);
+
+        // A new or resized history holds whatever the allocator handed back, which is not a previous frame.
+        const bool           bScreenSpaceGI = WantsScreenSpaceGI(View);
+        const RHI::FTextureH OldGIHistory   = View.Images[(int)ENamedImage::ScreenSpaceGIHistory].Texture;
+        Want(ENamedImage::ScreenSpaceGITrace,   bScreenSpaceGI, /*bMipUAVs*/ true);
+        Want(ENamedImage::ScreenSpaceGI,        bScreenSpaceGI, /*bMipUAVs*/ true);
+        Want(ENamedImage::ScreenSpaceGIHistory, bScreenSpaceGI);
+        if (!bScreenSpaceGI || View.Images[(int)ENamedImage::ScreenSpaceGIHistory].Texture != OldGIHistory)
+        {
+            View.bScreenSpaceGIHistoryValid = false;
+        }
+
         Want(ENamedImage::SunFarShadowMask, View.bIsPrimary && WantsSunFarShadowMask(), /*bMipUAVs*/ true);
         Want(ENamedImage::SSRTrace,         bSSR,  /*bMipUAVs*/ true);
         Want(ENamedImage::SSRPyramid,       bSSR,  /*bMipUAVs*/ true);

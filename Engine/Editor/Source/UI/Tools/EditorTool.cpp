@@ -1260,6 +1260,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
                     { ERenderSceneDebugFlags::SunFarShadow,    "Sun Far Shadow"   },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
+                    { ERenderSceneDebugFlags::ScreenSpaceGI,   "Screen Space GI"  },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },
                     { ERenderSceneDebugFlags::ProbeRadiance,   "Probe Radiance"   },
@@ -2349,7 +2350,7 @@ namespace Lumina
         TransactionManager.AbortTransaction();
     }
 
-    void FEditorTool::RunObjectTransacted(FName Label, CObject* Object, const TFunction<void()>& Mutate)
+    void FEditorTool::RunObjectTransacted(FName Label, CObject* Object, const TFunction<void()>& Mutate, const FObjectSnapshotCommand::FSerializer& Serializer)
     {
         if (!Mutate)
         {
@@ -2362,7 +2363,7 @@ namespace Lumina
         {
             TransactionManager.BeginTransaction(Label);
         }
-        TransactionManager.Record(MakeUnique<FObjectSnapshotCommand>(Object, Label));
+        TransactionManager.Record(MakeUnique<FObjectSnapshotCommand>(Object, Label, Serializer));
         Mutate();
         if (!bJoinOpenEdit)
         {

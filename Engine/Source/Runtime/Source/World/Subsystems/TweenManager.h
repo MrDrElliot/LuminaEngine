@@ -256,6 +256,7 @@ namespace Lumina
 
         mutable ECS::FRegistry Registry;
         ECS::FRegistry*        WorldRegistry = nullptr;
+        TVector<ECS::FEntity>  Completed;
         uint32                 NextShakeSeed = 1;
         bool                   bTicking = false;
     };

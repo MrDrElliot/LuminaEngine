@@ -169,39 +169,46 @@ namespace Lumina::NetPrediction
             }
 
             FNetCharacterDrive& Applied = Registry.GetOrEmplace<FNetCharacterDrive>(Entity);
-            if (Applied.Drive == (uint8)Drive)
+            if (Applied.Drive != (uint8)Drive)
             {
-                continue;
-            }
+                // The capsule may not exist on the frame the entity arrived, so the drive is retried until it does.
+                Physics::FCharacterNetState Probe;
+                if (!Scene->GetCharacterNetState(Entity, Probe))
+                {
+                    continue;
+                }
+                Scene->SetCharacterNetDrive(Entity, Drive);
+                Applied.Drive = (uint8)Drive;
 
-            // The capsule may not exist on the frame the entity arrived, so the drive is retried until it does.
-            Physics::FCharacterNetState Probe;
-            if (!Scene->GetCharacterNetState(Entity, Probe))
-            {
-                continue;
+                if (!bServer && Net.LocalRole == ENetRole::AutonomousProxy)
+                {
+                    Registry.EmplaceOrReplace<FNetPredictionClient>(Entity);
+                }
+                else
+                {
+                    Registry.Remove<FNetPredictionClient>(Entity);
+                }
             }
-            Scene->SetCharacterNetDrive(Entity, Drive);
-            Applied.Drive = (uint8)Drive;
-
-            const bool bPredictsHere = !bServer && Net.LocalRole == ENetRole::AutonomousProxy;
-            const bool bServesCommands = bServer && Net.OwningConnectionId != 0;
-            if (bPredictsHere)
-            {
-                Registry.EmplaceOrReplace<FNetPredictionClient>(Entity);
-            }
-            else
-            {
-                Registry.Remove<FNetPredictionClient>(Entity);
-            }
-            if (bServesCommands)
-            {
-                Registry.EmplaceOrReplace<FNetPredictionServer>(Entity).Budget = 4.0f;
-            }
-            else
-            {
-                Registry.Remove<FNetPredictionServer>(Entity);
-            }
+            RefreshServerPrediction(Registry, Entity, bServer ? Net.OwningConnectionId : 0);
         }
+    }
+
+    void RefreshServerPrediction(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 OwningConnectionId)
+    {
+        if (OwningConnectionId == 0)
+        {
+            Registry.Remove<FNetPredictionServer>(Entity);
+            return;
+        }
+
+        const FNetPredictionServer* Existing = Registry.TryGet<ECS::Read<FNetPredictionServer>>(Entity);
+        if (Existing != nullptr && Existing->OwningConnectionId == OwningConnectionId)
+        {
+            return;
+        }
+        FNetPredictionServer& Prediction = Registry.EmplaceOrReplace<FNetPredictionServer>(Entity);
+        Prediction.OwningConnectionId = OwningConnectionId;
+        Prediction.Budget = 4.0f;
     }
 
     void OnCharacterStep(CWorld* World, float FixedDt, bool bAfter)

@@ -59,6 +59,7 @@ namespace Lumina
 
         mutable FMutex                          WaitLock;
         TVector<FWait>                          Waits;
+        TVector<FWait>                          TickingWaits;
 
         mutable FMutex                          TrackLock;
         TVector<CoroDetail::FCoroutineState*>   Tracked;

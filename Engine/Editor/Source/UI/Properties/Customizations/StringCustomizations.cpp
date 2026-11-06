@@ -13,18 +13,6 @@ namespace Lumina
 {
     namespace
     {
-        // Grows the backing FString as the user types, since a shader body outgrows any fixed buffer.
-        int StringResizeCallback(ImGuiInputTextCallbackData* Data)
-        {
-            if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
-            {
-                FString* Str = static_cast<FString*>(Data->UserData);
-                Str->SetLen(Data->BufTextLen);
-                Data->Buf = Str->GetData();
-            }
-            return 0;
-        }
-
         // Null when the property asks for no picker, which leaves it a plain text field.
         const INamePickerSource* ResolvePickerSource(FProperty* Property, FStringView& OutKind)
         {
@@ -67,14 +55,13 @@ namespace Lumina
         }
 
         // None edits as an empty field, which also turns a cleared field back into None.
-        char Buffer[256];
-        strncpy(Buffer, DisplayValue.IsNone() ? "" : *DisplayValue, sizeof(Buffer));
-        Buffer[sizeof(Buffer) - 1] = 0;
+        FString Text = DisplayValue.IsNone() ? FString() : DisplayValue.ToString();
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-        if (ImGui::InputTextWithHint("##Name", "None", Buffer, sizeof(Buffer)))
+        if (ImGui::InputTextWithHint("##Name", "None", Text.GetData(), Text.GetCapacity() + 1,
+                                     ImGuiInputTextFlags_CallbackResize, ImGuiX::StringInputResizeCallback<FString>, &Text))
         {
-            DisplayValue = FName(Buffer);
+            DisplayValue = FName(Text);
         }
         ImGui::PopItemWidth();
 
@@ -132,24 +119,16 @@ namespace Lumina
 
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
-        char Buffer[1024];
-        strncpy(Buffer, *DisplayValue, sizeof(Buffer));
-        Buffer[sizeof(Buffer) - 1] = '\0';
-
         if (bMultiline)
         {
             const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 4.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
-            // Edited in place through the resize callback, since the text can be arbitrarily long.
             ImGui::InputTextMultiline("##ParamName", DisplayValue.GetData(), DisplayValue.GetCapacity() + 1, Size,
-                                      ImGuiInputTextFlags_CallbackResize, StringResizeCallback, &DisplayValue);
+                                      ImGuiInputTextFlags_CallbackResize, ImGuiX::StringInputResizeCallback<FString>, &DisplayValue);
         }
         else
         {
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - ButtonWidth);
-            if (ImGui::InputText("##ParamName", Buffer, sizeof(Buffer)))
-            {
-                DisplayValue = Buffer;
-            }
+            ImGuiX::InputText("##ParamName", DisplayValue);
             ImGui::PopItemWidth();
 
             // A file of an allowed kind dragged from the content browser lands as its path.

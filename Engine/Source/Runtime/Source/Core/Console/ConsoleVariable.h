@@ -124,6 +124,14 @@ namespace Lumina
         FString            Value;
     };
 
+    // A console line trimmed of surrounding whitespace and split at its first space.
+    struct FConsoleLineParts
+    {
+        FStringView Line;
+        FStringView Name;
+        FStringView Value;
+    };
+
     class RUNTIME_API FConsoleRegistry
     {
     public:
@@ -184,6 +192,8 @@ namespace Lumina
         TOptional<FString> GetValueAsString(FStringView VariableName);
 
         bool ExecuteCommand(FStringView Name);
+
+        static FConsoleLineParts SplitLine(FStringView Line);
 
         // A command name, or a variable name with an optional new value, as every console types it. Successful sets are saved to config.
         FConsoleLineResult ExecuteLine(FStringView Line, bool bEchoToLog);

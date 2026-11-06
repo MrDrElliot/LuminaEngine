@@ -99,20 +99,6 @@ namespace Lumina
         // Reused so we act on whatever terrain entity is currently in the world.
         ECS::FEntity FindPreferredTerrain(CWorld* World) const;
 
-        template<typename TEdit>
-        void RunModeTransaction(const char* Name, TEdit&& Edit)
-        {
-            if (Context)
-            {
-                Context->BeginModeTransaction();
-            }
-            Edit();
-            if (Context)
-            {
-                Context->EndModeTransaction(Name);
-            }
-        }
-
         void TrackLayerEditTransaction(const char* Name);
         void CloseLayerEditTransaction();
 

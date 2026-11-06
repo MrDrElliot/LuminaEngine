@@ -438,6 +438,54 @@ TEST(ECSTests, Hierarchy_PreorderKeepsEverySubtreeContiguous)
     EXPECT_EQ(Hierarchy.GetSlot(A1) + 1, Hierarchy.GetSlot(A2));
 }
 
+TEST(ECSTests, Hierarchy_ForEachDescendantVisitsParentsFirstAndSiblingsInOrder)
+{
+    ECS::FRegistry Registry{};
+
+    const ECS::FEntity Top = Registry.Create();
+    const ECS::FEntity Before = Registry.Create();
+    const ECS::FEntity BeforeChild = Registry.Create();
+    const ECS::FEntity Root = Registry.Create();
+    const ECS::FEntity After = Registry.Create();
+    const ECS::FEntity AfterChild = Registry.Create();
+    const ECS::FEntity C = Registry.Create();
+    const ECS::FEntity C3 = Registry.Create();
+    const ECS::FEntity C1 = Registry.Create();
+    const ECS::FEntity C2 = Registry.Create();
+    const ECS::FEntity B = Registry.Create();
+    const ECS::FEntity A = Registry.Create();
+    const ECS::FEntity A2 = Registry.Create();
+    const ECS::FEntity A1 = Registry.Create();
+    const ECS::FEntity A1a = Registry.Create();
+
+    Registry.AttachChild(Before, Top);
+    Registry.AttachChild(Root, Top);
+    Registry.AttachChild(After, Top);
+    Registry.AttachChild(BeforeChild, Before);
+    Registry.AttachChild(AfterChild, After);
+
+    // Attached out of creation order and partly at the front, so only the sibling links give the expected order.
+    Registry.AttachChild(C, Root);
+    Registry.AttachChild(B, Root, 0);
+    Registry.AttachChild(A, Root, 0);
+    Registry.AttachChild(A2, A);
+    Registry.AttachChild(A1, A, 0);
+    Registry.AttachChild(A1a, A1);
+    Registry.AttachChild(C1, C);
+    Registry.AttachChild(C2, C);
+    Registry.AttachChild(C3, C);
+
+    TVector<ECS::FEntity> Visited;
+    Registry.GetHierarchy().ForEachDescendant(Root, [&](ECS::FEntity Entity) { Visited.Add(Entity); });
+
+    const TVector<ECS::FEntity> Expected = { A, A1, A1a, A2, B, C, C1, C2, C3 };
+    ASSERT_EQ(Visited.Num(), Expected.Num()) << "Root, its siblings and their children are never visited";
+    for (int32 Index = 0; Index < Expected.Num(); ++Index)
+    {
+        EXPECT_EQ(Visited[Index], Expected[Index]) << "at visit " << Index;
+    }
+}
+
 TEST(ECSTests, Hierarchy_AttachRefusesACycle)
 {
     ECS::FRegistry Registry{};

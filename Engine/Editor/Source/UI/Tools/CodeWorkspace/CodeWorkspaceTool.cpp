@@ -1,6 +1,7 @@
 #include "CodeWorkspaceTool.h"
 
 #include <imgui_internal.h>
+#include "Asset/AssetOps.h"
 #include "Config/Config.h"
 #include "Core/Delegates/CoreDelegates.h"
 #include "FileSystem/FileSystem.h"
@@ -1486,10 +1487,20 @@ namespace Lumina
         const bool bSubmit = ImGui::InputTextWithHint("##name", "Name.cs", NewFileBuffer, sizeof(NewFileBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
         const FStringView Name(NewFileBuffer);
         const FString Path = NewFileFolder + "/" + FString(Name);
+        const FStringView Stem = VFS::FileName(Path.View(), true);
+        FString Reason;
+        if (AssetOps::IsValidLeafName(Name, &Reason) && Stem.IsEmpty())
+        {
+            Reason = "A file needs a name before its extension.";
+        }
         const bool bKnown = HasAnyExtension(Name, TextExtensions);
-        const bool bExists = !Name.IsEmpty() && VFS::Exists(Path.View());
-        const bool bValid = bKnown && !bExists && Name.FindFirstOf("/\\:*?\"<>|") == Constants::kIndexNone;
-        if (!Name.IsEmpty() && !bKnown)
+        const bool bExists = Reason.IsEmpty() && bKnown && VFS::Exists(Path.View());
+        const bool bValid = Reason.IsEmpty() && bKnown && !bExists;
+        if (!Name.IsEmpty() && !Reason.IsEmpty())
+        {
+            ImGui::TextColored(EditorColors::Danger(), "%s", *Reason);
+        }
+        else if (!Name.IsEmpty() && !bKnown)
         {
             ImGui::TextColored(EditorColors::Warning(), "Use a text extension such as .cs, .slang, .rml or .json.");
         }
@@ -1502,7 +1513,7 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_FILE_PLUS_OUTLINE " Create") || (bSubmit && bValid))
         {
             const bool bScript = EndsWithIgnoreCase(Name, ".cs");
-            const FString Source = bScript ? CSharpScript::NewScriptSource(VFS::FileName(Name, true)) : FString();
+            const FString Source = bScript ? CSharpScript::NewScriptSource(Stem) : FString();
             if (VFS::WriteFile(Path.View(), Source.View()))
             {
                 ImGui::CloseCurrentPopup();

@@ -373,6 +373,43 @@ TEST_F(PhysicalAnimation, WalksEveryWayWithoutFallingOrLurching)
     EXPECT_LT(MaxTilt, 25.0f);
 }
 
+// A ragdoll at rest reads back its bind pose, a bone with no body follows its parent, and a second read reuses every buffer.
+TEST_F(PhysicalAnimation, ReadRagdollPoseReturnsTheBindPoseWithoutReallocating)
+{
+    const FVector3 Hand(0.22f, 0.95f, 0.0f);
+    FSkeletonResource::FBoneInfo& HandBone = Skeleton.Bones.EmplaceGetRef();
+    HandBone.Name           = FName("hand_l");
+    HandBone.ParentIndex    = 5;
+    HandBone.LocalTransform = Math::Translate(FMatrix4(1.0f), Hand - kMannequinBones[5].Position);
+    HandBone.InvBindMatrix  = Math::Inverse(Math::Translate(FMatrix4(1.0f), Hand));
+    Skeleton.BoneNameToIndex[HandBone.Name] = Skeleton.Bones.Num() - 1;
+    BindGlobals.Add(Math::Translate(FMatrix4(1.0f), Hand));
+
+    const FVector3 At(0.0f, 2.0f, 0.0f);
+    SpawnMannequin(At, false);
+    const FMatrix4 WorldToEntity = Math::Inverse(Math::Translate(FMatrix4(1.0f), At));
+
+    TVector<FMatrix4> Pose;
+    Scene->ReadRagdollPose(*Ragdoll().Ragdoll, WorldToEntity, &Skeleton, Pose);
+    ASSERT_EQ(Pose.Num(), Skeleton.GetNumBones());
+    for (int32 Bone = 0; Bone < Pose.Num(); ++Bone)
+    {
+        for (int32 Column = 0; Column < 4; ++Column)
+        {
+            for (int32 Row = 0; Row < 4; ++Row)
+            {
+                EXPECT_NEAR(Pose[Bone][Column][Row], Column == Row ? 1.0f : 0.0f, 1e-3f) << "bone " << Bone;
+            }
+        }
+    }
+
+    const FMatrix4* PoseData = Pose.GetData();
+    const uint8* MappedData = Ragdoll().Ragdoll->PoseBoneMapped.GetData();
+    Scene->ReadRagdollPose(*Ragdoll().Ragdoll, WorldToEntity, &Skeleton, Pose);
+    EXPECT_EQ(Pose.GetData(), PoseData);
+    EXPECT_EQ(Ragdoll().Ragdoll->PoseBoneMapped.GetData(), MappedData);
+}
+
 // Standing and walking, the torso stays steady instead of buzzing, and a body left alone stands still instead of fidgeting.
 TEST_F(PhysicalAnimation, StandsAndWalksWithoutShaking)
 {

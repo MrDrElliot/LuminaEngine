@@ -554,5 +554,13 @@ namespace Lumina
         /** Trades depth-pyramid bandwidth against thin-object accuracy and temporal stability. */
         PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.0f, ClampMax = 30.0f)
         float GTAODepthMipSamplingOffset = 3.3f;
+
+        // Half resolution indirect diffuse gathered along GTAO's horizon slices from last frame's lit color; needs GTAO on.
+        PROPERTY(Editable, Category = "Global Illumination")
+        bool bScreenSpaceGI = false;
+
+        // World distance the indirect diffuse trace searches for surfaces to bounce light from.
+        PROPERTY(Editable, Category = "Global Illumination", ClampMin = 0.01f)
+        float ScreenSpaceGIRadius = 2.0f;
     };
 }

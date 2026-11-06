@@ -81,6 +81,11 @@ namespace Lumina
         RUNTIME_API bool IsSurfaceStale(const FResolvedSurface& Surface);
 
         RUNTIME_API bool ResolveSurfaceMaterial(FResolvedSurface& Out, CMaterialInterface* RawMaterial);
+
+        // Total triangle area of Count static meshlets from Begin, in mesh space.
+        RUNTIME_API double MeshletRangeArea(const FMeshletData& MD, uint32 Begin, uint32 Count);
+
+        RUNTIME_API FInstanceProxy ComputeSurfaceProxy(const FMeshResource& Resource, const FGeometrySurface& Surface);
     }
 
     // Interned per (mesh, material assignment), so every instance of a mesh shares one entry.

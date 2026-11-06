@@ -23,8 +23,11 @@ namespace AgentGameThreadTestsInternal
         }
     }
 
-    // Runs Body on a worker and pumps the main thread queue meanwhile, which is the real arrangement.
-    void RunOffThreadWhilePumping(TFunction<void()> Body, double PumpSeconds)
+    // Only a broken gate should hit this, so a cold job system start under a loaded machine cannot.
+    constexpr int32 kTimeoutThatOnlyCatchesAHang = 60000;
+
+    // Runs Body on a worker and pumps the main thread queue until it returns, which is the real arrangement.
+    void RunOffThreadWhilePumping(TFunction<void()> Body)
     {
         TAtomic<bool> bDone { false };
 
@@ -34,8 +37,7 @@ namespace AgentGameThreadTestsInternal
             bDone.store(true, std::memory_order_release);
         });
 
-        const double Deadline = PlatformTime::Seconds() + PumpSeconds;
-        while (!bDone.load(std::memory_order_acquire) && PlatformTime::Seconds() < Deadline)
+        while (!bDone.load(std::memory_order_acquire))
         {
             MainThread::ProcessQueue();
             Threading::Sleep(1);
@@ -75,8 +77,8 @@ TEST(AgentGameThread, WorkFromAnotherThreadRunsOnTheMainThread)
         Result = FGameThreadGate::Run([&bRanOnMain]()
         {
             bRanOnMain.store(Threading::IsMainThread(), std::memory_order_release);
-        }, 4000);
-    }, 5.0);
+        }, kTimeoutThatOnlyCatchesAHang);
+    });
 
     EXPECT_EQ(Result, EGameThreadResult::Ran);
     EXPECT_TRUE(bRanOnMain.load(std::memory_order_acquire));
@@ -89,8 +91,8 @@ TEST(AgentGameThread, AValueWrittenByTheWorkIsVisibleAfterwards)
 
     RunOffThreadWhilePumping([&]()
     {
-        Result = FGameThreadGate::Run([&Written]() { Written = 42; }, 4000);
-    }, 5.0);
+        Result = FGameThreadGate::Run([&Written]() { Written = 42; }, kTimeoutThatOnlyCatchesAHang);
+    });
 
     ASSERT_EQ(Result, EGameThreadResult::Ran);
     EXPECT_EQ(Written, 42);
@@ -145,7 +147,7 @@ TEST(AgentGameThread, WorkAlreadyRunningIsWaitedOutPastTheTimeout)
             Threading::Sleep(250);
             bFinished.store(true, std::memory_order_release);
         }, 50);
-    }, 5.0);
+    });
 
     EXPECT_EQ(Result, EGameThreadResult::Ran);
     EXPECT_TRUE(bFinished.load(std::memory_order_acquire));
@@ -162,7 +164,7 @@ TEST(AgentGameThread, WorkQueuedBehindALongCallbackWaitsForIt)
     RunOffThreadWhilePumping([&]()
     {
         Result = FGameThreadGate::Run([&bRan]() { bRan.store(true, std::memory_order_release); }, 50);
-    }, 5.0);
+    });
 
     EXPECT_EQ(Result, EGameThreadResult::Ran);
     EXPECT_TRUE(bRan.load(std::memory_order_acquire));
@@ -177,9 +179,9 @@ TEST(AgentGameThread, SeveralCallsAllRunInOrder)
     {
         for (int32 Index = 0; Index < 3; ++Index)
         {
-            Results[Index] = FGameThreadGate::Run([&Order, Index]() { Order.Add(Index); }, 4000);
+            Results[Index] = FGameThreadGate::Run([&Order, Index]() { Order.Add(Index); }, kTimeoutThatOnlyCatchesAHang);
         }
-    }, 6.0);
+    });
 
     for (const EGameThreadResult Result : Results)
     {

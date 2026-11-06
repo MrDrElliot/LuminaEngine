@@ -185,7 +185,7 @@ public static class TestMode
         return 0;
     }
 
-    private static int Launch(string Executable, IReadOnlyList<string> LaunchArguments, string EngineBinaries)
+    private static int Launch(string Executable, IReadOnlyList<string> LaunchArguments, string LibrarySearchPath)
     {
         ProcessStartInfo StartInfo = new(Executable)
         {
@@ -193,11 +193,12 @@ public static class TestMode
             WorkingDirectory = Path.GetDirectoryName(Executable) ?? string.Empty,
         };
 
-        // A project's suite links the engine's module DLLs but sits beside the project's binaries, so the loader needs this.
-        if (EngineBinaries.Length > 0)
+        // Windows finds DLLs through PATH, while the Linux loader reads only LD_LIBRARY_PATH beyond the rpath.
+        if (LibrarySearchPath.Length > 0)
         {
-            string Existing = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-            StartInfo.Environment["PATH"] = EngineBinaries + Path.PathSeparator + Existing;
+            string Variable = OperatingSystem.IsWindows() ? "PATH" : "LD_LIBRARY_PATH";
+            string Existing = Environment.GetEnvironmentVariable(Variable) ?? string.Empty;
+            StartInfo.Environment[Variable] = Existing.Length > 0 ? LibrarySearchPath + Path.PathSeparator + Existing : LibrarySearchPath;
         }
 
         foreach (string Argument in LaunchArguments)

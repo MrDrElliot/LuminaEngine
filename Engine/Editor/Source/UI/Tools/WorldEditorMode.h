@@ -3,6 +3,7 @@
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Transactions/ObjectSnapshotCommand.h"
 #include "World/ECS/Entity.h"
 
 namespace Lumina
@@ -22,6 +23,12 @@ namespace Lumina
 
         // Cheaper, for an interaction that only adds entities; EndModeTransaction closes it.
         virtual void BeginModeCreationTransaction() = 0;
+
+        // For an object outside the world, such as an asset the mode edits; EndModeTransaction closes it.
+        virtual void BeginModeObjectTransaction(CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer) = 0;
+
+        // One step snapshotting Object around Edit, or part of the step already open.
+        virtual void RunModeObjectTransaction(const char* Name, CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer, const TFunction<void()>& Edit) = 0;
 
         virtual ECS::FEntity GetModeSelectionFocus() const = 0;
         virtual void SetModeSelection(ECS::FEntity Entity) = 0;
@@ -46,9 +53,26 @@ namespace Lumina
         // True when the mode owns viewport input outright, so the host drops its own selection, marquee and gizmo.
         virtual bool ConsumesViewportInput() const { return true; }
 
+        // Raised on every mode after an undo or redo, active or not.
+        virtual void OnPostUndoRedo(CWorld* World) {}
+
         void SetContext(IEditorModeContext* InContext) { Context = InContext; }
 
     protected:
+
+        template<typename TEdit>
+        void RunModeTransaction(const char* Name, TEdit&& Edit)
+        {
+            if (Context)
+            {
+                Context->BeginModeTransaction();
+            }
+            Edit();
+            if (Context)
+            {
+                Context->EndModeTransaction(Name);
+            }
+        }
 
         IEditorModeContext* Context = nullptr;
     };

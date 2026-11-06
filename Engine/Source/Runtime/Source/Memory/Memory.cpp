@@ -208,8 +208,17 @@ namespace Lumina
 
     void* Memory::Realloc(void* Memory, size_t NewSize, size_t Alignment)
     {
+        const int32 CallstackDepth = GAllocCallstackDepth.load(Atomic::MemoryOrderRelaxed);
+        if (Memory != nullptr)
+        {
+            TracyCFreeS(Memory, CallstackDepth);
+        }
         FMalloc& Allocator = EnsureAllocator();
         void* pMemory = Allocator.Realloc(Memory, NewSize, Align<size_t>(Alignment, 16));
+        if (pMemory != nullptr)
+        {
+            TracyCAllocS(pMemory, NewSize, CallstackDepth);
+        }
     #if LUMINA_MEMORY_TRACKING
         ::Lumina::Memory::Hooks::OnRealloc(Memory, pMemory, NewSize);
     #endif
@@ -232,6 +241,9 @@ namespace Lumina
             return false;
         }
 
+        const int32 CallstackDepth = GAllocCallstackDepth.load(Atomic::MemoryOrderRelaxed);
+        TracyCFreeS(Memory, CallstackDepth);
+        TracyCAllocS(Memory, NewSize, CallstackDepth);
     #if LUMINA_MEMORY_TRACKING
         ::Lumina::Memory::Hooks::OnRealloc(Memory, Memory, NewSize);
     #endif

@@ -126,7 +126,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             NormalWS = dot(NormalWS, NormalWS) > 1e-12 ? normalize(NormalWS) : float3(0.0, 1.0, 0.0);
 
             // A pixel-sized splat faces the camera more than its averaged normal does, so the normal leans toward the eye.
-            const float3 WorldPosition = mul(P.Model, float4(P.Proxy.LocalCenter, 1.0)).xyz;
+            float3 GroundWiden;
+            const float3 WorldPosition = ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
             const float3 ToEye = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
             NormalWS = normalize(lerp(NormalWS, ToEye, 0.5));
 
@@ -182,12 +183,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             }
             $MATERIAL_INPUTS
 
+            // Velocity stays as the camera motion the Velocity pass derived from this proxy's depth.
             G = BuildGBufferData(Input, Material);
-
-            if (SPEC_DEFERRED_VELOCITY != 0u && Pass().Velocity.IsValid())
-            {
-                Pass().Velocity[int2(Texel)] = float4(0.0, 0.0, 0.0, 0.0);
-            }
         }
     }
     else if (T.bValid)

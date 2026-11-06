@@ -1,6 +1,5 @@
 #include "UIScript.h"
 
-#include <algorithm>
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIteration.h"
@@ -189,7 +188,7 @@ namespace Lumina::UIBinding
         {
             return Name.Mid(Dot + 1);
         }
-        if (Name.Len() > 1 && Name[0] == 'C' && std::isupper((unsigned char)Name[1]))
+        if (Name.Len() > 1 && Name[0] == 'C' && Name[1] >= 'A' && Name[1] <= 'Z')
         {
             return Name.Mid(1);
         }
@@ -438,15 +437,23 @@ namespace Lumina::UIScripts
             return FString();
         }
 
+        template<typename TFunc>
+        void ForEachElementProperty(CEntityScript* Script, TFunc&& Func)
+        {
+            for (FProperty* Property : Script->GetClass()->GetProperties())
+            {
+                if (Property->HasMetadata("Element") && Property->GetType() == EPropertyTypeFlags::Struct
+                    && static_cast<const FStructProperty*>(Property)->GetStruct() == SUIElement::StaticStruct())
+                {
+                    Func(Property, *Property->GetValuePtr<SUIElement>(Script));
+                }
+            }
+        }
+
         void ResolveElements(FOpenUI& Open)
         {
-            for (FProperty* Property : Open.Script->GetClass()->GetProperties())
+            ForEachElementProperty(Open.Script, [&Open](FProperty* Property, SUIElement& Handle)
             {
-                if (!Property->HasMetadata("Element") || Property->GetType() != EPropertyTypeFlags::Struct
-                    || static_cast<const FStructProperty*>(Property)->GetStruct() != SUIElement::StaticStruct())
-                {
-                    continue;
-                }
                 const FCStringView Declared = Property->GetMetadata("Element");
                 const FString Id = Declared.IsEmpty() ? FString(*Property->GetPropertyName()) : FString(Declared.GetData(), Declared.Len());
                 void* Element = RmlUi::DocumentGetElementById(Open.Document, FStringView(*Id, Id.Len()));
@@ -455,8 +462,16 @@ namespace Lumina::UIScripts
                     LOG_WARN("[UI] {}.{} found no element with id '{}' in '{}'.", *Open.Script->GetClass()->GetName(),
                         *Property->GetPropertyName(), *Id, *Open.Path);
                 }
-                Property->GetValuePtr<SUIElement>(Open.Script)->Handle = reinterpret_cast<uint64>(Element);
-            }
+                Handle.Handle = reinterpret_cast<uint64>(Element);
+            });
+        }
+
+        // RmlUi frees an unloaded document on its next update, so no handle may keep pointing into it.
+        void UnloadDocument(FOpenUI& Open)
+        {
+            ForEachElementProperty(Open.Script, [](FProperty*, SUIElement& Handle) { Handle.Handle = 0; });
+            RmlUi::UnloadScreenDocument(Open.World, Open.Document);
+            Open.Document = nullptr;
         }
 
         // The callbacks may open another UI and move the list, so nothing reads Open after they start.
@@ -497,7 +512,7 @@ namespace Lumina::UIScripts
             Open.ModelName = Declared;
             for (int32 Suffix = 2; Context != nullptr && RmlUi::HasDataModel(Context, FStringView(*Open.ModelName, Open.ModelName.Len())); ++Suffix)
             {
-                Open.ModelName = Declared + "_" + std::to_string(Suffix).c_str();
+                Open.ModelName = Format("{}_{}", Declared, Suffix);
             }
 
             TVector<UIBinding::FBoundValue> Values;
@@ -539,8 +554,7 @@ namespace Lumina::UIScripts
         {
             if (Open.Document != nullptr)
             {
-                RmlUi::UnloadScreenDocument(Open.World, Open.Document);
-                Open.Document = nullptr;
+                UnloadDocument(Open);
             }
             if (bRebindModel)
             {
@@ -605,7 +619,7 @@ namespace Lumina::UIScripts
                 continue;
             }
             ReleaseHeldCursor(Open);
-            RmlUi::UnloadScreenDocument(Open.World, Open.Document);
+            UnloadDocument(Open);
             RmlUi::DestroyObjectModel(Open.Model);
             UIs.RemoveAt((int64)Index);
             return;
@@ -700,8 +714,7 @@ namespace Lumina::UIScripts
         for (int32 Index = 0; Index < OpenUIs().Num(); ++Index)
         {
             FOpenUI& Open = OpenUIs()[Index];
-            if (Open.Path.Len() == Path.Len() && std::equal(Path.begin(), Path.end(), Open.Path.begin(),
-                [](char A, char B) { return std::tolower((unsigned char)A) == std::tolower((unsigned char)B); }))
+            if (Open.Path.EqualsIgnoreCase(Path))
             {
                 Reopen(Open, false);
             }

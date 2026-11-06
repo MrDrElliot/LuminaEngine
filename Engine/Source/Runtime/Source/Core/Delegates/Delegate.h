@@ -181,8 +181,9 @@ namespace Lumina
             }
         }
 
+        // False when a listener destroyed this delegate, so the caller must not touch its owner again.
         template<typename... CallArgs>
-        void Broadcast(CallArgs&&... args)
+        bool Broadcast(CallArgs&&... args)
         {
             // A handler is free to destroy whatever owns this delegate, so nothing below touches a dead this.
             FBroadcastFrame Frame;
@@ -203,18 +204,21 @@ namespace Lumina
 
             if (!Frame.bAlive)
             {
-                return;
+                return false;
             }
 
             ActiveBroadcast = Frame.Previous;
             Unlock();
+            return true;
         }
 
         template<typename... CallArgs>
         void BroadcastAndClear(CallArgs&&... args)
         {
-            Broadcast(std::forward<CallArgs>(args)...);
-            Clear();
+            if (Broadcast(std::forward<CallArgs>(args)...))
+            {
+                Clear();
+            }
         }
 
         bool IsBound() const

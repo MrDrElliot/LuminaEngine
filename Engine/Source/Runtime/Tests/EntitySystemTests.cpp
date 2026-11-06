@@ -39,18 +39,9 @@ namespace
         ~FCreationGate() { CEntitySystemTest::bAllowCreation = false; }
     };
 
-    // Discovery reaches every system class in the process, so everything but the test types is disabled.
     THashSet<FName> AllButTestSystems()
     {
-        THashSet<FName> Disabled;
-        EntitySystems::ForEachSystemClass([&Disabled](CClass* Class)
-        {
-            if (Class != CEntitySystemTest::StaticClass() && Class != CEntitySystemExclusiveTest::StaticClass())
-            {
-                Disabled.Add(Class->GetName());
-            }
-        });
-        return Disabled;
+        return FWorldTestAccess::AllSystemsExcept({ CEntitySystemTest::StaticClass()->GetName(), CEntitySystemExclusiveTest::StaticClass()->GetName() });
     }
 
     CEntitySystemTest* FindTestSystem(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems)

@@ -8,13 +8,12 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Math/Math.h"
 #include "Log/Log.h"
+#include "MCPEditorModule.h"
 #include "MCPTextMatch.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Platform/Time/PlatformTime.h"
 #include "Core/Profiler/Profile.h"
-#include "Core/Threading/Thread.h"
-#include "Memory/SmartPtr.h"
 
 #include <cstdlib>
 
@@ -42,7 +41,7 @@ namespace Lumina::MCP
             while (Start <= Line.Len())
             {
                 const int32 End = Line.Find(TracySeparator, Start);
-                Fields.Add(Line.Mid(Start, End == Constants::kIndexNone ? Constants::kIndexNone : End - Start));
+                Fields.Add(Line.Mid(Start, (End == Constants::kIndexNone ? Line.Len() : End) - Start));
                 if (End == Constants::kIndexNone)
                 {
                     break;
@@ -180,26 +179,18 @@ namespace Lumina::MCP
             return Found == nullptr ? 0.0f : (float)(Found->TotalNs / 1.0e6 / Math::Max(Frames, 1));
         }
 
-        // One capture at a time runs on its own thread, so the scene it measures can still be driven through other tools.
-        struct FProfilerCaptureJob
+        FProfilerToolsState& ProfilerState()
         {
-            FString File;
-            FString Failure;
-            int32 Seconds = 0;
-            bool bCaptured = false;
-            FThread Worker;
-        };
-
-        FMutex ProfilerJobMutex;
-        TUniquePtr<FProfilerCaptureJob> ProfilerJob;
-        FString LastProfilerCaptureFile;
+            return *FMCPEditorModule::GetProfilerTools();
+        }
 
         bool StartProfilerCapture(float Seconds, bool bUncapFrameRate, FString& OutFile, FString& OutError)
         {
-            FScopeLock Lock(ProfilerJobMutex);
-            if (ProfilerJob)
+            FProfilerToolsState& State = ProfilerState();
+            FScopeLock Lock(State.Mutex);
+            if (State.Job)
             {
-                OutError = Lumina::Format("A capture to {} has not been reported yet; call profiler.report first.", ProfilerJob->File);
+                OutError = Lumina::Format("A capture to {} has not been reported yet; call profiler.report first.", State.Job->File);
                 return false;
             }
 
@@ -217,11 +208,11 @@ namespace Lumina::MCP
             FString Directory = Paths::GetEngineDirectory() + "/Saved/Profiling";
             Paths::CreateDirectories(FStringView(*Directory, Directory.Len()));
 
-            ProfilerJob = MakeUnique<FProfilerCaptureJob>();
-            ProfilerJob->File = Lumina::Format("{}/Capture_{}.tracy", Directory, (uint64)(PlatformTime::Seconds() * 1000.0));
-            OutFile = ProfilerJob->File;
+            State.Job = MakeUnique<FProfilerCaptureJob>();
+            State.Job->File = Lumina::Format("{}/Capture_{}.tracy", Directory, (uint64)(PlatformTime::Seconds() * 1000.0));
+            OutFile = State.Job->File;
 
-            FProfilerCaptureJob* Running = ProfilerJob.get();
+            FProfilerCaptureJob* Running = State.Job.get();
             const int32 CaptureSeconds = (int32)Math::Ceil(Math::Clamp(Seconds, 1.0f, MaxProfilerCaptureSeconds));
             Running->Seconds = CaptureSeconds;
             Running->Worker = FThread([Running, CaptureSeconds, bUncapFrameRate, ListenPort]()
@@ -270,10 +261,11 @@ namespace Lumina::MCP
 
         Agent::FToolResult FinishProfilerCapture(int32 TopZones, const FString& Filter, bool bSelfTime, SProfilerCaptureResult& Out)
         {
+            FProfilerToolsState& State = ProfilerState();
             TUniquePtr<FProfilerCaptureJob> Finished;
             {
-                FScopeLock Lock(ProfilerJobMutex);
-                Finished = Move(ProfilerJob);
+                FScopeLock Lock(State.Mutex);
+                Finished = Move(State.Job);
             }
             if (!Finished)
             {
@@ -288,8 +280,8 @@ namespace Lumina::MCP
             Out.CaptureFile = Finished->File;
             if (Finished->bCaptured)
             {
-                FScopeLock Lock(ProfilerJobMutex);
-                LastProfilerCaptureFile = Finished->File;
+                FScopeLock Lock(State.Mutex);
+                State.LastCaptureFile = Finished->File;
             }
             if (!Finished->bCaptured)
             {
@@ -381,8 +373,9 @@ namespace Lumina::MCP
             Out.CaptureFile = In.CaptureFile;
             if (Out.CaptureFile.IsEmpty())
             {
-                FScopeLock Lock(ProfilerJobMutex);
-                Out.CaptureFile = LastProfilerCaptureFile;
+                FProfilerToolsState& State = ProfilerState();
+                FScopeLock Lock(State.Mutex);
+                Out.CaptureFile = State.LastCaptureFile;
             }
             if (Out.CaptureFile.IsEmpty() || !Paths::Exists(Out.CaptureFile))
             {
@@ -601,6 +594,17 @@ namespace Lumina::MCP
     }
 
     using namespace MCPProfilerToolsInternal;
+
+    void FProfilerToolsState::Shutdown()
+    {
+        if (!Job || !Job->Worker.Joinable())
+        {
+            return;
+        }
+        LOG_WARN("[MCP] Waiting for the unreported profiler capture to {} to finish before the editor quits.", Job->File);
+        Job->Worker.Join();
+        Job.reset();
+    }
 
     void RegisterProfilerTools(FStringView Owner)
     {

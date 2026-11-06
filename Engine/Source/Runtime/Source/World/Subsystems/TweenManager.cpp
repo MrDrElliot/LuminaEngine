@@ -485,8 +485,6 @@ namespace Lumina
     {
         bTicking = true;
 
-        TVector<ECS::FEntity> Completed;
-
         auto View = Registry.View<ECS::Write<FTweenState>>();
         for (ECS::FEntity Entity : View)
         {
@@ -525,6 +523,7 @@ namespace Lumina
                 Registry.Destroy(Entity);
             }
         }
+        Completed.Reset();
     }
 
     //~ FTween

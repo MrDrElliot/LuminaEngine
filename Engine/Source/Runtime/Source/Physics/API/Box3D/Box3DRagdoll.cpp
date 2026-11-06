@@ -562,10 +562,9 @@ namespace Lumina::Physics
         const int32 NumBones = Skeleton->GetNumBones();
         OutBoneTransforms.SetNum(NumBones);
 
-        TVector<FMatrix4> ComponentGlobals;
-        ComponentGlobals.SetNum(NumBones);
-        TVector<uint8> Mapped;
-        Mapped.SetNum(NumBones, 0);
+        // OutBoneTransforms holds the component globals until the last pass applies the inverse bind.
+        TVector<uint8>& Mapped = Handle.PoseBoneMapped;
+        Mapped.Init(0, NumBones);
 
         for (int32 j = 0; j < Handle.JointToBone.Num(); ++j)
         {
@@ -583,7 +582,7 @@ namespace Lumina::Physics
 
             const FVector3 Pos = Box3DUtils::FromB3Vec3(b3Body_GetPosition(BodyId));
             const FQuat Rot = Box3DUtils::FromB3Quat(b3Body_GetRotation(BodyId));
-            ComponentGlobals[BoneIndex] = WorldToEntity * AnimPose::ComposeTRS(Pos, Rot, FVector3(1.0f));
+            OutBoneTransforms[BoneIndex] = WorldToEntity * AnimPose::ComposeTRS(Pos, Rot, FVector3(1.0f));
             Mapped[BoneIndex] = 1;
         }
 
@@ -594,9 +593,12 @@ namespace Lumina::Physics
             {
                 const int32 Parent = Skeleton->GetBone(i).ParentIndex;
                 const FMatrix4& Local = Skeleton->GetBone(i).LocalTransform;
-                ComponentGlobals[i] = Parent >= 0 ? ComponentGlobals[Parent] * Local : Local;
+                OutBoneTransforms[i] = Parent >= 0 ? OutBoneTransforms[Parent] * Local : Local;
             }
-            OutBoneTransforms[i] = ComponentGlobals[i] * Skeleton->GetBone(i).InvBindMatrix;
+        }
+        for (int32 i = 0; i < NumBones; ++i)
+        {
+            OutBoneTransforms[i] = OutBoneTransforms[i] * Skeleton->GetBone(i).InvBindMatrix;
         }
     }
 

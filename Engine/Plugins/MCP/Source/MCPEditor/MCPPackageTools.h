@@ -270,15 +270,18 @@ namespace Lumina
             FString LogPath;
             double StartSeconds = 0.0;
             double EndSeconds = 0.0;
+
+            // Kills the game if it still runs and releases its handle, keeping the id and exit code Status reports. True when it killed a live game.
+            bool Close();
         };
 
-        // Owned by FMCPEditorModule, which joins the build worker before the DLL unloads.
+        // Owned by FMCPEditorModule, which shuts it down before the DLL unloads.
         struct FPackageToolsState
         {
             FPackageSession Build;
             FPackageGameSession Game;
 
-            void JoinWorker();
+            void Shutdown();
         };
 
         void RegisterPackageTools(FStringView Owner);

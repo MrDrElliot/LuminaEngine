@@ -109,6 +109,8 @@ namespace Lumina::MCP
                 return true;
             }
 
+            size_t Remaining() const { return static_cast<size_t>(Data.Num()) - Offset; }
+
         private:
             const TVector<uint8>& Data;
             size_t Offset = 0;
@@ -117,6 +119,8 @@ namespace Lumina::MCP
         constexpr uint32 GFoliageFileMagic   = 0x4C4F464Cu;
         constexpr uint32 GFoliageFileVersion = 1u;
         constexpr int32  GFoliageInstanceFloats = 10;
+        constexpr uint64 GFoliageTypeMinBytes   = sizeof(uint16) + sizeof(uint8) + sizeof(float);
+        constexpr uint64 GFoliageInstanceBytes  = GFoliageInstanceFloats * sizeof(float) + sizeof(uint32);
 
         void RegisterTerrainCreate(FStringView Owner)
         {
@@ -170,14 +174,11 @@ namespace Lumina::MCP
                         Terrain.LayerWeights.Init(uint8(0), IntCastChecked<int32>(Samples * Terrain.Layers.Num()));
                         Terrain.CPUState.bFullWeightsDirty = true;
 
-                        if (!FTerrainEditMode::ImportHeightmap(Terrain, *In.HeightmapPath, ImportError,
-                                                               Out.SourceWidth, Out.SourceHeight))
+                        if (!FTerrainEditMode::ImportHeightmap(Terrain, *In.HeightmapPath, ImportError, Out.SourceWidth, Out.SourceHeight)
+                            || !ImportTerrainLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
                         {
-                            return;
-                        }
-
-                        if (!ImportTerrainLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
-                        {
+                            // Destroyed inside the transaction, so it sees no net creation and records no undo step.
+                            World->DestroyEntity(Created);
                             return;
                         }
 
@@ -190,14 +191,13 @@ namespace Lumina::MCP
                         }
                     }, SceneError);
 
+                    if (!ImportError.IsEmpty())
+                    {
+                        return Agent::FToolResult::Error(ImportError);
+                    }
                     if (Created == ECS::NullEntity)
                     {
                         return Agent::FToolResult::Error(SceneError.IsEmpty() ? FString("The world refused to create the terrain.") : SceneError);
-                    }
-                    if (!ImportError.IsEmpty())
-                    {
-                        World->DestroyEntity(Created);
-                        return Agent::FToolResult::Error(ImportError);
                     }
 
                     Out.Entity = Agent::FEntityTokens::Mint(*Registry, Created);
@@ -226,6 +226,10 @@ namespace Lumina::MCP
                         || Magic != GFoliageFileMagic || Version != GFoliageFileVersion)
                     {
                         return Agent::FToolResult::Error("Not a version 1 LFOL file.");
+                    }
+                    if (TypeCount * GFoliageTypeMinBytes + InstanceCount * GFoliageInstanceBytes > Reader.Remaining())
+                    {
+                        return Agent::FToolResult::Error("The file ends early for the type and instance counts in its header.");
                     }
 
                     FString SceneError;
@@ -298,25 +302,33 @@ namespace Lumina::MCP
                     }
 
                     const FName EntityName(In.Name.IsEmpty() ? "Foliage" : *In.Name);
+                    TVector<ECS::FEntity> Stale;
+                    World->View<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent&)
+                    {
+                        const SNameComponent* Name = World->TryGetComponent<SNameComponent>(Entity);
+                        if (Name != nullptr && Name->Name == EntityName)
+                        {
+                            Stale.Add(Entity);
+                        }
+                    });
+
+                    // A creation transaction cannot restore what it destroys, so the replaced foliage gets its own undo step.
+                    if (!Stale.IsEmpty())
+                    {
+                        SessionOps::RunDestroyTransacted("Replace Foliage (agent)", Stale, [&]()
+                        {
+                            for (ECS::FEntity Entity : Stale)
+                            {
+                                World->DestroyEntity(Entity);
+                            }
+                        }, SceneError);
+                    }
+
                     ECS::FEntity Created = ECS::NullEntity;
 
                     // Transacted like any other creation, so the level is marked dirty and the import survives a save.
                     SessionOps::RunCreationTransacted("Import Foliage (agent)", [&]()
                     {
-                        TVector<ECS::FEntity> Stale;
-                        World->View<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent&)
-                        {
-                            const SNameComponent* Name = World->TryGetComponent<SNameComponent>(Entity);
-                            if (Name != nullptr && Name->Name == EntityName)
-                            {
-                                Stale.Add(Entity);
-                            }
-                        });
-                        for (ECS::FEntity Entity : Stale)
-                        {
-                            World->DestroyEntity(Entity);
-                        }
-
                         Created = World->ConstructEntity(EntityName);
                         SFoliageComponent& Foliage = World->EmplaceComponent<SFoliageComponent>(Created);
                         Foliage.Types     = Move(Types);

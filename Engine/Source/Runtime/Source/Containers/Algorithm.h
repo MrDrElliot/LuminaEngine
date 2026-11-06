@@ -814,7 +814,7 @@ namespace Lumina::Algo
         Private::SiftDown(First, 0, Count - 1, Pred);
     }
 
-    // Bottom-up merge sort through one heap buffer; keeps equal elements in their original order.
+    // Bottom-up merge sort through one heap buffer, skipped for sorted input; keeps equal elements in their original order.
     template <typename TIt, typename TPred = FLess>
     void StableSort(TIt First, TIt Last, TPred Pred = {})
     {
@@ -822,7 +822,7 @@ namespace Lumina::Algo
         using FDiff = Private::TDiff<TIt>;
 
         const FDiff Count = Last - First;
-        if (Count < 2)
+        if (Count < 2 || IsSorted(First, Last, Pred))
         {
             return;
         }

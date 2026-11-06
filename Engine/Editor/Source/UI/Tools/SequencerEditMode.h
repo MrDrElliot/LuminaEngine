@@ -29,6 +29,10 @@ namespace Lumina
         void OnExit(CWorld* World) override;
         void Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize) override;
         void DrawToolbar(CWorld* World, float ButtonSize) override;
+        void OnPostUndoRedo(CWorld* World) override;
+
+        // Tracks are separate objects holding the keys, so every undo step images them along with the sequence.
+        EDITOR_API static void SerializeForUndo(FArchive& Ar, CObject* Object);
 
     private:
 
@@ -46,6 +50,21 @@ namespace Lumina
         void MarkSequenceDirty();
         void CommitEdit(CWorld* World);
         void ResetSelection();
+
+        template<typename TEdit>
+        void EditSequence(const char* Name, TEdit&& Edit)
+        {
+            if (Context != nullptr)
+            {
+                Context->RunModeObjectTransaction(Name, Sequence.Get(), &SerializeForUndo, Edit);
+                return;
+            }
+            Edit();
+        }
+
+        // A drag or a typed field is one step, opened on its first change and closed once no item is active.
+        void BeginDragEdit(const char* Name);
+        void EndDragEdit();
 
         void RefreshAutoKeyWatch(CWorld* World);
         void ProcessAutoKey(CWorld* World);
@@ -132,6 +151,8 @@ namespace Lumina
         int32                           DraggingCut = Constants::kIndexNone;
         int32                           DragEdge = 0;
         float                           DragGrabOffset = 0.0f;
+
+        const char*                     DragEditName = nullptr;
 
         int32                           PendingRemoveBinding = Constants::kIndexNone;
         int32                           PendingRemoveTrack = Constants::kIndexNone;

@@ -376,11 +376,11 @@ namespace Lumina
         return Count;
     }
 
-    void FScriptDelegateBase::BroadcastAll(const void* Payload)
+    bool FScriptDelegateBase::BroadcastAll(const void* Payload)
     {
         if (LiveCount == 0)
         {
-            return;
+            return true;
         }
 
         // A handler is free to destroy whatever owns this delegate, so nothing below touches a dead this.
@@ -426,7 +426,7 @@ namespace Lumina
             {
                 Listener.Destroy(Listener.Context);
             }
-            return;
+            return false;
         }
 
         ActiveBroadcast = Frame.Previous;
@@ -436,6 +436,7 @@ namespace Lumina
         {
             Compact();
         }
+        return true;
     }
 
     uint64 FScriptDelegateBase::GenerateId()

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Agent/AgentToolRegistry.h"
+#include "Containers/Algorithm.h"
 #include "Containers/StringFormat.h"
 #include "MCPServer.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -23,6 +24,24 @@ namespace MCPLogTestsInternal
         TVector<FConnection> Connections;
         Log.Snapshot(Transactions, Connections);
         return Transactions;
+    }
+
+    TVector<FConnection> SnapshotConnections(const FLog& Log)
+    {
+        TVector<TSharedPtr<const FTransaction>> Transactions;
+        TVector<FConnection> Connections;
+        Log.Snapshot(Transactions, Connections);
+        return Connections;
+    }
+
+    FString Open(FLog& Log, FStringView Client)
+    {
+        return Log.Record("", Format(R"({{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"clientInfo":{{"name":"{}","version":"1"}}}}}})", Client), "", 0.0);
+    }
+
+    bool HasSession(const TVector<FConnection>& Connections, const FString& Session)
+    {
+        return Algo::AnyOf(Connections, [&Session](const FConnection& Each) { return Each.Session == Session; });
     }
 }
 
@@ -103,4 +122,55 @@ TEST(MCPLog, ClippingBacksUpToTheStartOfASplitCharacter)
     EXPECT_EQ(ClipText("a\xE2\x82\xACz", 2), "a [4 more bytes]");
     EXPECT_EQ(ClipText("a\xE2\x82\xACz", 3), "a [4 more bytes]");
     EXPECT_EQ(ClipText("a\xE2\x82\xACz", 4), "a\xE2\x82\xAC [1 more bytes]");
+}
+
+TEST(MCPLog, AFullConnectionListEvictsTheLeastRecentlySeenNotTheFirstOpened)
+{
+    FLog Log;
+
+    TVector<FString> Sessions;
+    for (int32 Index = 0; Index < FLog::kMaxConnections; ++Index)
+    {
+        Sessions.Add(Open(Log, Format("client{}", Index)));
+    }
+
+    (void)Log.Record(FStringView(Sessions[0]), R"({"jsonrpc":"2.0","id":2,"method":"ping"})", "", 0.0);
+    const FString Newest = Open(Log, "newest");
+
+    const TVector<FConnection> Connections = SnapshotConnections(Log);
+    ASSERT_EQ(Connections.Num(), FLog::kMaxConnections);
+    EXPECT_TRUE(HasSession(Connections, Newest));
+    EXPECT_FALSE(HasSession(Connections, Sessions[1]));
+
+    const auto First = Algo::FindIf(Connections, [&Sessions](const FConnection& Each) { return Each.Session == Sessions[0]; });
+    ASSERT_NE(First, Connections.end());
+    EXPECT_EQ(First->Client, "client0 1");
+    EXPECT_EQ(First->Requests, 2u);
+}
+
+TEST(MCPLog, AFullConnectionListEvictsAClosedConnectionBeforeAnOpenOne)
+{
+    FLog Log;
+
+    TVector<FString> Sessions;
+    for (int32 Index = 0; Index < FLog::kMaxConnections; ++Index)
+    {
+        Sessions.Add(Open(Log, Format("client{}", Index)));
+    }
+
+    Log.RecordDisconnect(FStringView(Sessions[5]));
+    (void)Open(Log, "newest");
+
+    const TVector<FConnection> Connections = SnapshotConnections(Log);
+    EXPECT_FALSE(HasSession(Connections, Sessions[5]));
+    EXPECT_TRUE(HasSession(Connections, Sessions[0]));
+}
+
+TEST(MCPLog, DisconnectingAnUnknownSessionAddsNoConnection)
+{
+    FLog Log;
+    Log.RecordDisconnect("never-opened");
+
+    EXPECT_TRUE(SnapshotConnections(Log).IsEmpty());
+    EXPECT_EQ(Snapshot(Log).Num(), 1);
 }

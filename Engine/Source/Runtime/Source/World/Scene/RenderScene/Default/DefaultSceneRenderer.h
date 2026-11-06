@@ -617,6 +617,9 @@ namespace Lumina
             GTAO,
             GTAODenoise,
             GTAOBlur,
+            ScreenSpaceGITrace,
+            ScreenSpaceGI,
+            ScreenSpaceGIHistory,
             SunFarShadowMask,
             SSRTrace,
             SSRPyramid,
@@ -731,6 +734,9 @@ namespace Lumina
             FMatrix4                                        PrevViewProjection       = FMatrix4(1.0f);
             // Committed with the frame index, so a bailed extract cannot leave the two describing different frames.
             FMatrix4                                        PendingViewProjection    = FMatrix4(1.0f);
+            // A debug view skips the capture, so the history reprojects through the camera it was taken with.
+            bool                                            bScreenSpaceGIHistoryValid = false;
+            FMatrix4                                        ScreenSpaceGIHistoryViewProjection = FMatrix4(1.0f);
         };
 
         void Init() override;
@@ -1033,6 +1039,11 @@ namespace Lumina
         bool GTAOMain(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH MainCS);
         bool GTAODenoise(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH DenoiseCS);
         bool GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS);
+        // Marches GTAO's working depth, so it needs GTAO on, and only the primary view keeps the color history it gathers.
+        bool WantsScreenSpaceGI(const FSceneView& View) const;
+        bool IsScreenSpaceGITraced() const;
+        void ScreenSpaceGIPass(RHI::FCmdListH CL);
+        void CaptureScreenSpaceGIHistory(RHI::FCmdListH CL);
         bool WantsSunFarShadowMask() const;
         bool SunFarShadowPass(RHI::FCmdListH CL);
         bool SunDFShadowCullPass(RHI::FCmdListH CL);

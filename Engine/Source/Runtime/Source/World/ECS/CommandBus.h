@@ -171,6 +171,8 @@ namespace Lumina::ECS
             uint8            Padding[64] = {};
         };
 
+        struct FCommandHeader;
+
         void* AllocateCommand(FApplyFn Apply, size_t PayloadSize);
         FSlot& LocalSlot();
         uint32 RunCommands(FRegistry* Target);
@@ -182,5 +184,10 @@ namespace Lumina::ECS
 
         FRegistry&      Registry;
         TVector<FSlot>  Slots;
+
+        // Flush scratch, kept so a steady-state flush allocates nothing.
+        TVector<TVector<FBlock>> RunningBlocks;
+        TVector<FCommandHeader*> RunningCommands;
+        TVector<FOrderedEntity>  PendingEntities;
     };
 }

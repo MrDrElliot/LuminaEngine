@@ -17,6 +17,27 @@
 namespace Lumina::ContentBrowserEditorToolInternal
 {
     class FContentBrowserTileViewItem;
+
+    struct FScriptHoverInfo
+    {
+        bool             bValid = false;
+        FString          Namespace;
+        FString          ClassName;
+        FString          BaseClass;
+        FString          Summary;
+        TVector<FString> Lifecycle;
+        TVector<FString> Properties;
+        TVector<FString> PropertyTips;
+    };
+
+    // The hovered tile's tooltip content, rebuilt only when the hovered path or the script's write time changes.
+    struct FHoverTooltipCache
+    {
+        FString          Path;
+        int64            MTime = 0;
+        int32            FolderItemCount = 0;
+        FScriptHoverInfo Script;
+    };
 }
 
 namespace Lumina
@@ -182,6 +203,7 @@ namespace Lumina
         FTileViewWidget             ContentBrowserTileView;
         FTileViewContext            ContentBrowserTileViewContext;
         float                       ContentBrowserTileSize = 84.0f;
+        ContentBrowserEditorToolInternal::FHoverTooltipCache HoverTooltipCache;
 
         FFixedString                SelectedPath;
         TVector<FFixedString>       NavBackStack;

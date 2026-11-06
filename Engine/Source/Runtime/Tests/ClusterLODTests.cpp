@@ -11,6 +11,7 @@
 #include "Tools/Import/ClusterLODBuilder.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "Tools/Import/VoxelFarBuilder.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 using namespace Lumina;
 
@@ -546,27 +547,6 @@ TEST(ClusterLOD, CardCanopyHandsOverToVoxelsAtEveryDistance)
     }
 }
 
-namespace
-{
-    double MeshletRangeArea(const FMeshletData& MD, uint32 Begin, uint32 Count)
-    {
-        double Area = 0.0;
-        for (uint32 m = Begin; m < Begin + Count; ++m)
-        {
-            const FMeshlet& M = MD.Meshlets[m];
-            for (uint32 t = 0; t < M.TriangleCount; ++t)
-            {
-                const uint32   Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                const FVector3 A = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[GetStaticVertexIndex(MD, M, Packed & 0xFFu)]);
-                const FVector3 B = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[GetStaticVertexIndex(MD, M, (Packed >> 8) & 0xFFu)]);
-                const FVector3 C = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[GetStaticVertexIndex(MD, M, (Packed >> 16) & 0xFFu)]);
-                Area += 0.5 * (double)Math::Length(Math::Cross(B - A, C - A));
-            }
-        }
-        return Area;
-    }
-}
-
 // Cards collapse at almost no quadric cost, so without area preservation a coarse canopy level would be mostly air.
 TEST(ClusterLOD, CardCanopyKeepsItsAreaThroughTheHierarchy)
 {
@@ -581,17 +561,85 @@ TEST(ClusterLOD, CardCanopyKeepsItsAreaThroughTheHierarchy)
     ASSERT_TRUE(Surface.HasClusterLOD());
     ASSERT_GE(Surface.NumLODs, 3u);
 
-    const double SourceArea = MeshletRangeArea(MD, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
+    const double SourceArea = MeshResolve::MeshletRangeArea(MD, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
     ASSERT_GT(SourceArea, 0.0);
 
     // A cut at any one slot stands for the whole surface, so every slot's triangles together must cover most of it.
     for (uint32 Slot = 1; Slot < Surface.NumLODs; ++Slot)
     {
         const uint32 Triangles = TrianglesInRange(Resource, Surface.LODMeshletOffset[Slot], Surface.LODMeshletCount[Slot]);
-        const double Area      = MeshletRangeArea(MD, Surface.LODMeshletOffset[Slot], Surface.LODMeshletCount[Slot]);
+        const double Area      = MeshResolve::MeshletRangeArea(MD, Surface.LODMeshletOffset[Slot], Surface.LODMeshletCount[Slot]);
         EXPECT_LT(Triangles, TrianglesInRange(Resource, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0])) << "slot " << Slot;
         EXPECT_GT(Area, SourceArea * 0.5) << "slot " << Slot << " lost most of the canopy";
     }
+}
+
+namespace
+{
+    // Six faces of four corners each, so every face keeps its own normal.
+    void BuildCube(FMeshResource& Resource, float HalfExtent)
+    {
+        Resource.ResizeVertices(24u);
+        for (uint32 f = 0; f < 6u; ++f)
+        {
+            FVector3 Normal(0.0f);
+            Normal[f / 2u] = (f & 1u) ? -1.0f : 1.0f;
+            FVector3 U(0.0f);
+            U[(f / 2u + 1u) % 3u] = 1.0f;
+            const FVector3 V = Math::Cross(Normal, U);
+
+            const FVector3 Corners[4] = { Normal - U - V, Normal + U - V, Normal + U + V, Normal - U + V };
+            const FVector2 UVs[4]     = { FVector2(0.0f, 0.0f), FVector2(1.0f, 0.0f), FVector2(1.0f, 1.0f), FVector2(0.0f, 1.0f) };
+            for (uint32 k = 0; k < 4u; ++k)
+            {
+                const uint32 i = f * 4u + k;
+                Resource.Positions[i] = Corners[k] * HalfExtent;
+                Resource.Normals[i]   = PackNormal(Normal);
+                Resource.SetUVAt(i, UVs[k]);
+                Resource.SetUV1At(i, FVector2(0.0f, 0.0f));
+                Resource.Colors[i] = 0xFFFFFFFFu;
+            }
+            const uint32 b = f * 4u;
+            Resource.Indices.Append({ b, b + 1u, b + 2u, b, b + 2u, b + 3u });
+        }
+        FGeometrySurface& Surface = Resource.GeometrySurfaces.EmplaceGetRef();
+        Surface.ID         = "Cube";
+        Surface.IndexCount = (uint32)Resource.Indices.Num();
+    }
+
+    float SplatArea(const FInstanceProxy& Proxy)
+    {
+        return 4.0f * Proxy.SplatHalfSize * Proxy.SplatHalfSize;
+    }
+}
+
+// A solid splat must cover about what the solid does on average, not the bounding square that read brighter past the transition.
+TEST(ClusterLOD, SolidProxySplatMatchesItsMeanProjectedArea)
+{
+    constexpr float HalfExtent = 2.0f;
+    FMeshResource Resource;
+    BuildCube(Resource, HalfExtent);
+    Import::Mesh::GenerateMeshlets(Resource);
+
+    // Cauchy's formula, a quarter of the six faces' area.
+    const FInstanceProxy Proxy = MeshResolve::ComputeSurfaceProxy(Resource, Resource.GeometrySurfaces[0]);
+    const float MeanProjectedArea = 6.0f * HalfExtent * HalfExtent;
+    const float BoundingRadius    = HalfExtent * 1.7320508f;
+    EXPECT_NEAR(SplatArea(Proxy), MeanProjectedArea, MeanProjectedArea * 0.25f);
+    EXPECT_LT(SplatArea(Proxy), 4.0f * BoundingRadius * BoundingRadius);
+}
+
+TEST(ClusterLOD, SparseCanopyProxySplatIsSmallerThanItsBoundingSquare)
+{
+    FMeshResource Resource;
+    BuildCardCanopy(Resource, 4000u, 10.0f, 0.3f);
+    Resource.bClusterLODs = true;
+    Import::Mesh::GenerateMeshlets(Resource);
+
+    const FInstanceProxy Proxy = MeshResolve::ComputeSurfaceProxy(Resource, Resource.GeometrySurfaces[0]);
+    const float BoxRadius = 10.0f * 0.8660254f;
+    EXPECT_GT(SplatArea(Proxy), 0.0f);
+    EXPECT_LT(SplatArea(Proxy), 4.0f * BoxRadius * BoxRadius);
 }
 
 // Noise past MaxLevelError strands its groups as roots early, while the flat rest keeps simplifying along their open border.

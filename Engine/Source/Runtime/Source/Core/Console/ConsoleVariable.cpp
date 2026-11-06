@@ -93,16 +93,19 @@ namespace Lumina
         return true;
     }
 
-    FConsoleLineResult FConsoleRegistry::ExecuteLine(FStringView Line, bool bEchoToLog)
+    FConsoleLineParts FConsoleRegistry::SplitLine(FStringView Line)
     {
-        while (!Line.IsEmpty() && (Line[0] == ' ' || Line[0] == '\t'))
-        {
-            Line.RemovePrefix(1);
-        }
-        while (!Line.IsEmpty() && (Line.Last() == ' ' || Line.Last() == '\t'))
-        {
-            Line.RemoveSuffix(1);
-        }
+        FConsoleLineParts Parts;
+        Parts.Line = Line.TrimStartAndEnd();
+        const int32 Space = Parts.Line.FindFirstOf(' ');
+        Parts.Name = Space == Constants::kIndexNone ? Parts.Line : Parts.Line.Mid(0, Space);
+        Parts.Value = Space == Constants::kIndexNone ? FStringView() : Parts.Line.Mid(Space + 1);
+        return Parts;
+    }
+
+    FConsoleLineResult FConsoleRegistry::ExecuteLine(FStringView InLine, bool bEchoToLog)
+    {
+        const auto [Line, Name, Value] = SplitLine(InLine);
 
         FConsoleLineResult Result;
         if (Line.IsEmpty())
@@ -114,9 +117,6 @@ namespace Lumina
             LOG_INFO("> {}", Line);
         }
 
-        const int32 Space = Line.FindFirstOf(' ');
-        const FStringView Name = Space == Constants::kIndexNone ? Line : Line.Mid(0, Space);
-        const FStringView Value = Space == Constants::kIndexNone ? FStringView() : Line.Mid(Space + 1);
         Result.Name = FStringView(Name.GetData(), Name.Len());
 
         if (FindCommand(Name) != nullptr)

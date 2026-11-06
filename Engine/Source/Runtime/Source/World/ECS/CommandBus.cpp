@@ -8,17 +8,16 @@
 
 namespace Lumina::ECS
 {
+    struct FCommandBus::FCommandHeader
+    {
+        void   (*Apply)(void*, FRegistry*);
+        uint32 Stride;
+        uint32 RecordOrder;
+    };
+
     namespace
     {
         constexpr size_t HeaderSize = 16;
-
-        struct FCommandHeader
-        {
-            void   (*Apply)(void*, FRegistry*);
-            uint32 Stride;
-            uint32 RecordOrder;
-        };
-        static_assert(sizeof(FCommandHeader) <= HeaderSize, "The command header must fit its reserved space.");
 
         // A flush that keeps spawning commands this many times over is a feedback loop, not a backlog.
         constexpr uint32 MaxFlushRounds = 64;
@@ -35,6 +34,7 @@ namespace Lumina::ECS
         : Registry(InRegistry)
     {
         Slots.SetNum(Math::Max(Jobs::GetNumThreadSlots(), 1u));
+        RunningBlocks.SetNum(Slots.Num());
     }
 
     FCommandBus::~FCommandBus()
@@ -84,6 +84,8 @@ namespace Lumina::ECS
 
     void* FCommandBus::AllocateCommand(FApplyFn Apply, size_t PayloadSize)
     {
+        static_assert(sizeof(FCommandHeader) <= HeaderSize, "The command header must fit its reserved space.");
+
         FSlot& Slot = LocalSlot();
         const size_t Stride = HeaderSize + AlignUp(PayloadSize, CommandAlignment);
 
@@ -118,56 +120,67 @@ namespace Lumina::ECS
     uint32 FCommandBus::RunCommands(FRegistry* Target)
     {
         // Detached first, so a command that records more lands in fresh blocks instead of the ones being walked.
-        TVector<TVector<FBlock>> Running(Slots.Num());
-        TVector<FCommandHeader*> Commands;
+        RunningCommands.Reset();
         for (int32 Index = 0; Index < Slots.Num(); ++Index)
         {
             FSlot& Slot = Slots[Index];
-            swap(Running[Index], Slot.Blocks);
+            swap(RunningBlocks[Index], Slot.Blocks);
             Slot.ActiveBlock = 0;
             Slot.NumCommands = 0;
-            for (const FBlock& Block : Running[Index])
+            for (const FBlock& Block : RunningBlocks[Index])
             {
                 for (size_t Offset = 0; Offset < Block.Used; Offset += reinterpret_cast<FCommandHeader*>(Block.Data + Offset)->Stride)
                 {
-                    Commands.Add(reinterpret_cast<FCommandHeader*>(Block.Data + Offset));
+                    RunningCommands.Add(reinterpret_cast<FCommandHeader*>(Block.Data + Offset));
                 }
             }
         }
 
-        Algo::StableSort(Commands, [](const FCommandHeader* A, const FCommandHeader* B) { return A->RecordOrder < B->RecordOrder; });
-        for (FCommandHeader* Header : Commands)
+        Algo::StableSort(RunningCommands, [](const FCommandHeader* A, const FCommandHeader* B) { return A->RecordOrder < B->RecordOrder; });
+        for (FCommandHeader* Header : RunningCommands)
         {
             Header->Apply(reinterpret_cast<uint8*>(Header) + HeaderSize, Target);
         }
 
         for (int32 Index = 0; Index < Slots.Num(); ++Index)
         {
-            for (FBlock& Block : Running[Index])
+            TVector<FBlock>& Running = RunningBlocks[Index];
+            for (FBlock& Block : Running)
             {
                 Block.Used = 0;
-                Slots[Index].Blocks.Add(Block);
+            }
+
+            // Blocks the commands recorded into stay first, so the slot's active block still points at their unrun commands.
+            TVector<FBlock>& Blocks = Slots[Index].Blocks;
+            if (Blocks.IsEmpty())
+            {
+                swap(Blocks, Running);
+            }
+            else
+            {
+                Blocks.Append(Running);
+                Running.Reset();
             }
         }
-        return static_cast<uint32>(Commands.Num());
+        return static_cast<uint32>(RunningCommands.Num());
     }
 
     template<typename TFunc>
     uint32 FCommandBus::ApplyEntities(TVector<FOrderedEntity> FSlot::* List, TFunc&& Apply)
     {
-        TVector<FOrderedEntity> Pending;
+        PendingEntities.Reset();
         for (FSlot& Slot : Slots)
         {
-            Pending.Append((Slot.*List));
+            PendingEntities.Append((Slot.*List));
             (Slot.*List).Reset();
         }
 
-        Algo::StableSort(Pending, [](const FOrderedEntity& A, const FOrderedEntity& B) { return A.RecordOrder < B.RecordOrder; });
-        for (const FOrderedEntity& Ordered : Pending)
+        Algo::StableSort(PendingEntities, [](const FOrderedEntity& A, const FOrderedEntity& B) { return A.RecordOrder < B.RecordOrder; });
+        for (const FOrderedEntity& Ordered : PendingEntities)
         {
             Apply(Ordered.Entity);
         }
-        return static_cast<uint32>(Pending.Num());
+        return static_cast<uint32>(PendingEntities.Num());
     }
 
     void FCommandBus::FreeBlocks(FSlot& Slot)

@@ -11,14 +11,14 @@ namespace Lumina
     class FArchive;
 
     // Before/after snapshot of a CObject's tagged properties; gives every property-grid asset editor undo for free.
-    class FObjectSnapshotCommand final : public IUndoableCommand
+    class EDITOR_API FObjectSnapshotCommand final : public IUndoableCommand
     {
     public:
 
-        FObjectSnapshotCommand(CObject* InObject, FName InName);
-
         // Writes or reads everything an undo of Object has to carry, for an object whose data is not all reflected.
         using FSerializer = TFunction<void(FArchive&, CObject*)>;
+
+        FObjectSnapshotCommand(CObject* InObject, FName InName, FSerializer InSerializer = FSerializer());
 
         // Both images already taken, for a caller that noticed the edit only after it happened.
         FObjectSnapshotCommand(CObject* InObject, FName InName, TVector<uint8> InBefore, TVector<uint8> InAfter,

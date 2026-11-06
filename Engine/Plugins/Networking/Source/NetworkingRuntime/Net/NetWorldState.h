@@ -197,7 +197,6 @@ namespace Lumina
 
         // Newest server time received, mirrored into FNetInterpClock for the render clock.
         double                        LatestServerTime   = 0.0;
-        double                        ClockOffset        = 0.0; // legacy (unused by the smooth clock)
 
         // Net-index caches. Outgoing maps this peer mints and exports; incoming maps are kept per sender
         // connection id since the index space is sender-owned.

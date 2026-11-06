@@ -1,8 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "Containers/Algorithm.h"
-#include "Containers/HashTable.h"
-#include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Events/Event.h"
 #include "Input/InputContext.h"
@@ -41,17 +39,7 @@ namespace
             Registry->Ctx().GetOrEmplace<FTweenManager>().SetWorldRegistry(Registry);
 
             // By name, since the system classes are not exported to the test binary.
-            const FName Kept[] = { "CTimerSystem", "CCoroutineSystem", "CInputSystem", "CTweenSystem", "CSequencerSystem" };
-            THashSet<FName> Disabled;
-            EntitySystems::ForEachSystemClass([&](CClass* Class)
-            {
-                if (!Algo::Contains(Kept, Class->GetName()))
-                {
-                    Disabled.Add(Class->GetName());
-                }
-            });
-            EntitySystems::CreateMissing(*World, Disabled, World->Systems);
-            FWorldTestAccess::RebuildSystemSchedule(*World);
+            FWorldTestAccess::KeepOnlySystems(*World, { "CTimerSystem", "CCoroutineSystem", "CInputSystem", "CTweenSystem", "CSequencerSystem" });
         }
 
         ~FCallbackWorld()

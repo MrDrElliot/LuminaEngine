@@ -220,7 +220,7 @@ struct FGTAOSettings
 {
     FTexture2D AOTexture;       // ~0u means no GTAO for this view
     FTexture2D SunShadowMask;   // Sun occlusion traced past the cascades, invalid when not traced.
-    uint       _Pad1;
+    FTexture2D IndirectDiffuse; // Screen-space bounce in rgb and its hemisphere coverage in a, invalid when not traced.
     uint       _Pad2;
 };
 
@@ -554,11 +554,11 @@ struct FInstanceStatic
 struct FInstanceProxy
 {
     float3 LocalCenter;
-    float  LocalRadius;
+    float  SplatHalfSize;
     uint   PackedNormal;
     uint   PackedUV;
     uint   Color;
-    uint   Flags;
+    float  ThinningStartDistance;
 };
 
 // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
@@ -1036,6 +1036,7 @@ struct FCullData
 
 // Shading lanes per 2x2 quad that survived to the VisBuffer; the micro-triangle cost readout.
 #define DEBUG_MODE_QUAD_EFFICIENCY      31u
+#define DEBUG_MODE_SCREEN_SPACE_GI      32u
 
 // Global scale on every material's POM settings. Matches FParallaxSettings in SceneRenderTypes.h.
 struct FParallaxSettings

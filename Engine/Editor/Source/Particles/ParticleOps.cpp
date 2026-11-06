@@ -4,6 +4,7 @@
 #include "ParticleStockModules.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
+#include "Assets/Factories/Factory.h"
 #include "Containers/StringFormat.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -175,9 +176,11 @@ namespace Lumina::ParticleOps
         CPackage* Package = Source != nullptr ? CPackage::CreatePackage(Path) : nullptr;
 
         // Held strongly, since a fresh object dies the first time a ref the save takes is released.
-        const TStrongObjectPtr<CParticleEmitter> Asset(CopyEmitter(Source, Package, FName(VFS::FileName(Path, true))));
+        TStrongObjectPtr<CParticleEmitter> Asset(CopyEmitter(Source, Package, FName(VFS::FileName(Path, true))));
         if (!Asset || !CPackage::SavePackage(Package, Path))
         {
+            Asset.Reset();
+            CFactory::DiscardNewPackage(Package);
             return nullptr;
         }
 

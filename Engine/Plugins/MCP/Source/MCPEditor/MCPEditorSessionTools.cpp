@@ -805,10 +805,7 @@ namespace Lumina::MCP
 
         Agent::FToolResult ExecEditorConsole(const SConsoleExecParams& In, SConsoleExecResult& Out)
         {
-            const FStringView Line(In.Line);
-            const int32 Space = Line.FindFirstOf(' ');
-            const FStringView Name  = Space == Constants::kIndexNone ? Line : Line.Mid(0, Space);
-            const FStringView Value = Space == Constants::kIndexNone ? FStringView() : Line.Mid(Space + 1);
+            const auto [Line, Name, Value] = FConsoleRegistry::SplitLine(FStringView(In.Line));
 
             if (Name.IsEmpty())
             {

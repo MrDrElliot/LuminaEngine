@@ -1,6 +1,7 @@
 #pragma once
 #include "SceneGlobals.slang"
 #include "MeshletGeometry.slang"
+#include "Culling.slang"
 
 // Every VisID decode lives here, since the five shaders that read it must agree bit for bit.
 
@@ -90,6 +91,17 @@ FVisProxy ResolveVisProxy(uint VisRaw)
                                                  : float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
     Out.bValid = bValid;
     return Out;
+}
+
+// Widened across the ground exactly as the cull widens a thinned instance's meshlets, so the drawn quad and its shading agree.
+float3 ProxyWidenedCenter(float4x4 Model, FInstanceProxy Proxy, out float3 GroundWiden)
+{
+    const float3 Center = mul(Model, float4(Proxy.LocalCenter, 1.0)).xyz;
+    const float3 Pivot  = mul(Model, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    const float3 ToCam  = Center - GetCullCameraPosition();
+    const float  Widen  = rsqrt(ThinningKeep(dot(ToCam, ToCam), Proxy.ThinningStartDistance));
+    GroundWiden = float3(Widen, 1.0, Widen);
+    return Pivot + (Center - Pivot) * GroundWiden;
 }
 
 // Returns ~0u for background, for a far proxy, and for any entry this frame did not write.

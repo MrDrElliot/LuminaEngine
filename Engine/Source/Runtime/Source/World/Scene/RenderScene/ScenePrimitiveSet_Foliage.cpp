@@ -25,7 +25,9 @@ namespace Lumina
         {
             return FInstanceProxy{};
         }
-        return (*Type.Surfaces)[SurfaceIndex].Proxy;
+        FInstanceProxy Proxy = (*Type.Surfaces)[SurfaceIndex].Proxy;
+        Proxy.ThinningStartDistance = Type.ThinningStartDistance;
+        return Proxy;
     }
 
     FInstanceStatic FScenePrimitiveSet::MakeFoliageStatic(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, uint32 EntityID, uint32 MeshletVisibilityBase)

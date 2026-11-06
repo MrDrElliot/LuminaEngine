@@ -16,6 +16,15 @@
 // A slice narrower than this many pixels resolves nothing, and the minimum step would span the screen.
 #define XE_GTAO_PIXEL_TOO_CLOSE         1.3
 
+// Relative depth difference at which a filter tap's weight halves; wide enough for slopes, narrow enough to stop halos at silhouettes.
+#define XE_GTAO_DEPTH_SIGMA             0.05
+
+// Weight of a tap DepthDelta away from a center whose depth gave InvSigmaZ = 1 / (XE_GTAO_DEPTH_SIGMA * Z).
+float XeGTAO_DepthWeight(float DepthDelta, float InvSigmaZ)
+{
+    return 1.0 / (1.0 + DepthDelta * InvSigmaZ);
+}
+
 // Probed from the engine's own inverse projection rather than assumed from a matrix layout.
 struct FGTAOView
 {
@@ -188,4 +197,138 @@ float XeGTAO_DepthMIPFilter(float Depth0, float Depth1, float Depth2, float Dept
 
     const float WSum = W0 + W1 + W2 + W3;
     return (W0 * Depth0 + W1 * Depth1 + W2 * Depth2 + W3 * Depth3) / max(WSum, 1e-6);
+}
+
+// The working-depth texel a horizon search starts from, with its edges and depth-derived normal.
+struct FGTAOCenter
+{
+    float  ViewspaceZ;
+    float4 EdgesLRTB;
+    float3 Normal;
+};
+
+FGTAOCenter XeGTAO_LoadCenter(FGTAOView V, FTexture2D WorkingDepth, uint2 PixCoord)
+{
+    const float2 ScreenUV = (float2(PixCoord) + 0.5) * V.ViewportPixelSize;
+
+    // Mip 0 of the working pyramid is the unfiltered linearized depth, so the cross reads it directly.
+    const float2 GatherUV = float2(PixCoord) * V.ViewportPixelSize;
+    const float4 ValuesUL = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV);
+    const float4 ValuesBR = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV, int2(1, 1));
+
+    const float CenterZ = ValuesUL.y;
+    const float PixLZ   = ValuesUL.x;
+    const float PixTZ   = ValuesUL.z;
+    const float PixRZ   = ValuesBR.z;
+    const float PixBZ   = ValuesBR.x;
+
+    FGTAOCenter C;
+    C.ViewspaceZ = CenterZ;
+    C.EdgesLRTB  = XeGTAO_CalculateEdges(CenterZ, PixLZ, PixRZ, PixTZ, PixBZ);
+
+    const float3 CenterPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV, CenterZ);
+    const float3 LeftPos   = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2(-1.0,  0.0) * V.ViewportPixelSize, PixLZ);
+    const float3 RightPos  = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 1.0,  0.0) * V.ViewportPixelSize, PixRZ);
+    const float3 TopPos    = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 0.0, -1.0) * V.ViewportPixelSize, PixTZ);
+    const float3 BottomPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 0.0,  1.0) * V.ViewportPixelSize, PixBZ);
+
+    C.Normal = XeGTAO_CalculateNormal(C.EdgesLRTB, CenterPos, LeftPos, RightPos, TopPos, BottomPos);
+
+    // The cross-product winding depends on the projection's handedness, so resolve it against the view.
+    if (dot(C.Normal, -CenterPos) < 0.0)
+    {
+        C.Normal = -C.Normal;
+    }
+    return C;
+}
+
+// One slice of the horizon search, the screen direction it marches and the normal projected into its plane.
+struct FGTAOSlice
+{
+    float2 Omega;
+    float  SliceN;
+    float  SinSliceN;
+    float  CosNorm;
+    float  ProjNLen;
+    float  LowHorizonCos0;
+    float  LowHorizonCos1;
+};
+
+FGTAOSlice XeGTAO_MakeSlice(FGTAOView V, float Phi, float ScreenspaceRadius, float3 ViewVec, float3 Normal)
+{
+    const float CosPhi = cos(Phi);
+    const float SinPhi = sin(Phi);
+
+    // The reference bakes the Y flip into its screen march; derive it so either handedness works.
+    const float SignX = (V.NDCToViewMulPixelSize.x < 0.0) ? -1.0 : 1.0;
+    const float SignY = (V.NDCToViewMulPixelSize.y < 0.0) ? -1.0 : 1.0;
+
+    const float3 DirectionVec       = float3(CosPhi, SinPhi, 0.0);
+    const float3 OrthoDirectionVec  = DirectionVec - (dot(DirectionVec, ViewVec) * ViewVec);
+    const float3 AxisVec            = normalize(cross(OrthoDirectionVec, ViewVec));
+    const float3 ProjectedNormalVec = Normal - AxisVec * dot(Normal, AxisVec);
+
+    FGTAOSlice S;
+    S.Omega     = float2(CosPhi * SignX, SinPhi * SignY) * ScreenspaceRadius;
+    S.ProjNLen  = length(ProjectedNormalVec);
+    S.CosNorm   = saturate(dot(ProjectedNormalVec, ViewVec) / max(S.ProjNLen, 1e-6));
+    S.SliceN    = sign(dot(OrthoDirectionVec, ProjectedNormalVec)) * XeGTAO_FastACos(S.CosNorm);
+    S.SinSliceN = sin(S.SliceN);
+
+    // Below the horizon a sample is not "unoccluded", so the reference seeds from the tangent plane.
+    S.LowHorizonCos0 = cos(S.SliceN + XE_GTAO_PI_HALF);
+    S.LowHorizonCos1 = cos(S.SliceN - XE_GTAO_PI_HALF);
+    return S;
+}
+
+// Cosine-weighted visible arc from the projected normal out to a horizon at signed angle H.
+float XeGTAO_SliceArc(FGTAOSlice S, float H)
+{
+    return (S.CosNorm + 2.0 * H * S.SinSliceN - cos(2.0 * H - S.SliceN)) / 4.0;
+}
+
+// Fraction of the radius a step reaches, jittered per slice and step by the golden ratio.
+float XeGTAO_StepDistance(uint Slice, uint Step, uint StepsPerSlice, float NoiseSample, float SampleDistributionPower, float MinS)
+{
+    const float StepBaseNoise = float(Slice + Step * StepsPerSlice) * 0.6180339887498948482;
+    const float StepNoise     = frac(NoiseSample + StepBaseNoise);
+    return pow((float(Step) + StepNoise) / float(StepsPerSlice), SampleDistributionPower) + MinS;
+}
+
+// Stepping the mip with the offset is what keeps a wide radius off the full-res cache.
+float2 XeGTAO_StepOffsetUV(FGTAOView V, FGTAOSlice Slice, float S, float DepthMIPSamplingOffset, out float MipLevel)
+{
+    const float2 SampleOffset = S * Slice.Omega;
+    MipLevel = clamp(log2(length(SampleOffset)) - DepthMIPSamplingOffset, 0.0, float(XE_GTAO_DEPTH_MIP_LEVELS));
+    return round(SampleOffset) * V.ViewportPixelSize;
+}
+
+struct FGTAOFalloff
+{
+    float Mul;
+    float Add;
+    float ThinOccluderCompensation;
+};
+
+FGTAOFalloff XeGTAO_MakeFalloff(float EffectRadius, float EffectFalloffRange, float ThinOccluderCompensation)
+{
+    const float FalloffRange = max(EffectFalloffRange * EffectRadius, 1e-6);
+    const float FalloffFrom  = EffectRadius * (1.0 - EffectFalloffRange);
+
+    FGTAOFalloff F;
+    F.Mul                      = -1.0 / FalloffRange;
+    F.Add                      = FalloffFrom / FalloffRange + 1.0;
+    F.ThinOccluderCompensation = ThinOccluderCompensation;
+    return F;
+}
+
+// Horizon cosine of a sample Delta from the center, faded back to the tangent plane toward the radius.
+float XeGTAO_SampleHorizonCos(FGTAOFalloff F, float3 Delta, float3 ViewVec, float LowHorizonCos)
+{
+    const float Dist = max(length(Delta), 1e-6);
+
+    // Stretching the depth axis discards samples behind the center sooner, which is the thickness heuristic.
+    const float FalloffBase = length(float3(Delta.x, Delta.y, Delta.z * (1.0 + F.ThinOccluderCompensation)));
+    const float Weight      = saturate(FalloffBase * F.Mul + F.Add);
+    return lerp(LowHorizonCos, dot(Delta / Dist, ViewVec), Weight);
 }

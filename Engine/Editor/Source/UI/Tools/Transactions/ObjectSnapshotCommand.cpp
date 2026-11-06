@@ -8,11 +8,12 @@
 
 namespace Lumina
 {
-    FObjectSnapshotCommand::FObjectSnapshotCommand(CObject* InObject, FName InName)
+    FObjectSnapshotCommand::FObjectSnapshotCommand(CObject* InObject, FName InName, FSerializer InSerializer)
         : Object(InObject)
         , Name(InName)
+        , Serializer(Move(InSerializer))
     {
-        Capture(InObject, Before);
+        Capture(InObject, Before, Serializer);
         CollectReferenced(InObject, Referenced);
     }
 

@@ -400,7 +400,6 @@ namespace Lumina
         {
             const CNetworkSettings* NS = GetDefault<CNetworkSettings>();
             ImGui::BulletText("Interp delay: %.0f ms", (NS ? NS->InterpDelay : 0.1f) * 1000.0f);
-            ImGui::BulletText("Clock offset: %.1f ms", State->ClockOffset * 1000.0);
             ImGui::BulletText("Latest server time: %.2f s", State->LatestServerTime);
             if (RingCount > 0)
             {

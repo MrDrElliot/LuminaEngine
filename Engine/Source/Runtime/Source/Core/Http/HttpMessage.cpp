@@ -9,29 +9,6 @@ namespace Lumina::Http
     {
         constexpr FStringView GHeaderTerminator = "\r\n\r\n";
 
-        char ToLowerAscii(char Character)
-        {
-            return (Character >= 'A' && Character <= 'Z') ? static_cast<char>(Character - 'A' + 'a') : Character;
-        }
-
-        bool EqualsIgnoringCase(FStringView Left, FStringView Right)
-        {
-            if (Left.Len() != Right.Len())
-            {
-                return false;
-            }
-
-            for (int32 Index = 0; Index < Left.Len(); ++Index)
-            {
-                if (ToLowerAscii(Left[Index]) != ToLowerAscii(Right[Index]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
         FStringView TrimSpace(FStringView Text)
         {
             int32 First = 0;
@@ -99,7 +76,7 @@ namespace Lumina::Http
     {
         for (const FHeader& Header : Headers)
         {
-            if (EqualsIgnoringCase(FStringView(Header.Name), Name))
+            if (EqualsIgnoreCase(FStringView(Header.Name), Name))
             {
                 return FStringView(Header.Value);
             }
@@ -111,7 +88,7 @@ namespace Lumina::Http
     bool FRequest::WantsKeepAlive() const
     {
         const FStringView Connection = FindHeader("Connection");
-        return !EqualsIgnoringCase(Connection, "close");
+        return !EqualsIgnoreCase(Connection, FStringView("close"));
     }
 
     FResponse FResponse::Json(FString InBody)
@@ -250,7 +227,7 @@ namespace Lumina::Http
 
         // Chunked bodies are refused outright rather than half handled, since no client here needs them.
         const FStringView Encoding = Parsed.FindHeader("Transfer-Encoding");
-        if (!Encoding.IsEmpty() && !EqualsIgnoringCase(Encoding, "identity"))
+        if (!Encoding.IsEmpty() && !EqualsIgnoreCase(Encoding, FStringView("identity")))
         {
             return EParseResult::Malformed;
         }

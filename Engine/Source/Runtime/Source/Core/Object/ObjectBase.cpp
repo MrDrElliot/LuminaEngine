@@ -210,6 +210,13 @@ namespace Lumina
         FObjectHashTables::Get().AddObject(this);
     }
 
+    void CObjectBase::ClearPackage() noexcept
+    {
+        FObjectHashTables::Get().RemoveObject(this);
+        PackagePrivate = nullptr;
+        FObjectHashTables::Get().AddObject(this);
+    }
+
     void CObjectBase::HandleGUIDChange(const FGuid& NewGUID) noexcept
     {
         if (NewGUID == GUIDPrivate)

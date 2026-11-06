@@ -104,6 +104,19 @@ float TransformMaxScale(FTransform3x4 Transform)
     return sqrt(max(dot(AxisX, AxisX), max(dot(AxisY, AxisY), dot(AxisZ, AxisZ))));
 }
 
+// Thinned foliage keeps at least this share of its instances, which caps how wide the survivors grow.
+static const float kMinThinningKeep = 1.0 / 16.0;
+
+// The share of foliage kept at this squared camera distance, falling with distance squared so the count on screen stays level, 1 when not thinned.
+float ThinningKeep(float DistSq, float ThinningStart)
+{
+    if (ThinningStart <= 0.0 || DistSq <= ThinningStart * ThinningStart)
+    {
+        return 1.0;
+    }
+    return max(ThinningStart * ThinningStart / DistSq, kMinThinningKeep);
+}
+
 // The project's runtime toggle for the baked voxel levels.
 bool VoxelFarEnabled()
 {
@@ -236,12 +249,6 @@ uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBou
     const uint LOD = SelectLODForView(Desc, View, SphereBounds, MaxScale);
     DrawBound = Desc.LODMeshletCount[LOD];
     return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
-}
-
-uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
-{
-    uint DrawBound;
-    return SelectViewMeshletRange(Desc, View, SphereBounds, MaxScale, DrawBound);
 }
 
 // Diameter of a world sphere in pixels of the cull camera, unbounded when the camera is inside it.

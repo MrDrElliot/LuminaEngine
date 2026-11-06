@@ -88,21 +88,21 @@ public static class ProcessRunner
         Runner.BeginOutputReadLine();
         Runner.BeginErrorReadLine();
 
-        if (StandardInput is not null)
-        {
-            try
-            {
-                await Runner.StandardInput.WriteAsync(StandardInput.AsMemory(), Cancellation).ConfigureAwait(false);
-                Runner.StandardInput.Close();
-            }
-            catch (IOException)
-            {
-                // The tool exited before reading everything; its exit code and output say why.
-            }
-        }
-
         try
         {
+            if (StandardInput is not null)
+            {
+                try
+                {
+                    await Runner.StandardInput.WriteAsync(StandardInput.AsMemory(), Cancellation).ConfigureAwait(false);
+                    Runner.StandardInput.Close();
+                }
+                catch (IOException)
+                {
+                    // The tool exited before reading everything; its exit code and output say why.
+                }
+            }
+
             await Runner.WaitForExitAsync(Cancellation).ConfigureAwait(false);
         }
         catch (OperationCanceledException)

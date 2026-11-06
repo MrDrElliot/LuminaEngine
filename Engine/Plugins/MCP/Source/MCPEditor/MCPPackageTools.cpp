@@ -242,8 +242,7 @@ namespace Lumina::MCP
             }
 
             FPackageGameSession& G = PackageGame();
-            Platform::KillProcess(G.Process);
-            Platform::CloseProcess(G.Process);
+            G.Close();
 
             const FString Directory = PackageDirectoryOf(Executable);
             G.Process = Platform::SpawnProcess(UTF8_TO_TCHAR(*Executable), UTF8_TO_TCHAR(*In.Arguments), UTF8_TO_TCHAR(*Directory));
@@ -271,7 +270,7 @@ namespace Lumina::MCP
 
         Agent::FToolResult StopPackagedGame(const SPackageRunParams& In, SPackageRunResult& Out)
         {
-            Platform::KillProcess(PackageGame().Process);
+            PackageGame().Close();
             FillPackageRunStatus(In, Out);
             return Agent::FToolResult::Ok(Lumina::Format("Stopped after {:.0f}s.", Out.ElapsedSeconds));
         }
@@ -501,8 +500,30 @@ namespace Lumina::MCP
         Stage.store(bSucceeded ? EPackageStage::Succeeded : EPackageStage::Failed);
     }
 
-    void FPackageToolsState::JoinWorker()
+    bool FPackageGameSession::Close()
     {
+        const bool bWasRunning = Platform::IsProcessRunning(Process);
+        Platform::KillProcess(Process);
+        if (Process.IsValid() && EndSeconds == 0.0)
+        {
+            EndSeconds = PlatformTime::Seconds();
+        }
+
+        const Platform::FProcessHandle Exited = Process;
+        Platform::CloseProcess(Process);
+        Process.ProcessId = Exited.ProcessId;
+        Process.ExitCode = Exited.ExitCode;
+        Process.bExited = Exited.bExited;
+        return bWasRunning;
+    }
+
+    void FPackageToolsState::Shutdown()
+    {
+        if (Game.Close())
+        {
+            LOG_WARN("[MCP] Killed the packaged game {} launched by package.run because the editor is quitting.", Game.Executable);
+        }
+
         if (!Build.Worker.joinable())
         {
             return;

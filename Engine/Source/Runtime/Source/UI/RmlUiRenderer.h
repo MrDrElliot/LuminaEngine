@@ -6,6 +6,7 @@
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Delegates/Delegate.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"
 #include "Lumina.h"
@@ -104,12 +105,12 @@ namespace Lumina
         {
             RHI::FManagedTexture       Managed;                    // owned (generated textures + brush RTs)
             uint32                     ResourceID = RHI::kInvalidHeapSlot; // global-heap sampled slot
-            class CTexture*            AssetKeepalive = nullptr;   // rooted while held; released on ReleaseTexture
+            TStrongObjectPtr<class CTexture>           AssetKeepalive;
             FUIntVector2               AssetExtent = {0, 0};
-            class CMaterialInterface*  BrushMaterial  = nullptr;   // UI-material brush; rooted while held, rendered each frame
+            TStrongObjectPtr<class CMaterialInterface> BrushMaterial;   // rendered each frame
             FUIntVector2               BrushSize = {0, 0};
             FString                    BrushSourcePath;            // resolved asset path; re-validated so a rename/delete breaks the brush
-            bool                       bBrushStale = false;        // source path no longer resolves -> cleared + not rendered (material stays rooted so a rename-back can resume)
+            bool                       bBrushStale = false;        // source path no longer resolves -> cleared + not rendered (material stays held so a rename-back can resume)
             bool                       bBrushCleared = false;      // RT has defined contents; until then a not-yet-ready material would leave the UI sampling garbage
             bool                       bBrushRendered = false;     // Holds a frame of the material, which a compile keeps on screen and a domain change must not
             bool                       bStraightAlpha = false;     // asset textures are not premultiplied like RmlUi's own; the shader premultiplies them

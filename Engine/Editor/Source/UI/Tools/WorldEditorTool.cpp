@@ -10,6 +10,8 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
+#include "Assets/Factories/Factory.h"
+#include "Asset/AssetOps.h"
 #include "Components/EditorEntityTags.h"
 #include "ContentBrowserEditorTool.h"
 #include "Config/Config.h"
@@ -2767,40 +2769,32 @@ namespace Lumina
         }
     }
 
-    void FWorldEditorTool::PushSaveAsAssetModal()
+    namespace WorldEditorToolInternal
     {
-        ToolContext->PushModal("Save World As Asset", ImVec2(550.0f, 240.0f), [this]() -> bool
+        struct FNewAssetDialogState
         {
-            static FFixedString NameBuffer;
-            static FFixedString DirBuffer;
-            static FFixedString ErrorMessage;
+            FFixedString Name;
+            FFixedString Folder = "/Game/Content";
+            FFixedString Error;
+        };
 
-            if (ImGui::IsWindowAppearing())
-            {
-                NameBuffer = "NewWorld";
-                DirBuffer = "/Game/Content";
-                ErrorMessage.Reset();
-            }
+        enum class ENewAssetDialogResult : uint8 { None, Confirm, Cancel };
 
-            ImGui::TextUnformatted("This world is not saved as an asset yet.");
-            ImGui::TextUnformatted("Pick a name and content folder to save it.");
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
+        ENewAssetDialogResult DrawNewAssetDialogFields(FNewAssetDialogState& State, const char* ConfirmLabel)
+        {
             ImGui::TextUnformatted("Folder");
             ImGui::SetNextItemWidth(-1.0f);
-            ImGuiX::InputText("##Folder", DirBuffer);
+            ImGuiX::InputText("##Folder", State.Folder);
 
             ImGui::Spacing();
             ImGui::TextUnformatted("Name");
             ImGui::SetNextItemWidth(-1.0f);
-            const bool bEnter = ImGuiX::InputText("##Name", NameBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool bEnter = ImGuiX::InputText("##Name", State.Name, ImGuiInputTextFlags_EnterReturnsTrue);
 
-            if (!ErrorMessage.IsEmpty())
+            if (!State.Error.IsEmpty())
             {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", *ErrorMessage);
+                ImGui::TextColored(EditorColors::Danger(), "%s", *State.Error);
             }
 
             ImGui::Spacing();
@@ -2811,55 +2805,80 @@ namespace Lumina
             const float AvailWidth = ImGui::GetContentRegionAvail().x;
             ImGui::SetCursorPosX((AvailWidth - ButtonWidth * 2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
 
-            const bool bConfirm = ImGui::Button("Save", ImVec2(ButtonWidth, 0.0f)) || bEnter;
+            const bool bConfirm = ImGui::Button(ConfirmLabel, ImVec2(ButtonWidth, 0.0f)) || bEnter;
             ImGui::SameLine();
-            const bool bCancel = ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f));
-
-            if (bCancel)
+            if (ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f)))
             {
-                return true;
+                return ENewAssetDialogResult::Cancel;
             }
+            return bConfirm ? ENewAssetDialogResult::Confirm : ENewAssetDialogResult::None;
+        }
 
-            if (!bConfirm)
+        // Free of loaded packages and in-flight imports as well as files, since CreatePackage refuses all three.
+        bool ResolveFreeAssetPath(FStringView Folder, FStringView Name, FFixedString& OutPath, FFixedString& OutError)
+        {
+            FString Reason;
+            if (!AssetOps::IsValidLeafName(Name, &Reason))
             {
+                OutError = *Reason;
+                return false;
+            }
+            if (Folder.IsEmpty())
+            {
+                OutError = "Folder cannot be empty.";
                 return false;
             }
 
-            if (NameBuffer.GetData()[0] == '\0')
+            OutPath = VFS::ResolveToVirtualPath(Paths::Combine(Folder, Name));
+            if (OutPath.IsEmpty() || OutPath[0] != '/')
             {
-                ErrorMessage = "Name cannot be empty.";
+                OutError = "Folder must resolve to a virtual path under a mounted alias (e.g. /Game).";
                 return false;
+            }
+            OutPath = Import::PathReservations::FindFree(OutPath);
+            if (OutPath.IsEmpty())
+            {
+                OutError = "No free name in that folder.";
+                return false;
+            }
+            CPackage::AddPackageExt(OutPath);
+            return true;
+        }
+    }
+
+    void FWorldEditorTool::PushSaveAsAssetModal()
+    {
+        WorldEditorToolInternal::FNewAssetDialogState State;
+        State.Name = "NewWorld";
+
+        ToolContext->PushModal("Save World As Asset", ImVec2(550.0f, 240.0f), [this, State = Move(State)]() mutable -> bool
+        {
+            ImGui::TextUnformatted("This world is not saved as an asset yet.");
+            ImGui::TextUnformatted("Pick a name and content folder to save it.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            const WorldEditorToolInternal::ENewAssetDialogResult Result = WorldEditorToolInternal::DrawNewAssetDialogFields(State, "Save");
+            if (Result != WorldEditorToolInternal::ENewAssetDialogResult::Confirm)
+            {
+                return Result == WorldEditorToolInternal::ENewAssetDialogResult::Cancel;
             }
 
-            if (DirBuffer.GetData()[0] == '\0')
+            FFixedString Path;
+            if (!WorldEditorToolInternal::ResolveFreeAssetPath(FStringView(*State.Folder), FStringView(*State.Name), Path, State.Error))
             {
-                ErrorMessage = "Folder cannot be empty.";
                 return false;
             }
-
-            FFixedString Path = Paths::Combine(FStringView(*DirBuffer), FStringView(*NameBuffer));
-            Path = VFS::ResolveToVirtualPath(Path);
-            if (Path.IsEmpty() || Path[0] != '/')
-            {
-                ErrorMessage = "Folder must resolve to a virtual path under a mounted alias (e.g. /Game).";
-                return false;
-            }
-            // Free of loaded packages and in-flight imports as well as files, since CreatePackage refuses all three.
-            Path = Import::PathReservations::FindFree(Path);
-            if (Path.IsEmpty())
-            {
-                ErrorMessage = "No free name in that folder.";
-                return false;
-            }
-            CPackage::AddPackageExt(Path);
 
             CPackage* NewPackage = CPackage::CreatePackage(Path);
             if (NewPackage == nullptr)
             {
-                ErrorMessage = "Failed to create package.";
+                State.Error = "Failed to create package.";
                 return false;
             }
 
+            const FName OriginalName = World->GetName();
             FStringView FileName = VFS::FileName(Path, true);
             World->Rename(FName(FileName), NewPackage);
             World->SetFlag(OF_Public);
@@ -2884,7 +2903,11 @@ namespace Lumina
                 return true;
             }
 
-            ErrorMessage = "Failed to save package to disk.";
+            // OnSave only opens this dialog for a world with no package, so that is what it goes back to.
+            World->ClearPackage();
+            World->Rename(OriginalName);
+            CFactory::DiscardNewPackage(NewPackage);
+            State.Error = "Failed to save package to disk.";
             return false;
         });
     }
@@ -2989,22 +3012,14 @@ namespace Lumina
         ECS::FRegistry& Registry = World->GetEntityRegistry();
         WorldEditorToolInternal::FCreatePrefabRequest Req = WorldEditorToolInternal::BuildCreatePrefabRequest(Registry, Move(Roots));
 
+        WorldEditorToolInternal::FNewAssetDialogState State;
+        State.Name = Req.DefaultName;
+
         ToolContext->PushModal("Create Prefab From Selection", ImVec2(560.0f, 290.0f),
-            [this, Req = Move(Req)]() -> bool
+            [this, Req = Move(Req), State = Move(State)]() mutable -> bool
         {
-            static FFixedString NameBuffer;
-            static FFixedString DirBuffer;
-            static FFixedString ErrorMessage;
-
-            if (ImGui::IsWindowAppearing())
-            {
-                NameBuffer = Req.DefaultName;
-                DirBuffer = "/Game/Content";
-                ErrorMessage.Reset();
-            }
-
             ImGui::TextUnformatted("Save the selection as a reusable prefab asset.");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            ImGui::TextColored(EditorColors::TextDim(),
                 "Capturing %u entities total (%d top-level + descendants).",
                 Req.TotalEntityCount, Req.Roots.Num());
 
@@ -3012,37 +3027,13 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::TextUnformatted("Folder");
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGuiX::InputText("##Folder", DirBuffer);
-
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Name");
-            ImGui::SetNextItemWidth(-1.0f);
-            const bool bEnter = ImGuiX::InputText("##Name", NameBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
-
-            if (!ErrorMessage.IsEmpty())
+            const WorldEditorToolInternal::ENewAssetDialogResult Result = WorldEditorToolInternal::DrawNewAssetDialogFields(State, "Create");
+            if (Result != WorldEditorToolInternal::ENewAssetDialogResult::Confirm)
             {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", *ErrorMessage);
+                return Result == WorldEditorToolInternal::ENewAssetDialogResult::Cancel;
             }
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            constexpr float ButtonWidth = 110.0f;
-            const float AvailWidth = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorPosX((AvailWidth - ButtonWidth * 2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
-
-            const bool bConfirm = ImGui::Button("Create", ImVec2(ButtonWidth, 0.0f)) || bEnter;
-            ImGui::SameLine();
-            const bool bCancel = ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f));
-
-            if (bCancel) return true;
-            if (!bConfirm) return false;
-
-            if (CPrefab* Prefab = CreatePrefabFromRoots(Req.Roots, Req.Pivot, FStringView(*DirBuffer), FStringView(*NameBuffer), ErrorMessage))
+            if (CPrefab* Prefab = CreatePrefabFromRoots(Req.Roots, Req.Pivot, FStringView(*State.Folder), FStringView(*State.Name), State.Error))
             {
                 ImGuiX::Notifications::NotifySuccess("Created prefab: \"{0}\"", Prefab->GetPackage()->GetPackagePath());
                 return true;
@@ -3053,9 +3044,6 @@ namespace Lumina
 
     CPrefab* FWorldEditorTool::CreatePrefabFromRoots(const TVector<ECS::FEntity>& Roots, const FVector3& Pivot, FStringView Folder, FStringView Name, FFixedString& OutError)
     {
-        if (Name.IsEmpty()) { OutError = "Name cannot be empty."; return nullptr; }
-        if (Folder.IsEmpty()) { OutError = "Folder cannot be empty."; return nullptr; }
-
         ECS::FRegistry& WorkingRegistry = World->GetEntityRegistry();
         for (ECS::FEntity Entity : Roots)
         {
@@ -3066,28 +3054,23 @@ namespace Lumina
             }
         }
 
-        FFixedString Path = Paths::Combine(Folder, Name);
-        Path = VFS::ResolveToVirtualPath(Path);
-        if (Path.IsEmpty() || Path[0] != '/')
+        FFixedString Path;
+        if (!WorldEditorToolInternal::ResolveFreeAssetPath(Folder, Name, Path, OutError))
         {
-            OutError = "Folder must resolve to a virtual path under a mounted alias (e.g. /Game).";
             return nullptr;
         }
-        // Free of loaded packages and in-flight imports as well as files, since CreatePackage refuses all three.
-        Path = Import::PathReservations::FindFree(Path);
-        if (Path.IsEmpty())
-        {
-            OutError = "No free name in that folder.";
-            return nullptr;
-        }
-        CPackage::AddPackageExt(Path);
 
         CPackage* NewPackage = CPackage::CreatePackage(Path);
         if (NewPackage == nullptr) { OutError = "Failed to create package."; return nullptr; }
 
         const FStringView FileName = VFS::FileName(Path, true);
         CPrefab* Prefab = NewObject<CPrefab>(NewPackage, FName(FileName));
-        if (Prefab == nullptr) { OutError = "Failed to create prefab object."; return nullptr; }
+        if (Prefab == nullptr)
+        {
+            OutError = "Failed to create prefab object.";
+            CFactory::DiscardNewPackage(NewPackage);
+            return nullptr;
+        }
         Prefab->SetFlag(OF_Public);
 
         // A scratch parent at the pivot, reparented world-preserving, then captured and restored.
@@ -3107,6 +3090,7 @@ namespace Lumina
             if (ScratchRoot == ECS::NullEntity)
             {
                 OutError = "Failed to create scratch parent.";
+                CFactory::DiscardNew(Prefab);
                 return nullptr;
             }
 
@@ -3162,6 +3146,7 @@ namespace Lumina
         if (!CPackage::SavePackage(NewPackage, Path))
         {
             OutError = "Failed to save prefab to disk.";
+            CFactory::DiscardNew(Prefab);
             return nullptr;
         }
         FAssetRegistry::Get().AssetCreated(Prefab);
@@ -3806,6 +3791,22 @@ namespace Lumina
                 State.bChunksDirty        = true;
             }
         }
+
+        for (TUniquePtr<IWorldEditorMode>& Mode : EditorModes)
+        {
+            Mode->OnPostUndoRedo(World.Get());
+        }
+    }
+
+    void FWorldEditorTool::BeginModeObjectTransaction(CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer)
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        TransactionManager.BeginTransaction(FName());
+        TransactionManager.Record(MakeUnique<FObjectSnapshotCommand>(Object, FName(), Serializer));
     }
 
     bool FWorldEditorTool::AllowsUndoRedo() const

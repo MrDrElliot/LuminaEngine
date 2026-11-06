@@ -307,6 +307,145 @@ namespace Lumina
         return true;
     }
 
+    namespace
+    {
+        // Denser than GTAO's tables, since nothing accumulates the bounce across frames to hide the noise.
+        constexpr uint32 kScreenSpaceGISlices        = 4u;
+        constexpr uint32 kScreenSpaceGIStepsPerSlice = 8u;
+    }
+
+    bool FDefaultSceneRenderer::WantsScreenSpaceGI(const FSceneView& View) const
+    {
+        return IsGTAOEnabled() && GetDefault<CRendererSettings>()->bScreenSpaceGI && View.bIsPrimary;
+    }
+
+    bool FDefaultSceneRenderer::IsScreenSpaceGITraced() const
+    {
+        return WantsScreenSpaceGI(*CurrentView) && CurrentView->bScreenSpaceGIHistoryValid
+            && !RenderFrame->Geometry.DrawCommands.IsEmpty();
+    }
+
+    void FDefaultSceneRenderer::ScreenSpaceGIPass(RHI::FCmdListH CL)
+    {
+        static const FString  DenoiseDefine = "SSGI_DENOISE";
+        static const FShaderH TraceCS       = FShaderLibrary::Get("ScreenSpaceGI.slang");
+        static const FShaderH DenoiseCS     = FShaderLibrary::Get("ScreenSpaceGI.slang", TSpan<const FString>(&DenoiseDefine, 1));
+        FGTAOParams P;
+        if (!TraceCS || !DenoiseCS || !MakeGTAOParams(P))
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Screen Space GI", tracy::Color::Orange);
+
+        const FSceneImage& WorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
+        const FSceneImage& Trace        = GetNamedImage(ENamedImage::ScreenSpaceGITrace);
+        const FSceneImage& Output       = GetNamedImage(ENamedImage::ScreenSpaceGI);
+        const FSceneImage& History      = GetNamedImage(ENamedImage::ScreenSpaceGIHistory);
+
+        const int32 WorkingDepthSlot = WorkingDepth.GetResourceID();
+        const int32 HistorySlot      = History.GetResourceID();
+        const int32 TraceSlot        = Trace.GetResourceID();
+        const int32 TraceUAV         = Trace.GetMipUAVIndex(0);
+        const int32 OutputUAV        = Output.GetMipUAVIndex(0);
+        if (WorkingDepthSlot < 0 || HistorySlot < 0 || TraceSlot < 0 || TraceUAV < 0 || OutputUAV < 0)
+        {
+            LOG_ERROR_ONCE("Screen space GI is missing a heap slot; skipping the pass.");
+            return;
+        }
+
+        struct FTraceConstants
+        {
+            FMatrix4 HistoryViewProjection;
+            uint32   OutputSize[2];
+            uint32   WorkingDepthSize[2];
+            uint32   WorkingDepthIndex;
+            uint32   SceneDepthIndex;
+            uint32   SceneColorHistoryIndex;
+            uint32   OutputUAV;
+            uint32   DepthScale;
+            uint32   SliceCount;
+            uint32   StepsPerSlice;
+            float    EffectRadius;
+            float    EffectFalloffRange;
+            float    SampleDistributionPower;
+            float    ThinOccluderCompensation;
+            float    DepthMIPSamplingOffset;
+        } PC = {};
+
+        // The working depth is already half size below ultra quality, and full size steps two texels per output.
+        const uint32 DepthScale = P.bHalfTrace ? 1u : 2u;
+
+        PC.HistoryViewProjection    = CurrentView->ScreenSpaceGIHistoryViewProjection;
+        PC.OutputSize[0]            = Output.GetSizeX();
+        PC.OutputSize[1]            = Output.GetSizeY();
+        PC.WorkingDepthSize[0]      = P.Width;
+        PC.WorkingDepthSize[1]      = P.Height;
+        PC.WorkingDepthIndex        = (uint32)WorkingDepthSlot;
+        PC.SceneDepthIndex          = (uint32)P.DepthSlot;
+        PC.SceneColorHistoryIndex   = (uint32)HistorySlot;
+        PC.OutputUAV                = (uint32)TraceUAV;
+        PC.DepthScale               = DepthScale;
+        PC.SliceCount               = kScreenSpaceGISlices;
+        PC.StepsPerSlice            = kScreenSpaceGIStepsPerSlice;
+        PC.EffectRadius             = Math::Max(GetDefault<CRendererSettings>()->ScreenSpaceGIRadius, 0.01f);
+        PC.EffectFalloffRange       = P.FalloffRange;
+        PC.SampleDistributionPower  = P.SampleDistributionPower;
+        PC.ThinOccluderCompensation = P.ThinOccluderCompensation;
+        PC.DepthMIPSamplingOffset   = P.DepthMipSamplingOffset;
+
+        const uint32 GroupsX = RenderUtils::GetGroupCount(PC.OutputSize[0], 8u);
+        const uint32 GroupsY = RenderUtils::GetGroupCount(PC.OutputSize[1], 8u);
+        DispatchCompute(CL, TraceCS, PC, GroupsX, GroupsY, 1);
+        RHI::Barriers::ComputeToCompute(CL);
+
+        struct FDenoiseConstants
+        {
+            uint32 OutputSize[2];
+            uint32 WorkingDepthSize[2];
+            uint32 WorkingDepthIndex;
+            uint32 SourceIndex;
+            uint32 OutputUAV;
+            uint32 DepthScale;
+        } DenoisePC = {};
+
+        DenoisePC.OutputSize[0]       = PC.OutputSize[0];
+        DenoisePC.OutputSize[1]       = PC.OutputSize[1];
+        DenoisePC.WorkingDepthSize[0] = P.Width;
+        DenoisePC.WorkingDepthSize[1] = P.Height;
+        DenoisePC.WorkingDepthIndex   = (uint32)WorkingDepthSlot;
+        DenoisePC.SourceIndex         = (uint32)TraceSlot;
+        DenoisePC.OutputUAV           = (uint32)OutputUAV;
+        DenoisePC.DepthScale          = DepthScale;
+
+        DispatchCompute(CL, DenoiseCS, DenoisePC, GroupsX, GroupsY, 1);
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+    }
+
+    void FDefaultSceneRenderer::CaptureScreenSpaceGIHistory(RHI::FCmdListH CL)
+    {
+        // A debug view has replaced the lit color in HDR, so the last lit frame stays the history.
+        const FSceneImage& History = GetNamedImage(ENamedImage::ScreenSpaceGIHistory);
+        if (!History.IsValid() || RenderFrame->SceneGlobalData.CullData.DebugMode != (uint32)ERenderSceneDebugFlags::None)
+        {
+            return;
+        }
+
+        RHI::Barriers::SceneToTransfer(CL);
+        RHI::CmdBlitTexture(CL, GetNamedImage(ENamedImage::HDR).Texture, RHI::FTextureSlice{}, History.Texture, RHI::FTextureSlice{});
+        // The next HDR writers wait out the read, and the next frame's trace the write.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute | RHI::EStageFlags::RasterColorOut);
+
+        const FCameraData& Camera = RenderFrame->SceneGlobalData.CameraData;
+        CurrentView->ScreenSpaceGIHistoryViewProjection = Camera.Projection * Camera.View;
+        CurrentView->bScreenSpaceGIHistoryValid         = true;
+    }
+
     namespace ScreenSpaceInternal
     {
         // Shared by SSRHiZ.slang and SSRFilter.slang, which both build one level of a chain from the level below.

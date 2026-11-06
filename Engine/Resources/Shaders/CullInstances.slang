@@ -100,9 +100,6 @@ bool IsBlockInReach(FInstanceBlockBounds Block, float3 CamPos)
     return dot(ToBox, ToBox) <= Block.Reach * Block.Reach;
 }
 
-// Thinned foliage keeps at least this share of its instances, which caps how wide the survivors grow.
-static const float kMinThinningKeep = 1.0 / 16.0;
-
 // Keyed on the exact position bits, so an instance that has not moved keeps its answer every frame.
 float ThinningHash(float3 Position)
 {
@@ -124,6 +121,12 @@ groupshared FCullView gsViews[kStagedCullViews];
 FCullView GetCullView(uint View)
 {
     return View < kStagedCullViews ? gsViews[View] : CullViews().GetAligned(View);
+}
+
+// The proxy pass stands in for a proxied instance only in the views drawn from the camera's own projection.
+bool IsCameraProxyView(FCullView View, uint ViewIndex, bool bProxied)
+{
+    return bProxied && (ViewIndex == 0u || View.HasFlag(CULL_VIEW_FLAG_CUSTOM_DEPTH_ONLY));
 }
 
 [shader("compute")]
@@ -201,10 +204,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Thinned foliage keeps a share falling with distance squared, so the count on screen stays level, and every view sees the same choice.
     FTransform3x4 Transform = (FTransform3x4)0;
     bool bWidened = false;
-    const float ThinningStart = Cull.ThinningStartDistance;
-    if (!bNoCull && ThinningStart > 0.0 && DistSq > ThinningStart * ThinningStart)
+    const float Keep = bNoCull ? 1.0 : ThinningKeep(DistSq, Cull.ThinningStartDistance);
+    if (Keep < 1.0)
     {
-        const float Keep = max(ThinningStart * ThinningStart / DistSq, kMinThinningKeep);
         if (ThinningHash(Center) >= Keep)
         {
             return;
@@ -223,11 +225,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     const uint Layers = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
 
-    // Too small for its meshlets, the instance leaves this path for one splat the proxy pass draws off the retained slot alone.
+    // Too small for its meshlets, the camera sees the instance as one splat the proxy pass draws off the retained slot alone.
     const bool bProxyCandidate = !bSkinned && !bNoCull && !Cull.HasFlag(EInstanceFlags::ShadowOnly) && Cull.HasFlag(EInstanceFlags::HasGeometry)
                               && Pass().OutProxyList.Count > 0u && (Scene().CullData.VirtualGeometryFlags & VG_FLAG_PROXIES) != 0u
                               && Scene().CullData.ProxyTransitionPixels > 0.0;
-    if (bProxyCandidate && ProjectedDiameterPixels(Center, Radius) < Scene().CullData.ProxyTransitionPixels)
+    const bool bProxied = bProxyCandidate && ProjectedDiameterPixels(Center, Radius) < Scene().CullData.ProxyTransitionPixels;
+    if (bProxied)
     {
         // Only what the camera could see, since the proxy pass draws the list without a cull of its own.
         const FCullView Camera = GetCullView(0u);
@@ -240,7 +243,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
                 Pass().OutProxyList.Set(ProxySlot, SlotIdx);
             }
         }
-        return;
     }
 
     // Past the table this reads garbage counts that BuildMeshletBlocks would append against unbounded.
@@ -282,7 +284,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bCustomDepth       = (CustomDepthStencil & CUSTOM_DEPTH_ENABLED_BIT) != 0u;
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
-    bool bAnyView = false;
 
     // A skinned instance needs a pre-skin slice only when some view emits it.
     bool bNeedsSkin = false;
@@ -294,16 +295,19 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
                                    : 0u);
 
     // Needed before the compacted slot is claimed, because that slot indexes the range slab.
+    uint FirstVisibleView = NumViews;
     for (uint v = 0; v < NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(GetCullView(v), Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster, bFoliage, bCustomDepth, Layers))
+        const FCullView View = GetCullView(v);
+        if (!IsCameraProxyView(View, v, bProxied)
+            && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster, bFoliage, bCustomDepth, Layers))
         {
-            bAnyView = true;
+            FirstVisibleView = v;
             break;
         }
     }
 
-    if (!bAnyView)
+    if (FirstVisibleView == NumViews)
     {
         return;
     }
@@ -331,9 +335,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const float MaxScale = TransformMaxScale(Transform);
 
     // The primary camera's pick, which the instance carries for anything that reads it outside a view.
-    if (bSelectPerView && bHasGeometry && NumViews > 0u)
+    uint SurfaceDrawBound = SurfaceMeshletCount;
+    if (bSelectPerView && bHasGeometry)
     {
-        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), Cull.SphereBounds, MaxScale);
+        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), Cull.SphereBounds, MaxScale, SurfaceDrawBound);
         SurfaceMeshletOffset = CameraRange.x;
         SurfaceMeshletCount  = CameraRange.y;
     }
@@ -347,16 +352,21 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         uint  Emitted   = 0u;
         uint  DrawBound = 0u;
 
-        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster, bFoliage, bCustomDepth, Layers))
+        // Views before the first visible one already failed the test above, and that view already passed it.
+        const bool bVisible = v == FirstVisibleView
+                           || (v > FirstVisibleView && !IsCameraProxyView(View, v, bProxied)
+                               && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster, bFoliage, bCustomDepth, Layers));
+        if (bVisible)
         {
-            if (bSelectPerView)
+            // View 0 reuses the camera's pick above.
+            if (bSelectPerView && v > 0u)
             {
                 Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, Cull.SphereBounds, MaxScale, DrawBound) : uint2(0u, 0u);
             }
             else
             {
                 Range     = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
-                DrawBound = SurfaceMeshletCount;
+                DrawBound = SurfaceDrawBound;
             }
 
             // Clamped here, so the builder inherits a range that is already in bounds.

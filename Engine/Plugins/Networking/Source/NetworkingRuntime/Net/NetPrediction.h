@@ -41,6 +41,7 @@ namespace Lumina
     // Host, on a character a client owns. Budget caps how many steps a client may claim per second of real time.
     struct FNetPredictionServer
     {
+        uint32                        OwningConnectionId = 0;
         uint32                        LastProcessed = 0;
         float                         Budget        = 0.0f;
         Physics::FCharacterNetState   AckState;
@@ -68,6 +69,9 @@ namespace Lumina
 
         // After roles refresh, decides who simulates each networked character.
         void RefreshDrives(CWorld* World, ECS::FRegistry& Registry, bool bServer);
+
+        // Host only. A new owner starts its sequence at 1, so its server state restarts too; owner 0 removes it.
+        NETWORKINGRUNTIME_API void RefreshServerPrediction(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 OwningConnectionId);
 
         // Physics calls this around every fixed character step. The client records its own moves here.
         void OnCharacterStep(CWorld* World, float FixedDt, bool bAfter);

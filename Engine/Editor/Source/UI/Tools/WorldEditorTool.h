@@ -69,6 +69,8 @@ namespace Lumina
         void BeginModeTransaction() override { BeginTransaction(); }
         void EndModeTransaction(const char* Name) override { EndTransaction(FName(Name)); }
         void BeginModeCreationTransaction() override { BeginCreationTransaction(); }
+        void BeginModeObjectTransaction(CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer) override;
+        void RunModeObjectTransaction(const char* Name, CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer, const TFunction<void()>& Edit) override { RunObjectTransacted(FName(Name), Object, Edit, Serializer); }
         ECS::FEntity GetModeSelectionFocus() const override { return GetLastSelectedEntity(); }
         void SetModeSelection(ECS::FEntity Entity) override { SetSingleSelectedEntity(Entity); }
 

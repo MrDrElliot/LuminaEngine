@@ -120,6 +120,8 @@ namespace Lumina
         // Bind-pose body transform per part, used to rebuild the skinning matrix from the simulated pose.
         TVector<FMatrix4>   PartBindInverse;
         TVector<int32>      JointToBone;
+        // Per bone scratch for ReadRagdollPose, marking the bones a body drives.
+        mutable TVector<uint8> PoseBoneMapped;
 
         // Bone names and parents, so a limb can be found by bone name.
         TSharedPtr<FSkeletonResource> Skeleton;

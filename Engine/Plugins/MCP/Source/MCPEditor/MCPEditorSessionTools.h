@@ -618,7 +618,7 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterEditorSessionTools(FStringView Owner);
-        void UnregisterEditorSessionTools();
+        MCPEDITOR_API void RegisterEditorSessionTools(FStringView Owner);
+        MCPEDITOR_API void UnregisterEditorSessionTools();
     }
 }

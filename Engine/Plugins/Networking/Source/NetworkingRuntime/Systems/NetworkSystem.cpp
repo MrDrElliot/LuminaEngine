@@ -145,22 +145,12 @@ namespace Lumina
                 Picked.Append(JoinerTable->begin(), JoinerTable->end());
             }
 
-            for (int32 Begin = 0; Begin < Picked.Num(); Begin += 0xFFFF)
+            Net::AppendCountedMessages(Reliable, ENetMessage::OwnershipUpdate, Picked.Num(), [](FNetArchive& Writer, int32 Index)
             {
-                const size_t End = Math::Min(Picked.Num(), Begin + 0xFFFF);
-                TVector<uint8> Buffer;
-                FNetArchive Writer(Buffer);
-                uint8  Type  = static_cast<uint8>(ENetMessage::OwnershipUpdate);
-                uint16 Count = static_cast<uint16>(End - Begin);
-                Writer << Type;
-                Writer << Count;
-                for (int32 Index = Begin, Limit = IntCastChecked<int32>(End); Index < Limit; ++Index)
-                {
-                    Net::WriteNetGuid(Writer, Picked[Index].Guid);
-                    WriteVarUInt(Writer, Picked[Index].Owner);
-                }
-                Net::AppendFramedMessage(Reliable, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()));
-            }
+                Net::WriteNetGuid(Writer, Picked[Index].Guid);
+                WriteVarUInt(Writer, Picked[Index].Owner);
+                return true;
+            });
         }
 
         // Client, apply an ownership table. Roles refresh from it on the same tick.
@@ -216,7 +206,15 @@ namespace Lumina
             NetQuantize::FQuantizedQuat::FromQuat(Rot).Write(Writer);
             NetQuantize::FQuantizedVector::FromVector(Scale, NetQuantize::ScaleQuantum).Write(Writer);
         }
-        
+
+        void WriteDespawnMessage(uint32 Guid, TVector<uint8>& OutMsg)
+        {
+            FNetArchive Writer(OutMsg);
+            uint8 Type = static_cast<uint8>(ENetMessage::DespawnEntity);
+            Writer << Type;
+            Net::WriteNetGuid(Writer, Guid);
+        }
+
         // Runs on the game thread with synchronous signals, so the GuidTable mutation is safe.
         void OnNetworkComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
@@ -225,17 +223,21 @@ namespace Lumina
             {
                 return;
             }
-            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>(); // find, since ctx may be gone during teardown
-            CWorld*  World    = WorldPtr ? *WorldPtr : nullptr;
-            if (World == nullptr || !IsServerMode(World->GetNetMode()))
-            {
-                return;
-            }
+            State->PendingAttach.Remove(static_cast<uint32>(Entity.Value));
+
+            // A server's stable GUID is still despawned for clients, since ReplicateStableDespawns treats a missing entry as dead.
             const SNetworkComponent& Net = Registry.Get<ECS::Read<SNetworkComponent>>(Entity);
-            if (Net.NetGUID.Value >= NetGUID_DynamicStart) // stable GUIDs handled by ReplicateStableDespawns
+            if (State->GuidTable.Find(Net.NetGUID) == Entity)
             {
                 State->GuidTable.Unregister(Net.NetGUID);
             }
+        }
+
+        // A client may have destroyed its copy locally, which leaves nothing to despawn and must not block a respawn.
+        ECS::FEntity FindLiveEntity(ECS::FRegistry& Registry, const FNetWorldState& State, uint32 Guid)
+        {
+            const ECS::FEntity Entity = State.GuidTable.Find(SNetGUID{ Guid });
+            return Registry.IsValid(Entity) ? Entity : ECS::NullEntity;
         }
 
         // Assigns NetGUIDs to newly-spawned dynamic entities, with destruction handled by the destroy hook.
@@ -262,10 +264,7 @@ namespace Lumina
                 if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
                 {
                     TVector<uint8> Buffer;
-                    FNetArchive Writer(Buffer);
-                    uint8 Type = static_cast<uint8>(ENetMessage::DespawnEntity);
-                    Writer << Type;
-                    Net::WriteNetGuid(Writer, Guid);
+                    WriteDespawnMessage(Guid, Buffer);
                     Net::AppendFramedMessage(Batch, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()));
                     ++State.Stats.DespawnsSent;
 
@@ -389,7 +388,7 @@ namespace Lumina
             Reader << Type;
             const uint32 Guid  = Net::ReadNetGuid(Reader);
             const uint32 Owner = ReadVarUInt(Reader);
-            if (Reader.HasError() || State.GuidTable.Find(SNetGUID{ Guid }) != ECS::NullEntity)
+            if (Reader.HasError() || FindLiveEntity(Registry, State, Guid) != ECS::NullEntity)
             {
                 return; // malformed, or we already have this entity
             }
@@ -471,7 +470,7 @@ namespace Lumina
         }
 
         // Client, destroy a despawned entity.
-        void ApplyDespawnEntity(CWorld* World, FNetWorldState& State, const uint8* Data, SIZE_T Size)
+        void ApplyDespawnEntity(ECS::FRegistry& Registry, FNetWorldState& State, const uint8* Data, SIZE_T Size)
         {
             FNetArchive Reader(Data, Size);
             uint8 Type = 0;
@@ -481,11 +480,10 @@ namespace Lumina
             {
                 return;
             }
-            ECS::FRegistry& Registry = World->GetEntityRegistry();
-            const ECS::FEntity Entity = State.GuidTable.Find(SNetGUID{ Guid });
-            if (Entity != ECS::NullEntity && Registry.IsValid(Entity))
+            const ECS::FEntity Entity = FindLiveEntity(Registry, State, Guid);
+            State.GuidTable.Unregister(SNetGUID{ Guid });
+            if (Entity != ECS::NullEntity)
             {
-                State.GuidTable.Unregister(SNetGUID{ Guid });
                 ECS::Utils::DestroyEntity(Registry, Entity);
             }
         }
@@ -1045,10 +1043,7 @@ namespace Lumina
                     if (Op.Op == EClientOp::Despawn)
                     {
                         TVector<uint8> Buf;
-                        FNetArchive W(Buf);
-                        uint8 Type = static_cast<uint8>(ENetMessage::DespawnEntity);
-                        W << Type;
-                        Net::WriteNetGuid(W, Op.Guid);
+                        WriteDespawnMessage(Op.Guid, Buf);
                         Net::AppendFramedMessage(Reliable, Buf.GetData(), static_cast<SIZE_T>(Buf.Num()));
                         ++DespawnsSum;
                         continue;
@@ -1107,26 +1102,16 @@ namespace Lumina
 
             PhaseMark(ENetPhase::Messages);
             // Exports first, so every client learns an index before any spawn that references it.
-            if (!State.OutObjects.PendingExports.IsEmpty())
+            TVector<uint8> Exports;
+            Net::BuildObjectExport(State.OutObjects, State.OutObjects.PendingExports, Exports);
+            Net::BuildAssetExport(State.OutAssets, State.OutAssets.PendingExports, Exports);
+            Net::BuildNameExport(State.OutNames, State.OutNames.PendingExports, Exports);
+            State.OutObjects.PendingExports.Reset();
+            State.OutAssets.PendingExports.Reset();
+            State.OutNames.PendingExports.Reset();
+            if (!Exports.IsEmpty())
             {
-                TVector<uint8> ExportMsg;
-                Net::BuildObjectExport(State.OutObjects, State.OutObjects.PendingExports, ExportMsg);
-                Net::BroadcastFramed(*State.Transport, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
-                State.OutObjects.PendingExports.Reset();
-            }
-            if (!State.OutAssets.PendingExports.IsEmpty())
-            {
-                TVector<uint8> ExportMsg;
-                Net::BuildAssetExport(State.OutAssets, State.OutAssets.PendingExports, ExportMsg);
-                Net::BroadcastFramed(*State.Transport, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
-                State.OutAssets.PendingExports.Reset();
-            }
-            if (!State.OutNames.PendingExports.IsEmpty())
-            {
-                TVector<uint8> ExportMsg;
-                Net::BuildNameExport(State.OutNames, State.OutNames.PendingExports, ExportMsg);
-                Net::BroadcastFramed(*State.Transport, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
-                State.OutNames.PendingExports.Reset();
+                State.Transport->Broadcast(Exports.GetData(), static_cast<SIZE_T>(Exports.Num()), 0, ESendMode::Reliable);
             }
             PhaseMark(ENetPhase::Exports);
             if (!ReliableBroadcast.IsEmpty())
@@ -1895,11 +1880,10 @@ namespace Lumina
             const FString  Host = WorldCtx ? WorldCtx->NetHost : FString("127.0.0.1");
             const uint16   Port = WorldCtx ? WorldCtx->NetPort : NetDefaultPort;
 
+            Registry.GetSignals<SNetworkComponent>().OnDestroy.Connect<&OnNetworkComponentDestroyed>();
+
             if (bServer)
             {
-                // Unregister a destroyed entity's dynamic GUID the instant it dies (server only, connected once).
-                Registry.GetSignals<SNetworkComponent>().OnDestroy.Connect<&OnNetworkComponentDestroyed>();
-
                 State->Transport.reset(Network::CreateTransport());
                 if (GCommandLine->GetInt("netstats").Get(0) > 0 && State->Transport != nullptr)
                 {
@@ -2047,6 +2031,9 @@ namespace Lumina
                     Joiners.Remove(Event.Connection.Value);
                     State->PendingRpcReliable.Remove(Event.Connection.Value);
                     State->PendingRpcUnreliable.Remove(Event.Connection.Value);
+                    State->InObjects.Remove(Event.Connection.Value);
+                    State->InAssets.Remove(Event.Connection.Value);
+                    State->InNames.Remove(Event.Connection.Value);
 
                     // Told before ownership is released, so gameplay can still find what the player had.
                     auto& Ready = State->ReadyClientIds;
@@ -2144,7 +2131,7 @@ namespace Lumina
                     case ENetMessage::DespawnEntity:
                         if (!bServer)
                         {
-                            ApplyDespawnEntity(World, *State, Msg, MsgSize);
+                            ApplyDespawnEntity(Registry, *State, Msg, MsgSize);
                         }
                         break;
                     case ENetMessage::PropertyUpdate:
@@ -2254,43 +2241,23 @@ namespace Lumina
                             }
 
                             // Dynamic entities arrive through AOI, while stable ones come from the map the joiner loads.
-                            if (!State->OutObjects.IndexToGuid.IsEmpty())
+                            auto AllIndices = [](const auto& Table)
                             {
-                                TVector<uint32> AllIndices;
-                                AllIndices.Reserve(State->OutObjects.IndexToGuid.Num());
-                                for (const auto& [Index, Guid] : State->OutObjects.IndexToGuid)
+                                TVector<uint32> Indices;
+                                Indices.Reserve(Table.Num());
+                                for (const auto& [Index, Value] : Table)
                                 {
-                                    AllIndices.Add(Index);
+                                    Indices.Add(Index);
                                 }
-                                TVector<uint8> ExportMsg;
-                                Net::BuildObjectExport(State->OutObjects, AllIndices, ExportMsg);
-                                Net::SendFramed(*State->Transport, Event.Connection, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
-                            }
-
-                            if (!State->OutAssets.IndexToRef.IsEmpty()) // asset index table for the joiner
+                                return Indices;
+                            };
+                            TVector<uint8> Exports;
+                            Net::BuildObjectExport(State->OutObjects, AllIndices(State->OutObjects.IndexToGuid), Exports);
+                            Net::BuildAssetExport(State->OutAssets, AllIndices(State->OutAssets.IndexToRef), Exports);
+                            Net::BuildNameExport(State->OutNames, AllIndices(State->OutNames.IndexToName), Exports);
+                            if (!Exports.IsEmpty())
                             {
-                                TVector<uint32> AllIndices;
-                                AllIndices.Reserve(State->OutAssets.IndexToRef.Num());
-                                for (const auto& [Index, Ref] : State->OutAssets.IndexToRef)
-                                {
-                                    AllIndices.Add(Index);
-                                }
-                                TVector<uint8> ExportMsg;
-                                Net::BuildAssetExport(State->OutAssets, AllIndices, ExportMsg);
-                                Net::SendFramed(*State->Transport, Event.Connection, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
-                            }
-
-                            if (!State->OutNames.IndexToName.IsEmpty()) // name index table for the joiner
-                            {
-                                TVector<uint32> AllIndices;
-                                AllIndices.Reserve(State->OutNames.IndexToName.Num());
-                                for (const auto& [Index, Name] : State->OutNames.IndexToName)
-                                {
-                                    AllIndices.Add(Index);
-                                }
-                                TVector<uint8> ExportMsg;
-                                Net::BuildNameExport(State->OutNames, AllIndices, ExportMsg);
-                                Net::SendFramed(*State->Transport, Event.Connection, ExportMsg.GetData(), static_cast<SIZE_T>(ExportMsg.Num()), 0, ESendMode::Reliable);
+                                State->Transport->Send(Event.Connection, Exports.GetData(), static_cast<SIZE_T>(Exports.Num()), 0, ESendMode::Reliable);
                             }
 
                             // The joiner loaded the level fresh, so tell it to remove copies it would have created.
@@ -2300,10 +2267,7 @@ namespace Lumina
                                 for (uint32 Guid : State->DestroyedStableGuids)
                                 {
                                     TVector<uint8> Buffer;
-                                    FNetArchive Writer(Buffer);
-                                    uint8 Type = static_cast<uint8>(ENetMessage::DespawnEntity);
-                                    Writer << Type;
-                                    Net::WriteNetGuid(Writer, Guid);
+                                    WriteDespawnMessage(Guid, Buffer);
                                     Net::AppendFramedMessage(DespawnBatch, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()));
                                 }
                                 State->Transport->Send(Event.Connection, DespawnBatch.GetData(), static_cast<SIZE_T>(DespawnBatch.Num()), 0, ESendMode::Reliable);

@@ -1148,6 +1148,10 @@ namespace Lumina
         {
             SceneGlobalData.GTAOSettings.SunShadowMaskIndex = (uint32)Images[(int)ENamedImage::SunFarShadowMask].GetResourceID();
         }
+        if (IsScreenSpaceGITraced())
+        {
+            SceneGlobalData.GTAOSettings.IndirectDiffuseIndex = (uint32)Images[(int)ENamedImage::ScreenSpaceGI].GetResourceID();
+        }
 
         SceneGlobalData.SceneDepthIndex = (uint32)Images[(int)ENamedImage::DepthAttachment].GetResourceID();
 

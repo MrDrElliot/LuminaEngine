@@ -119,6 +119,7 @@ namespace Lumina
         });
         if (Remap.IsEmpty() || !CPackage::SavePackage(DestPackage, DestPath))
         {
+            CFactory::DiscardNewPackage(DestPackage);
             return nullptr;
         }
 

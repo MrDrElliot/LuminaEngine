@@ -13,6 +13,7 @@
 #include "Core/Math/Math.h"
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Vertex.h>
+#include <charconv>
 
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
@@ -165,16 +166,6 @@ namespace Lumina
         Shaders.Reset();
         for (auto& [Handle, Texture] : Textures)
         {
-            if (Texture.AssetKeepalive != nullptr)
-            {
-                Texture.AssetKeepalive->RemoveFromRoot();
-                Texture.AssetKeepalive = nullptr;
-            }
-            if (Texture.BrushMaterial != nullptr)
-            {
-                Texture.BrushMaterial->RemoveFromRoot();
-                Texture.BrushMaterial = nullptr;
-            }
             if (Texture.Managed.IsValid())
             {
                 RHI::Textures::Release(Texture.Managed);
@@ -615,14 +606,9 @@ namespace Lumina
                 else
                 {
                     // Once per session, because the silent version of this cost a long hunt.
-                    static bool bWarned = false;
-                    if (!bWarned)
-                    {
-                        bWarned = true;
-                        LOG_WARN("[RmlUi] A cached draw references texture {} that is no longer live. It falls "
-                                 "back to the default rather than a dead heap slot, but something released a "
-                                 "texture the batch still names.", uint64(Handle));
-                    }
+                    LOG_WARN_ONCE("[RmlUi] A cached draw references texture {} that is no longer live. It falls "
+                                  "back to the default rather than a dead heap slot, but something released a "
+                                  "texture the batch still names.", uint64(Handle));
                 }
             }
 
@@ -1632,32 +1618,36 @@ namespace Lumina
     Rml::TextureHandle FRmlUiRenderer::LoadTexture(Rml::Vector2i& OutDimensions, const Rml::String& Source)
     {
         LUMINA_PROFILE_SCOPE();
-        Rml::String Path = Source;
-        if (Path.rfind("material:", 0) == 0)
+        constexpr FStringView MaterialPrefix = "material:";
+        FStringView SourceView(Source.c_str(), IntCastChecked<int32>(Source.size()));
+        if (SourceView.StartsWith(MaterialPrefix))
         {
-            Path = Path.substr(std::strlen("material:"));
+            SourceView.RemovePrefix(MaterialPrefix.Len());
         }
 
         // Optional `?w=NNN&h=NNN` brush-resolution override (materials only).
         uint32 Width = 256, Height = 256;
-        const size_t QueryPos = Path.find('?');
-        if (QueryPos != Rml::String::npos)
+        const int32 QueryPos = SourceView.Find('?');
+        if (QueryPos != Constants::kIndexNone)
         {
-            const Rml::String Query = Path.substr(QueryPos + 1);
-            Path = Path.substr(0, QueryPos);
-            auto ReadParam = [&](const char* Key, uint32& Out)
+            const FStringView Query = SourceView.RightChop(QueryPos + 1);
+            SourceView = SourceView.Left(QueryPos);
+            auto ReadParam = [&](FStringView Token, uint32& Out)
             {
-                const Rml::String Token = Rml::String(Key) + "=";
-                const size_t At = Query.find(Token);
-                if (At != Rml::String::npos)
+                const int32 At = Query.Find(Token);
+                if (At != Constants::kIndexNone)
                 {
-                    const int Parsed = std::atoi(Query.c_str() + At + Token.size());
-                    if (Parsed > 0) Out = (uint32)(Parsed < 4096 ? Parsed : 4096);
+                    const FStringView Value = Query.RightChop(At + Token.Len());
+                    uint32 Parsed = 0;
+                    std::from_chars(Value.GetData(), Value.GetData() + Value.Len(), Parsed);
+                    if (Parsed > 0) Out = Math::Min(Parsed, 4096u);
                 }
             };
-            ReadParam("w", Width);
-            ReadParam("h", Height);
+            ReadParam("w=", Width);
+            ReadParam("h=", Height);
         }
+
+        Rml::String Path(SourceView.GetData(), SourceView.Len());
 
         // RmlUi strips the leading '/' when joining src to the document dir; restore it for the absolute VFS lookup.
         if (!Path.empty() && Path[0] != '/')
@@ -1720,9 +1710,6 @@ namespace Lumina
             return 0;
         }
 
-        // Pinned for the lifetime of the RmlUi handle so an unload cannot dangle the bindless slot.
-        Texture->AddToRoot();
-
         const Rml::TextureHandle Handle = NextTextureHandle++;
         FTexture Tex;
         Tex.ResourceID      = (uint32)ResourceID;
@@ -1760,8 +1747,6 @@ namespace Lumina
             LOG_WARN("[RmlUi] LoadTexture: failed to create brush RT for '{}'.", *Material->GetName());
             return 0;
         }
-
-        Material->AddToRoot();
 
         const Rml::TextureHandle Handle = NextTextureHandle++;
         FTexture Tex;
@@ -1860,15 +1845,9 @@ namespace Lumina
         auto It = Textures.Find(Texture);
         if (It != nullptr)
         {
-            if (It->AssetKeepalive != nullptr)
+            // Brush size rather than the material, which reads null once the material is destroyed.
+            if (It->BrushSize.x != 0)
             {
-                It->AssetKeepalive->RemoveFromRoot();
-                It->AssetKeepalive = nullptr;
-            }
-            if (It->BrushMaterial != nullptr)
-            {
-                It->BrushMaterial->RemoveFromRoot();
-                It->BrushMaterial = nullptr;
                 --LiveBrushCount;
             }
             if (It->Managed.IsValid())
@@ -2583,7 +2562,7 @@ namespace Lumina
             Rendered.Add(Draw.Texture);
 
             FTexture& Tex = (*It);
-            CMaterialInterface* Material = Tex.BrushMaterial;
+            CMaterialInterface* Material = Tex.BrushMaterial.Get();
             FShaderH VS;
             FShaderH PS;
             if (!Material->ResolveDomainShaders(EMaterialType::UI, VS, PS))

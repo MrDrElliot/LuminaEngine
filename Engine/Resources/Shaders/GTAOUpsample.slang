@@ -16,9 +16,6 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Relative depth difference at which a texel's weight halves; wide enough for slopes, narrow enough to stop halos at silhouettes.
-static const float kDepthSigma = 0.05;
-
 [shader("compute")]
 [numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
@@ -41,7 +38,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float2 F       = HalfPos - float2(Base);
     const int2   MaxTap  = int2(Pass().HalfSize) - 1;
 
-    const float InvSigmaZ = 1.0 / (kDepthSigma * Z);
+    const float InvSigmaZ = 1.0 / (XE_GTAO_DEPTH_SIGMA * Z);
 
     float Sum       = 0.0;
     float SumWeight = 0.0;
@@ -56,7 +53,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const float  Value  = AO.Load(Tap).r;
         const float  Dz     = abs(HalfDepth.Load(Tap).r - Z);
         const float2 Bilin  = lerp(1.0 - F, F, float2(Offset));
-        const float  Weight = Bilin.x * Bilin.y / (1.0 + Dz * InvSigmaZ);
+        const float  Weight = Bilin.x * Bilin.y * XeGTAO_DepthWeight(Dz, InvSigmaZ);
 
         Sum       += Value * Weight;
         SumWeight += Weight;

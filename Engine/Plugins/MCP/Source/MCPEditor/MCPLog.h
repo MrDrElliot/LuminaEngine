@@ -42,6 +42,9 @@ namespace Lumina::MCP
         PlatformTime::FDateTime FirstSeen;
         PlatformTime::FDateTime LastSeen;
 
+        // Orders connections by recency where LastSeen, at millisecond resolution, would tie.
+        uint64 LastSeenRevision = 0;
+
         uint32 Requests = 0;
         uint32 Errors   = 0;
         bool   bOpen    = true;
@@ -79,6 +82,7 @@ namespace Lumina::MCP
 
     private:
 
+        FConnection* FindConnection(FStringView Session);
         FConnection& FindOrAddConnection(FStringView Session, const PlatformTime::FDateTime& Now);
 
         TRingBuffer<TSharedPtr<const FTransaction>> Transactions;

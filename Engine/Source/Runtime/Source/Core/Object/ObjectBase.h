@@ -76,6 +76,9 @@ namespace Lumina
         // Rewires hash buckets without any safety checks, which the caller must guarantee.
         RUNTIME_API void HandleNameChange(const FName& NewName, CPackage* NewPackage = nullptr) noexcept;
 
+        // Takes this object out of its package, which a null package in HandleNameChange or Rename cannot do.
+        RUNTIME_API void ClearPackage() noexcept;
+
         // Called just before the destructor and free.
         RUNTIME_API virtual void OnDestroy() { }
 

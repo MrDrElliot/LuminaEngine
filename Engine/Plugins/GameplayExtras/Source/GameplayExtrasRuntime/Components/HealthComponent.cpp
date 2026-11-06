@@ -33,13 +33,13 @@ namespace Lumina
         const bool bDied = Health <= 0.0f;
         bDead = bDied;
 
+        // A listener may destroy the entity, and swap-removal then puts another entity's component at this.
         const SHealthChangedEvent Event = MakeHealthEvent(*this, Health - Before, Instigator);
-        OnHealthChanged.Broadcast(Event);
-        if (bDied)
+        if (OnHealthChanged.Broadcast(Event) && bDied)
         {
             OnDied.Broadcast(Event);
         }
-        return Health;
+        return Event.Health;
     }
 
     float SHealthComponent::Heal(float Amount, ECS::FEntity Instigator)
@@ -51,11 +51,12 @@ namespace Lumina
 
         const float Before = Health;
         Health = Math::Min(MaxHealth, Health + Amount);
-        if (Health != Before)
+        const float After = Health;
+        if (After != Before)
         {
-            OnHealthChanged.Broadcast(MakeHealthEvent(*this, Health - Before, Instigator));
+            OnHealthChanged.Broadcast(MakeHealthEvent(*this, After - Before, Instigator));
         }
-        return Health;
+        return After;
     }
 
     void SHealthComponent::Kill(ECS::FEntity Instigator)
@@ -71,8 +72,10 @@ namespace Lumina
         RegenCooldown = RegenDelay;
 
         const SHealthChangedEvent Event = MakeHealthEvent(*this, -Before, Instigator);
-        OnHealthChanged.Broadcast(Event);
-        OnDied.Broadcast(Event);
+        if (OnHealthChanged.Broadcast(Event))
+        {
+            OnDied.Broadcast(Event);
+        }
     }
 
     void SHealthComponent::Revive(float NewHealth)

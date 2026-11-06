@@ -874,6 +874,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
     // Translucent skips GTAO, which comes from opaque depth and holds what is behind the glass.
     float GTAO = 1.0;
+    float4 IndirectDiffuse = float4(0.0, 0.0, 0.0, 0.0);
 #ifndef TRANSLUCENT
     // The compute lane tests at runtime, since deferred lighting does not specialize on GTAO and the fetch is one texel.
 #ifdef SHADING_COMPUTE
@@ -885,11 +886,20 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // Explicit LOD, since the deferred lighting lane is compute and has no implicit derivatives.
         float2 ScreenUV = ScreenPos / float2(Scene().ScreenSize.xy);
         GTAO = Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0).r;
+
+        // Only ever traced alongside GTAO, whose working depth it marches.
+        if (Scene().GTAOSettings.IndirectDiffuse.IsValid())
+        {
+            IndirectDiffuse = Scene().GTAOSettings.IndirectDiffuse.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0);
+        }
     }
 #endif
 
-    // Folded into the AO the ambient is evaluated with, so specular takes it through ComputeSpecularOcclusion.
-    const float AmbientAO = AO * GTAO;
+    // Specular takes this through ComputeSpecularOcclusion, and where the bounce stands in for the sky the IBL steps back.
+    const float AmbientAO = AO * min(GTAO, 1.0 - IndirectDiffuse.a);
+
+    // Metals carry no diffuse.
+    const float3 DiffuseColor = Albedo * (1.0 - Metallic);
 
     float3 Ambient;
     if (HasIBL())
@@ -909,11 +919,11 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     }
     else
     {
-        // Without an environment a SkyLight alone fills a flat diffuse ambient; metals carry no diffuse.
-        float3 DiffuseColor = Albedo * (1.0 - Metallic);
+        // Without an environment a SkyLight alone fills a flat diffuse ambient.
         Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor
                 * AOMultiBounce(AmbientAO, DiffuseColor);
     }
+    Ambient += DiffuseColor * IndirectDiffuse.rgb * AO;
     // The coat reflects the environment too, which is most of the read on car paint.
     if (Coat > 0.0 && HasIBL())
     {
@@ -1037,6 +1047,12 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
         Color = float3(DbgAO, DbgAO, DbgAO);
         break;
     }
+    case DEBUG_MODE_SCREEN_SPACE_GI:
+        // Black where the trace is off for this view.
+        Color = Scene().GTAOSettings.IndirectDiffuse.IsValid()
+                    ? Scene().GTAOSettings.IndirectDiffuse.SampleLevel(Samplers::LinearClamp, ScreenPos / float2(Scene().ScreenSize.xy), 0.0).rgb
+                    : float3(0.0, 0.0, 0.0);
+        break;
     case DEBUG_MODE_MATERIAL_ID:
         Color = MeshletDebugColor(Info.MaterialIndex);
         break;

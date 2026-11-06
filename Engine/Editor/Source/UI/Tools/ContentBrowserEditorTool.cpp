@@ -119,12 +119,13 @@ namespace Lumina
         public:
 
             // Refers into the browser's folder listing, which is only rebuilt after every tile is gone.
-            FContentBrowserTileViewItem(FTileViewItem* InParent, const VFS::FFileInfo& InInfo, bool bInProtected, FName InTypeLabel, bool bInMissingType)
+            FContentBrowserTileViewItem(FTileViewItem* InParent, const VFS::FFileInfo& InInfo, bool bInProtected, FName InTypeLabel, bool bInMissingType, FHoverTooltipCache& InTooltipCache)
                 : FTileViewItem(InParent)
                 , bProtected(bInProtected)
                 , bMissingType(bInMissingType)
                 , TypeLabel(InTypeLabel)
                 , FileInfo(InInfo)
+                , TooltipCache(InTooltipCache)
                 , IconKind(ClassifyIcon(InInfo))
             {
             }
@@ -194,6 +195,7 @@ namespace Lumina
             bool                    bMissingType = false;
             FName                   TypeLabel;
             const VFS::FFileInfo&   FileInfo;
+            FHoverTooltipCache&     TooltipCache;
             EIconKind               IconKind = EIconKind::Generic;
         };
 
@@ -516,29 +518,6 @@ namespace Lumina
             return IEquals(NextSegment(), "Scripts");
         }
         
-        struct FScriptHoverInfo
-        {
-            bool             bValid = false;
-            FString          Namespace;
-            FString          ClassName;
-            FString          BaseClass;
-            FString          Summary;
-            TVector<FString> Lifecycle;
-            TVector<FString> Properties;
-            TVector<FString> PropertyTips;
-        };
-
-        struct FScriptHoverCacheEntry
-        {
-            FScriptHoverCacheEntry() noexcept = default;
-            
-            FString          Path;
-            int64            MTime = 0;
-            FScriptHoverInfo Info;
-        };
-
-        FScriptHoverCacheEntry GScriptHoverCache;
-
         bool IsCsIdentChar(char C)
         {
             return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') || C == '_';
@@ -750,19 +729,27 @@ namespace Lumina
             return Info;
         }
 
-        void UpdateScriptHoverCache(FStringView VirtualPath, FStringView DiskPath)
+        void UpdateScriptHoverCache(FHoverTooltipCache& Cache, FStringView VirtualPath, FStringView DiskPath)
         {
             const int64 MTime = Filesystem::LastWriteTime(DiskPath);
-
-            const bool bSamePath = GScriptHoverCache.Path.Len() == VirtualPath.Len()
-                && memcmp(GScriptHoverCache.Path.GetData(), VirtualPath.GetData(), VirtualPath.Len()) == 0;
-            if (bSamePath && GScriptHoverCache.MTime == MTime && GScriptHoverCache.Info.bValid)
+            if (Cache.Path.View() == VirtualPath && Cache.MTime == MTime)
             {
                 return;
             }
-            GScriptHoverCache.Path = FStringView(VirtualPath.GetData(), VirtualPath.Len());
-            GScriptHoverCache.MTime = MTime;
-            GScriptHoverCache.Info = ParseScriptHoverInfo(VirtualPath);
+            Cache.Path = VirtualPath;
+            Cache.MTime = MTime;
+            Cache.Script = ParseScriptHoverInfo(VirtualPath);
+        }
+
+        void UpdateFolderHoverCache(FHoverTooltipCache& Cache, FStringView VirtualPath)
+        {
+            if (Cache.Path.View() == VirtualPath)
+            {
+                return;
+            }
+            Cache.Path = VirtualPath;
+            Cache.FolderItemCount = 0;
+            VFS::DirectoryIterator(VirtualPath, [&Cache](const VFS::FFileInfo&) { ++Cache.FolderItemCount; });
         }
 
         void DrawScriptHoverContent(const FScriptHoverInfo& Info)
@@ -917,8 +904,8 @@ namespace Lumina
             {
                 const FStringView VPath(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
                 const FStringView DPath(*FileInfo.PathSource, FileInfo.PathSource.Len());
-                ContentBrowserEditorToolInternal::UpdateScriptHoverCache(VPath, DPath);
-                ContentBrowserEditorToolInternal::DrawScriptHoverContent(ContentBrowserEditorToolInternal::GScriptHoverCache.Info);
+                ContentBrowserEditorToolInternal::UpdateScriptHoverCache(TooltipCache, VPath, DPath);
+                ContentBrowserEditorToolInternal::DrawScriptHoverContent(TooltipCache.Script);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Asset:
@@ -928,9 +915,8 @@ namespace Lumina
             }
         case ContentBrowserEditorToolInternal::EIconKind::Directory:
             {
-                int32 Count = 0;
-                const FStringView VPath(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
-                VFS::DirectoryIterator(VPath, [&Count](const VFS::FFileInfo&) { ++Count; });
+                ContentBrowserEditorToolInternal::UpdateFolderHoverCache(TooltipCache, FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()));
+                const int32 Count = TooltipCache.FolderItemCount;
                 ImGui::TextColored(EditorColors::TextDim(), "Folder - %d item%s", Count, Count == 1 ? "" : "s");
                 break;
             }
@@ -1578,7 +1564,7 @@ namespace Lumina
                 }
 
                 const bool bProtected = AssetOps::IsProtectedRoot(FStringView(*Entry.Info.VirtualPath, Entry.Info.VirtualPath.Len()));
-                FTileItem* NewItem = ContentBrowserTileView.AddItemToTree<FTileItem>(nullptr, Entry.Info, bProtected, Entry.TypeLabel, Entry.bMissingType);
+                FTileItem* NewItem = ContentBrowserTileView.AddItemToTree<FTileItem>(nullptr, Entry.Info, bProtected, Entry.TypeLabel, Entry.bMissingType, HoverTooltipCache);
 
                 const FStringView ItemPath = VFS::RemoveExtension(NewItem->GetVirtualPath());
                 if (!BrowseTarget.IsEmpty() && ItemPath == BrowseTarget)

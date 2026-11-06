@@ -43,53 +43,21 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    const FGTAOView V        = MakeGTAOView(Pass().ViewportSize);
-    const uint2     PixCoord = DTid.xy;
-    const float2    ScreenUV = (float2(PixCoord) + 0.5) * V.ViewportPixelSize;
+    const FGTAOView   V        = MakeGTAOView(Pass().ViewportSize);
+    const uint2       PixCoord = DTid.xy;
+    const float2      ScreenUV = (float2(PixCoord) + 0.5) * V.ViewportPixelSize;
+    const FGTAOCenter Center   = XeGTAO_LoadCenter(V, Pass().WorkingDepth, PixCoord);
 
-    // Mip 0 of the working pyramid is the unfiltered linearized depth, so the cross reads it directly.
-    const float2 GatherUV = float2(PixCoord) * V.ViewportPixelSize;
-    const float4 ValuesUL = Pass().WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV);
-    const float4 ValuesBR = Pass().WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV, int2(1, 1));
-
-    float       ViewspaceZ = ValuesUL.y;
-    const float PixLZ      = ValuesUL.x;
-    const float PixTZ      = ValuesUL.z;
-    const float PixRZ      = ValuesBR.z;
-    const float PixBZ      = ValuesBR.x;
-
-    const float4 EdgesLRTB = XeGTAO_CalculateEdges(ViewspaceZ, PixLZ, PixRZ, PixTZ, PixBZ);
-    Pass().Edges[PixCoord] = float4(XeGTAO_PackEdges(EdgesLRTB), 0.0, 0.0, 0.0);
-
-    const float3 CenterPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV, ViewspaceZ);
-    const float3 LeftPos   = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2(-1.0,  0.0) * V.ViewportPixelSize, PixLZ);
-    const float3 RightPos  = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 1.0,  0.0) * V.ViewportPixelSize, PixRZ);
-    const float3 TopPos    = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 0.0, -1.0) * V.ViewportPixelSize, PixTZ);
-    const float3 BottomPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2( 0.0,  1.0) * V.ViewportPixelSize, PixBZ);
-
-    float3 ViewspaceNormal = XeGTAO_CalculateNormal(EdgesLRTB, CenterPos, LeftPos, RightPos, TopPos, BottomPos);
+    Pass().Edges[PixCoord] = float4(XeGTAO_PackEdges(Center.EdgesLRTB), 0.0, 0.0, 0.0);
 
     // Nudge the center toward the camera so depth quantization cannot make a texel occlude itself.
-    ViewspaceZ *= 0.99999;
+    const float ViewspaceZ = Center.ViewspaceZ * 0.99999;
 
     const float3 PixCenterPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV, ViewspaceZ);
     const float3 ViewVec      = normalize(-PixCenterPos);
 
-    // The cross-product winding depends on the projection's handedness, so resolve it against the view.
-    if (dot(ViewspaceNormal, ViewVec) < 0.0)
-    {
-        ViewspaceNormal = -ViewspaceNormal;
-    }
-
-    const float EffectRadius             = Pass().EffectRadius;
-    const float EffectFalloffRange       = Pass().EffectFalloffRange;
-    const float SampleDistributionPower  = Pass().SampleDistributionPower;
-    const float ThinOccluderCompensation = Pass().ThinOccluderCompensation;
-
-    const float FalloffRange = max(EffectFalloffRange * EffectRadius, 1e-6);
-    const float FalloffFrom  = EffectRadius * (1.0 - EffectFalloffRange);
-    const float FalloffMul   = -1.0 / FalloffRange;
-    const float FalloffAdd   = FalloffFrom / FalloffRange + 1.0;
+    const float        EffectRadius = Pass().EffectRadius;
+    const FGTAOFalloff Falloff      = XeGTAO_MakeFalloff(EffectRadius, Pass().EffectFalloffRange, Pass().ThinOccluderCompensation);
 
     const float PixelSizeAtZ       = abs(V.NDCToViewMulPixelSize.x * ViewspaceZ);
     const float ScreenspaceRadius  = EffectRadius / max(PixelSizeAtZ, 1e-8);
@@ -100,10 +68,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         StoreVisibility(PixCoord, 1.0);
         return;
     }
-
-    // The reference bakes the Y flip into its screen march; derive it so either handedness works.
-    const float SignX = (V.NDCToViewMulPixelSize.x < 0.0) ? -1.0 : 1.0;
-    const float SignY = (V.NDCToViewMulPixelSize.y < 0.0) ? -1.0 : 1.0;
 
     const float2 LocalNoise  = XeGTAO_SpatioTemporalNoise(PixCoord, Pass().NoiseIndex);
     const float  NoiseSlice  = LocalNoise.x;
@@ -120,49 +84,19 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     [loop]
     for (uint Slice = 0; Slice < SliceCount; ++Slice)
     {
-        const float SliceK = (float(Slice) + NoiseSlice) / float(SliceCount);
-        const float Phi    = SliceK * XE_GTAO_PI;
-        const float CosPhi = cos(Phi);
-        const float SinPhi = sin(Phi);
+        const float      SliceK = (float(Slice) + NoiseSlice) / float(SliceCount);
+        const FGTAOSlice S      = XeGTAO_MakeSlice(V, SliceK * XE_GTAO_PI, ScreenspaceRadius, ViewVec, Center.Normal);
 
-        const float2 Omega = float2(CosPhi * SignX, SinPhi * SignY) * ScreenspaceRadius;
-
-        const float3 DirectionVec      = float3(CosPhi, SinPhi, 0.0);
-        const float3 OrthoDirectionVec = DirectionVec - (dot(DirectionVec, ViewVec) * ViewVec);
-        const float3 AxisVec           = normalize(cross(OrthoDirectionVec, ViewVec));
-
-        const float3 ProjectedNormalVec = ViewspaceNormal - AxisVec * dot(ViewspaceNormal, AxisVec);
-
-        const float SignNorm  = sign(dot(OrthoDirectionVec, ProjectedNormalVec));
-        float       ProjNLen  = length(ProjectedNormalVec);
-        const float CosNorm   = saturate(dot(ProjectedNormalVec, ViewVec) / max(ProjNLen, 1e-6));
-        const float SliceN    = SignNorm * XeGTAO_FastACos(CosNorm);
-
-        // Below the horizon a sample is not "unoccluded", so the reference seeds from the tangent plane.
-        const float LowHorizonCos0 = cos(SliceN + XE_GTAO_PI_HALF);
-        const float LowHorizonCos1 = cos(SliceN - XE_GTAO_PI_HALF);
-
-        float HorizonCos0 = LowHorizonCos0;
-        float HorizonCos1 = LowHorizonCos1;
+        float HorizonCos0 = S.LowHorizonCos0;
+        float HorizonCos1 = S.LowHorizonCos1;
 
         [loop]
         for (uint Step = 0; Step < StepsPerSlice; ++Step)
         {
-            const float StepBaseNoise = float(Slice + Step * StepsPerSlice) * 0.6180339887498948482;
-            const float StepNoise     = frac(NoiseSample + StepBaseNoise);
+            const float Distance = XeGTAO_StepDistance(Slice, Step, StepsPerSlice, NoiseSample, Pass().SampleDistributionPower, MinS);
 
-            float S = (float(Step) + StepNoise) / float(StepsPerSlice);
-            S = pow(S, SampleDistributionPower);
-            S += MinS;
-
-            float2      SampleOffset       = S * Omega;
-            const float SampleOffsetLength = length(SampleOffset);
-
-            // Stepping the mip with the offset is what keeps a wide radius off the full-res cache.
-            const float MipLevel = clamp(log2(SampleOffsetLength) - Pass().DepthMIPSamplingOffset,
-                                         0.0, float(XE_GTAO_DEPTH_MIP_LEVELS));
-
-            SampleOffset = round(SampleOffset) * V.ViewportPixelSize;
+            float MipLevel;
+            const float2 SampleOffset = XeGTAO_StepOffsetUV(V, S, Distance, Pass().DepthMIPSamplingOffset, MipLevel);
 
             const float2 SampleUV0 = ScreenUV + SampleOffset;
             const float2 SampleUV1 = ScreenUV - SampleOffset;
@@ -170,36 +104,17 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             const float3 SamplePos0 = XeGTAO_ComputeViewspacePosition(V, SampleUV0, SampleWorkingDepth(SampleUV0, MipLevel));
             const float3 SamplePos1 = XeGTAO_ComputeViewspacePosition(V, SampleUV1, SampleWorkingDepth(SampleUV1, MipLevel));
 
-            const float3 Delta0 = SamplePos0 - PixCenterPos;
-            const float3 Delta1 = SamplePos1 - PixCenterPos;
-            const float  Dist0  = max(length(Delta0), 1e-6);
-            const float  Dist1  = max(length(Delta1), 1e-6);
-
-            // Stretching the depth axis discards samples behind the center sooner, which is the thickness heuristic.
-            const float FalloffBase0 = length(float3(Delta0.x, Delta0.y, Delta0.z * (1.0 + ThinOccluderCompensation)));
-            const float FalloffBase1 = length(float3(Delta1.x, Delta1.y, Delta1.z * (1.0 + ThinOccluderCompensation)));
-
-            const float Weight0 = saturate(FalloffBase0 * FalloffMul + FalloffAdd);
-            const float Weight1 = saturate(FalloffBase1 * FalloffMul + FalloffAdd);
-
-            const float SHC0 = lerp(LowHorizonCos0, dot(Delta0 / Dist0, ViewVec), Weight0);
-            const float SHC1 = lerp(LowHorizonCos1, dot(Delta1 / Dist1, ViewVec), Weight1);
-
-            HorizonCos0 = max(HorizonCos0, SHC0);
-            HorizonCos1 = max(HorizonCos1, SHC1);
+            HorizonCos0 = max(HorizonCos0, XeGTAO_SampleHorizonCos(Falloff, SamplePos0 - PixCenterPos, ViewVec, S.LowHorizonCos0));
+            HorizonCos1 = max(HorizonCos1, XeGTAO_SampleHorizonCos(Falloff, SamplePos1 - PixCenterPos, ViewVec, S.LowHorizonCos1));
         }
 
         // Fudge from the reference against slight over-darkening on steep slopes.
-        ProjNLen = lerp(ProjNLen, 1.0, 0.05);
+        const float ProjNLen = lerp(S.ProjNLen, 1.0, 0.05);
 
         const float H0 = -XeGTAO_FastACos(HorizonCos1);
         const float H1 =  XeGTAO_FastACos(HorizonCos0);
 
-        const float SinSliceN = sin(SliceN);
-        const float IArc0 = (CosNorm + 2.0 * H0 * SinSliceN - cos(2.0 * H0 - SliceN)) / 4.0;
-        const float IArc1 = (CosNorm + 2.0 * H1 * SinSliceN - cos(2.0 * H1 - SliceN)) / 4.0;
-
-        Visibility += ProjNLen * (IArc0 + IArc1);
+        Visibility += ProjNLen * (XeGTAO_SliceArc(S, H0) + XeGTAO_SliceArc(S, H1));
     }
 
     Visibility /= float(SliceCount);

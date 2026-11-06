@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using LuminaBuildTool.Core;
 
@@ -40,28 +39,16 @@ public sealed class AdaptiveUnityState
     public static AdaptiveUnityState Load(BuildModule Module)
     {
         string Path_ = Path.Combine(Module.IntermediateDirectory, FileName);
+        Payload? Loaded = JsonStore.Load<Payload>(Path_);
 
-        try
+        if (Loaded is null)
         {
-            if (File.Exists(Path_))
-            {
-                Payload? Loaded = JsonSerializer.Deserialize<Payload>(File.ReadAllText(Path_));
-
-                if (Loaded is not null)
-                {
-                    // Case-insensitive on the way back in; System.Text.Json rebuilds the default comparer.
-                    Loaded.Files = new Dictionary<string, long>(Loaded.Files, StringComparer.OrdinalIgnoreCase);
-                    return new AdaptiveUnityState(Path_, Loaded);
-                }
-            }
-        }
-        catch (Exception Ex) when (Ex is IOException or JsonException or UnauthorizedAccessException)
-        {
-            // A losable cache. Starting over costs one unity-shaped build, never a wrong one.
-            Log.Verbose("Adaptive unity: could not read '{0}': {1}", Path_, Ex.Message);
+            return new AdaptiveUnityState(Path_, new Payload());
         }
 
-        return new AdaptiveUnityState(Path_, new Payload());
+        // Case-insensitive on the way back in; System.Text.Json rebuilds the default comparer.
+        Loaded.Files = new Dictionary<string, long>(Loaded.Files, StringComparer.OrdinalIgnoreCase);
+        return new AdaptiveUnityState(Path_, Loaded);
     }
 
     /// <summary>Holds out the sources git reports as changed, falling back to file timestamps where git cannot answer.</summary>
@@ -143,18 +130,7 @@ public sealed class AdaptiveUnityState
         Data.SeenUtc = DateTime.UtcNow;
     }
 
-    public void Save()
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(Location)!);
-            File.WriteAllText(Location, JsonSerializer.Serialize(Data, new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException)
-        {
-            Log.Verbose("Adaptive unity: could not write '{0}': {1}", Location, Ex.Message);
-        }
-    }
+    public void Save() => JsonStore.Save(Location, Data);
 
     public bool HasChanged => bDirty;
 }

@@ -822,21 +822,21 @@ namespace Lumina
 #endif
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_F5))
+        // Global routing yields to a focused window that routes or owns the key, such as the terminal.
+        if (ImGui::Shortcut(ImGuiKey_F5, ImGuiInputFlags_RouteGlobal))
         {
             CMaterial::CreateDefaultMaterial();
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_F9, false))
+        const bool bCaptureFinal = ImGui::Shortcut(ImGuiKey_F9, ImGuiInputFlags_RouteGlobal);
+        const bool bCaptureHDR   = ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_F9, ImGuiInputFlags_RouteGlobal);
+        if (bCaptureFinal || bCaptureHDR)
         {
-            const auto Source = ImGui::GetIO().KeyShift
-                ? Screenshot::ECaptureSource::SceneHDR
-                : Screenshot::ECaptureSource::FinalLDR;
-            Screenshot::CaptureActiveWorld(Source);
+            Screenshot::CaptureActiveWorld(bCaptureHDR ? Screenshot::ECaptureSource::SceneHDR : Screenshot::ECaptureSource::FinalLDR);
         }
 
         // Ctrl+P is quick-open now, and never had a handler anyway, so Tracy sits on F7 with the other tools.
-        if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
+        if (ImGui::Shortcut(ImGuiKey_F7, ImGuiInputFlags_RouteGlobal))
         {
             LaunchTracyProfiler();
         }

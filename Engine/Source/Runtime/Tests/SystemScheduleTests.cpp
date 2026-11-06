@@ -26,19 +26,11 @@ namespace
             RegisterPendingTypes();
             CEntitySystemTest::bAllowCreation = true;
 
-            const CClass* Wanted[] = {
-                CEntitySystemTest::StaticClass(), CEntitySystemExclusiveTest::StaticClass(), CEntitySystemReaderTest::StaticClass(),
-                CEntitySystemAfterTest::StaticClass(), CEntitySystemLastTest::StaticClass(), CEntitySystemCycleTest::StaticClass(),
-                CEntitySystemTransformReaderTest::StaticClass() };
-
-            THashSet<FName> Disabled;
-            EntitySystems::ForEachSystemClass([&](CClass* Class)
-            {
-                if (!Algo::Contains(Wanted, Class))
-                {
-                    Disabled.Add(Class->GetName());
-                }
-            });
+            const THashSet<FName> Disabled = FWorldTestAccess::AllSystemsExcept({
+                CEntitySystemTest::StaticClass()->GetName(), CEntitySystemExclusiveTest::StaticClass()->GetName(),
+                CEntitySystemReaderTest::StaticClass()->GetName(), CEntitySystemAfterTest::StaticClass()->GetName(),
+                CEntitySystemLastTest::StaticClass()->GetName(), CEntitySystemCycleTest::StaticClass()->GetName(),
+                CEntitySystemTransformReaderTest::StaticClass()->GetName() });
             EntitySystems::CreateMissing(*ScheduleSentinelWorld, Disabled, Systems);
 
             Writer    = EntitySystems::Find(Systems, CEntitySystemTest::StaticClass());

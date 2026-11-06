@@ -3,6 +3,9 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Threading/Sync.h"
+#include "Core/Threading/Thread.h"
+#include "Memory/SmartPtr.h"
 
 #include "MCPProfilerTools.generated.h"
 
@@ -221,6 +224,26 @@ namespace Lumina
 
     namespace MCP
     {
+        // One capture at a time runs on its own thread, so the scene it measures can still be driven through other tools.
+        struct FProfilerCaptureJob
+        {
+            FString File;
+            FString Failure;
+            int32 Seconds = 0;
+            bool bCaptured = false;
+            FThread Worker;
+        };
+
+        // Owned by FMCPEditorModule, which shuts it down before the DLL unloads.
+        struct FProfilerToolsState
+        {
+            FMutex Mutex;
+            TUniquePtr<FProfilerCaptureJob> Job;
+            FString LastCaptureFile;
+
+            void Shutdown();
+        };
+
         void RegisterProfilerTools(FStringView Owner);
     }
 }

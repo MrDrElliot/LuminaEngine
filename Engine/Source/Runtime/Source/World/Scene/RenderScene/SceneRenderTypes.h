@@ -131,7 +131,8 @@ namespace Lumina
         WireframeOverlay    = 29,
         Velocity            = 30,
         QuadEfficiency      = 31,
-        Num                 = 32,
+        ScreenSpaceGI       = 32,
+        Num                 = 33,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -169,6 +170,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::WireframeOverlay:  return "Wireframe Overlay";
             case ERenderSceneDebugFlags::Velocity:          return "Velocity";
             case ERenderSceneDebugFlags::QuadEfficiency:    return "Quad Efficiency";
+            case ERenderSceneDebugFlags::ScreenSpaceGI:     return "Screen Space GI";
             default:                                        return "Lit";
         }
     }
@@ -624,7 +626,8 @@ namespace Lumina
         uint32 AOTextureIndex = Constants::kIndexNoneU32;
         // Sun occlusion traced past the cascades, read pixel for pixel by the opaque lighting.
         uint32 SunShadowMaskIndex = Constants::kIndexNoneU32;
-        uint32 _Pad1 = 0;
+        // Half resolution bounced light in rgb and the hemisphere fraction it covers in a, set only on frames that traced it.
+        uint32 IndirectDiffuseIndex = Constants::kIndexNoneU32;
         uint32 _Pad2 = 0;
     };
 
@@ -956,11 +959,13 @@ namespace Lumina
     struct alignas(16) FInstanceProxy
     {
         FVector3    LocalCenter;
-        float       LocalRadius;
+        // Half the side of a square as large as the surface's mean projected area.
+        float       SplatHalfSize;
         uint32      PackedNormal;       // PackNormal
         uint32      PackedUV;           // PackHalf2x16
         uint32      Color;              // PackColor
-        uint32      Flags;
+        // The foliage thinning start the cull widens survivors from, 0 never.
+        float       ThinningStartDistance;
     };
     static_assert(sizeof(FInstanceProxy) == 32, "FInstanceProxy layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceProxy);

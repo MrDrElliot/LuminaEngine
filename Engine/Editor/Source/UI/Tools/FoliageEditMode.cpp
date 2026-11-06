@@ -89,27 +89,12 @@ namespace Lumina
         return float(RngState & 0xFFFFFFu) / float(0x1000000);
     }
 
-    SFoliageComponent* FFoliageEditMode::FindFoliage(CWorld* World) const
+    SFoliageComponent* FFoliageEditMode::FindFoliage(CWorld* World, ECS::FEntity* OutEntity)
     {
         if (!World)
         {
             return nullptr;
         }
-        auto View = World->View<SFoliageComponent>();
-        for (auto Entity : View)
-        {
-            return &View.Get<SFoliageComponent>(Entity);
-        }
-        return nullptr;
-    }
-
-    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World, ECS::FEntity* OutEntity)
-    {
-        if (!World)
-        {
-            return nullptr;
-        }
-
         auto View = World->View<SFoliageComponent>();
         for (auto Entity : View)
         {
@@ -119,26 +104,24 @@ namespace Lumina
             }
             return &View.Get<SFoliageComponent>(Entity);
         }
-
-        ECS::FEntity Entity = World->ConstructEntity("Foliage");
-        if (OutEntity != nullptr)
-        {
-            *OutEntity = Entity;
-        }
-        return &World->EmplaceComponent<SFoliageComponent>(Entity);
+        return nullptr;
     }
 
-    void FFoliageEditMode::MarkFoliageDirty(CWorld* World, SFoliageComponent& Foliage)
+    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World)
     {
-        if (World == nullptr)
+        if (SFoliageComponent* Existing = FindFoliage(World))
         {
-            return;
+            return Existing;
         }
+        return &World->EmplaceComponent<SFoliageComponent>(World->ConstructEntity("Foliage"));
+    }
 
+    void FFoliageEditMode::MarkFoliageDirty(CWorld* World)
+    {
         ECS::FEntity Entity = ECS::NullEntity;
-        if (FindOrCreateFoliage(World, &Entity) != nullptr && Entity != ECS::NullEntity)
+        if (SFoliageComponent* Foliage = FindFoliage(World, &Entity))
         {
-            MarkFoliageChanged(*World, Entity, Foliage);
+            MarkFoliageChanged(*World, Entity, *Foliage);
         }
     }
 
@@ -250,12 +233,6 @@ namespace Lumina
         Foliage.RemoveInRadius(Center, Radius, Filter);
     }
 
-    void FFoliageEditMode::OnEnter(CWorld* World)
-    {
-        // Make sure there's a foliage component to paint into.
-        FindOrCreateFoliage(World);
-    }
-
     void FFoliageEditMode::OnExit(CWorld* World)
     {
         if (bTransactionOpen && Context)
@@ -323,18 +300,15 @@ namespace Lumina
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::SliderFloat("##Falloff", &Falloff, 0.0f, 1.0f, "Falloff  %.2f");
 
-        if (SFoliageComponent* Foliage = FindOrCreateFoliage(World))
-        {
-            DrawTypePanel(World, *Foliage);
-        }
+        DrawTypePanel(World, FindFoliage(World));
 
         ImGui::TextDisabled("[ / ] resize brush");
         ImGui::End();
     }
 
-    void FFoliageEditMode::RebindTypeSettings(CWorld* World, SFoliageComponent& Foliage)
+    void FFoliageEditMode::RebindTypeSettings(CWorld* World, SFoliageComponent* Foliage)
     {
-        void* Desired = Foliage.IsValidType(ActiveType) ? (void*)&Foliage.Types[ActiveType] : nullptr;
+        void* Desired = (Foliage != nullptr && Foliage->IsValidType(ActiveType)) ? (void*)&Foliage->Types[ActiveType] : nullptr;
         if (Desired == BoundTypeData)
         {
             return;
@@ -347,9 +321,20 @@ namespace Lumina
             TypeSettings.SetShowSearchBar(false);   // a search box inside a viewport overlay is noise
 
             // Cheap, since the bake is skipped when the version matches, and missing one culls wrongly.
-            TypeSettings.SetPostEditCallback([this, World, &Foliage](const FPropertyChangedEvent&)
+            TypeSettings.SetPostEditCallback([World](const FPropertyChangedEvent&) { MarkFoliageDirty(World); });
+            TypeSettings.SetStartEditCallback([this](const FPropertyChangedEvent&)
             {
-                MarkFoliageDirty(World, Foliage);
+                if (Context)
+                {
+                    Context->BeginModeTransaction();
+                }
+            });
+            TypeSettings.SetFinishEditCallback([this](const FPropertyChangedEvent&)
+            {
+                if (Context)
+                {
+                    Context->EndModeTransaction("Edit Foliage Type");
+                }
             });
         }
         else
@@ -358,22 +343,23 @@ namespace Lumina
         }
     }
 
-    void FFoliageEditMode::DrawTypePanel(CWorld* World, SFoliageComponent& Foliage)
+    void FFoliageEditMode::DrawTypePanel(CWorld* World, SFoliageComponent* Foliage)
     {
-        (void)World;
-
         ImGui::SeparatorText("Foliage Types");
 
-        const int32 TypeCount = Foliage.Types.Num();
+        const int32 TypeCount = Foliage != nullptr ? Foliage->Types.Num() : 0;
 
         // One pass rather than a scan per type, and this is the only place painted counts are visible.
         TVector<int32> Counts;
         Counts.SetNum(Math::Max(TypeCount, 1), 0);
-        for (const SFoliageInstance& Inst : Foliage.Instances)
+        if (TypeCount > 0)
         {
-            if (Inst.TypeIndex >= 0 && Inst.TypeIndex < TypeCount)
+            for (const SFoliageInstance& Inst : Foliage->Instances)
             {
-                ++Counts[Inst.TypeIndex];
+                if (Inst.TypeIndex >= 0 && Inst.TypeIndex < TypeCount)
+                {
+                    ++Counts[Inst.TypeIndex];
+                }
             }
         }
 
@@ -388,7 +374,7 @@ namespace Lumina
 
         for (int32 i = 0; i < TypeCount; ++i)
         {
-            SFoliageType& Type = Foliage.Types[i];
+            SFoliageType& Type = Foliage->Types[i];
             ImGui::PushID(i);
 
             // A type with no mesh cannot paint anything, so it is called out rather than looking ready.
@@ -426,48 +412,58 @@ namespace Lumina
 
         if (ImGui::Button("Add"))
         {
-            SFoliageType& NewType = Foliage.Types.EmplaceGetRef();
-            NewType.Name = Format("Type{}", TypeCount);
-            ActiveType = Foliage.Types.Num() - 1;
-            MarkFoliageDirty(World, Foliage);
+            RunModeTransaction("Add Foliage Type", [&]
+            {
+                Foliage = FindOrCreateFoliage(World);
+                SFoliageType& NewType = Foliage->Types.EmplaceGetRef();
+                NewType.Name = Format("Type{}", TypeCount);
+                ActiveType = Foliage->Types.Num() - 1;
+                MarkFoliageDirty(World);
+            });
         }
         ImGui::SameLine();
 
-        ImGui::BeginDisabled(!Foliage.IsValidType(ActiveType));
+        ImGui::BeginDisabled(Foliage == nullptr || !Foliage->IsValidType(ActiveType));
         if (ImGui::Button("Duplicate"))
         {
-            // Copied by value first, since Emplace can reallocate and dangle the reference.
-            const SFoliageType Source = Foliage.Types[ActiveType];
-            Foliage.Types.Add(Source);
-            Foliage.Types.Last().Name = Source.Name + " Copy";
-            ActiveType = Foliage.Types.Num() - 1;
-            // The copy carries an unstamped resolve, so without this it paints instances with no mesh.
-            MarkFoliageDirty(World, Foliage);
+            RunModeTransaction("Duplicate Foliage Type", [&]
+            {
+                // Copied by value first, since Emplace can reallocate and dangle the reference.
+                const SFoliageType Source = Foliage->Types[ActiveType];
+                Foliage->Types.Add(Source);
+                Foliage->Types.Last().Name = Source.Name + " Copy";
+                ActiveType = Foliage->Types.Num() - 1;
+                // The copy carries an unstamped resolve, so without this it paints instances with no mesh.
+                MarkFoliageDirty(World);
+            });
         }
         ImGui::SameLine();
 
         if (ImGui::Button("Remove"))
         {
-            Foliage.Instances.RemoveAll([this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; });
-            // Re-index instances that pointed past the removed type.
-            for (SFoliageInstance& Inst : Foliage.Instances)
+            RunModeTransaction("Remove Foliage Type", [&]
             {
-                if (Inst.TypeIndex > ActiveType)
+                Foliage->Instances.RemoveAll([this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; });
+                // Re-index instances that pointed past the removed type.
+                for (SFoliageInstance& Inst : Foliage->Instances)
                 {
-                    --Inst.TypeIndex;
+                    if (Inst.TypeIndex > ActiveType)
+                    {
+                        --Inst.TypeIndex;
+                    }
                 }
-            }
-            Foliage.Types.RemoveAt(ActiveType);
-            ActiveType = Math::Min(ActiveType, Foliage.Types.Num() - 1);
-            // Instances were removed and re-indexed, so the cache would keep drawing the deleted type.
-            MarkFoliageDirty(World, Foliage);
+                Foliage->Types.RemoveAt(ActiveType);
+                ActiveType = Math::Min(ActiveType, Foliage->Types.Num() - 1);
+                // Instances were removed and re-indexed, so the cache would keep drawing the deleted type.
+                MarkFoliageDirty(World);
+            });
         }
         ImGui::EndDisabled();
 
-        ActiveType = Math::Clamp(ActiveType, 0, Math::Max(Foliage.Types.Num() - 1, 0));
+        ActiveType = Math::Clamp(ActiveType, 0, Math::Max((Foliage != nullptr ? Foliage->Types.Num() : 0) - 1, 0));
         RebindTypeSettings(World, Foliage);
 
-        if (!Foliage.IsValidType(ActiveType))
+        if (Foliage == nullptr || !Foliage->IsValidType(ActiveType))
         {
             ImGui::TextDisabled("Add a type to start painting.");
             return;
@@ -540,7 +536,7 @@ namespace Lumina
         }
 
         ECS::FEntity FoliageEntity = ECS::NullEntity;
-        SFoliageComponent* Foliage = FindOrCreateFoliage(World, &FoliageEntity);
+        SFoliageComponent* Foliage = FindFoliage(World, &FoliageEntity);
         if (!Foliage)
         {
             return;

@@ -14,6 +14,7 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImViewGuizmo.h"
 #include "Transactions/EditorTransaction.h"
+#include "Transactions/ObjectSnapshotCommand.h"
 #include "World/ECS/Entity.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -203,7 +204,7 @@ namespace Lumina
         NODISCARD FName PeekUndoLabel() const { return TransactionManager.PeekUndoName(); }
         NODISCARD FName PeekRedoLabel() const { return TransactionManager.PeekRedoName(); }
 
-        void RunObjectTransacted(FName Label, CObject* Object, const TFunction<void()>& Mutate);
+        void RunObjectTransacted(FName Label, CObject* Object, const TFunction<void()>& Mutate, const FObjectSnapshotCommand::FSerializer& Serializer = {});
 
         // A property set from outside the tool's panels, answered the way the tool answers its own panel edit.
         virtual void OnExternalPropertyEdit(CObject* Object, FProperty* Property) {}

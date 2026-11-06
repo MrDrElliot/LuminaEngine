@@ -375,9 +375,12 @@ namespace Lumina
         }
 
         const bool bApplication = Tab.Screen.IsApplicationCursorKeys();
+        const ImGuiID KeyOwner  = ImGui::GetCurrentWindow()->ID;
         for (const FSpecialKey& Special : GSpecialKeys)
         {
-            if (ImGui::IsKeyPressed(Special.Key, true))
+            // Claimed every focused frame, so the press frame already finds the key owned and global hotkeys skip it.
+            ImGui::SetKeyOwner(Special.Key, KeyOwner);
+            if (ImGui::IsKeyPressed(Special.Key, ImGuiInputFlags_Repeat, KeyOwner))
             {
                 const char* Sequence = bApplication ? Special.Application : Special.Normal;
                 SendBytes(Tab, Sequence, static_cast<int32>(strlen(Sequence)));

@@ -14,7 +14,6 @@ namespace Lumina
 {
     ECS::FEntity CSpawnSubsystem::SpawnPrefab(const TSoftObjectPtr<CPrefab>& Prefab)
     {
-        CWorld* World = GetWorld();
         return SpawnPrefabAt(Prefab, FTransform(), ECS::NullEntity);
     }
 
@@ -51,7 +50,6 @@ namespace Lumina
 
     ECS::FEntity CSpawnSubsystem::SpawnLoadedPrefab(CPrefab* Prefab)
     {
-        CWorld* World = GetWorld();
         return SpawnLoadedPrefabAt(Prefab, FTransform(), ECS::NullEntity);
     }
 
@@ -75,22 +73,18 @@ namespace Lumina
         }
 
         const FName Path(Prefab.GetPath());
-        TStrongObjectPtr<CWorld> WorldHandle(World);
+        TWeakObjectPtr<CWorld> WorldHandle = World;
         FAssetManager::Get().Load(Prefab.GetPath()).OnReady([WorldHandle, Path, OnSpawned](const FAssetHandle& Handle)
         {
-            CWorld* Target = WorldHandle.Get();
             CPrefab* Loaded = Handle.Get<CPrefab>();
-            if (Target == nullptr || Loaded == nullptr)
+            if (Loaded == nullptr)
             {
-                if (Loaded == nullptr)
-                {
-                    LOG_WARN("SpawnPrefabAsync: asset '{}' is not a CPrefab", *Path);
-                }
-                Scripting::InvokeScriptCallback(OnSpawned, (uint64)(uint32)ECS::NullEntity);
-                return;
+                LOG_WARN("SpawnPrefabAsync: asset '{}' is not a CPrefab", *Path);
             }
 
-            const ECS::FEntity Spawned = Target->GetSpawner()->SpawnLoadedPrefab(Loaded);
+            CWorld* Target = WorldHandle.Get();
+            CSpawnSubsystem* Spawner = (Target != nullptr && !Target->IsTearingDown()) ? Target->GetSpawner() : nullptr;
+            const ECS::FEntity Spawned = Spawner != nullptr ? Spawner->SpawnLoadedPrefab(Loaded) : ECS::NullEntity;
             Scripting::InvokeScriptCallback(OnSpawned, (uint64)(uint32)Spawned);
         });
     }
