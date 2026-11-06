@@ -29,7 +29,7 @@ namespace Lumina
     {
         {
             FScopeLock Lock(QueueLock);
-            Queue.PushLast(std::move(Job));
+            Queue.PushLast(Move(Job));
         }
         QueueWake.NotifyOne();
     }
@@ -43,7 +43,7 @@ namespace Lumina
             {
                 return false;
             }
-            Job = std::move(Queue[0]);
+            Job = Move(Queue[0]);
             Queue.PopFirst();
         }
         Job();
@@ -62,7 +62,7 @@ namespace Lumina
                 {
                     return;
                 }
-                Job = std::move(Queue[0]);
+                Job = Move(Queue[0]);
                 Queue.PopFirst();
             }
             Job();

@@ -4,11 +4,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// A handle to one element in a loaded <see cref="UIDocument"/>. Get/set text, styles, classes and
-/// attributes, and subscribe to events. A lightweight value (copy freely); valid while its document is
-/// loaded and the element is in the DOM. Calls on an invalid element are safe no-ops.
-/// </summary>
+// Copyable handle to an element in a loaded UIDocument; calls on an invalid element are safe no-ops.
 public readonly unsafe struct UIElement
 {
     internal readonly ulong World;
@@ -23,25 +19,24 @@ public readonly unsafe struct UIElement
     // Indexers and properties hand elements out by readonly ref, which is what lets doc["id"].Text = ... compile.
     internal static ref readonly UIElement Hold(UIElement Value) => ref HeldElement<UIElement>.Hold(Value);
 
-    /// <summary>False if a query missed or the owning document has been closed.</summary>
+    // False if a query missed or the owning document was closed.
     public bool IsValid => Handle.IsValid;
 
-    /// <summary>Plain text content. The setter HTML-escapes its value (so arbitrary strings render
-    /// literally); the getter returns the element's inner RML markup. For markup use <see cref="Rml"/>.</summary>
+    // The setter escapes its value, while the getter returns inner RML markup.
     public string Text
     {
         get => Rml;
         set { if (IsValid) Lumina.CUILibrary.SetInnerRml(Handle, Escape(value)); }
     }
 
-    /// <summary>The element's inner RML markup (set is NOT escaped -- pass real markup).</summary>
+    // Set is not escaped, so pass real markup.
     public string Rml
     {
         get => IsValid ? Lumina.CUILibrary.GetInnerRml(Handle) : string.Empty;
         set { if (IsValid) Lumina.CUILibrary.SetInnerRml(Handle, value); }
     }
 
-    /// <summary>Set plain text (escaped). Same as the <see cref="Text"/> setter, as a method.</summary>
+    // Escaped, same as the Text setter.
     public void SetText(string Value)
     {
         if (IsValid)
@@ -60,8 +55,6 @@ public readonly unsafe struct UIElement
         }
     }
 
-    /// <summary>Set an inline CSS property, e.g. <c>SetStyle("color", "#ff0000")</c> or
-    /// <c>SetStyle("width", "50%")</c>.</summary>
     public void SetStyle(string Property, string Value)
     {
         if (IsValid)
@@ -79,7 +72,7 @@ public readonly unsafe struct UIElement
     // Zero is invisible but still laid out, unlike hiding the element.
     public void SetOpacity(float Value) => SetStyle("opacity", Math.Clamp(Value, 0.0f, 1.0f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
 
-    /// <summary>Remove an inline CSS property set via <see cref="SetStyle"/>, reverting to the stylesheet.</summary>
+    // Reverts to the stylesheet value.
     public void ClearStyle(string Property)
     {
         if (IsValid)
@@ -114,15 +107,12 @@ public readonly unsafe struct UIElement
 
     public bool HasClass(string Class) => IsValid && Lumina.CUILibrary.IsClassSet(Handle, Class);
 
-    /// <summary>Show or hide the element via the CSS <c>display</c> property. (Property form; usable on a
-    /// stored element variable. For a chained call -- <c>doc["x"].SetVisible(false)</c> -- use the method.)</summary>
+    // Chained calls off an indexer need SetVisible, since a struct property cannot be assigned on a non-variable.
     public bool Visible
     {
         set { if (IsValid) Lumina.CUILibrary.SetProperty(Handle, "display", value ? "block" : "none"); }
     }
 
-    /// <summary>Show/hide via the CSS <c>display</c> property. Method form, so it chains off an indexer
-    /// result (a struct property setter can't be assigned on a non-variable).</summary>
     public void SetVisible(bool Value)
     {
         if (IsValid)
@@ -147,7 +137,7 @@ public readonly unsafe struct UIElement
         }
     }
 
-    /// <summary>Synthesize a click on this element (fires "click" listeners, follows the active state).</summary>
+    // Fires click listeners and follows the active state.
     public void Click()
     {
         if (IsValid)
@@ -156,7 +146,7 @@ public readonly unsafe struct UIElement
         }
     }
 
-    /// <summary>Border box in document pixels (X, Y, Width, Height); all zero for an invalid element.</summary>
+    // Border box in document pixels, all zero for an invalid element.
     public (float X, float Y, float Width, float Height) Box
     {
         get
@@ -170,16 +160,12 @@ public readonly unsafe struct UIElement
         }
     }
 
-    /// <summary>First descendant matching a CSS selector, or an invalid element.</summary>
+    // First descendant matching a CSS selector, or an invalid element.
     public UIElement Query(string Selector) => new(World, IsValid ? Lumina.CUILibrary.QuerySelector(Handle, Selector) : default);
 
     // ---- events ----
 
-    /// <summary>
-    /// Subscribe to an RmlUi event on this element (e.g. "click", "mousedown", "change", "keydown"). The
-    /// handler runs on the game thread during input/UI update. Dispose the returned subscription to
-    /// unsubscribe (do so before the world tears down, e.g. in <see cref="CEntityScript.OnDetach"/>).
-    /// </summary>
+    // The handler runs on the game thread; dispose the subscription before the world tears down, e.g. in OnDetach.
     public UIEventSubscription On(string EventType, Action<UIEvent> Handler)
     {
         if (!IsValid || string.IsNullOrEmpty(EventType))
@@ -199,8 +185,7 @@ public readonly unsafe struct UIElement
             return UIEventSubscription.Empty;
         }
 
-        // Bound through the listener's own delegate, so its destructor releases this handle whether the
-        // element, the world or the script generation is what goes away first.
+        // Bound through the listener's own delegate, so its destructor releases this handle whichever owner dies first.
         ulong Event = Lumina.CUILibrary.GetEventListenerDelegate(Listener);
         DelegateBinding Binding = DelegateBindings.Bind((void*)Event,
             new PayloadInvoker<UIEventData>
@@ -223,10 +208,8 @@ public readonly unsafe struct UIElement
         return new UIEventSubscription(WorldId, Listener, Binding);
     }
 
-    /// <summary>Subscribe to "click" on this element.</summary>
     public UIEventSubscription OnClick(Action<UIEvent> Handler) => On("click", Handler);
 
-    /// <summary>Subscribe to "click" with a no-argument handler.</summary>
     public UIEventSubscription OnClick(Action Handler) => On("click", _ => Handler());
 
     private static readonly char[] MarkupChars = { '&', '<', '>' };

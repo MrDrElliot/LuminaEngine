@@ -9,7 +9,7 @@
 
 namespace Lumina
 {
-    /** Builds text into an inline buffer, so the usual case formats without reaching the allocator. */
+    // Builds text into an inline buffer, so the usual case formats without reaching the allocator.
     template <size_t InlineCapacity = 256>
     class TStringBuilder
     {
@@ -74,7 +74,7 @@ namespace Lumina
 
     using FStringBuilder = TStringBuilder<256>;
 
-    /** Compile-time checked formatting, replacing the printf-style FString::sprintf. */
+    // Compile-time checked formatting, replacing the printf-style FString::sprintf.
     template <typename... TArgs>
     NODISCARD FString Format(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
@@ -84,7 +84,7 @@ namespace Lumina
         return FString(Buffer.GetData(), Buffer.Len());
     }
 
-    /** Formats a string that only exists at runtime, so nothing is checked at the call site. */
+    // Formats a string that only exists at runtime, so nothing is checked at the call site.
     template <typename... TArgs>
     NODISCARD FString Format(Fmt::FRuntimeFormatString Fmt, TArgs&&... Args)
     {
@@ -94,7 +94,7 @@ namespace Lumina
         return FString(Buffer.GetData(), Buffer.Len());
     }
 
-    /** Formats into a chosen string type, so a fixed-capacity target keeps the result off the heap. */
+    // Formats into a chosen string type, so a fixed-capacity target keeps the result off the heap.
     template <typename TOut, typename... TArgs>
     NODISCARD TOut FormatAs(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
@@ -104,7 +104,7 @@ namespace Lumina
         return TOut(Buffer.GetData(), Buffer.Len());
     }
 
-    /** Appends straight into a format buffer, with no staging copy in between. */
+    // Appends straight into a format buffer, with no staging copy in between.
     template <typename... TArgs>
     void AppendFormat(Fmt::FFormatBuffer& Out, Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
@@ -112,7 +112,7 @@ namespace Lumina
         Fmt::VFormatTo(Out, Fmt.Get(), Store.View());
     }
 
-    /** Appends to any string that can append, replacing FString::append_sprintf. */
+    // Appends to any string that can append, replacing FString::append_sprintf.
     template <typename TOut, typename... TArgs>
     requires (!std::is_base_of_v<Fmt::FFormatBuffer, TOut>)
     void AppendFormat(TOut& Out, Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
@@ -123,7 +123,7 @@ namespace Lumina
         Out.Append(Buffer.GetData(), Buffer.Len());
     }
 
-    /** Replaces the contents of any string that can append, replacing FString::sprintf; Out may also be an argument. */
+    // Replaces the contents of any string that can append, replacing FString::sprintf; Out may also be an argument.
     template <typename TOut, typename... TArgs>
     void FormatTo(TOut& Out, Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
@@ -134,7 +134,7 @@ namespace Lumina
         Out.Append(Buffer.GetData(), Buffer.Len());
     }
 
-    /** Formats into a caller-owned array and reports how much was written, never allocating. */
+    // Formats into a caller-owned array and reports how much was written, never allocating.
     template <typename... TArgs>
     int32 FormatToBuffer(char* Out, size_t Capacity, Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {

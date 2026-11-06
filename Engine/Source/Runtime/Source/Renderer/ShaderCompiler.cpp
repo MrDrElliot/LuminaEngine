@@ -129,11 +129,7 @@ namespace Lumina
 
         if (ExitCode == -1)
         {
-            static TAtomic<bool> bWarned{false};
-            if (!bWarned.exchange(true, std::memory_order_relaxed))
-            {
-                LOG_WARN("Could not run spirv-val ('{}'); shader validation is inactive this session.", *Validator);
-            }
+            LOG_WARN_ONCE("Could not run spirv-val ('{}'); shader validation is inactive this session.", *Validator);
             return;
         }
 
@@ -239,7 +235,7 @@ namespace Lumina
     {
     public:
         FSlangBlob(TVector<uint8>&& InData)
-            : Data(std::move(InData)), RefCount(1) {}
+            : Data(Move(InData)), RefCount(1) {}
     
         virtual ~FSlangBlob() = default;
         
@@ -277,7 +273,7 @@ namespace Lumina
                 return SLANG_FAIL;
             }
     
-            *outBlob = new FSlangBlob(std::move(Data));
+            *outBlob = new FSlangBlob(Move(Data));
             return SLANG_OK;
         }
     

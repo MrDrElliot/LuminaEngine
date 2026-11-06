@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Agent/AgentAssetResolve.h"
 #include "Containers/String.h"
 #include "Core/Http/HttpMessage.h"
 #include "Core/Http/HttpServer.h"
@@ -68,4 +69,22 @@ namespace Lumina::MCP
 
         TVector<TStrongObjectPtr<CObject>> KeptLoaded;
     };
+
+    // Keeps the asset through the running server, since an unheld one is freed when any short-lived ref drops, such as a compile job's.
+    MCPEDITOR_API void KeepAssetLoaded(CObject* Asset);
+
+    MCPEDITOR_API void MarkAssetDirty(const CObject* Asset);
+
+    // Loads an asset a tool may edit and keeps it for the session, so the edit is not freed before a save.
+    template<typename T>
+    NODISCARD bool ResolveEditableAsset(FStringView Reference, T*& OutAsset, FString& OutError)
+    {
+        if (!Agent::ResolveAsset<T>(Reference, OutAsset, OutError))
+        {
+            return false;
+        }
+
+        KeepAssetLoaded(OutAsset);
+        return true;
+    }
 }

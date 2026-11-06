@@ -6,13 +6,7 @@
 
 namespace Lumina
 {
-    /**
-     * An enum whose members were decided at runtime, from a C# type rather than a C++ declaration.
-     *
-     * Exists for the same reason CScriptClass does: "was this minted from a script type" becomes a cast
-     * rather than a string lookup in metadata, and the things only a minted enum has stop being carried by
-     * every native CEnum in the engine.
-     */
+    // An enum minted at runtime from a C# type, so asking whether an enum is script-defined is a cast.
     class LUMINA_VISIBLE_TYPE CScriptEnum : public CEnum
     {
     public:
@@ -22,11 +16,11 @@ namespace Lumina
 
         CScriptEnum() = default;
 
-        /** The C# underlying integer type, which is the width a field of this enum reserves. */
+        // The C# underlying integer type, which is the width a field of this enum reserves.
         EPropertyTypeFlags UnderlyingType = EPropertyTypeFlags::Int32;
     };
 
-    /** Null unless the enum was minted from a script type. Mirrors ToScriptClass. */
+    // Null unless the enum was minted from a script type, mirroring ToScriptClass.
     FORCEINLINE const CScriptEnum* ToScriptEnum(const CEnum* Enum)
     {
         return (Enum != nullptr && Enum->GetClass() != nullptr) ? Cast<CScriptEnum>(Enum) : nullptr;

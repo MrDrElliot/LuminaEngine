@@ -24,7 +24,7 @@ namespace
     struct FPondWorld
     {
         CWorld*                    World  = nullptr;
-        SWeatherInteractionSystem* System = nullptr;
+        CWeatherInteractionSystem* System = nullptr;
         TStrongObjectPtr<CWorld>   WorldOwner;
         ECS::FEntity               Pond;
         ECS::FEntity               Wader;
@@ -52,7 +52,7 @@ namespace
             FWeatherContactPoint& Contact = Interactor.Contacts.EmplaceGetRef();
             Contact.Radius = 0.2f;
 
-            System = NewObject<SWeatherInteractionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            System = NewObject<CWeatherInteractionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             System->SetOwningWorld(World);
             System->ConfigureSystem();
             System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));

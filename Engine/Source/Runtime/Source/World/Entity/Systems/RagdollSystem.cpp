@@ -53,19 +53,19 @@ namespace Lumina
         Ragdoll.CapturedPoseSerial = Mesh.PoseSerial;
     }
 
-    void SRagdollSystem::Configure()
+    void CRagdollSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::PostPhysics);
-        RunsAfter<SAnimationSystem>();
+        RunsAfter<CAnimationSystem>();
     }
 
-    bool SRagdollSystem::HasWork(const SSystemContext& Context)
+    bool CRagdollSystem::HasWork(const SSystemContext& Context)
     {
         return AnyQueryHasRows(Ragdolls);
     }
 
-    void SRagdollSystem::OnUpdate(const SSystemContext& Context)
+    void CRagdollSystem::OnUpdate(const SSystemContext& Context)
     {
         Physics::IPhysicsQueries* PhysicsQueries = Context.GetPhysics();
         if (PhysicsQueries == nullptr)
@@ -191,7 +191,7 @@ namespace Lumina
                     World.SetLocation(RootPos);
                     World.SetRotation(RootRot);
                     World.SetScale(Transform.GetWorldScale());
-                    DrivenTransforms.Get<STransformComponent>(Entity).SetWorldTransform(World);
+                    Context.Patch<STransformComponent>(Entity, [World](STransformComponent& Driven) { Driven.SetWorldTransform(World); });
 
                     WorldToEntity = Math::Inverse(AnimPose::ComposeTRS(RootPos, RootRot, World.GetScale()));
                 }

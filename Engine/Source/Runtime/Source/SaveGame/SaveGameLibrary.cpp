@@ -1,7 +1,6 @@
 #include "RuntimePCH.h"
 #include "SaveGameLibrary.h"
 
-#include <algorithm>
 #include <ctime>
 #include "SaveGame.h"
 #include "SaveGameArchive.h"
@@ -54,25 +53,21 @@ namespace Lumina
 
     FString CSaveGameLibrary::GetSaveGameDirectory(int32 UserIndex)
     {
-        FString Directory;
+        FFixedString Directory;
         if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
         {
-            const FFixedString Path = Paths::Combine(GEngine->GetProjectPath(), "Saved", "SaveGames");
-            Directory = FStringView(*Path, Path.Len());
+            Directory = Paths::Combine(GEngine->GetProjectPath(), "Saved", "SaveGames");
         }
         else
         {
             const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
-            Directory = Paths::GetUserDataDirectory();
-            Directory += "/";
-            Directory += ProjectName.IsEmpty() ? FString("Lumina") : FString(ProjectName.GetData(), ProjectName.Len());
-            Directory += "/SaveGames";
+            Directory = Paths::Combine(View(Paths::GetUserDataDirectory()), ProjectName.IsEmpty() ? FStringView("Lumina") : ProjectName, "SaveGames");
         }
         if (UserIndex > 0)
         {
-            Directory += Format("/User{}", UserIndex);
+            Directory = Paths::Combine(Directory, View(Format("User{}", UserIndex)));
         }
-        return Directory;
+        return FString(*Directory, Directory.Len());
     }
 
     FString CSaveGameLibrary::GetSlotFilePath(const FString& SlotName, int32 UserIndex)
@@ -222,7 +217,7 @@ namespace Lumina
             }
         });
 
-        std::sort(Found.begin(), Found.end(), [](const auto& A, const auto& B) { return A.Key > B.Key; });
+        Algo::Sort(Found, [](const auto& A, const auto& B) { return A.Key > B.Key; });
         for (auto& [ModifyTime, Slot] : Found)
         {
             OutSlots.Add(Move(Slot));

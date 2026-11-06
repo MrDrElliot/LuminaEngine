@@ -403,7 +403,7 @@ namespace Lumina
             Params.Duration = 0.0f;
             Params.BlendInTime = 0.0f;
             Params.BlendOutTime = 0.3f;
-            Context.Instance->Shakes.Emplace(this, SCameraSystem::PlayCameraShake(Registry, Params));
+            Context.Instance->Shakes.Emplace(this, CCameraSystem::PlayCameraShake(Registry, Params));
             Playing = &Context.Instance->Shakes.Last();
         }
 
@@ -433,7 +433,7 @@ namespace Lumina
             {
                 if (World != nullptr)
                 {
-                    SCameraSystem::StopCameraShake(World->GetEntityRegistry(), Instance.Shakes[Index].Handle);
+                    CCameraSystem::StopCameraShake(World->GetEntityRegistry(), Instance.Shakes[Index].Handle);
                 }
                 Instance.Shakes.RemoveAt(Index);
                 continue;
@@ -625,7 +625,7 @@ namespace Lumina
                 }
             }
 
-            SCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), 0.0f, FVector3(0.0f), 0.0f);
+            CCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), 0.0f, FVector3(0.0f), 0.0f);
 
             // Hands the view back when the sequence still owns it, so gameplay resumes on its own camera.
             const ECS::FEntity Active = World->GetCamera()->GetActiveCameraEntity();
@@ -698,7 +698,7 @@ namespace Lumina
 
         OverlayFade = 0.0f;
         Sequence->Evaluate(Context);
-        SCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), OverlayFade, OverlayFadeColor, Sequence->LetterboxAspect);
+        CCameraSystem::SetCinematicOverlay(World->GetEntityRegistry(), OverlayFade, OverlayFadeColor, Sequence->LetterboxAspect);
     }
 
     int32 CSequence::GetFrameCount() const

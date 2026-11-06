@@ -19,7 +19,7 @@ namespace Lumina
         int32 Count = 0;
     };
 
-    /** A named delegate signature, so a declaration site does not have to spell the arguments. */
+    // A named delegate signature, so a declaration site does not have to spell the arguments.
     using FOnTestTwoArgs = TScriptDelegate<SDelegateTestPayload, float>;
 
     typedef TScriptDelegate<SDelegateTestPayload, float, FString> FOnTestThreeArgs;

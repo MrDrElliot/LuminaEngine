@@ -431,7 +431,7 @@ namespace Lumina::RHI
             const FSpecializationConstant& Constant = Constants[i];
             const uint32 Size = SpecializationConstantSize(Constant.Type);
 
-            std::memcpy(Data + Offset, &Constant.AsInt, Size);
+            Memory::Memcpy(Data + Offset, &Constant.AsInt, Size);
 
             Entries[i].constantID = Constant.ConstantID;
             Entries[i].offset     = Offset;
@@ -638,6 +638,16 @@ namespace Lumina::RHI
         FPresentSync           SubmittedSync;      // signaled by the frame submit, waited by the present after it
     };
 
+    // What a GPU copy crosses, since host-sourced bytes are the ones that cost PCIe bandwidth every frame.
+    enum class ECopyTraffic : uint8
+    {
+        HostToDevice,
+        DeviceToHost,
+        DeviceToDevice,
+        Fill,
+        Count
+    };
+
     struct FDeviceImpl
     {
         VkInstance                      Instance = VK_NULL_HANDLE;
@@ -736,6 +746,22 @@ namespace Lumina::RHI
         FMutex                           TextureLedgerMutex;
 #endif
 
+        // One frame of copy bytes by direction and destination, gathered only while RHI.LogCopyTraffic is nonzero.
+        struct FCopyTraffic
+        {
+            struct FDest
+            {
+                char   Name[kMaxBlockNameLength];
+                uint64 Bytes = 0;
+                uint32 Count = 0;
+            };
+            uint64         Bytes[(uint32)ECopyTraffic::Count] = {};
+            uint32         Count[(uint32)ECopyTraffic::Count] = {};
+            TVector<FDest> Dests;
+            FMutex         Mutex;
+        };
+        FCopyTraffic                    CopyTraffic;
+
         TSegmentMap<FSemaphore>         Semaphores;
         TSegmentMap<FPipeline>          Pipelines;
         TSegmentMap<FTexture>           Textures;
@@ -772,6 +798,12 @@ namespace Lumina::RHI
     static VkPipelineCreateFlags PipelineCreateFlags();
 
     static bool GLogCopies = false;
+
+    namespace
+    {
+        TConsoleVar<int32> CVarLogCopyTraffic("RHI.LogCopyTraffic", 0,
+            "Logs each frame's GPU copy bytes by direction and destination for this many frames.");
+    }
 
     // The mutex owning the VkQueue that Type resolves to. Aliased types share the owner's lock.
     static FMutex& QueueLockFor(EQueueType Type)
@@ -998,7 +1030,6 @@ namespace Lumina::RHI
         return View;
     }
 
-#if USING(WITH_EDITOR)
     static void CopyBlockName(char (&Dest)[kMaxBlockNameLength], const char* Name)
     {
         if (Name == nullptr)
@@ -1010,6 +1041,147 @@ namespace Lumina::RHI
         std::snprintf(Dest, kMaxBlockNameLength, "%s", Name);
     }
 
+    static bool CopyTrafficArmed()
+    {
+        return CVarLogCopyTraffic.GetValue() > 0;
+    }
+
+    // Caller holds MemoryMutex shared.
+    static bool IsHostMemoryLocked(GPUPtr Ptr)
+    {
+        const FMemoryBlock* Block = FindMemory(Ptr);
+        return Block != nullptr && Block->MemType != EMemoryType::GPUOnly;
+    }
+
+    // Caller holds MemoryMutex shared. The ledger is keyed by base address, so an interior pointer takes a scan.
+    static const char* LedgerNameLocked(GPUPtr Ptr)
+    {
+#if USING(WITH_EDITOR)
+        for (const auto& [Address, Record] : GDevice->AllocationLedger)
+        {
+            if (Ptr >= Address && Ptr - Address < Record.Size)
+            {
+                return Record.Name[0] != '\0' ? Record.Name : "unnamed buffer";
+            }
+        }
+#endif
+        return "unnamed buffer";
+    }
+
+    static void TextureTrafficName(FTextureH Texture, char (&Out)[kMaxBlockNameLength])
+    {
+        Out[0] = '\0';
+#if USING(WITH_EDITOR)
+        FScopeLock Lock(GDevice->TextureLedgerMutex);
+        if (const FTextureRecord* Record = GDevice->TextureLedger.Find(Texture.Handle); Record != nullptr)
+        {
+            CopyBlockName(Out, Record->Name);
+        }
+#endif
+        if (Out[0] == '\0')
+        {
+            CopyBlockName(Out, "unnamed texture");
+        }
+    }
+
+    static uint64 TextureRegionBytes(const FTexture& Texture, VkExtent3D Extent, uint32 Layers)
+    {
+        const FFormatInfo& Info   = RHI::Format::Info(Texture.Desc.Format);
+        const uint32       Block  = Math::Max<uint32>(Info.BlockSize, 1u);
+        const uint64       Blocks = (uint64)((Extent.width + Block - 1u) / Block) * ((Extent.height + Block - 1u) / Block) * Math::Max(Extent.depth, 1u);
+        return Blocks * Info.BytesPerBlock * Math::Max(Layers, 1u);
+    }
+
+    static void RecordCopyTraffic(ECopyTraffic Kind, uint64 Bytes, const char* DestName)
+    {
+        FDeviceImpl::FCopyTraffic& Traffic = GDevice->CopyTraffic;
+        FScopeLock Lock(Traffic.Mutex);
+        Traffic.Bytes[(uint32)Kind] += Bytes;
+        ++Traffic.Count[(uint32)Kind];
+        for (FDeviceImpl::FCopyTraffic::FDest& Dest : Traffic.Dests)
+        {
+            if (strcmp(Dest.Name, DestName) == 0)
+            {
+                Dest.Bytes += Bytes;
+                ++Dest.Count;
+                return;
+            }
+        }
+        FDeviceImpl::FCopyTraffic::FDest& Dest = Traffic.Dests.AddDefaultedGetRef();
+        CopyBlockName(Dest.Name, DestName);
+        Dest.Bytes = Bytes;
+        Dest.Count = 1;
+    }
+
+    // Caller holds MemoryMutex shared.
+    static void RecordBufferCopyLocked(GPUPtr Source, GPUPtr Dest, uint64 Bytes)
+    {
+        const ECopyTraffic Kind = IsHostMemoryLocked(Dest)   ? ECopyTraffic::DeviceToHost
+                                : IsHostMemoryLocked(Source) ? ECopyTraffic::HostToDevice
+                                                             : ECopyTraffic::DeviceToDevice;
+        RecordCopyTraffic(Kind, Bytes, LedgerNameLocked(Dest));
+    }
+
+    static void RecordBufferCopy(GPUPtr Source, GPUPtr Dest, uint64 Bytes)
+    {
+        FReadScopeLock Lock(GDevice->MemoryMutex);
+        RecordBufferCopyLocked(Source, Dest, Bytes);
+    }
+
+    static void RecordBufferWrite(ECopyTraffic Kind, GPUPtr Dest, uint64 Bytes)
+    {
+        FReadScopeLock Lock(GDevice->MemoryMutex);
+        RecordCopyTraffic(Kind, Bytes, LedgerNameLocked(Dest));
+    }
+
+    static void RecordTextureCopy(ECopyTraffic Kind, FTextureH Dest, uint64 Bytes)
+    {
+        char Name[kMaxBlockNameLength];
+        TextureTrafficName(Dest, Name);
+        RecordCopyTraffic(Kind, Bytes, Name);
+    }
+
+    static void LogCopyTrafficFrame()
+    {
+        FDeviceImpl::FCopyTraffic& Traffic = GDevice->CopyTraffic;
+        {
+            FScopeLock Lock(Traffic.Mutex);
+            LOG_INFO("RHI copy traffic: host->device {} KiB in {} copies, device->host {} KiB in {}, device->device {} KiB in {}, fills {} KiB in {}, transient ring {} KiB.",
+                     Traffic.Bytes[0] / 1024, Traffic.Count[0], Traffic.Bytes[1] / 1024, Traffic.Count[1],
+                     Traffic.Bytes[2] / 1024, Traffic.Count[2], Traffic.Bytes[3] / 1024, Traffic.Count[3], TransientDemandLastFrame() / 1024);
+            Algo::Sort(Traffic.Dests, [](const FDeviceImpl::FCopyTraffic::FDest& A, const FDeviceImpl::FCopyTraffic::FDest& B) { return A.Bytes > B.Bytes; });
+            constexpr int32 kTopDests = 16;
+            uint64 OtherBytes = 0;
+            uint32 OtherCount = 0;
+            for (int32 i = 0; i < Traffic.Dests.Num(); ++i)
+            {
+                if (i < kTopDests)
+                {
+                    LOG_INFO("    {} KiB in {} copies -> {}", Traffic.Dests[i].Bytes / 1024, Traffic.Dests[i].Count, Traffic.Dests[i].Name);
+                    continue;
+                }
+                OtherBytes += Traffic.Dests[i].Bytes;
+                OtherCount += Traffic.Dests[i].Count;
+            }
+            if (Traffic.Dests.Num() > kTopDests)
+            {
+                LOG_INFO("    {} KiB in {} copies -> {} other destinations", OtherBytes / 1024, OtherCount, Traffic.Dests.Num() - kTopDests);
+            }
+            Traffic.Dests.Reset();
+            for (uint32 i = 0; i < (uint32)ECopyTraffic::Count; ++i)
+            {
+                Traffic.Bytes[i] = 0;
+                Traffic.Count[i] = 0;
+            }
+        }
+        if (--*CVarLogCopyTraffic.GetValuePtr() == 0)
+        {
+            // The console persisted the armed count, so without this every later boot would log again.
+            FConsoleRegistry::Get().SaveToConfig();
+        }
+    }
+
+#if USING(WITH_EDITOR)
     // Allocated once and overwritten forever after, since this runs on the free path.
     static void RecordFreedBlockLocked(GPUPtr Device, uint64 Size, const char* Name)
     {
@@ -3283,6 +3455,11 @@ namespace Lumina::RHI
         }
 
         GDevice->CurrentRetireSlot.store(Slot, std::memory_order_release);
+
+        if (CopyTrafficArmed())
+        {
+            LogCopyTrafficFrame();
+        }
     }
 
     void WaitDeviceIdle()
@@ -3393,12 +3570,7 @@ namespace Lumina::RHI
             vmaGetAllocationMemoryProperties(GDevice->Allocator, Allocation, &Props);
             if ((Props & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0)
             {
-                static bool bWarnedHostFallback = false;
-                if (!bWarnedHostFallback)
-                {
-                    bWarnedHostFallback = true;
-                    LOG_WARN("RHI: CPUWrite allocation ({} KiB) landed in host memory instead of the ReBAR heap (budget pressure or ReBAR disabled). GPU reads of it will cross PCIe.", Size / 1024);
-                }
+                LOG_WARN_ONCE("RHI: CPUWrite allocation ({} KiB) landed in host memory instead of the ReBAR heap (budget pressure or ReBAR disabled). GPU reads of it will cross PCIe.", Size / 1024);
             }
         }
 
@@ -6865,6 +7037,10 @@ namespace Lumina::RHI
     {
         DEBUG_ASSERT(Dest.Size >= Source.Size, "CmdMemcpy destination is smaller than the source range.");
         const uint64 Size = Source.Size;
+        if (CopyTrafficArmed())
+        {
+            RecordBufferCopy(Source.Address, Dest.Address, Size);
+        }
         if (UseAddressCommands())
         {
             const VkDeviceMemoryCopyKHR Region
@@ -6912,6 +7088,17 @@ namespace Lumina::RHI
     static void CmdMemcpyBatchChunk(FCmdListH CL, TSpan<const FBufferCopy> Copies)
     {
         FMemMark Mark;
+        if (CopyTrafficArmed())
+        {
+            FReadScopeLock Lock(GDevice->MemoryMutex);
+            for (const FBufferCopy& Copy : Copies)
+            {
+                if (Copy.Source.Size != 0)
+                {
+                    RecordBufferCopyLocked(Copy.Source.Address, Copy.Dest.Address, Copy.Source.Size);
+                }
+            }
+        }
 
         if (UseAddressCommands())
         {
@@ -7013,6 +7200,10 @@ namespace Lumina::RHI
         {
             return;
         }
+        if (CopyTrafficArmed())
+        {
+            RecordBufferWrite(ECopyTraffic::Fill, Dest.Address, AddressFillSize);
+        }
 
         if (UseAddressCommands())
         {
@@ -7048,6 +7239,10 @@ namespace Lumina::RHI
         const uint64 Size = Dest.Size;
         ASSERT(Size <= kMaxInlineWrite, "CmdWriteMemory is for inline writes (<= 64 KiB); stage larger data through CmdMemcpy");
         ASSERT((Dest.Address & 3) == 0 && (Size & 3) == 0, "vkCmdUpdateBuffer needs 4-byte aligned offset and size");
+        if (CopyTrafficArmed())
+        {
+            RecordBufferWrite(ECopyTraffic::HostToDevice, Dest.Address, Size);
+        }
 
         if (UseAddressCommands())
         {
@@ -7111,6 +7306,10 @@ namespace Lumina::RHI
             .extent         = Extent
         };
 
+        if (CopyTrafficArmed())
+        {
+            RecordTextureCopy(ECopyTraffic::DeviceToDevice, Dest, TextureRegionBytes(SourceTexture, Extent, SourceSlice.LayerCount));
+        }
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         vkCmdCopyImage(VkCmdBuf, SourceTexture.Image, VK_IMAGE_LAYOUT_GENERAL, DestTexture.Image, VK_IMAGE_LAYOUT_GENERAL, 1, &Region);
     }
@@ -7172,6 +7371,16 @@ namespace Lumina::RHI
         };
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        if (CopyTrafficArmed())
+        {
+            bool bHostSource;
+            {
+                FReadScopeLock Lock(GDevice->MemoryMutex);
+                bHostSource = IsHostMemoryLocked(Source);
+            }
+            RecordTextureCopy(bHostSource ? ECopyTraffic::HostToDevice : ECopyTraffic::DeviceToDevice, Dest,
+                              TextureRegionBytes(DestTexture, Extent, Slice.LayerCount));
+        }
         vkCmdCopyBufferToImage(VkCmdBuf, SourceRange.Buffer, DestTexture.Image, VK_IMAGE_LAYOUT_GENERAL, 1, &Region);
     }
 
@@ -7250,6 +7459,10 @@ namespace Lumina::RHI
         };
 
         LUMINA_PROFILE_SECTION("RHI::HostCopyToTexture");
+        if (CopyTrafficArmed())
+        {
+            RecordTextureCopy(ECopyTraffic::HostToDevice, Dest, TextureRegionBytes(DestTexture, Extent, Slice.LayerCount));
+        }
         const VkResult Result = vkCopyMemoryToImage(*GDevice, &Info);
 
         static TAtomic<uint64> HostCopyCount{0};
@@ -7299,6 +7512,12 @@ namespace Lumina::RHI
         };
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        if (CopyTrafficArmed())
+        {
+            FReadScopeLock Lock(GDevice->MemoryMutex);
+            RecordCopyTraffic(IsHostMemoryLocked(Dest) ? ECopyTraffic::DeviceToHost : ECopyTraffic::DeviceToDevice,
+                              TextureRegionBytes(SourceTexture, Region.imageExtent, Slice.LayerCount), LedgerNameLocked(Dest));
+        }
         vkCmdCopyImageToBuffer(VkCmdBuf, SourceTexture.Image, VK_IMAGE_LAYOUT_GENERAL, DestRange.Buffer, 1, &Region);
     }
 
@@ -7348,9 +7567,23 @@ namespace Lumina::RHI
         vkCmdResolveImage(VkCmdBuf, SourceTexture.Image, VK_IMAGE_LAYOUT_GENERAL, DestTexture.Image, VK_IMAGE_LAYOUT_GENERAL, 1, &Region);
     }
 
+    static void RecordTextureClear(FTextureH Texture, const FTexture& TextureData)
+    {
+        uint64 Bytes = 0;
+        for (uint32 Mip = 0; Mip < Math::Max(TextureData.Desc.MipCount, 1u); ++Mip)
+        {
+            Bytes += TextureRegionBytes(TextureData, SliceExtent(TextureData, { .Mip = Mip }), TextureData.Desc.LayerCount);
+        }
+        RecordTextureCopy(ECopyTraffic::Fill, Texture, Bytes);
+    }
+
     void CmdClearTexture(FCmdListH CL, FTextureH Texture, const float Value[4])
     {
         const FTexture& TextureData = GDevice->Textures[Texture];
+        if (CopyTrafficArmed())
+        {
+            RecordTextureClear(Texture, TextureData);
+        }
         const VkImageAspectFlags Aspect = AspectsForFormat(TextureData.Desc.Format);
         const VkImageSubresourceRange Range = FullSubresourceRange(Aspect);
 
@@ -7376,6 +7609,10 @@ namespace Lumina::RHI
     void CmdClearTextureUInt(FCmdListH CL, FTextureH Texture, const uint32 Value[4])
     {
         const FTexture& TextureData = GDevice->Textures[Texture];
+        if (CopyTrafficArmed())
+        {
+            RecordTextureClear(Texture, TextureData);
+        }
         const VkImageSubresourceRange Range = FullSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
 
         VkClearColorValue Clear;

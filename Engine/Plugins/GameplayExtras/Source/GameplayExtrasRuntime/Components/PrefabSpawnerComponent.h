@@ -31,7 +31,7 @@ namespace Lumina
         FVector2 SpawnTimeRange = FVector2{1.0f, 10.0f};
 
         /**
-         * Countdown to the next automatic spawn, driven by SPrefabSpawnerSystem::Update. Runtime state:
+         * Countdown to the next automatic spawn, driven by CPrefabSpawnerSystem::Update. Runtime state:
          * not a PROPERTY, so it is neither serialized nor editable. Zero means "not armed yet" - the
          * system arms it the first time it sees the component rather than spawning immediately, so a
          * spawner added mid-game still waits out a full interval.

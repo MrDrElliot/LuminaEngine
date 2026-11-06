@@ -32,11 +32,9 @@ namespace Lumina
         {
             const FMatrix4 CameraVP = ViewVolume.GetProjectionMatrix() * ViewVolume.GetViewMatrix();
             const uint32   Flags    = ViewVolume.IsOrthographic() ? (uint32)ECullViewFlags::OrthographicLOD : 0u;
-            float FlagsAsFloat;
-            std::memcpy(&FlagsAsFloat, &Flags, sizeof(float));
 
             FCullView View = {};
-            View.ViewOriginAndFlags = FVector4(ViewVolume.GetViewPosition(), FlagsAsFloat);
+            View.ViewOriginAndFlags = FVector4(ViewVolume.GetViewPosition(), std::bit_cast<float>(Flags));
             View.LODErrorScale      = MakeLODErrorScale(CameraVP, DisplayHeight, CameraLODPixels());
             return View;
         }
@@ -276,6 +274,14 @@ namespace Lumina
         SceneGlobalData.CullData.CullFarPlane           = SceneGlobalData.FarPlane;
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
         SceneGlobalData.CullData.bShadowOcclusionCull   = FrameSettings.bShadowOcclusionCull;
+        {
+            // Read live from the project settings, like the other quality toggles; there is no per-world copy.
+            const CRendererSettings* Renderer = GetDefault<CRendererSettings>();
+            const bool bVoxelFar = Renderer == nullptr || Renderer->bVoxelFarRepresentation;
+            const bool bProxies  = Renderer == nullptr || Renderer->bFarProxies;
+            SceneGlobalData.CullData.VirtualGeometryFlags = (bVoxelFar ? VG_FLAG_VOXEL_FAR : 0u) | (bProxies ? VG_FLAG_PROXIES : 0u);
+            SceneGlobalData.CullData.ProxyTransitionPixels = Renderer != nullptr ? Math::Clamp(Renderer->ProxyTransitionPixels, 0.0f, 16.0f) : 2.0f;
+        }
         CascadeMinTexels                                = 1.0f;
         // Built here because the skinned gather picks against it on workers before the cull views exist.
         Frame.Views.CameraLODView                       = MakeCameraLODView(ViewVolume, (float)DisplaySize.y);
@@ -666,7 +672,7 @@ namespace Lumina
         for (FCullView& View : Frame.Views.CullViews)
         {
             const uint32 Flags = GetCullViewFlags(View) & ~HiZFlags;
-            std::memcpy(&View.ViewOriginAndFlags.w, &Flags, sizeof(Flags));
+            View.ViewOriginAndFlags.w = std::bit_cast<float>(Flags);
         }
     }
 
@@ -737,9 +743,7 @@ namespace Lumina
             {
                 View.FrustumPlanes[p] = Frustum.Planes[p];
             }
-            float FlagsAsFloat;
-            std::memcpy(&FlagsAsFloat, &Flags, sizeof(float));
-            View.ViewOriginAndFlags = FVector4(Origin, FlagsAsFloat);
+            View.ViewOriginAndFlags = FVector4(Origin, std::bit_cast<float>(Flags));
             View.CascadeIndex       = CascadeIndex;
             View.MinBoundsDiameter  = MinBoundsDiameter;
             View.LODErrorScale      = LODErrorScale;
@@ -1164,7 +1168,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    std::memcpy(Dst + S.WriteCursor[b], V.GetData(), V.Num() * sizeof(FSimpleElementVertex));
+                    Memory::Memcpy(Dst + S.WriteCursor[b], V.GetData(), V.Num() * sizeof(FSimpleElementVertex));
                 }
             }
         };
@@ -1243,7 +1247,7 @@ namespace Lumina
             {
                 if (WriteIdx != i)
                 {
-                    Batches[WriteIdx] = std::move(Batch);
+                    Batches[WriteIdx] = Move(Batch);
                 }
                 ++WriteIdx;
             }
@@ -1310,6 +1314,8 @@ namespace Lumina
         Frame.Geometry.DrawCommands.Reset();
         Frame.Geometry.OpaqueDrawList.Reset();
         Frame.Geometry.TranslucentDrawList.Reset();
+        Frame.Geometry.bHasBlendedTranslucency   = false;
+        Frame.Geometry.bHasUnorderedTranslucency = false;
         // BonesData keeps its capacity; the layout pass resizes it to the live arena extent.
         Frame.Geometry.BoneCount = 0;
         Frame.Geometry.BoneUploadRanges.Reset();

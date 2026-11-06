@@ -1,6 +1,6 @@
 #include "RuntimePCH.h"
 #include "World/ECS/Registry.h"
-#include <algorithm>
+#include "Memory/Memcpy.h"
 #include "EntityUtils.h"
 #include "Components/CharacterComponent.h"
 #include "Components/DirtyComponent.h"
@@ -191,6 +191,7 @@ namespace Lumina
         void ValidateEntityStructuralWrite(ECS::FRegistry&, ECS::FEntity)
         {
             ValidateNotInParallelSystem("Creating or destroying an entity on the registry (use the system context's Create or Destroy)");
+            EntityScripts::CheckParallelStructureChange("creating or destroying an entity");
         }
     }
 
@@ -316,7 +317,7 @@ namespace Lumina::ECS::Utils
         }
 
         // Ascending index per parent, so inserting each one at its index rebuilds the saved order.
-        std::stable_sort(Links.begin(), Links.end(), [](const FLink& A, const FLink& B)
+        Algo::StableSort(Links, [](const FLink& A, const FLink& B)
         {
             return A.Parent != B.Parent ? A.Parent < B.Parent : A.SiblingIndex < B.SiblingIndex;
         });
@@ -1505,7 +1506,7 @@ namespace Lumina::ECS::Utils
         constexpr size_t SortedDirtyRatio = 16;
         if (DirtySlots.Num() * SortedDirtyRatio < static_cast<size_t>(Order.Num()))
         {
-            std::sort(DirtySlots.begin(), DirtySlots.end());
+            Algo::Sort(DirtySlots);
 
             uint32 CoveredEnd = 0;
             for (const uint32 Slot : DirtySlots)
@@ -1606,7 +1607,7 @@ namespace Lumina::ECS::Utils
                     DirtyState.PublishMovedBulk(&Order[Begin], Count);
                     continue;
                 }
-                std::copy_n(&Order[Begin], Count, Moved + NumMoved);
+                Memory::Memcpy(Moved + NumMoved, &Order[Begin], Count * sizeof(*Moved));
                 NumMoved += Count;
             }
             DirtyState.PublishMovedBulk(Moved, NumMoved);

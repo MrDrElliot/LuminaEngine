@@ -119,6 +119,9 @@ enum class ELuminaEngineVersion : uint32
 	// An export names its class's type package, so a build without the editor can tell editor data from a missing class.
 	EXPORT_CLASS_PACKAGE,
 
+	// Surfaces hold twelve LOD slots with parent errors and flags, and FMeshletData carries cluster hierarchy bounds per meshlet.
+	MESH_CLUSTER_LOD,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

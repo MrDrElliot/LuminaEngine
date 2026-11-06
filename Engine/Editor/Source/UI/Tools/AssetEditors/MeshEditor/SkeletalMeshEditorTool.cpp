@@ -1,4 +1,6 @@
 #include "SkeletalMeshEditorTool.h"
+#include "World/World.h"
+#include "UI/InfoTable.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -584,23 +586,6 @@ namespace Lumina
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
-                auto PropertyRow = [](const char* label, const FString& value, const ImVec4* color = nullptr)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(label);
-                    ImGui::TableSetColumnIndex(1);
-                    if (color)
-                    {
-                        ImGui::PushStyleColor(ImGuiCol_Text, *color);
-                    }
-                    ImGui::TextUnformatted(*value);
-                    if (color)
-                    {
-                        ImGui::PopStyleColor();
-                    }
-                };
-
                 // Measured off meshlets, since GenerateGPUBuffers drops Positions and Indices once the mesh loads.
                 uint32 LOD0Triangles = 0;
                 uint32 MaxLODsAcrossSurfaces = 0;
@@ -610,38 +595,38 @@ namespace Lumina
                     LOD0Triangles += SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
                 }
 
-                PropertyRow("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.Num()));
-                PropertyRow("Triangles (LOD 0)", Format("{}", LOD0Triangles));
-                PropertyRow("Meshlets", Format("{}", MD.Meshlets.Num()));
-                PropertyRow("Surfaces", Format("{}", Resource.GetNumSurfaces()));
-                PropertyRow("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
+                InfoTable::Row("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.Num()));
+                InfoTable::Row("Triangles (LOD 0)", Format("{}", LOD0Triangles));
+                InfoTable::Row("Meshlets", Format("{}", MD.Meshlets.Num()));
+                InfoTable::Row("Surfaces", Format("{}", Resource.GetNumSurfaces()));
+                InfoTable::Row("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::Dummy(ImVec2(0, 4));
 
-                const float vertexSizeKB  = (MD.MeshletSkinnedVertices.Num() * sizeof(FMeshletSkinnedVertex)) / 1024.0f;
-                const float meshletSizeKB = (MD.Meshlets.Num() * sizeof(FMeshlet)
-                                           + MD.MeshletSpheres.Num() * sizeof(FMeshletSphere)
-                                           + MD.MeshletCones.Num() * sizeof(FMeshletCone)
-                                           + MD.MeshletTriangles.Num() * sizeof(uint32)) / 1024.0f;
-                const float totalSizeKB   = vertexSizeKB + meshletSizeKB;
+                const size_t vertexSizeBytes  = MD.MeshletSkinnedVertices.Num() * sizeof(FMeshletSkinnedVertex);
+                const size_t meshletSizeBytes = MD.Meshlets.Num() * sizeof(FMeshlet)
+                                              + MD.MeshletSpheres.Num() * sizeof(FMeshletSphere)
+                                              + MD.MeshletCones.Num() * sizeof(FMeshletCone)
+                                              + MD.MeshletTriangles.Num() * sizeof(uint32);
+                const size_t totalSizeBytes   = vertexSizeBytes + meshletSizeBytes;
 
-                PropertyRow("Vertex Buffer", Format("{}", static_cast<int>(vertexSizeKB)) + " KB");
-                PropertyRow("Meshlet Data",  Format("{}", static_cast<int>(meshletSizeKB)) + " KB");
+                InfoTable::Row("Vertex Buffer", ImGuiX::FormatSize(vertexSizeBytes));
+                InfoTable::Row("Meshlet Data",  ImGuiX::FormatSize(meshletSizeBytes));
 
-                ImVec4 totalColor = totalSizeKB > 1024 ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f) : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
-                PropertyRow("Total Memory", Format("{}", static_cast<int>(totalSizeKB)) + " KB", &totalColor);
+                const ImVec4 totalColor = totalSizeBytes > Constants::kMiB ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f) : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
+                InfoTable::Row("Total Memory", ImGuiX::FormatSize(totalSizeBytes), &totalColor);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::Dummy(ImVec2(0, 4));
 
-                PropertyRow("Bounds Min", *Math::ToString(BoundingBox.Min));
-                PropertyRow("Bounds Max", *Math::ToString(BoundingBox.Max));
+                InfoTable::Row("Bounds Min", *Math::ToString(BoundingBox.Min));
+                InfoTable::Row("Bounds Max", *Math::ToString(BoundingBox.Max));
 
                 FVector3 extents = BoundingBox.Max - BoundingBox.Min;
-                PropertyRow("Bounds Extents", *Math::ToString(extents));
+                InfoTable::Row("Bounds Extents", *Math::ToString(extents));
 
                 ImGui::EndTable();
             }
@@ -789,26 +774,17 @@ namespace Lumina
                             ImGui::TableSetupColumn("##Label", ImGuiTableColumnFlags_WidthFixed, 130.0f);
                             ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
 
-                            auto DetailRow = [](const char* label, const FString& value)
-                            {
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", label);
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::TextUnformatted(*value);
-                            };
-
                             const uint32 SurfaceTris = SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0],
                                                                           Surface.LODMeshletCount[0]);
 
-                            DetailRow("Material Index:", Format("{}", Surface.MaterialIndex));
-                            DetailRow("LOD Levels:", Format("{}", Surface.NumLODs));
-                            DetailRow("Meshlets (LOD 0):", Format("{}", Surface.LODMeshletCount[0]));
-                            DetailRow("Triangles (LOD 0):", Format("{}", SurfaceTris));
+                            InfoTable::Row("Material Index:", Format("{}", Surface.MaterialIndex));
+                            InfoTable::Row("LOD Levels:", Format("{}", Surface.NumLODs));
+                            InfoTable::Row("Meshlets (LOD 0):", Format("{}", Surface.LODMeshletCount[0]));
+                            InfoTable::Row("Triangles (LOD 0):", Format("{}", SurfaceTris));
 
                             if (CMaterialInterface* Material = SkeletalMesh->GetMaterialAtSlot(Surface.MaterialIndex))
                             {
-                                DetailRow("Material:", FString(*Material->GetName()));
+                                InfoTable::Row("Material:", FString(*Material->GetName()));
                             }
 
                             ImGui::EndTable();
@@ -1294,22 +1270,9 @@ namespace Lumina
     {
         FAssetEditorTool::DrawToolMenu(UpdateContext);
 
-        // Gizmo Control Dropdown
         if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo Control"))
         {
-            const char* operations[] = { "Translate", "Rotate", "Scale" };
-            int currentOp = GuizmoOp == ImGuizmo::ROTATE ? 1 : (GuizmoOp == ImGuizmo::SCALE ? 2 : 0);
-
-            if (ImGui::Combo("##", &currentOp, operations, IM_ARRAYSIZE(operations)))
-            {
-                switch (currentOp)
-                {
-                case 0: GuizmoOp = ImGuizmo::TRANSLATE; break;
-                case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
-                case 2: GuizmoOp = ImGuizmo::SCALE;     break;
-                }
-            }
-
+            DrawGizmoOperationCombo(GuizmoOp);
             ImGui::EndMenu();
         }
 

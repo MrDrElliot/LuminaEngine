@@ -159,7 +159,7 @@ namespace Lumina::Physics
             bColliderIsTrigger = TCC->bIsTrigger;
             ResolvedMaterial = TCC->PhysicsMaterial.Get();
 
-            WarnTaperedCapsuleOnce();
+            LOG_WARN_ONCE("Tapered capsule colliders are approximated by a cone hull under Box3D; the rounded caps are lost.");
 
             const b3HullData* Hull = GetOrCreateTaperedCylinderHull(TCC->HalfHeight * UniformScale, TCC->TopRadius * UniformScale, TCC->BottomRadius * UniformScale);
             if (Hull == nullptr)

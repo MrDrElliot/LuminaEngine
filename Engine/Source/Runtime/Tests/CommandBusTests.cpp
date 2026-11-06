@@ -24,6 +24,11 @@ namespace
     {
         ++*static_cast<int32*>(Payload);
     }
+
+    void RecordEntity(void* Payload, ECS::FRegistry&, ECS::FEntity Entity)
+    {
+        static_cast<TVector<ECS::FEntity>*>(Payload)->Add(Entity);
+    }
 }
 
 TEST(CommandBus, ReservedEntityBecomesLiveAtFlush)
@@ -185,6 +190,48 @@ TEST(CommandBus, ManyThreadsRecordCreatesAndComponentsTogether)
         Indices.Add(Entity.GetIndex());
     }
     EXPECT_EQ(Indices.Num(), Count);
+}
+
+TEST(CommandBus, RecordOrderBeatsWhichThreadRecorded)
+{
+    ECS::FRegistry Registry;
+    ECS::FCommandBus Bus(Registry);
+
+    constexpr uint32 Count = 256;
+    TVector<ECS::FEntity> Doomed(Count);
+    for (ECS::FEntity& Entity : Doomed)
+    {
+        Entity = Registry.Create();
+    }
+
+    TVector<uint32> Ran;
+    TVector<ECS::FEntity> Created(Count);
+    TVector<ECS::FEntity> CreatedOrder;
+    TVector<ECS::FEntity> DestroyedOrder;
+    Registry.OnEntityCreated().Connect(&RecordEntity, &CreatedOrder);
+    Registry.OnEntityDestroyed().Connect(&RecordEntity, &DestroyedOrder);
+
+    // Recorded in reverse, so record order and thread scheduling both disagree with the expected result.
+    Jobs::ParallelFor(Count, [&](uint32 Item)
+    {
+        const uint32 Order = Count - 1 - Item;
+        const ECS::FCommandBus::FDeferScope Scope(true, Order);
+        Created[Order] = Bus.Create();
+        Bus.Enqueue([&Ran, Order]() { Ran.Add(Order); });
+        Bus.Destroy(Doomed[Order]);
+    }, 1);
+
+    Bus.Flush();
+
+    ASSERT_EQ(Ran.Num(), Count);
+    ASSERT_EQ(CreatedOrder.Num(), Count);
+    ASSERT_EQ(DestroyedOrder.Num(), Count);
+    for (uint32 Index = 0; Index < Count; ++Index)
+    {
+        EXPECT_EQ(Ran[Index], Index);
+        EXPECT_EQ(CreatedOrder[Index], Created[Index]);
+        EXPECT_EQ(DestroyedOrder[Index], Doomed[Index]);
+    }
 }
 
 TEST(CommandBus, WorkerThreadsAlwaysDefer)

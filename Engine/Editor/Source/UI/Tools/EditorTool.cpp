@@ -30,8 +30,10 @@
 #include "Transactions/EntityRelationshipCommand.h"
 #include "Transactions/EntityTransformCommand.h"
 #include "Transactions/ObjectSnapshotCommand.h"
+#include "UI/InfoTable.h"
 #include "UI/RmlUiBridge.h"
 #include "UI/Tools/EditorAssetDropHandlers.h"
+#include "World/World.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
@@ -1875,7 +1877,7 @@ namespace Lumina
             }
 
             float Speed = CameraState.Speed;
-            if (ImGui::IsKeyDown(ImGuiKey_LeftShift))
+            if (ImGui::GetIO().KeyShift)
             {
                 Speed *= 10.0f;
             }
@@ -1981,6 +1983,16 @@ namespace Lumina
 
             ApplyOrbitTransform();
         }
+    }
+
+    bool FEditorTool::HasEditorCameraControl() const
+    {
+        return HasWorld() && !World->IsGameWorld();
+    }
+
+    bool FEditorTool::CanTransact() const
+    {
+        return World != nullptr && World->GetWorldType() == EWorldType::Editor;
     }
 
     bool FEditorTool::ShouldSuppressViewportClickInput() const
@@ -2192,11 +2204,7 @@ namespace Lumina
 
     void FEditorTool::DrawHelpTextRow(const char* Label, const char* Text) const
     {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(Label);
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(Text);
+        InfoTable::Row(Label, Text);
     }
 
     void FEditorTool::BeginTransaction()

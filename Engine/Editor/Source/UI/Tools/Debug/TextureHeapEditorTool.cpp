@@ -78,10 +78,6 @@ namespace Lumina
         });
     }
 
-    void FTextureHeapEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FTextureHeapEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("Heap",

@@ -27,26 +27,9 @@ namespace Lumina
         TSharedPtr<FLaunchSession>  GSession;
         FThread                     GWorker;
 
-        FString StandaloneLauncherJoin(FStringView Left, FStringView Right)
+        FFixedString GameExecutablePath()
         {
-            FString Result(Left.GetData(), Left.Len());
-            if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
-            {
-                Result.AppendChar('/');
-            }
-            Result.Append(Right.GetData(), Right.Len());
-            return Result;
-        }
-
-        FString EngineBinariesDirectory()
-        {
-            return StandaloneLauncherJoin(Paths::GetEngineInstallDirectory(), StandaloneLauncherJoin("Binaries", LUMINA_PLATFORM_NAME));
-        }
-
-        FString GameExecutablePath()
-        {
-            const FFixedString Name = Paths::MakeGameApplicationName();
-            return StandaloneLauncherJoin(EngineBinariesDirectory(), FStringView(*Name, Name.Len()));
+            return Paths::Combine(Paths::GetEngineInstallDirectory(), "Binaries", LUMINA_PLATFORM_NAME, Paths::MakeGameApplicationName());
         }
 
         FString ProjectDirectory()
@@ -61,27 +44,33 @@ namespace Lumina
             return FString(Name.GetData(), Name.Len());
         }
 
-        FString ProjectBinaryPath(const FFixedString& FileName)
+        FFixedString ProjectBinaryPath(const FFixedString& FileName)
         {
             const FString Directory = ProjectDirectory();
             if (Directory.IsEmpty())
             {
                 return {};
             }
-            return StandaloneLauncherJoin(StandaloneLauncherJoin(Directory, StandaloneLauncherJoin("Binaries", LUMINA_PLATFORM_NAME)),
-                        FStringView(*FileName, FileName.Len()));
+            return Paths::Combine(Directory, "Binaries", LUMINA_PLATFORM_NAME, FileName);
         }
 
         // A project with no editor-flavor module has no C++ at all, so a game build would produce nothing.
         bool ProjectHasNativeModule()
         {
-            const FString EditorModule = ProjectBinaryPath(Paths::MakeModuleFileName(ProjectName()));
+            const FFixedString EditorModule = ProjectBinaryPath(Paths::MakeModuleFileName(ProjectName()));
             return !EditorModule.IsEmpty() && Filesystem::Exists(EditorModule);
         }
 
-        FString ProjectGameModulePath()
+        FFixedString ProjectGameModulePath()
         {
             return ProjectBinaryPath(Paths::MakeGameModuleFileName(ProjectName()));
+        }
+
+        void AppendQuoted(FString& Out, FStringView Value)
+        {
+            Out += "\"";
+            Out += Value;
+            Out += "\"";
         }
 
         FString BuildArguments()
@@ -90,15 +79,14 @@ namespace Lumina
             Args += ProjectName();
             Args += " -TargetType=Game -Configuration=";
             Args += LUMINA_CONFIGURATION_NAME;
-            Args += " -Project=\"";
-            Args += ProjectDirectory();
-            Args += "\"";
+            Args += " -Project=";
+            AppendQuoted(Args, *ProjectDirectory());
             return Args;
         }
 
         bool StartGameProcess(const FStandaloneLaunchOptions& Options, FString& OutError)
         {
-            const FString Executable = GameExecutablePath();
+            const FFixedString Executable = GameExecutablePath();
             if (!Filesystem::Exists(Executable))
             {
                 OutError = Format("The game application is missing at {}. Build the Game target first.",
@@ -113,22 +101,20 @@ namespace Lumina
                 return false;
             }
 
-            FString Params = "--Project=\"";
-            Params += ProjectFile;
-            Params += "\"";
+            FString Params = "--Project=";
+            AppendQuoted(Params, ProjectFile);
 
             if (!Options.MapPath.IsEmpty())
             {
                 Params += " --map=";
-                Params += Options.MapPath;
+                AppendQuoted(Params, *Options.MapPath);
             }
 
             // Its own log, or its startup rotates the file this editor is still writing.
             Params += " --logfile=Standalone";
 
-            FString Quoted = "\"";
-            Quoted += Executable;
-            Quoted += "\"";
+            FString Quoted;
+            AppendQuoted(Quoted, *Executable);
 
             const int Error = Platform::LaunchProcess(UTF8_TO_TCHAR(*Quoted), UTF8_TO_TCHAR(*Params));
             if (Error != 0)

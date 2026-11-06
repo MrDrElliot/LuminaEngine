@@ -320,7 +320,9 @@ namespace Lumina::Containers
 
         T& AddDefaultedGetRef()
         {
-            return Elements[AddDefaulted(1)];
+            // Indexed in two steps, since the array operand is read before the subscript grows the storage.
+            const SizeType Index = AddDefaulted(1);
+            return Elements[Index];
         }
 
         SizeType AddZeroed(SizeType Count = 1)

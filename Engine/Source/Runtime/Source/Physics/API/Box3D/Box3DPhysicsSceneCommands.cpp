@@ -77,11 +77,7 @@ namespace Lumina::Physics
                           && Math::Abs(InCommand.Parameters.w) <= FLT_MAX;
         if (!bFinite)
         {
-            static TAtomic<bool> bWarned{ false };
-            if (!bWarned.exchange(true, std::memory_order_relaxed))
-            {
-                LOG_WARN("Dropped a physics body command with a NaN or infinite value for entity {}", InCommand.Entity.Value);
-            }
+            LOG_WARN_ONCE("Dropped a physics body command with a NaN or infinite value for entity {}", InCommand.Entity.Value);
             return;
         }
 

@@ -5,7 +5,7 @@
 // The script schema wire shared by LuminaSharp.Serializer and the native reader, a checked header and length-framed records making a mismatch loud.
 namespace Lumina::Scripting
 {
-    /** 'LSCH'. Identifies a schema buffer, so a stale or foreign one is refused rather than parsed. */
+    // 'LSCH'. Identifies a schema buffer, so a stale or foreign one is refused rather than parsed.
     inline constexpr uint32 kScriptSchemaMagic = 0x4843534Cu;
 
     // Bumped only when an existing field changes meaning, type or position, since a reader skips what is appended.

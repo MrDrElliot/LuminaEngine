@@ -57,7 +57,7 @@ namespace Lumina
 
         void EnqueueStaged(ECS::FCommandBus& Commands, ECS::FEntity Entity, FStagedComponent&& Staged)
         {
-            Commands.Enqueue([Entity, Staged = std::move(Staged)](ECS::FRegistry& InRegistry)
+            Commands.Enqueue([Entity, Staged = Move(Staged)](ECS::FRegistry& InRegistry)
             {
                 if (InRegistry.IsValid(Entity))
                 {
@@ -160,7 +160,7 @@ namespace Lumina
 
     void SSystemContext::DrawDebugSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode, float Duration) const
     {
-        World->GetDebugInterface()->DrawSolidTriangles(std::move(Vertices), Mode, Duration);
+        World->GetDebugInterface()->DrawSolidTriangles(Move(Vertices), Mode, Duration);
     }
 
     ECS::FEntity SSystemContext::Create(const FTransform& Transform, FName EntityName) const
@@ -209,7 +209,7 @@ namespace Lumina
         {
             SystemContextInternal::FStagedComponent Staged(Component);
             void* Value = Staged.Value;
-            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, std::move(Staged));
+            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, Move(Staged));
             return bTag ? nullptr : Value;
         }
 
@@ -239,7 +239,7 @@ namespace Lumina
 
         if (ECS::FCommandBus::ShouldDefer())
         {
-            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, std::move(Staged));
+            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, Move(Staged));
             return;
         }
         Component->EmplaceCopy(*Registry, Entity, Staged.Value);

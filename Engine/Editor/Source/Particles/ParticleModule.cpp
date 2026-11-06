@@ -1,6 +1,7 @@
 #include "ParticleModule.h"
 #include "Containers/String.h"
 #include "Containers/StringFormat.h"
+#include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
 #include <cctype>
 
 namespace Lumina
@@ -45,5 +46,10 @@ namespace Lumina
     FString CParticleModule::Lit(const FVector4& V)
     {
         return "float4(" + Lit(V.x) + ", " + Lit(V.y) + ", " + Lit(V.z) + ", " + Lit(V.w) + ")";
+    }
+
+    FString CParticleModule::OverLifeExpr(FParticleCompiler& Compiler, const char* Name, const SCurve& Curve)
+    {
+        return "SampleCurveLUT(" + Compiler.ParamCurve(Name, Curve) + ", LifeRatio)";
     }
 }

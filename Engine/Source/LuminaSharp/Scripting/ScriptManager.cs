@@ -50,7 +50,7 @@ internal sealed class ScriptManager
 {
     private ScriptLoadContext? Context;
 
-    /// <summary>The runtime for the current generation, or null when no scripts are loaded.</summary>
+    // Null when no scripts are loaded.
     public EntityScriptRuntime? EntityScripts { get; private set; }
 
     // Hosts the C# subclasses of reflected native classes for the current generation.
@@ -59,10 +59,10 @@ internal sealed class ScriptManager
     // The reflected view of the loaded generation, which the type manifest is written from.
     public TypeLibrary? Library { get; private set; }
 
-    /// <summary>Bumps on every successful (re)load; the native side rebinds entity scripts when it changes.</summary>
+    // Bumps on every successful load, and native rebinds entity scripts when it changes.
     public int Generation { get; private set; }
 
-    /// <summary>Total managed types in the current generation's assembly (for editor diagnostics).</summary>
+    // Total managed types in the current generation, for editor diagnostics.
     public int LoadedTypeCount { get; private set; }
 
     // The editor's completion and diagnostics, made on its first query since it is built on Roslyn, which a packaged game does not ship.
@@ -375,7 +375,7 @@ internal sealed class ScriptManager
 
     private static string CompileKeyPath(string DllPath) => DllPath + ".compilekey";
 
-    /// <summary>Identity of everything the emitted image depends on, or null when it cannot be pinned down.</summary>
+    // Identity of everything the emitted image depends on, or null when it cannot be pinned down.
     private static string? ComputeCompileKey(ScriptAssemblyUnit Unit, Dictionary<string, byte[]> DependencyImages)
     {
         if (string.IsNullOrEmpty(Unit.DllPath))
@@ -474,7 +474,7 @@ internal sealed class ScriptManager
         }
     }
 
-    /// <summary>A null key clears any stale stamp, so the next load recompiles rather than trusting an old DLL.</summary>
+    // A null key clears any stale stamp, so the next load recompiles rather than trusting an old DLL.
     private static void WriteCompileKey(string? DllPath, string? CompileKey)
     {
         if (string.IsNullOrEmpty(DllPath))
@@ -561,7 +561,7 @@ internal sealed class ScriptManager
         return Paths;
     }
 
-    // Global per-frame pump, empty because SEntityScriptSystem drives per-world ticking natively.
+    // Global per-frame pump, empty because CEntityScriptSystem drives per-world ticking natively.
     public void Tick()
     {
         GameThreadContext.Drain();

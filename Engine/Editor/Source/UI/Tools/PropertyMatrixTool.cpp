@@ -225,10 +225,6 @@ namespace Lumina
         }, ImGui::GetFrameHeight());
     }
 
-    void FPropertyMatrixTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FPropertyMatrixTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
         ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);

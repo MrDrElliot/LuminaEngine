@@ -34,18 +34,18 @@ namespace Lumina
         ECS::FRegistry& Registry = GetWorld()->GetEntityRegistry();
         if (Registry.IsValid(Entity) && Registry.HasAll<SCameraComponent>(Entity))
         {
-            SCameraSystem::SetActiveCamera(Registry, Entity, BlendTime, Function);
+            CCameraSystem::SetActiveCamera(Registry, Entity, BlendTime, Function);
         }
     }
 
     SCameraComponent* CCameraSubsystem::GetActiveCamera() const
     {
-        return SCameraSystem::GetActiveCamera(GetWorld()->GetEntityRegistry());
+        return CCameraSystem::GetActiveCamera(GetWorld()->GetEntityRegistry());
     }
 
     ECS::FEntity CCameraSubsystem::GetActiveCameraEntity() const
     {
-        return SCameraSystem::GetActiveCameraEntity(GetWorld()->GetEntityRegistry());
+        return CCameraSystem::GetActiveCameraEntity(GetWorld()->GetEntityRegistry());
     }
 
     FVector3 CCameraSubsystem::GetViewPosition()
@@ -82,7 +82,7 @@ namespace Lumina
     {
         CWorld* World = GetWorld();
         return World != nullptr
-            ? SCameraSystem::PlayCameraShake(World->GetEntityRegistry(), Params)
+            ? CCameraSystem::PlayCameraShake(World->GetEntityRegistry(), Params)
             : 0;
     }
 
@@ -104,7 +104,7 @@ namespace Lumina
         CWorld* World = GetWorld();
         if (World != nullptr)
         {
-            SCameraSystem::StopCameraShake(World->GetEntityRegistry(), ShakeHandle);
+            CCameraSystem::StopCameraShake(World->GetEntityRegistry(), ShakeHandle);
         }
     }
 
@@ -113,7 +113,7 @@ namespace Lumina
         CWorld* World = GetWorld();
         if (World != nullptr)
         {
-            SCameraSystem::StopAllCameraShakes(World->GetEntityRegistry());
+            CCameraSystem::StopAllCameraShakes(World->GetEntityRegistry());
         }
     }
 

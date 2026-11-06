@@ -61,7 +61,7 @@ namespace Lumina
 
     // Scores the entities whose components read significance, once per frame, into FSignificanceState.
     REFLECT()
-    class RUNTIME_API SSignificanceSystem : public CEntitySystem
+    class RUNTIME_API CSignificanceSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
@@ -93,7 +93,7 @@ namespace Lumina
         // Reference radius for a meshless entity, which puts the bands at 30, 60 and 120 meters.
         inline constexpr float kDefaultRadius = 1.0f;
 
-        // The one definition of the tick bands, shared with the metric SAnimationSystem gets from the gather.
+        // The one definition of the tick bands, shared with the metric CAnimationSystem gets from the gather.
         NODISCARD FORCEINLINE uint8 IntervalForDistanceOverRadius(float DistanceOverRadius)
         {
             if (DistanceOverRadius > 120.0f)

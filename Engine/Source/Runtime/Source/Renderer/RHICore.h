@@ -41,9 +41,7 @@ namespace Lumina::RHI
     // Exported so a host without the engine's frame loop, RHITests or a dedicated server, can drive the ring.
     RUNTIME_API void BeginFrame(uint32 SlotIndex);
 
-    /** The one submit. Every submission rides its queue's timeline and the returned value is what it signals,
-     *  so waiting on it is WaitSemaphore(GetQueueTimeline(Queue), Value). The frame ring recycles the lists,
-     *  so a caller must never reset one it submitted. */
+    // Returns the value signaled on GetQueueTimeline(Queue); never reset a submitted list, since the frame ring recycles it.
     RUNTIME_API uint64 Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {});
 
     RUNTIME_API FSemaphoreH GetQueueTimeline(EQueueType Queue);
@@ -63,6 +61,8 @@ namespace Lumina::RHI
     RUNTIME_API FTextureHeapH GetGlobalHeap();
     
     RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);
+    // Bytes the host wrote into the transient ring for the frame whose slot was just retired.
+    RUNTIME_API uint64 TransientDemandLastFrame();
 
     template<typename T>
     GPUPtr CopyTransient(const T& Value)
@@ -95,12 +95,7 @@ namespace Lumina::RHI
     RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
     RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
 
-    /** Runs Callback on the fence boundary a buffer retired at the same moment would be freed on.
-     *
-     *  For CPU-side state that DESCRIBES a GPU resource and has to stop describing it at exactly the
-     *  instant it dies: any earlier and frames already recorded lose the resource they were built
-     *  against, any later and frames recorded since read it after the free. A frame count cannot
-     *  express that; the fence already does. */
+    // Runs on the fence a buffer retired now would be freed on, for CPU state that must die with a GPU resource.
     RUNTIME_API void RetireCallback(TFunction<void()> Callback);
 
     // Rebuilds the anisotropic stock samplers in place, so every texture using them follows. Clamped to 1 to 16 and to the device.
@@ -110,6 +105,6 @@ namespace Lumina::RHI
     FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
     FPipelineH CreateComputePipeline(const FName& ComputeShader);
 
-    /** Writes the driver's disassembly for Pipeline beside the log, when -dumpshaderisa is set. */
+    // Writes the driver's disassembly beside the log, when -dumpshaderisa is set.
     RUNTIME_API void DumpPipelineISA(FPipelineH Pipeline, const FName& Name);
 }

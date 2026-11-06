@@ -11,7 +11,7 @@ namespace Lumina
 {
     // Runs the queued SSaveGameRequestEvents alone at the end of a frame, where restoring can destroy and spawn safely.
     REFLECT()
-    class RUNTIME_API SSaveGameSystem : public CExclusiveSystem
+    class RUNTIME_API CSaveGameSystem : public CExclusiveSystem
     {
         GENERATED_BODY()
 

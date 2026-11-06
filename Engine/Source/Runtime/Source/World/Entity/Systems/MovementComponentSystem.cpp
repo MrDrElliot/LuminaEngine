@@ -26,12 +26,12 @@ namespace Lumina
         }
     }
 
-    void SMovementComponentSystem::Configure()
+    void CMovementComponentSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
-    void SMovementComponentSystem::OnUpdate(const SSystemContext& Context)
+    void CMovementComponentSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace MovementComponentSystemInternal;
 

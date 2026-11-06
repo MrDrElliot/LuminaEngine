@@ -4,6 +4,7 @@
 #include "Config/NavigationSettings.h"
 #include "Memory/SmartPtr.h"
 #include "Memory/Memory.h"
+#include "Memory/Memcpy.h"
 #include "Memory/MemoryTracking.h"
 #include "TaskSystem/TaskSystem.h"
 #include "AI/Navigation/NavBuildPool.h"
@@ -66,17 +67,22 @@ namespace Lumina::NavMeshBuilder
             int32       TilesY = 0;         // nav-grid Y = world Z
         };
 
+        // AgentRadius/CellSize + 3 is the Recast convention; tiles need a voxel border for seam triangles.
+        float TileBorderSize(const SNavBuildSettings& Settings)
+        {
+            const int32 BorderVoxels = (int32)Math::Ceil(Settings.AgentRadius / Settings.CellSize) + 3;
+            return (float)BorderVoxels * Settings.CellSize;
+        }
+
         FTileGrid ComputeGrid(const FNavBuildInput& In)
         {
             FTileGrid Grid{};
             Grid.Origin = In.BoundsMin;
             Grid.TileWorldSize = (float)In.Settings.TileSizeVoxels * In.Settings.CellSize;
-            // AgentRadius/CellSize + 3 is the Recast convention; tiles need a voxel border for seam triangles.
-            const int32 BorderVoxels = (int32)std::ceil(In.Settings.AgentRadius / In.Settings.CellSize) + 3;
-            Grid.BorderSize = (float)BorderVoxels * In.Settings.CellSize;
+            Grid.BorderSize = TileBorderSize(In.Settings);
             const FVector3 Span = In.BoundsMax - In.BoundsMin;
-            Grid.TilesX = (int32)std::ceil(Math::Max(Span.x, 0.0f) / Grid.TileWorldSize);
-            Grid.TilesY = (int32)std::ceil(Math::Max(Span.z, 0.0f) / Grid.TileWorldSize);
+            Grid.TilesX = (int32)Math::Ceil(Math::Max(Span.x, 0.0f) / Grid.TileWorldSize);
+            Grid.TilesY = (int32)Math::Ceil(Math::Max(Span.z, 0.0f) / Grid.TileWorldSize);
             Grid.TilesX = Math::Max(Grid.TilesX, 1);
             Grid.TilesY = Math::Max(Grid.TilesY, 1);
             return Grid;
@@ -99,10 +105,10 @@ namespace Lumina::NavMeshBuilder
             const float MaxX = Math::Max(A.x, Math::Max(B.x, C.x)) + Grid.BorderSize;
             const float MinZ = Math::Min(A.z, Math::Min(B.z, C.z)) - Grid.BorderSize;
             const float MaxZ = Math::Max(A.z, Math::Max(B.z, C.z)) + Grid.BorderSize;
-            TX0 = Math::Clamp((int32)std::floor((MinX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
-            TX1 = Math::Clamp((int32)std::floor((MaxX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
-            TY0 = Math::Clamp((int32)std::floor((MinZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
-            TY1 = Math::Clamp((int32)std::floor((MaxZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
+            TX0 = Math::Clamp((int32)Math::Floor((MinX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
+            TX1 = Math::Clamp((int32)Math::Floor((MaxX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
+            TY0 = Math::Clamp((int32)Math::Floor((MinZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
+            TY1 = Math::Clamp((int32)Math::Floor((MaxZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
         }
 
         // The tiles a bin pass fills, as a rectangle of the grid mapped to bin slots, with kIndexNone for tiles nobody asked for.
@@ -265,8 +271,8 @@ namespace Lumina::NavMeshBuilder
         // The ledge filter's steep slope test spans the cells on both sides of a span, so it needs the rise of the steepest walkable slope across them.
         int LedgeFilterClimb(const rcConfig& Cfg)
         {
-            const float SlopeRise = 2.0f * Cfg.cs * std::tan(Math::Radians(Cfg.walkableSlopeAngle));
-            return Math::Max(Cfg.walkableClimb, (int)std::ceil(SlopeRise / Cfg.ch));
+            const float SlopeRise = 2.0f * Cfg.cs * Math::Tan(Math::Radians(Cfg.walkableSlopeAngle));
+            return Math::Max(Cfg.walkableClimb, (int)Math::Ceil(SlopeRise / Cfg.ch));
         }
 
         bool VoxelizeTile(rcContext& Ctx, const rcConfig& Cfg, const FNavBuildInput& In, const int32* TileTriIndices, int32 NumTileTris, rcCompactHeightfield*& OutCompact)
@@ -395,9 +401,9 @@ namespace Lumina::NavMeshBuilder
             Cfg.cs = S.CellSize;
             Cfg.ch = S.CellHeight;
             Cfg.walkableSlopeAngle = S.AgentMaxSlopeDeg;
-            Cfg.walkableHeight     = (int)std::ceil(S.AgentHeight / S.CellHeight);
-            Cfg.walkableClimb      = (int)std::floor(S.AgentMaxClimb / S.CellHeight);
-            Cfg.walkableRadius     = (int)std::ceil(S.AgentRadius / S.CellSize);
+            Cfg.walkableHeight     = (int)Math::Ceil(S.AgentHeight / S.CellHeight);
+            Cfg.walkableClimb      = (int)Math::Floor(S.AgentMaxClimb / S.CellHeight);
+            Cfg.walkableRadius     = (int)Math::Ceil(S.AgentRadius / S.CellSize);
             Cfg.maxEdgeLen         = (int)(S.EdgeMaxLength / S.CellSize);
             Cfg.maxSimplificationError = S.EdgeMaxError;
             Cfg.minRegionArea      = S.RegionMinSize * S.RegionMinSize;
@@ -631,7 +637,7 @@ namespace Lumina::NavMeshBuilder
 
         // Neighboring cells on a slope connect only while the slope rises no more than the climb across one cell.
         const SNavBuildSettings& Settings = Input.Settings;
-        const float ConnectableSlope = Math::Degrees(std::atan(Settings.AgentMaxClimb / Math::Max(Settings.CellSize, 0.001f)));
+        const float ConnectableSlope = Math::Degrees(Math::Atan(Settings.AgentMaxClimb / Math::Max(Settings.CellSize, 0.001f)));
         if (Settings.AgentMaxSlopeDeg > ConnectableSlope)
         {
             LOG_WARN("NavMesh bake: AgentMaxSlopeDeg {:.0f} is steeper than the {:.0f} degrees a {:.2f} climb can connect at CellSize {:.2f}, "
@@ -725,7 +731,7 @@ namespace Lumina::NavMeshBuilder
         {
             RunBake(In, *Baking);
             co_return;
-        }, Handle, std::move(Input));
+        }, Handle, Move(Input));
 
         return Handle;
     }
@@ -742,7 +748,7 @@ namespace Lumina::NavMeshBuilder
             }
             RunBake(In, *Baking);
             co_return;
-        }, Handle, std::move(Input), Move(Prepare));
+        }, Handle, Move(Input), Move(Prepare));
 
         return Handle;
     }
@@ -751,7 +757,7 @@ namespace Lumina::NavMeshBuilder
     {
         FNavBakeHandle Handle;
         RunBake(Input, Handle);
-        Out = std::move(Handle.Output);
+        Out = Move(Handle.Output);
         return Handle.bDone.load(std::memory_order_acquire);
     }
 
@@ -764,8 +770,7 @@ namespace Lumina::NavMeshBuilder
             FTileGrid Grid{};
             Grid.Origin = BaseLayout.Origin;
             Grid.TileWorldSize = BaseLayout.TileWorldSize;
-            const int32 BorderVoxels = (int32)std::ceil(Input.Settings.AgentRadius / Input.Settings.CellSize) + 3;
-            Grid.BorderSize = (float)BorderVoxels * Input.Settings.CellSize;
+            Grid.BorderSize = TileBorderSize(Input.Settings);
             Grid.TilesX = Math::Max(1, BaseLayout.TilesX);
             Grid.TilesY = Math::Max(1, BaseLayout.TilesY);
             return Grid;
@@ -857,7 +862,7 @@ namespace Lumina::NavMeshBuilder
         {
             return false;
         }
-        Out = std::move(Baked[0]);
+        Out = Move(Baked[0]);
         return true;
     }
 #else
@@ -995,9 +1000,9 @@ namespace Lumina
             rcFreeCompactHeightfield(Compact);
             return false;
         }
-        memcpy(Compact->cells, Entry.Cells.GetData(), sizeof(rcCompactCell) * Entry.Cells.Num());
-        memcpy(Compact->spans, Entry.Spans.GetData(), sizeof(rcCompactSpan) * Entry.Spans.Num());
-        memcpy(Compact->areas, Entry.Areas.GetData(), Entry.Areas.Num());
+        Memory::Memcpy(Compact->cells, Entry.Cells.GetData(), sizeof(rcCompactCell) * Entry.Cells.Num());
+        Memory::Memcpy(Compact->spans, Entry.Spans.GetData(), sizeof(rcCompactSpan) * Entry.Spans.Num());
+        Memory::Memcpy(Compact->areas, Entry.Areas.GetData(), Entry.Areas.Num());
         (*It)->LastUse = ++Clock;
         Hits.fetch_add(1, std::memory_order_relaxed);
         Out = Compact;
@@ -1051,7 +1056,7 @@ namespace Lumina
             }
             Bytes -= (*It)->GetBytes();
         }
-        Entries.Add(Key, std::move(Entry));
+        Entries.Add(Key, Move(Entry));
 
         // Least recently used first, never one a bake has pinned.
         while (Bytes > BudgetBytes)

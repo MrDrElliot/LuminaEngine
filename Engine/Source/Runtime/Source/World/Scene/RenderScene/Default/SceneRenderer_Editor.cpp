@@ -263,8 +263,8 @@ namespace Lumina
         constexpr float  OutlineThickness = 2.0f;
         constexpr uint32 OutlineTileSize  = 8;
         const FUIntVector2 Extent = Output.GetExtent();
-        const uint32 TilesX   = (Extent.x + OutlineTileSize - 1u) / OutlineTileSize;
-        const uint32 TilesY   = (Extent.y + OutlineTileSize - 1u) / OutlineTileSize;
+        const uint32 TilesX   = RenderUtils::GetGroupCount(Extent.x, OutlineTileSize);
+        const uint32 TilesY   = RenderUtils::GetGroupCount(Extent.y, OutlineTileSize);
         const uint32 NumTiles = TilesX * TilesY;
 
         const RHI::TGPUSpan<uint32> SelectionSpan = RHI::CopyTransientArray(SelectionBits.GetData(), SelectionBits.Num());
@@ -314,7 +314,7 @@ namespace Lumina
             TilePC.TileStamp       = SelectionTileStamp;
             TilePC.TilesX          = TilesX;
             TilePC.TilesY          = TilesY;
-            TilePC.TileReach       = ((uint32)Math::Ceil(OutlineThickness) + OutlineTileSize - 1u) / OutlineTileSize;
+            TilePC.TileReach       = RenderUtils::GetGroupCount((uint32)Math::Ceil(OutlineThickness), OutlineTileSize);
 
             // The previous frame's draw read the list and its arguments, and this frame rewrites both.
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::IndirectRead,

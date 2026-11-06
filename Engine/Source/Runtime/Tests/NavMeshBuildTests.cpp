@@ -1312,7 +1312,10 @@ TEST(NavHierarchy, ATileSwapIsNotHeldOffByAStreamOfLongQueries)
             }
         });
     }
-    Threading::Sleep(20);
+    while (Finished.load(std::memory_order_acquire) < kQueriers)
+    {
+        PlatformTime::YieldThread();
+    }
 
     // A swap is measured in the queries that finish during it, which machine load cannot inflate the way it stretches wall time.
     constexpr int32 kRounds = 8;
@@ -1332,7 +1335,6 @@ TEST(NavHierarchy, ATileSwapIsNotHeldOffByAStreamOfLongQueries)
     {
         Querier.Join();
     }
-    ASSERT_GT(Finished.load(), 0) << "the queriers never ran, so nothing stood in the swaps' way";
     // The fewest is checked because a swap preempted before it announces itself lets queries through without being held off.
     EXPECT_LE(Fewest, 2 * kQueriers) << "a swap waits for the searches in flight, not for the queries to dry up";
     EXPECT_EQ(FindMazePath(Mesh, 32.0f).Result, ENavPathResult::Success);

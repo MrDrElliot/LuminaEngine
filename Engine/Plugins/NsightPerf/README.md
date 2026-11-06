@@ -27,7 +27,7 @@ NvPerf's periodic sampler requires specific Vulkan **instance and device extensi
 device creation**. The engine creates the device during startup, before most plugins load, so this
 plugin's module loads at the **Core** loading phase (before `RHI::CreateDevice`) and registers the
 required extensions via `RHI::Native::RegisterDeviceCreationRequest` (see
-`Engine/Source/Runtime/Renderer/RHINative.h`). It also grabs the live device through
+`Engine/Source/Runtime/Source/Renderer/RHINative.h`). It also grabs the live device through
 `RHI::Native::GetNativeDeviceHandles()`, which returns *opaque* handles (no Vulkan types leak out of
 the backend) that this plugin reinterprets to `Vk*` itself.
 

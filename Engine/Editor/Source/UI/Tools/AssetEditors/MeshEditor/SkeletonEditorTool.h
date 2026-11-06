@@ -32,7 +32,6 @@ namespace Lumina
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
-        void OnAssetLoadFinished() override;
         void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
         void OnPostUndoRedo() override;
         void OnAssetDataChangedExternally() override;

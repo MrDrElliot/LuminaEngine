@@ -28,11 +28,6 @@ namespace Lumina::Net
 {
     namespace
     {
-        uint32 HashStructName(const FName& Name)
-        {
-            return Hash::GetHash32(*Name);
-        }
-
         // Constant time, since the storage is keyed by type id rather than scanned.
         void* FindComponentPtr(ECS::FRegistry& Registry, ECS::FEntity Entity, const CStruct* Type)
         {
@@ -60,8 +55,8 @@ namespace Lumina::Net
         // The same build gives an identical order, so the wire carries a 1-byte index, not the hash.
         struct FReplTypeTable
         {
-            TVector<FReplType>      ByIndex;
-            THashMap<uint32, uint32> HashToIndex;
+            TVector<FReplType> ByIndex;
+            TVector<int32>     TypeIdToIndex;
         };
 
         const FReplTypeTable& ReplTypes()
@@ -71,20 +66,41 @@ namespace Lumina::Net
                 FReplTypeTable T;
                 ForEachComponentStruct([&T](CStruct* St)
                 {
-                    T.ByIndex.Emplace(HashStructName(St->GetName()), St);
+                    T.ByIndex.Emplace(Hash::GetHash32(*St->GetName()), St);
                 });
                 Algo::Sort(T.ByIndex,[](const FReplType& A, const FReplType& B)
                 {
                     return A.Hash < B.Hash;
                 });
-                
+
                 for (int32 i = 0; i < T.ByIndex.Num(); ++i)
                 {
-                    T.HashToIndex[T.ByIndex[i].Hash] = i;
+                    const uint64 TypeId = T.ByIndex[i].Struct->GetComponentOps()->TypeId;
+                    if (TypeId >= static_cast<uint64>(T.TypeIdToIndex.Num()))
+                    {
+                        T.TypeIdToIndex.SetNum(static_cast<int32>(TypeId) + 1, Constants::kIndexNone);
+                    }
+                    T.TypeIdToIndex[static_cast<int32>(TypeId)] = i;
                 }
                 return T;
             }();
             return Table;
+        }
+
+        template<typename TFunc>
+        void ForEachReplicatedComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, TFunc&& Func)
+        {
+            const FReplTypeTable& Types = ReplTypes();
+            for (ECS::FSparseSet* Set : Registry.GetActiveStorages())
+            {
+                const ECS::FComponentTypeID Id = Set->GetTypeInfo().TypeID;
+                if (Id >= Types.TypeIdToIndex.Num() || Types.TypeIdToIndex[Id] == Constants::kIndexNone || !Set->Contains(Entity))
+                {
+                    continue;
+                }
+                const int32 WireIndex = Types.TypeIdToIndex[Id];
+                Func(static_cast<uint32>(WireIndex), Types.ByIndex[WireIndex].Struct, Set->GetRaw(Entity));
+            }
         }
 
         // A parent guid of 0 detaches, and an unspawned parent is retried when it spawns.
@@ -212,29 +228,8 @@ namespace Lumina::Net
         FNetArchive HookSrc(HookScratch);
         Net::BindWriters(HookSrc, State);
 
-        const FReplTypeTable& Types = ReplTypes();
-        for (Lumina::ECS::FSparseSet* SetPtr : Registry.GetActiveStorages())
+        ForEachReplicatedComponent(Registry, Entity, [&](uint32 WireIndex, CStruct* St, void* Ptr)
         {
-            const Lumina::ECS::FComponentTypeID Id = SetPtr->GetTypeInfo().TypeID;
-            Lumina::ECS::FSparseSet& Set = *SetPtr;
-            if (!Set.Contains(Entity))
-            {
-                continue;
-            }
-            CStruct* St = FindComponentStructByTypeId(Id);
-            if (St == nullptr)
-            {
-                continue;
-            }
-            const auto It = Types.HashToIndex.Find(HashStructName(St->GetName()));
-            if (It == nullptr)
-            {
-                continue; // not a known replicated type (shouldn't happen for a reflected component)
-            }
-
-            const uint32 WireIndex = (*It);
-            void* Ptr = Set.GetRaw(Entity);
-
             // Current field bytes, flat; compare to the last-sent baseline to build the changed-field mask.
             St->NetSerializeReplicatedFlat(HookSrc, Ptr, CurBytes, CurOffsets);
             const uint32 N = CurOffsets.IsEmpty() ? 0u : (uint32)CurOffsets.Num() - 1u;
@@ -279,7 +274,7 @@ namespace Lumina::Net
             // A baseline keeps a fieldless component so the client still emplaces the tag-only one.
             if (!bBaseline && !bAny)
             {
-                continue;
+                return;
             }
 
             FComponentRepOut& C = (Emitted < Out.Num()) ? Out[Emitted] : Out.EmplaceGetRef();
@@ -296,7 +291,7 @@ namespace Lumina::Net
                     C.Block.Append(Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
                 }
             }
-        }
+        });
 
         Out.SetNum(Emitted);
     }
@@ -771,25 +766,10 @@ namespace Lumina::Net
         struct FSpawnComponent { uint32 WireIndex; CStruct* Struct; void* Data; };
         TVector<FSpawnComponent> Components;
 
-        const FReplTypeTable& Types = ReplTypes();
         const CStruct* TransformStruct = STransformComponent::StaticStruct();
-        for (ECS::FSparseSet* Set : Registry.GetActiveStorages())
+        ForEachReplicatedComponent(Registry, Entity, [&](uint32 WireIndex, CStruct* St, void* Data)
         {
-            if (!Set->Contains(Entity))
-            {
-                continue;
-            }
-            CStruct* St = FindComponentStructByTypeId(Set->GetTypeInfo().TypeID);
-            if (St == nullptr)
-            {
-                continue;
-            }
-            const auto It = Types.HashToIndex.Find(HashStructName(St->GetName()));
-            if (It == nullptr)
-            {
-                continue;
-            }
-            FSpawnComponent Entry{ (*It), St, Set->GetRaw(Entity) };
+            const FSpawnComponent Entry{ WireIndex, St, Data };
             if (St == TransformStruct)
             {
                 Components.Insert(Entry, 0);
@@ -798,7 +778,7 @@ namespace Lumina::Net
             {
                 Components.Add(Entry);
             }
-        }
+        });
 
         uint16 Count = static_cast<uint16>(Components.Num());
         Ar << Count;

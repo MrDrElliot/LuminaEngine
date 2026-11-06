@@ -1,7 +1,8 @@
 ﻿#include "gtest/gtest.h"
 #include "Containers/Name.h"
+#include "Containers/Optional.h"
+#include "Core/Application/ApplicationGlobalState.h"
 #include "Core/Object/ObjectBase.h"
-#include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "TaskSystem/TaskSystem.h"
 
@@ -12,8 +13,7 @@ public:
     {
         Lumina::Memory::Initialize();
 
-        Lumina::Threading::Initialize("Main Thread");
-        Lumina::Logging::Init();
+        GlobalState.Emplace();
         Lumina::Jobs::Initialize();
 
         Lumina::InitializeCObjectSystem();
@@ -21,12 +21,13 @@ public:
 
     void TearDown() override
     {
-        Lumina::Jobs::Shutdown();
-        Lumina::Logging::Shutdown();
-        Lumina::Threading::Shutdown();
         Lumina::ShutdownCObjectSystem();
-
+        Lumina::Jobs::Shutdown();
+        GlobalState.Reset();
     }
+
+private:
+    Lumina::TOptional<Lumina::FApplicationGlobalState> GlobalState;
 };
 
 

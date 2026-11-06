@@ -16,7 +16,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    /** Build inputs for a mesh distance field. Lives on CMesh so a rebuild reproduces the import result. */
+    // Build inputs for a mesh distance field, kept on CMesh so a rebuild reproduces the import result.
     REFLECT()
     struct RUNTIME_API SDistanceFieldBuildSettings
     {
@@ -38,7 +38,7 @@ namespace Lumina
         uint32 SourceLOD = 0;
     };
 
-    /** A built field. Not reflected: it is bulk payload, serialized by hand alongside FMeshResource. */
+    // A built field, left unreflected because it is bulk payload serialized by hand alongside FMeshResource.
     struct FDistanceFieldVolume
     {
         // Voxel counts. Zero on any axis means "no field".
@@ -50,7 +50,7 @@ namespace Lumina
 
         float           MaxDistance = 0.0f;
 
-        // Unsigned build: values are distances only, encoded over [0, MaxDistance].
+        // Builds an unsigned field whose values are distances encoded over [0, MaxDistance].
         bool            bTwoSided = false;
 
         // Dimensions.x * y * z bytes, X-major then Y then Z (matching the Tex3D upload order).

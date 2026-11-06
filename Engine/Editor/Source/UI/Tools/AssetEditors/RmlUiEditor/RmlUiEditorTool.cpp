@@ -134,7 +134,7 @@ namespace Lumina
             }
             static const char* Tag = "<template";
             const size_t N = std::strlen(Tag);
-            return (Body.size() - i >= N) && (std::memcmp(Body.data() + i, Tag, N) == 0);
+            return (Body.size() - i >= N) && (Memory::Memcmp(Body.data() + i, Tag, N) == 0);
         }
 
         // Swaps the template wrapper for rml so the framed body previews with an empty content slot.
@@ -589,7 +589,7 @@ namespace Lumina
                 Node.Id = ParseIdAttr(Text, T);
                 Node.OpenLt = Lt;
                 Node.Depth = Depth;
-                Out.push_back(std::move(Node));
+                Out.push_back(Move(Node));
                 if (!T.bSelfClosing) ++Depth;
                 Pos = T.TagEnd + 1;
             }
@@ -1276,14 +1276,7 @@ namespace Lumina
             ImGui::SameLine(0, 20);
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "%d lines", LineCount);
             ImGui::SameLine(0, 20);
-            if (Bytes >= 1024)
-            {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "%.1f KB", float(Bytes) / 1024.0f);
-            }
-            else
-            {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "%zu B", Bytes);
-            }
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "%s", *ImGuiX::FormatSize(Bytes));
 
             ImGui::SameLine(0, 20);
             ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%s", *FString(Language.GetName()));
@@ -1347,7 +1340,7 @@ namespace Lumina
             ImGui::SameLine();
             if (ImGui::SmallButton(LE_ICON_PHONE_ROTATE_PORTRAIT "##rml_swap"))
             {
-                std::swap(CanvasWidth, CanvasHeight);
+                ElementOps::SwapElements(CanvasWidth, CanvasHeight);
                 ResolutionPreset = RmlUiEditorToolInternal::CustomPresetIndex;
             }
             ImGuiX::TextTooltip("Swap width and height (portrait/landscape).");
@@ -1684,14 +1677,9 @@ namespace Lumina
         const float HudY = PaneMin.y + PaneSize.y - ImGui::GetTextLineHeightWithSpacing();
         DL->AddText(ImVec2(PaneMin.x + 8.0f, HudY),
                     IM_COL32(170, 170, 190, 220),
-                    [&]
-                    {
-                        // Both sizes, since the layout resolution and the rasterized pixel count now differ.
-                        static char Buf[160];
-                        std::snprintf(Buf, sizeof(Buf), "%ux%u  raster %ux%u  view %.2fx  dpi %.2fx",
-                                      EffW, EffH, PreviewWidth, PreviewHeight, ViewZoom, PreviewDpiScale);
-                        return Buf;
-                    }());
+                    // Both sizes, since the layout resolution and the rasterized pixel count now differ.
+                    *Format("{}x{}  raster {}x{}  view {:.2f}x  dpi {:.2f}x",
+                            EffW, EffH, PreviewWidth, PreviewHeight, ViewZoom, PreviewDpiScale));
 
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1712,7 +1700,7 @@ namespace Lumina
 
         // Skipping SetText when disk matches preserves cursor, selection, scroll and undo.
         if (static_cast<size_t>(Body.Len()) == LastSyncedText.size()
-            && std::memcmp(Body.GetData(), LastSyncedText.data(), Body.Len()) == 0)
+            && Memory::Memcmp(Body.GetData(), LastSyncedText.data(), Body.Len()) == 0)
         {
             bBufferDirty = false;
             return;
@@ -2049,7 +2037,7 @@ namespace Lumina
                 Slot.OffsetPx.x += TDp.x * Dpi;
                 Slot.OffsetPx.y += TDp.y * Dpi;
             }
-            CompSlots.Add(std::move(Slot));
+            CompSlots.Add(Move(Slot));
         }
     }
 

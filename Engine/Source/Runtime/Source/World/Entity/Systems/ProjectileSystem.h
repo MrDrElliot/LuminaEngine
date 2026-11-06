@@ -11,7 +11,7 @@ namespace Lumina
 
     // Sweeps every projectile forward in PrePhysics, reports the first hit, and despawns on hit.
     REFLECT()
-    class RUNTIME_API SProjectileSystem : public CEntitySystem
+    class RUNTIME_API CProjectileSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

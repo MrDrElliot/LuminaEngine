@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Containers/Algorithm.h"
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Scalar.h"
@@ -94,7 +93,7 @@ namespace Lumina
         float Value = 0.0f;
     };
 
-    /** Events fired inside one block, in ascending frame order. */
+    // Events fired inside one block, in ascending frame order.
     struct FAudioGraphTriggerBuffer
     {
         // Inline rather than heap, because the audio thread must not allocate to fire an event.
@@ -118,10 +117,10 @@ namespace Lumina
         uint32 operator[](uint32 Index) const { return Frames[Index]; }
     };
 
-    /** Fully decoded PCM for one wave the graph references, owned by the instance that plays it. */
+    // Fully decoded PCM for one wave the graph references, owned by the instance that plays it.
     struct FAudioGraphWaveResource
     {
-        /** Interleaved float samples at the source file's rate and channel count. */
+        // Interleaved float samples at the source file's rate and channel count.
         TVector<float> Samples;
 
         uint32 SampleRate  = 0;
@@ -132,7 +131,7 @@ namespace Lumina
     };
 
 
-    /** Walks a trigger buffer alongside a per sample loop, one Consume call per frame. */
+    // Walks a trigger buffer alongside a per sample loop, one Consume call per frame.
     struct FAudioGraphTriggerCursor
     {
         uint32 Index = 0;
@@ -151,12 +150,10 @@ namespace Lumina
         }
     };
 
-    /** Ramps a block rate float across the block, so a parameter edit cannot click. */
+    // Ramps a block rate float across the block, so a parameter edit cannot click.
     class FAudioGraphSmoothedFloat
     {
     public:
-
-        void Reset() { bPrimed = false; Value = 0.0f; Step = 0.0f; Target = 0.0f; }
 
         void Begin(float InTarget, uint32 NumFrames)
         {
@@ -180,7 +177,7 @@ namespace Lumina
             return Current;
         }
 
-        /** Snaps to the target, so rounding across the ramp cannot drift. */
+        // Snaps to the target, so rounding across the ramp cannot drift.
         void End() { Value = Target; Step = 0.0f; }
 
         float GetValue() const { return Value; }
@@ -258,12 +255,6 @@ namespace Lumina
             WriteIndex = 0;
         }
 
-        void Clear()
-        {
-            Algo::Fill(Buffer, 0.0f);
-            WriteIndex = 0;
-        }
-
         float GetMaxDelay() const { return Buffer.Num() > 2 ? (float)(Buffer.Num() - 2) : 0.0f; }
 
         // Delay counts frames back from the next write and may be fractional.
@@ -297,17 +288,17 @@ namespace Lumina
         int32          WriteIndex = 0;
     };
 
-    /** Per-block state handed to every operator's Execute. */
+    // Per-block state handed to every operator's Execute.
     struct FAudioGraphBlockContext
     {
-        /** Frames to process this call, never more than kAudioGraphBlockFrames. */
+        // Frames to process this call, never more than kAudioGraphBlockFrames.
         uint32 NumFrames = kAudioGraphBlockFrames;
 
         uint32 SampleRate = 48000;
 
         float InverseSampleRate = 1.0f / 48000.0f;
 
-        /** Seconds of audio this instance rendered before the block started. */
+        // Seconds of audio this instance rendered before the block started.
         double BlockStartTime = 0.0;
     };
 }

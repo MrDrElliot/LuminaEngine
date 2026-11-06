@@ -18,7 +18,7 @@
 
 namespace Lumina
 {
-    void SPathFollowSystem::Configure()
+    void CPathFollowSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
@@ -145,7 +145,7 @@ namespace Lumina
     }
 
     // Resolved once per tick from a handful of volumes, since followers query it from a parallel loop.
-    FNavMesh* SPathFollowSystem::MeshForAgent(const TVector<FAgentMesh>& Meshes, FName Agent)
+    FNavMesh* CPathFollowSystem::MeshForAgent(const TVector<FAgentMesh>& Meshes, FName Agent)
     {
         FNavMesh* Fallback = nullptr;
         for (const FAgentMesh& Entry : Meshes)
@@ -159,12 +159,12 @@ namespace Lumina
         return Agent.IsNone() ? Fallback : nullptr;
     }
 
-    bool SPathFollowSystem::HasWork(const SSystemContext&)
+    bool CPathFollowSystem::HasWork(const SSystemContext&)
     {
         return AnyQueryHasRows(Followers);
     }
 
-    void SPathFollowSystem::OnUpdate(const SSystemContext& Context)
+    void CPathFollowSystem::OnUpdate(const SSystemContext& Context)
     {
         constexpr FVector3 Lift(0.0f, 0.1f, 0.0f);
         constexpr FVector4 PathColor(0.4f, 0.8f, 1.0f, 1.0f);

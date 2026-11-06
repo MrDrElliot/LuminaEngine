@@ -83,7 +83,7 @@ internal static class ScriptPropertyViews
         return true;
     }
 
-    /// <summary>The key and value types of a map view, or false if <paramref name="Type"/> is not one.</summary>
+    // The key and value types of a map view, or false when Type is not one.
     public static bool TryGetKeyValue(Type Type, out Type? KeyType, out Type? ValueType)
     {
         KeyType = null;

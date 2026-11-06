@@ -145,7 +145,7 @@ namespace Lumina
                 {
                     Choices.Emplace(Item);
                 }
-                GetOwningGraph()->OpenChoicePopup(this, std::move(Choices), Current, [this, Set](int32 Chosen)
+                GetOwningGraph()->OpenChoicePopup(this, Move(Choices), Current, [this, Set](int32 Chosen)
                 {
                     Set(Chosen);
                     MarkGraphDirty();

@@ -18,20 +18,6 @@ struct FTerrainCullPushConstants
 
 groupshared bool gsChunkVisible;
 
-void AABBToSphere(float3 BoundsMin, float3 BoundsMax, out float3 Center, out float Radius)
-{
-    Center = (BoundsMin + BoundsMax) * 0.5;
-    Radius = length(BoundsMax - Center);
-}
-
-bool ChunkVisible(FFrustum F, float3 BoundsMin, float3 BoundsMax)
-{
-    float3 Center;
-    float  Radius;
-    AABBToSphere(BoundsMin, BoundsMax, Center, Radius);
-    return FrustumContainsSphere(F, Center, Radius);
-}
-
 FTerrainCullPushConstants* Pass() { return GetPassArgs<FTerrainCullPushConstants>(); }
 
 [shader("compute")]
@@ -47,7 +33,7 @@ void ComputeMain(
     if (LocalIdx == 0)
     {
         FTerrainChunkInfo Chunk = Pass().Chunks.Get(ChunkIndex);
-        gsChunkVisible = ChunkVisible(Scene().CullData.Frustum, Chunk.BoundsMin, Chunk.BoundsMax);
+        gsChunkVisible = FrustumIntersectsAABB(Scene().CullData.Frustum, Chunk.BoundsMin, Chunk.BoundsMax);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -64,8 +50,8 @@ void ComputeMain(
 
         FTerrainMeshletInfo Meshlet = Pass().Meshlets.Get(MeshletIndex);
 
-        // Per-meshlet frustum refinement; tighter bounds catch silhouettes the chunk sphere misses.
-        if (!ChunkVisible(Scene().CullData.Frustum, Meshlet.BoundsMin, Meshlet.BoundsMax))
+        // Per-meshlet frustum refinement; tighter bounds catch silhouettes the chunk box misses.
+        if (!FrustumIntersectsAABB(Scene().CullData.Frustum, Meshlet.BoundsMin, Meshlet.BoundsMax))
             continue;
 
         // Base 0 because the CPU rewrites FirstInstance to 0, and reading it would contend with the lanes incrementing InstanceCount.

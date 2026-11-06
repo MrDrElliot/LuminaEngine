@@ -1,5 +1,7 @@
 ﻿#include "Containers/StringFormat.h"
 #include "AssetEditorTool.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "UI/Tools/EditorToolContext.h"
 #include "Core/CoreEditorDelegates.h"
 #include "Assets/AssetEvents.h"
@@ -117,6 +119,17 @@ namespace Lumina
         PropertyTable.SetObject(Asset.Get(), Asset->GetClass());
         PropertyTable.MarkDirty();
         bAssetUndoImageStale = true;
+    }
+
+    void FAssetEditorTool::DrawGizmoOperationCombo(ImGuizmo::OPERATION& InOutOp)
+    {
+        constexpr ImGuizmo::OPERATION Ops[] = { ImGuizmo::TRANSLATE, ImGuizmo::ROTATE, ImGuizmo::SCALE };
+        const char* OpNames[] = { "Translate", "Rotate", "Scale" };
+        int Current = (InOutOp == ImGuizmo::ROTATE) ? 1 : (InOutOp == ImGuizmo::SCALE ? 2 : 0);
+        if (ImGui::Combo("##GizmoOp", &Current, OpNames, IM_ARRAYSIZE(OpNames)))
+        {
+            InOutOp = Ops[Current];
+        }
     }
 
     void FAssetEditorTool::SetupPropertyUndo()

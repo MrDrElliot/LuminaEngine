@@ -10,25 +10,25 @@ namespace Lumina
     template<typename T, typename... TArgs>
     decltype(auto) CWorld::EmplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
     {
-        return EntityRegistry.Emplace<T>(Entity, std::forward<TArgs>(Args)...);
+        return EntityRegistry.Emplace<T>(Entity, Forward<TArgs>(Args)...);
     }
 
     template<typename T, typename... TArgs>
     decltype(auto) CWorld::EmplaceOrReplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
     {
-        return EntityRegistry.EmplaceOrReplace<T>(Entity, std::forward<TArgs>(Args)...);
+        return EntityRegistry.EmplaceOrReplace<T>(Entity, Forward<TArgs>(Args)...);
     }
 
     template<typename T, typename... TArgs>
     T& CWorld::GetOrEmplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
     {
-        return EntityRegistry.GetOrEmplace<T>(Entity, std::forward<TArgs>(Args)...);
+        return EntityRegistry.GetOrEmplace<T>(Entity, Forward<TArgs>(Args)...);
     }
 
     template<typename T, typename TFunc>
     T& CWorld::PatchComponent(ECS::FEntity Entity, TFunc&& Func)
     {
-        return EntityRegistry.Patch<T>(Entity, std::forward<TFunc>(Func));
+        return EntityRegistry.Patch<T>(Entity, Forward<TFunc>(Func));
     }
 
     template<typename T> requires (!std::is_empty_v<T>)
@@ -124,7 +124,7 @@ namespace Lumina
     template<typename T, typename... TArgs>
     T& CWorld::EmplaceSingleton(TArgs&&... Args)
     {
-        return EntityRegistry.Ctx().Emplace<T>(std::forward<TArgs>(Args)...);
+        return EntityRegistry.Ctx().Emplace<T>(Forward<TArgs>(Args)...);
     }
 
     template<typename T>

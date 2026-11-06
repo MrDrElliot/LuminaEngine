@@ -8,16 +8,20 @@ namespace LuminaSharp;
 // One crossing per run of scripts instead of one per script, which is most of what an empty OnUpdate cost.
 internal static unsafe class EntityScriptBatch
 {
-    // Returns how many ran, stopping early once the native structure epoch moves, since the driver then has to re-check the rest.
+    // Returns how many ran, stopping early once the native structure epoch moves, and keeps a non-null Cursor on the running index.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static int DispatchEntityScriptUpdates(IntPtr* Handles, int Count, float DeltaTime, uint* StructureEpoch)
+    public static int DispatchEntityScriptUpdates(IntPtr* Handles, int Count, float DeltaTime, uint* StructureEpoch, int* Cursor)
     {
         uint Epoch = Volatile.Read(ref *StructureEpoch);
         using var Scope = Engine.Snapshot();
         for (int Index = 0; Index < Count; ++Index)
         {
             object? Target = null;
+            if (Cursor != null)
+            {
+                *Cursor = Index;
+            }
             try
             {
                 if (GCHandle.FromIntPtr(Handles[Index]).Target is Lumina.CEntityScript Script)

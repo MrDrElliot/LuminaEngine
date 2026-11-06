@@ -95,3 +95,12 @@ TEST(MCPLog, TheHistoryKeepsOnlyTheNewestEntriesAndClipsPayloads)
     EXPECT_NE(Transactions[0]->Request.Find("\"id\":10,"), Constants::kIndexNone);
     EXPECT_LT(Transactions[0]->Response.Len(), FLog::kMaxPayloadBytes + 64);
 }
+
+TEST(MCPLog, ClippingBacksUpToTheStartOfASplitCharacter)
+{
+    EXPECT_EQ(ClipText("abcdef", 3), "abc [3 more bytes]");
+    EXPECT_EQ(ClipText("a\xC3\xA9z", 2), "a [3 more bytes]");
+    EXPECT_EQ(ClipText("a\xE2\x82\xACz", 2), "a [4 more bytes]");
+    EXPECT_EQ(ClipText("a\xE2\x82\xACz", 3), "a [4 more bytes]");
+    EXPECT_EQ(ClipText("a\xE2\x82\xACz", 4), "a\xE2\x82\xAC [1 more bytes]");
+}

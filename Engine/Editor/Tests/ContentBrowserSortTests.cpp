@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "FileSystem/MemoryFileSystem.h"
 #include "Settings/EditorSettings.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/ContentBrowserEditorTool.h"
@@ -19,6 +20,20 @@ namespace
         Entry.Info.LastModifyTime = Modified;
         Entry.TypeLabel = FName(Type);
         return Entry;
+    }
+
+    TVector<FString> ListedPaths(FStringView Folder, bool bRecursive)
+    {
+        TVector<FEntry> Entries;
+        FContentBrowserEditorTool::ReadFolderListing(Folder, bRecursive, Entries);
+
+        TVector<FString> Paths;
+        for (const FEntry& Entry : Entries)
+        {
+            Paths.Add(Entry.Info.VirtualPath);
+        }
+        Algo::Sort(Paths);
+        return Paths;
     }
 
     TVector<FString> SortedNames(EContentBrowserSortMode Mode, bool bAscending)
@@ -49,4 +64,19 @@ TEST(ContentBrowserSort, FoldersListFirstUnderEveryMode)
     EXPECT_EQ(SortedNames(EContentBrowserSortMode::Size, false), TVector<FString>({ "ZFolder", "AFolder", "Bravo", "Charlie", "Alpha" }));
     EXPECT_EQ(SortedNames(EContentBrowserSortMode::DateModified, true),  TVector<FString>({ "ZFolder", "AFolder", "Charlie", "Bravo", "Alpha" }));
     EXPECT_EQ(SortedNames(EContentBrowserSortMode::DateModified, false), TVector<FString>({ "AFolder", "ZFolder", "Alpha", "Bravo", "Charlie" }));
+}
+
+TEST(ContentBrowserListing, RecursiveReadFindsNestedSubfolderEntries)
+{
+    VFS::FMemoryFileSystem& FS = VFS::Mount<VFS::FMemoryFileSystem>("/CBListing");
+    const uint8 Byte = 0;
+    FS.AddFile("/CBListing/Top.cs", TSpan<const uint8>(&Byte, 1));
+    FS.AddFile("/CBListing/Props/Rocks/DeepOnly.cs", TSpan<const uint8>(&Byte, 1));
+    FS.AddFile("/CBListing/.lmeta/Hidden.cs", TSpan<const uint8>(&Byte, 1));
+
+    EXPECT_EQ(ListedPaths("/CBListing", false), TVector<FString>({ "/CBListing/Props", "/CBListing/Top.cs" }));
+    EXPECT_EQ(ListedPaths("/CBListing", true), TVector<FString>({ "/CBListing/Props", "/CBListing/Props/Rocks", "/CBListing/Props/Rocks/DeepOnly.cs", "/CBListing/Top.cs" }));
+    EXPECT_EQ(ListedPaths("/CBListing/Props", true), TVector<FString>({ "/CBListing/Props/Rocks", "/CBListing/Props/Rocks/DeepOnly.cs" }));
+
+    VFS::Unmount("/CBListing");
 }

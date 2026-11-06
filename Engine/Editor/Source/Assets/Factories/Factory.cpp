@@ -10,6 +10,8 @@
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -164,5 +166,35 @@ namespace Lumina
         }
 
         return bShouldClose;
+    }
+
+    void CFactory::DrawCreationDialogueTitle(const char* Title)
+    {
+        ImGui::TextColored(EditorColors::SectionHeader(), "%s", Title);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
+    bool CFactory::DrawCreationDialogueButtons(bool bCanCreate, bool& bShouldClose)
+    {
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        const float ButtonWidth = 110.0f;
+        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - ButtonWidth * 2 - Spacing);
+
+        ImGui::BeginDisabled(!bCanCreate);
+        const bool bConfirm = ImGui::Button(LE_ICON_CHECK " Create", ImVec2(ButtonWidth, 0));
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button(LE_ICON_CLOSE " Cancel", ImVec2(ButtonWidth, 0)))
+        {
+            bShouldClose = true;
+        }
+
+        return bConfirm;
     }
 }

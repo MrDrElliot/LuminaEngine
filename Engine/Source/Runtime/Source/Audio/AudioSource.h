@@ -11,7 +11,7 @@ namespace Lumina
 	class FAudioGraphInstance;
 	class FProceduralAudioStream;
 
-	/** Anything the mixer pulls interleaved float samples from, at the source's own rate and layout. */
+	// Anything the mixer pulls interleaved float samples from, at the source's own rate and layout.
 	class RUNTIME_API IAudioSource
 	{
 	public:
@@ -32,11 +32,11 @@ namespace Lumina
 		virtual void Seek(uint64 Frame) { (void)Frame; }
 		virtual void SetLooping(bool bInLooping) { (void)bInLooping; }
 
-		/** False for generated sources, which have no timeline to scrub and are never auto-collected. */
+		// False for generated sources, which have no timeline to scrub and are never auto-collected.
 		virtual bool IsSeekable() const { return false; }
 	};
 
-	/** A wave clip decoded on demand straight out of the encoded bytes, so seeking costs nothing. */
+	// A wave clip decoded on demand straight out of the encoded bytes, so seeking costs nothing.
 	class RUNTIME_API FWaveAudioSource final : public IAudioSource
 	{
 	public:
@@ -72,7 +72,7 @@ namespace Lumina
 		bool bLooping = false;
 	};
 
-	/** A live ring the game pushes samples into; an underrun reads as silence, never as an end. */
+	// A live ring the game pushes samples into; an underrun reads as silence, never as an end.
 	class RUNTIME_API FProceduralAudioSource final : public IAudioSource
 	{
 	public:
@@ -91,7 +91,7 @@ namespace Lumina
 		TSharedPtr<FProceduralAudioStream> Stream;
 	};
 
-	/** A compiled audio graph rendered block by block; it ends when the graph raises OnFinished. */
+	// A compiled audio graph rendered block by block; it ends when the graph raises OnFinished.
 	class RUNTIME_API FAudioGraphSource final : public IAudioSource
 	{
 	public:

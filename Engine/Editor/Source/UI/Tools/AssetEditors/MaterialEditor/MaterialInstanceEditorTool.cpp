@@ -1,4 +1,5 @@
 ﻿#include "MaterialInstanceEditorTool.h"
+#include "World/World.h"
 
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -44,10 +45,6 @@ namespace Lumina
         {
             DrawParameterEditor(bFocused);
         });
-    }
-
-    void FMaterialInstanceEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
     }
 
     void FMaterialInstanceEditorTool::SetupWorldForTool()
@@ -162,14 +159,6 @@ namespace Lumina
 
         ImGui::SameLine();
         DrawCameraModeSelector();
-    }
-
-    void FMaterialInstanceEditorTool::OnAssetLoadFinished()
-    {
-    }
-
-    void FMaterialInstanceEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
-    {
     }
 
     void FMaterialInstanceEditorTool::DrawHelpMenu()

@@ -8,12 +8,12 @@
 
 namespace Lumina
 {
-    void SFoliageCollisionSystem::Configure()
+    void CFoliageCollisionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
-    void SFoliageCollisionSystem::OnUpdate(const SSystemContext& Context)
+    void CFoliageCollisionSystem::OnUpdate(const SSystemContext& Context)
     {
         if (Context.GetPhysics() == nullptr)
         {
@@ -96,7 +96,7 @@ namespace Lumina
         });
     }
 
-    void SFoliageCollisionSystem::OnTeardown(const SExclusiveContext& Context)
+    void CFoliageCollisionSystem::OnTeardown(const SExclusiveContext& Context)
     {
         Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
 

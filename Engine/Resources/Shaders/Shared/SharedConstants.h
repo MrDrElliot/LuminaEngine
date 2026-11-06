@@ -5,7 +5,10 @@
 #define MESHLET_MAX_VERTICES            64
 #define MESHLET_MAX_TRIANGLES           64
 
-#define MESHLET_MAX_LODS                6
+// Discrete LODs or cluster hierarchy level slots per surface; a forced LOD plus one must still fit INSTANCE_FORCED_LOD_MASK.
+#define MESHLET_MAX_LODS                12
+// What files written before the slot count grew hold, and read back as.
+#define MESHLET_LEGACY_MAX_LODS         6
 
 // FMeshletDraw packs a mesh-global meshlet index into this many bits; past the bound it silently resolves the wrong meshlet.
 #define MESHLET_DRAW_INDEX_BITS         20u
@@ -34,10 +37,37 @@
 #define MESHLET_COUNT_BITS              7
 #define MESHLET_COUNT_MASK              0x7Fu
 #define MESHLET_TRIANGLE_COUNT_SHIFT    7u
-#define MESHLET_LOD_BITS                3
-#define MESHLET_LOD_MASK                0x7u
+#define MESHLET_LOD_BITS                4
+#define MESHLET_LOD_MASK                0xFu
 #define MESHLET_LOD_SHIFT               14u
-#define MESHLET_SHORT_REFS_SHIFT        17u
+#define MESHLET_SHORT_REFS_SHIFT        18u
+// Set on a voxel splat meshlet, whose quads stand for a surface and so skip the material's opacity clip.
+#define MESHLET_VOXEL_SHIFT             19u
+
+// FSurfaceDesc::Flags. The cluster bit turns a view's pick from one slot into a slot range the per-meshlet cut then refines.
+#define SURFACE_DESC_CLUSTER_LOD        1u
+// Slot L holds voxel geometry when bit (SURFACE_DESC_VOXEL_SHIFT + L) is set, and its meshlets' parents are voxels when bit (SURFACE_DESC_VOXEL_PARENT_SHIFT + L) is.
+#define SURFACE_DESC_VOXEL_SHIFT        4u
+#define SURFACE_DESC_VOXEL_PARENT_SHIFT 16u
+
+// FMeshletLODBounds::Flags, the per-meshlet form of the same two facts.
+#define MESHLET_LOD_FLAG_VOXEL          1u
+#define MESHLET_LOD_FLAG_VOXEL_PARENT   2u
+// A parent error no tolerance accepts, so a root meshlet is always drawn once its own error is.
+#define MESHLET_LOD_ERROR_INFINITE      3.0e38
+
+// FMeshletHeader::Flags.
+#define MESH_HEADER_FLAG_CLUSTER_LOD    1u
+
+// FCullData::VirtualGeometryFlags, the project's runtime toggles.
+#define VG_FLAG_VOXEL_FAR               1u
+#define VG_FLAG_PROXIES                 2u
+
+// FMeshletBlock bit above its count, set when the cull must draw every meshlet of the block without the cluster cut.
+#define MESHLET_BLOCK_FORCE_ALL_BIT     (1u << 26u)
+
+// The high bit of a VisBuffer word marks a far proxy, whose low bits hold its proxy draw index plus one.
+#define VISBUFFER_PROXY_BIT             0x80000000u
 
 // Which optional per-vertex streams a static mesh carries; an absent UV1 reads as UV0 and an absent color as white.
 #define MESH_VERTEX_STREAM_UV1          1u

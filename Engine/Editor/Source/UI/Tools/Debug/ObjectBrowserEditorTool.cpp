@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectFlags.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/Profile.h"
+#include "Core/UpdateContext.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -52,10 +53,6 @@ namespace Lumina
         {
             DrawWindow(bIsFocused);
         });
-    }
-
-    void FObjectBrowserEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
     }
 
     void FObjectBrowserEditorTool::DrawHelpMenu()

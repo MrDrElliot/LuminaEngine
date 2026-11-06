@@ -24,7 +24,8 @@ FPickerOutput FragmentMain(float4 SvPosition : SV_Position)
     const uint InstanceID = ResolveVisInstance(Raw, Pass().DrawListCount);
 
     FPickerOutput Output;
-    Output.EntityID = (InstanceID == ~0u) ? 0u : GetInstanceEntityID(InstanceID);
+    // A proxy has no compacted instance, so its entity comes off the retained slot instead.
+    Output.EntityID = ResolveVisEntityID(Raw, Pass().DrawListCount);
     Output.Foliage  = (InstanceID != ~0u && Instances()[InstanceID].HasFlag(EInstanceFlags::Foliage)) ? 1u : 0u;
     return Output;
 }

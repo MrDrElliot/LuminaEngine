@@ -157,6 +157,12 @@ namespace Lumina
         RegisterComponentOps(&Struct, Ops);
     }
 
+    void Scripting::RenameSupersededType(CObject& Type)
+    {
+        const FString Retired = FString("REPLACED_") + *Type.GetName();
+        Type.Rename(FName(*Retired, Type.GetInternalIndex() + 1), Type.GetPackage());
+    }
+
     void FScriptStructRegistry::Supersede(TStrongObjectPtr<CScriptStruct>&& Struct)
     {
         CScriptStruct* Old = Struct.Get();
@@ -165,9 +171,8 @@ namespace Lumina
             return;
         }
         Old->MarkSuperseded();
-        const FString Retired = FString("REPLACED_") + *Old->GetName();
-        Old->Rename(FName(*Retired, ++SupersededSerial), Old->GetPackage());
-        Superseded.Add(std::move(Struct));
+        Scripting::RenameSupersededType(*Old);
+        Superseded.Add(Move(Struct));
         ++Generation;
     }
 
@@ -175,7 +180,7 @@ namespace Lumina
     {
         for (auto& [Name, Struct] : Types)
         {
-            Supersede(std::move(Struct));
+            Supersede(Move(Struct));
         }
         Types.Reset();
         // A value of a type that never reached the registry still has to learn its type is gone.
@@ -186,6 +191,17 @@ namespace Lumina
     {
         THashSet<FName> Live;
         uint32 MintedCount = 0;
+
+        auto ApplyDefinition = [this](const FName& Name, CScriptStruct& Struct, const Scripting::FManagedTypeDefinition& Desc)
+        {
+            const FString Stable = Name.ToString();
+            DotNet::ApplyScriptableDefaults(FStringView(*Stable, Stable.Len()), Struct.GetDefaultInstance());
+            ApplyScriptMetadata(Struct, Desc);
+            if (IsComponent(Desc))
+            {
+                RegisterComponent(Name, Struct);
+            }
+        };
 
         // Definitions arrive with every struct after the structs it holds by value, so each finds its fields' types already current.
         for (const Scripting::FManagedTypeDefinition& Desc : Definitions)
@@ -217,17 +233,11 @@ namespace Lumina
                 if (Current->GetNativeBase() == Base && !EnumHasAnyFlags(Dirty, EScriptTypeDirty::Layout))
                 {
                     // Same layout, so every holder keeps its pointer and only the defaults and metadata are brought up to date.
-                    const FString Stable = Name.ToString();
-                    DotNet::ApplyScriptableDefaults(FStringView(*Stable, Stable.Len()), Current->GetDefaultInstance());
-                    ApplyScriptMetadata(*Current, Desc);
                     Current->SetAppliedSchema(Desc.Schema);
-                    if (IsComponent(Desc))
-                    {
-                        RegisterComponent(Name, *Current);
-                    }
+                    ApplyDefinition(Name, *Current, Desc);
                     continue;
                 }
-                Supersede(std::move(*Existing));
+                Supersede(Move(*Existing));
                 Types.Remove(Name);
             }
 
@@ -246,14 +256,8 @@ namespace Lumina
             Minted->SetAppliedSchema(Desc.Schema);
 
             // A C# struct's initializers live in its rewritten accessors, so the schema carried none of them.
-            const FString Stable = Name.ToString();
-            DotNet::ApplyScriptableDefaults(FStringView(*Stable, Stable.Len()), Minted->GetDefaultInstance());
-            ApplyScriptMetadata(*Minted, Desc);
-            if (IsComponent(Desc))
-            {
-                RegisterComponent(Name, *Minted);
-            }
-            Types[Name] = std::move(Minted);
+            ApplyDefinition(Name, *Minted, Desc);
+            Types[Name] = Move(Minted);
             ++MintedCount;
         }
 
@@ -267,7 +271,7 @@ namespace Lumina
         }
         for (const FName& Name : Removed)
         {
-            Supersede(std::move(Types[Name]));
+            Supersede(Move(Types[Name]));
             Types.Remove(Name);
         }
 

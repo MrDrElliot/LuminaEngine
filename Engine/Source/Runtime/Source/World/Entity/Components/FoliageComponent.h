@@ -179,7 +179,7 @@ namespace Lumina
         // Instances a game has hidden at runtime, such as a felled tree, kept apart from Instances so no rebake is owed.
         TVector<uint8>  HiddenInstances;
 
-        // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
+        // Transient physics bake, owned by CFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
         uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
 

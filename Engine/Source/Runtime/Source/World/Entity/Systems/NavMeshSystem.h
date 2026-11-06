@@ -24,13 +24,13 @@ namespace Lumina
 
     // Owns SNavMeshComponent lifecycle: rehydrate, drain bakes, rebuild on Tiles change.
     REFLECT()
-    class RUNTIME_API SNavMeshSystem : public CEntitySystem
+    class RUNTIME_API CNavMeshSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:
 
-        SNavMeshSystem();
-        ~SNavMeshSystem() override;
+        CNavMeshSystem();
+        ~CNavMeshSystem() override;
 
         // Paused stage required so editor-mode ticks for bake button, debug draw, dirty detection.
         void Configure() override;

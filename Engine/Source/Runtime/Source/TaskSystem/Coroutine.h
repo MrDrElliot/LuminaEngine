@@ -14,7 +14,6 @@
 
 #include <coroutine>
 #include <type_traits>
-#include <utility>
 #include "Coroutine.generated.h"
 
 namespace Lumina
@@ -128,7 +127,7 @@ namespace Lumina
             explicit FStateRef(FCoroutineState* In, bool bAddRef = true) : State(In) { if (State && bAddRef) { State->AddRef(); } }
             FStateRef(const FStateRef& Other) : State(Other.State) { if (State) { State->AddRef(); } }
             FStateRef(FStateRef&& Other) noexcept : State(Other.State) { Other.State = nullptr; }
-            FStateRef& operator=(FStateRef Other) noexcept { std::swap(State, Other.State); return *this; }
+            FStateRef& operator=(FStateRef Other) noexcept { ElementOps::SwapElements(State, Other.State); return *this; }
             ~FStateRef() { if (State) { State->Release(); } }
 
             FCoroutineState* Get() const { return State; }
@@ -300,7 +299,7 @@ namespace Lumina
         template<typename U = T>
         void return_value(U&& Value)
         {
-            static_cast<CoroDetail::TCoroutineState<T>&>(GetState()).Result = std::forward<U>(Value);
+            static_cast<CoroDetail::TCoroutineState<T>&>(GetState()).Result = Forward<U>(Value);
         }
     };
 
@@ -371,7 +370,7 @@ namespace Lumina
         using promise_type = TCoroutinePromise<T>;
 
         TCoroutine() = default;
-        explicit TCoroutine(CoroDetail::FStateRef InState) : State(std::move(InState)) {}
+        explicit TCoroutine(CoroDetail::FStateRef InState) : State(Move(InState)) {}
 
         template<typename U> requires (std::is_void_v<T> && !std::is_void_v<U>)
         TCoroutine(const TCoroutine<U>& Other) : State(Other.GetStateRef()) {}
@@ -393,7 +392,7 @@ namespace Lumina
         {
             if (State)
             {
-                State->ContinueWith(std::move(Callback));
+                State->ContinueWith(Move(Callback));
             }
             else
             {
@@ -405,7 +404,7 @@ namespace Lumina
         template<typename TObject, typename TFunc>
         void ContinueWithWeak(TObject* Object, TFunc&& Callback) const
         {
-            ContinueWith([Weak = TWeakObjectPtr<TObject>(Object), Callback = std::forward<TFunc>(Callback)]() mutable
+            ContinueWith([Weak = TWeakObjectPtr<TObject>(Object), Callback = Forward<TFunc>(Callback)]() mutable
             {
                 if (TObject* Alive = Weak.Get())
                 {
@@ -474,7 +473,7 @@ namespace Lumina
                 {
                     static_assert(CoroDetail::TIsCoroutinePromise<TPromise>, "Latent waits run on a world and need a TCoroutine.");
                     CoroDetail::FCoroutineState& State = Caller.promise().GetState();
-                    CoroDetail::SuspendLatent(State, std::move(Spec), State.BeginWait());
+                    CoroDetail::SuspendLatent(State, Move(Spec), State.BeginWait());
                 }
 
                 void await_resume() const noexcept {}
@@ -497,7 +496,7 @@ namespace Lumina
                     return false;
                 }
 
-                auto await_resume() { return std::move(Value.GetValue()); }
+                auto await_resume() { return Move(Value.GetValue()); }
             };
 
             template<typename TStart>
@@ -513,7 +512,7 @@ namespace Lumina
                     CoroDetail::FResumeTarget Target = CoroDetail::FResumeTarget::For(Caller);
 
                     // Moved out first, since a synchronous resume can end the await and free this awaiter mid-call.
-                    TStart LocalStart = std::move(Start);
+                    TStart LocalStart = Move(Start);
                     if constexpr (CoroDetail::TIsCoroutinePromise<TPromise>)
                     {
                         CoroDetail::FCoroutineState& State = Caller.promise().GetState();
@@ -522,7 +521,7 @@ namespace Lumina
                         {
                             CoroDetail::FLatentWaitSpec Spec;
                             Spec.Kind = CoroDetail::FLatentWaitSpec::EKind::External;
-                            CoroDetail::SuspendLatent(State, std::move(Spec), Serial);
+                            CoroDetail::SuspendLatent(State, Move(Spec), Serial);
                         }
                         LocalStart([Target, Serial]()
                         {
@@ -611,7 +610,7 @@ namespace Lumina
             CoroDetail::FLatentWaitSpec Spec;
             Spec.Kind  = CoroDetail::FLatentWaitSpec::EKind::Ticks;
             Spec.Ticks = Count;
-            return Detail::FLatentAwaiter{ std::move(Spec) };
+            return Detail::FLatentAwaiter{ Move(Spec) };
         }
 
         inline auto NextTick() { return Ticks(1); }
@@ -623,7 +622,7 @@ namespace Lumina
             Spec.Kind    = CoroDetail::FLatentWaitSpec::EKind::Time;
             Spec.Clock   = Clock;
             Spec.Seconds = Seconds;
-            return Detail::FLatentAwaiter{ std::move(Spec) };
+            return Detail::FLatentAwaiter{ Move(Spec) };
         }
 
         inline auto UnpausedSeconds(double InSeconds) { return Seconds(InSeconds, ECoroutineClock::Unpaused); }
@@ -637,7 +636,7 @@ namespace Lumina
             Spec.Clock     = Clock;
             Spec.Seconds   = Time;
             Spec.bAbsolute = true;
-            return Detail::FLatentAwaiter{ std::move(Spec) };
+            return Detail::FLatentAwaiter{ Move(Spec) };
         }
 
         // Polled once a tick, resuming on the first true.
@@ -645,13 +644,13 @@ namespace Lumina
         {
             CoroDetail::FLatentWaitSpec Spec;
             Spec.Kind      = CoroDetail::FLatentWaitSpec::EKind::Until;
-            Spec.Predicate = std::move(Predicate);
-            return Detail::FLatentAwaiter{ std::move(Spec) };
+            Spec.Predicate = Move(Predicate);
+            return Detail::FLatentAwaiter{ Move(Spec) };
         }
 
         // Hands Start a resume callback for any callback API, such as an asset load or a delegate, and wakes once it is called.
         template<typename TStart>
-        auto Chain(TStart&& Start) { return Detail::TChainAwaiter<std::decay_t<TStart>>{ std::forward<TStart>(Start) }; }
+        auto Chain(TStart&& Start) { return Detail::TChainAwaiter<std::decay_t<TStart>>{ Forward<TStart>(Start) }; }
 
         // Waits for anything with OnReady, such as an FAssetHandle.
         template<typename THandle>
@@ -659,7 +658,7 @@ namespace Lumina
         {
             return Chain([&Handle](auto Resume)
             {
-                Handle.OnReady([Resume = std::move(Resume)](const THandle&) { Resume(); });
+                Handle.OnReady([Resume = Move(Resume)](const THandle&) { Resume(); });
             });
         }
 
@@ -694,8 +693,8 @@ namespace Lumina
                 EJoin                 Mode;
                 FShared*              Shared = nullptr;
 
-                FJoinAwaiter(TVector<TCoroutine<>>&& InChildren, EJoin InMode) : Children(std::move(InChildren)), Mode(InMode) {}
-                FJoinAwaiter(FJoinAwaiter&& Other) noexcept : Children(std::move(Other.Children)), Mode(Other.Mode), Shared(Other.Shared) { Other.Shared = nullptr; }
+                FJoinAwaiter(TVector<TCoroutine<>>&& InChildren, EJoin InMode) : Children(Move(InChildren)), Mode(InMode) {}
+                FJoinAwaiter(FJoinAwaiter&& Other) noexcept : Children(Move(Other.Children)), Mode(Other.Mode), Shared(Other.Shared) { Other.Shared = nullptr; }
                 FJoinAwaiter(const FJoinAwaiter&) = delete;
                 FJoinAwaiter& operator=(const FJoinAwaiter&) = delete;
                 FJoinAwaiter& operator=(FJoinAwaiter&&) = delete;
@@ -730,7 +729,7 @@ namespace Lumina
                     {
                         TVector<CoroDetail::FCoroutineState*> States;
                         for (const TCoroutine<>& Child : Children) { States.Add(Child.GetStateRef().Get()); }
-                        Shared->Target.State->AwaitChildren(std::move(States));
+                        Shared->Target.State->AwaitChildren(Move(States));
                     }
 
                     FShared* Local = Shared;
@@ -785,13 +784,13 @@ namespace Lumina
         }
 
         // Resumes once every coroutine has ended.
-        inline auto WhenAll(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(std::move(Coroutines), Detail::EJoin::All); }
+        inline auto WhenAll(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(Move(Coroutines), Detail::EJoin::All); }
 
         // Resumes once the first ends, with its index, and leaves the rest running.
-        inline auto WhenAny(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(std::move(Coroutines), Detail::EJoin::Any); }
+        inline auto WhenAny(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(Move(Coroutines), Detail::EJoin::Any); }
 
         // Resumes once the first ends, with its index, and cancels the rest.
-        inline auto Race(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(std::move(Coroutines), Detail::EJoin::Race); }
+        inline auto Race(TVector<TCoroutine<>> Coroutines) { return Detail::FJoinAwaiter(Move(Coroutines), Detail::EJoin::Race); }
 
         template<typename... Ts> requires (sizeof...(Ts) > 0)
         auto WhenAll(const TCoroutine<Ts>&... Coroutines) { return WhenAll(Detail::Collect(Coroutines...)); }
@@ -833,8 +832,8 @@ namespace Lumina
         class TOnCanceled
         {
         public:
-            TOnCanceled(CoroDetail::FCoroutineState* InState, TFunc&& InFunc) : State(InState), Func(std::move(InFunc)) {}
-            TOnCanceled(TOnCanceled&& Other) noexcept : State(Other.State), Func(std::move(Other.Func)) { Other.State = nullptr; }
+            TOnCanceled(CoroDetail::FCoroutineState* InState, TFunc&& InFunc) : State(InState), Func(Move(InFunc)) {}
+            TOnCanceled(TOnCanceled&& Other) noexcept : State(Other.State), Func(Move(Other.Func)) { Other.State = nullptr; }
             TOnCanceled(const TOnCanceled&) = delete;
             TOnCanceled& operator=(const TOnCanceled&) = delete;
             TOnCanceled& operator=(TOnCanceled&&) = delete;
@@ -848,9 +847,9 @@ namespace Lumina
         template<typename TFunc>
         auto OnCanceled(TFunc&& Func)
         {
-            return Detail::TStateProbe{ [Func = std::forward<TFunc>(Func)](CoroDetail::FCoroutineState& State) mutable
+            return Detail::TStateProbe{ [Func = Forward<TFunc>(Func)](CoroDetail::FCoroutineState& State) mutable
             {
-                return TOnCanceled<std::decay_t<TFunc>>(&State, std::move(Func));
+                return TOnCanceled<std::decay_t<TFunc>>(&State, Move(Func));
             } };
         }
 

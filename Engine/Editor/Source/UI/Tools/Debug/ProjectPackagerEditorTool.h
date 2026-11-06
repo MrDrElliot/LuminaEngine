@@ -30,7 +30,6 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_PACKAGE_VARIANT; }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
 
     private:

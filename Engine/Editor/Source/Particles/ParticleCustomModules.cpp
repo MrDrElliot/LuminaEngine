@@ -101,7 +101,7 @@ namespace Lumina
         while (Start <= Code.Len())
         {
             const int32 End = Code.Find('\n', Start);
-            FString Line = Code.Mid(Start, End == Constants::kIndexNone ? Constants::kIndexNone : End - Start);
+            FString Line = Code.Mid(Start, (End == Constants::kIndexNone ? Code.Len() : End) - Start);
             if (!Line.IsEmpty() && Line.Last() == '\r')
             {
                 Line.LeftChopInline(1);

@@ -55,10 +55,47 @@ float QuadLaneEfficiency(FTexture2DUInt VisBuffer, int2 Texel)
     return float(Covered) / (4.0 * float(Distinct));
 }
 
-// Returns ~0u for background and for any entry this frame did not write.
+// A far proxy stamps its draw index rather than a meshlet slot, so everything below reads it off the retained arrays.
+bool IsVisProxy(uint VisRaw)
+{
+    return (VisRaw & VISBUFFER_PROXY_BIT) != 0u;
+}
+
+struct FVisProxy
+{
+    uint           Slot;
+    FInstanceProxy Proxy;
+    FInstanceStatic Static;
+    float4x4       Model;
+    bool           bValid;
+};
+
+// Every index is clamped like the triangle resolve, since a stale list entry must not walk off the retained arrays.
+FVisProxy ResolveVisProxy(uint VisRaw)
+{
+    FVisProxy Out;
+    Out.Slot   = 0u;
+    Out.bValid = false;
+
+    const uint Index = (VisRaw & ~VISBUFFER_PROXY_BIT) - 1u;
+    bool bValid = IsVisProxy(VisRaw) && ProxyList().Contains(Index);
+    const uint Slot = bValid ? ProxyList().Get(Index) : 0u;
+    bValid = bValid && RetainedProxies().Contains(Slot) && RetainedStatic().Contains(Slot) && RetainedTransforms().Contains(Slot);
+
+    const uint SafeSlot = bValid ? Slot : 0u;
+    Out.Slot   = SafeSlot;
+    Out.Proxy  = RetainedProxies().Count  > 0u ? RetainedProxies().GetAligned(SafeSlot) : (FInstanceProxy)0;
+    Out.Static = RetainedStatic().Count   > 0u ? RetainedStatic().GetAligned(SafeSlot)  : (FInstanceStatic)0;
+    Out.Model  = RetainedTransforms().Count > 0u ? RetainedTransforms().Get(SafeSlot).ToMatrix()
+                                                 : float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    Out.bValid = bValid;
+    return Out;
+}
+
+// Returns ~0u for background, for a far proxy, and for any entry this frame did not write.
 uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 {
-    if (VisRaw == 0u || DrawListCount == 0u)
+    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw))
     {
         return ~0u;
     }
@@ -78,16 +115,40 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
     return Draw.InstanceID;
 }
 
+// The entity under a pixel, 0 for background, read off the retained slot for a proxy and the compacted instance otherwise.
+uint ResolveVisEntityID(uint VisRaw, uint DrawListCount)
+{
+    if (IsVisProxy(VisRaw))
+    {
+        const FVisProxy P = ResolveVisProxy(VisRaw);
+        return P.bValid ? P.Static.EntityID : 0u;
+    }
+    const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
+    return InstanceID == ~0u ? 0u : GetInstanceEntityID(InstanceID);
+}
+
 // Dense deferred slot for the pixel, or ~0u for background, terrain's 0 stamp and unbinned materials.
 uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint> SlotByMaterial)
 {
-    const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
-    if (InstanceID == ~0u)
+    uint MaterialIndex;
+    if (IsVisProxy(VisRaw))
     {
-        return ~0u;
+        const FVisProxy P = ResolveVisProxy(VisRaw);
+        if (!P.bValid)
+        {
+            return ~0u;
+        }
+        MaterialIndex = P.Static.MaterialIndex;
     }
-
-    const uint MaterialIndex = GetInstanceMaterialIndex(InstanceID);
+    else
+    {
+        const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
+        if (InstanceID == ~0u)
+        {
+            return ~0u;
+        }
+        MaterialIndex = GetInstanceMaterialIndex(InstanceID);
+    }
     if (!SlotByMaterial.Contains(MaterialIndex))
     {
         return ~0u;
@@ -110,7 +171,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     const uint MeshletSlot = VisID >> VISBUFFER_TRI_BITS;
     const uint TriId       = VisID & VISBUFFER_TRI_MASK;
 
-    bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && (MeshletSlot < DrawListCount);
+    bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && !IsVisProxy(VisRaw) && (MeshletSlot < DrawListCount);
     const uint SafeSlot = bValid ? MeshletSlot : 0u;
 
     const FMeshletDraw Draw = MeshletDrawList().Get(SafeSlot);

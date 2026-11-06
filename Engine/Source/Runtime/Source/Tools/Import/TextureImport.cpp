@@ -64,7 +64,7 @@ namespace Lumina::Import::Textures
             STBIR_FILTER_MITCHELL
         );
     
-        Source.Pixels     = std::move(Resized);
+        Source.Pixels     = Move(Resized);
         Source.Dimensions = TargetSize;
     }
 
@@ -261,7 +261,7 @@ namespace Lumina::Import::Textures
                     Result.Format = bIsSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM;
                     TVector64<uint8> rgba8Data(static_cast<int64>(x) * y * 4);
                     SIMD::ExpandRGBToRGBA8(data, rgba8Data.GetData(), (size_t)x * (size_t)y);
-                    Result.Pixels = std::move(rgba8Data);
+                    Result.Pixels = Move(rgba8Data);
                 }
                 break;
             default:
@@ -393,7 +393,7 @@ namespace Lumina::Import::Textures
                     Result.Format = bIsSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM;
                     TVector64<uint8> rgba8Data(static_cast<int64>(x) * y * 4);
                     SIMD::ExpandRGBToRGBA8(data, rgba8Data.GetData(), (size_t)x * (size_t)y);
-                    Result.Pixels = std::move(rgba8Data);
+                    Result.Pixels = Move(rgba8Data);
                 }
                 break;
             default:

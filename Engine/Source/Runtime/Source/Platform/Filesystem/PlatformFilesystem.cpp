@@ -2,6 +2,7 @@
 #include "PlatformFilesystem.h"
 
 #include "Log/Log.h"
+#include "Paths/Paths.h"
 
 namespace Lumina::Filesystem
 {
@@ -139,10 +140,7 @@ namespace Lumina::Filesystem
             }
         }
 
-        while (Buffer.Len() > 1 && Buffer.Last() == '/')
-        {
-            Buffer.LeftChopInline(1);
-        }
+        Buffer.SetLen(Paths::TrimTrailingSeparators(Buffer).Len());
 
         const int32 RootEnd = FindRootEnd(FStringView(Buffer.GetData(), Buffer.Len()));
 
@@ -231,11 +229,7 @@ namespace Lumina::Filesystem
         }
 
         const int32 SourceLength = From.Len();
-        FString Target(To.GetData(), To.Len());
-        while (Target.Len() > 1 && (Target.Last() == '/' || Target.Last() == '\\'))
-        {
-            Target.LeftChopInline(1);
-        }
+        const FString Target(Paths::TrimTrailingSeparators(To));
 
         bool bSuccess = true;
         uint32 Copied = 0;

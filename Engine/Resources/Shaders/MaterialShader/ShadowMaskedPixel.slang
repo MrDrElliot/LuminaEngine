@@ -2,7 +2,7 @@
 
 // Plain cutoff rather than hashed since PCF already filters the shadow map; never name the material token above its one real site.
 
-bool ShadowMaskedKeep(FMaskedVertexOutput Input)
+float ShadowMaskedOpacity(FMaskedVertexOutput Input)
 {
     uint EntityID           = MaskedEntityID(Input);
     uint MaterialIndex      = Input.MaterialIndex;
@@ -28,13 +28,24 @@ bool ShadowMaskedKeep(FMaskedVertexOutput Input)
 
     $MATERIAL_INPUTS
 
-    return Material.Opacity >= GetMaterialOpacityClip(MaterialIndex);
+    return Material.Opacity;
 }
 
 [shader("fragment")]
 void FragmentMain(FMaskedVertexOutput Input)
 {
-    if (!ShadowMaskedKeep(Input))
+    // A splat's UVs span its source triangle's box, so the mipped opacity is the share of light its cards stop.
+    const float Opacity = ShadowMaskedOpacity(Input);
+    if (MaskedIsVoxelSplat(Input))
+    {
+        // A per-frame shift would make the shadow crawl.
+        if (FixedInterleavedGradientNoise(Input.Position.xy) >= Opacity)
+        {
+            discard;
+        }
+        return;
+    }
+    if (Opacity < GetMaterialOpacityClip(Input.MaterialIndex))
     {
         discard;
     }

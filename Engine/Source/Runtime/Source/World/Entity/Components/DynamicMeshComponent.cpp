@@ -371,7 +371,7 @@ namespace Lumina
         // An absent stream is one constant for the whole mesh, so it fills instead of packing per vertex.
         if (InColors != nullptr)
         {
-            Resource->Colors = std::move(BD.Colors);
+            Resource->Colors = Move(BD.Colors);
         }
         else
         {
@@ -412,8 +412,8 @@ namespace Lumina
 
         Resource->UVs1 = Resource->UVs;
 
-        Resource->Positions = std::move(BD.Positions);
-        Resource->Indices   = std::move(BD.Indices);
+        Resource->Positions = Move(BD.Positions);
+        Resource->Indices   = Move(BD.Indices);
 
         int32 MaterialSlotCount = 1;
         if (BD.Sections.IsEmpty())
@@ -501,7 +501,7 @@ namespace Lumina
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
 
         Import::Mesh::GenerateMeshlets(*Resource);
-        NewData->Resource = std::move(*Resource);
+        NewData->Resource = Move(*Resource);
         MeshBuffers::CreateForResource(NewData->Resource);
         NewData->MeshletHeaderSlot = NewData->Resource.MeshBuffers.MeshletHeaderSlot;
 
@@ -514,11 +514,13 @@ namespace Lumina
             R.NumLODs = Geometry[i].NumLODs;
             
             R.TexelFactor = Geometry[i].TexelFactor;
+            R.LODFlags    = Geometry[i].LODFlags;
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
                 R.LODMeshletOffset[LOD] = Geometry[i].LODMeshletOffset[LOD];
                 R.LODMeshletCount[LOD]  = Geometry[i].LODMeshletCount[LOD];
                 R.LODError[LOD]         = Geometry[i].LODError[LOD];
+                R.LODParentError[LOD]   = Geometry[i].LODParentError[LOD];
             }
         }
         
@@ -534,7 +536,7 @@ namespace Lumina
         }
 
         // Single publish point. The extract later this tick already reads the new addresses
-        PublishRenderData(std::move(NewData));
+        PublishRenderData(Move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.
         BuildData.reset();

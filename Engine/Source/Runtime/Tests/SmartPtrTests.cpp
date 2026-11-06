@@ -374,6 +374,11 @@ namespace LuminaSmartPtrTests
             }
         });
 
+        while (Reads.load(std::memory_order_relaxed) == 0)
+        {
+            PlatformTime::YieldThread();
+        }
+
         for (int32 Index = 1; Index <= 2000; ++Index)
         {
             Lumina::AtomicStore(&Slot, MakeShared<FCounted>(Index));

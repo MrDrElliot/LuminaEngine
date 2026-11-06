@@ -32,16 +32,6 @@ namespace Lumina
         }
     }
 
-    // Cheap xorshift for drop decisions; deterministic seed is fine for a debug tool.
-    static float SimRand01()
-    {
-        static uint32 State = 0x9E3779B9u;
-        State ^= State << 13;
-        State ^= State >> 17;
-        State ^= State << 5;
-        return static_cast<float>(State & 0xFFFFFFu) / static_cast<float>(0x1000000);
-    }
-
     static enet_uint32 ToPacketFlags(ESendMode Mode)
     {
         switch (Mode)
@@ -69,6 +59,7 @@ namespace Lumina
         bool                           bIsServer  = false;
         uint32                         NextHandle = 1;
         THashMap<uint32, ENetPeer*>    Peers;
+        uint32                         SimRandState = 0x9E3779B9u;
 
         uint32 AllocHandle()
         {
@@ -116,15 +107,20 @@ namespace Lumina
             }
         }
 
+        // Cheap xorshift for drop decisions; deterministic seed is fine for a debug tool.
+        float SimRand01()
+        {
+            SimRandState ^= SimRandState << 13;
+            SimRandState ^= SimRandState >> 17;
+            SimRandState ^= SimRandState << 5;
+            return static_cast<float>(SimRandState & 0xFFFFFFu) / static_cast<float>(0x1000000);
+        }
+
         // Returns true when the packet was consumed here, and false to send it immediately.
         bool ApplySim(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
         {
             const int32 LatencyMs = CVarSimLatencyMs.GetValue();
             const float LossPct   = CVarSimPacketLossPct.GetValue();
-            if (LatencyMs <= 0 && LossPct <= 0.0f)
-            {
-                return false; // simulation off -> fast path
-            }
 
             // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
             if (LossPct > 0.0f && Mode != ESendMode::Reliable && SimRand01() * 100.0f < LossPct)
@@ -132,21 +128,28 @@ namespace Lumina
                 return true; // dropped
             }
 
-            if (LatencyMs > 0)
+            if (LatencyMs <= 0 && Delayed.IsEmpty())
             {
-                FDelayedPacket& P = Delayed.EmplaceGetRef();
-                P.Peer        = PeerHandle;
-                P.Channel     = Channel;
-                P.Mode        = Mode;
-                P.ReleaseTime = enet_time_get() + static_cast<uint32>(LatencyMs);
-                P.Data.Reset();
-                P.Data.Append(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
-                return true; // queued
+                return false;
             }
-            return false; // loss didn't drop it and no latency -> send now
+
+            // Never release before a packet queued earlier, even after the latency was lowered.
+            uint32 ReleaseTime = enet_time_get() + static_cast<uint32>(Math::Max(LatencyMs, 0));
+            if (!Delayed.IsEmpty())
+            {
+                ReleaseTime = Math::Max(ReleaseTime, Delayed.Last().ReleaseTime);
+            }
+
+            FDelayedPacket& P = Delayed.EmplaceGetRef();
+            P.Peer        = PeerHandle;
+            P.Channel     = Channel;
+            P.Mode        = Mode;
+            P.ReleaseTime = ReleaseTime;
+            P.Data.Append(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
+            return true;
         }
 
-        // Constant latency keeps the queue ordered, so a due prefix is safe to flush and erase.
+        // ApplySim keeps ReleaseTime non-decreasing, so a due prefix is safe to flush and erase.
         void FlushDelayed()
         {
             if (Delayed.IsEmpty())

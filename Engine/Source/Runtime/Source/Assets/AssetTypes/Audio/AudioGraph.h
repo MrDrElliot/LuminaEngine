@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Audio/Graph/AudioGraphInstance.h"
 #include "Audio/Graph/AudioGraphProgram.h"
 #include "Audio/Graph/AudioGraphTypes.h"
 #include "Containers/Vector.h"
@@ -14,6 +13,7 @@
 namespace Lumina
 {
     class CAudioStream;
+    class FAudioGraphInstance;
 
     /** Node based sound asset, compiled by the editor into a program the mixer renders block by block. */
     REFLECT()

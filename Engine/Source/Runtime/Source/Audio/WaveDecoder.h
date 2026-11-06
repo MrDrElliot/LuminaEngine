@@ -5,7 +5,7 @@
 
 namespace Lumina::Audio
 {
-	/** Sample encoding declared by a WAVE fmt chunk. */
+	// Sample encoding declared by a WAVE fmt chunk.
 	enum class EWaveSampleFormat : uint8
 	{
 		Unknown,
@@ -21,7 +21,7 @@ namespace Lumina::Audio
 
 	RUNTIME_API const char* ToString(EWaveSampleFormat Format);
 
-	/** Random-access RIFF/WAVE reader over a file image the caller keeps alive for the reader's lifetime. */
+	// Random-access RIFF/WAVE reader over a file image the caller keeps alive for the reader's lifetime.
 	class RUNTIME_API FWaveReader
 	{
 	public:

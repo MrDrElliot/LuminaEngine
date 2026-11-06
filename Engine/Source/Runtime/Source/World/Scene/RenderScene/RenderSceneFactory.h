@@ -13,13 +13,13 @@ namespace Lumina
 
         RUNTIME_API void SetOverride(FCreateFn Factory, const char* DebugName = nullptr);
 
-        /** True if a project/plugin renderer is installed. */
+        // True if a project or plugin renderer is installed.
         RUNTIME_API bool HasOverride();
 
-        /** The installed factory, or null. Lets an installer check whether the current override is its own. */
+        // The installed factory or null, so an installer can tell whether the current override is its own.
         RUNTIME_API FCreateFn GetOverride();
 
-        /** Create a renderer for World: the installed override, or the engine default. Never null. */
+        // Creates the installed override for World, or the engine default, and never returns null.
         RUNTIME_API TUniquePtr<IRenderScene> Create(CWorld* World);
     }
 }

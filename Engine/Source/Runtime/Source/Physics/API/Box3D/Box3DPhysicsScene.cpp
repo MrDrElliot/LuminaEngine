@@ -130,16 +130,7 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        ForEachColliderType([&]<typename TCollider>() { Registry.GetSignals<TCollider>().OnConstruct.template Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>(); });
         Registry.GetSignals<SVehicleComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
     }
 
@@ -150,16 +141,7 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
-        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        ForEachColliderType([&]<typename TCollider>() { Registry.GetSignals<TCollider>().OnConstruct.template Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>(); });
         Registry.GetSignals<SVehicleComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
 
         if (b3World_IsValid(WorldId))
@@ -550,12 +532,7 @@ namespace Lumina::Physics
         if (Math::LengthSquared(Angular) > 0.0f)
         {
             // Box3D has no angular surface drive, so a rotating platform needs a kinematic body instead.
-            static bool bWarned = false;
-            if (!bWarned)
-            {
-                bWarned = true;
-                LOG_WARN("Angular surface velocity is not supported by Box3D; use a kinematic body for rotating platforms.");
-            }
+            LOG_WARN_ONCE("Angular surface velocity is not supported by Box3D; use a kinematic body for rotating platforms.");
         }
     }
 }

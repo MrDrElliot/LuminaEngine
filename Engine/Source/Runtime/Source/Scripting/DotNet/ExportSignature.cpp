@@ -1,23 +1,11 @@
 #include "RuntimePCH.h"
 
 #include "ExportSignature.h"
+#include "NameSizeRegistry.h"
 #include "Scripting/DotNet/DotNetExport.h"
-
-#include <string>
-#include <unordered_map>
 
 namespace Lumina::DotNet
 {
-    namespace
-    {
-        // A function-local static, so the map exists before any self-registration runs.
-        std::unordered_map<std::string, int32>& SignatureRegistry()
-        {
-            static std::unordered_map<std::string, int32> Map;
-            return Map;
-        }
-    }
-
     void RegisterExportSignatures(const FExportSignatureEntry* Entries, int32 Count)
     {
         if (Entries == nullptr)
@@ -27,20 +15,13 @@ namespace Lumina::DotNet
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            SignatureRegistry()[std::string(Entries[Index].Name)] = Entries[Index].Size;
+            NameSizeRegistry::Register(ENameSizeRegistry::ExportSignature, Entries[Index].Name, Entries[Index].Size);
         }
     }
 
     int32 GetExportSignature(const char* Name, int32 Len)
     {
-        if (Name == nullptr || Len <= 0)
-        {
-            return -1;
-        }
-
-        const std::unordered_map<std::string, int32>& Map = SignatureRegistry();
-        auto It = Map.find(std::string(Name, (size_t)Len));
-        return It != Map.end() ? It->second : -1;
+        return NameSizeRegistry::Find(ENameSizeRegistry::ExportSignature, Name, Len);
     }
 }
 

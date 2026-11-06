@@ -54,17 +54,17 @@ namespace Lumina
         std::atomic<int32>                   Misses{ 0 };
     };
 
-    /** World-space triangle snapshot. Areas is one ENavArea per tri (empty = all Ground). */
+    // World-space triangle snapshot, with one ENavArea per tri in Areas or all Ground when it is empty.
     struct FNavBuildInput
     {
         TVector<FVector3>      Vertices;
         TVector<uint32>         Indices;
         TVector<uint8>          Areas;          // optional, size = NumTris
 
-        /** Stamped onto the eroded surface before region building, in order. */
+        // Stamped onto the eroded surface before region building, in order.
         TVector<FNavAreaVolume> AreaVolumes;
 
-        /** Off-mesh connections; each tile keeps the ones whose start point falls inside it. */
+        // Each tile keeps the off-mesh links whose start point falls inside it.
         TVector<FNavOffMeshLink> Links;
 
         FVector3               BoundsMin = FVector3( FLT_MAX);
@@ -73,14 +73,13 @@ namespace Lumina
         SNavBuildSettings       Settings;
     };
 
-    /** Passed to FNavMesh::Initialize. */
+    // Passed to FNavMesh::Initialize.
     struct FNavBuildOutput
     {
         FVector3               Origin = FVector3(0.0f);
         float                   TileWorldSize = 0.0f;
 
-        /** Grid the tile coords were baked against. Recomputing these from live bounds misplaces a
-         *  hot rebake as soon as the volume is moved or rescaled without a full re-bake. */
+        // Grid the tile coords were baked against, since live bounds misplace a hot rebake once the volume moves or rescales.
         int32                   TilesX = 0;
         int32                   TilesY = 0;
 
@@ -89,7 +88,7 @@ namespace Lumina
         TVector<SNavTileData>   Tiles;
     };
 
-    /** Async bake handle; cancellation is cooperative. */
+    // Async bake handle with cooperative cancellation.
     struct FNavBakeHandle
     {
         std::atomic<uint32>     TilesCompleted{ 0 };
@@ -107,16 +106,16 @@ namespace Lumina
 
     namespace NavMeshBuilder
     {
-        /** Tile-parallel async bake; non-blocking. Cancel via Handle->bCancelRequested. The worker keeps its own reference. */
+        // Tile-parallel async bake that never blocks, canceled via Handle->bCancelRequested, and the worker keeps its own reference.
         RUNTIME_API TSharedPtr<FNavBakeHandle> Bake(FNavBuildInput Input);
 
         // Prepare runs on the bake worker first, so geometry emission never holds the game thread.
         RUNTIME_API TSharedPtr<FNavBakeHandle> Bake(FNavBuildInput Input, TFunction<void(FNavBuildInput&)> Prepare);
 
-        /** Blocking variant; still parallelizes tile work internally. */
+        // Blocking variant that still parallelizes tile work internally.
         RUNTIME_API bool BakeSync(FNavBuildInput Input, FNavBuildOutput& Out);
 
-        /** Single-tile rebake aligned to BaseLayout's grid (used for hot-swap). */
+        // Single-tile hot-swap rebake aligned to BaseLayout's grid.
         RUNTIME_API bool BakeSingleTile(const FNavBuildInput& Input, const FNavBuildOutput& BaseLayout, int32 TX, int32 TY, SNavTileData& Out);
 
         // One binning pass feeds every tile in Coords, on Pool's threads when given one, and a tile that fails keeps an empty blob.

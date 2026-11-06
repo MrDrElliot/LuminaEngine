@@ -1,4 +1,5 @@
 #include "Containers/StringFormat.h"
+#include "UI/InfoTable.h"
 #include "PluginBrowserEditorTool.h"
 
 #include "Core/Application/Application.h"
@@ -307,23 +308,14 @@ namespace Lumina
 
         if (ImGui::BeginTable("##PluginMeta", 2, ImGuiTableFlags_SizingStretchProp))
         {
-            auto Row = [](const char* Key, const char* Value)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextDisabled("%s", Key);
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(Value && *Value ? Value : "-");
-            };
-
-            Row("Path",     Plugin->GetDescriptorPath().GetData());
-            Row("Category", *Desc.Category);
-            Row("Version",  Desc.VersionName.IsEmpty()
+            InfoTable::Row("Path",     Plugin->GetDescriptorPath().GetData());
+            InfoTable::Row("Category", *Desc.Category);
+            InfoTable::Row("Version",  Desc.VersionName.IsEmpty()
                                 ? *Format("{}", Desc.Version)
                                 : *Desc.VersionName);
-            Row("Type",     Plugin->IsEnginePlugin() ? "Engine plugin" : "Project plugin");
-            Row("Editor-only", Desc.bEditorOnly ? "Yes" : "No");
-            Row("Has content", Desc.bContainsContent ? "Yes" : "No");
+            InfoTable::Row("Type",     Plugin->IsEnginePlugin() ? "Engine plugin" : "Project plugin");
+            InfoTable::Row("Editor-only", Desc.bEditorOnly ? "Yes" : "No");
+            InfoTable::Row("Has content", Desc.bContainsContent ? "Yes" : "No");
 
             ImGui::EndTable();
         }

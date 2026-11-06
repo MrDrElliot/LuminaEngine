@@ -4,11 +4,13 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Log/Log.h"
 
 #include "Scripting/ScriptableTest.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/World.h"
+#include "WorldTestAccess.h"
 
 using namespace Lumina;
 
@@ -186,6 +188,37 @@ TEST(SystemSchedule, AConflictWaitsForTheEarlierSystem)
     EXPECT_EQ(Batches[1].Members, (TVector<uint16>{ 2 }));
 }
 
+TEST(SystemSchedule, DisjointSystemsShareABatchAndConflictingOnesDoNot)
+{
+    FScheduleSystems S;
+    ASSERT_TRUE(S.AllCreated());
+
+    const CWorld::FStageSchedule Stage = SystemSchedule::OrderStage({ S.TransformReader, S.Reader, S.Writer }, EUpdateStage::PrePhysics);
+    const TVector<CWorld::FSystemSegment> Segments = SystemSchedule::BuildSegments(Stage, AllWork(Stage));
+    const TVector<CWorld::FSystemBatch> Batches = SystemSchedule::BuildLevels(Segments);
+
+    ASSERT_EQ(Batches.Num(), 2);
+    EXPECT_TRUE(Algo::Contains(Batches[0].Members, (uint16)IndexOf(Stage, S.Writer)));
+    EXPECT_TRUE(Algo::Contains(Batches[0].Members, (uint16)IndexOf(Stage, S.Reader))) << "the writer and the reader touch nothing in common";
+    EXPECT_EQ(Batches[1].Members, (TVector<uint16>{ (uint16)IndexOf(Stage, S.TransformReader) })) << "reading what the writer writes waits for it";
+
+    const FString Report = SystemSchedule::DescribeParallelism(Stage, Segments, EUpdateStage::PrePhysics);
+    EXPECT_TRUE(Report.Contains("batch widths 2 1, critical path 2, widest 2")) << *Report;
+}
+
+TEST(SystemSchedule, AnExclusiveSystemAChainWaitsOnRunsBeforeUnrelatedSharedWork)
+{
+    FScheduleSystems S;
+    ASSERT_TRUE(S.AllCreated());
+
+    // Reader, After and Last are a declared chain, so running the exclusive head late would stack the chain behind the writer pair.
+    S.Exclusive->RunsBeforeSystem("CEntitySystemReaderTest");
+    const CWorld::FStageSchedule Stage = SystemSchedule::OrderStage({ S.Writer, S.TransformReader, S.Reader, S.After, S.Last, S.Exclusive }, EUpdateStage::PrePhysics);
+
+    EXPECT_EQ(Stage.Systems[0], S.Exclusive);
+    EXPECT_EQ(Levels(Stage, AllWork(Stage)).Num(), 5) << "the writer pair overlaps the chain instead of preceding the exclusive head";
+}
+
 TEST(SystemSchedule, ADependencyCycleStillSchedulesEverySystem)
 {
     FScheduleSystems S;
@@ -317,4 +350,30 @@ TEST(SystemSchedule, ExclusiveSystemsAreNeverReportedAsAmbiguous)
     Stage.Systems  = { S.Writer, S.Exclusive };
     Stage.Precedes = TVector<uint8>(4, 0);
     EXPECT_TRUE(SystemSchedule::FindAmbiguities(Stage).IsEmpty());
+}
+
+TEST(SystemSchedule, TheEngineSystemSetReportsEverySystemItSchedules)
+{
+    RegisterPendingTypes();
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    EntitySystems::CreateMissing(*World, {}, World->Systems);
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+
+    // Flushed first, so the ambiguity lines the rebuild logged do not interleave with the report.
+    Logging::Flush();
+    const FString Report = World->DescribeSystemParallelism(true);
+    fprintf(stderr, "%s", *Report);
+    fflush(stderr);
+    for (const TStrongObjectPtr<CEntitySystem>& System : World->Systems)
+    {
+        const FString Name = System->GetClass()->GetName().ToString();
+        bool bScheduled = false;
+        for (uint8 Stage = 0; Stage < (uint8)EUpdateStage::Max; ++Stage)
+        {
+            bScheduled |= System->RunsInStage((EUpdateStage)Stage);
+        }
+        EXPECT_TRUE(!bScheduled || Report.Contains(Name)) << *Name;
+    }
+    EntitySystems::DestroyAll(SSystemContext(), World->Systems);
 }

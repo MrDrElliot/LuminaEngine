@@ -1,33 +1,24 @@
 #include "MCPPackageTools.h"
 
 #include "Agent/AgentToolRegistry.h"
+#include "Assets/AssetRegistry/CookRoot.h"
 #include "Config/EngineSettings.h"
 #include "Containers/StringFormat.h"
 #include "Cooker/AssetCooker.h"
 #include "Cooker/ProjectPackager.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Math/Math.h"
-#include "Core/Threading/Thread.h"
+#include "Log/Log.h"
+#include "MCPEditorModule.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include "Platform/Process/PlatformProcess.h"
 #include "Platform/Time/PlatformTime.h"
 
-#include <atomic>
 #include <cctype>
 
 namespace Lumina::MCP
 {
     namespace MCPPackageToolsInternal
     {
-        enum class EPackageStage : uint8
-        {
-            Idle,
-            Cooking,
-            Building,
-            Succeeded,
-            Failed,
-        };
-
         const char* PackageStageName(EPackageStage Stage)
         {
             switch (Stage)
@@ -71,61 +62,15 @@ namespace Lumina::MCP
             return Line.Find("] [warning") != Constants::kIndexNone;
         }
 
-        struct FPackageSession
-        {
-            FMutex Mutex;
-            TVector<FString> Lines;
-            int32 Warnings = 0;
-
-            std::atomic<EPackageStage> Stage{ EPackageStage::Idle };
-            FString Error;
-            FString Configuration;
-            FString OutputDirectory;
-            FString Executable;
-            int32 AssetsCooked = 0;
-            TVector<SPackageChunkInfo> Chunks;
-            double StartSeconds = 0.0;
-            std::atomic<double> EndSeconds{ 0.0 };
-
-            FThread Worker;
-
-            void Append(FStringView Line)
-            {
-                FScopeLock Lock(Mutex);
-                Lines.Emplace(Line.GetData(), Line.Len());
-                Warnings += IsPackageBuildProblem(Line) ? 1 : 0;
-            }
-
-            void Finish(bool bSucceeded, const FString& InError)
-            {
-                {
-                    FScopeLock Lock(Mutex);
-                    Error = InError;
-                }
-                EndSeconds.store(PlatformTime::Seconds());
-                Stage.store(bSucceeded ? EPackageStage::Succeeded : EPackageStage::Failed);
-            }
-        };
-
+        // Package tools are registered only while the module's server runs, so the module is always there.
         FPackageSession& PackageSession()
         {
-            static FPackageSession Instance;
-            return Instance;
+            return FMCPEditorModule::GetPackageTools()->Build;
         }
-
-        struct FPackageGameSession
-        {
-            Platform::FProcessHandle Process;
-            FString Executable;
-            FString LogPath;
-            double StartSeconds = 0.0;
-            double EndSeconds = 0.0;
-        };
 
         FPackageGameSession& PackageGame()
         {
-            static FPackageGameSession Instance;
-            return Instance;
+            return FMCPEditorModule::GetPackageTools()->Game;
         }
 
         FString PackageProjectName()
@@ -473,9 +418,8 @@ namespace Lumina::MCP
                     Options.bServer = In.bServer;
 
                     S.Stage.store(EPackageStage::Building);
-                    S.Worker = FThread([Options, Name, PackageName, PakPath]()
+                    S.Worker = FThread([&Worker = S, Options, Name, PackageName, PakPath]()
                     {
-                        FPackageSession& Worker = PackageSession();
                         const FPackageBuildResult Result = FProjectPackager::BuildAndCopyOnly(Options, FStringView(*Name, Name.Len()),
                                                                                               FStringView(*PakPath, PakPath.Len()),
                                                                                               [&Worker](FStringView Line) { Worker.Append(Line); });
@@ -539,6 +483,36 @@ namespace Lumina::MCP
     }
 
     using namespace MCPPackageToolsInternal;
+
+    void FPackageSession::Append(FStringView Line)
+    {
+        FScopeLock Lock(Mutex);
+        Lines.Emplace(Line.GetData(), Line.Len());
+        Warnings += IsPackageBuildProblem(Line) ? 1 : 0;
+    }
+
+    void FPackageSession::Finish(bool bSucceeded, const FString& InError)
+    {
+        {
+            FScopeLock Lock(Mutex);
+            Error = InError;
+        }
+        EndSeconds.store(PlatformTime::Seconds());
+        Stage.store(bSucceeded ? EPackageStage::Succeeded : EPackageStage::Failed);
+    }
+
+    void FPackageToolsState::JoinWorker()
+    {
+        if (!Build.Worker.joinable())
+        {
+            return;
+        }
+        if (Build.Stage.load() == EPackageStage::Building)
+        {
+            LOG_WARN("[MCP] Waiting for the running package build to finish before the editor quits.");
+        }
+        Build.Worker.join();
+    }
 
     void RegisterPackageTools(FStringView Owner)
     {

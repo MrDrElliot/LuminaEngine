@@ -1,4 +1,5 @@
 ﻿#include <string>
+#include "World/World.h"
 #include "Tools/Import/ImportPaths.h"
 #include "World/ECS/Registry.h"
 #include "WorldEditorTool.h"
@@ -957,8 +958,8 @@ namespace Lumina
 
         if (bSelectionEditActive)
         {
-            bool bCopyPressed = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_C);
-            bool bDuplicatePressed = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_D);
+            bool bCopyPressed = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C);
+            bool bDuplicatePressed = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D);
             bool bDeletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete) && !HasVisualizerSubSelection();
 
             if (bCopyPressed)
@@ -1015,7 +1016,7 @@ namespace Lumina
         }
 
         const bool bPastePressed = bSelectionEditActive
-            && ImGui::IsKeyDown(ImGuiKey_LeftCtrl)
+            && ImGui::GetIO().KeyCtrl
             && ImGui::IsKeyPressed(ImGuiKey_V, false);
 
         if (bPastePressed)
@@ -2902,7 +2903,7 @@ namespace Lumina
         FCreatePrefabRequest BuildCreatePrefabRequest(ECS::FRegistry& Registry, TVector<ECS::FEntity> InitialRoots)
         {
             FCreatePrefabRequest Out;
-            Out.Roots = std::move(InitialRoots);
+            Out.Roots = Move(InitialRoots);
             Out.Pivot = FVector3(0.0f);
             Out.TotalEntityCount = 0;
 
@@ -2986,10 +2987,10 @@ namespace Lumina
         }
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        WorldEditorToolInternal::FCreatePrefabRequest Req = WorldEditorToolInternal::BuildCreatePrefabRequest(Registry, std::move(Roots));
+        WorldEditorToolInternal::FCreatePrefabRequest Req = WorldEditorToolInternal::BuildCreatePrefabRequest(Registry, Move(Roots));
 
         ToolContext->PushModal("Create Prefab From Selection", ImVec2(560.0f, 290.0f),
-            [this, Req = std::move(Req)]() -> bool
+            [this, Req = Move(Req)]() -> bool
         {
             static FFixedString NameBuffer;
             static FFixedString DirBuffer;
@@ -4466,7 +4467,7 @@ namespace Lumina
         // How long the panel trusts its list of system classes, since gathering it configures every one of them.
         constexpr double kSystemListRefreshSeconds = 1.0;
 
-        // "SBlockoutSystem" reads as "Blockout", and a C# "Game.WaveSystem" as "Wave".
+        // "CBlockoutSystem" reads as "Blockout", and a C# "Game.WaveSystem" as "Wave".
         FString FriendlySystemName(const FString& ClassName)
         {
             FStringView Name(ClassName);
@@ -4474,7 +4475,7 @@ namespace Lumina
             {
                 Name = Name.Mid(Dot + 1);
             }
-            if (Name.Len() > 1 && Name[0] == 'S' && Name[1] >= 'A' && Name[1] <= 'Z')
+            if (Name.Len() > 1 && Name[0] == 'C' && Name[1] >= 'A' && Name[1] <= 'Z')
             {
                 Name.RemovePrefix(1);
             }

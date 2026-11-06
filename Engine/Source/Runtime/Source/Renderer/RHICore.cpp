@@ -69,6 +69,7 @@ namespace Lumina::RHI
         bool                bQueueTookTransferWait[kNumQueues] = {};
         TVector<FCmdListH>  SlotCommandLists[kFramesInFlight];
         FTransientSlice     Slices[kFramesInFlight];
+        uint64              LastTransientDemand = 0;
 
         TAtomic<uint32>     CurrentSlot{0};
         FMutex              SubmitMutex;
@@ -311,7 +312,7 @@ namespace Lumina::RHI
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
 
         FScopeLock Lock(GCore.RetireMutex);
-        GCore.RetireQueues[Slot].Add(std::move(Item));
+        GCore.RetireQueues[Slot].Add(Move(Item));
     }
 
     // Metered, since a destroy can reach the driver free and a streaming burst retires hundreds.
@@ -384,13 +385,13 @@ namespace Lumina::RHI
                 const bool bUnderCap = Ready.Num() < Cap;
                 if (bUnderCap && HasRetired(Queue[Read]))
                 {
-                    Ready.Add(std::move(Queue[Read]));
+                    Ready.Add(Move(Queue[Read]));
                     continue;
                 }
 
                 if (Write != Read)
                 {
-                    Queue[Write] = std::move(Queue[Read]);
+                    Queue[Write] = Move(Queue[Read]);
                 }
                 ++Write;
             }
@@ -460,8 +461,8 @@ namespace Lumina::RHI
 
         FRetireItem Item;
         Item.Kind     = FRetireItem::EKind::Callback;
-        Item.Callback = std::move(Callback);
-        PushRetire(std::move(Item));
+        Item.Callback = Move(Callback);
+        PushRetire(Move(Item));
     }
 
     void RetireSampledSlot(uint32 HeapSlot)
@@ -508,6 +509,11 @@ namespace Lumina::RHI
         Internal::FreeDevice();
     }
 
+    uint64 TransientDemandLastFrame()
+    {
+        return GCore.LastTransientDemand;
+    }
+
     void BeginFrame(uint32 SlotIndex)
     {
         if (!GCore.bInitialized)
@@ -537,6 +543,7 @@ namespace Lumina::RHI
         
         RHI::ApplyDeferredHeapWrites(Slot);
         DrainRetireQueue(Slot);
+        GCore.LastTransientDemand = GCore.Slices[Slot].Cursor.load(std::memory_order_relaxed);
         RHI::RetireSlot(Slot);
         RHI::TrimMemoryPages();
 

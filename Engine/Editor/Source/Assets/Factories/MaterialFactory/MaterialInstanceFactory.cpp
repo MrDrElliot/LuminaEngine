@@ -24,34 +24,15 @@ namespace Lumina
             SelectedMaterialGUID.Invalidate();
         }
 
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), LE_ICON_FORMAT_LIST_BULLETED_TYPE " Select Parent Material");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        DrawCreationDialogueTitle(LE_ICON_FORMAT_LIST_BULLETED_TYPE " Select Parent Material");
 
         ImGui::SetNextItemWidth(-1.0f);
         ImGuiX::AssetReferenceCombo("##ParentMaterial", CMaterialInterface::StaticClass(), SelectedMaterialGUID, LE_ICON_PALETTE);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        const float ButtonWidth = 110.0f;
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - ButtonWidth * 2 - Spacing);
-
-        bool bConfirm = false;
-        ImGui::BeginDisabled(!SelectedMaterialGUID.IsValid());
-        if (ImGui::Button(LE_ICON_CHECK " Create", ImVec2(ButtonWidth, 0)))
-        {
-            bConfirm = true;
-        }
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        if (ImGui::Button(LE_ICON_CLOSE " Cancel", ImVec2(ButtonWidth, 0)))
+        const bool bConfirm = DrawCreationDialogueButtons(SelectedMaterialGUID.IsValid(), bShouldClose);
+        if (bShouldClose)
         {
             SelectedMaterialGUID.Invalidate();
-            bShouldClose = true;
         }
 
         return bConfirm;

@@ -158,7 +158,7 @@ namespace Lumina::UIBinding
             {
                 Name = Name.Mid(4);
             }
-            const bool bTaken = std::any_of(Out.begin(), Out.end(), [&Name](const FBoundFunction& Existing) { return Existing.Name == Name; });
+            const bool bTaken = Algo::AnyOf(Out, [&Name](const FBoundFunction& Existing) { return Existing.Name == Name; });
             if (bTaken)
             {
                 continue;

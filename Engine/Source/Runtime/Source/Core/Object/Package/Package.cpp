@@ -10,6 +10,7 @@
 #include "Core/Object/ObjectReferenceReplacer.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Profiler/Profile.h"
+#include "Memory/Memcpy.h"
 #include "Memory/MemoryTracking.h"
 #include "Core/Serialization/Package/PackageLoader.h"
 #include "Core/Serialization/Package/PackageSaver.h"
@@ -122,7 +123,7 @@ namespace Lumina
             }
 
             FPackageBulkTrailer Trailer;
-            std::memcpy(&Trailer, TailBytes + TailSize - sizeof(FPackageBulkTrailer), sizeof(Trailer));
+            Memory::Memcpy(&Trailer, TailBytes + TailSize - sizeof(FPackageBulkTrailer), sizeof(Trailer));
 
             if (Trailer.Magic != kBulkTrailerMagic || Trailer.Version != kBulkTrailerVersion)
             {
@@ -251,8 +252,8 @@ namespace Lumina
             Out.SetNum(IntCastChecked<int32>(HeaderBytes + TotalCompressed));
 
             uint8* P = Out.GetData();
-            auto WriteU32 = [&P](uint32 V) { std::memcpy(P, &V, sizeof(V)); P += sizeof(V); };
-            auto WriteU64 = [&P](uint64 V) { std::memcpy(P, &V, sizeof(V)); P += sizeof(V); };
+            auto WriteU32 = [&P](uint32 V) { Memory::Memcpy(P, &V, sizeof(V)); P += sizeof(V); };
+            auto WriteU64 = [&P](uint64 V) { Memory::Memcpy(P, &V, sizeof(V)); P += sizeof(V); };
 
             WriteU32(kPackageChunkMagic);
             WriteU32(kPackageChunkVersion);
@@ -266,7 +267,7 @@ namespace Lumina
             }
             for (const TVector<uint8>& Chunk : ChunkBytes)
             {
-                std::memcpy(P, Chunk.GetData(), Chunk.Num());
+                Memory::Memcpy(P, Chunk.GetData(), Chunk.Num());
                 P += Chunk.Num();
             }
 
@@ -287,8 +288,8 @@ namespace Lumina
                 return false;
             }
 
-            auto ReadU32 = [&]() { uint32 V; std::memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
-            auto ReadU64 = [&]() { uint64 V; std::memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
+            auto ReadU32 = [&]() { uint32 V; Memory::Memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
+            auto ReadU64 = [&]() { uint64 V; Memory::Memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
 
             const uint32 Magic   = ReadU32();
             const uint32 Version = ReadU32();
@@ -394,7 +395,7 @@ namespace Lumina
             if (static_cast<size_t>(Raw.Num()) >= sizeof(uint32))
             {
                 uint32 Magic;
-                std::memcpy(&Magic, Raw.GetData(), sizeof(Magic));
+                Memory::Memcpy(&Magic, Raw.GetData(), sizeof(Magic));
                 if (Magic == kPackageChunkMagic)
                 {
                     return DecompressChunkedPackage(Raw, Out);
@@ -408,7 +409,7 @@ namespace Lumina
             }
 
             FCompressedPackageHeader CHeader;
-            std::memcpy(&CHeader, Raw.GetData(), sizeof(CHeader));
+            Memory::Memcpy(&CHeader, Raw.GetData(), sizeof(CHeader));
 
             if (sizeof(FCompressedPackageHeader) + CHeader.CompressedSize != static_cast<size_t>(Raw.Num()))
             {
@@ -717,6 +718,9 @@ namespace Lumina
         }
         return false;
     }
+
+    CPackage::CPackage() = default;
+    CPackage::~CPackage() = default;
 
     void CPackage::OnDestroy()
     {
@@ -1364,7 +1368,7 @@ namespace Lumina
                 OutCompressed.SetNum(ContainerSize + BulkBytes.Num() + sizeof(FPackageBulkTrailer));
 
                 Memory::Memcpy(OutCompressed.GetData() + ContainerSize, BulkBytes.GetData(), BulkBytes.Num());
-                std::memcpy(OutCompressed.GetData() + ContainerSize + BulkBytes.Num(), &Trailer, sizeof(Trailer));
+                Memory::Memcpy(OutCompressed.GetData() + ContainerSize + BulkBytes.Num(), &Trailer, sizeof(Trailer));
 
                 OutBulkRegion.FileOffset = (int64)Trailer.BulkOffset;
                 OutBulkRegion.Size       = (int64)Trailer.BulkSize;

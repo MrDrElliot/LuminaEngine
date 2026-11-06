@@ -18,30 +18,9 @@ namespace Lumina::AssetOps
 {
     namespace
     {
-        // Case-insensitive compare of a view against a NUL-terminated literal.
-        bool IEquals(FStringView A, const char* B)
+        bool IsAtOrUnder(FStringView VirtualPath, FStringView Root)
         {
-            const auto Lower = [](char Character)
-            {
-                return (Character >= 'A' && Character <= 'Z') ? (char)(Character + 32) : Character;
-            };
-
-            int32 Index = 0;
-            for (; Index < A.Len() && B[Index] != 0; ++Index)
-            {
-                if (Lower(A[Index]) != Lower(B[Index]))
-                {
-                    return false;
-                }
-            }
-
-            return Index == A.Len() && B[Index] == 0;
-        }
-
-        bool IsAtOrUnder(FStringView VirtualPath, const char* RootLiteral)
-        {
-            const FStringView Root(RootLiteral);
-            if (VirtualPath.Len() < Root.Len() || !IEquals(VirtualPath.Mid(0, Root.Len()), RootLiteral))
+            if (VirtualPath.Len() < Root.Len() || !EqualsIgnoreCase(VirtualPath.Mid(0, Root.Len()), Root))
             {
                 return false;
             }
@@ -133,12 +112,13 @@ namespace Lumina::AssetOps
 
     bool IsProtectedRoot(FStringView VirtualPath)
     {
-        return IEquals(VirtualPath, "/Game")
-            || IEquals(VirtualPath, "/Game/Content")
-            || IEquals(VirtualPath, "/Game/Scripts")
-            || IEquals(VirtualPath, "/Engine/Resources")
-            || IEquals(VirtualPath, "/Engine/Resources/Content")
-            || IEquals(VirtualPath, "/Engine/Resources/Scripts");
+        constexpr FStringView ProtectedRoots[] =
+        {
+            "/Game", "/Game/Content", "/Game/Scripts",
+            "/Engine/Resources", "/Engine/Resources/Content", "/Engine/Resources/Scripts",
+        };
+
+        return Algo::AnyOf(ProtectedRoots, [VirtualPath](FStringView Root) { return EqualsIgnoreCase(VirtualPath, Root); });
     }
 
     bool IsAssetLocation(FStringView VirtualPath)
@@ -260,7 +240,7 @@ namespace Lumina::AssetOps
         }
 
         // Moving a folder into itself would recurse forever, and the walk below cannot detect it after the fact.
-        if (VFS::IsDirectory(OldPath) && IsAtOrUnder(NewPath, *FString(OldPath.GetData(), OldPath.Len())))
+        if (VFS::IsDirectory(OldPath) && IsAtOrUnder(NewPath, OldPath))
         {
             return FPathOpResult::Fail("A folder cannot be moved inside itself.");
         }

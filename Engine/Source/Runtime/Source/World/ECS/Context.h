@@ -27,7 +27,7 @@ namespace Lumina::ECS
         FRegistryContext& operator = (const FRegistryContext&) = delete;
 
         FRegistryContext(FRegistryContext&& Other) noexcept
-            : Entries(std::move(Other.Entries))
+            : Entries(Move(Other.Entries))
         {
             Other.Entries.Reset();
         }
@@ -37,7 +37,7 @@ namespace Lumina::ECS
             if (this != &Other)
             {
                 Reset();
-                Entries = std::move(Other.Entries);
+                Entries = Move(Other.Entries);
                 Other.Entries.Reset();
             }
             return *this;
@@ -57,7 +57,7 @@ namespace Lumina::ECS
 
             Entry.Info = &FComponentTypeRegistry::Get().GetInfo(TypeID);
             Entry.Data = Memory::Malloc(sizeof(T), alignof(T));
-            return *Memory::ConstructAt(static_cast<T*>(Entry.Data), std::forward<TArgs>(Args)...);
+            return *Memory::ConstructAt(static_cast<T*>(Entry.Data), Forward<TArgs>(Args)...);
         }
 
         template<typename T>

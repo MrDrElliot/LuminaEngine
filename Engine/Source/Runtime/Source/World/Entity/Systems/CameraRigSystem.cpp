@@ -12,7 +12,7 @@
 
 namespace Lumina
 {
-    void SCameraRigSystem::Configure()
+    void CCameraRigSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
     }
@@ -47,22 +47,29 @@ namespace Lumina
             return Math::ToQuat(FMatrix3(R, U, F));
         }
 
-        static void ApplyWorldPose(STransformComponent& Xform, const FVector3& Location, const FQuat& Rotation)
+        // A settled rig leaves the transform unstamped so Changed<STransformComponent> readers skip it.
+        static void ApplyWorldPose(ECS::TMut<STransformComponent> XformMut, const FVector3& Location, const FQuat& Rotation)
         {
+            const FTransform Current = XformMut.Get().ComputeWorldTransform();
+            if (Math::IsNearlyEqual(Current.GetLocation(), Location) && Math::IsSameRotation(Current.GetRotation(), Rotation))
+            {
+                return;
+            }
+
             FTransform World;
             World.SetLocation(Location);
             World.SetRotation(Rotation);
-            World.SetScale(Xform.GetWorldScale());
-            Xform.SetWorldTransform(World);
+            World.SetScale(Current.GetScale());
+            XformMut.GetMut().SetWorldTransform(World);
         }
     }
 
-    bool SCameraRigSystem::HasWork(const SSystemContext&)
+    bool CCameraRigSystem::HasWork(const SSystemContext&)
     {
         return AnyQueryHasRows(Followers, SpringArms);
     }
 
-    void SCameraRigSystem::OnUpdate(const SSystemContext& Context)
+    void CCameraRigSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace CameraRigSystemInternal;
 
@@ -78,7 +85,7 @@ namespace Lumina
                 return;
             }
 
-            STransformComponent& Xform = XformMut.GetMut();
+            const STransformComponent& Xform = XformMut.Get();
             SCameraFollowComponent& Follow = FollowMut.GetMut();
             const FVector3 TargetPos = TargetXform->GetWorldLocation();
             const FQuat TargetRot = TargetXform->GetWorldRotation();
@@ -122,13 +129,13 @@ namespace Lumina
                 }
             }
 
-            ApplyWorldPose(Xform, Follow.CurrentPosition, Follow.CurrentRotation);
+            ApplyWorldPose(XformMut, Follow.CurrentPosition, Follow.CurrentRotation);
         });
 
         //~ Spring arm places the camera a collision-shortened distance behind the pivot.
         SpringArms.ForEach([&](ECS::FEntity Entity, ECS::TMut<SSpringArmComponent> ArmMut, ECS::TMut<STransformComponent> XformMut)
         {
-            STransformComponent& Xform = XformMut.GetMut();
+            const STransformComponent& Xform = XformMut.Get();
             SSpringArmComponent& Arm = ArmMut.GetMut();
             const ECS::FEntity Target = Arm.Target;
             const STransformComponent* TargetXform = Targets.TryGet<STransformComponent>(Target);
@@ -193,7 +200,7 @@ namespace Lumina
             }
 
             const FVector3 FinalPos = Arm.CurrentPivot + Back * Arm.CurrentArmLength + SocketWorld;
-            ApplyWorldPose(Xform, FinalPos, ControlRot);
+            ApplyWorldPose(XformMut, FinalPos, ControlRot);
         });
     }
 }

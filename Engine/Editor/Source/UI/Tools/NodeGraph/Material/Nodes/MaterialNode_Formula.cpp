@@ -800,7 +800,7 @@ namespace Lumina
     const FMaterialFormula& CMaterialExpression_ScreenDither::GetFormula() const
     {
         static constexpr FMaterialFormula Formula = { "Screen Dither", "Noise", "A fine per pixel pattern in 0..1 for dithering gradients and fades.", TSpan<const FMaterialFormulaPin>(), 1,
-            "float $ = frac(52.9829189 * frac(dot(Input.Position.xy, float2(0.06711056, 0.00583715))));",
+            "float $ = FixedInterleavedGradientNoise(Input.Position.xy);",
             {}, EMaterialFormulaLimit::PixelOnly };
         return Formula;
     }
@@ -1189,7 +1189,7 @@ namespace Lumina
     {
         static constexpr FMaterialFormulaPin Inputs[] = { { "Opacity", 1, 0.5f } };
         static constexpr FMaterialFormula Formula = { "Dither Fade", "Utility", "Turns Opacity into a dithered 0 or 1 per pixel, for fading masked materials without sorting.", Inputs, 1,
-            "float $ = step(frac(52.9829189 * frac(dot(Input.Position.xy, float2(0.06711056, 0.00583715)))), {Opacity});",
+            "float $ = step(FixedInterleavedGradientNoise(Input.Position.xy), {Opacity});",
             {}, EMaterialFormulaLimit::PixelOnly };
         return Formula;
     }

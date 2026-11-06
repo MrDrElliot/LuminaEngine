@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 
+#include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "World/ECS/Query.h"
+#include "World/World.h"
+#include "World/Entity/Systems/CameraRigSystem.h"
+#include "WorldTestAccess.h"
 
 using namespace Lumina;
 
@@ -31,9 +36,17 @@ namespace EntityChangeTrackingTestsInternal
         return Rows;
     }
 
+    template<typename T = FTrackedValue>
     bool HasChangedSince(const ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Since)
     {
-        return Registry.FindStorage(ECS::GetComponentTypeID<FTrackedValue>())->HasChangedSince(Entity, Since);
+        return Registry.FindStorage(ECS::GetComponentTypeID<T>())->HasChangedSince(Entity, Since);
+    }
+
+    ECS::FEntity CreatePlaced(ECS::FRegistry& Registry)
+    {
+        const ECS::FEntity Entity = Registry.Create();
+        Registry.Emplace<STransformComponent>(Entity).Bind(Registry, Entity);
+        return Entity;
     }
 
     // The rows whose index makes Expected true are exactly the ones reported changed since Since.
@@ -145,4 +158,50 @@ TEST(EntityChangeTracking, ChangedFilterSeesExactlyTheWrittenRows)
     ASSERT_EQ(Seen.Num(), 2);
     EXPECT_TRUE(Seen.Contains(Rows[2]));
     EXPECT_TRUE(Seen.Contains(Rows[6]));
+}
+
+TEST(EntityChangeTracking, SettledCameraRigLeavesItsTransformUnchanged)
+{
+    RegisterPendingTypes();
+    CWorld* World = NewObject<CWorld>(nullptr, FName("CameraRigChangeTestWorld"), FGuid::New(), OF_Transient);
+    TStrongObjectPtr<CWorld> WorldOwner = World;
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    Registry.Ctx().Emplace<CWorld*>(World);
+    Registry.TrackChanges<STransformComponent>();
+
+    const ECS::FEntity Target = CreatePlaced(Registry);
+    const ECS::FEntity Follower = CreatePlaced(Registry);
+    Registry.Emplace<SCameraFollowComponent>(Follower).Target = Target;
+    const ECS::FEntity Arm = CreatePlaced(Registry);
+    Registry.Emplace<SSpringArmComponent>(Arm).Target = Target;
+
+    CCameraRigSystem* System = NewObject<CCameraRigSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    System->SetOwningWorld(World);
+    System->ConfigureSystem();
+    System->OnStartup(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
+
+    auto Step = [&]
+    {
+        const uint32 Since = Registry.AdvanceChangeTick();
+        SSystemContext Context = FWorldTestAccess::SystemContext(*World);
+        Context.DeltaTime = 0.1;
+        System->OnUpdate(Context);
+        return Since;
+    };
+    auto ExpectRigsChanged = [&](uint32 Since, bool bExpected)
+    {
+        EXPECT_EQ(HasChangedSince<STransformComponent>(Registry, Follower, Since), bExpected) << "follower";
+        EXPECT_EQ(HasChangedSince<STransformComponent>(Registry, Arm, Since), bExpected) << "spring arm";
+    };
+
+    ExpectRigsChanged(Step(), true);
+    ExpectRigsChanged(Step(), false);
+
+    Registry.Get<STransformComponent>(Target).SetLocation(FVector3(5.0f, 0.0f, 0.0f));
+    ExpectRigsChanged(Step(), true);
+    EXPECT_GT(Registry.Get<STransformComponent>(Follower).GetWorldLocation().x, 0.0f) << "the follower lags toward the moved target";
+    EXPECT_NEAR(Registry.Get<STransformComponent>(Arm).GetWorldLocation().x, 5.0f, 1e-4f) << "the arm pivot has no lag by default";
+
+    System->OnTeardown(SExclusiveContext(FWorldTestAccess::SystemContext(*World)));
+    System->SetOwningWorld(nullptr);
 }

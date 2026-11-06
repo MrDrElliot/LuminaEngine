@@ -5,8 +5,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/Package/Package.h"
-#include "Assets/AssetTypes/Material/MaterialInterface.h"
-#include "Assets/AssetTypes/Mesh/Mesh.h"
+#include "ImGuizmo.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/EditorTool.h"
 #include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
@@ -76,6 +75,8 @@ namespace Lumina
         {
             return Cast<T>(Asset.Get());
         }
+
+        static void DrawGizmoOperationCombo(ImGuizmo::OPERATION& InOutOp);
 
         TStrongObjectPtr<CObject>   Asset;
         mutable FFixedString        AssetVirtualPath;

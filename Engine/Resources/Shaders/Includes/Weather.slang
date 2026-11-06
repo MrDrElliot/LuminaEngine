@@ -8,7 +8,7 @@
 // Integer hashed so neighboring cells agree exactly on their shared corners, which the sine hash cannot promise.
 float WeatherCellValue(int2 Cell)
 {
-    return float(WeatherHash(uint(Cell.x) * 1597334677u ^ uint(Cell.y) * 3812015801u) >> 8u) * (1.0 / 16777216.0);
+    return float(PCGHash(uint(Cell.x) * 1597334677u ^ uint(Cell.y) * 3812015801u) >> 8u) * (1.0 / 16777216.0);
 }
 
 float WeatherValueNoise(float2 P)
@@ -149,7 +149,7 @@ FRainDrop EvaluateRainDrop(FWeatherData W, uint Index, float3 Camera)
     const float3 U         = float3(WeatherRandom(Seed), WeatherRandom(Seed), WeatherRandom(Seed));
     const float  SizeRand  = WeatherRandom(Seed);
     const float  WindRand  = WeatherRandom(Seed);
-    const float  SwayPhase = WeatherRandom(Seed) * 6.2831853;
+    const float  SwayPhase = WeatherRandom(Seed) * TWO_PI;
 
     const float Tile      = W.Motion.w;
     const float SizeScale = max(1.0 + (SizeRand * 2.0 - 1.0) * W.RainDrops.w * 0.6, 0.2);
@@ -182,7 +182,7 @@ FRainDrop EvaluateSnowFlake(FWeatherData W, uint Index, float3 Camera)
     const float3 U        = float3(WeatherRandom(Seed), WeatherRandom(Seed), WeatherRandom(Seed));
     const float  SizeRand = WeatherRandom(Seed);
     const float  WindRand = WeatherRandom(Seed);
-    const float  Phase    = WeatherRandom(Seed) * 6.2831853;
+    const float  Phase    = WeatherRandom(Seed) * TWO_PI;
     const float  Rate     = 0.6 + 0.9 * WeatherRandom(Seed);
 
     const float Tile      = W.SnowLook.w;
@@ -242,7 +242,7 @@ float2 RainRipples(float2 Position, float Time, float Rain)
         const float2 Cell = floor(Q);
         const float2 F    = Q - Cell;
 
-        uint Seed = WeatherHash(asuint(Cell.x) * 1973u ^ asuint(Cell.y) * 9277u ^ uint(Layer) * 26699u);
+        uint Seed = PCGHash(asuint(Cell.x) * 1973u ^ asuint(Cell.y) * 9277u ^ uint(Layer) * 26699u);
         const float2 Center = 0.25 + 0.5 * float2(WeatherRandom(Seed), WeatherRandom(Seed));
         const float  Phase  = WeatherRandom(Seed);
         const float  Active = WeatherRandom(Seed);
@@ -256,7 +256,7 @@ float2 RainRipples(float2 Position, float Time, float Rain)
         const float2 Delta  = F - Center;
         const float  Dist   = length(Delta);
         const float  X      = (Dist - Radius) * 34.0;
-        const float  Wave   = abs(X) < 3.14159 ? sin(X) : 0.0;
+        const float  Wave   = abs(X) < PI ? sin(X) : 0.0;
         const float  Fade   = (1.0 - Age) * (1.0 - Age);
         Slope += (Delta / max(Dist, 1e-4)) * (Wave * Fade);
     }
@@ -334,7 +334,7 @@ void ApplyWeatherSurface(inout FGBufferData G, float3 WorldPos, float3 GeoNormal
     if (Steep > 0.0 && W.Surface2.y > 0.0)
     {
         const float3 Across = normalize(cross(float3(0.0, 1.0, 0.0), GeoNormal) + float3(1e-5, 0.0, 0.0));
-        uint Seed = WeatherHash(asuint(floor(dot(WorldPos, Across) * 14.0)));
+        uint Seed = PCGHash(asuint(floor(dot(WorldPos, Across) * 14.0)));
         const float Column = WeatherRandom(Seed);
         const float Flow   = frac(WorldPos.y * 0.7 + Time * (0.3 + 0.6 * Column) + Column * 7.0);
         const float Rivulet = smoothstep(0.7, 1.0, Flow) * step(0.5, Column) * (0.4 + 0.6 * Rain);
@@ -351,7 +351,7 @@ void ApplyWeatherSurface(inout FGBufferData G, float3 WorldPos, float3 GeoNormal
     // Porous rough dielectrics drink water and darken into richer color, smooth metals only gain a film.
     const float  Porosity = saturate((G.Roughness - 0.2) * 1.6) * (1.0 - G.Metallic);
     const float3 Soaked   = G.BaseColor * lerp(0.85, 0.4, Porosity);
-    const float  SoakedLuma = dot(Soaked, float3(0.2126, 0.7152, 0.0722));
+    const float  SoakedLuma = Luminance(Soaked);
     const float3 Saturated  = max(lerp(SoakedLuma.xxx, Soaked, 1.0 + 0.35 * Porosity), 0.0);
     G.BaseColor = lerp(G.BaseColor, Saturated, Wet);
     // Porous stone drinks the water rather than wearing a film, so it darkens and only smooth surfaces turn glossy.

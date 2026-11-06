@@ -25,6 +25,7 @@ namespace Lumina
 
     using Containers::CompareIgnoreCase;
     using Containers::EqualsIgnoreCase;
+    using Containers::EndsWithIgnoreCase;
 
     using FWString                                  = Containers::TBasicString<wchar_t>;
     using FFixedWString                             = Containers::TBasicString<wchar_t, 255>;

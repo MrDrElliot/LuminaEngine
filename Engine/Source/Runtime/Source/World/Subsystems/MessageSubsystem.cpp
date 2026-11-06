@@ -2,6 +2,8 @@
 #include "World/Subsystems/MessageSubsystem.h"
 
 #include "Core/Object/Class.h"
+#include "HierarchicalTags/GameplayMessageBus.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -15,10 +17,13 @@ namespace Lumina
         }
     }
 
+    CMessageSubsystem::CMessageSubsystem() = default;
+    CMessageSubsystem::~CMessageSubsystem() = default;
+
     void CMessageSubsystem::OnInitialize()
     {
         CWorld* World = GetWorld();
-        Bus.Emplace(World->GetEntityRegistry(), World->GetCommandBus());
+        Bus = MakeUnique<FGameplayMessageBus>(World->GetEntityRegistry(), World->GetCommandBus());
     }
 
     void CMessageSubsystem::OnUpdate(float DeltaTime)
@@ -51,7 +56,7 @@ namespace Lumina
         Params.Match    = bExactMatch ? EHierarchicalTagMatch::Exact : EHierarchicalTagMatch::Partial;
         Params.Invoke   = &InvokeManagedListener;
         Params.Context  = reinterpret_cast<void*>(Listener.Token);
-        Params.Destroy  = &Scripting::FreeManagedHandle;
+        Params.Destroy  = &DotNet::FreeManagedHandle;
         Params.bManaged = true;
         return Bus->Subscribe(Params);
     }
@@ -80,7 +85,7 @@ namespace Lumina
         {
             if (Payload.Kind == EGameplayMessagePayload::Managed)
             {
-                Scripting::FreeManagedHandle(Data);
+                DotNet::FreeManagedHandle(Data);
             }
             return;
         }

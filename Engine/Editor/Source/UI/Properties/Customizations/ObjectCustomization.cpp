@@ -201,19 +201,9 @@ namespace Lumina
                 ImGui::EndCombo();
             }
         
-            FEditorUI* EditorUI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
-
             // Outside the disabled block, since this is most useful exactly when the slot is empty.
-            const FAssetData* BrowserSelection = EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedAsset() : nullptr;
-            bool bSelectionFits = false;
-            if (BrowserSelection != nullptr)
-            {
-                CClass* SelectedClass = FindObject<CClass>(BrowserSelection->AssetClass);
-                bSelectionFits = SelectedClass != nullptr && SelectedClass->IsChildOf(ObjectProperty->GetPropertyClass());
-            }
-
-            ImGui::BeginDisabled(!bSelectionFits);
-            if (ImGui::Button(LE_ICON_ARROW_LEFT_CIRCLE "##UseSelected", AssetPickerFilter::kButtonSize))
+            const FAssetData* BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(ObjectProperty->GetPropertyClass());
+            if (AssetPickerFilter::DrawUseSelectedButton(BrowserSelection != nullptr, "Select a compatible asset in the Content Browser to use it here."))
             {
                 if (CObject* Loaded = LoadObject<CObject>(BrowserSelection->AssetGUID))
                 {
@@ -221,28 +211,15 @@ namespace Lumina
                     bWasChanged = true;
                 }
             }
-            ImGui::EndDisabled();
 
-            ImGuiX::TextTooltip("{}", bSelectionFits
-                ? "Use the asset selected in the Content Browser."
-                : "Select a compatible asset in the Content Browser to use it here.");
+            ImGui::SameLine();
+
+            const FString PackageName = HardObject && HardObject->GetPackage() ? HardObject->GetPackage()->GetName().ToString() : FString();
+            AssetPickerFilter::DrawBrowseButton(FStringView(*PackageName, PackageName.Len()));
 
             ImGui::SameLine();
 
             ImGui::BeginDisabled(Object == nullptr);
-
-            // Reveal in the Content Browser, the inverse of the button above.
-            if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", AssetPickerFilter::kButtonSize))
-            {
-                if (HardObject && HardObject->GetPackage() && EditorUI != nullptr)
-                {
-                    const FString PackageName = HardObject->GetPackage()->GetName().ToString();
-                    EditorUI->BrowseToAsset(FStringView(*PackageName, PackageName.Len()));
-                }
-            }
-            ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");
-
-            ImGui::SameLine();
 
             if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", AssetPickerFilter::kButtonSize))
             {
@@ -250,19 +227,12 @@ namespace Lumina
             }
 
             ImGui::SameLine();
-        
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
 
-            if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##Clear", AssetPickerFilter::kButtonSize))
+            if (AssetPickerFilter::DrawClearButton("Clear the reference."))
             {
                 Object.Reset();
                 bWasChanged = true;
             }
-        
-            ImGui::PopStyleColor(3);
-
 
             ImGui::EndDisabled();
             ImGui::EndGroup();

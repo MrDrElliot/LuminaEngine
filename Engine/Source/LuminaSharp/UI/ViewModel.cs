@@ -7,16 +7,12 @@ namespace LuminaSharp;
 
 public abstract class ViewModel
 {
-    /// <summary>The live binding, or null while the model is not registered. Set by <see cref="UIDataModel"/>.</summary>
+    // Null while the model is not registered; set by UIDataModel.
     internal UIDataModel? Binding;
 
-    /// <summary>True once this view-model is bound to a document and pushing changes to the view.</summary>
     public bool IsBound => Binding != null && Binding.IsValid;
 
-    /// <summary>
-    /// Setter helper for a bound property: assigns the backing field and, if the value actually changed,
-    /// pushes it to the view. Use it in property setters: <c>set =&gt; Set(ref _field, value);</c>.
-    /// </summary>
+    // Pushes to the view only when the value changed, as in set => Set(ref _field, value).
     protected void Set<T>(ref T Field, T Value, [CallerMemberName] string Name = "")
     {
         if (EqualityComparer<T>.Default.Equals(Field, Value))
@@ -27,17 +23,13 @@ public abstract class ViewModel
         Binding?.OnPropertyChanged(Name);
     }
 
-    /// <summary>
-    /// Force a refresh of one bound property by name (for computed values, or fields mutated without
-    /// <see cref="Set{T}"/>). Defaults to the calling property.
-    /// </summary>
+    // For computed values or fields mutated without Set.
     protected void NotifyChanged([CallerMemberName] string Name = "")
     {
         Binding?.OnPropertyChanged(Name);
     }
 
-    /// <summary>Re-push every bound property to the view. Cheap for a handful of variables; prefer
-    /// <see cref="Set{T}"/> (push-on-change) over calling this every frame to avoid needless work.</summary>
+    // Prefer the push-on-change Set over calling this every frame.
     public void Refresh()
     {
         Binding?.PushAll();

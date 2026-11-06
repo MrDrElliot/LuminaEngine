@@ -3,10 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// Base for the generated opaque wrappers around native CObjects. Identifies the object by its object-array
-/// index + generation, and the canonical wrapper also owns a strong reference, as a TStrongObjectPtr would.
-/// </summary>
+// Base for generated CObject wrappers, identified by object-array index and generation; the canonical wrapper holds a strong reference.
 public unsafe class NativeObject : IDisposable
 {
     private IntPtr RawHandle;            // pointer captured at construction; the fallback when untracked
@@ -33,8 +30,7 @@ public unsafe class NativeObject : IDisposable
     {
     }
 
-    /// <summary>Pairs this wrapper with its native CObject after construction. Used by the Scriptable hosting
-    /// path, which creates the native object first, then binds the managed instance to it.</summary>
+    // The Scriptable hosting path creates the native object first, then binds the managed instance here.
     internal void BindNativeHandle(IntPtr Handle)
     {
         RawHandle = Handle;
@@ -86,7 +82,6 @@ public unsafe class NativeObject : IDisposable
         References?.Release();
     }
 
-    /// <summary>True while the native CObject this wraps is still alive. </summary>
     public bool IsValid
     {
         get
@@ -104,35 +99,17 @@ public unsafe class NativeObject : IDisposable
         }
     }
 
-    /// <summary>True once this wrapper has been paired with a native object at all.
-    /// <para>A <c>[Property]</c> accessor is a view over native bytes, so it has nothing to read
-    /// before the pairing happens -- and there IS a moment before it: the schema pass Activator-creates one
-    /// unbound instance per script type purely to describe the type to the engine. The generated accessors
-    /// gate on this so that pass reads defaults instead of dereferencing a null handle.</para></summary>
+    // False during the schema pass, whose unbound instances must read defaults instead of a null handle.
     protected internal bool HasNativeStorage => ObjectIndex >= 0 || RawHandle != IntPtr.Zero;
 
-    /// <summary>
-    /// Writes this type's declared <c>[Property]</c> initializers into whatever native object this wrapper is
-    /// bound to. Overridden by generated code (see ScriptPropertyRewriter) and called by the engine exactly
-    /// once, against the class default object; every instance is then copied from that.
-    ///
-    /// It is not a constructor for a reason: the managed wrapper is created lazily, AFTER a loaded object
-    /// already holds its authored values, so assigning there would overwrite them with the declared default.
-    /// </summary>
+    // Not a constructor because the wrapper is created lazily, after a loaded object already holds its authored values.
     protected virtual void __ApplyScriptDefaults()
     {
     }
 
-    // Plain protected on the virtual, so a script assembly overrides it the same way whether or not it is
-    // a friend of this one; the engine reaches it through this wrapper.
+    // The virtual stays plain protected so any script assembly can override it; the engine calls through here.
     internal void ApplyScriptDefaults() => __ApplyScriptDefaults();
 
-    /// <summary>The live native pointer. Throws <see cref="InvalidOperationException"/> if the object has
-    /// been destroyed; every generated accessor reads through here, so touching a dead reference fails
-    /// loudly rather than corrupting memory. (An object the array doesn't track falls back to the raw
-    /// pointer, preserving the old behavior.)
-    /// <para>protected, not internal: a user script is a subclass in ANOTHER assembly, and the accessors
-    /// ScriptPropertyRewriter emits for it read through here.</para></summary>
     // The names generated accessors read through, shared with struct handles so one emitter serves both.
     protected internal IntPtr Self => Handle;
 
@@ -207,7 +184,6 @@ public unsafe class NativeObject : IDisposable
             "for example a deleted asset or a torn-down world.");
     }
 
-    /// <summary>Throws <see cref="InvalidOperationException"/> if the object has been destroyed.</summary>
     public void ThrowIfInvalid()
     {
         _ = Handle;

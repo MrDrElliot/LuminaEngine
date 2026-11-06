@@ -116,7 +116,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     if (Raw > 0.0 && Pass().ToSun.y > 0.0)
     {
         const float2 UV = (float2(Pixel) + 0.5) / float2(Pass().ScreenSize);
-        const float3 P  = ReconstructWorldPos(UV, Raw, GetInverseCameraProjection(), GetInverseCameraView());
+        const float3 P  = ReconstructWorldPos(UV, Raw);
         const float  ViewDistance = length(P - GetCameraPosition());
 
         [loop]

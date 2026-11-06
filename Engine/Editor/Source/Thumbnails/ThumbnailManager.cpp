@@ -441,12 +441,25 @@ namespace Lumina
         }
     }
 
-    CThumbnailManager::FThumbnailRendererFn* CThumbnailManager::FindRenderer(CClass* AssetClass)
+    void CThumbnailManager::CompleteRequest(const FRenderRequest& Request, bool bCaptured, FPackageThumbnail& Captured)
+    {
+        if (bCaptured)
+        {
+            ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
+            UploadAndStore(Request.Package, Captured);
+        }
+        else
+        {
+            SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);
+        }
+    }
+
+    template<typename TFn>
+    static TFn* FindInClassHierarchy(THashMap<CClass*, TFn>& Map, CClass* AssetClass)
     {
         for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
         {
-            auto It = ThumbnailRenderers.Find(Klass);
-            if (It != nullptr)
+            if (auto It = Map.Find(Klass))
             {
                 return &(*It);
             }
@@ -454,17 +467,14 @@ namespace Lumina
         return nullptr;
     }
 
+    CThumbnailManager::FThumbnailRendererFn* CThumbnailManager::FindRenderer(CClass* AssetClass)
+    {
+        return FindInClassHierarchy(ThumbnailRenderers, AssetClass);
+    }
+
     CThumbnailManager::FThumbnailPainterFn* CThumbnailManager::FindPainter(CClass* AssetClass)
     {
-        for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
-        {
-            auto It = ThumbnailPainters.Find(Klass);
-            if (It != nullptr)
-            {
-                return &(*It);
-            }
-        }
-        return nullptr;
+        return FindInClassHierarchy(ThumbnailPainters, AssetClass);
     }
 
     bool CThumbnailManager::CanGenerateFor(CClass* AssetClass)
@@ -492,13 +502,13 @@ namespace Lumina
             return false;
         }
 
-        // ONE preview world is reused, since a scene per thumbnail made browsing a folder feel locked up.
+        // One preview world is reused, since a scene per thumbnail made browsing a folder feel locked up.
         if (!AcquireScene())
         {
             return false;
         }
 
-        // This path BLOCKS, so an in-flight browser capture must be collected before the target is reused.
+        // This path waits on the GPU, so an in-flight browser capture must be collected before the target is reused.
         FlushPendingCapture();
 
         PersistentScene->ResetContents();
@@ -544,16 +554,7 @@ namespace Lumina
         }
 
         FPackageThumbnail Captured;
-        if (PersistentScene != nullptr && PersistentScene->WaitAndFinishCapture(Captured))
-        {
-            ThumbnailCache::Save(PendingRequest.GUID, PendingRequest.ContentHash, Captured);
-            UploadAndStore(PendingRequest.Package, Captured);
-        }
-        else
-        {
-            SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
-        }
-
+        CompleteRequest(PendingRequest, PersistentScene != nullptr && PersistentScene->WaitAndFinishCapture(Captured), Captured);
         ClearPendingRequest();
     }
 
@@ -580,20 +581,12 @@ namespace Lumina
             }
             else if (!PersistentScene->IsCaptureReady())
             {
-                return;                       // still on the GPU, do NOT wait for it
+                return;                       // still on the GPU, so check again next frame
             }
             else
             {
                 FPackageThumbnail Captured;
-                if (PersistentScene->FinishCapture(Captured))
-                {
-                    ThumbnailCache::Save(PendingRequest.GUID, PendingRequest.ContentHash, Captured);
-                    UploadAndStore(PendingRequest.Package, Captured);
-                }
-                else
-                {
-                    SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
-                }
+                CompleteRequest(PendingRequest, PersistentScene->FinishCapture(Captured), Captured);
                 ClearPendingRequest();
             }
         }
@@ -691,20 +684,12 @@ namespace Lumina
             if (FThumbnailPainterFn* Painter = FindPainter(Asset->GetClass()))
             {
                 FPackageThumbnail Captured;
-                if ((*Painter)(Asset, ThumbnailUtils::kThumbnailResolution, Captured))
-                {
-                    ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
-                    UploadAndStore(Request.Package, Captured);
-                }
-                else
-                {
-                    SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);
-                }
+                CompleteRequest(Request, (*Painter)(Asset, ThumbnailUtils::kThumbnailResolution, Captured), Captured);
                 ++Rendered;
                 continue;
             }
 
-            // Rendered classes submit here and complete on a LATER frame.
+            // Rendered classes submit here and complete on a later frame.
             if (BeginThumbnailRender(Asset))
             {
                 PendingRequest     = Request;

@@ -78,7 +78,7 @@ namespace Lumina::ECS
             {
                 const FEntity Moved = Keys[Last];
                 Keys[Dense] = Moved;
-                Values[Dense] = std::move(Values[Last]);
+                Values[Dense] = Move(Values[Last]);
                 Pages[Moved.GetIndex() / PageSize][Moved.GetIndex() % PageSize] = FEntity(Dense, Moved.GetVersion());
             }
             Pages[Removed.GetIndex() / PageSize][Removed.GetIndex() % PageSize] = NullEntity;

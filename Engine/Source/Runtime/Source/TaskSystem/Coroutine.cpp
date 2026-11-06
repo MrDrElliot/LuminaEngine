@@ -60,13 +60,13 @@ namespace Lumina::CoroDetail
         {
             return false;
         }
-        Continuations.Add(std::move(Callback));
+        Continuations.Add(Move(Callback));
         return true;
     }
 
     void FCoroutineState::ContinueWith(TMoveOnlyFunction<void()>&& Callback)
     {
-        if (!TryContinueWith(std::move(Callback)))
+        if (!TryContinueWith(Move(Callback)))
         {
             Callback();
         }
@@ -127,7 +127,7 @@ namespace Lumina::CoroDetail
     {
         {
             TScopeLock Guard(Lock);
-            AwaitedChildren = std::move(InChildren);
+            AwaitedChildren = Move(InChildren);
         }
 
         // A cancel that landed before the children were known still has to reach them.
@@ -154,7 +154,7 @@ namespace Lumina::CoroDetail
         {
             TScopeLock Guard(Lock);
             Status.store(Final, std::memory_order_release);
-            Run = std::move(Continuations);
+            Run = Move(Continuations);
             Continuations.Reset();
             AwaitedChildren.Reset();
         }
@@ -174,7 +174,7 @@ namespace Lumina::CoroDetail
     void SuspendLatent(FCoroutineState& State, FLatentWaitSpec&& Spec, uint32 Serial)
     {
         ASSERT(State.GetWorld() != nullptr, "A latent wait needs a world. Pass a CWorld*, or an object with GetWorld(), as the coroutine's first parameter.");
-        State.GetWorld()->GetTimers()->GetCoroutineManager().Suspend(State, std::move(Spec), Serial);
+        State.GetWorld()->GetTimers()->GetCoroutineManager().Suspend(State, Move(Spec), Serial);
     }
 
     namespace
@@ -188,12 +188,12 @@ namespace Lumina::CoroDetail
 
     void ScheduleOnTask(FResumeTarget Target, Jobs::EJobPriority Priority)
     {
-        Jobs::Spawn(Priority, &ResumeOnWorker, std::move(Target));
+        Jobs::Spawn(Priority, &ResumeOnWorker, Move(Target));
     }
 
     void ScheduleOnGameThread(FResumeTarget Target)
     {
-        MainThread::Enqueue([Target = std::move(Target)]() { Target(); });
+        MainThread::Enqueue([Target = Move(Target)]() { Target(); });
     }
 
     bool IsOnGameThread()

@@ -2,6 +2,7 @@
 #ifdef _WIN32
 
 #include "PlatformFilesystem.h"
+#include "Paths/Paths.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -1105,11 +1106,7 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        FStringView Trimmed = Path;
-        while (Trimmed.Len() > 1 && (Trimmed.Last() == '/' || Trimmed.Last() == '\\'))
-        {
-            Trimmed.RemoveSuffix(1);
-        }
+        const FStringView Trimmed = Paths::TrimTrailingSeparators(Path);
 
         if (!IsDirectory(Trimmed))
         {

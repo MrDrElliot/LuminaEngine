@@ -288,7 +288,7 @@ namespace Lumina
         }
 
         // Built now rather than on the next system tick so the shape is visible under the cursor immediately.
-        SBlockoutSystem::Rebuild(Shape, Mesh, bCreateCollision);
+        CBlockoutSystem::Rebuild(Shape, Mesh, bCreateCollision);
 
         if (Context != nullptr)
         {

@@ -50,10 +50,6 @@ namespace Lumina
         });
     }
 
-    void FTextureStreamingEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FTextureStreamingEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("What this shows",

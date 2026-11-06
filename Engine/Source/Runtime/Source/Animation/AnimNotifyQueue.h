@@ -11,6 +11,7 @@ namespace Lumina
     namespace ECS
     {
         class FCommandBus;
+        class FRegistry;
     }
 
     struct SSystemContext;

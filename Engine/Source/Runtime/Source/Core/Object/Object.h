@@ -41,21 +41,13 @@ namespace Lumina
 
         RUNTIME_API virtual void Serialize(FArchive& Ar);
 
-        /**
-         * Object references this type holds in state reflection cannot describe, such as an ECS registry.
-         *
-         * Overriding this is how a type takes part in reinstancing and reference replacement without either
-         * of them knowing it exists. The reflected properties are walked already; add only what they miss.
-         */
+        // Reports references reflection cannot see, such as an ECS registry, so reinstancing and replacement reach them too.
         RUNTIME_API virtual void VisitAdditionalObjectReferences(FObjectReferenceVisitor::FSlotFunc Func) {}
 
-        /** Structured-archive serialize (packaging, network). */
         RUNTIME_API virtual void SerializeStructured(IStructuredArchive::FRecord& Record);
 
-        /** Called after constructor + property init. */
         RUNTIME_API virtual void PostInitProperties();
 
-        /** Called after the CDO is created. */
         RUNTIME_API virtual void PostCreateCDO() {}
 
         RUNTIME_API virtual bool IsAsset() const { return false; }
@@ -63,12 +55,9 @@ namespace Lumina
         RUNTIME_API virtual void PreLoad() {}
         RUNTIME_API virtual void PostLoad() {}
 
-        /** Called immediately before this object is serialized into a package being saved. Last chance to
-         *  make derived or streamed-out state resident: anything still on disk when Serialize runs is
-         *  written back as empty. Runs on the saving thread and may block on IO. */
+        // Last chance to make streamed-out state resident, since anything still on disk at Serialize is saved empty.
         RUNTIME_API virtual void PreSave() {}
 
-        /** Property modified externally (e.g. editor). */
         RUNTIME_API virtual void PostPropertyChange(FProperty* ChangedProperty) {}
 
         // A reference sweep (delete, replace) rewrote at least one object this one points at, so state derived from it is stale.
@@ -79,12 +68,10 @@ namespace Lumina
 
         RUNTIME_API virtual bool Rename(const FName& NewName, CPackage* NewPackage = nullptr);
 
-        /** Templates a new object from this one; copies reflected properties only. */
+        // Copies reflected properties only.
         RUNTIME_API CObject* Duplicate();
 
-        /** Copies reflected properties onto Other. Remap, when supplied, rewrites any object reference
-         *  that lands in it -- pass the source -> copy table when duplicating a whole package, or the
-         *  copy keeps pointing at the source's sub-objects. References outside the table stay as-is. */
+        // Remap rewrites references into a duplicated package, or the copy keeps pointing at the source's sub-objects.
         RUNTIME_API void CopyPropertiesTo(CObject* Other, const THashMap<CObject*, CObject*>* Remap = nullptr);
         
     private:

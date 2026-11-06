@@ -15,6 +15,7 @@
 #include "Core/Serialization/Archiver.h"
 #include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/ParallelSort.h"
+#include "TaskSystem/TaskSystem.h"
 #include "UI/Tools/EditorToolContext.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"

@@ -3,6 +3,7 @@
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Containers/StringFormat.h"
+#include "GUID/GUID.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <chrono>
 #include <thread>
@@ -24,8 +25,8 @@ namespace
                 Root.LeftChopInline(1);
             }
 
-            Root.Append("/LuminaFilesystemTests");
-            RemoveTree(Root);
+            // Unique per test so parallel test runs never share or delete each other's folder.
+            Root.Append(Format("/LuminaFilesystemTests_{}", FGuid::New()));
             ASSERT_TRUE(MakeDirectoryTree(Root));
         }
 

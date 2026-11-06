@@ -28,11 +28,8 @@ namespace Lumina::VFS
         FFixedString Key(Path.GetData(), Path.Len());
         Paths::Normalize(Key);
 
-        // Strip a single trailing slash so "/A/" and "/A" map to the same key.
-        if (Key.Len() > 1 && Key.Last() == '/')
-        {
-            Key.LeftChopInline(1);
-        }
+        // So "/A/" and "/A" map to the same key.
+        Key.SetLen(Paths::TrimTrailingSeparators(Key).Len());
 
         return Key;
     }

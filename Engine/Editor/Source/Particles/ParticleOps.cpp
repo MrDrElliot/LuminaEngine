@@ -14,8 +14,6 @@
 #include "UI/Tools/EditorAssetActions.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
 
-#include <cctype>
-
 namespace Lumina
 {
     FParticleEmitterCompileJob::FParticleEmitterCompileJob() = default;
@@ -27,24 +25,6 @@ namespace Lumina::ParticleOps
     namespace
     {
         constexpr FStringView ModuleClassPrefix = "CParticleModule_";
-
-        bool EqualsIgnoreCase(FStringView A, FStringView B)
-        {
-            if (A.Len() != B.Len())
-            {
-                return false;
-            }
-
-            for (int32 Index = 0; Index < A.Len(); ++Index)
-            {
-                if (std::tolower((unsigned char)A[Index]) != std::tolower((unsigned char)B[Index]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
 
         CParticleEmitter* EmitterAt(CParticleSystem* System, int32 EmitterIndex)
         {
@@ -512,7 +492,7 @@ namespace Lumina::ParticleOps
     {
         for (EParticleModuleStage Stage : AllStages)
         {
-            if (EqualsIgnoreCase(Name, StageName(Stage)))
+            if (StageName(Stage).EqualsIgnoreCase(Name))
             {
                 OutStage = Stage;
                 return true;

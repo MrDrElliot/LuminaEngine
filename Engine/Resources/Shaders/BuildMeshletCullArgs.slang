@@ -41,6 +41,8 @@ struct FBuildMeshletCullArgsArgs
     uint  _Pad2;
 
     GPUSpan<FRenderBucket>                   Buckets;
+    // BuildDrawPrefix's totals, slot 2 the reservation sum and slot 8 the list size a short bucket asks for.
+    GPUSpan<uint>                            Totals;
     // One workgroup per written block, Y-folded exactly as BuildDrawPrefix folds the block dispatch.
     GPUSpan<FMeshletCullDispatch>            OutCullDispatchArgs;
     // [(bucket * MESHLET_SLICE_COUNT + slice) * SubDrawsPerSlice + subdraw]
@@ -153,6 +155,14 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
         const uint Written = min(Bucket.DrawCursor, Bucket.DrawCapacity);
         const uint Start   = Bucket.SliceBase[Slice];
+
+        // A bucket its survivors outgrew asks for the list that would have fit them at its share, which the readback then grows toward.
+        if (Bucket.DrawCursor > Bucket.DrawCapacity && Bucket.DrawDemand > 0u && Pass().Totals.Contains(8u))
+        {
+            // Capped per cycle, since one starved bucket must not ask for a list the whole scene could never fill.
+            const double Needed = min((double)Bucket.DrawCursor / (double)Bucket.DrawDemand, 4.0) * (double)Pass().Totals.Get(2u);
+            InterlockedMax(Pass().Totals.At(8u)[0], (uint)min(Needed, 4294967295.0));
+        }
         Bucket.SliceCount[Slice] = (Written > Start) ? (Written - Start) : 0u;
 
         // Single-phase passes draw the whole region and run after both phases, so it is derived here.

@@ -13,7 +13,7 @@ namespace Lumina
     class CWeatherPreset;
 
     REFLECT()
-    class RUNTIME_API SWeatherSystem : public CEntitySystem
+    class RUNTIME_API CWeatherSystem : public CEntitySystem
     {
         GENERATED_BODY()
 

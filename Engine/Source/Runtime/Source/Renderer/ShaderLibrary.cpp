@@ -3,6 +3,7 @@
 #include "ShaderCompiler.h"
 #include "ShaderPaths.h"
 #include "FileSystem/FileSystem.h"
+#include "Memory/Memcpy.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
 
@@ -409,8 +410,8 @@ namespace Lumina
             {
                 const bool bIdentical = Existing->Type == Type
                                      && Existing->Spirv.Num() == Spirv.Num()
-                                     && std::memcmp(Existing->Spirv.GetData(), Spirv.GetData(),
-                                                    Spirv.Num() * sizeof(uint32)) == 0;
+                                     && Memory::Memcmp(Existing->Spirv.GetData(), Spirv.GetData(),
+                                                       Spirv.Num() * sizeof(uint32)) == 0;
                 if (bIdentical)
                 {
                     // The bytecode is unchanged, so every pipeline built from this entry stays valid.

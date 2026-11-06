@@ -45,7 +45,7 @@ namespace Lumina
         // Grows a list with placeholder rows or trims it, so a data-for can be previewed at any length.
         void ResizeDesignRows(FUIDesignList& List, int32 Count)
         {
-            Count = std::max(0, Count);
+            Count = Math::Max(0, Count);
             while (List.Rows.Num() > Count)
             {
                 List.Rows.Pop();
@@ -175,7 +175,7 @@ namespace Lumina
         TVector<FUIDesignModel> Inferred;
         for (const FString& Name : Bindings.Models)
         {
-            const bool bSeen = std::any_of(DesignModels.begin(), DesignModels.end(), [&Name](const FUIDesignModel& Model) { return Model.Name == Name; });
+            const bool bSeen = Algo::Contains(DesignModels, Name, &FUIDesignModel::Name);
             if (bSeen || Name.IsEmpty())
             {
                 continue;

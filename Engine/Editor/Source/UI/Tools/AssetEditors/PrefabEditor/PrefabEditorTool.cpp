@@ -1351,17 +1351,7 @@ namespace Lumina
 
         if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo"))
         {
-            const char* Ops[] = { "Translate", "Rotate", "Scale" };
-            int Current = (GuizmoOp == ImGuizmo::TRANSLATE) ? 0 : (GuizmoOp == ImGuizmo::ROTATE ? 1 : 2);
-            if (ImGui::Combo("##GizmoOp", &Current, Ops, IM_ARRAYSIZE(Ops)))
-            {
-                switch (Current)
-                {
-                case 0: GuizmoOp = ImGuizmo::TRANSLATE; break;
-                case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
-                case 2: GuizmoOp = ImGuizmo::SCALE;     break;
-                }
-            }
+            DrawGizmoOperationCombo(GuizmoOp);
 
             const char* Modes[] = { "World", "Local" };
             int ModeIdx = (GuizmoMode == ImGuizmo::WORLD) ? 0 : 1;

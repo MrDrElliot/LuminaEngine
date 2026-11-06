@@ -24,7 +24,7 @@ float3 PixelWorldPosition(int2 Pixel, uint2 Size, out bool bSky)
     const float Raw = Scene().SceneDepth.Load(int3(Pixel, 0)).r;
     bSky = Raw <= 0.0;
     const float2 UV = (float2(Pixel) + 0.5) / float2(Size);
-    return ReconstructWorldPos(UV, Raw, GetInverseCameraProjection(), GetInverseCameraView());
+    return ReconstructWorldPos(UV, Raw);
 }
 
 // Takes each axis from whichever neighbor lies on the same surface, so silhouettes do not tip the normal on its side.
@@ -56,7 +56,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     const FWeatherData W = GetWeather();
-    uint Seed = WeatherHash(Pass().FrameSeed ^ (DTid.x * 0x27D4EB2Du));
+    uint Seed = PCGHash(Pass().FrameSeed ^ (DTid.x * 0x27D4EB2Du));
 
     // Kept off the border, where a neighbor would clamp onto the pixel itself and flatten the normal sideways.
     const uint2 Size  = GetScreenSize();
@@ -101,11 +101,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     FRainSplash Splash;
     Splash.Position      = Center;
     Splash.SpawnTime     = W.Surface2.z - WeatherRandom(Seed) * Pass().SpawnWindow;
-    Splash.PackedNormal  = PackUnitVector(Normal);
+    Splash.PackedNormal  = PackNormal(Normal);
     const float3 Light   = RainLightAt(Center + Normal * 0.05);
     Splash.PackedLightRG = PackHalf2(Light.rg);
     Splash.PackedLightB  = f32tof16(Light.b);
-    Splash.Seed          = WeatherHash(Seed) | 1u;
+    Splash.Seed          = PCGHash(Seed) | 1u;
 
     const uint Capacity = Pass().Splashes.Count;
     Pass().Splashes.Set((Pass().Cursor + DTid.x) % Capacity, Splash);

@@ -622,7 +622,7 @@ namespace Lumina
                 SkeletalIndices[Primitives[Last].SkeletalSlot] = Index;
             }
 
-            Primitives[Index]  = std::move(Primitives[Last]);
+            Primitives[Index]  = Move(Primitives[Last]);
             Bounds[Index]      = Bounds[Last];
             CullData[Index]    = CullData[Last];
             ResolveKeys[Index] = ResolveKeys[Last];
@@ -1057,6 +1057,7 @@ namespace Lumina
         RetainedCullEntries.Emplace();
         RetainedTransforms.Emplace();
         RetainedStatic.Emplace();
+        RetainedProxies.Emplace();
 
         // The device range past the old count may hold a slot from before a reset, so a new slot always uploads.
         MarkInstanceDirty(Slot);
@@ -1072,6 +1073,7 @@ namespace Lumina
         RetainedCullEntries.SetNum(Base + Count);
         RetainedTransforms.SetNum(Base + Count);
         RetainedStatic.SetNum(Base + Count);
+        RetainedProxies.SetNum(Base + Count);
 
         // The scatter relies on its unused slots reading inactive, so the block starts from uploaded zeros.
         for (uint32 Slot = Base; Slot < Base + Count; ++Slot)
@@ -1176,16 +1178,23 @@ namespace Lumina
     uint32 FScenePrimitiveSet::LargestLODMeshletsOf(uint32 Slot) const
     {
         const FInstanceCullEntry& Cull = RetainedCullEntries[Slot];
-        if ((Cull.DrawIDAndFlags & ScenePrimitiveSetInternal::kActiveBit) == 0u || Cull.SurfaceDescIndex >= (uint32)SurfaceDescs.Num())
+        return (Cull.DrawIDAndFlags & ScenePrimitiveSetInternal::kActiveBit) != 0u ? LargestLODMeshletsOfSurface(Cull.SurfaceDescIndex) : 0u;
+    }
+
+    uint32 FScenePrimitiveSet::LargestLODMeshletsOfSurface(uint32 SurfaceDescIndex) const
+    {
+        if (SurfaceDescIndex >= (uint32)SurfaceDescs.Num())
         {
             return 0u;
         }
 
-        const FSurfaceDescGPU& Desc = SurfaceDescs[Cull.SurfaceDescIndex];
+        const FSurfaceDescGPU& Desc = SurfaceDescs[SurfaceDescIndex];
+        const bool bClusterLOD = (Desc.Flags & SURFACE_DESC_CLUSTER_LOD) != 0u;
         uint32 LargestLOD = 0u;
         for (uint32 LOD = 0; LOD < Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS); ++LOD)
         {
-            LargestLOD = Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
+            // A cluster range can span every level at once, so its words cover the whole hierarchy.
+            LargestLOD = bClusterLOD ? LargestLOD + Desc.LODMeshletCount[LOD] : Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
         }
         return LargestLOD;
     }
@@ -1193,7 +1202,7 @@ namespace Lumina
     void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
     {
         const uint32 Meshlets = LargestLODMeshletsOf(Slot);
-        const uint32 Words    = (Meshlets + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
+        const uint32 Words    = RenderUtils::GetGroupCount(Meshlets, MESHLET_CULL_GROUP_SIZE);
 
         FUIntVector3& Range = SlotMeshletVisibility[Slot];
         if (Range.y != Words)
@@ -1299,11 +1308,14 @@ namespace Lumina
     {
         FSurfaceDescGPU Desc = {};
         Desc.NumLODs = Surface.NumLODs;
+        Desc.Flags   = Surface.LODFlags;
+        Desc.LODErrorMultiplier = Surface.LODErrorMultiplier;
         for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
         {
             Desc.LODMeshletOffset[i] = Surface.LODMeshletOffset[i];
             Desc.LODMeshletCount[i]  = Surface.LODMeshletCount[i];
             Desc.LODError[i]         = Surface.LODError[i];
+            Desc.LODParentError[i]   = Surface.LODParentError[i];
 
             const uint32 RangeEnd = Desc.LODMeshletOffset[i] + Desc.LODMeshletCount[i];
             if (RangeEnd > MAX_MESHLETS_PER_SURFACE_LOD)
@@ -1320,11 +1332,14 @@ namespace Lumina
 
         uint64 Hash = 0;
         Hash::HashCombine(Hash, Desc.NumLODs);
+        Hash::HashCombine(Hash, Desc.Flags);
+        Hash::HashCombine(Hash, Desc.LODErrorMultiplier);
         for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
         {
             Hash::HashCombine(Hash, Desc.LODMeshletOffset[i]);
             Hash::HashCombine(Hash, Desc.LODMeshletCount[i]);
             Hash::HashCombine(Hash, Desc.LODError[i]);
+            Hash::HashCombine(Hash, Desc.LODParentError[i]);
         }
 
         TVector<uint32>& Bucket = SurfaceDescByHash.FindOrAdd(Hash);
@@ -1438,6 +1453,18 @@ namespace Lumina
             GrassFreeBlocks[Insert - 1].y += GrassFreeBlocks[Insert].y;
             GrassFreeBlocks.RemoveAt(Insert);
         }
+    }
+
+    FScenePrimitiveSet::FMeshletDemand FScenePrimitiveSet::GetGrassMeshletDemand() const
+    {
+        FMeshletDemand Demand;
+        for (const auto& [Key, Binding] : GrassSpecies)
+        {
+            const uint32 Meshlets = LargestLODMeshletsOfSurface(Binding.SurfaceDescIndex);
+            Demand.Words    += (uint64)Binding.Capacity * RenderUtils::GetGroupCount(Meshlets, MESHLET_CULL_GROUP_SIZE);
+            Demand.Meshlets += (uint64)Binding.Capacity * Meshlets;
+        }
+        return Demand;
     }
 
     void FScenePrimitiveSet::KeepGrassSpecies(ECS::FEntity Terrain)
@@ -1582,7 +1609,10 @@ namespace Lumina
                     MarkInstanceDirty(Slot);
                 }
             }
-            if (StoreIfChanged(RetainedStatic[Slot], NewStatic))
+            // The proxy rides the static upload, so a changed splat dirties the slot the same way.
+            const FInstanceProxy NewProxy = Prim.Surfaces != nullptr && s < (uint32)Prim.Surfaces->Num() ? (*Prim.Surfaces)[s].Proxy : FInstanceProxy{};
+            const bool bProxyChanged = StoreIfChanged(RetainedProxies[Slot], NewProxy);
+            if (StoreIfChanged(RetainedStatic[Slot], NewStatic) || bProxyChanged)
             {
                 if (Sink != nullptr)
                 {

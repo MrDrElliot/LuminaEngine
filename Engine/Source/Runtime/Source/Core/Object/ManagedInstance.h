@@ -6,45 +6,23 @@ namespace Lumina
 {
     class CObjectBase;
 
-    /**
-     * One managed (C#) wrapper instance per CObject, so repeated wrapping of the same object returns the same
-     * managed object and reference identity holds (`==`, `is`, dictionary keys). Replaces the previous model
-     * where every Asset.Load / object-property read allocated a fresh wrapper.
-     *
-     * Two kinds of entry share this table and their handles differ in strength. A plain wrapper from
-     * Wrapper<T>.ForObject is weak, so the table never keeps one alive and a collected target leaves a slot
-     * that reports no instance until the next access re-creates it. A C# subclass of a reflected
-     * class is strong, because its native object is the only owner it has.
-     *
-     * So this table can pin the collectible script load context, and what stops it is ReleaseAll running in
-     * the unload sequence before that context is dropped. Draining it is required, not hygiene.
-     *
-     * Layering: storage and lifetime live in Core (CObjectBase owns a slot index); actually freeing the GC
-     * handle is the scripting layer's job and is installed via SetFreeHandleFn. With no host, the table still
-     * works and simply never has anything to free.
-     *
-     * Game thread only, consistent with the rest of the scripting layer.
-     */
+    // One C# wrapper per CObject on the game thread, weak for plain wrappers and strong for a script subclass's own instance.
     namespace ManagedInstances
     {
         using FFreeHandleFn = void (*)(void* Handle);
         using FIsHandleAliveFn = bool (*)(void* Handle);
 
-        /** Installed by the .NET host. Cleared (nullptr) on host shutdown. */
+        // Installed by the .NET host and cleared on host shutdown.
         RUNTIME_API void SetFreeHandleFn(FFreeHandleFn Fn);
 
         // Lets the table tell a collected weak twin from a live one without knowing what a GC handle is.
         RUNTIME_API void SetIsHandleAliveFn(FIsHandleAliveFn Fn);
 
-        /** The cached managed handle for Object, or null if it has none. */
         RUNTIME_API void* Find(const CObjectBase* Object);
 
-        /** Caches Handle on Object. Frees any handle it replaces. A null Handle clears (and frees) the slot.
-         *  A weak wrapper (bScriptTwin false) is dropped rather than allowed to displace a script's own
-         *  instance, because the script would then never receive another dispatch. */
+        // A weak wrapper never displaces a script's own instance, which would then never receive another dispatch.
         RUNTIME_API void Set(CObjectBase* Object, void* Handle, bool bScriptTwin = false);
 
-        /** True when Object's cached handle is the script's own instance rather than a weak wrapper. */
         RUNTIME_API bool IsScriptTwin(const CObjectBase* Object);
 
         // Find and IsScriptTwin under one lock, since every script event dispatch asks both. A collected weak twin reads as none.
@@ -56,19 +34,15 @@ namespace Lumina
         // Moves whenever a cached handle is freed or replaced, so a caller holding one can tell it is still good.
         RUNTIME_API uint32 GetHandleGeneration();
 
-        /** Frees Object's handle and reclaims its slot. Called from ~CObjectBase; safe when there is none. */
+        // Called from ~CObjectBase, so it is safe when Object has no handle.
         RUNTIME_API void Release(CObjectBase* Object);
 
-        /** Frees every cached handle and reclaims every slot. A strong entry points into the load context
-         *  being unloaded, so a reload has to call this before it drops that context; shutdown calls it for
-         *  the same reason. Objects are untouched and the next access re-creates the wrapper. */
+        // Strong entries pin the script load context, so a reload or shutdown must call this before dropping it.
         RUNTIME_API void ReleaseAll();
 
-        /** Number of objects currently holding a cached handle. */
         RUNTIME_API int32 GetLiveCount();
 
-        /** Total slots ever allocated. Live count returning to zero while this stays flat is what proves
-         *  slots are recycled rather than leaked; exposed for tests and diagnostics. */
+        // Stays flat while the live count returns to zero when slots are recycled rather than leaked.
         RUNTIME_API int32 GetSlotCapacity();
     }
 }

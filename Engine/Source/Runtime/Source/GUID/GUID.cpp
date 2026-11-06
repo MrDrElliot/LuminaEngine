@@ -1,12 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include <bit>
-#include <string>
 #include "GUID.h"
 
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
-
+#include "Containers/ElementOps.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Math/Random.h"
 
@@ -107,7 +103,7 @@ namespace Lumina
     }
     
     FGuid::FGuid(ByteArray&& bytes) noexcept
-        : Bytes(std::move(bytes))
+        : Bytes(Move(bytes))
     {
     }
     
@@ -151,7 +147,7 @@ namespace Lumina
             bytes.byte12, bytes.byte13, bytes.byte14, bytes.byte15
         };
         
-        return FGuid(std::move(guidBytes));
+        return FGuid(Move(guidBytes));
         
     #elif defined(__linux__) || defined(__unix__)
         ByteArray bytes{};
@@ -164,7 +160,7 @@ namespace Lumina
         bytes[6] = (bytes[6] & 0x0F) | 0x40;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
 
-        return FGuid(std::move(bytes));
+        return FGuid(Move(bytes));
 
     #else
         // Per-thread, since a shared unsynchronized generator could hand two threads the same GUID.
@@ -176,7 +172,7 @@ namespace Lumina
         bytes[6] = (bytes[6] & 0x0F) | 0x40;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
         
-        return FGuid(std::move(bytes));
+        return FGuid(Move(bytes));
     #endif
     }
     
@@ -274,46 +270,23 @@ namespace Lumina
         return NullOpt;
     }
     
-    bool FGuid::operator<(const FGuid& other) const noexcept
-    {
-        return Bytes < other.Bytes;
-    }
-    
-    bool FGuid::operator<=(const FGuid& other) const noexcept
-    {
-        return Bytes <= other.Bytes;
-    }
-    
-    bool FGuid::operator>(const FGuid& other) const noexcept
-    {
-        return Bytes > other.Bytes;
-    }
-    
-    bool FGuid::operator>=(const FGuid& other) const noexcept
-    {
-        return Bytes >= other.Bytes;
-    }
-    
     FString FGuid::ToString(bool uppercase, bool includeDashes) const
     {
-        std::ostringstream oss;
-        oss << std::hex << std::setfill('0');
-        
-        if (uppercase)
-        {
-            oss << std::uppercase;
-        }
-        
+        const char* Digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
+        char Text[GUID_SIZE * 2 + 4];
+        int32 Length = 0;
+
         for (int32 i = 0; i < GUID_SIZE; ++i)
         {
             if (includeDashes && (i == 4 || i == 6 || i == 8 || i == 10))
             {
-                oss << '-';
+                Text[Length++] = '-';
             }
-            oss << std::setw(2) << static_cast<int>(Bytes[i]);
+            Text[Length++] = Digits[Bytes[i] >> 4];
+            Text[Length++] = Digits[Bytes[i] & 0xF];
         }
-        
-        return oss.str().c_str();
+
+        return FString(Text, Length);
     }
     
     FString FGuid::ToShortString() const
@@ -328,25 +301,11 @@ namespace Lumina
     
     void FGuid::Swap(FGuid& other) noexcept
     {
-        swap(Bytes, other.Bytes);
+        ElementOps::SwapElements(Bytes, other.Bytes);
     }
-    
+
     size_t FGuid::Hash() const noexcept
     {
         return Hash::GetHash64(Bytes.GetData(), Bytes.Num());
-    }
-    
-    std::ostream& operator<<(std::ostream& os, const FGuid& guid)
-    {
-        os << guid.ToString();
-        return os;
-    }
-    
-    std::istream& operator>>(std::istream& is, FGuid& guid)
-    {
-        std::string str;
-        is >> str;
-        guid = FGuid::FromString(str.c_str());
-        return is;
     }
 }

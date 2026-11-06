@@ -2497,13 +2497,13 @@ namespace Lumina
 
     const FCodeFold* FCodeEditor::FoldStartingAt(int32 Line) const
     {
-        const auto Found = std::lower_bound(Folds.begin(), Folds.end(), Line, [](const FCodeFold& Fold, int32 Start) { return Fold.StartLine < Start; });
+        const auto Found = Algo::LowerBound(Folds, Line, [](const FCodeFold& Fold, int32 Start) { return Fold.StartLine < Start; });
         return Found != Folds.end() && Found->StartLine == Line ? &*Found : nullptr;
     }
 
     bool FCodeEditor::IsCollapsed(int32 Line) const
     {
-        return std::binary_search(Collapsed.begin(), Collapsed.end(), Line);
+        return Algo::BinarySearch(Collapsed, Line);
     }
 
     void FCodeEditor::RebuildRows()
@@ -2592,7 +2592,7 @@ namespace Lumina
         {
             return;
         }
-        const int32 FoundIndex = static_cast<int32>(std::lower_bound(Collapsed.begin(), Collapsed.end(), Line) - Collapsed.begin());
+        const int32 FoundIndex = static_cast<int32>(Algo::LowerBound(Collapsed, Line) - Collapsed.begin());
         if (FoundIndex < Collapsed.Num() && Collapsed[FoundIndex] == Line)
         {
             Collapsed.RemoveAt(FoundIndex);

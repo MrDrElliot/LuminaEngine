@@ -1,6 +1,6 @@
 ﻿#include "SkeletonEditorTool.h"
+#include "World/World.h"
 #include "World/ECS/Registry.h"
-#include "ImGuiDrawUtils.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Core/Math/Math.h"
@@ -209,10 +209,6 @@ namespace Lumina
         SocketHierarchy.CloseOpenDragTransaction();
     }
 
-    void FSkeletonEditorTool::OnAssetLoadFinished()
-    {
-    }
-
     // Sockets are edited in the property table too, so any edit can rename, move or remove a row.
     void FSkeletonEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
     {
@@ -254,22 +250,9 @@ namespace Lumina
     {
         FAssetEditorTool::DrawToolMenu(UpdateContext);
         
-        // Gizmo Control Dropdown
         if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo Control"))
         {
-            const char* operations[] = { "Translate", "Rotate", "Scale" };
-            int currentOp = (GuizmoOp == ImGuizmo::ROTATE) ? 1 : (GuizmoOp == ImGuizmo::SCALE) ? 2 : 0;
-
-            if (ImGui::Combo("##", &currentOp, operations, IM_ARRAYSIZE(operations)))
-            {
-                switch (currentOp)
-                {
-                case 0: GuizmoOp = ImGuizmo::TRANSLATE; break;
-                case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
-                case 2: GuizmoOp = ImGuizmo::SCALE;     break;
-                }
-            }
-
+            DrawGizmoOperationCombo(GuizmoOp);
             ImGui::EndMenu();
         }
 

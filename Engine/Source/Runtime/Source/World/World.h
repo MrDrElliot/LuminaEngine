@@ -115,11 +115,13 @@ namespace Lumina
             bool MustPrecede(int32 First, int32 Second) const { return Precedes[First * Systems.Num() + Second] != 0; }
         };
 
-        // Systems that may run together, as indices into an FStageSchedule.
         // One dependency level of a stage, which the editor shows as a batch. Indices are into an FStageSchedule.
         struct FSystemBatch
         {
             TVector<uint16> Members;
+
+            // The flush-bounded segment it belongs to, so a report can show where the stage synchronizes.
+            int32           Segment = 0;
         };
 
         // A run of systems with no flush inside it, each starting once its own predecessors finish. Indices are into an FStageSchedule.
@@ -572,6 +574,9 @@ namespace Lumina
         // The last frame's per-stage batches with each system's declared access, for Gameplay Insights. Main thread.
         void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const;
 
+        // Every stage as SystemSchedule::DescribeParallelism reports it, from the last frame's work or as if every system had work.
+        FString DescribeSystemParallelism(bool bAssumeAllWork) const;
+
         //~ Subsystems, one per class per world, so a C++ and a C# one are the same thing to the world.
 
         // Matches a derived class too, and is null when the world has none.
@@ -749,7 +754,7 @@ namespace Lumina
         // Runs the FixedUpdate stage 0..MaxPhysicsSteps times at 1/PhysicsHz, from this world's own accumulator.
         void TickFixedUpdate(double FrameDeltaSeconds);
 
-        void RunScheduledSystem(CEntitySystem* System, SSystemContext& Context);
+        void RunScheduledSystem(const FStageSchedule& Stage, uint16 Index, SSystemContext& Context);
         void RunSegment(const FStageSchedule& Stage, const FSystemSegment& Segment, SSystemContext& Context);
 
         struct FSegmentRun;
@@ -853,6 +858,9 @@ namespace Lumina
         // Unspent frame time toward the next FixedUpdate step.
         float                   FixedUpdateAccumulator = 0.0f;
 
+        // Advances by the fixed delta per FixedUpdate step, the Time those steps see.
+        double                  FixedUpdateTime = 0.0;
+
         // Engine clock time the world went suspended, or -1 while active, for the idle reclaim grace.
         double                  SuspendedTime = -1.0;
 
@@ -876,7 +884,7 @@ namespace Lumina
         // True when First's or Second's own declarations put First ahead of Second.
         RUNTIME_API bool DeclaresOrder(const CEntitySystem* First, const CEntitySystem* Second);
 
-        // Declared dependencies first, then shared systems ahead of exclusive ones, then the class name, so the order never depends on discovery.
+        // Declared dependencies first, then the earliest batch, the longest declared chain, shared over exclusive and the class name, so the order never depends on discovery.
         RUNTIME_API CWorld::FStageSchedule OrderStage(const TVector<CEntitySystem*>& Systems, EUpdateStage Stage);
 
         // Whether Later must wait for a flush after Earlier rather than only for Earlier to finish: a declared order, an event it sends Later, or an exclusive side.
@@ -887,6 +895,9 @@ namespace Lumina
 
         // The segments as dependency levels, which is how the editor draws a stage.
         RUNTIME_API TVector<CWorld::FSystemBatch> BuildLevels(const TVector<CWorld::FSystemSegment>& Segments);
+
+        // The batch widths, the critical path (one system per batch, since each batch waits on the one before) and each batch's members.
+        RUNTIME_API FString DescribeParallelism(const CWorld::FStageSchedule& Stage, const TVector<CWorld::FSystemSegment>& Segments, EUpdateStage StageId);
 
         // Two shared systems of a stage that conflict on ConflictId with no declared order, so only registration order sequences them.
         struct FAmbiguity

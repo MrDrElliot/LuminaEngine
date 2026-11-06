@@ -7,7 +7,7 @@ namespace Lumina
 {
     // Ticks entity scripts in either language: OnReady and OnUpdate in PrePhysics, OnFixedUpdate at the fixed rate in PostPhysics.
     REFLECT()
-    class RUNTIME_API SEntityScriptSystem : public CExclusiveSystem
+    class RUNTIME_API CEntityScriptSystem : public CExclusiveSystem
     {
         GENERATED_BODY()
     public:

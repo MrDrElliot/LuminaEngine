@@ -358,7 +358,7 @@ namespace Lumina
         const float FogRange = Fog.FogRange;
         const float FogNear  = Fog.NearPlane;
 
-        std::swap(CurrentView->Images[(int)ENamedImage::FroxelShadow], CurrentView->Images[(int)ENamedImage::FroxelShadowHistory]);
+        ElementOps::SwapElements(CurrentView->Images[(int)ENamedImage::FroxelShadow], CurrentView->Images[(int)ENamedImage::FroxelShadowHistory]);
         const FSceneImage& Shadow        = GetNamedImage(ENamedImage::FroxelShadow);
         const FSceneImage& ShadowHistory = GetNamedImage(ENamedImage::FroxelShadowHistory);
         const bool bShadowHistory = CurrentView->bIsPrimary && CurrentView->bFroxelShadowHistoryValid && CameraCutFramesLeft == 0u
@@ -402,10 +402,7 @@ namespace Lumina
         CurrentView->FroxelHistoryRange        = FogRange;
 
         // Integrate reads the scatter volume next.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
     }
 
     void FDefaultSceneRenderer::FroxelIntegratePass(RHI::FCmdListH CL)
@@ -505,10 +502,7 @@ namespace Lumina
                         RenderUtils::GetGroupCount(PC.TraceW, FogShaftTileSize),
                         RenderUtils::GetGroupCount(PC.TraceH, FogShaftTileSize), 1);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
 
         AtmosphereTerms.FogShaftIndex      = (uint32)Shaft.GetResourceID();
         AtmosphereTerms.FogShaftDepthIndex = (uint32)ShaftDepth.GetResourceID();
@@ -731,10 +725,7 @@ namespace Lumina
         const uint32 BakeGroups = RenderUtils::GetGroupCount(kCloudNoiseSize, CloudNoiseTileSize);
         RHI::CmdDispatch(CL, MakeArgs(BakePC), BakeGroups, BakeGroups, BakeGroups);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
 
         static const FShaderH WeatherCS = FShaderLibrary::Get("CloudWeatherBake.slang");
         const FSceneImage& Weather = GetNamedImage(ENamedImage::CloudWeather);
@@ -759,10 +750,7 @@ namespace Lumina
         const uint32 WeatherGroups = RenderUtils::GetGroupCount(WeatherPC.Size, 8u);
         RHI::CmdDispatch(CL, MakeArgs(WeatherPC), WeatherGroups, WeatherGroups, 1);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
         CurrentView->bCloudNoiseBaked = true;
         CurrentView->CloudNoiseQueue  = Queue;
         return true;
@@ -798,8 +786,8 @@ namespace Lumina
         }
 
         // Last frame's targets become the history, so the march writes into the pair the composite read two frames ago.
-        std::swap(CurrentView->Images[(int)ENamedImage::CloudScatter], CurrentView->Images[(int)ENamedImage::CloudScatterHistory]);
-        std::swap(CurrentView->Images[(int)ENamedImage::CloudDepth], CurrentView->Images[(int)ENamedImage::CloudDepthHistory]);
+        ElementOps::SwapElements(CurrentView->Images[(int)ENamedImage::CloudScatter], CurrentView->Images[(int)ENamedImage::CloudScatterHistory]);
+        ElementOps::SwapElements(CurrentView->Images[(int)ENamedImage::CloudDepth], CurrentView->Images[(int)ENamedImage::CloudDepthHistory]);
 
         // Cleared until this frame's clouds are written, so a bail below leaves no half-swapped history to reproject.
         const bool bHistoryValid = CurrentView->bCloudHistoryValid;
@@ -899,9 +887,7 @@ namespace Lumina
 
         if (bTemporal)
         {
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::Barriers::ComputeToCompute(CL);
 
             FCloudResolvePushConstants Resolve = {};
             Resolve.ScatterUAV        = (uint32)ScatterUAV;
@@ -926,10 +912,7 @@ namespace Lumina
         CurrentView->CloudHistoryWindOffset = PC.WindOffset;
 
         // The scatter volume feeds AtmosphereCompositePass and the cloud shadow map, both dispatches.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
 
         AtmosphereTerms.CloudScatterIndex = (uint32)Scatter.GetResourceID();
         AtmosphereTerms.CloudDepthIndex   = (uint32)CloudDepth.GetResourceID();
@@ -989,10 +972,7 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(LutPC), LutGroups, LutGroups, 1);
 
         // Only AtmosphereCompositePass reads the LUT, and it is a dispatch.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
 
         AtmosphereTerms.AerialInScatterIndex     = (uint32)InScatter.GetResourceID();
         AtmosphereTerms.AerialTransmittanceIndex = (uint32)Transmittance.GetResourceID();

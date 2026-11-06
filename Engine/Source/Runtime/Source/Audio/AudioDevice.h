@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-	/** Requested output format. A zero field means whatever the endpoint natively runs at. */
+	// Requested output format. A zero field means whatever the endpoint natively runs at.
 	struct FAudioDeviceConfig
 	{
 		uint32 SampleRate = 0;
@@ -13,7 +13,7 @@ namespace Lumina
 		uint32 PeriodFrames = 0;
 	};
 
-	/** Implemented by the mixer. Called on the backend's realtime thread, so it must not lock or allocate. */
+	// Implemented by the mixer. Called on the backend's realtime thread, so it must not lock or allocate.
 	class IAudioRenderCallback
 	{
 	public:
@@ -23,7 +23,7 @@ namespace Lumina
 		virtual void RenderAudio(float* OutInterleaved, uint32 FrameCount) = 0;
 	};
 
-	/** One running output stream. The format is fixed for its lifetime, so a change means a new device. */
+	// One running output stream. The format is fixed for its lifetime, so a change means a new device.
 	class RUNTIME_API IAudioDevice
 	{
 	public:

@@ -222,7 +222,7 @@ namespace Lumina::ShapeHandles
             float TFar  = ( ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
             if (TNear > TFar)
             {
-                std::swap(TNear, TFar);
+                ElementOps::SwapElements(TNear, TFar);
             }
 
             TMin = Math::Max(TMin, TNear);
@@ -235,6 +235,83 @@ namespace Lumina::ShapeHandles
 
         const FVector3 WorldHit = FVector3(Matrix * FVector4(LocalOrigin + LocalDirection * TMin, 1.0f));
         OutT = Math::Length(WorldHit - Origin);
+        return true;
+    }
+
+    bool RayHitsSphere(const FVector3& Origin, const FVector3& Direction, const FVector3& Center, float Radius, float& OutT)
+    {
+        const FVector3 ToOrigin = Origin - Center;
+        const float B = Math::Dot(ToOrigin, Direction);
+        const float C = Math::Dot(ToOrigin, ToOrigin) - Radius * Radius;
+
+        if (C > 0.0f && B > 0.0f)
+        {
+            return false;
+        }
+
+        const float Discriminant = B * B - C;
+        if (Discriminant < 0.0f)
+        {
+            return false;
+        }
+
+        OutT = Math::Max(0.0f, -B - Math::Sqrt(Discriminant));
+        return true;
+    }
+
+    bool RayHitsCapsule(const FVector3& Origin, const FVector3& Direction,
+                        const FVector3& SegmentStart, const FVector3& SegmentEnd, float Radius, float& OutT)
+    {
+        const FVector3 Segment = SegmentEnd - SegmentStart;
+        const float SegmentLengthSq = Math::LengthSquared(Segment);
+        if (SegmentLengthSq < 1e-8f)
+        {
+            return RayHitsSphere(Origin, Direction, SegmentStart, Radius, OutT);
+        }
+
+        const FVector3 ToStart = Origin - SegmentStart;
+        const float DirDotSeg = Math::Dot(Direction, Segment);
+        const float DirDotToStart = Math::Dot(Direction, ToStart);
+        const float SegDotToStart = Math::Dot(Segment, ToStart);
+
+        float SegmentParam = 0.0f;
+        const float Denominator = SegmentLengthSq - DirDotSeg * DirDotSeg;
+        if (Math::Abs(Denominator) > 1e-6f)
+        {
+            SegmentParam = Math::Clamp((SegDotToStart - DirDotSeg * DirDotToStart) / Denominator, 0.0f, 1.0f);
+        }
+
+        // Ray parameter for the closest point on the (clamped) segment, then re-clamp behind the eye.
+        float RayParam = DirDotSeg * SegmentParam - DirDotToStart;
+        if (RayParam < 0.0f)
+        {
+            RayParam = 0.0f;
+            SegmentParam = Math::Clamp(SegDotToStart / SegmentLengthSq, 0.0f, 1.0f);
+        }
+
+        const FVector3 PointOnRay = Origin + Direction * RayParam;
+        const FVector3 PointOnSegment = SegmentStart + Segment * SegmentParam;
+        if (Math::LengthSquared(PointOnRay - PointOnSegment) > Radius * Radius)
+        {
+            return false;
+        }
+
+        OutT = RayParam;
+        return true;
+    }
+
+    bool ClosestParamOnAxisToRay(const FVector3& Anchor, const FVector3& Axis,
+                                 const FVector3& RayOrigin, const FVector3& RayDirection, float& OutT)
+    {
+        const FVector3 ToAnchor = Anchor - RayOrigin;
+        const float AxisDotRay = Math::Dot(Axis, RayDirection);
+        const float Denominator = 1.0f - AxisDotRay * AxisDotRay;
+        if (Math::Abs(Denominator) < 1e-5f)
+        {
+            return false;
+        }
+
+        OutT = (AxisDotRay * Math::Dot(RayDirection, ToAnchor) - Math::Dot(Axis, ToAnchor)) / Denominator;
         return true;
     }
 

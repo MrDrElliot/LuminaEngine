@@ -291,6 +291,18 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Focusing '{}'.", In.Tab));
         }
 
+        Agent::FToolResult OpenEditorToolPanel(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::OpenToolPanel(FStringView(In.Tab), Error);
+            if (!Out.bDone)
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("Opening '{}'.", In.Tab));
+        }
+
         Agent::FToolResult CloseEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
         {
             FString Error;
@@ -971,7 +983,7 @@ namespace Lumina::MCP
             Agent::FToolRegistry::Get().Register<SEditorTabsParams, SEditorTabsResult>(
                 Owner, "editor.tabs",
                 "List open editor tabs, Focus or Close one, Float it to a screen rect, or Target it so the scene, entity and undo "
-                "tools act on it, such as a prefab editor. Changes land on the next frames.",
+                "tools act on it, such as a prefab editor. Open shows a Tools menu panel such as Memory. Changes land on the next frames.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SEditorTabsParams& In, SEditorTabsResult& Out)
                 {
@@ -981,6 +993,7 @@ namespace Lumina::MCP
                     case EEditorTabsAction::Close:  return CloseEditorTab(In, Out);
                     case EEditorTabsAction::Float:  return FloatEditorTab(In, Out);
                     case EEditorTabsAction::Target: return TargetEditorTab(In, Out);
+                    case EEditorTabsAction::Open:   return OpenEditorToolPanel(In, Out);
                     default:                        return ListEditorTabs(Out);
                     }
                 });

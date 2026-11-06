@@ -50,7 +50,7 @@ namespace Lumina::ECS
         Stored->TypeID = static_cast<FComponentTypeID>(Types.Num());
 
         const FComponentTypeID TypeID = Stored->TypeID;
-        Types.Add(std::move(Stored));
+        Types.Add(Move(Stored));
         return TypeID;
     }
 
@@ -520,7 +520,7 @@ namespace Lumina::ECS
         swap(ActiveStorages, Other.ActiveStorages);
         swap(NamedStorages, Other.NamedStorages);
         Context.Swap(Other.Context);
-        std::swap(Hierarchy, Other.Hierarchy);
+        ElementOps::SwapElements(Hierarchy, Other.Hierarchy);
 
         const uint32 FreeHead = FreeEntityHead;
         FreeEntityHead = Other.FreeEntityHead;
@@ -564,7 +564,7 @@ namespace Lumina::ECS
         FSparseSet* Raw = Storage.Get();
 
         CheckPoolTableThread();
-        NamedStorages.TryAdd(Key, std::move(Storage));
+        NamedStorages.TryAdd(Key, Move(Storage));
 
         // Joins the walk so a destroy detaches from it too, but never the by-type-id index, which one pool owns.
         ActiveStorages.Add(Raw);
@@ -681,7 +681,7 @@ namespace Lumina::ECS
         FSparseSet* Raw = Storage.Get();
         StoragesByTypeID[TypeID] = Raw;
         ActiveStorages.Add(Raw);
-        OwnedStorages.Add(std::move(Storage));
+        OwnedStorages.Add(Move(Storage));
     }
 
     FOwningGroup* FRegistry::DeclareGroup(TSpan<const FComponentTypeID> TypeIDs)

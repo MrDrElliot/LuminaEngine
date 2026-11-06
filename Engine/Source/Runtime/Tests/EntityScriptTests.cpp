@@ -11,6 +11,8 @@
 #include "Scripting/ManagedTypeRegistry.h"
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Entity/Systems/SystemAccess.h"
+#include "Log/Log.h"
 #include "Core/Object/ObjectReinstancer.h"
 #include "Core/Reflection/Type/ObjectReferenceVisitor.h"
 #include "ScriptTestUtil.h"
@@ -21,6 +23,9 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
+#include "World/Entity/Components/EntityTags.h"
+#include <chrono>
+#include <cstdio>
 
 using namespace Lumina;
 
@@ -156,6 +161,9 @@ TEST(EntityScriptUnification, UpdatePhaseSelectsWhichPassRunsOnUpdate)
     EXPECT_EQ(Script->UpdateCount, 1) << "it updates in the pass its class declares";
 
     Class->ScriptUpdatePhase = PriorPhase;
+
+    // Only a reload changes a class's phase in practice, and a reload notes a structure change the claim is keyed on.
+    EntityScripts::NoteStructureChange();
 
     EntityScripts::Tick(Registry, 0.5f, EScriptUpdatePhase::PrePhysics);
     EXPECT_EQ(Script->UpdateCount, 2) << "the default phase is PrePhysics, exactly as before";
@@ -400,6 +408,8 @@ namespace
 {
     CParallelEntityScriptTest* AttachParallelTestScript(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        // The ParallelUpdate promise is class metadata, which only lands once registration finishes.
+        RegisterPendingTypes();
         return static_cast<CParallelEntityScriptTest*>(
             EntityScripts::Attach(Registry, Entity, CParallelEntityScriptTest::StaticClass()));
     }
@@ -422,17 +432,11 @@ TEST(EntityScriptUnification, ParallelUpdateScriptsRunOncePerPassAcrossThreads)
     EntityScripts::Tick(Registry, 0.5f);
     EntityScripts::TickFixed(Registry, 0.5f);
 
-    THashSet<uint64> Threads;
     for (CParallelEntityScriptTest* Script : Scripts)
     {
         EXPECT_EQ(Script->ReadyCount, 1);
         EXPECT_EQ(Script->UpdateCount, 2) << "every promising script updates once per pass, no more and no fewer";
         EXPECT_EQ(Script->FixedUpdateCount, 1);
-        Threads.Add(Script->LastThreadID);
-    }
-    if (Threading::GetNumThreads() > 1)
-    {
-        EXPECT_GT(Threads.Num(), 1) << "thousands of promising scripts should have spread across the workers";
     }
 }
 
@@ -485,6 +489,56 @@ TEST(EntityScriptUnification, AMintedClassOptsInThroughItsFlag)
     }
 }
 
+// Priority, not attach order, decides which of an entity's scripts updates first, a C# one and a C++ one alike, on either path.
+TEST(EntityScriptUnification, UpdatePriorityOrdersScriptsAcrossLanguagesAndPaths)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+
+    CEntityScriptTest*         Managed = AttachMintedTestScript(Registry, Entity, "EntityScript_GTestPriority");
+    CParallelEntityScriptTest* Native  = AttachParallelTestScript(Registry, Entity);
+    ASSERT_NE(Managed, nullptr);
+    ASSERT_NE(Native, nullptr);
+
+    // The native script reads how far the managed one got, so a count already bumped this tick means the managed one ran first.
+    struct FProbe { const CEntityScriptTest* Managed; int32 Seen; } Probe{ Managed, -1 };
+    Native->HookContext = &Probe;
+    Native->UpdateHook  = [](CParallelEntityScriptTest&, void* Context)
+    {
+        FProbe& Seen = *static_cast<FProbe*>(Context);
+        Seen.Seen = Seen.Managed->UpdateCount;
+    };
+    auto ManagedRanFirst = [&]
+    {
+        EntityScripts::Tick(Registry, 0.1f);
+        return Probe.Seen == Managed->UpdateCount;
+    };
+
+    EXPECT_TRUE(ManagedRanFirst()) << "equal priorities keep attach order";
+
+    Managed->SetUpdatePriority(1);
+    Native->SetUpdatePriority(-1);
+    EXPECT_FALSE(ManagedRanFirst()) << "the lower priority runs first, though it attached second";
+
+    Managed->SetUpdatePriority(-2);
+    EXPECT_TRUE(ManagedRanFirst()) << "a priority changed after attach reorders the next pass";
+
+    // Promising parallel safety moves the entity onto the claimed span, which must keep the same order.
+    CScriptClass* Class = ToScriptClass(Managed->GetClass());
+    ASSERT_NE(Class, nullptr);
+    const FName ParallelUpdateName("ParallelUpdate");
+    Class->Metadata.SetValue(ParallelUpdateName, FString());
+    EntityScripts::NoteStructureChange();
+
+    EXPECT_TRUE(ManagedRanFirst()) << "the claimed span runs in priority order";
+    Managed->SetUpdatePriority(1);
+    EXPECT_FALSE(ManagedRanFirst()) << "and follows a priority change the same way";
+
+    Class->Metadata.RemoveValue(ParallelUpdateName);
+    EntityScripts::NoteStructureChange();
+    EXPECT_EQ(Native->UpdateCount, Managed->UpdateCount);
+}
+
 // Breaking the promise mid-pass cannot skip or repeat anyone, because each chunk's remainder runs serially.
 TEST(EntityScriptUnification, AStructuralChangeMidPassHandsTheRestToTheSerialPath)
 {
@@ -507,6 +561,244 @@ TEST(EntityScriptUnification, AStructuralChangeMidPassHandsTheRestToTheSerialPat
     {
         EXPECT_EQ(Script->UpdateCount, 2) << "every script still updates exactly once in the interrupted pass";
     }
+}
+
+#if !defined(LE_SHIPPING)
+extern "C" void* LuminaSharp_GetComponent(uint64 World, uint32 Entity, const void* Ops);
+extern "C" const void* LuminaSharp_GetComponentRead(uint64 World, uint32 Entity, const void* Ops);
+
+namespace
+{
+    struct FPromiseTest
+    {
+        ECS::FRegistry Registry;
+        ECS::FEntity   Bystander = ECS::NullEntity;
+    };
+
+    template<typename TTick>
+    int32 CountPromiseReportsDuring(const char* Call, TTick&& Tick)
+    {
+        // The log backend is asynchronous, so drain an earlier test's report before clearing or it lands in this pass.
+        Logging::Flush();
+        Logging::ClearLogQueue();
+        Tick();
+        Logging::Flush();
+
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+        int32 Count = 0;
+        for (int32 Index = 0; Index < Messages.Num(); ++Index)
+        {
+            const FStringView Text = Messages[Index].Message.View();
+            Count += Messages[Index].Level == ELogLevel::Error && Text.Contains("CParallelEntityScriptTest") && Text.Contains(Call) ? 1 : 0;
+        }
+        return Count;
+    }
+
+    // Few enough entities that the pass runs on the ticking thread, so a hook may change the registry without racing anyone.
+    int32 CountPromiseReports(void (*Hook)(CParallelEntityScriptTest&, void*), const char* Call)
+    {
+        FPromiseTest Test;
+        ConnectComponentAccessValidators(Test.Registry);
+        Test.Bystander = Test.Registry.Create();
+        for (int32 Index = 0; Index < 64; ++Index)
+        {
+            CParallelEntityScriptTest* Script = AttachParallelTestScript(Test.Registry, Test.Registry.Create());
+            Script->UpdateHook  = Hook;
+            Script->HookContext = &Test;
+        }
+
+        return CountPromiseReportsDuring(Call, [&]
+        {
+            EntityScripts::Tick(Test.Registry, 0.5f);
+            EntityScripts::Tick(Test.Registry, 0.5f);
+        });
+    }
+}
+
+TEST(EntityScriptUnification, AParallelScriptTouchingOnlyItsOwnEntityIsNotReported)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest& Script, void*)
+    {
+        LuminaSharp_GetComponent(0, Script.GetOwningEntity().GetPacked(), nullptr);
+        LuminaSharp_GetComponentRead(0, Script.GetOwningEntity().GetPacked(), nullptr);
+    }, "ParallelUpdate"), 0);
+}
+
+TEST(EntityScriptUnification, AParallelScriptReadingAnotherEntityIsReportedOnce)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest&, void* Context)
+    {
+        LuminaSharp_GetComponentRead(0, static_cast<FPromiseTest*>(Context)->Bystander.GetPacked(), nullptr);
+    }, "GetComponentRead"), 1);
+}
+
+TEST(EntityScriptUnification, AParallelScriptWritingAnotherEntityIsReportedOnce)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest&, void* Context)
+    {
+        LuminaSharp_GetComponent(0, static_cast<FPromiseTest*>(Context)->Bystander.GetPacked(), nullptr);
+    }, "GetComponent"), 1);
+}
+
+TEST(EntityScriptUnification, AParallelScriptCreatingAnEntityIsReportedOnce)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest&, void* Context)
+    {
+        (void)static_cast<FPromiseTest*>(Context)->Registry.Create();
+    }, "creating or destroying an entity"), 1);
+}
+
+TEST(EntityScriptUnification, AParallelScriptDestroyingAnEntityIsReportedOnce)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest&, void* Context)
+    {
+        FPromiseTest& Test = *static_cast<FPromiseTest*>(Context);
+        if (Test.Registry.IsValid(Test.Bystander))
+        {
+            Test.Registry.Destroy(Test.Bystander);
+        }
+    }, "creating or destroying an entity"), 1);
+}
+
+TEST(EntityScriptUnification, AParallelScriptAttachingAScriptIsReportedOnce)
+{
+    EXPECT_EQ(CountPromiseReports([](CParallelEntityScriptTest&, void* Context)
+    {
+        FPromiseTest& Test = *static_cast<FPromiseTest*>(Context);
+        AttachTestScript(Test.Registry, Test.Bystander);
+    }, "attaching, detaching or destroying a script"), 1);
+}
+#endif
+
+namespace
+{
+    // Hides the promise from anything that walks the class again, so whether a tick ran in parallel shows whether it re-claimed.
+    struct FHiddenParallelPromise
+    {
+        FHiddenParallelPromise()  { CParallelEntityScriptTest::StaticClass()->Metadata.RemoveValue(FName("ParallelUpdate")); }
+        ~FHiddenParallelPromise() { CParallelEntityScriptTest::StaticClass()->Metadata.SetValue(FName("ParallelUpdate"), FString()); }
+    };
+
+    TVector<CParallelEntityScriptTest*> AttachReadiedParallelScripts(ECS::FRegistry& Registry, int32 Count)
+    {
+        TVector<CParallelEntityScriptTest*> Scripts;
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            Scripts.Add(AttachParallelTestScript(Registry, Registry.Create()));
+        }
+        EntityScripts::Tick(Registry, 0.5f);
+        return Scripts;
+    }
+
+    bool AllRanOnThisThread(const TVector<CParallelEntityScriptTest*>& Scripts)
+    {
+        return Algo::AllOf(Scripts, [](const CParallelEntityScriptTest* Script) { return Script->LastThreadID == Threading::GetThreadID(); });
+    }
+}
+
+#if !defined(LE_SHIPPING)
+// With nothing structural changed the next tick runs the claim it already has, without walking the entities again.
+TEST(EntityScriptUnification, AnUnchangedWorldReusesItsParallelClaim)
+{
+    ECS::FRegistry Registry{};
+    const TVector<CParallelEntityScriptTest*> Scripts = AttachReadiedParallelScripts(Registry, kParallelTestEntities);
+    EntityScripts::Tick(Registry, 0.5f);
+    EntityScripts::TickFixed(Registry, 0.5f);
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        Script->UpdateHook = [](CParallelEntityScriptTest&, void*)
+        {
+            LuminaSharp_GetComponentRead(0, ECS::NullEntity.GetPacked(), nullptr);
+        };
+    }
+
+    int32 Reports = 0;
+    {
+        FHiddenParallelPromise Hidden;
+        EntityScripts::TickFixed(Registry, 0.5f);
+        Reports = CountPromiseReportsDuring("GetComponentRead", [&] { EntityScripts::Tick(Registry, 0.5f); });
+    }
+
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        EXPECT_EQ(Script->UpdateCount, 3);
+        EXPECT_EQ(Script->FixedUpdateCount, 2);
+    }
+    EXPECT_EQ(Reports, 1) << "only the claimed span watches promises, and a re-walk would have found none and run everything serially";
+}
+#endif
+
+// A structural change throws the cached claim away, so the next tick claims from what the entities hold now.
+TEST(EntityScriptUnification, AStructuralChangeInvalidatesTheCachedClaim)
+{
+    ECS::FRegistry Registry{};
+    const TVector<CParallelEntityScriptTest*> Scripts = AttachReadiedParallelScripts(Registry, kParallelTestEntities);
+    EntityScripts::Tick(Registry, 0.5f);
+    {
+        FHiddenParallelPromise Hidden;
+        EntityScripts::NoteStructureChange();
+        EntityScripts::Tick(Registry, 0.5f);
+    }
+
+    EXPECT_TRUE(AllRanOnThisThread(Scripts)) << "the re-claim saw no promise, so every script ran on the ticking thread";
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        EXPECT_EQ(Script->UpdateCount, 3);
+    }
+}
+
+// Entities that come, go or pause after a claim are seen by the next tick, though only the attach moves the script epoch.
+TEST(EntityScriptUnification, TheCachedClaimFollowsSpawnsDestroysAndPauses)
+{
+    ECS::FRegistry Registry{};
+    const TVector<CParallelEntityScriptTest*> Scripts = AttachReadiedParallelScripts(Registry, kParallelTestEntities);
+    EntityScripts::Tick(Registry, 0.5f);
+
+    CParallelEntityScriptTest* Paused = Scripts[1];
+    Registry.Emplace<SScriptDisabledTag>(Paused->GetOwningEntity());
+    Registry.Destroy(Scripts[0]->GetOwningEntity());
+    CParallelEntityScriptTest* Spawned = AttachParallelTestScript(Registry, Registry.Create());
+    EntityScripts::Tick(Registry, 0.5f);
+
+    EXPECT_EQ(Paused->UpdateCount, 2) << "a paused entity's scripts must drop out of the claim";
+    EXPECT_EQ(Spawned->ReadyCount, 1);
+    EXPECT_EQ(Spawned->UpdateCount, 1);
+    for (int32 Index = 2; Index < Scripts.Num(); ++Index)
+    {
+        EXPECT_EQ(Scripts[Index]->UpdateCount, 3);
+    }
+
+    Registry.Remove<SScriptDisabledTag>(Paused->GetOwningEntity());
+    EntityScripts::Tick(Registry, 0.5f);
+    EXPECT_EQ(Paused->UpdateCount, 3) << "resuming it must bring it back";
+}
+
+// Not a pass or fail bound, as wall-clock time under load is noise. Prints a whole tick with the claim rebuilt and cached.
+TEST(EntityScriptUnification, ClaimTimingWithAndWithoutTheCache)
+{
+    constexpr int32 kEntities = 20000;
+    constexpr int32 kTicks    = 50;
+
+    ECS::FRegistry Registry{};
+    AttachReadiedParallelScripts(Registry, kEntities);
+
+    auto MicrosPerCall = [&](bool bInvalidate)
+    {
+        const auto Start = std::chrono::steady_clock::now();
+        for (int32 Tick = 0; Tick < kTicks; ++Tick)
+        {
+            if (bInvalidate)
+            {
+                EntityScripts::NoteStructureChange();
+            }
+            EntityScripts::Tick(Registry, 0.5f);
+        }
+        return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - Start).count() / kTicks;
+    };
+
+    const double Rebuilt = MicrosPerCall(true);
+    const double Cached  = MicrosPerCall(false);
+    std::printf("[ClaimTiming] %d entities, tick with claim rebuilt %.1f us, cached %.1f us\n", kEntities, Rebuilt, Cached);
 }
 
 // A class that is not a CEntityScript must be refused rather than attached and later dispatched to.

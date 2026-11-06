@@ -1,5 +1,6 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
+#include "Includes/SelectionOutlineCommon.slang"
 
 // Masks the Picker RT, so every pass that writes entity ids gets outlined with no extra draw.
 
@@ -20,33 +21,11 @@ struct FSelectionOutlineArgs
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 
-bool IsEntitySelected(uint PickerValue)
-{
-    // 0 is the Picker's cleared/background value, and the null handle is all-ones; neither is a slot.
-    if (PickerValue == 0u || PickerValue == 0xFFFFFFFFu)
-    {
-        return false;
-    }
-
-    const uint Index = PickerValue & Pass().EntityIndexMask;
-    const uint Word  = Index >> 5u;
-
-    // Out-of-range reads return zero, meaning not selected.
-    return (Pass().SelectionBits.Get(Word) & (1u << (Index & 31u))) != 0u;
-}
-
 struct FragmentInput
 {
     float4 Position : SV_Position;
     float2 UV       : TEXCOORD0;
 };
-
-// The outline runs over display pixels while the picker holds one id per render pixel.
-int2 DisplayToPickerTexel(int2 DisplayTexel)
-{
-    const float2 Scale = float2(GetScreenSize()) / float2(max(GetDisplaySize(), uint2(1u, 1u)));
-    return clamp(int2((float2(DisplayTexel) + 0.5) * Scale), int2(0, 0), int2(GetScreenSize()) - int2(1, 1));
-}
 
 [shader("fragment")]
 float4 FragmentMain(FragmentInput In) : SV_Target0
@@ -55,7 +34,7 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
     const int2 Extent = int2(GetDisplaySize());
 
     // Only unselected pixels are candidates, so small silhouettes and adjacent selections stay intact.
-    if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel))))
+    if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel)), Pass().SelectionBits, Pass().EntityIndexMask))
     {
         discard;
         return float4(0.0, 0.0, 0.0, 0.0);
@@ -70,7 +49,7 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         for (int X = -Radius; X <= Radius; ++X)
         {
             const int2 Sample = clamp(Texel + int2(X, Y), int2(0, 0), Extent - int2(1, 1));
-            if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Sample))))
+            if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Sample)), Pass().SelectionBits, Pass().EntityIndexMask))
             {
                 bNear = true;
                 break;

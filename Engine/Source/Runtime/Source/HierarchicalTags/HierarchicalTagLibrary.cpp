@@ -2,7 +2,6 @@
 
 #include "HierarchicalTagLibrary.h"
 
-#include "HierarchicalTags/HierarchicalTagComponent.h"
 #include "HierarchicalTags/HierarchicalTagRegistry.h"
 
 namespace Lumina

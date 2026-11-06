@@ -97,65 +97,9 @@ namespace Lumina::Paths
         return Filesystem::Exists(Filename);
     }
 
-    FString GetVirtualPathPrefix(const FString& VirtualPath)
-    {
-        int32 Pos = VirtualPath.Find("://");
-        if (Pos != Constants::kIndexNone)
-        {
-            return VirtualPath.Mid(0, Pos + 3);
-        }
-
-        return VirtualPath;
-    }
-
     bool CreateDirectories(FStringView Path)
     {
         return Filesystem::MakeDirectoryTree(Path);
-    }
-
-    bool IsUnderDirectory(const FString& ParentDirectory, const FString& Directory)
-    {
-        if (Directory.Len() < ParentDirectory.Len())
-        {
-            return false;
-        }
-
-        if (!EqualsIgnoreCase(FStringView(Directory.GetData(), ParentDirectory.Len()), FStringView(ParentDirectory.GetData(), ParentDirectory.Len())))
-        {
-            return false;
-        }
-
-        if (Directory.Len() > ParentDirectory.Len())
-        {
-            char nextChar = Directory[ParentDirectory.Len()];
-            if (nextChar != '/' && nextChar != '\\')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-    
-    FString MakeRelativeTo(const FString& Path, const FString& BasePath)
-    {
-        FString NormalizedPath = Path;
-        FString NormalizedBase = BasePath;
-    
-        Algo::Replace(NormalizedPath, '\\', '/');
-        Algo::Replace(NormalizedBase, '\\', '/');
-    
-        if (!NormalizedBase.IsEmpty() && NormalizedBase.Last() != '/')
-        {
-            NormalizedBase.AppendChar('/');
-        }
-    
-        if (NormalizedPath.Find(NormalizedBase) != 0)
-        {
-            return Path;
-        }
-    
-        return NormalizedPath.Mid(NormalizedBase.Len());
     }
 
     void ReplaceFilename(FString& Path, const FString& NewFilename)
@@ -276,13 +220,11 @@ namespace Lumina::Paths
         template<typename StringT>
         void NormalizeInPlace(StringT& Path)
         {
-            // 1) backslashes â†’ forward slashes
             for (auto& c : Path)
             {
                 if (c == '\\') c = '/';
             }
 
-            // 2) collapse runs of '/' to a single '/'.
             int32 Write = 0;
             bool PrevSlash = false;
             for (int32 Read = 0; Read < Path.Len(); ++Read)
@@ -320,8 +262,20 @@ namespace Lumina::Paths
         return RetVal;
     }
 
+    FStringView TrimTrailingSeparators(FStringView Path)
+    {
+        const int32 RootLen = (Path.Len() >= 2 && Path[1] == ':') ? 3 : 1;
+        while (Path.Len() > RootLen && (Path.Last() == '/' || Path.Last() == '\\'))
+        {
+            Path.RemoveSuffix(1);
+        }
+        return Path;
+    }
+
     bool PathsEqual(FStringView A, FStringView B)
     {
+        A = TrimTrailingSeparators(A);
+        B = TrimTrailingSeparators(B);
         int32 lenA = A.Len();
         int32 lenB = B.Len();
         if (lenA != lenB)

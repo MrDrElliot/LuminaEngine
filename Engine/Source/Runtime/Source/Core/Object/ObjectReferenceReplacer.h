@@ -10,14 +10,7 @@ namespace Lumina
 {
     class CObject;
 
-    /**
-     * Retargets references to a set of objects, across the whole object graph and every registered reference
-     * provider.
-     *
-     * Walks the reflected shape rather than re-serializing each object, which is what lets it reach a
-     * NoSerialize property and a holder that is not a CObject at all. A null replacement clears the
-     * reference instead of repointing it.
-     */
+    // Walks reflected shape rather than re-serializing, so it reaches NoSerialize properties and non-CObject holders.
     class RUNTIME_API FObjectReferenceReplacer
     {
     public:
@@ -28,19 +21,19 @@ namespace Lumina
         ~FObjectReferenceReplacer() = default;
         LE_NO_COPYMOVE(FObjectReferenceReplacer);
 
-        /** Hard reference: matched by pointer. */
+        // Hard references are matched by pointer, and a null replacement clears them.
         void AddReplacement(CObject* ToReplace, CObject* Replacement);
 
-        /** Soft reference: never loads its target, so it is matched on GUID or path instead. */
+        // Soft references never load their target, so they are matched on GUID or path instead.
         void AddSoftReplacement(const FGuid& ToReplaceGUID, FStringView ToReplacePath,
             const FGuid& ReplacementGUID, FStringView ReplacementPath);
 
         NODISCARD bool IsEmpty() const { return HardEntries.IsEmpty() && SoftEntries.IsEmpty(); }
 
-        /** Applies to every live object and every registered provider. Returns the number rewritten. */
+        // Applies to every live object and every registered provider, returning the number rewritten.
         uint32 ApplyToAllObjects();
 
-        /** Applies to one object's own properties only. */
+        // Applies to one object's own properties only.
         uint32 ApplyTo(CObject* Object);
 
         NODISCARD uint32 GetNumReplaced() const { return NumReplaced; }

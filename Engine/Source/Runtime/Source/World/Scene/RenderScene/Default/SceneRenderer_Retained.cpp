@@ -99,6 +99,8 @@ namespace Lumina
         ScenePrimitives.AssignMeshletVisibility();
         Out.MeshletVisibilityWords = ScenePrimitives.GetMeshletVisibilityExtent();
         Out.LargestLODMeshlets     = ScenePrimitives.GetLargestLODMeshletTotal();
+        Out.GrassMeshlets          = ScenePrimitives.GetGrassMeshletDemand();
+        Out.GrassSlotCount         = ScenePrimitives.GetGrassSlotCount();
 
         const uint32 SlotCount = ScenePrimitives.GetRetainedSlotCount();
         Out.SlotCount = SlotCount;
@@ -118,7 +120,7 @@ namespace Lumina
         if (!Out.bFull || !Out.bFullStatic)
         {
             // A bitmap over the slot range yields the sorted, unique list in linear time, where a sort did not.
-            DirtySlotBits.SetNum(IntCastChecked<int32>(((SIZE_T)SlotCount + 63u) / 64u));
+            DirtySlotBits.SetNum(IntCastChecked<int32>(RenderUtils::GetGroupCount(SlotCount, 64u)));
             auto Collect = [this, SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
             {
                 // A few slots sort faster than a walk over every bitmap word.
@@ -133,8 +135,7 @@ namespace Lumina
                         }
                     }
                     Algo::Sort(OutList);
-                    const uint32* const UniqueEnd = std::unique(OutList.begin(), OutList.end());
-                    OutList.SetNum(static_cast<int32>(UniqueEnd - OutList.GetData()));
+                    OutList.SetNum(static_cast<int32>(Algo::Unique(OutList) - OutList.begin()));
                     return;
                 }
 

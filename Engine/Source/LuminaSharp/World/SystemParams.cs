@@ -163,16 +163,35 @@ public readonly unsafe struct Write<T> : IQueryTerm<Write<T>> where T : struct, 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
         {
-            if (Tick != null)
-            {
-                *Tick = Now;
-            }
-            return ref Unsafe.AsRef<T>((void*)Pointer);
+            Stamp();
+            return ref BypassChangeDetection();
         }
     }
 
     // The same row as a Read<T>, which never stamps.
     public Read<T> AsRead => new(Pointer);
+
+    // Returns whether it wrote, so an unchanged value leaves Changed<T> quiet, for example Transform.SetIfChanged(static (in STransformComponent Row) => ref Row.LocalTransform.Location.X, 1.0f).
+    public bool SetIfChanged<TField>(FieldOf<T, TField> Field, TField NewValue)
+    {
+        ref TField Dest = ref Field(in BypassChangeDetection());
+        if (EqualityComparer<TField>.Default.Equals(Dest, NewValue))
+        {
+            return false;
+        }
+        Dest = NewValue;
+        Stamp();
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Stamp()
+    {
+        if (Tick != null)
+        {
+            *Tick = Now;
+        }
+    }
 
     // For a write no Changed<T> reader should see.
     public ref T BypassChangeDetection() => ref Unsafe.AsRef<T>((void*)Pointer);
@@ -228,6 +247,8 @@ public sealed class AddedAttribute<T> : Attribute, IQueryTickFilter where T : st
     IntPtr IQueryTickFilter.Token => ComponentOps<T>.Token;
     bool IQueryTickFilter.bAdded => true;
 }
+
+public delegate ref TField FieldOf<T, TField>(in T Row);
 
 public delegate void QueryFunc<T1>(FEntity Entity, T1 First);
 public delegate void QueryFunc<T1, T2>(FEntity Entity, T1 First, T2 Second);

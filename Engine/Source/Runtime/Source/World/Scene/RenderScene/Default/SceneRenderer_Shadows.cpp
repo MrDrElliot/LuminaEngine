@@ -284,9 +284,7 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(Args), Groups.x, Groups.y, 1u);
 
         // A ground slab or a hill can cover the whole grid, so its cells are shared out across a group instead of one lane.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
         FSunDFShadowBinLargeArgs LargeArgs = {};
         LargeArgs.LargeObjects = Args.LargeObjects;
         LargeArgs.Grid         = Args.Grid;

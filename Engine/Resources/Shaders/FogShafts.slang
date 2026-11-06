@@ -38,10 +38,8 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
     FExponentialHeightFogParams uFog = Scene().FogParams;
 
     float3 CamPos  = GetCameraPosition();
-    float2 NDC     = UV * 2.0 - 1.0;
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
-    float3 RayDir  = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
+    float3 ViewRay = GetCameraViewRay(UV);
+    float3 RayDir  = GetCameraWorldRayDir(UV);
     float  ZPerT   = max(ViewRay.z, 1e-4) / length(ViewRay);
 
     const bool bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);

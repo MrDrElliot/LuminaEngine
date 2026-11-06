@@ -36,7 +36,7 @@ namespace Lumina
         Center = 1,
     };
 
-    /** Authored parameters SBlockoutSystem meshes onto the SDynamicMeshComponent beside it. */
+    /** Authored parameters CBlockoutSystem meshes onto the SDynamicMeshComponent beside it. */
     REFLECT(Component, Category = "Modeling")
     struct RUNTIME_API SBlockoutComponent
     {

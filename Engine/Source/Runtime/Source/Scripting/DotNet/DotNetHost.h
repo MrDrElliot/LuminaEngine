@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Scripting/ManagedTypeRegistry.h"
-
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
@@ -11,7 +9,7 @@ namespace Lumina
     class CObject;
     class CScriptStruct;
     class CWorld;
-    namespace Scripting { struct FScriptExportSchema; }
+    namespace Scripting { struct FScriptExportSchema; struct FManagedTypeDefinition; struct FManagedTypeAlias; }
 }
 
 // Embeds CoreCLR from the bundled runtime under External/DotNet and drives the LuminaSharp managed side.
@@ -87,6 +85,9 @@ namespace Lumina::DotNet
 
     RUNTIME_API bool IsInitialized();
 
+    // Frees a GCHandle managed handed to native, a no-op once the host has shut down.
+    RUNTIME_API void FreeManagedHandle(void* Handle);
+
     // A managed export by name, or null. A script assembly's export dies with its generation, so re-resolve when the generation changes. Game thread only.
     RUNTIME_API void* ResolveManagedExport(FStringView Name);
 
@@ -100,7 +101,7 @@ namespace Lumina::DotNet
             : Name(InName)
         {}
 
-        /** Null until the host is up, and retried until it resolves, so declaration order does not matter. */
+        // Null until the host is up, and retried until it resolves, so declaration order does not matter.
         TSignature Get() const
         {
             if (Pointer == nullptr)
@@ -150,7 +151,7 @@ namespace Lumina::DotNet
     
     //~ C# subclasses of reflected native classes, each minted as a CClass whose objects bind a managed instance.
 
-    /** One crossing per type for everything the reload stages need, so no stage gathers for itself. */
+    // One crossing per type for everything the reload stages need, so no stage gathers for itself.
     RUNTIME_API void GatherManagedTypeDefinitions(TVector<Scripting::FManagedTypeDefinition>& OutTypes, TVector<Scripting::FManagedTypeAlias>& OutAliases);
 
     // Creates the C# subclass instance for a native object, as a strong handle the object's managed-instance slot then owns.

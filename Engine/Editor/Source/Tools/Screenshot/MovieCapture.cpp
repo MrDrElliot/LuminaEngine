@@ -345,7 +345,11 @@ namespace Lumina::MovieCapture
         if (!S.Settings.PngDirectory.IsEmpty() && S.Status.FramesWritten % Math::Max(S.Settings.PngEvery, 1u) == 0)
         {
             const FString Path = Lumina::Format("{}/Frame_{:05}.png", S.Settings.PngDirectory, S.Status.FramesWritten);
-            ImageWrite::WritePngFile(*Path, S.Settings.Width, S.Settings.Height, 4, S.Frame.GetData(), S.Settings.Width * 4);
+            if (!ImageWrite::WritePngFile(*Path, S.Settings.Width, S.Settings.Height, 4, S.Frame.GetData(), S.Settings.Width * 4))
+            {
+                Finish(Lumina::Format("Could not write the frame {}.", Path));
+                return;
+            }
         }
 
         ++S.Status.FramesWritten;

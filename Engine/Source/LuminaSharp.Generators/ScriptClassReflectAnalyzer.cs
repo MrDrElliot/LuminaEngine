@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Linq;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -9,9 +10,6 @@ namespace LuminaSharp.Generators;
 [Generator]
 public sealed class ScriptClassReflectAnalyzer : IIncrementalGenerator
 {
-    private const string ReflectAttribute = "LuminaSharp.ReflectAttribute";
-    private const string NativeTypeAttribute = "LuminaSharp.NativeTypeAttribute";
-
     private static readonly DiagnosticDescriptor MissingReflect = new(
         id: "LUM0112",
         title: "Script class needs [Reflect]",
@@ -20,39 +18,39 @@ public sealed class ScriptClassReflectAnalyzer : IIncrementalGenerator
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
 
+    private sealed record Model(string Name, string NativeBase, SourceSpot Where);
+
     public void Initialize(IncrementalGeneratorInitializationContext Context)
     {
-        IncrementalValueProvider<ImmutableArray<INamedTypeSymbol?>> Classes = Context.SyntaxProvider
+        IncrementalValueProvider<ImmutableArray<Model?>> Classes = Context.SyntaxProvider
             .CreateSyntaxProvider(
                 static (Node, _) => Node is ClassDeclarationSyntax { BaseList: not null },
-                static (Syntax, _) => Syntax.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)Syntax.Node) as INamedTypeSymbol)
-            .Where(static Symbol => Symbol != null && !Symbol.IsAbstract && NativeBaseOf(Symbol) != null && !HasAttribute(Symbol, ReflectAttribute))
+                static (Syntax, _) => Syntax.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)Syntax.Node) is INamedTypeSymbol { IsAbstract: false } Symbol
+                    && NativeBaseOf(Symbol) is { } NativeBase && ScriptPropertyClassifier.FindAttribute(Symbol, ScriptPropertyTypeNames.ReflectAttribute) == null
+                        ? new Model(Symbol.Name, NativeBase.Name, SourceSpot.Of(Symbol))
+                        : null)
+            .Where(static Class => Class != null)
             .Collect();
 
-        Context.RegisterSourceOutput(Classes, static (Output, Symbols) =>
+        Context.RegisterSourceOutput(Classes.Combine(Context.CompilationProvider), static (Output, Input) =>
         {
-            foreach (INamedTypeSymbol Symbol in Symbols.Distinct(SymbolEqualityComparer.Default).Cast<INamedTypeSymbol>())
+            foreach (Model Class in Input.Left.Distinct().Cast<Model>())
             {
-                Output.ReportDiagnostic(Diagnostic.Create(MissingReflect, Symbol.Locations.FirstOrDefault(), Symbol.Name, NativeBaseOf(Symbol)!.Name));
+                Output.ReportDiagnostic(Diagnostic.Create(MissingReflect, Class.Where.ToLocation(Input.Right), Class.Name, Class.NativeBase));
             }
         });
-    }
-
-    private static bool HasAttribute(INamedTypeSymbol Symbol, string Attribute)
-    {
-        return Symbol.GetAttributes().Any(Data => Data.AttributeClass?.ToDisplayString() == Attribute);
     }
 
     // The nearest generated wrapper above Symbol, mirroring TypeLibrary.NativeClassBaseOf at runtime.
     private static INamedTypeSymbol? NativeBaseOf(INamedTypeSymbol Symbol)
     {
-        if (HasAttribute(Symbol, NativeTypeAttribute))
+        if (ScriptPropertyClassifier.FindAttribute(Symbol, ScriptPropertyTypeNames.NativeTypeAttribute) != null)
         {
             return null;
         }
         for (INamedTypeSymbol? Base = Symbol.BaseType; Base != null; Base = Base.BaseType)
         {
-            if (HasAttribute(Base, NativeTypeAttribute))
+            if (ScriptPropertyClassifier.FindAttribute(Base, ScriptPropertyTypeNames.NativeTypeAttribute) != null)
             {
                 return Base;
             }

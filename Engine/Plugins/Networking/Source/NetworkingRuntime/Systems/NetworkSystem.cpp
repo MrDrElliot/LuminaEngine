@@ -2,7 +2,6 @@
 #include "NetworkSystem.h"
 #include "World/ECS/Registry.h"
 
-#include <algorithm>
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
@@ -730,7 +729,7 @@ namespace Lumina
             uint32 RelevantSum = 0, RelevantMax = 0, SpawnsSum = 0, DespawnsSum = 0;
 
             // Copied from the grid's cell-ordered arrays so the diff reads hot fields contiguously.
-            struct FGathered { uint32 Rec; uint32 Guid; uint8 Flags; ENetLODTier Tier; };
+            struct FGathered { uint32 Rec; uint32 Guid; uint8 Flags; ENetLODTier Tier; float Score = 0.0f; };
 
             // Message building mints shared export indices, so the parallel pass only records what each client is owed.
             enum class EClientOp : uint8 { Spawn, MapBaseline, Despawn };
@@ -861,7 +860,7 @@ namespace Lumina
                 if (MaxRelevant > 0 && Gathered.Num() > MaxRelevant)
                 {
                     const uint32 OwnRecord = bHasViewpoint ? (*VpIt) : Constants::kIndexNoneU32;
-                    auto Score = [&](const FGathered& G)
+                    auto ScoreOf = [&](const FGathered& G)
                     {
                         if ((G.Flags & NETREC_AlwaysRelevant) || G.Rec == OwnRecord)
                         {
@@ -877,8 +876,12 @@ namespace Lumina
                         }
                         return Held->TimeHeld < MinResidencySeconds ? 0.0f : DistanceSq * 0.36f;
                     };
-                    std::nth_element(Gathered.begin(), Gathered.begin() + MaxRelevant, Gathered.end(),
-                        [&](const FGathered& A, const FGathered& B) { return Score(A) < Score(B); });
+                    for (FGathered& G : Gathered)
+                    {
+                        G.Score = ScoreOf(G);
+                    }
+                    Algo::NthElement(Gathered.begin(), Gathered.begin() + MaxRelevant, Gathered.end(),
+                        [](const FGathered& A, const FGathered& B) { return A.Score < B.Score; });
                     Gathered.SetNum(MaxRelevant);
                 }
 
@@ -986,7 +989,7 @@ namespace Lumina
 
                 if (MaxRecordsPerSend > 0 && static_cast<size_t>(Due.Num()) > MaxRecordsPerSend)
                 {
-                    std::nth_element(Due.begin(), Due.begin() + MaxRecordsPerSend, Due.end(),
+                    Algo::NthElement(Due.begin(), Due.begin() + MaxRecordsPerSend, Due.end(),
                         [](const FDueRecord& A, const FDueRecord& B) { return A.Priority > B.Priority; });
                     Due.SetNum(IntCastChecked<int32>(MaxRecordsPerSend));
                 }
@@ -1825,20 +1828,20 @@ namespace Lumina
         }
     }
 
-    void SNetworkSystem::Configure()
+    void CNetworkSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::FrameEnd);
         // The frame end snapshot leaves out what expired this frame.
-        RunsAfter<SLifetimeSystem>();
+        RunsAfter<CLifetimeSystem>();
     }
 
-    bool SNetworkSystem::HasWork(const SSystemContext& Context)
+    bool CNetworkSystem::HasWork(const SSystemContext& Context)
     {
         return GetWorld() != nullptr && GetWorld()->GetNetMode() != ENetMode::Standalone;
     }
 
-    void SNetworkSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CNetworkSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
         using namespace NetworkSystemInternal;
 
@@ -2366,7 +2369,7 @@ namespace Lumina
         RefreshNetRoles(Registry, *State, bServer);
         NetPrediction::RefreshDrives(World, Registry, bServer);
 
-        // Smoothing back onto the transform is done by SNetMovementInterpSystem, not here.
+        // Smoothing back onto the transform is done by CNetMovementInterpSystem, not here.
         EnsureRepTransforms(Registry);
 
         if (!bServer)

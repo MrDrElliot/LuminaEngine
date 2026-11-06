@@ -22,13 +22,13 @@ namespace Lumina
         constexpr uint32 kKinematicsParallelGrain = 2048;
     }
 
-    void SKinematicsSystem::Configure()
+    void CKinematicsSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    void SKinematicsSystem::OnUpdate(const SSystemContext& Context)
+    void CKinematicsSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace KinematicsSystemInternal;
 
@@ -115,7 +115,7 @@ namespace Lumina
             }, kKinematicsParallelGrain);
         }
 
-        // Last, because a character mover owns its velocity outright and SAnimationSystem preferred it.
+        // Last, because a character mover owns its velocity outright and CAnimationSystem preferred it.
         Movers.ForEach([&](ECS::FEntity Entity, const SCharacterMovementComponent& Movement, const STransformComponent&)
         {
             Refine(Entity, Movement.Velocity);

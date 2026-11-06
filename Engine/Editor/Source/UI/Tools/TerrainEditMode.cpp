@@ -227,6 +227,29 @@ namespace Lumina
         bTransactionOpen = false;
         bHasStrokeHit    = false;
         bRampStarted     = false;
+        CloseLayerEditTransaction();
+    }
+
+    void FTerrainEditMode::TrackLayerEditTransaction(const char* Name)
+    {
+        if (ImGui::IsItemActivated() && Context && !OpenLayerEditName)
+        {
+            Context->BeginModeTransaction();
+            OpenLayerEditName = Name;
+        }
+        else if (ImGui::IsItemDeactivated())
+        {
+            CloseLayerEditTransaction();
+        }
+    }
+
+    void FTerrainEditMode::CloseLayerEditTransaction()
+    {
+        if (OpenLayerEditName && Context)
+        {
+            Context->EndModeTransaction(OpenLayerEditName);
+        }
+        OpenLayerEditName = nullptr;
     }
 
     void FTerrainEditMode::DrawToolbar(CWorld* World, float ButtonSize)
@@ -261,22 +284,11 @@ namespace Lumina
             {
                 STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(TerrainEntity);
 
-                // Wrap in an undo transaction so the import is a single Ctrl+Z (snapshots the pre-import heightmap).
-                const bool bTransaction = (Context != nullptr);
-                if (bTransaction)
-                {
-                    Context->BeginModeTransaction();
-                }
-
                 FString Error;
                 int32 SrcW = 0;
                 int32 SrcH = 0;
-                const bool bOk = ImportHeightmap(Terrain, *File, Error, SrcW, SrcH);
-
-                if (bTransaction)
-                {
-                    Context->EndModeTransaction("Import Heightmap");
-                }
+                bool bOk = false;
+                RunModeTransaction("Import Heightmap", [&] { bOk = ImportHeightmap(Terrain, *File, Error, SrcW, SrcH); });
 
                 if (bOk)
                 {
@@ -440,11 +452,14 @@ namespace Lumina
             if (LayerCount > 0) ImGui::SameLine();
             if (ImGui::Button("+", SwatchSize))
             {
-                STerrainLayer& L = Terrain.Layers.EmplaceGetRef();
-                L.Name = Format("Layer{}", LayerCount);
-                L.UVScale = 1.0f / 16.0f;
-                EnsureLayerWeightStorage(Terrain);
-                Terrain.CPUState.bFullWeightsDirty = true;
+                RunModeTransaction("Add Terrain Layer", [&]
+                {
+                    STerrainLayer& L = Terrain.Layers.EmplaceGetRef();
+                    L.Name = Format("Layer{}", LayerCount);
+                    L.UVScale = 1.0f / 16.0f;
+                    EnsureLayerWeightStorage(Terrain);
+                    Terrain.CPUState.bFullWeightsDirty = true;
+                });
             }
         }
         else
@@ -469,9 +484,11 @@ namespace Lumina
             {
                 L.Name = NameBuf;
             }
+            TrackLayerEditTransaction("Rename Terrain Layer");
 
             ImGui::SetNextItemWidth(140.0f);
             ImGui::SliderFloat("UV Scale", &L.UVScale, 1.0f / 1024.0f, 1.0f, "%.4f", ImGuiSliderFlags_Logarithmic);
+            TrackLayerEditTransaction("Edit Terrain Layer UV Scale");
 
             const bool bCanUp   = ActiveLayer > 0;
             const bool bCanDown = ActiveLayer + 1 < LayerCount;
@@ -479,7 +496,7 @@ namespace Lumina
             ImGui::BeginDisabled(!bCanUp);
             if (ImGui::Button("Up"))
             {
-                SwapLayers(Terrain, ActiveLayer, ActiveLayer - 1);
+                RunModeTransaction("Move Terrain Layer Up", [&] { SwapLayers(Terrain, ActiveLayer, ActiveLayer - 1); });
                 --ActiveLayer;
             }
             ImGui::EndDisabled();
@@ -488,7 +505,7 @@ namespace Lumina
             ImGui::BeginDisabled(!bCanDown);
             if (ImGui::Button("Down"))
             {
-                SwapLayers(Terrain, ActiveLayer, ActiveLayer + 1);
+                RunModeTransaction("Move Terrain Layer Down", [&] { SwapLayers(Terrain, ActiveLayer, ActiveLayer + 1); });
                 ++ActiveLayer;
             }
             ImGui::EndDisabled();
@@ -497,7 +514,7 @@ namespace Lumina
             ImGui::BeginDisabled(LayerCount <= 1);
             if (ImGui::Button("Remove"))
             {
-                RemoveLayer(Terrain, ActiveLayer);
+                RunModeTransaction("Remove Terrain Layer", [&] { RemoveLayer(Terrain, ActiveLayer); });
                 ActiveLayer = Math::Min(ActiveLayer, Terrain.Layers.Num() - 1);
             }
             ImGui::EndDisabled();
@@ -635,7 +652,7 @@ namespace Lumina
 
         // On click rather than down, so a held stroke cannot accidentally retarget itself.
         if (Mode == ETerrainBrushMode::Flatten
-            && ImGui::IsKeyDown(ImGuiKey_LeftCtrl)
+            && ImGui::GetIO().KeyCtrl
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             FlattenHeight = Hit.y - TerrainOrigin.y;
@@ -679,7 +696,7 @@ namespace Lumina
         Dab.ActiveLayer   = ActiveLayer;
 
         // Shift was the old modifier but is now reserved for constraint and slow-drag shortcuts.
-        const bool bInvertNow = bInvertSculpt != ImGui::IsKeyDown(ImGuiKey_LeftAlt);
+        const bool bInvertNow = bInvertSculpt != ImGui::GetIO().KeyAlt;
         Dab.SculptSign = bInvertNow ? int8(-1) : int8(1);
 
         Dab.NoiseFrequency = NoiseFrequency;

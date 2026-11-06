@@ -3,6 +3,7 @@
 
 #include "AudioStream.h"
 #include "Audio/AudioDecode.h"
+#include "Audio/Graph/AudioGraphInstance.h"
 #include "Core/Serialization/Archiver.h"
 #include "Log/Log.h"
 #include "Memory/MemoryTracking.h"

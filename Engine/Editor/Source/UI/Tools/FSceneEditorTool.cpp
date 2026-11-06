@@ -110,6 +110,11 @@ namespace Lumina
         return Asset != nullptr ? Asset->GetPackage() : nullptr;
     }
 
+    ECS::FRegistry& FSceneEditorTool::GetSceneRegistry() const
+    {
+        return GetObservedWorld()->GetEntityRegistry();
+    }
+
     void FSceneEditorTool::MarkSceneDirty()
     {
         if (CPackage* Package = GetScenePackage())
@@ -1297,10 +1302,6 @@ namespace Lumina
         EndTransaction("Remove Component");
     }
 
-    void FSceneEditorTool::OnPrePropertyChangeEvent(const FPropertyChangedEvent& Event)
-    {
-    }
-
     void FSceneEditorTool::BeginPropertyEditTransaction(CStruct* ComponentType)
     {
         ECS::FRegistry& Registry = GetSceneRegistry();
@@ -1551,7 +1552,6 @@ namespace Lumina
                 // The panel owns ONE search box, or a per-table box would sit above each component header.
                 Entry.Table->SetShowSearchBar(false);
                 Entry.Table->SetOwnerHeading(FName(*SceneEditorToolInternal::FriendlyComponentName(Row.Title)));
-                Entry.Table->SetPreEditCallback([&](const FPropertyChangedEvent& Event)    { OnPrePropertyChangeEvent(Event); });
                 Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
                 Entry.Table->SetStartEditCallback([this, Layout = Row.Layout](const FPropertyChangedEvent& Event) { BeginPropertyEditTransaction(Layout); });
                 Entry.Table->SetFinishEditCallback([&](const FPropertyChangedEvent& Event) { EndTransaction(Event.PropertyName); });
@@ -1797,7 +1797,7 @@ namespace Lumina
         {
             FString Chip = LE_ICON_PUZZLE " ";
             Chip += SceneEditorToolInternal::FriendlyComponentName(*StructType->MakeDisplayName());
-            Display.TooltipChips.Emplace(std::move(Chip));
+            Display.TooltipChips.Emplace(Move(Chip));
         });
         if (Display.TooltipChips.IsEmpty())
         {

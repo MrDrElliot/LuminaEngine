@@ -30,11 +30,6 @@ namespace Lumina
             return false;
         }
 
-        bool IsGamepadSource(EInputAxisSource Source)
-        {
-            return Source >= EInputAxisSource::GamepadLeftX && Source <= EInputAxisSource::GamepadRightTrigger;
-        }
-
         // The stick or trigger a gamepad axis source reads.
         EGamepadAxis GetGamepadAxisFor(EInputAxisSource Source)
         {

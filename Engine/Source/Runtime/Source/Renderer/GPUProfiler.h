@@ -33,7 +33,7 @@ namespace Lumina
         double                    TotalMs     = 0.0;
     };
 
-    /** Per-pass GPU timings, bracketing the debug markers the scene renderer already emits. */
+    // Per-pass GPU timings, bracketing the debug markers the scene renderer already emits.
     class RUNTIME_API FGPUProfiler
     {
     public:
@@ -53,10 +53,10 @@ namespace Lumina
         NODISCARD bool IsEnabled() const;
         void SetEnabled(bool bEnabled);
 
-        /** Releases the query pools. Called before the device goes away. */
+        // Releases the query pools. Called before the device goes away.
         void Shutdown();
 
-        /** Resolves the slot's previous frame, then arms it for recording. */
+        // Resolves the slot's previous frame, then arms it for recording.
         void BeginFrame(uint32 Slot);
 
         //~ Driven by RHI::CmdBeginMarker / CmdEndMarker, so every existing marker is a timed scope.

@@ -36,7 +36,7 @@ namespace Lumina
             const FVector3 Offset = Center - NodeCenter;
 
             // Past the root's own box nothing deeper can hold it, so it stays at the root.
-            const bool bInside = std::fabs(Offset.x) <= Nodes[Node].HalfSize && std::fabs(Offset.y) <= Nodes[Node].HalfSize && std::fabs(Offset.z) <= Nodes[Node].HalfSize;
+            const bool bInside = Math::Abs(Offset.x) <= Nodes[Node].HalfSize && Math::Abs(Offset.y) <= Nodes[Node].HalfSize && Math::Abs(Offset.z) <= Nodes[Node].HalfSize;
             if (ChildHalf < MinHalfSize || Size > ChildHalf || !bInside)
             {
                 return Node;

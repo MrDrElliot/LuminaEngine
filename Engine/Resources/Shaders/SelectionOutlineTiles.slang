@@ -1,6 +1,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 #include "Includes/WaveAtomics.slang"
+#include "Includes/SelectionOutlineCommon.slang"
 
 // Lists every 8x8 tile within outline reach of a selected pixel, once each, as the instances SelectionOutlineTileQuad.slang draws.
 struct FSelectionTileArgs
@@ -20,26 +21,7 @@ struct FSelectionTileArgs
 };
 FSelectionTileArgs* Pass() { return GetPassArgs<FSelectionTileArgs>(); }
 
-// The same membership test as SelectionOutline.slang, so a tile is listed exactly when that pass would find a selected pixel in it.
-bool IsEntitySelected(uint PickerValue)
-{
-    if (PickerValue == 0u || PickerValue == 0xFFFFFFFFu)
-    {
-        return false;
-    }
-
-    const uint Index = PickerValue & Pass().EntityIndexMask;
-    return (Pass().SelectionBits.Get(Index >> 5u) & (1u << (Index & 31u))) != 0u;
-}
-
 groupshared uint GTileHasSelection;
-
-// The outline runs over display pixels while the picker holds one id per render pixel.
-int2 DisplayToPickerTexel(int2 DisplayTexel)
-{
-    const float2 Scale = float2(GetScreenSize()) / float2(max(GetDisplaySize(), uint2(1u, 1u)));
-    return clamp(int2((float2(DisplayTexel) + 0.5) * Scale), int2(0, 0), int2(GetScreenSize()) - int2(1, 1));
-}
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -58,7 +40,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
 
     const int2 Extent = int2(GetDisplaySize());
     const int2 Texel  = int2(GroupID.xy * 8u + LocalID.xy);
-    if (all(Texel < Extent) && IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel))))
+    if (all(Texel < Extent) && IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel)), Pass().SelectionBits, Pass().EntityIndexMask))
     {
         InterlockedOr(GTileHasSelection, 1u);
     }

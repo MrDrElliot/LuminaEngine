@@ -7,7 +7,7 @@
 
 namespace Lumina::Assert::Detail
 {
-    // The assertion entry point for headers that cannot include Assert.h, which reaches FString and <stacktrace>.
+    // The assertion entry point for headers that cannot include Assert.h, which reaches FString.
     [[noreturn]] FORCENOINLINE RUNTIME_API void HandleCheckFailure(const char* Expression, const std::source_location& Location);
 
     // The same for a bounds check, which reports the two values that failed it rather than only their names.

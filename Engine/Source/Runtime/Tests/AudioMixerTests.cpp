@@ -321,6 +321,58 @@ TEST(AudioMixer, PausedVoicesHoldTheirSlotAndGoQuiet)
     EXPECT_EQ(Mixer.GetActiveVoiceCount(), 1u);
 }
 
+TEST(AudioMixer, AFadeOutStopFreesAVoiceThatIsNotRendering)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+
+    FMixerConstantSource Paused(1, 0.25f);
+    FMixerConstantSource Delayed(1, 0.25f);
+    FMixerConstantSource Playing(1, 0.25f);
+    FMixerVoiceDesc DelayedDesc = MakeDesc(1, &Delayed);
+    DelayedDesc.Params.StartDelaySeconds = 10.0f;
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(0, &Paused)));
+    ASSERT_TRUE(Mixer.StartVoice(DelayedDesc));
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(2, &Playing)));
+
+    TVector<float> Out(512, 0.0f);
+    Mixer.PostCommand(FAudioCommand::MakeBool(EAudioCommandType::SetPaused, SAudioHandle{ 1, 0 }, true));
+    Mixer.RenderAudio(Out.GetData(), 64);
+    ASSERT_EQ(Mixer.GetSlotState(0), EAudioVoiceState::Paused);
+
+    Mixer.PostCommand(FAudioCommand::MakeStop(SAudioHandle{ 1, 0 }, EAudioStopMode::AllowFadeOut, 0.5f));
+    Mixer.PostCommand(FAudioCommand::MakeStop(SAudioHandle{ 2, 1 }, EAudioStopMode::AllowFadeOut, 0.5f));
+    Mixer.PostCommand(FAudioCommand::MakeStop(SAudioHandle{ 3, 2 }, EAudioStopMode::AllowFadeOut, 0.5f));
+    Mixer.RenderAudio(Out.GetData(), 64);
+
+    EXPECT_EQ(Mixer.GetSlotState(0), EAudioVoiceState::Free);
+    EXPECT_EQ(Mixer.GetSlotState(1), EAudioVoiceState::Free);
+    EXPECT_EQ(Mixer.GetSlotState(2), EAudioVoiceState::Playing);
+}
+
+TEST(AudioMixer, ARelativeVoiceGetsNoDopplerFromListenerMotion)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 1));
+    Mixer.SetVolumeSmoothing(0.0f);
+    Mixer.SetListener(0, FVector3(1000.0f, 0.0f, 0.0f), FQuat(1.0f, 0.0f, 0.0f, 0.0f), FVector3(10.0f, 0.0f, 0.0f));
+
+    FMixerTestSource Source(kMixRate, 1, 4096, 0.1f, 0.001f);
+    FMixerVoiceDesc Desc = MakeDesc(0, &Source);
+    Desc.Params.bSpatialized = true;
+    Desc.Params.Position = FVector3(1.0f, 0.0f, 0.0f);
+    Desc.Params.Attenuation.Positioning = EAudioPositioning::Relative;
+    ASSERT_TRUE(Mixer.StartVoice(Desc));
+
+    TVector<float> Out(128, 0.0f);
+    Mixer.RenderAudio(Out.GetData(), 128);
+
+    // Out[k] is Gain times (Start + k * Step * Ratio), so this ratio isolates the playback rate from the gain.
+    ASSERT_GT(Out[0], 0.0f);
+    const float Ratio = (Out[100] / Out[0] - 1.0f) * 0.1f / (100.0f * 0.001f);
+    EXPECT_NEAR(Ratio, 1.0f, 1.0e-3f);
+}
+
 TEST(AudioMixer, ReverbSendAddsAWetTail)
 {
     FAudioMixer Mixer;

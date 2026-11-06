@@ -1,9 +1,6 @@
 ﻿#include "AssetCooker.h"
-#include <string>
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Paths/Paths.h"
-#include <filesystem>
-#include <fstream>
 #include "Assets/AssetManager/AssetManager.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetRegistry/AssetData.h"
@@ -355,7 +352,7 @@ namespace Lumina
             if (!bMatch)
             {
                 const FString Dir = FString(*Paths::GetEngineInstallDirectory()) + "/Intermediates/CookVerify/";
-                std::filesystem::create_directories(*Dir);
+                Filesystem::MakeDirectoryTree(Dir);
                 const FString Stem = Dir + FString(LeafName(Path).GetData(), LeafName(Path).Len());
                 Filesystem::AtomicWriteFile(Stem + ".file", TSpan<const uint8>(Stripped.GetData(), Stripped.Num()));
                 Filesystem::AtomicWriteFile(Stem + ".saved", TSpan<const uint8>(Saved.GetData(), Saved.Num()));
@@ -435,30 +432,10 @@ namespace Lumina
             Filesystem::MakeDirectoryTree(FStringView(*ContentsDir, ContentsDir.Len()));
             const FString ContentsPath = ContentsDir + "/" + FString(LeafName(FStringView(*PakPath, PakPath.Len())).GetData(),
                                                                        LeafName(FStringView(*PakPath, PakPath.Len())).Len()) + ".contents.txt";
-            std::ofstream File(*ContentsPath, std::ios::binary | std::ios::trunc);
-            File.write(Text.GetData(), (std::streamsize)Text.Len());
-            if (File.good())
+            if (Filesystem::AtomicWriteFile(ContentsPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len())))
             {
                 LogCooker(LogFunc, *Format("  listed {} entries in {}", Paths.Num(), *ContentsPath));
             }
-        }
-
-        // VirtualPath ends in ".lasset" (case-insensitive).
-        bool IsLAssetPath(FStringView VirtualPath)
-        {
-            static constexpr FStringView Ext = ".lasset";
-            if (VirtualPath.Len() < Ext.Len())
-            {
-                return false;
-            }
-            FStringView Tail = VirtualPath.Mid(VirtualPath.Len() - Ext.Len());
-            for (int32 i = 0; i < Ext.Len(); ++i)
-            {
-                char a = Tail[i]; char b = Ext[i];
-                if (a >= 'A' && a <= 'Z') a = char(a - 'A' + 'a');
-                if (a != b) return false;
-            }
-            return true;
         }
 
         // Picks up loose files loaded by name at runtime, which carry no asset-reflected references.
@@ -471,7 +448,7 @@ namespace Lumina
                 {
                     if (Info.IsDirectory()) return;
                     FStringView Vp(*Info.VirtualPath, Info.VirtualPath.Len());
-                    if (IsLAssetPath(Vp)) return;
+                    if (EndsWithIgnoreCase(Vp, ".lasset")) return;
                     if (BundleVfsFile(Writer, Vp, LogFunc))
                     {
                         ++Count;
@@ -770,26 +747,25 @@ namespace Lumina
         LogCooker(LogFunc, *Format("Reachable assets: {}", Reachable.Num()));
 
         // Sorted-by-GUID input order is preserved per chunk so PAK entry order stays deterministic.
-        const FName kMainChunk("Main");
         THashMap<FName, TVector<const FCookNode*>> ByChunk;
         for (const FCookNode* Node : Reachable)
         {
-            const FName Chunk = Node->Chunk.IsNone() ? kMainChunk : Node->Chunk;
+            const FName Chunk = Node->Chunk.IsNone() ? kMainChunkName : Node->Chunk;
             ByChunk[Chunk].Add(Node);
         }
 
         // Alphabetical with Main forced first, since Main carries shared content and the verbatim path.
         TVector<FName> ChunkOrder;
         ByChunk.GenerateKeyArray(ChunkOrder);
-        if (ByChunk.TryAdd(kMainChunk))      // ensure a Main PAK exists for shared content
+        if (ByChunk.TryAdd(kMainChunkName))      // ensure a Main PAK exists for shared content
         {
-            ChunkOrder.Add(kMainChunk);
+            ChunkOrder.Add(kMainChunkName);
         }
         Algo::Sort(ChunkOrder,
             [&](const FName& A, const FName& B)
             {
-                if (A == kMainChunk) return true;
-                if (B == kMainChunk) return false;
+                if (A == kMainChunkName) return true;
+                if (B == kMainChunkName) return false;
                 return A.ToString() < B.ToString();
             });
 
@@ -797,7 +773,7 @@ namespace Lumina
         auto ChunkPakPath = [&](FName Chunk) -> FString
         {
             const FString FullPath(OutputPakPath.GetData(), OutputPakPath.Len());
-            if (Chunk == kMainChunk) return FullPath;
+            if (Chunk == kMainChunkName) return FullPath;
 
             const int32 DotPos = FullPath.FindLastOf('.');
             const int32 SlashPos = FullPath.FindLastOf("/\\");
@@ -816,7 +792,7 @@ namespace Lumina
         for (const FName& Chunk : ChunkOrder)
         {
             FPakWriter Writer;
-            const bool bIsMain = (Chunk == kMainChunk);
+            const bool bIsMain = (Chunk == kMainChunkName);
 
             BundleChunkAssets(Writer, ByChunk[Chunk], Result, LogFunc);
 

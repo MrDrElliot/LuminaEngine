@@ -108,9 +108,7 @@ namespace Lumina
 
         void Initialize();
 
-        /** Blocks until the GPU has finished with the slot this frame is about to record into. Called at
-         *  the top of the application loop, BEFORE input is pumped: everything between sampling the mouse
-         *  and submitting is input latency, and this wait is the longest thing in that window. */
+        // Called before input is pumped, so this longest wait in the frame does not count as input latency.
         void WaitForFrameSlot();
 
         // ImGui::NewFrame (and any other backend per-frame init).
@@ -151,8 +149,7 @@ namespace Lumina
         NODISCARD RHI::FMaterialManager& GetMaterialManager() const { return *MaterialManager.get(); }
         NODISCARD RHI::FMaterialCollectionManager& GetCollectionManager() const { return *CollectionManager.get(); }
 
-        /** Deferred release of renderer-side state whose owner has gone away. See RenderRelease.h for
-            why this exists and what it gates on. */
+        // Deferred release of renderer-side state whose owner has gone away.
         NODISCARD RHI::FRenderReleaseQueue& GetReleaseQueue() { return ReleaseQueue; }
 
         // Lazily populated by the first render scene; aliased by all later scenes.
@@ -228,7 +225,7 @@ namespace Lumina
 
     namespace Internal
     {
-        /** Publishes the process-wide renderer. FEngine owns the lifetime; nothing else should call this. */
+        // FEngine owns the renderer's lifetime, so nothing else should call this.
         RUNTIME_API void SetRenderManager(FRenderManager* Manager);
     }
 }

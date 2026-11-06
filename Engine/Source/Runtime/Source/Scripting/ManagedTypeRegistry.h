@@ -13,7 +13,7 @@ namespace Lumina
 
 namespace Lumina::Scripting
 {
-    /** What a managed type becomes on the native side. */
+    // What a managed type becomes on the native side.
     enum class EManagedTypeKind : uint8
     {
         None = 0,
@@ -31,7 +31,7 @@ namespace Lumina::Scripting
         EManagedTypeKind    Kind = EManagedTypeKind::None;
         FName               TypeName;
 
-        /** Empty when the type declares no [Property] members; bHasSchema says which. */
+        // Empty when the type declares no [Property] members; bHasSchema says which.
         FScriptExportSchema Schema;
         bool                bHasSchema = false;
 
@@ -62,7 +62,7 @@ namespace Lumina::Scripting
 
         virtual ~IManagedTypeCompiler() = default;
 
-        /** Names the stage in logs and in the ordering test. */
+        // Names the stage in logs and in the ordering test.
         virtual const char* GetName() const = 0;
 
         // Tears down what this stage holds in the collectible context before it unloads, in reverse registration order.
@@ -112,7 +112,7 @@ namespace Lumina::Scripting
         virtual void OnScriptsReloaded(const FScriptReload& Reload) = 0;
     };
 
-    /** Installs the engine's own stages, in the order they must run. Idempotent. */
+    // Installs the engine's own stages, in the order they must run. Idempotent.
     RUNTIME_API void RegisterBuiltInManagedTypeStages();
 
     // The stages in registration order, which is the order they compile in and the reverse of the order they unload in.
@@ -122,16 +122,16 @@ namespace Lumina::Scripting
 
         static FManagedTypeRegistry& Get();
 
-        /** Appends a stage. Not owned: a stage is a process-lifetime singleton. */
+        // Appends a stage. Not owned, since a stage is a process-lifetime singleton.
         void Register(IManagedTypeCompiler* Compiler);
 
-        /** Runs every stage's PreUnload, in reverse order, before the load context goes away. */
+        // Runs every stage's PreUnload, in reverse order, before the load context goes away.
         void PreUnloadAll();
 
-        /** Runs every stage's UnloadAborted, in order, after a load that failed. */
+        // Runs every stage's UnloadAborted, in order, after a load that failed.
         void UnloadAbortedAll();
 
-        /** Runs every stage, in order, over one generation's definitions. */
+        // Runs every stage, in order, over one generation's definitions.
         void CompileAll(TSpan<const FManagedTypeDefinition> Definitions, TSpan<const FManagedTypeAlias> Aliases = {});
 
         NODISCARD TSpan<IManagedTypeCompiler* const> GetStages() const { return Stages; }
@@ -145,7 +145,7 @@ namespace Lumina::Scripting
         // Tells every listener the generation is live, handing over what the stages replaced on the way.
         void BroadcastReload(int32 Generation, TSpan<const FManagedTypeDefinition> Types);
 
-        /** Test seam: drops every registered stage. */
+        // Drops every registered stage, for tests.
         void ResetForTesting() { Stages.Reset(); }
 
     private:

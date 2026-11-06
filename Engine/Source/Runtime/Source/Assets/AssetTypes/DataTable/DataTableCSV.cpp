@@ -324,7 +324,7 @@ namespace Lumina::DataTableCSV
             return Result;
         }
 
-        Table->Rows = std::move(NewRows);
+        Table->Rows = Move(NewRows);
         Result.bSucceeded = true;
         return Result;
     }

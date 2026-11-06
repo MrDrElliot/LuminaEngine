@@ -194,6 +194,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Distance Field")
         SDistanceFieldBuildSettings DistanceField;
 
+        // Cluster hierarchy and voxel levels per mesh, seeded from the project's renderer settings and rebuildable from the mesh editor.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        SVirtualGeometryBuildSettings VirtualGeometry;
+
         bool HasSettingsDialogue() const override { return true; }
 
         bool ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress) override;

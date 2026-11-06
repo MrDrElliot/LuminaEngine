@@ -9,11 +9,12 @@
 #include "Input/Key.h"
 #include "Physics/PhysicsTypes.h"
 #include "Renderer/PresentMode.h"
-#include "World/World.h"
 #include "EngineSettings.generated.h"
 
 namespace Lumina
 {
+    class CWorld;
+
     // Per-project runtime settings; persists to the project's /Config/GameSettings.json.
     REFLECT(MinimalAPI, ConfigFile = "/Config/GameSettings.json", DisplayName = "Project", Category = "Project")
     class CProjectSettings : public CDeveloperSettings
@@ -374,6 +375,30 @@ namespace Lumina
         // Largest face a point light's cube shadow may claim. Higher is sharper, but every tap touches more cache lines.
         PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)
         int32 PointShadowResolution = 512;
+
+        // New meshes import with a cluster hierarchy the GPU cuts per meshlet, in place of a discrete LOD chain. Existing meshes rebuild from the mesh editor.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        bool bClusterLODByDefault = true;
+
+        // New meshes import with voxel splat levels past their coarsest geometry.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        bool bVoxelFarByDefault = true;
+
+        // Voxels along the longest side at the finest voxel level a new mesh bakes.
+        PROPERTY(Editable, Category = "Virtual Geometry", ClampMin = 4, ClampMax = 128)
+        int32 DefaultVoxelResolution = 128;
+
+        // Draws the baked voxel levels once a mesh is far enough; off keeps every mesh on its coarsest triangles.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        bool bVoxelFarRepresentation = true;
+
+        // Replaces an instance smaller than ProxyTransitionPixels on screen with one splat carrying no transform or meshlet data of its own.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        bool bFarProxies = true;
+
+        // Projected diameter in pixels under which an instance becomes a proxy. 0 keeps every instance on its meshlets.
+        PROPERTY(Editable, Category = "Virtual Geometry", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.25f)
+        float ProxyTransitionPixels = 2.0f;
 
         // Sun shadow filtering; a low sun stretches each shadow texel along the ground, which only more taps hide.
         PROPERTY(Editable, Category = "Shadows")

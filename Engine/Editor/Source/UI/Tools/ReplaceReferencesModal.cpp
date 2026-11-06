@@ -14,6 +14,7 @@
 #include "Core/Object/Package/Package.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/SmartPtr.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include <imgui.h>
@@ -23,10 +24,6 @@ namespace Lumina::ReplaceReferences
 {
     namespace
     {
-        constexpr ImVec4 kWarningColor = ImVec4(1.00f, 0.78f, 0.40f, 1.00f);
-        constexpr ImVec4 kDangerColor  = ImVec4(0.96f, 0.36f, 0.38f, 1.00f);
-        constexpr ImVec4 kDimColor     = ImVec4(0.55f, 0.56f, 0.62f, 1.00f);
-
         constexpr const char* kClearLabel = "Clear reference (null)";
 
         enum class EPhase : uint8
@@ -96,7 +93,7 @@ namespace Lumina::ReplaceReferences
 
             if (Entry.AssetClass == nullptr)
             {
-                ImGui::TextColored(kDimColor, "Unknown asset type, no replacement can be offered.");
+                ImGui::TextColored(EditorColors::TextDim(), "Unknown asset type, no replacement can be offered.");
                 ImGui::EndCombo();
                 return;
             }
@@ -183,11 +180,11 @@ namespace Lumina::ReplaceReferences
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
                         ImGui::Indent();
-                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? *Referencer->Path : "<missing>");
+                        ImGui::TextColored(EditorColors::TextDim(), "%s", Referencer != nullptr ? *Referencer->Path : "<missing>");
                         ImGui::Unindent();
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextColored(kDimColor, "%s", Referencer != nullptr ? *Referencer->AssetClass : "");
+                        ImGui::TextColored(EditorColors::TextDim(), "%s", Referencer != nullptr ? *Referencer->AssetClass : "");
                     }
                     ImGui::TreePop();
                 }
@@ -347,7 +344,7 @@ namespace Lumina::ReplaceReferences
 
             if (bDeleting)
             {
-                ImGui::TextColored(kWarningColor, LE_ICON_ALERT " %u asset(s) you are deleting are still in use.",
+                ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_ALERT " %u asset(s) you are deleting are still in use.",
                     (uint32)State.Entries.Num());
 
                 ImGui::Spacing();
@@ -358,7 +355,7 @@ namespace Lumina::ReplaceReferences
             }
             else
             {
-                ImGui::TextColored(kWarningColor, LE_ICON_LINK " %u asset(s) reference the selection.", ReferencerCount);
+                ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_LINK " %u asset(s) reference the selection.", ReferencerCount);
 
                 ImGui::Spacing();
                 ImGui::TextWrapped(
@@ -368,11 +365,11 @@ namespace Lumina::ReplaceReferences
             }
 
             ImGui::Spacing();
-            ImGui::TextColored(kDimColor, "Replacements are limited to the original asset's own type or a subclass of it.");
+            ImGui::TextColored(EditorColors::TextDim(), "Replacements are limited to the original asset's own type or a subclass of it.");
 
             if (State.DirtyReferencerCount > 0)
             {
-                ImGui::TextColored(kWarningColor, LE_ICON_ALERT " %u referencing asset(s) have unsaved changes, which this saves too.",
+                ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_ALERT " %u referencing asset(s) have unsaved changes, which this saves too.",
                     State.DirtyReferencerCount);
             }
 
@@ -392,19 +389,19 @@ namespace Lumina::ReplaceReferences
             if (bDeleting)
             {
                 FormatTo(ConfirmLabel, LE_ICON_TRASH_CAN " Delete {} Item(s)", State.TargetCount);
-                ImGui::PushStyleColor(ImGuiCol_Text, kDangerColor);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
             }
             else
             {
                 FormatTo(ConfirmLabel, LE_ICON_LINK " Update {} Reference(s)", ReferencerCount);
-                ImGui::PushStyleColor(ImGuiCol_Text, kWarningColor);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
             }
 
             const bool bConfirmed = ImGui::Button(*ConfirmLabel, ImVec2(220.0f, 0.0f));
             ImGui::PopStyleColor();
 
             ImGui::SameLine();
-            ImGui::TextColored(kDimColor, "%u replace, %u clear", ReplacedCount, (uint32)State.Entries.Num() - ReplacedCount);
+            ImGui::TextColored(EditorColors::TextDim(), "%u replace, %u clear", ReplacedCount, (uint32)State.Entries.Num() - ReplacedCount);
 
             if (bCanceled)
             {
@@ -436,7 +433,7 @@ namespace Lumina::ReplaceReferences
             ImGui::Spacing();
             ImGui::ProgressBar(Progress, ImVec2(-1.0f, 0.0f));
             ImGui::Spacing();
-            ImGui::TextColored(kDimColor, "%s", State.Current.IsNone() ? "" : *State.Current);
+            ImGui::TextColored(EditorColors::TextDim(), "%s", State.Current.IsNone() ? "" : *State.Current);
 
             return false;
         }
@@ -450,7 +447,7 @@ namespace Lumina::ReplaceReferences
             if (State.Failed > 0)
             {
                 ImGui::Spacing();
-                ImGui::TextColored(kDangerColor, LE_ICON_ALERT " %u reference(s) could not be updated.", State.Failed);
+                ImGui::TextColored(EditorColors::Danger(), LE_ICON_ALERT " %u reference(s) could not be updated.", State.Failed);
                 ImGui::TextWrapped(bDeleting
                     ? "Deleting now leaves them pointing at a missing asset. See the log for which ones failed."
                     : "Those references still point at the original asset. See the log for which ones failed.");

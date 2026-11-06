@@ -19,7 +19,7 @@ namespace Lumina
         }
 
         TScopeLock Guard(WaitLock);
-        Waits.Add(std::move(Wait));
+        Waits.Add(Move(Wait));
     }
 
     void FCoroutineManager::Suspend(CoroDetail::FCoroutineState& State, CoroDetail::FLatentWaitSpec&& Spec, uint32 Serial)
@@ -27,21 +27,21 @@ namespace Lumina
         FWait Wait;
         Wait.State  = CoroDetail::FStateRef(&State);
         Wait.Serial = Serial;
-        Wait.Spec   = std::move(Spec);
-        Add(std::move(Wait));
+        Wait.Spec   = Move(Spec);
+        Add(Move(Wait));
     }
 
     uint64 FCoroutineManager::AddWait(CoroDetail::FLatentWaitSpec&& Spec, FWaitCallback Callback)
     {
         FWait Wait;
-        Wait.Spec     = std::move(Spec);
-        Wait.Callback = std::move(Callback);
+        Wait.Spec     = Move(Spec);
+        Wait.Callback = Move(Callback);
         {
             TScopeLock Guard(WaitLock);
             Wait.Id = ++NextId;
         }
         const uint64 Id = Wait.Id;
-        Add(std::move(Wait));
+        Add(Move(Wait));
         return Id;
     }
 
@@ -55,7 +55,7 @@ namespace Lumina
             {
                 return;
             }
-            Dropped = std::move(It->Callback);
+            Dropped = Move(It->Callback);
             Waits.RemoveAt(static_cast<int32>(It - Waits.begin()));
         }
     }
@@ -108,7 +108,7 @@ namespace Lumina
         TVector<FWait> Current;
         {
             TScopeLock Guard(WaitLock);
-            Current = std::move(Waits);
+            Current = Move(Waits);
             Waits.Reset();
         }
 
@@ -120,12 +120,12 @@ namespace Lumina
             {
                 if (IsReady(Wait, bPaused))
                 {
-                    FWaitCallback Callback = std::move(Wait.Callback);
+                    FWaitCallback Callback = Move(Wait.Callback);
                     Callback(true);
                 }
                 else
                 {
-                    Kept.Add(std::move(Wait));
+                    Kept.Add(Move(Wait));
                 }
                 continue;
             }
@@ -141,7 +141,7 @@ namespace Lumina
             {
                 if (State.IsWaitingOn(Wait.Serial))
                 {
-                    Kept.Add(std::move(Wait));
+                    Kept.Add(Move(Wait));
                 }
                 continue;
             }
@@ -162,7 +162,7 @@ namespace Lumina
         TScopeLock Guard(WaitLock);
         for (FWait& Wait : Kept)
         {
-            Waits.Add(std::move(Wait));
+            Waits.Add(Move(Wait));
         }
     }
 
@@ -186,14 +186,14 @@ namespace Lumina
         TVector<FWait> Current;
         {
             TScopeLock Guard(WaitLock);
-            Current = std::move(Waits);
+            Current = Move(Waits);
             Waits.Reset();
         }
         for (FWait& Wait : Current)
         {
             if (!Wait.State)
             {
-                FWaitCallback Callback = std::move(Wait.Callback);
+                FWaitCallback Callback = Move(Wait.Callback);
                 Callback(false);
             }
             else if (Wait.State->ClaimWait(Wait.Serial))

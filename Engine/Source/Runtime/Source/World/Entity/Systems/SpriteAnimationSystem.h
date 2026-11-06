@@ -9,7 +9,7 @@ namespace Lumina
 {
 
     REFLECT()
-    class SSpriteAnimationSystem : public CEntitySystem
+    class CSpriteAnimationSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

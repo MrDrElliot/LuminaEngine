@@ -28,8 +28,6 @@ namespace Lumina
                 }
             }
 
-            void Reset() override { bPrimed = false; }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 const uint32 Selected = ClampSelectIndex(*IndexIn);

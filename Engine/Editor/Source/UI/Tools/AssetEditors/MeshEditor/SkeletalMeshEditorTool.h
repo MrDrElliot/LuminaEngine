@@ -14,6 +14,7 @@
 namespace Lumina
 {
     class CAnimation;
+    class CMesh;
     class CSkeleton;
     struct FSkeletonResource;
 

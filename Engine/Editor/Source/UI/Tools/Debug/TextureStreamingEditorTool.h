@@ -26,7 +26,6 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_SWAP_VERTICAL; }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
 
     private:

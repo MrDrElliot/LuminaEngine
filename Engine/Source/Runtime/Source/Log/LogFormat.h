@@ -85,13 +85,6 @@ namespace Lumina::Logging
             Storage[Length++] = Value;
         }
 
-        void AppendTwoDigits(uint32 Value)
-        {
-            Reserve(2);
-            std::memcpy(Storage + Length, GTwoDigits.Data + (Value % 100) * 2, 2);
-            Length += 2;
-        }
-
         void AppendThreeDigits(uint32 Value)
         {
             Reserve(3);

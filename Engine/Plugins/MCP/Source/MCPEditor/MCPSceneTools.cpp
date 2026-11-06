@@ -1228,11 +1228,11 @@ namespace Lumina::MCP
         {
             World = SessionOps::GetSceneWorld(Error);
         }
-        if (World == nullptr)
-        {
-            return GNoGroundHeight;
-        }
+        return World != nullptr ? GroundHeightAt(World, X, Z) : GNoGroundHeight;
+    }
 
+    float GroundHeightAt(CWorld* World, float X, float Z)
+    {
         const SRayResult Hit = World->GetPhysics()->Raycast(FVector3(X, 5000.0f, Z), FVector3(X, -5000.0f, Z), ECS::NullEntity);
         return Hit.bHit ? Hit.Location.y : GNoGroundHeight;
     }

@@ -35,7 +35,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
         constexpr uint32 ClusterBuildGroupSize = 64;
-        constexpr uint32 ClusterDispatchGroups = (MaxClusters + ClusterBuildGroupSize - 1) / ClusterBuildGroupSize;
+        constexpr uint32 ClusterDispatchGroups = RenderUtils::GetGroupCount(MaxClusters, ClusterBuildGroupSize);
         RHI::CmdDispatch(CL, MakeArgs(), ClusterDispatchGroups, 1, 1);
 
         // LightCull consumes the cluster AABBs next.

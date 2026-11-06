@@ -1,4 +1,5 @@
 #include "TextureEditorTool.h"
+#include "UI/InfoTable.h"
 
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -392,53 +393,22 @@ namespace Lumina
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
             
-                auto PropertyRow = [](const char* label, const FString& value, const ImVec4* color = nullptr)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(label);
-                    ImGui::TableSetColumnIndex(1);
-                    if (color)
-                    {
-                        ImGui::PushStyleColor(ImGuiCol_Text, *color);
-                    }
-                    ImGui::TextUnformatted(*value);
-                    if (color)
-                    {
-                        ImGui::PopStyleColor();
-                    }
-                };
-            
                 ImVec4 dimensionColor(0.5f, 0.9f, 0.5f, 1.0f);
                 const char* TypeLabel = Texture->IsA<CTextureRenderTarget>() ? "Render Target"
                                       : (Texture->IsA<CTextureArray>() ? "2D Texture Array" : "2D Texture");
-                PropertyRow("Type", TypeLabel, &dimensionColor);
-                PropertyRow("Resolution", Format("{}", ImageDesc.Extent.x) + " x " + Format("{}", ImageDesc.Extent.y));
+                InfoTable::Row("Type", TypeLabel, &dimensionColor);
+                InfoTable::Row("Resolution", Format("{}", ImageDesc.Extent.x) + " x " + Format("{}", ImageDesc.Extent.y));
 
                 // Format
                 const FFormatInfo& FormatInfo = RHI::Format::Info(ImageDesc.Format);
-                PropertyRow("Pixel Format", FString(FormatInfo.Name));
+                InfoTable::Row("Pixel Format", FString(FormatInfo.Name));
                 
                 // Memory
-                size_t MemorySizeBytes = Texture->TextureResource->CalcTotalSizeBytes();
-                size_t MemorySizeKB = MemorySizeBytes / 1024;
-                size_t MemorySizeMB = MemorySizeKB / 1024;
-                
-                FString memoryStr;
-                ImVec4 memoryColor(0.7f, 1.0f, 0.7f, 1.0f);
-                
-                if (MemorySizeMB > 0)
-                {
-                    memoryStr = Format("{}", MemorySizeMB) + " MB";
-                    if (MemorySizeMB > 10)  memoryColor = ImVec4(1.0f, 0.7f, 0.3f, 1.0f);
-                    if (MemorySizeMB > 50)  memoryColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-                }
-                else
-                {
-                    memoryStr = Format("{}", MemorySizeKB) + " KB";
-                }
-                
-                PropertyRow("Memory Size", memoryStr, &memoryColor);
+                const size_t MemorySizeBytes = Texture->TextureResource->CalcTotalSizeBytes();
+                const ImVec4 memoryColor = MemorySizeBytes > 50 * Constants::kMiB ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
+                                         : MemorySizeBytes > 10 * Constants::kMiB ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f)
+                                         : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
+                InfoTable::Row("Memory Size", ImGuiX::FormatSize(MemorySizeBytes), &memoryColor);
             
                 ImGui::EndTable();
             }
@@ -502,8 +472,8 @@ namespace Lumina
                     {
                         ImGui::TableNextRow();
                         
-                        uint32 mipWidth = std::max<uint32>(1u, ImageDesc.Extent.x >> i);
-                        uint32 mipHeight = std::max<uint32>(1u, ImageDesc.Extent.y >> i);
+                        uint32 mipWidth = Math::Max<uint32>(1u, ImageDesc.Extent.x >> i);
+                        uint32 mipHeight = Math::Max<uint32>(1u, ImageDesc.Extent.y >> i);
                         uint32 mipTexels = mipWidth * mipHeight;
                         
                         // Calculate expected memory size
@@ -551,18 +521,7 @@ namespace Lumina
         
                         // Size
                         ImGui::TableSetColumnIndex(3);
-                        if (actualSize >= Constants::kMiB)
-                        {
-                            ImGui::Text("%.2f MB", actualSize / float(Constants::kMiB));
-                        }
-                        else if (actualSize >= 1024)
-                        {
-                            ImGui::Text("%.1f KB", actualSize / 1024.0f);
-                        }
-                        else
-                        {
-                            ImGui::Text("%llu B", (unsigned long long)actualSize);
-                        }
+                        ImGuiX::TextUnformatted(ImGuiX::FormatSize(actualSize));
         
                         // Percentage
                         ImGui::TableSetColumnIndex(4);
@@ -601,36 +560,27 @@ namespace Lumina
                 ImGui::TableSetupColumn("##Label", ImGuiTableColumnFlags_WidthFixed, 150.0f);
                 ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
                 
-                auto StatRow = [](const char* label, const FString& value)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", label);
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(*value);
-                };
-                
                 char aspectStr[32];
                 snprintf(aspectStr, sizeof(aspectStr), "%.3f:1", aspectRatio);
-                StatRow("Aspect Ratio:", aspectStr);
+                InfoTable::Row("Aspect Ratio:", aspectStr);
                 
-                StatRow("Base Mip Texels:", Format("{}", baseTexels));
+                InfoTable::Row("Base Mip Texels:", Format("{}", baseTexels));
                 
                 if (ImageDesc.NumMips > 1)
                 {
                     uint64 mipChainTexels = 0;
                     for (uint32 i = 0; i < ImageDesc.NumMips; ++i)
                     {
-                        uint32 mipWidth = std::max<uint32>(1u, ImageDesc.Extent.x >> i);
-                        uint32 mipHeight = std::max<uint32>(1u, ImageDesc.Extent.y >> i);
+                        uint32 mipWidth = Math::Max<uint32>(1u, ImageDesc.Extent.x >> i);
+                        uint32 mipHeight = Math::Max<uint32>(1u, ImageDesc.Extent.y >> i);
                         mipChainTexels += mipWidth * mipHeight;
                     }
-                    StatRow("Total Mip Texels:", Format("{}", mipChainTexels));
+                    InfoTable::Row("Total Mip Texels:", Format("{}", mipChainTexels));
                     
                     float texelIncrease = ((float)mipChainTexels / (float)baseTexels - 1.0f) * 100.0f;
                     char texelIncStr[32];
                     snprintf(texelIncStr, sizeof(texelIncStr), "+%.1f%%", texelIncrease);
-                    StatRow("Texel Increase:", texelIncStr);
+                    InfoTable::Row("Texel Increase:", texelIncStr);
                 }
         
                 ImGui::EndTable();
@@ -682,7 +632,7 @@ namespace Lumina
 
                 if (MoveFrom >= 0)
                 {
-                    std::swap(Array->SourceTextures[MoveFrom], Array->SourceTextures[MoveTo]);
+                    Array->SourceTextures.Swap(MoveFrom, MoveTo);
                     Asset->GetPackage()->MarkDirty();
                 }
                 if (RemoveIndex >= 0)

@@ -15,16 +15,6 @@
 
 namespace Lumina::Physics
 {
-    void WarnTaperedCapsuleOnce()
-    {
-        static bool bWarned = false;
-        if (!bWarned)
-        {
-            bWarned = true;
-            LOG_WARN("Tapered capsule colliders are approximated by a cone hull under Box3D; the rounded caps are lost.");
-        }
-    }
-
     const b3HullData* FBox3DPhysicsScene::GetOrCreateBoxHull(const FVector3& HalfExtent)
     {
         const FHullKey Key{ 0, HalfExtent.x, HalfExtent.y, HalfExtent.z, nullptr };

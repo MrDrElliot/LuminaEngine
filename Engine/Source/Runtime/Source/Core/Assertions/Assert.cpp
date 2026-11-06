@@ -1,9 +1,17 @@
 ﻿#include "RuntimePCH.h"
 #include <atomic>
 #include <string>
+#include <version>
 #include "Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+
+#if __has_include(<stacktrace>) && defined(__cpp_lib_stacktrace)
+#include <stacktrace>
+#define HAS_STD_STACKTRACE 1
+#else
+#define HAS_STD_STACKTRACE 0
+#endif
 
 
 namespace Lumina::Assert

@@ -3,12 +3,12 @@
 
 namespace Lumina
 {
-    void STimerSystem::Configure()
+    void CTimerSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
     }
 
-    void STimerSystem::OnUpdate(const SSystemContext& Context)
+    void CTimerSystem::OnUpdate(const SSystemContext& Context)
     {
         Timers->Tick(Context.GetDeltaTime());
         if (!Timers->HasDue())

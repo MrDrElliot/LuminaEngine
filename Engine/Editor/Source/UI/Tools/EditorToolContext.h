@@ -34,6 +34,9 @@ namespace Lumina
         virtual void OpenFileEditor(FStringView VirtualPath) = 0;
 
         virtual void OpenScriptEditor(FStringView ScriptPath) = 0;
+
+        // Opens the file in the script editor chosen in the editor settings, at Line when it is above zero.
+        virtual void OpenScriptInExternalEditor(FStringView ScriptPath, int32 Line) = 0;
         // The open file editor for VirtualPath, or null.
         virtual FEditorTool* FindFileEditor(FStringView VirtualPath) const = 0;
 

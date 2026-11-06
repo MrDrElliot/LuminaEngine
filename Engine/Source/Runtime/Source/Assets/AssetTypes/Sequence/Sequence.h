@@ -1,6 +1,6 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
+#include "World/ECS/Entity.h"
 
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"

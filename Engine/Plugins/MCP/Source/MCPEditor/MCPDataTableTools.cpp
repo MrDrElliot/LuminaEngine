@@ -1,6 +1,5 @@
 #include "MCPDataTableTools.h"
 
-#include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentReflectionUtils.h"
 #include "Agent/AgentToolMarshal.h"
@@ -9,8 +8,8 @@
 #include "Assets/AssetTypes/DataTable/DataTableCSV.h"
 #include "Containers/Algorithm.h"
 #include "Core/Object/ObjectIterator.h"
-#include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "MCPServer.h"
 
 namespace Lumina::MCP
 {
@@ -26,11 +25,6 @@ namespace Lumina::MCP
             void*       Memory   = nullptr;
         };
 
-        bool ResolveDataTable(const FString& Guid, CDataTable*& OutTable, FString& OutError)
-        {
-            return Agent::ResolveAsset<CDataTable>(FStringView(Guid), OutTable, OutError);
-        }
-
         // The first twenty names are enough for a model to spot a typo without flooding the reply.
         FString DataTableRowNameHint(const CDataTable* Table)
         {
@@ -45,7 +39,7 @@ namespace Lumina::MCP
 
         bool ResolveDataTableRow(const FString& Guid, const FString& RowName, FDataTableRowTarget& Out, FString& OutError)
         {
-            if (!ResolveDataTable(Guid, Out.Table, OutError))
+            if (!ResolveEditableAsset(FStringView(Guid), Out.Table, OutError))
             {
                 return false;
             }
@@ -69,14 +63,6 @@ namespace Lumina::MCP
             return true;
         }
 
-        void MarkDataTableDirty(CDataTable* Table)
-        {
-            if (Table->GetPackage() != nullptr)
-            {
-                Table->GetPackage()->MarkDirty();
-            }
-        }
-
         void RegisterDataTableDescribe(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SDescribeDataTableParams, SDescribeDataTableResult>(
@@ -87,7 +73,7 @@ namespace Lumina::MCP
                 {
                     CDataTable* Table = nullptr;
                     FString Error;
-                    if (!ResolveDataTable(In.Asset, Table, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Asset), Table, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -217,7 +203,7 @@ namespace Lumina::MCP
         {
             CDataTable* Table = nullptr;
             FString Error;
-            if (!ResolveDataTable(In.Asset, Table, Error))
+            if (!ResolveEditableAsset(FStringView(In.Asset), Table, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -271,7 +257,7 @@ namespace Lumina::MCP
                 }
             }
 
-            MarkDataTableDirty(Table);
+            MarkAssetDirty(Table);
 
             return Agent::FToolResult::Ok(Lumina::Format("Added row '{}' at {}.{}{}", Out.Row, Out.Index, Applied, GDataTableSaveHint));
         }
@@ -286,7 +272,7 @@ namespace Lumina::MCP
             }
 
             Target.Table->RemoveRow(Target.Index);
-            MarkDataTableDirty(Target.Table);
+            MarkAssetDirty(Target.Table);
 
             Out.RemainingCount = Target.Table->GetRowCount();
 
@@ -314,7 +300,7 @@ namespace Lumina::MCP
             }
 
             Target.Table->Rows[Target.Index].Name = FName(In.NewName);
-            MarkDataTableDirty(Target.Table);
+            MarkAssetDirty(Target.Table);
 
             Out.Row = In.NewName;
             return Agent::FToolResult::Ok(Lumina::Format("Renamed '{}' to '{}'.{}", In.Row, In.NewName, GDataTableSaveHint));
@@ -353,7 +339,7 @@ namespace Lumina::MCP
                     ? FString("The CSV could not be imported.") : Imported.FailureReason);
             }
 
-            MarkDataTableDirty(Table);
+            MarkAssetDirty(Table);
 
             return Agent::FToolResult::Ok(Lumina::Format("Imported {} row(s), skipped {}, {} cell problem(s).{}",
                 Out.RowCount, Out.Skipped, Out.Errors.Num(), GDataTableSaveHint));
@@ -370,7 +356,7 @@ namespace Lumina::MCP
                 {
                     CDataTable* Table = nullptr;
                     FString Error;
-                    if (!ResolveDataTable(In.Asset, Table, Error))
+                    if (!ResolveEditableAsset(FStringView(In.Asset), Table, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }

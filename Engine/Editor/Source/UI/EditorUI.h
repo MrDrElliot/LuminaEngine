@@ -57,7 +57,6 @@ namespace Lumina
         void Deinitialize(const FUpdateContext& UpdateContext) override;
 
         void OnStartFrame(const FUpdateContext& UpdateContext) override;
-        void OnUpdate(const FUpdateContext& UpdateContext) override;
         void OnEndFrame(const FUpdateContext& UpdateContext) override;
 
         /**
@@ -73,9 +72,7 @@ namespace Lumina
 
         void OpenScriptEditor(FStringView ScriptPath) override;
 
-        /** Opens a script source file in the editor chosen in CScriptEditorSettings (falls back to the OS association). */
-        // Opens the file in the script editor chosen in the editor settings, at Line when it is above zero.
-        static void OpenScriptInExternalEditor(FStringView ScriptPath, int32 Line = 0);
+        void OpenScriptInExternalEditor(FStringView ScriptPath, int32 Line) override;
 
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
@@ -146,11 +143,26 @@ namespace Lumina
         requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         void ToggleTool(Args&&... args);
 
-        // Convenience for the Tools menu, draws a MenuItem whose check state
-        // mirrors the tool's existence and whose click toggles it.
-        template<typename T, typename... Args>
-        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
-        void DrawToolMenuItem(const char* Label, Args&&... args);
+        // A singleton tool window the menus toggle, and OpenToolPanel opens by the label after its icon.
+        struct FToolPanel
+        {
+            const char*  Label  = nullptr;
+            uint32       TypeID = 0;
+            FEditorTool* (*Create)(FEditorUI&) = nullptr;
+        };
+
+        template<typename T>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, FEditorUI*>
+        static constexpr FToolPanel MakeToolPanel(const char* Label)
+        {
+            return { Label, T::s_toolTypeID, [](FEditorUI& UI) -> FEditorTool* { return UI.CreateTool<T>(&UI); } };
+        }
+
+        // A MenuItem whose check state mirrors the panel's existence and whose click toggles it.
+        void DrawToolMenuItem(const FToolPanel& Panel);
+
+        // Opens a Tools menu debug window or plugin entry by name, focusing it when it is already open.
+        bool OpenToolPanel(FStringView Name, FString& OutError);
 
         void VerifyDirtyPackages();
 
@@ -343,6 +355,15 @@ namespace Lumina
         FEditorModalManager                             ModalManager;
         TFunction<void()>                               PendingDialogAction;
 
+        char                                            NewProjectName[256] = "MyProject";
+        char                                            NewProjectPath[512] = "";
+        FString                                         NewProjectError;
+
+        FString                                         VisualStudio2022Exe;
+        FString                                         VisualStudio2026Exe;
+        FString                                         VSCodeExe;
+        FString                                         RiderExe;
+
         ImGuiX::FApplicationTitleBar                    TitleBar;
         ImGuiWindowClass                                EditorWindowClass;
 
@@ -500,16 +521,5 @@ namespace Lumina
             return;
         }
         CreateTool<T>(std::forward<Args>(args)...);
-    }
-
-    template <typename T, typename... Args>
-    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
-    void FEditorUI::DrawToolMenuItem(const char* Label, Args&&... args)
-    {
-        const bool bActive = IsToolActive<T>();
-        if (ImGui::MenuItem(Label, nullptr, bActive))
-        {
-            ToggleTool<T>(std::forward<Args>(args)...);
-        }
     }
 }

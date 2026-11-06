@@ -50,7 +50,6 @@ namespace Lumina::Physics
         constexpr float kLostOverhang      = 0.65f;
         constexpr float kElbowBend         = 0.3f;
         constexpr float kRootFollowHertz   = 3.0f;
-        constexpr float kTwoPi             = 6.2831853f;
 
         enum class ELimb : uint8
         {
@@ -107,12 +106,6 @@ namespace Lumina::Physics
             return Length > Max && Length > 0.0f ? V * (Max / Length) : V;
         }
 
-        float SmoothStep01(float X)
-        {
-            const float T = Math::Clamp(X, 0.0f, 1.0f);
-            return T * T * (3.0f - 2.0f * T);
-        }
-
         // The rotation's axis scaled by its angle, the shortest way round.
         FVector3 RotationVector(const FQuat& Rotation)
         {
@@ -166,6 +159,11 @@ namespace Lumina::Physics
         const FSkeletonResource& Skeleton = *Ragdoll.Skeleton;
         const int32 NumBodies = Ragdoll.Bodies.Num();
         const bool  bTargets  = Component.TargetGlobals.Num() == Skeleton.GetNumBones();
+        if (!bTargets && Ragdoll.bRestFromBind)
+        {
+            return;
+        }
+        Ragdoll.bRestFromBind = !bTargets;
         Ragdoll.RestRotation.SetNum(NumBodies);
         Ragdoll.RestPosition.SetNum(NumBodies);
         for (int32 Body = 0; Body < NumBodies; ++Body)
@@ -516,7 +514,7 @@ namespace Lumina::Physics
                 }
                 Gait.Recovery = Math::Min(Gait.Recovery + Dt / Math::Max(Locomotion.RecoverDuration, 0.1f), 1.0f);
             }
-            BalanceAlpha   = SmoothStep01(Gait.Recovery);
+            BalanceAlpha   = Math::SmoothStep(0.0f, 1.0f, Gait.Recovery);
             TargetStrength = Math::Lerp(Locomotion.FallenStrength, 1.0f, BalanceAlpha);
             if (Gait.Recovery >= 1.0f && Tilt < kStandUpTilt)
             {
@@ -530,7 +528,7 @@ namespace Lumina::Physics
 
         // Reflexes only work while the weight is over the feet, so a shove that carries it past them topples the body.
         const float Overhang  = Math::Length(Horizontal(Motion.CenterOfMass - FeetCenter, WorldUp)) / Rig.StandHeight;
-        const float Stability = Gait.bFallen ? 1.0f : 1.0f - SmoothStep01((Overhang - kStableOverhang) / (kLostOverhang - kStableOverhang));
+        const float Stability = Gait.bFallen ? 1.0f : 1.0f - Math::SmoothStep(0.0f, 1.0f, (Overhang - kStableOverhang) / (kLostOverhang - kStableOverhang));
         const float Strength  = Locomotion.BalanceStrength * BalanceAlpha * Stability;
         if (Strength > 0.0f)
         {
@@ -543,7 +541,7 @@ namespace Lumina::Physics
                 {
                     TargetHeight = Math::Lerp(Gait.RecoverStartHeight, TargetHeight, BalanceAlpha);
                 }
-                const float Omega = kTwoPi * kSupportHertz;
+                const float Omega = Math::TwoPi<float>() * kSupportHertz;
                 const float Accel = Omega * Omega * (TargetHeight - Height) - 2.0f * Omega * Math::Dot(PelvisVelocity, WorldUp);
                 const float Lift  = Math::Clamp(M * (G * Locomotion.SupportFraction + Accel), 0.0f, M * G * kMaxSupportWeight) * Strength;
                 b3Body_ApplyForceToCenter(Pelvis, Box3DUtils::ToB3Vec3(WorldUp * Lift), true);
@@ -559,7 +557,7 @@ namespace Lumina::Physics
         // Upright and facing reflexes act on the whole body's inertia, approximated as its mass at a third of its height.
         const float Lever   = 0.35f * Rig.StandHeight;
         const float Inertia = M * Lever * Lever;
-        const float UpOmega = kTwoPi * kUprightHertz;
+        const float UpOmega = Math::TwoPi<float>() * kUprightHertz;
 
         FVector3 Facing = Horizontal(Locomotion.FacingDirection, WorldUp);
         if (Math::Length(Facing) < 0.1f)
@@ -699,7 +697,7 @@ namespace Lumina::Physics
         const FVector3 Gravity = Box3DUtils::FromB3Vec3(b3World_GetGravity(WorldId));
         const float    M       = Math::Max(MeasureRagdoll(Ragdoll).Mass, 1e-3f);
         const float    Limit   = M * Math::Max(Math::Length(Gravity), 1.0f) * Component.RootFollowStrength;
-        const float    Omega   = kTwoPi * kRootFollowHertz;
+        const float    Omega   = Math::TwoPi<float>() * kRootFollowHertz;
 
         const FVector3 Position = Box3DUtils::FromB3Vec3(b3Body_GetPosition(Root));
         const FVector3 Velocity = Box3DUtils::FromB3Vec3(b3Body_GetLinearVelocity(Root));

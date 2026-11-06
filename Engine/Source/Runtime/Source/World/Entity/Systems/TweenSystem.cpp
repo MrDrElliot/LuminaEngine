@@ -1,29 +1,36 @@
 #include "RuntimePCH.h"
 #include "TweenSystem.h"
+#include "CoroutineSystem.h"
+#include "InputSystem.h"
 
 namespace Lumina
 {
-    void STweenSystem::Configure()
+    void CTweenSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart);
 
         // While the world is paused only the tweens that ignore time scale move, which keeps pause menus animated.
         RequireUpdate(EUpdateStage::Paused);
+
+        RunsAfter<CCoroutineSystem, CInputSystem>();
     }
 
-    void STweenSystem::OnStartup(const SExclusiveContext& Context)
+    void CTweenSystem::OnStartup(const SExclusiveContext& Context)
     {
         Tweens->SetWorldRegistry(&Context.GetRegistry());
     }
 
-    bool STweenSystem::HasWork(const SSystemContext&)
+    bool CTweenSystem::HasWork(const SSystemContext&)
     {
         return Tweens->HasTweens();
     }
 
-    void STweenSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CTweenSystem::OnUpdate(const SSystemContext& Context)
     {
-        const bool bPaused = Context.GetUpdateStage() == EUpdateStage::Paused;
-        Tweens->Tick(bPaused ? 0.0f : Context.GetDeltaTime(), Context.GetRealDeltaTime());
+        Context.Defer([](const SExclusiveContext& X)
+        {
+            const bool bPaused = X.GetUpdateStage() == EUpdateStage::Paused;
+            X.GetRegistry().Ctx().Get<FTweenManager>().Tick(bPaused ? 0.0f : X.GetDeltaTime(), X.GetRealDeltaTime());
+        });
     }
 }

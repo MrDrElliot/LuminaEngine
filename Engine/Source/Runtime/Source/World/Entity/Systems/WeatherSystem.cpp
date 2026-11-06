@@ -25,13 +25,13 @@ namespace Lumina
         }
     }
 
-    void SWeatherSystem::Configure()
+    void CWeatherSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    void SWeatherSystem::OnUpdate(const SSystemContext& Context)
+    void CWeatherSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace WeatherSystemInternal;
 

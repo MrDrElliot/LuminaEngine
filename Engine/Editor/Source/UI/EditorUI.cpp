@@ -84,6 +84,7 @@
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Input/InputViewport.h"
 #include "Memory/Memory.h"
+#include "Memory/Memcpy.h"
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
@@ -169,6 +170,7 @@
 #include "Tools/AssetEditors/PrefabEditor/PrefabEditorTool.h"
 #include "Tools/AssetEditors/RmlUiEditor/RmlUiEditorTool.h"
 #include "Tools/CodeWorkspace/CodeWorkspaceTool.h"
+#include "UI/CodeEditor/CodeDocument.h"
 #include "Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/AssetEditors/FontEditor/FontEditorTool.h"
 #include "Tools/AssetEditors/SpriteSheetEditor/SpriteSheetEditorTool.h"
@@ -190,21 +192,9 @@ namespace Lumina
     static TConsoleVar<bool> CVarPIEClientBots("Net.PIEClientBots", false,
         "Play-in-editor players past the first run as bots instead of reading input.");
 
-    // Mirrors ContentBrowserEditorTool's painted rows so the dialogs match the editor.
     namespace
     {
-        constexpr ImVec4 kProjDialogPanelBg     = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-        constexpr ImVec4 kProjDialogRowBg       = ImVec4(0.14f, 0.14f, 0.17f, 1.00f);
-        constexpr ImVec4 kProjDialogRowBgHover  = ImVec4(0.19f, 0.20f, 0.24f, 1.00f);
-        constexpr ImVec4 kProjDialogRowBgActive = ImVec4(0.16f, 0.17f, 0.21f, 1.00f);
-        constexpr ImVec4 kProjDialogTextPrimary = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
-        constexpr ImVec4 kProjDialogTextDim     = ImVec4(0.55f, 0.56f, 0.62f, 1.00f);
-        constexpr ImVec4 kProjDialogTextMuted   = ImVec4(0.42f, 0.42f, 0.47f, 1.00f);
-        constexpr ImVec4 kProjDialogTextSection = ImVec4(0.50f, 0.58f, 0.72f, 1.00f);
-        constexpr ImVec4 kProjDialogAccentBlue  = ImVec4(0.36f, 0.66f, 1.00f, 1.00f);
-        constexpr ImVec4 kProjDialogAccentGold  = ImVec4(1.00f, 0.78f, 0.40f, 1.00f);
-        constexpr ImVec4 kProjDialogAccentSoft  = ImVec4(0.45f, 0.48f, 0.55f, 1.00f);
-        constexpr ImVec4 kProjDialogDanger      = ImVec4(0.96f, 0.36f, 0.38f, 1.00f);
+        constexpr ImVec4 kProjDialogAccentBlue = ImVec4(0.36f, 0.66f, 1.00f, 1.00f);
 
         /** A button's three states. Hover lightens and press darkens, unlike ImGuiX::ButtonEx. */
         struct FButtonColors
@@ -238,7 +228,7 @@ namespace Lumina
         {
             ImGui::Spacing();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::TinyBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextSection);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
             ImGui::TextUnformatted(Label);
             ImGui::PopStyleColor();
@@ -281,7 +271,7 @@ namespace Lumina
 
             ImDrawList* DL = ImGui::GetWindowDrawList();
             const ImU32  BgCol = ImGui::ColorConvertFloat4ToU32(
-                bActive ? kProjDialogRowBgActive : (bHovered ? kProjDialogRowBgHover : kProjDialogRowBg));
+                bActive ? EditorColors::RowBgActive() : (bHovered ? EditorColors::RowBgHovered() : EditorColors::RowBg()));
             DL->AddRectFilled(P0, P1, BgCol, 4.0f);
             DL->AddRectFilled(P0, ImVec2(P0.x + 3.0f, P1.y),
                 ImGui::ColorConvertFloat4ToU32(Accent), 4.0f);
@@ -299,13 +289,13 @@ namespace Lumina
             if (bCompact || Subtitle == nullptr || Subtitle[0] == '\0')
             {
                 ImGui::SetCursorScreenPos(ImVec2(TextX, P0.y + (Height - ImGui::GetFontSize()) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
                 ImGui::TextUnformatted(Title);
                 ImGui::PopStyleColor();
                 if (Subtitle && Subtitle[0])
                 {
                     ImGui::SameLine(0.0f, 12.0f);
-                    ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
                     ImGui::TextUnformatted(Subtitle);
                     ImGui::PopStyleColor();
                 }
@@ -314,14 +304,14 @@ namespace Lumina
             {
                 ImGui::SetCursorScreenPos(ImVec2(TextX, P0.y + 7.0f));
                 ImGuiX::Font::PushFont(ImGuiX::Font::EFont::SmallBold);
-                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
                 ImGui::TextUnformatted(Title);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
 
                 ImGui::SetCursorScreenPos(ImVec2(TextX, P0.y + 27.0f));
                 ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
                 ImGui::TextUnformatted(Subtitle);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
@@ -338,11 +328,11 @@ namespace Lumina
                 if (bCloseHover)
                 {
                     DL->AddRectFilled(CloseP0, CloseP1,
-                        ImGui::ColorConvertFloat4ToU32(kProjDialogDanger), 4.0f);
+                        ImGui::ColorConvertFloat4ToU32(EditorColors::Danger()), 4.0f);
                 }
                 ImGui::SetCursorScreenPos(ImVec2(CloseP0.x + 8.0f, CloseP0.y + (Height - ImGui::GetFontSize()) * 0.5f));
                 ImGui::PushStyleColor(ImGuiCol_Text,
-                    bCloseHover ? kProjDialogTextPrimary : kProjDialogTextDim);
+                    bCloseHover ? EditorColors::TextPrimary() : EditorColors::TextDim());
                 ImGui::TextUnformatted(LE_ICON_CLOSE);
                 ImGui::PopStyleColor();
                 if (OutCloseClicked && bClose)
@@ -839,7 +829,7 @@ namespace Lumina
 
         if (ImGui::IsKeyPressed(ImGuiKey_F9, false))
         {
-            const auto Source = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift)
+            const auto Source = ImGui::GetIO().KeyShift
                 ? Screenshot::ECaptureSource::SceneHDR
                 : Screenshot::ECaptureSource::FinalLDR;
             Screenshot::CaptureActiveWorld(Source);
@@ -1075,7 +1065,7 @@ namespace Lumina
         }
 
         // Save All is global, unlike Ctrl+S, so handling it per-tool would fire it once per open tool.
-        if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             SaveAllDirtyPackages();
         }
@@ -1094,20 +1084,6 @@ namespace Lumina
 
         MaterialCompiles.Tick();
         ParticleCompiles.Tick();
-    }
-
-    void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
-    {
-        LUMINA_PROFILE_SCOPE();
-
-        // Per-frame work belongs in OnStartFrame; the engine calls this once per update stage.
-        for (FEditorTool* Tool : EditorTools)
-        {
-            if (Tool->HasWorld())
-            {
-                Tool->WorldUpdate(UpdateContext);
-            }
-        }
     }
 
     void FEditorUI::OnEndFrame(const FUpdateContext& UpdateContext)
@@ -1219,7 +1195,7 @@ namespace Lumina
             [ReadOnly = Move(ReadOnly), Then = Move(Then), bSaves = bThenSaves]() mutable -> bool
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
             ImGui::TextUnformatted(LE_ICON_LOCK "  Read-only on disk");
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -1228,7 +1204,7 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGui::TextWrapped("%s", bSaves
                 ? "These files are read-only on disk, so they cannot be saved. Make them writable to save, or cancel to leave them as they are."
                 : "These files are read-only on disk, so they cannot be changed, renamed, moved or deleted. Make them writable first, or cancel to leave them as they are.");
@@ -1436,13 +1412,22 @@ namespace Lumina
         }
         else
         {
-            // Cached per editor choice; disk probing / the vswhere subprocess don't change in-session.
+            // An empty result is not cached, so an editor installed mid-session is still found.
+            auto Probe = [](FString& Cached, auto&& Find) -> const FString&
+            {
+                if (Cached.IsEmpty())
+                {
+                    Cached = Find();
+                }
+                return Cached;
+            };
+
             switch (Settings->ScriptEditor)
             {
-            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv("[17.0,18.0)"); Exe = Found; break; }
-            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv("[18.0,19.0)"); Exe = Found; break; }
-            case EScriptEditor::VSCode:           { static FString Found = FindVSCode(); Exe = Found; break; }
-            case EScriptEditor::Rider:            { static FString Found = FindRider(); Exe = Found; break; }
+            case EScriptEditor::VisualStudio2022: Exe = Probe(VisualStudio2022Exe, [] { return FindDevEnv("[17.0,18.0)"); }); break;
+            case EScriptEditor::VisualStudio2026: Exe = Probe(VisualStudio2026Exe, [] { return FindDevEnv("[18.0,19.0)"); }); break;
+            case EScriptEditor::VSCode:           Exe = Probe(VSCodeExe, FindVSCode); break;
+            case EScriptEditor::Rider:            Exe = Probe(RiderExe, FindRider); break;
             case EScriptEditor::SystemDefault:    break;
             case EScriptEditor::BuiltIn:          break;
             }
@@ -1487,7 +1472,7 @@ namespace Lumina
                 return;
             }
         }
-        OpenScriptInExternalEditor(ScriptPath);
+        OpenScriptInExternalEditor(ScriptPath, 0);
     }
 
     FEditorTool* FEditorUI::FindFileEditor(FStringView VirtualPath) const
@@ -1506,6 +1491,27 @@ namespace Lumina
         {
             return Key.Find(Prefix) == 0;
         }
+
+        // The menu label after its icon glyph, which is what a caller can type.
+        FStringView ToolPanelName(FStringView Label)
+        {
+            const int32 Space = Label.Find(" ");
+            return Space == Constants::kIndexNone ? Label : Label.Mid(Space + 1);
+        }
+
+        constexpr FEditorUI::FToolPanel GDebugToolPanels[] =
+        {
+            FEditorUI::MakeToolPanel<FAssetRegistryEditorTool>(LE_ICON_DATABASE " Asset Registry"),
+            FEditorUI::MakeToolPanel<FProfilerEditorTool>(LE_ICON_CHART_BAR " Profiler"),
+            FEditorUI::MakeToolPanel<FShadowAtlasEditorTool>(LE_ICON_GRID " Shadow Atlas"),
+            FEditorUI::MakeToolPanel<FTextureHeapEditorTool>(LE_ICON_IMAGE_ALBUM " Texture Heap"),
+            FEditorUI::MakeToolPanel<FTextureStreamingEditorTool>(LE_ICON_SWAP_VERTICAL " Texture Streaming"),
+            FEditorUI::MakeToolPanel<FMemoryProfilerEditorTool>(LE_ICON_MEMORY " Memory"),
+            FEditorUI::MakeToolPanel<FScriptDiagnosticsEditorTool>(LE_ICON_LANGUAGE_CSHARP " C# Diagnostics"),
+            FEditorUI::MakeToolPanel<FObjectBrowserEditorTool>(LE_ICON_LIST_BOX " Object Browser"),
+            FEditorUI::MakeToolPanel<FConsoleVariableEditorTool>(LE_ICON_TUNE " Console Variables"),
+            FEditorUI::MakeToolPanel<FPluginBrowserEditorTool>(LE_ICON_PUZZLE " Plugin Browser"),
+        };
     }
 
     void FEditorUI::RecordSessionTab(FEditorTool* Tool, FString Key)
@@ -1768,30 +1774,6 @@ namespace Lumina
 
     FEditorTool* FEditorUI::FindTab(FStringView Name, FString& OutError) const
     {
-        const auto Lower = [](char Character)
-        {
-            return (Character >= 'A' && Character <= 'Z') ? static_cast<char>(Character - 'A' + 'a') : Character;
-        };
-
-        const auto ContainsFold = [&Lower](FStringView Haystack, FStringView Needle)
-        {
-            for (int32 Start = 0; Start + Needle.Len() <= Haystack.Len(); ++Start)
-            {
-                bool bMatches = true;
-                for (int32 Index = 0; Index < Needle.Len() && bMatches; ++Index)
-                {
-                    bMatches = Lower(Haystack[Start + Index]) == Lower(Needle[Index]);
-                }
-
-                if (bMatches)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        };
-
         FEditorTool* Partial = nullptr;
         int32 PartialCount = 0;
 
@@ -1811,7 +1793,7 @@ namespace Lumina
                 return Tool;
             }
 
-            if (!Name.IsEmpty() && ContainsFold(Full, Name))
+            if (CodeText::FindIgnoreCase(Full, Name, 0) >= 0)
             {
                 Partial = Tool;
                 ++PartialCount;
@@ -1881,6 +1863,89 @@ namespace Lumina
         }
 
         RequestCloseTool(Tool);
+        return true;
+    }
+
+    void FEditorUI::DrawToolMenuItem(const FToolPanel& Panel)
+    {
+        FEditorTool* Existing = FindToolByTypeID(Panel.TypeID);
+        if (!ImGui::MenuItem(Panel.Label, nullptr, Existing != nullptr))
+        {
+            return;
+        }
+
+        if (Existing != nullptr)
+        {
+            ToolsPendingDestroy.Enqueue(Existing);
+        }
+        else
+        {
+            Panel.Create(*this);
+        }
+    }
+
+    bool FEditorUI::OpenToolPanel(FStringView Name, FString& OutError)
+    {
+        struct FCandidate
+        {
+            FStringView            Name;
+            const FToolPanel*      Panel = nullptr;
+            const FToolsMenuEntry* Entry = nullptr;
+        };
+
+        TVector<FCandidate> Candidates;
+        for (const FToolPanel& Panel : GDebugToolPanels)
+        {
+            Candidates.Add({ ToolPanelName(Panel.Label), &Panel, nullptr });
+        }
+        for (const FToolsMenuEntry& Entry : FToolsMenuRegistry::Get().GetEntries())
+        {
+            Candidates.Add({ ToolPanelName(Entry.Label), nullptr, &Entry });
+        }
+
+        const FCandidate* Match = nullptr;
+        int32 PartialCount = 0;
+        for (const FCandidate& Candidate : Candidates)
+        {
+            if (EqualsIgnoreCase(Candidate.Name, Name))
+            {
+                Match = &Candidate;
+                PartialCount = 1;
+                break;
+            }
+            if (CodeText::FindIgnoreCase(Candidate.Name, Name, 0) >= 0)
+            {
+                Match = &Candidate;
+                ++PartialCount;
+            }
+        }
+
+        if (PartialCount != 1)
+        {
+            FString Names;
+            for (const FCandidate& Candidate : Candidates)
+            {
+                Names.Append(Lumina::Format("{}{}", Names.IsEmpty() ? "" : ", ", Candidate.Name));
+            }
+            OutError = Lumina::Format("{} '{}'. Tool panels are {}.", PartialCount == 0 ? "No tool panel is named" : "Several tool panels match", Name, Names);
+            return false;
+        }
+
+        if (Match->Entry != nullptr)
+        {
+            if (!(Match->Entry->IsActive && Match->Entry->IsActive()) && Match->Entry->OnToggle)
+            {
+                Match->Entry->OnToggle();
+            }
+            return true;
+        }
+
+        FEditorTool* Tool = FindToolByTypeID(Match->Panel->TypeID);
+        if (Tool == nullptr)
+        {
+            Tool = Match->Panel->Create(*this);
+        }
+        FocusTargetWindowName = *Tool->GetToolName();
         return true;
     }
 
@@ -1958,7 +2023,7 @@ namespace Lumina
             [this, AssetGUID, WorldName, CurrentName, bSourceDirty]() -> bool
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
             ImGui::TextUnformatted(LE_ICON_ALERT_CIRCLE_OUTLINE "  Stop Play In Editor?");
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -1967,7 +2032,7 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGui::TextWrapped("A play session is running in '%s'. Opening '%s' will stop it.",
                 *CurrentName, *WorldName);
             ImGui::PopStyleColor();
@@ -1975,7 +2040,7 @@ namespace Lumina
             if (bSourceDirty)
             {
                 ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogDanger);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
                 ImGui::TextWrapped(LE_ICON_ALERT "  '%s' has unsaved changes. Cancel and save it first if you want to keep them.",
                     *CurrentName);
                 ImGui::PopStyleColor();
@@ -2947,8 +3012,8 @@ namespace Lumina
         
         const bool bIsLastFocusedTool = (LastActiveTool == Tool);
 
-        // Shift is excluded because Ctrl+Shift+S is Save All, handled once in OnUpdate.
-        if (bIsLastFocusedTool && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && !ImGui::GetIO().KeyShift
+        // Shift is excluded because Ctrl+Shift+S is Save All, handled once in OnStartFrame.
+        if (bIsLastFocusedTool && ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift
             && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             Tool->OnSave();
@@ -2971,8 +3036,8 @@ namespace Lumina
 
             ToolWorld->SetUpdateInterval(GetToolWorldUpdateInterval(ToolWorld, bIsLastFocusedTool));
 
-            // Tool->Update just flew the camera, and SCameraSystem runs a stage too late for the overlays below.
-            SCameraSystem::ResolveActiveCameraView(ToolWorld->GetEntityRegistry());
+            // Tool->Update just flew the camera, and CCameraSystem runs a stage too late for the overlays below.
+            CCameraSystem::ResolveActiveCameraView(ToolWorld->GetEntityRegistry());
         }
         
         if (!bVisible)
@@ -4309,7 +4374,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        DrawToolMenuItem<FSettingsEditorTool>(LE_ICON_COG " Settings", this);
+        DrawToolMenuItem(MakeToolPanel<FSettingsEditorTool>(LE_ICON_COG " Settings"));
 
         if (ImGui::BeginMenu(LE_ICON_ROTATE_LEFT " Recent"))
         {
@@ -4388,7 +4453,7 @@ namespace Lumina
         }
         else
         {
-            DrawToolMenuItem<FProjectPackagerEditorTool>(LE_ICON_PACKAGE_VARIANT " Package Project...", this);
+            DrawToolMenuItem(MakeToolPanel<FProjectPackagerEditorTool>(LE_ICON_PACKAGE_VARIANT " Package Project..."));
         }
 
         ImGui::EndMenu();
@@ -4404,7 +4469,7 @@ namespace Lumina
         ImGui::TextColored(EditorColors::TextDim(), "Workspace");
         ImGui::Separator();
 
-        DrawToolMenuItem<FTerminalEditorTool>(LE_ICON_CONSOLE_LINE " Terminal", this);
+        DrawToolMenuItem(MakeToolPanel<FTerminalEditorTool>(LE_ICON_CONSOLE_LINE " Terminal"));
         if (ImGui::MenuItem(LE_ICON_CODE_BRACES " Code", nullptr, IsToolActive<FCodeWorkspaceTool>()))
         {
             if (FCodeWorkspaceTool* Workspace = FindTool<FCodeWorkspaceTool>())
@@ -4422,16 +4487,10 @@ namespace Lumina
         ImGui::TextColored(EditorColors::TextDim(), "Debug Windows");
         ImGui::Separator();
 
-        DrawToolMenuItem<FAssetRegistryEditorTool>(LE_ICON_DATABASE " Asset Registry", this);
-        DrawToolMenuItem<FProfilerEditorTool>(LE_ICON_CHART_BAR " Profiler", this);
-        DrawToolMenuItem<FShadowAtlasEditorTool>(LE_ICON_GRID " Shadow Atlas", this);
-        DrawToolMenuItem<FTextureHeapEditorTool>(LE_ICON_IMAGE_ALBUM " Texture Heap", this);
-        DrawToolMenuItem<FTextureStreamingEditorTool>(LE_ICON_SWAP_VERTICAL " Texture Streaming", this);
-        DrawToolMenuItem<FMemoryProfilerEditorTool>(LE_ICON_MEMORY " Memory", this);
-        DrawToolMenuItem<FScriptDiagnosticsEditorTool>(LE_ICON_LANGUAGE_CSHARP " C# Diagnostics", this);
-        DrawToolMenuItem<FObjectBrowserEditorTool>(LE_ICON_LIST_BOX " Object Browser", this);
-        DrawToolMenuItem<FConsoleVariableEditorTool>(LE_ICON_TUNE " Console Variables", this);
-        DrawToolMenuItem<FPluginBrowserEditorTool>(LE_ICON_PUZZLE " Plugin Browser", this);
+        for (const FToolPanel& Panel : GDebugToolPanels)
+        {
+            DrawToolMenuItem(Panel);
+        }
 
         // Plugin-contributed standalone tools (see FToolsMenuRegistry). Section is hidden when empty.
         if (!FToolsMenuRegistry::Get().IsEmpty())
@@ -4571,7 +4630,7 @@ namespace Lumina
         ImGui::Separator();
         
         // About + Contributors are now tabs of the same tool, so a single menu entry covers both.
-        DrawToolMenuItem<FAboutEditorTool>(LE_ICON_CIRCLE " About Lumina", this);
+        DrawToolMenuItem(MakeToolPanel<FAboutEditorTool>(LE_ICON_CIRCLE " About Lumina"));
 
         ImGui::EndMenu();
     }
@@ -4583,7 +4642,7 @@ namespace Lumina
             bool bShouldClose = false;
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
             ImGui::TextUnformatted(LE_ICON_FOLDER_OPEN " Open Project");
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -4627,7 +4686,7 @@ namespace Lumina
                         LE_ICON_FOLDER,
                         *DisplayName,
                         *Entry,
-                        kProjDialogAccentGold,
+                        EditorColors::AccentAlt(),
                         /*bCompact=*/false,
                         /*bShowClose=*/true,
                         &bCloseClicked);
@@ -4644,7 +4703,7 @@ namespace Lumina
 
                 if (!bAnyRecent)
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextMuted);
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0f);
                     ImGui::TextUnformatted("No recent projects yet.");
                     ImGui::PopStyleColor();
@@ -4700,14 +4759,11 @@ namespace Lumina
 
     void FEditorUI::NewProjectDialog()
     {
+        NewProjectError.Reset();
         ModalManager.CreateDialogue("New Project", ImVec2(720, 600), [this] () -> bool
         {
-            static char NewProjectName[256] = "MyProject";
-            static char NewProjectPath[512] = "";
-            static FString LastError;
-
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
             ImGui::TextUnformatted(LE_ICON_FOLDER_PLUS " Create New Project");
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -4767,27 +4823,27 @@ namespace Lumina
                 if (Platform::OpenFileDialogue(File, "Select project location"))
                 {
                     const int32 Count = Math::Min(File.Len(), static_cast<int32>(sizeof(NewProjectPath) - 1));
-                    memcpy(NewProjectPath, *File, Count);
+                    Memory::Memcpy(NewProjectPath, *File, Count);
                     NewProjectPath[Count] = '\0';
                 }
             }
             ImGui::PopStyleVar();
 
             // Inline error box (red bordered child, matching rename modal).
-            if (!LastError.IsEmpty())
+            if (!NewProjectError.IsEmpty())
             {
                 ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.10f, 0.10f, 0.30f));
-                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.80f, 0.20f, 0.20f, 0.40f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::WithAlpha(EditorColors::Danger(), 0.15f));
+                ImGui::PushStyleColor(ImGuiCol_Border, EditorColors::WithAlpha(EditorColors::Danger(), 0.40f));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
                 ImGui::BeginChild("##NewProjError", ImVec2(-1, 0),
                     ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
                     ImGuiWindowFlags_NoScrollbar);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
                 ImGui::TextUnformatted(LE_ICON_ALERT_OCTAGON);
                 ImGui::SameLine();
-                ImGui::TextWrapped("%s", *LastError);
+                ImGui::TextWrapped("%s", *NewProjectError);
                 ImGui::PopStyleColor();
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
@@ -4815,7 +4871,6 @@ namespace Lumina
 
             if (bBack)
             {
-                LastError.Reset();
                 DeferShowDialog([this] { OpenProjectDialog(); });
                 return true;
             }
@@ -4823,10 +4878,8 @@ namespace Lumina
             if (bCreateClicked)
             {
                 FFixedString ProjectFile;
-                FString Error;
-                if (GEditorEngine->CreateProject(NewProjectName, NewProjectPath, ProjectFile, Error))
+                if (GEditorEngine->CreateProject(NewProjectName, NewProjectPath, ProjectFile, NewProjectError))
                 {
-                    LastError.Reset();
                     PushRecentProject(*ProjectFile);
 
                     // Its template carries no C++ module, so there is no solution to wait for.
@@ -4847,8 +4900,6 @@ namespace Lumina
                     });
                     return true;
                 }
-
-                LastError = Error;
             }
 
             return false;
@@ -4876,7 +4927,7 @@ namespace Lumina
             const bool bSlnReady = Filesystem::Exists(SlnPath);
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
             ImGui::TextUnformatted(LE_ICON_CHECK_CIRCLE " Project Created");
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -4884,7 +4935,7 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGui::TextWrapped(
                 "Your project was created. premake is generating its Visual Studio "
                 "solution in the background, watch the editor log for output.");
@@ -4893,19 +4944,19 @@ namespace Lumina
             ImGui::Spacing();
 
             // Project path callout with a Copy button.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, kProjDialogRowBg);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::RowBg());
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
             ImGui::BeginChild("##ProjectPath", ImVec2(-1, 38), true, ImGuiWindowFlags_NoScrollbar);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
             ImGui::TextUnformatted(LE_ICON_FOLDER);
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
             ImGui::TextUnformatted(*ProjectFileCopy);
             ImGui::PopStyleColor();
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 26);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             if (ImGui::SmallButton(LE_ICON_CONTENT_COPY))
             {
                 ImGui::SetClipboardText(*ProjectFileCopy);
@@ -4926,7 +4977,7 @@ namespace Lumina
             }
             else
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextMuted);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
                 ImGui::TextUnformatted(LE_ICON_CLOCK_OUTLINE " Waiting for premake to finish...");
                 ImGui::PopStyleColor();
             }

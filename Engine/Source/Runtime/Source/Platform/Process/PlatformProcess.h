@@ -17,32 +17,14 @@ namespace Lumina::Platform
     
     RUNTIME_API void* GetDLLHandle(const TCHAR* Filename);
     RUNTIME_API bool FreeDLLHandle(void* DLLHandle);
-    RUNTIME_API void* GetDLLExport(void* DLLHandle, const char* ProcName);
     RUNTIME_API void AddDLLDirectory(const FString& Directory);
 
     RUNTIME_API void PushDLLDirectory(const TCHAR* Directory);
-    RUNTIME_API void PopDLLDirectory();
 
-    RUNTIME_API uint32 GetCurrentCoreNumber();
     RUNTIME_API FString GetCurrentProcessPath();
 
     // The binary holding the Runtime module, which is the executable itself in a monolithic build.
     RUNTIME_API FString GetRuntimeModulePath();
-
-    enum class ECpuCoreType : uint8 { Performance, Efficiency, Unknown };
-
-    // Process-wide CPU core layout, detected once and cached. Platform-agnostic: where the OS can't
-    // report per-core efficiency classes, every core reports Performance and bHybrid stays false.
-    struct FCpuTopology
-    {
-        uint32       NumLogicalCores = 0;   // total logical processors
-        uint32       NumPerformance  = 0;   // P-cores (top efficiency class)
-        uint32       NumEfficiency   = 0;   // E-cores (below the top class)
-        bool         bHybrid         = false;
-        ECpuCoreType CoreTypes[256]  = {};  // indexed by logical processor number; Unknown where absent
-    };
-
-    RUNTIME_API const FCpuTopology& GetCpuTopology();
 
     // Empty when the variable is unset, which this API cannot distinguish from an empty value.
     RUNTIME_API FString GetEnvVariable(FStringView Variable);

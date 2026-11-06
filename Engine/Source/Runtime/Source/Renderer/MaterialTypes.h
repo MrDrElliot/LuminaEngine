@@ -18,8 +18,7 @@ namespace Lumina
         Translucent = 1 << 1,
         Additive    = 1 << 2,
 
-        // Bits 3-5 are a 3-bit SHADING MODEL field holding EMaterialShadingModel, not one flag per model.
-        // Unlit keeps its historical value for free: the enum value is 1 and the field starts at bit 3.
+        // Bits 3 to 5 hold an EMaterialShadingModel value rather than one flag per model, and Unlit is model 1.
         Unlit       = 1 << 3,
 
         // Stored inverted so a material saved before the flag existed still reads as receiving decals.
@@ -40,7 +39,7 @@ namespace Lumina
         uint32      Flags;
         float       OpacityClipValue;
 
-        /** Collection table slot per binding, resolved in PostLoad; 0 is the reserved zero collection. */
+        // Collection table slot per binding, resolved in PostLoad; 0 is the reserved zero collection.
         uint32      CollectionIndices[MAX_MATERIAL_COLLECTIONS];
     };
 
@@ -64,7 +63,7 @@ namespace Lumina
         RHI::TGPUSpan<uint32>               Data;
     };
 
-    /** One collection's GPU block, shared by every material that binds it. */
+    // One collection's GPU block, shared by every material that binds it.
     struct FMaterialCollectionUniforms
     {
         FVector4    Vectors[MAX_COLLECTION_VECTORS];
@@ -87,7 +86,7 @@ namespace Lumina
     static_assert(sizeof(FMaterialUniforms) % 16 == 0, "FMaterialUniforms stride must stay 16-byte aligned for loadAligned<16>");
     static_assert(offsetof(FMaterialUniforms, Vectors) % 16 == 0, "FMaterialUniforms::Vectors must stay 16-byte aligned");
     
-    /** Byte offset of one parameter's field in the block, for targeted uploads. POD, so offsetof is exact. */
+    // Byte offsets of one parameter's field in the block for targeted uploads; the block is POD so offsetof is exact.
     constexpr uint32 ScalarFieldOffset(uint32 Index)
     {
         return (uint32)(offsetof(FMaterialUniforms, Scalars) + Index * sizeof(float));
@@ -103,19 +102,10 @@ namespace Lumina
         return (uint32)(offsetof(FMaterialUniforms, Textures) + Index * sizeof(uint32));
     }
 
-    constexpr uint32 CollectionIndexFieldOffset(uint32 Index)
-    {
-        return (uint32)(offsetof(FMaterialUniforms, CollectionIndices) + Index * sizeof(uint32));
-    }
-
     // One bit per switch in a uint64 permutation key, so this is the cap the compiler enforces.
     constexpr uint32 kMaxStaticSwitches = 64;
 
-    /**
-     * One grass species a terrain material scatters, published by the graph's GrassOutput node so the
-     * runtime can read it without the editor. The layer index selects which painted weight drives the
-     * density, which is what confines a species to specific terrain layers.
-     */
+    // One grass species a terrain material scatters, published by the GrassOutput node so the runtime needs no editor.
     REFLECT()
     struct RUNTIME_API SGrassOutput
     {
@@ -124,16 +114,16 @@ namespace Lumina
         PROPERTY(Hidden)
         TStrongObjectPtr<CGrassType> GrassType;
 
-        /** Index into STerrainComponent::Layers whose painted weight gates this species. */
+        // Index into STerrainComponent::Layers whose painted weight gates this species.
         PROPERTY(Hidden)
         uint32 LayerIndex = 0;
 
-        /** Multiplies the type's own density, so one type can be reused at different coverage per layer. */
+        // Multiplies the type's own density, so one type can be reused at different coverage per layer.
         PROPERTY(Hidden)
         float DensityScale = 1.0f;
     };
 
-    /** A compile-time branch an instance may flip, at the cost of compiling that instance its own shader. */
+    // A compile-time branch an instance may flip, at the cost of compiling that instance its own shader.
     REFLECT()
     struct RUNTIME_API SMaterialStaticSwitch
     {

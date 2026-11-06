@@ -1,8 +1,5 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
-
-
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 

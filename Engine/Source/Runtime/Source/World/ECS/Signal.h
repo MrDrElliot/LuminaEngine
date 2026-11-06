@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Entity.h"
+#include "Containers/Invoke.h"
 #include "Containers/Vector.h"
 
-#include <functional>
 #include <type_traits>
 
 namespace Lumina::ECS
@@ -161,15 +161,15 @@ namespace Lumina::ECS
         {
             if constexpr (std::is_invocable_v<decltype(Callback), FRegistry&, FEntity>)
             {
-                std::invoke(Callback, Registry, Entity);
+                Invoke(Callback, Registry, Entity);
             }
             else if constexpr (std::is_invocable_v<decltype(Callback), FEntity>)
             {
-                std::invoke(Callback, Entity);
+                Invoke(Callback, Entity);
             }
             else
             {
-                std::invoke(Callback);
+                Invoke(Callback);
             }
         }
 

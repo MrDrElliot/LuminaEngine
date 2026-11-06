@@ -15,7 +15,7 @@ namespace Lumina
 
         SNameComponent() = default;
         SNameComponent(FName InName)
-            : Name(std::move(InName))
+            : Name(Move(InName))
         {}
 
         /** Display name of the entity shown in the editor hierarchy. */

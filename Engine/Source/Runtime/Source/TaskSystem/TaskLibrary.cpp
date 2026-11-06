@@ -10,7 +10,7 @@ namespace Lumina
     {
         Jobs::EJobPriority ToBand(int32 Priority)
         {
-            return static_cast<Jobs::EJobPriority>(std::clamp<int32>(Priority, 0, static_cast<int32>(Jobs::EJobPriority::Background)));
+            return static_cast<Jobs::EJobPriority>(Math::Clamp<int32>(Priority, 0, static_cast<int32>(Jobs::EJobPriority::Background)));
         }
 
         struct FScriptTaskState

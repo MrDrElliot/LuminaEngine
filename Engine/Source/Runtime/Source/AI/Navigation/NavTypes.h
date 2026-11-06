@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-    /** Area ids for dtQueryFilter (0..63). 0..15 are reserved by the bake. */
+    // Area ids for dtQueryFilter run from 0 to 63, and 0 to 15 are reserved by the bake.
     REFLECT()
     enum class ENavArea : uint8
     {
@@ -17,7 +17,7 @@ namespace Lumina
         User0   = 16,
     };
 
-    /** Per-poly flag set; AND-ed at query time. */
+    // Per-poly flag set, AND-ed at query time.
     REFLECT()
     enum class ENavPolyFlag : uint16
     {
@@ -43,13 +43,12 @@ namespace Lumina
         Layers,
     };
 
-    /** Offline voxelization + region build settings. */
     REFLECT()
     struct RUNTIME_API SNavBuildSettings
     {
         GENERATED_BODY()
 
-        /** Voxel cell size in world units. Smaller = sharper edges, much slower bake (cubic cost). */
+        // Voxel cell size in world units, where smaller gives sharper edges at a cubic bake cost.
         PROPERTY(Editable, Category = "Voxel", ClampMin = 0.05f)
         float CellSize = 0.30f;
 
@@ -57,78 +56,74 @@ namespace Lumina
         PROPERTY(Editable, Category = "Voxel", ClampMin = 0.05f)
         float CellHeight = 0.10f;
 
-        /** Agent radius used to erode the walkable surface. */
+        // How far the walkable surface is eroded from walls.
         PROPERTY(Editable, Category = "Agent", ClampMin = 0.0f)
         float AgentRadius = 0.40f;
 
-        /** Agent capsule height; surfaces with less clearance are excluded. */
+        // Surfaces with less clearance than this are excluded.
         PROPERTY(Editable, Category = "Agent", ClampMin = 0.1f)
         float AgentHeight = 1.80f;
 
-        /** Maximum vertical step (stairs, ledges) the agent can climb. */
+        // Tallest step, such as a stair or ledge, the agent can climb.
         PROPERTY(Editable, Category = "Agent", ClampMin = 0.0f)
         float AgentMaxClimb = 0.40f;
 
-        /** Steepest walkable slope, in degrees. */
         PROPERTY(Editable, Category = "Agent", ClampMin = 0.0f, ClampMax = 89.0f)
         float AgentMaxSlopeDeg = 45.0f;
 
-        /** Max contour edge length in world units. Longer edges are split. */
+        // Contour edges longer than this many world units are split.
         PROPERTY(Editable, Category = "Polygonization", ClampMin = 0.0f)
         float EdgeMaxLength = 12.0f;
 
-        /** Max distance a simplified contour edge may deviate from the raw contour. */
+        // How far a simplified contour edge may deviate from the raw contour.
         PROPERTY(Editable, Category = "Polygonization", ClampMin = 0.1f)
         float EdgeMaxError = 1.3f;
 
-        /** Floor area below which a region is dropped (in voxels). */
+        // Regions with less floor area than this many voxels are dropped.
         PROPERTY(Editable, Category = "Region", ClampMin = 0)
         int32 RegionMinSize = 8;
 
-        /** Adjacent regions smaller than this are merged. */
+        // Adjacent regions smaller than this are merged.
         PROPERTY(Editable, Category = "Region", ClampMin = 0)
         int32 RegionMergeSize = 20;
 
         PROPERTY(Editable, Category = "Region")
         ENavRegionPartition Partition = ENavRegionPartition::ProjectDefault;
 
-        /** Max vertices per nav polygon (3..6 typical). */
         PROPERTY(Editable, Category = "Polygonization", ClampMin = 3, ClampMax = 6)
         int32 VertsPerPoly = 6;
 
-        /** Detail mesh sample distance (world units). */
         PROPERTY(Editable, Category = "DetailMesh", ClampMin = 0.0f)
         float DetailSampleDist = 6.0f;
 
-        /** Detail mesh max sample error (world units). */
         PROPERTY(Editable, Category = "DetailMesh", ClampMin = 0.0f)
         float DetailSampleMaxError = 1.0f;
 
-        /** Voxels per tile side. Tiles are the unit of parallel bake + runtime streaming. */
+        // Tiles are the unit of parallel bake and runtime streaming.
         PROPERTY(Editable, Category = "Tiling", ClampMin = 16, ClampMax = 1024)
         int32 TileSizeVoxels = 64;
     };
 
-    /** Convex XZ footprint plus a vertical band; stamps an area id onto the voxelized surface. */
+    // Convex XZ footprint plus a vertical band that stamps an area id onto the voxelized surface.
     struct FNavAreaVolume
     {
-        /** World-space hull of the volume's XZ footprint, in perimeter order. Y is ignored. */
+        // World-space footprint in perimeter order, with Y ignored.
         TVector<FVector3> Hull;
 
         float MinY = 0.0f;
         float MaxY = 0.0f;
 
-        /** ENavArea id stamped onto covered spans. Null carves the surface away. */
+        // ENavArea id stamped onto covered spans, where Null carves the surface away.
         uint8 Area = 0;
     };
 
-    /** Point-to-point jump/ladder/teleport link stitched into the navmesh at bake time. */
+    // Point-to-point jump, ladder or teleport link stitched into the navmesh at bake time.
     struct FNavOffMeshLink
     {
         FVector3 Start = FVector3(0.0f);
         FVector3 End   = FVector3(0.0f);
 
-        /** Snap radius around each endpoint used to attach the link to a polygon. */
+        // Snap radius around each endpoint used to attach the link to a polygon.
         float Radius = 0.5f;
 
         bool bBidirectional = true;
@@ -136,11 +131,10 @@ namespace Lumina
         uint8  Area  = 1;                        // ENavArea::Ground
         uint16 Flags = (uint16)(1 << 3);         // ENavPolyFlag::Jump
 
-        /** Echoed back by Detour on traversal so gameplay can identify the link. */
+        // Echoed back by Detour on traversal so gameplay can identify the link.
         uint32 UserId = 0;
     };
 
-    /** Grid coordinates of one nav tile. */
     struct FNavTileCoord
     {
         int32 X = 0;
@@ -152,7 +146,7 @@ namespace Lumina
 
     namespace NavTile
     {
-        /** Tile coords are signed, so the two halves are packed rather than added. */
+        // Tile coords are signed, so the two halves are packed rather than added.
         FORCEINLINE uint64 PackKey(int32 TX, int32 TY)
         {
             return ((uint64)(uint32)TY << 32) | (uint64)(uint32)TX;
@@ -164,18 +158,18 @@ namespace Lumina
             OutTY = (int32)(uint32)(Key >> 32);
         }
 
-        /** Shortest XZ distance from a point to the tile's footprint; zero when inside it. */
+        // Shortest XZ distance from a point to the tile's footprint, zero when inside it.
         FORCEINLINE float DistanceToTile(const FVector3& Point, const FVector3& Origin, float TileWorldSize, int32 TX, int32 TY)
         {
             const float MinX = Origin.x + (float)TX * TileWorldSize;
             const float MinZ = Origin.z + (float)TY * TileWorldSize;
             const float DX = Math::Max(0.0f, Math::Max(MinX - Point.x, Point.x - (MinX + TileWorldSize)));
             const float DZ = Math::Max(0.0f, Math::Max(MinZ - Point.z, Point.z - (MinZ + TileWorldSize)));
-            return std::sqrt(DX * DX + DZ * DZ);
+            return Math::Sqrt(DX * DX + DZ * DZ);
         }
     }
 
-    /** Per-tile baked blob in the format dtNavMesh::addTile expects. */
+    // Per-tile baked blob in the format dtNavMesh::addTile expects.
     REFLECT()
     struct RUNTIME_API SNavTileData
     {
@@ -237,7 +231,7 @@ namespace Lumina
         return "unrecognized path result";
     }
 
-    /** Result of an async path request. Owned by the requester; can be polled or awaited. */
+    // Result of an async path request, owned by the requester and polled or awaited.
     struct FNavPath
     {
         TVector<FVector3> Corners;
@@ -245,10 +239,10 @@ namespace Lumina
         // One ENavCornerFlag per corner. OffMeshLink means gameplay drives the hop, not the follower.
         TVector<uint8> CornerFlags;
 
-        /** The route does not reach the requested goal; the last corner is as close as the query got. */
+        // The route misses the goal, and the last corner is as close as the query got.
         bool bPartial = false;
 
-        /** A buffer or search limit cut the result, so re-query from the last corner instead of stopping there. */
+        // A buffer or search limit cut the result, so re-query from the last corner instead of stopping there.
         bool bTruncated = false;
 
         bool bValid   = false;
@@ -256,38 +250,37 @@ namespace Lumina
         // Every pooled query was busy, so nothing ran. Distinct from no route found.
         bool bQueryUnavailable = false;
 
-        /** FNavMesh topology epoch this was found against. A path is a snapshot, not a live corridor, so
-         *  anything following one across frames re-queries once this stops matching the mesh. */
+        // Topology epoch this was found against, so a follower across frames re-queries once it stops matching the mesh.
         uint64 Epoch = 0;
 
-        // Why the query ended as it did; pass to ToString for the loggable reason.
+        // Why the query ended as it did, and ToString gives the loggable reason.
         ENavPathResult Result = ENavPathResult::NotQueried;
     };
 
-    /** Outcome of a surface walk along a straight line. */
+    // Outcome of a surface walk along a straight line.
     REFLECT()
     struct SNavRaycastResult
     {
         GENERATED_BODY()
 
-        /** Where the walk stopped, so the wall it hit, or End when nothing blocked it. */
+        // Where the walk stopped, at the wall it hit or at End when nothing blocked it.
         PROPERTY(Hidden)
         FVector3 Point = FVector3(0.0f);
 
-        /** Wall normal at the hit; zero when unobstructed. */
+        // Wall normal at the hit, zero when unobstructed.
         PROPERTY(Hidden)
         FVector3 Normal = FVector3(0.0f);
 
-        /** Fraction along Start to End at which the walk stopped, and one when unobstructed. */
+        // Fraction along Start to End at which the walk stopped, one when unobstructed.
         PROPERTY(Hidden)
         float T = 1.0f;
 
-        /** True when a navmesh edge blocked the walk. */
+        // True when a navmesh edge blocked the walk.
         PROPERTY(Hidden)
         bool bHit = false;
     };
 
-    /** A point query's answer, carrying the found flag a by-value result cannot express as an optional. */
+    // A point query's answer, carrying the found flag a by-value result cannot express as an optional.
     REFLECT()
     struct SNavPoint
     {
@@ -300,17 +293,17 @@ namespace Lumina
         bool bFound = false;
     };
 
-    /** Per-call query parameters. Cheap to copy, no heap. */
+    // Per-call query parameters, cheap to copy with no heap.
     struct FNavQueryFilter
     {
         uint16 IncludeFlags = 0xFFFF;
         uint16 ExcludeFlags = 0;
-        float  AreaCost[64] = {};   // 1.0 default; copied into dtQueryFilter
+        float  AreaCost[64] = {};   // 1.0 by default and copied into dtQueryFilter
 
-        /** Half-extents for findNearestPoly snapping; generous on Y for cell-quantized poly Y. */
+        // Half-extents for findNearestPoly snapping, generous on Y for cell-quantized poly Y.
         FVector3 QueryExtents = FVector3(2.0f, 16.0f, 2.0f);
 
-        // Corners this caller can store; zero takes the project default.
+        // Corners this caller can store, where zero takes the project default.
         int32 MaxCorners = 0;
 
         FNavQueryFilter()

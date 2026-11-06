@@ -16,10 +16,6 @@ namespace Lumina
         });
     }
 
-    void FShadowAtlasEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FShadowAtlasEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("Atlas",

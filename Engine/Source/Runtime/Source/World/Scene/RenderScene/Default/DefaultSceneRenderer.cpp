@@ -1,5 +1,7 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "Renderer/SMAA/AreaTex.h"
+#include "Renderer/SMAA/SearchTex.h"
 
 namespace Lumina
 {
@@ -211,6 +213,11 @@ namespace Lumina
 
         FRenderManager::OnSwapchainResized.Remove(SwapchainResizedHandle);
 
+        if (!SceneViews.IsEmpty() && SceneViews[0].Upscaler != nullptr)
+        {
+            SceneViews[0].Upscaler->ReleaseViewResources(this);
+        }
+
         if (World != nullptr)
         {
             ECS::FRegistry& Registry = World->GetEntityRegistry();
@@ -270,6 +277,7 @@ namespace Lumina
         RetainedCullEntryBuffer.Release();
         RetainedTransformBuffer.Release();
         RetainedStaticBuffer.Release();
+        RetainedProxyBuffer.Release();
         SunDFObjectBuffer.Release();
         SunDFCellCountBuffer.Release();
         SunDFCellItemBuffer.Release();
@@ -327,6 +335,8 @@ namespace Lumina
             MaterialClassifyRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
+            ProxyListRing[Slot].Release();
+            ProxyDrawArgsRing[Slot].Release();
 
             // Raw GPUPtr rather than an RHI::FGPUAllocation (CPURead allocation, persistently mapped).
             if (MeshletBoundReadback[Slot].Gpu != 0)
@@ -677,6 +687,7 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Cascade Meshlet Cull");
                     MeshletCullPass(CL, EMeshletSlice::Late, /*bCascadePhase*/ true);
                 }
+                CopyCullTotalsForReadback(CL);
 
                 // No rebuild here. Nothing between this and the build after Terrain Render writes depth or reads it.
 
@@ -1356,6 +1367,10 @@ namespace Lumina
         IUpscaler* const Upscaler = FUpscalerRegistry::GetActive();
         if (Upscaler != Primary.Upscaler)
         {
+            if (Primary.Upscaler != nullptr)
+            {
+                Primary.Upscaler->ReleaseViewResources(this);
+            }
             Primary.Upscaler = Upscaler;
             Primary.bTemporalHistoryValid = false;
         }
@@ -2270,8 +2285,8 @@ namespace Lumina
 
             RHI::FTextureDesc ScatterDesc;
             ScatterDesc.Type      = RHI::ETextureType::Tex2D;
-            ScatterDesc.Dimension = FUIntVector3(std::max<uint32>(Extent.x / 2u, 1u),
-                                                 std::max<uint32>(Extent.y / 2u, 1u), 1);
+            ScatterDesc.Dimension = FUIntVector3(Math::Max<uint32>(Extent.x / 2u, 1u),
+                                                 Math::Max<uint32>(Extent.y / 2u, 1u), 1);
             ScatterDesc.Format    = EFormat::RGBA16_FLOAT;
             ScatterDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudScatter]        = CreateSceneImage(ScatterDesc, true, true);
@@ -2303,8 +2318,8 @@ namespace Lumina
         }
 
         {
-            const uint32 BloomW = std::max<uint32>(Extent.x / 2u, 1u);
-            const uint32 BloomH = std::max<uint32>(Extent.y / 2u, 1u);
+            const uint32 BloomW = Math::Max<uint32>(Extent.x / 2u, 1u);
+            const uint32 BloomH = Math::Max<uint32>(Extent.y / 2u, 1u);
 
             RHI::FTextureDesc BloomDesc;
             BloomDesc.Type      = RHI::ETextureType::Tex2D;

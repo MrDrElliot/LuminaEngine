@@ -5,12 +5,12 @@
 
 namespace Lumina
 {
-    void SProjectileSystem::Configure()
+    void CProjectileSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
-    void SProjectileSystem::OnUpdate(const SSystemContext& Context)
+    void CProjectileSystem::OnUpdate(const SSystemContext& Context)
     {
         const float Dt = Context.GetDeltaTime();
         if (Dt <= 0.0f)

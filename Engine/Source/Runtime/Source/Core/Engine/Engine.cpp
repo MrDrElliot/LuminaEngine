@@ -10,6 +10,8 @@
 #include "Audio/AudioContext.h"
 #include "Audio/AudioSettings.h"
 #include "Networking/INetworkRuntime.h"
+#include "Networking/INetworkTransport.h"
+#include "Assets/AssetRegistry/CookRoot.h"
 #include "Config/Config.h"
 #include "Config/EngineSettings.h"
 #include "Config/GameUserSettings.h"
@@ -86,6 +88,9 @@ namespace Lumina
     static TConsoleVar CVarPaceToDisplay("Core.PaceToDisplay", true, "Under FIFO present, advance each frame by whole display refresh intervals so motion stays even on screen");
 
     static TConsoleVar CVarTrimAllocatorCaches("Core.TrimAllocatorCaches", true, "Hand the allocator's cached memory back to the OS once a level that replaced another has settled");
+
+    FEngine::FEngine() = default;
+    FEngine::~FEngine() = default;
     
     static FString ReadStartupProjectFromDisk()
     {
@@ -234,25 +239,39 @@ namespace Lumina
         #endif
     }
 
+    struct FEngine::FBootTimer
+    {
+        // Startup is a long serial chain, so -boottimings attributes it without attaching a profiler.
+        const bool bEnabled = GCommandLine->Has("boottimings");
+        const double Start = PlatformTime::Seconds();
+        double Last = Start;
+
+        void Mark(const char* Name)
+        {
+            const double Now = PlatformTime::Seconds();
+            if (bEnabled)
+            {
+                LOG_DISPLAY("[boot] {} {} ms", Name, (Now - Last) * 1000.0);
+            }
+            Last = Now;
+        }
+    };
+
+    struct FEngine::FStartupProject
+    {
+        FString Path;
+        bool bFromCommandLine = false;
+        bool bOpen = false;
+        bool bMounted = false;
+    };
+
     bool FEngine::Init()
     {
         LUMINA_PROFILE_SCOPE();
 
         PlatformTime::EnableHighResolutionTiming();
 
-        // Startup is a long serial chain, so -boottimings attributes it without attaching a profiler.
-        const bool bBootTimings = GCommandLine->Has("boottimings");
-        double BootLast = PlatformTime::Seconds();
-        const double BootStart = BootLast;
-        auto BootMark = [&BootLast, bBootTimings](const char* Name)
-        {
-            const double Now = PlatformTime::Seconds();
-            if (bBootTimings)
-            {
-                LOG_DISPLAY("[boot] {} {} ms", Name, (Now - BootLast) * 1000.0);
-            }
-            BootLast = Now;
-        };
+        FBootTimer Boot;
 
         // Before anything can build an object, so a reinstance always sees every holder.
         if (GConfig != nullptr)
@@ -260,44 +279,67 @@ namespace Lumina
             FObjectReferenceProviders::Register(GConfig);
         }
 
+        FStartupProject Startup = ResolveStartupProject(Boot);
+        const bool bStartupSucceeded = MountStartupFilesystems(Startup, Boot);
+        InitializeCoreSystems(Boot);
+        InitializeRendererAndParallelSubsystems(Boot);
+        InitializeReflectionAndWorld(Boot);
+
+        if (Startup.bMounted)
+        {
+            StartProject();
+        }
+        Boot.Mark("StartProject");
+
+        InitializeEditorTools(Boot);
+        InitializeUserInterface(Boot);
+        return FinishBoot(bStartupSucceeded, Boot);
+    }
+
+    FEngine::FStartupProject FEngine::ResolveStartupProject(FBootTimer& Boot)
+    {
         // Must run before the renderer so Earliest/Core-phase plugins can wedge in ahead.
         FPluginManager::Get().DiscoverEnginePlugins();
-        BootMark("DiscoverEnginePlugins");
+        Boot.Mark("DiscoverEnginePlugins");
 
         // Falls back to the stored startup project, so a bare launch respects plugin enable and disable.
-        FString StartupProject;
-        bool bStartupProjectFromCommandLine = false;
+        FStartupProject Startup;
         if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
         {
             const FFixedString& V = ProjectArg.GetValue();
-            StartupProject = FStringView(*V, V.Len());
-            bStartupProjectFromCommandLine = true;
+            Startup.Path = FStringView(*V, V.Len());
+            Startup.bFromCommandLine = true;
         }
         else
         {
-            StartupProject = ReadStartupProjectFromDisk();
+            Startup.Path = ReadStartupProjectFromDisk();
         }
 
-        bool bOpenStartupProject = bStartupProjectFromCommandLine;
+        Startup.bOpen = Startup.bFromCommandLine;
         #if WITH_EDITOR
         // Only the editor reopens the stored project on a bare launch, which a packaged game must never do.
-        bOpenStartupProject |= !StartupProject.IsEmpty() && Filesystem::Exists(StartupProject);
+        Startup.bOpen |= !Startup.Path.IsEmpty() && Filesystem::Exists(Startup.Path);
         #endif
 
         // The project's own plugins have to be known before its overrides apply, or each one reads as missing.
-        if (bOpenStartupProject)
+        if (Startup.bOpen)
         {
-            const FString Descriptor = ResolveProjectDescriptor(StartupProject);
+            const FString Descriptor = ResolveProjectDescriptor(Startup.Path);
             if (!Descriptor.IsEmpty())
             {
                 FPluginManager::Get().DiscoverProjectPlugins(VFS::Parent(Paths::Normalize(Descriptor)));
             }
         }
-        PreloadProjectPluginOverrides(StartupProject);
+        PreloadProjectPluginOverrides(Startup.Path);
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Earliest);
-        BootMark("Phase Earliest");
+        Boot.Mark("Phase Earliest");
 
+        return Startup;
+    }
+
+    bool FEngine::MountStartupFilesystems(FStartupProject& Startup, FBootTimer& Boot)
+    {
         const FString& EngineDir = Paths::GetEngineDirectory();
         if (!EngineDir.IsEmpty() && Filesystem::Exists(EngineDir))
         {
@@ -312,12 +354,12 @@ namespace Lumina
         }
 
         // Before any subsystem starts, so project plugins load in their own phases and boot sees /Game and /Config.
-        const bool bStartupProjectMounted = bOpenStartupProject && MountProject(StartupProject);
-        BootMark("MountProject");
+        Startup.bMounted = Startup.bOpen && MountProject(Startup.Path);
+        Boot.Mark("MountProject");
 
         bool bStartupSucceeded = true;
         #if !WITH_EDITOR
-        if (bStartupProjectFromCommandLine && !bStartupProjectMounted)
+        if (Startup.bFromCommandLine && !Startup.bMounted)
         {
             bStartupSucceeded = false;
         }
@@ -326,9 +368,13 @@ namespace Lumina
         {
             bStartupSucceeded = false;
         }
+        return bStartupSucceeded;
+    }
 
+    void FEngine::InitializeCoreSystems(FBootTimer& Boot)
+    {
         FCoreDelegates::OnPreEngineInit.BroadcastAndClear();
-        BootMark("OnPreEngineInit");
+        Boot.Mark("OnPreEngineInit");
 
         // An engine-lifetime subscription, so the handle is intentionally not retained.
         (void)FCoreDelegates::OnSettingsSaved.AddLambda([](CClass* Class)
@@ -348,22 +394,25 @@ namespace Lumina
         });
 
         FConsoleRegistry::Get().LoadFromConfig();
-        BootMark("Console LoadFromConfig");
-        
+        Boot.Mark("Console LoadFromConfig");
+
         Jobs::Initialize();
-        BootMark("Jobs::Initialize");
+        Boot.Mark("Jobs::Initialize");
 
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
             NetRuntime->Initialize();
         }
-        BootMark("Net Initialize");
+        Boot.Mark("Net Initialize");
         Physics::Initialize();
-        BootMark("Physics::Initialize");
+        Boot.Mark("Physics::Initialize");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Core);
-        BootMark("Phase Core");
+        Boot.Mark("Phase Core");
+    }
 
+    void FEngine::InitializeRendererAndParallelSubsystems(FBootTimer& Boot)
+    {
         // Threads rather than jobs, since a CLR and a COM apartment would stay bound to whichever worker ran the job.
         FThread BasisuThread(FThreadOptions{ "Basisu Init" }, []
         {
@@ -389,15 +438,15 @@ namespace Lumina
         {
             Internal::SetRenderManager(Memory::New<FRenderManager>());
             Render().Initialize();
-            BootMark("  Render().Initialize");
+            Boot.Mark("  Render().Initialize");
 
             // After the renderer since residency goes through the RHI, and before any asset load.
             FTextureStreamingManager::Initialize();
-            BootMark("  TextureStreaming");
+            Boot.Mark("  TextureStreaming");
 
             EngineViewportSize = Windowing::GetPrimaryWindowHandle()->GetExtent();
         }
-        BootMark("Renderer total");
+        Boot.Mark("Renderer total");
 
         if (AudioThread.Joinable())
         {
@@ -406,39 +455,39 @@ namespace Lumina
         BasisuThread.Join();
         // Script-backed CDOs run in the very next step, so the host has to be up by here.
         DotNetThread.Join();
-        BootMark("Join parallel init");
+        Boot.Mark("Join parallel init");
+    }
 
+    void FEngine::InitializeReflectionAndWorld(FBootTimer& Boot)
+    {
         RegisterPendingTypes();
-        BootMark("RegisterPendingTypes");
+        Boot.Mark("RegisterPendingTypes");
 
         // Post-reflection so module initializers do not null-deref, and pre WorldManager for what they spawn.
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PreEngineInit);
         RegisterPendingTypes();
-        BootMark("Phase PreEngineInit");
+        Boot.Mark("Phase PreEngineInit");
 
         // Built-in primitive meshes must exist before any world deserializes.
         CPrimitiveManager::Get();
-        BootMark("CPrimitiveManager");
-        
+        Boot.Mark("CPrimitiveManager");
+
         if (!GIsHeadless)
         {
             CFontManager::Get();
         }
-        BootMark("CFontManager");
+        Boot.Mark("CFontManager");
 
         GWorldManager = Memory::New<FWorldManager>();
-        BootMark("WorldManager");
+        Boot.Mark("WorldManager");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EngineInit);
         RegisterPendingTypes();
-        BootMark("Phase EngineInit");
+        Boot.Mark("Phase EngineInit");
+    }
 
-        if (bStartupProjectMounted)
-        {
-            StartProject();
-        }
-        BootMark("StartProject");
-
+    void FEngine::InitializeEditorTools([[maybe_unused]] FBootTimer& Boot)
+    {
         #if USING(WITH_EDITOR)
         GConfig->DiscoverAndLoadSettings();
 
@@ -450,17 +499,20 @@ namespace Lumina
         }
 
         StartDevelopmentTools(EInputLayer::EditorChrome);
-        BootMark("DeveloperToolUI");
+        Boot.Mark("DeveloperToolUI");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EditorInit);
         RegisterPendingTypes();
-        BootMark("Phase EditorInit");
+        Boot.Mark("Phase EditorInit");
         #endif
+    }
 
+    void FEngine::InitializeUserInterface(FBootTimer& Boot)
+    {
         if (!GIsHeadless)
         {
             RmlUi::Initialize();
-        BootMark("RmlUi::Initialize");
+            Boot.Mark("RmlUi::Initialize");
         }
 
         // The editor built its UI above; a game build has no window to draw an overlay into when headless.
@@ -468,10 +520,13 @@ namespace Lumina
         if (!GIsHeadless)
         {
             StartDevelopmentTools(EInputLayer::DevOverlay);
-            BootMark("DeveloperToolUI");
+            Boot.Mark("DeveloperToolUI");
         }
         #endif
+    }
 
+    bool FEngine::FinishBoot(bool bStartupSucceeded, FBootTimer& Boot)
+    {
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PostEngineInit);
         RegisterPendingTypes();
 
@@ -481,10 +536,10 @@ namespace Lumina
         }
 
         FCoreDelegates::OnPostEngineInit.BroadcastAndClear();
-        BootMark("Phase PostEngineInit");
-        if (bBootTimings)
+        Boot.Mark("Phase PostEngineInit");
+        if (Boot.bEnabled)
         {
-            LOG_DISPLAY("[boot] TOTAL FEngine::Init {} ms", (PlatformTime::Seconds() - BootStart) * 1000.0);
+            LOG_DISPLAY("[boot] TOTAL FEngine::Init {} ms", (PlatformTime::Seconds() - Boot.Start) * 1000.0);
         }
 
         return bStartupSucceeded;
@@ -1073,46 +1128,11 @@ namespace Lumina
             GConfig->SaveSettings(CProjectSettings::StaticClass());
         }
         LegacyCookRoots.Reset();
-        
-        // The project's module DLL lives in its OWN Binaries, exactly like a template project.
-        const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,
-                                                    Paths::MakeModuleFileName(ProjectName));
 
-        if (Paths::Exists(DLLPath))
-        {
-            if (FModuleManager::Get().LoadModule(DLLPath) != nullptr)
-            {
-                RegisterPendingTypes();
-            }
-            else
-            {
-                const FString& LoadError = FModuleManager::Get().GetLastLoadError();
-                if (!LoadError.IsEmpty())
-                {
-                    LOG_ERROR("Project module '{}' was not loaded: {}", ProjectName, LoadError);
-#if WITH_EDITOR
-                    if (OfferProjectRebuild(ProjectName, ProjectFile, Format("does not match this editor ({})", LoadError)))
-                    {
-                        return;
-                    }
-                    ImGuiX::Notifications::NotifyError(
-                        "Project '{}' code was not loaded: {}. Rebuild the project for this engine (matching configuration/platform).",
-                        ProjectName, LoadError);
-#endif
-                }
-                else
-                {
-                    LOG_INFO("No project module found");
-                }
-            }
-        }
-#if WITH_EDITOR
-        else if (Paths::Exists(Paths::Combine(ProjectPath, "Source", FFixedString(*ProjectName).Append(".Target.cs")))
-            && OfferProjectRebuild(ProjectName, ProjectFile, "has not been built yet"))
+        if (!LoadProjectModule())
         {
             return;
         }
-#endif
 
         // Project DLL is now in; plugin modules that wire up to project types load here.
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PostProjectLoad);
@@ -1140,6 +1160,51 @@ namespace Lumina
         LoadStartupMap();
 
         OnProjectLoaded.Broadcast();
+    }
+
+    // False when a rebuild was offered and accepted, which closes the editor instead of finishing the load.
+    bool FEngine::LoadProjectModule()
+    {
+        // The project's module DLL lives in its OWN Binaries, exactly like a template project.
+        const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,
+                                                    Paths::MakeModuleFileName(ProjectName));
+
+        if (Paths::Exists(DLLPath))
+        {
+            if (FModuleManager::Get().LoadModule(DLLPath) != nullptr)
+            {
+                RegisterPendingTypes();
+            }
+            else
+            {
+                const FString& LoadError = FModuleManager::Get().GetLastLoadError();
+                if (!LoadError.IsEmpty())
+                {
+                    LOG_ERROR("Project module '{}' was not loaded: {}", ProjectName, LoadError);
+#if WITH_EDITOR
+                    if (OfferProjectRebuild(ProjectName, ProjectFile, Format("does not match this editor ({})", LoadError)))
+                    {
+                        return false;
+                    }
+                    ImGuiX::Notifications::NotifyError(
+                        "Project '{}' code was not loaded: {}. Rebuild the project for this engine (matching configuration/platform).",
+                        ProjectName, LoadError);
+#endif
+                }
+                else
+                {
+                    LOG_INFO("No project module found");
+                }
+            }
+        }
+#if WITH_EDITOR
+        else if (Paths::Exists(Paths::Combine(ProjectPath, "Source", FFixedString(*ProjectName).Append(".Target.cs")))
+            && OfferProjectRebuild(ProjectName, ProjectFile, "has not been built yet"))
+        {
+            return false;
+        }
+#endif
+        return true;
     }
 
     void FEngine::ApplyUserSettings()

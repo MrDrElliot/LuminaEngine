@@ -52,17 +52,17 @@ namespace Lumina
                                                      const TVector<FMatrix4>& BoneTransforms,
                                                      TVector<FMatrix4>& OutGlobals);
 
-        /** Draw one skeleton's bones/joints/axes. GlobalBoneTransforms is model-space (see above). */
+        // Draw one skeleton's bones/joints/axes. GlobalBoneTransforms is model-space (see above).
         RUNTIME_API void DrawSkeleton(IPrimitiveDrawInterface* DrawInterface,
                                       const FSkeletonResource* Skeleton,
                                       const TVector<FMatrix4>& GlobalBoneTransforms,
                                       const FMatrix4& MeshWorldMatrix,
                                       const FOptions& Options);
 
-        /** Draw every skeletal mesh in the world (bone lines/joints/axes only; no names). Game thread. */
+        // Draw every skeletal mesh in the world (bone lines/joints/axes only; no names). Game thread.
         RUNTIME_API void DrawWorldSkeletons(CWorld* World, IPrimitiveDrawInterface* DrawInterface, const FOptions& Options);
 
-        /** World-space bone label positions, culled to MaxDistance around ViewOrigin and capped at MaxLabels. */
+        // World-space bone label positions, culled to MaxDistance around ViewOrigin and capped at MaxLabels.
         RUNTIME_API void GatherWorldBoneLabels(CWorld* World, const FVector3& ViewOrigin, float MaxDistance,
                                                TVector<FBoneLabel>& OutLabels, int32 MaxLabels = 2048);
     }

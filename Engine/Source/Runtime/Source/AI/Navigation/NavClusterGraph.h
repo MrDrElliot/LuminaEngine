@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Threading/Sync.h"
@@ -33,6 +34,30 @@ namespace Lumina
             Abandoned,
         };
 
+        // Owned by one query slot and cleared between queries, so a long path reuses the search's allocations.
+        struct FSearchScratch
+        {
+            struct FNode
+            {
+                uint64   Key;
+                uint64   EntryRef;
+                FVector3 Center;
+                float    Cost;
+                int32    Parent;
+                bool     bClosed;
+            };
+            struct FOpen
+            {
+                float Estimate;
+                int32 Node;
+            };
+
+            TVector<FNode>          Nodes;
+            TVector<FOpen>          Open;
+            THashMap<uint64, int32> NodeOfKey;
+            TVector<FStep>          Route;
+        };
+
         void Reset(int32 MaxTiles);
 
         // Every resident tile at once, for a mesh that was just filled.
@@ -42,9 +67,9 @@ namespace Lumina
         void AddTile(const dtNavMesh& Mesh, const dtMeshTile& Tile);
         void RemoveTile(const dtNavMesh& Mesh, uint32 TileIndex, int32 TileX, int32 TileY);
 
-        // Unreachable routes to the cluster nearest the goal that the start can reach. Abandoned once Abandon reads nonzero.
+        // Fills Scratch.Route. Unreachable routes to the cluster nearest the goal that the start can reach. Abandoned once Abandon reads nonzero.
         ERoute FindRoute(const dtNavMesh& Mesh, const dtQueryFilter& Filter, uint64 StartRef, uint64 EndRef,
-                         const FVector3& StartPos, const FVector3& EndPos, const std::atomic<uint32>& Abandon, TVector<FStep>& Out) const;
+                         const FVector3& StartPos, const FVector3& EndPos, const std::atomic<uint32>& Abandon, FSearchScratch& Scratch) const;
 
         // The poly of a route's cluster whose center lies nearest Pos.
         uint64 NearestPoly(const dtNavMesh& Mesh, uint64 Key, const FVector3& Pos) const;
@@ -94,7 +119,7 @@ namespace Lumina
         uint32 ComponentOf(uint64 Key) const;
         void Union(uint32 A, uint32 B);
         ERoute Search(const dtNavMesh& Mesh, const dtQueryFilter& Filter, uint64 StartKey, uint64 StartRef, uint64 GoalKey,
-                      const FVector3& StartPos, const FVector3& GoalPos, const std::atomic<uint32>& Abandon, TVector<FStep>& Out) const;
+                      const FVector3& StartPos, const FVector3& GoalPos, const std::atomic<uint32>& Abandon, FSearchScratch& Scratch) const;
 
         TVector<FTileClusters> Tiles;
         uint64                 Version = 1;

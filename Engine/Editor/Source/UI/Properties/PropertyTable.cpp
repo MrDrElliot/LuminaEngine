@@ -440,10 +440,6 @@ namespace Lumina::PropertyTableInternal
         {
             Ops->PreEdit(Callbacks.Instance, Event);
         }
-        if (Callbacks.PreChangeCallback)
-        {
-            Callbacks.PreChangeCallback(Event);
-        }
 
         Apply();
 
@@ -2965,11 +2961,6 @@ namespace Lumina
         }
         Bind(InObject, StructType, InDefaultObject);
         DropRows();
-    }
-
-    void FPropertyTable::SetPreEditCallback(FPropertyChangedEventFn Callback)
-    {
-        Callbacks.PreChangeCallback = Move(Callback);
     }
 
     void FPropertyTable::SetPostEditCallback(FPropertyChangedEventFn Callback)

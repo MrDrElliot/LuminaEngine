@@ -5,12 +5,14 @@
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
 #include "Containers/Algorithm.h"
+#include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Log/Log.h"
 #include "MCPAnimGraphTools.h"
 #include "MCPAssetTools.h"
 #include "MCPBuiltinTools.h"
 #include "MCPDataTableTools.h"
+#include "MCPEditorModule.h"
 #include "MCPEditorSessionTools.h"
 #include "MCPMaterialTools.h"
 #include "MCPPackageTools.h"
@@ -166,6 +168,22 @@ namespace Lumina::MCP
         if (Object != nullptr && !Algo::AnyOf(KeptLoaded, [Object](const TStrongObjectPtr<CObject>& Kept) { return Kept.Get() == Object; }))
         {
             KeptLoaded.Emplace(Object);
+        }
+    }
+
+    void KeepAssetLoaded(CObject* Asset)
+    {
+        if (FServer* Server = FMCPEditorModule::GetServer())
+        {
+            Server->KeepLoaded(Asset);
+        }
+    }
+
+    void MarkAssetDirty(const CObject* Asset)
+    {
+        if (CPackage* Package = Asset != nullptr ? Asset->GetPackage() : nullptr)
+        {
+            Package->MarkDirty();
         }
     }
 

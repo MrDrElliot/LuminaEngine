@@ -16,6 +16,14 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
 {
     private const string FunctionAttribute = "LuminaSharp.FunctionAttribute";
 
+    private static readonly DiagnosticDescriptor Overloaded = new(
+        id: "LUM0130",
+        title: "Overloaded [Function] name",
+        messageFormat: "[Function] '{0}' is declared more than once in '{1}'. A reflected function is looked up by name from native and from the dispatcher, so an overload cannot be told apart and none of them is reflected. Give each one its own name.",
+        category: "LuminaSharp",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         IncrementalValuesProvider<Model?> Models = context.SyntaxProvider.ForAttributeWithMetadataName(
@@ -26,19 +34,29 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(Models.Collect(), static (Output, All) => Emit(Output, All));
     }
 
-    private sealed record Model(string OwnerFullyQualified, string OwnerHint, string Function, string Body);
+    private sealed record Model(string OwnerFullyQualified, string OwnerHint, string Function, string Body, Diagnostic? Error = null);
 
     // Null for anything FrameMarshal would not bind as plain blittable slots, which keeps the reflection path.
     private static Model? BuildModel(GeneratorAttributeSyntaxContext Context, CancellationToken Token)
     {
-        if (Context.TargetSymbol is not IMethodSymbol Method || Method.IsStatic || Method.IsGenericMethod)
+        if (Context.TargetSymbol is not IMethodSymbol Method || Method.IsStatic)
+        {
+            return null;
+        }
+        if (ScriptPropertyClassifier.HasAttributedTwin(Method, FunctionAttribute))
+        {
+            Diagnostic Error = Diagnostic.Create(Overloaded, Method.Locations.FirstOrDefault(), Method.Name, Method.ContainingType.Name);
+            return new Model(string.Empty, string.Empty, string.Empty, string.Empty, Error);
+        }
+        // IsGenericType also covers a type nested inside a generic one, whose type parameters the invoker class cannot name.
+        if (Method.IsGenericMethod || Method.ContainingType.IsGenericType)
         {
             return null;
         }
 
         // Only a minted class is called through a reflected frame, and a view model's commands go through UI reflection instead.
         INamedTypeSymbol Owner = Method.ContainingType;
-        if (!IsNativeObject(Owner) || !IsReachable(Method))
+        if (!ScriptPropertyClassifier.IsNativeObject(Owner) || !IsReachable(Method))
         {
             return null;
         }
@@ -136,20 +154,8 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
         Builder.Append("                global::LuminaSharp.ScriptFunctionDispatch.ReportFunctionException(__target, \"").Append(Method.Name).Append("\", __e);\n");
         Builder.Append("            }\n        }\n");
 
-        string Hint = Owner.ToDisplayString().Replace('.', '_').Replace('<', '_').Replace('>', '_');
+        string Hint = Owner.ToDisplayString().Replace('.', '_');
         return new Model(OwnerName, Hint, Method.Name, Builder.ToString());
-    }
-
-    private static bool IsNativeObject(INamedTypeSymbol? Type)
-    {
-        for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
-        {
-            if (Current.ToDisplayString() == ScriptPropertyTypeNames.NativeObject)
-            {
-                return true;
-            }
-        }
-        return false;
     }
 
     // The invoker is a separate class, so a private or protected method or owner keeps the reflection path.
@@ -171,7 +177,7 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
         {
             RefKind.Out => "out ",
             RefKind.Ref => "ref ",
-            RefKind.In => "in ",
+            RefKind.In or RefKind.RefReadOnlyParameter => "in ",
             _ => string.Empty,
         };
     }
@@ -233,20 +239,14 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
     private static void Emit(SourceProductionContext Output, ImmutableArray<Model?> All)
     {
         IEnumerable<Model> Models = All.Where(M => M is not null).Select(M => M!);
-
-        foreach (IGrouping<string, Model> Group in Models.GroupBy(M => M.OwnerFullyQualified))
+        foreach (Model Refused in Models.Where(M => M.Error is not null))
         {
-            // An overloaded name is refused at describe time, so emitting for one would not compile anyway.
-            List<Model> Entries = Group
-                .GroupBy(M => M.Function)
-                .Where(G => G.Count() == 1)
-                .Select(G => G.First())
-                .ToList();
-            if (Entries.Count == 0)
-            {
-                continue;
-            }
+            Output.ReportDiagnostic(Refused.Error!);
+        }
 
+        foreach (IGrouping<string, Model> Group in Models.Where(M => M.Error is null).GroupBy(M => M.OwnerFullyQualified))
+        {
+            List<Model> Entries = Group.ToList();
             Model First = Entries[0];
             var Builder = new StringBuilder();
             Builder.Append("// <auto-generated/>\n#nullable enable\n");

@@ -208,8 +208,7 @@ namespace Lumina::Input
                 continue;
             }
 
-            const bool bGamepadSource = Binding.Source >= EInputAxisSource::GamepadLeftX;
-            if (bGamepadSource == bGamepad)
+            if (IsGamepadSource(Binding.Source) == bGamepad)
             {
                 return Binding.GetDisplayName(Family);
             }

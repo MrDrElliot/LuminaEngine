@@ -5,14 +5,14 @@
 #include "Core/Threading/Thread.h"
 #include "Core/Math/Math.h"
 #include "Containers/Vector.h"
+#include "AI/Avoidance/AvoidanceGrid.h"
 #include "AI/Perception/PerceptionTypes.h"
 #include "HierarchicalTags/HierarchicalTag.h"
 #include "World/Entity/Systems/SystemResources.h"
 
 namespace Lumina
 {
-    // One perceivable source, gathered into the grid each tick. Tags points into the live
-    // SAIStimuliSourceComponent (valid only for the tick the grid was built).
+    // A perceivable source gathered each tick, whose AffiliationTags point into the live SAIStimuliSourceComponent for that tick only.
     struct FPerceptionSource
     {
         ECS::FEntity                    Entity              = ECS::NullEntity;
@@ -21,108 +21,38 @@ namespace Lumina
         uint8                           RegisteredSenses    = 0;                // EAISenseChannel bits.
     };
 
-    // Uniform XZ grid over the stimulus sources, CSR (counting-sort) layout. Cell c owns SortedIndices in
-    // [CellStart[c], CellStart[c+1]). Built serially each tick, queried read-only from the parallel sense
-    // pass. Modeled on FNetGrid (NetReplicationGraph.h) but decoupled from the net module.
+    // Built serially each tick over the sources' aim points, then queried read-only from the parallel sense pass.
     struct FPerceptionGrid
     {
-        FVector3            Origin   = FVector3(0.0f);
-        float               CellSize = 32.0f;
-        int32               DimX     = 0;
-        int32               DimZ     = 0;
-        TVector<int32>      CellStart;       // size NumCells()+1.
-        TVector<int32>      SortedIndices;   // into Sources, in cell order.
+        Avoidance::FAvoidanceGrid  Grid;
+        TVector<float>             AimX;
+        TVector<float>             AimZ;
         TVector<FPerceptionSource> Sources;
 
-        int32 NumCells() const { return DimX * DimZ; }
-
-        void CellCoords(const FVector3& P, int32& OutX, int32& OutZ) const
+        void Build(float CellSize)
         {
-            int32 cx = (int32)((P.x - Origin.x) / CellSize);
-            int32 cz = (int32)((P.z - Origin.z) / CellSize);
-            OutX = cx < 0 ? 0 : (cx >= DimX ? DimX - 1 : cx);
-            OutZ = cz < 0 ? 0 : (cz >= DimZ ? DimZ - 1 : cz);
-        }
-
-        int32 CellIndex(int32 cx, int32 cz) const { return cz * DimX + cx; }
-
-        // CSR build from the already-populated Sources array. Vectors are reused across ticks (cleared, not freed).
-        void Build(float InCellSize)
-        {
-            CellSize = InCellSize > 1.0f ? InCellSize : 1.0f;
             const int32 N = Sources.Num();
-            if (N == 0)
-            {
-                DimX = DimZ = 0;
-                CellStart.Reset();
-                SortedIndices.Reset();
-                return;
-            }
-
-            FVector3 Min = Sources[0].AimPoint;
-            FVector3 Max = Sources[0].AimPoint;
-            for (int32 i = 1; i < N; ++i)
-            {
-                const FVector3& P = Sources[i].AimPoint;
-                if (P.x < Min.x) Min.x = P.x;
-                if (P.z < Min.z) Min.z = P.z;
-                if (P.x > Max.x) Max.x = P.x;
-                if (P.z > Max.z) Max.z = P.z;
-            }
-
-            Origin = Min;
-            DimX = (int32)((Max.x - Min.x) / CellSize) + 1;
-            DimZ = (int32)((Max.z - Min.z) / CellSize) + 1;
-            if (DimX < 1) DimX = 1;
-            if (DimZ < 1) DimZ = 1;
-
-            const int32 Cells = DimX * DimZ;
-            CellStart.Init(0, Cells + 1);
-
+            AimX.SetNum(N);
+            AimZ.SetNum(N);
             for (int32 i = 0; i < N; ++i)
             {
-                int32 cx, cz;
-                CellCoords(Sources[i].AimPoint, cx, cz);
-                ++CellStart[CellIndex(cx, cz) + 1];
+                AimX[i] = Sources[i].AimPoint.x;
+                AimZ[i] = Sources[i].AimPoint.z;
             }
-            for (int32 c = 1; c <= Cells; ++c)
-            {
-                CellStart[c] += CellStart[c - 1];
-            }
-
-            SortedIndices.SetNum(N);
-            TVector<int32> Cursor = CellStart; // running write offset per cell.
-            for (int32 i = 0; i < N; ++i)
-            {
-                int32 cx, cz;
-                CellCoords(Sources[i].AimPoint, cx, cz);
-                SortedIndices[Cursor[CellIndex(cx, cz)]++] = i;
-            }
+            Grid.Build(AimX.GetData(), AimZ.GetData(), N, CellSize);
         }
 
-        // Invoke Func(const FPerceptionSource&) for every source whose cell overlaps the XZ disc of Radius
-        // around Center. Read-only; safe to call concurrently from the parallel sense pass.
+        // Invoke Func(const FPerceptionSource&) for every source whose cell overlaps the XZ disc of Radius around Center.
         template<typename Fn>
         void ForEachInRadius(const FVector3& Center, float Radius, Fn&& Func) const
         {
-            if (DimX <= 0 || DimZ <= 0)
+            Grid.ForEachRowSpan(Center.x, Center.z, Radius, [&](int32 Begin, int32 End)
             {
-                return;
-            }
-            int32 minx, minz, maxx, maxz;
-            CellCoords(FVector3(Center.x - Radius, 0.0f, Center.z - Radius), minx, minz);
-            CellCoords(FVector3(Center.x + Radius, 0.0f, Center.z + Radius), maxx, maxz);
-            for (int32 cz = minz; cz <= maxz; ++cz)
-            {
-                for (int32 cx = minx; cx <= maxx; ++cx)
+                for (int32 i = Begin; i < End; ++i)
                 {
-                    const int32 Cell = CellIndex(cx, cz);
-                    for (int32 i = CellStart[Cell]; i < CellStart[Cell + 1]; ++i)
-                    {
-                        Func(Sources[SortedIndices[i]]);
-                    }
+                    Func(Sources[Grid.SortedIndices[i]]);
                 }
-            }
+            });
         }
     };
 
@@ -130,7 +60,7 @@ namespace Lumina
     struct FPerceptionWorldState : ECS::FResource
     {
         FPerceptionGrid             SourceGrid;
-        TVector<FAIStimulusEvent>   PendingStimuli;   // drained (swap-and-clear) by SPerceptionSystem each tick.
+        TVector<FAIStimulusEvent>   PendingStimuli;   // drained (swap-and-clear) by CPerceptionSystem each tick.
         FMutex                  StimuliMutex;     // guards PendingStimuli across the (rare) cross-thread push.
     };
 

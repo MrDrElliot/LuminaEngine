@@ -168,6 +168,7 @@ namespace Lumina
         Close,
         Float,
         Target,
+        Open,
     };
 
     REFLECT()
@@ -178,7 +179,7 @@ namespace Lumina
         PROPERTY()
         EEditorTabsAction Action = EEditorTabsAction::List;
 
-        // Tab id from List, or a unique part of its name. Target with an empty Tab restores the world editor.
+        // Tab id from List, or a unique part of its name. Target with an empty Tab restores the world editor. Open takes a Tools menu panel name such as Memory.
         PROPERTY()
         FString Tab;
 

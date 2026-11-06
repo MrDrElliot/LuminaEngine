@@ -1,9 +1,14 @@
 #include "EditorPCH.h"
 #include "AssetPickerFilter.h"
 
+#include "Assets/AssetRegistry/AssetData.h"
+#include "Core/Object/Class.h"
+#include "Core/Object/ObjectCore.h"
+#include "Session/SessionOps.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Tools/EditorToolContext.h"
 
 namespace Lumina::AssetPickerFilter
 {
@@ -117,5 +122,49 @@ namespace Lumina::AssetPickerFilter
 
             ImGui::EndPopup();
         }
+    }
+
+    const FAssetData* GetSelectedAssetOfClass(const CClass* Class)
+    {
+        const IEditorToolContext* Tools = SessionOps::GetToolContext();
+        const FAssetData* Selected = Tools != nullptr ? Tools->GetContentBrowserSelectedAsset() : nullptr;
+        if (Selected == nullptr || Class == nullptr)
+        {
+            return nullptr;
+        }
+
+        // Null when the asset's class is not registered, e.g. it belongs to an unloaded plugin.
+        const CClass* SelectedClass = FindObject<CClass>(Selected->AssetClass);
+        return SelectedClass != nullptr && SelectedClass->IsChildOf(Class) ? Selected : nullptr;
+    }
+
+    bool DrawUseSelectedButton(bool bSelectionFits, const char* Hint)
+    {
+        ImGui::BeginDisabled(!bSelectionFits);
+        const bool bPressed = ImGui::Button(LE_ICON_ARROW_LEFT_CIRCLE "##UseSelected", kButtonSize);
+        ImGui::EndDisabled();
+        ImGuiX::TextTooltip("{}", bSelectionFits ? "Use the asset selected in the Content Browser." : Hint);
+        return bPressed;
+    }
+
+    void DrawBrowseButton(FStringView AssetPath)
+    {
+        ImGui::BeginDisabled(AssetPath.IsEmpty());
+        if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", kButtonSize))
+        {
+            if (IEditorToolContext* Tools = SessionOps::GetToolContext())
+            {
+                Tools->BrowseToAsset(AssetPath);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");
+    }
+
+    bool DrawClearButton(const char* Tooltip)
+    {
+        const bool bPressed = ImGuiX::ToneButton(LE_ICON_CLOSE_CIRCLE "##Clear", ImGuiX::EButtonTone::Danger, kButtonSize);
+        ImGuiX::TextTooltip("{}", Tooltip);
+        return bPressed;
     }
 }

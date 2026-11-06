@@ -33,6 +33,7 @@ namespace ManagedChangeFilterTestsInternal
     using FEmptyFn   = int32(*)(void*, int32);
     using FProbeFn   = int32(*)(void*, uint32);
     using FReleaseFn = void(*)(void*);
+    using FWalkFn    = void*(*)(void*, int32*);
 }
 
 using namespace ManagedChangeFilterTestsInternal;
@@ -136,6 +137,50 @@ TEST_F(FManagedChangeFilterTest, CSharpChangedAndAddedFiltersMatchTQuery)
     Registry.Patch<SNameComponent>(A, [](SNameComponent&) {});
     EXPECT_EQ(Run(Managed, PlacedAndRenamed, 0), 1);
     EXPECT_EQ(Run(Managed, PlacedAndRenamed, 0), 0);
+
+    Release(Managed);
+}
+
+TEST_F(FManagedChangeFilterTest, CSharpParallelWriteStampsOnlyMutatedRows)
+{
+    auto* Walk    = (FWalkFn)DotNet::ResolveManagedExport("Test_ChangeFilterParallelWrite");
+    auto* Release = (FReleaseFn)DotNet::ResolveManagedExport("Test_ChangeFilterRelease");
+    ASSERT_TRUE(Walk && Release);
+
+    RegisterPendingTypes();
+    TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, FName("ManagedParallelWriteWorld"), FGuid::New(), OF_Transient));
+    TStrongObjectPtr<CEntitySystemReaderTest> System(NewObject<CEntitySystemReaderTest>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+    System->SetOwningWorld(World.Get());
+    System->ConfigureSystem();
+
+    constexpr int32 NumEntities = 4096;
+    int32 PerResidue[4] = {};
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    TVector<ECS::FEntity> Entities;
+    for (int32 Index = 0; Index < NumEntities; ++Index)
+    {
+        const ECS::FEntity Entity = Registry.Create();
+        Registry.Emplace<STransformComponent>(Entity);
+        Entities.Add(Entity);
+        ++PerResidue[(uint32)Entity % 4];
+    }
+
+    int32 Results[7] = {};
+    void* Managed = Walk(System.Get(), Results);
+    ASSERT_NE(Managed, nullptr);
+    EXPECT_EQ(Results[0], NumEntities) << "the first run reports every row";
+    EXPECT_EQ(Results[1], NumEntities) << "ParallelForEach visits every row once";
+    EXPECT_EQ(Results[2], PerResidue[1]) << "SetIfChanged reports a real change";
+    EXPECT_EQ(Results[3], PerResidue[2]) << "SetIfChanged to the held value does not write";
+    EXPECT_EQ(Results[4], PerResidue[0] + PerResidue[1]) << "only mutated rows read as changed";
+    EXPECT_EQ(Results[5], 0) << "an equal SetIfChanged or a read through AsRead leaves the row unchanged";
+    EXPECT_EQ(Results[6], 0);
+
+    for (ECS::FEntity Entity : Entities)
+    {
+        const float Expected[4] = { 1.0f, 2.0f, 0.0f, 0.0f };
+        EXPECT_NEAR(Registry.Get<STransformComponent>(Entity).GetLocalLocation().x, Expected[(uint32)Entity % 4], 1e-4f);
+    }
 
     Release(Managed);
 }

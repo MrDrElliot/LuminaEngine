@@ -29,9 +29,9 @@ namespace Lumina::Scripting
     RUNTIME_API FFunction* MintScriptOverride(CScriptClass& Class, const FFunction& Base,
                                              FFunction::FNativeFuncPtr Thunk);
 
-    /** Points Function's dispatch straight at the generated managed entry point. */
+    // Points Function's dispatch straight at the generated managed entry point.
     RUNTIME_API void PublishManagedInvoker(const FFunction& Function, void* Invoker, const int32* Offsets);
 
-    /** Drops every published entry point, since the code behind them goes away with the generation. */
+    // Drops every published entry point, since the code behind them goes away with the generation.
     RUNTIME_API void ClearManagedInvokers();
 }

@@ -28,29 +28,6 @@ static const float2 kRainQuadCorners[6] =
     float2(-1.0, 0.0), float2(1.0, 1.0), float2(-1.0, 1.0),
 };
 
-uint PackHalf2(float2 V)
-{
-    return f32tof16(V.x) | (f32tof16(V.y) << 16u);
-}
-
-float2 UnpackHalf2(uint P)
-{
-    return float2(f16tof32(P & 0xFFFFu), f16tof32(P >> 16u));
-}
-
-uint PackUnitVector(float3 N)
-{
-    const float2 E = clamp(N.xz * 0.5 + 0.5, 0.0, 1.0);
-    return uint(E.x * 32767.0) | (uint(E.y * 32767.0) << 15u) | (N.y >= 0.0 ? 0x40000000u : 0u);
-}
-
-float3 UnpackUnitVector(uint P)
-{
-    const float2 E = float2(float(P & 0x7FFFu), float((P >> 15u) & 0x7FFFu)) / 32767.0 * 2.0 - 1.0;
-    const float  Y = sqrt(saturate(1.0 - dot(E, E))) * ((P & 0x40000000u) != 0u ? 1.0 : -1.0);
-    return normalize(float3(E.x, Y, E.y));
-}
-
 struct FRainDrawArgs
 {
     GPUSpan<uint4>       Visible;

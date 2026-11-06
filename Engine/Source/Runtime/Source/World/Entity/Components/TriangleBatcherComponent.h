@@ -46,7 +46,7 @@ namespace Lumina
                 return;
             }
             FQueuedBatch Q;
-            Q.Vertices      = std::move(Vertices);
+            Q.Vertices      = Move(Vertices);
             Q.Duration      = Duration;
             Q.Mode          = Mode;
             Q.bSingleFrame  = (Duration == -1.0f) ? 1u : 0u;
@@ -64,7 +64,7 @@ namespace Lumina
             {
                 Batches.Emplace(FBatchInstance
                 {
-                    .Vertices           = std::move(Q.Vertices),
+                    .Vertices           = Move(Q.Vertices),
                     .RemainingLifetime  = Q.Duration,
                     .Mode               = Q.Mode,
                     .bSingleFrame       = Q.bSingleFrame,

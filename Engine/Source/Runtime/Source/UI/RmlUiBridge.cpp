@@ -783,8 +783,7 @@ namespace Lumina::RmlUi
                     {
                         L->Element->RemoveEventListener(L->Type, L, false);
                     }
-                    State.UIListeners[i] = State.UIListeners.Last();
-                    State.UIListeners.Pop();
+                    State.UIListeners.RemoveAtSwap(i);
                     delete L;
                 }
                 else
@@ -811,8 +810,7 @@ namespace Lumina::RmlUi
             {
                 M->OwnerContext->RemoveDataModel(M->Name);
             }
-            State.DataModels[Index] = State.DataModels.Last();
-            State.DataModels.Pop();
+            State.DataModels.RemoveAtSwap(Index);
             delete M;
         }
 
@@ -843,8 +841,7 @@ namespace Lumina::RmlUi
                 FManagedDataModel* M = State.DataModels[i];
                 if (M->World == World)
                 {
-                    State.DataModels[i] = State.DataModels.Last();
-                    State.DataModels.Pop();
+                    State.DataModels.RemoveAtSwap(i);
                     delete M;
                 }
                 else
@@ -856,22 +853,14 @@ namespace Lumina::RmlUi
 
         void OnContentFileModified(FStringView VirtualPath)
         {
-            auto EndsWith = [&](FStringView Suffix)
+            const bool bIsDocument = VirtualPath.EndsWith(FStringView(".rml"));
+            if (bIsDocument || VirtualPath.EndsWith(FStringView(".rcss")))
             {
-                return VirtualPath.Len() >= Suffix.Len()
-                    && VirtualPath.Mid(VirtualPath.Len() - Suffix.Len()) == Suffix;
-            };
-            if (EndsWith(FStringView(".rml")) || EndsWith(FStringView(".rcss")))
-            {
-                if (EndsWith(FStringView(".rml")))
+                if (bIsDocument)
                 {
                     FState& State = S();
                     FScopeLock Lock(State.ChangedDocumentsMutex);
-                    const FString Path(VirtualPath.GetData(), VirtualPath.Len());
-                    if (std::find(State.ChangedDocuments.begin(), State.ChangedDocuments.end(), Path) == State.ChangedDocuments.end())
-                    {
-                        State.ChangedDocuments.Add(Path);
-                    }
+                    State.ChangedDocuments.AddUnique(FString(VirtualPath.GetData(), VirtualPath.Len()));
                 }
                 S().LastUIFileChangeCycles.store(PlatformTime::Cycles(), Atomic::MemoryOrderRelease);
                 S().bUIReloadPending.store(true, Atomic::MemoryOrderRelease);
@@ -1972,12 +1961,7 @@ namespace Lumina::RmlUi
             ReapContextObjectModels(Dying);
             E->Context = nullptr;
 
-            const int32 Last = State.EditorContexts.Num() - 1;
-            if (i != Last)
-            {
-                std::swap(State.EditorContexts[i], State.EditorContexts[Last]);
-            }
-            State.EditorContexts.Pop();
+            State.EditorContexts.RemoveAtSwap(i);
             return;
         }
     }
@@ -2625,8 +2609,7 @@ namespace Lumina::RmlUi
             {
                 L->Element->RemoveEventListener(L->Type, L, false);
             }
-            State.UIListeners[i] = State.UIListeners.Last();
-            State.UIListeners.Pop();
+            State.UIListeners.RemoveAtSwap(i);
             delete L;
             return;
         }
@@ -3299,7 +3282,7 @@ namespace Lumina::RmlUi
             template<typename... TArgs>
             void WarnOnce(const Rml::String& Key, Fmt::TFormatString<std::decay_t<TArgs>...> Format, TArgs&&... Args)
             {
-                if (std::find(Warned.begin(), Warned.end(), Key) != Warned.end())
+                if (Warned.Contains(Key))
                 {
                     return;
                 }
@@ -3543,8 +3526,7 @@ namespace Lumina::RmlUi
                 if (Models[Index]->Context == Context)
                 {
                     delete Models[Index];
-                    Models[Index] = Models.Last();
-                    Models.Pop();
+                    Models.RemoveAtSwap(Index);
                 }
                 else
                 {
@@ -3650,8 +3632,7 @@ namespace Lumina::RmlUi
             {
                 Model->Context->RemoveDataModel(Model->Name);
             }
-            Models[Index] = Models.Last();
-            Models.Pop();
+            Models.RemoveAtSwap(Index);
             delete Model;
             return;
         }
@@ -3668,8 +3649,7 @@ namespace Lumina::RmlUi
             if (Model->Context == Context && Model->bDead && GEventDispatchDepth == 0)
             {
                 Context->RemoveDataModel(Model->Name);
-                Models[Index] = Models.Last();
-                Models.Pop();
+                Models.RemoveAtSwap(Index);
                 delete Model;
                 continue;
             }

@@ -10,6 +10,7 @@
 #include "Box3DUtils.h"
 #include "Core/Math/Math.h"
 #include "Renderer/MeshData.h"
+#include "World/Entity/Components/PhysicsComponent.h"
 #include "Lumina.h"
 
 namespace Lumina::Physics
@@ -169,7 +170,15 @@ namespace Lumina::Physics
         return EMoverSeatResult::Seated;
     }
 
-    void WarnTaperedCapsuleOnce();
+    using FColliderTypes = ECS::TTypeList<SSphereColliderComponent, SBoxColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent,
+        STaperedCapsuleColliderComponent, STaperedCylinderColliderComponent, SPlaneColliderComponent, SCompoundColliderComponent,
+        SMeshColliderComponent, STerrainColliderComponent, SDynamicMeshColliderComponent>;
+
+    template<typename TFunc>
+    void ForEachColliderType(TFunc&& Func)
+    {
+        [&]<typename... TColliders>(ECS::TTypeList<TColliders...>) { (Func.template operator()<TColliders>(), ...); }(FColliderTypes{});
+    }
 
     // Flattens a mesh resource's LOD-0 meshlets into positions, and triangles when the caller needs them.
     bool GatherMeshResourceGeometry(const FMeshResource& Resource, const FVector3& Scale,

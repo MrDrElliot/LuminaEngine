@@ -19,9 +19,8 @@ namespace Lumina
 
         LUMINA_SINGLETON_EDITOR_TOOL(FNsightPerfTool)
 
-        FNsightPerfTool(IEditorToolContext* Context)
-            : FEditorTool(Context, "Nsight Perf", nullptr)
-        {}
+        FNsightPerfTool(IEditorToolContext* Context);
+        ~FNsightPerfTool() override;
 
         bool IsSingleWindowTool() const override { return true; }
         const char* GetTitlebarIcon() const override { return LE_ICON_GAUGE; }
@@ -45,6 +44,6 @@ namespace Lumina
         // history a plot actually covers, how many metrics are live).
         void DrawSessionInfo();
 
-        FNsightPerfState* State = nullptr;
+        TUniquePtr<FNsightPerfState> State;
     };
 }

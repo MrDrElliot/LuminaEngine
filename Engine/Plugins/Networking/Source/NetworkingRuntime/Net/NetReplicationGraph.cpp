@@ -11,8 +11,6 @@
 #include "World/Net/NetGUID.h"
 #include "Net/NetReplication.h"
 #include "World/Subsystems/WorldSettings.h"
-#include <algorithm>
-#include <cmath>
 
 namespace Lumina::NetGraph
 {
@@ -188,11 +186,16 @@ namespace Lumina::NetGraph
     {
         LUMINA_PROFILE_SCOPE();
         const float Half = Settings.WorldHalfExtent;
-        const float Cell = (Settings.GridCellSize > 1.0f) ? Settings.GridCellSize : 1.0f;
+        float Cell = Math::Max(Settings.GridCellSize, 1.0f);
+        const float Dim = Math::Ceil((2.0f * Half) / Cell);
+        if (Dim > static_cast<float>(FNetGrid::MaxDim))
+        {
+            Cell = (2.0f * Half) / static_cast<float>(FNetGrid::MaxDim);
+            LOG_WARN_ONCE("Net relevancy grid would need {} cells per axis, widening cells to {} to stay at {}", Dim, Cell, FNetGrid::MaxDim);
+        }
         Grid.Origin   = FVector3(-Half, 0.0f, -Half);
         Grid.CellSize = Cell;
-        Grid.DimX     = static_cast<int32>(std::ceil((2.0f * Half) / Cell));
-        Grid.DimX = Math::Max(Grid.DimX, 1);
+        Grid.DimX     = Math::Max(static_cast<int32>(Math::Min(Dim, static_cast<float>(FNetGrid::MaxDim))), 1);
         Grid.DimZ     = Grid.DimX;
 
         const int32  NumCells = Grid.NumCells();
@@ -217,7 +220,7 @@ namespace Lumina::NetGraph
         }
 
         // Scatter with a per-cell cursor.
-        TVector<int32> Cursor;
+        TVector<int32>& Cursor = Grid.Cursor;
         Cursor.SetNum(NumCells);
         for (int32 c = 0; c < NumCells; ++c) { Cursor[c] = Grid.CellStart[c]; }
         for (uint32 i = 0; i < N; ++i)

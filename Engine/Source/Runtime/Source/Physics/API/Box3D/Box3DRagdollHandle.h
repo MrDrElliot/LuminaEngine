@@ -114,6 +114,8 @@ namespace Lumina
         TVector<FVector3>       RestPosition;
         TVector<FQuat>          Delta;
         TVector<uint8>          bExplicitDelta;
+        // The rest pose holds the constant bind pose, so it needs no refill until targets arrive.
+        bool                    bRestFromBind = false;
 
         // Bind-pose body transform per part, used to rebuild the skinning matrix from the simulated pose.
         TVector<FMatrix4>   PartBindInverse;

@@ -200,7 +200,7 @@ internal sealed class DispatchWhenAttribute : Attribute
     public string Predicate { get; }
 }
 
-/// <summary>Declares a prior name this element was serialized under, so saved data survives a rename. Repeatable.</summary>
+// A prior name this element was saved under, so saved data survives a rename.
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = true, Inherited = false)]
 public sealed class AliasAttribute : Attribute
 {
@@ -209,41 +209,32 @@ public sealed class AliasAttribute : Attribute
         this.Name = Name;
     }
 
-    /// <summary>A prior name, the type's name on a class, struct or enum, or a member name on a property.</summary>
+    // The old type name on a class, struct or enum, or the old member name on a property.
     public string Name { get; }
 }
 
-/// <summary>Resets this [Property] (or every [Property] on the class) to its default on a C# hot reload instead of carrying the previous value into the reloaded instance.</summary>
+// Resets this [Property], or every one on the class, to its default on a hot reload instead of carrying the old value over.
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
 public sealed class SkipHotReloadAttribute : Attribute
 {
 }
 
-/// <summary>
-/// Reflected property flags. A hand-written mirror of native <c>Lumina::EPropertyFlags</c>, single-sourced
-/// there from <c>EPropertyFlags.inl</c> and checked member-by-member at bootstrap: a wrong bit is a field that
-/// quietly stops replicating rather than a crash, so it fails loudly at startup instead.
-/// </summary>
+// Mirror of native EPropertyFlags, checked per member at boot since a wrong bit silently stops a field replicating.
 [Flags]
 public enum EPropertyFlags : uint
 {
     None               = 0,
 
-    /// <summary>Shown in the details panel.</summary>
     Editable           = 1u << 0,
-    /// <summary>Shown but not editable.</summary>
     ReadOnly           = 1u << 1,
-    /// <summary>Never written to a package.</summary>
     NoSerialize        = 1u << 2,
-    /// <summary>Not writable through reflection at all.</summary>
+    // Not writable through reflection at all.
     Const              = 1u << 3,
-    /// <summary>Stripped from cooked packages.</summary>
+    // Stripped from cooked packages.
     EditorOnly         = 1u << 11,
-    /// <summary>Participates in network replication.</summary>
     Replicated         = 1u << 12,
-    /// <summary>Duplication resets this to its default rather than copying it.</summary>
+    // Duplication resets this to its default rather than copying it.
     DuplicateTransient = 1u << 16,
-    /// <summary>Written into save games.</summary>
     SaveGame           = 1u << 19,
 }
 
@@ -363,10 +354,7 @@ public sealed class PropertyAttribute : Attribute
     public bool Has(string Specifier) => Enum.TryParse(Specifier, out ESpecifier Parsed) && Has(Parsed);
 }
 
-/// <summary>Marks a generated wrapper method as a native reflected virtual that a C# subclass of a
-/// <c>REFLECT(Scriptable)</c> class may override. Emitted by the Reflector, never hand-written. <see cref="Index"/>
-/// is the override-flag bit, aligned by construction with the native forwarding shim's per-method bit, so the
-/// runtime can tell native which events the subclass actually overrides.</summary>
+// A native reflected virtual a C# subclass of a Scriptable class may override, emitted by the Reflector.
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class ScriptEventAttribute : Attribute
 {
@@ -375,7 +363,7 @@ public sealed class ScriptEventAttribute : Attribute
         this.Index = Index;
     }
 
-    /// <summary>The override-flag bit index for this event within its declaring Scriptable class.</summary>
+    // Matches the native shim's per-method bit, so native learns which events the subclass overrides.
     public int Index { get; }
 }
 

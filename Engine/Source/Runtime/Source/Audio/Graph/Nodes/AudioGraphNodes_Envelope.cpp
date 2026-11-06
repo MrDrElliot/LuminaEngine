@@ -10,7 +10,7 @@ namespace Lumina
     {
         constexpr float kEnvelopeTwoPi = 6.28318530717958647692f;
 
-        /** Frames a time in seconds covers, floored to one so a zero time still advances. */
+        // Frames a time in seconds covers, floored to one so a zero time still advances.
         FORCEINLINE float StageRate(float Seconds, uint32 SampleRate)
         {
             const float Frames = Math::Max(Seconds, 0.0f) * (float)SampleRate;
@@ -32,12 +32,6 @@ namespace Lumina
                 , LevelOut(Params.FloatOut(1))
                 , FinishedOut(Params.TriggerOut(2))
             {}
-
-            void Reset() override
-            {
-                Stage = EStage::Idle;
-                Level = 0.0f;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -148,13 +142,6 @@ namespace Lumina
                 , FinishedOut(Params.TriggerOut(1))
             {}
 
-            void Reset() override
-            {
-                Phase    = 0.0f;
-                bActive  = false;
-                bDecaying = false;
-            }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Cursor.Reset();
@@ -233,8 +220,6 @@ namespace Lumina
                 , ValueOut(Params.FloatOut(1))
             {}
 
-            void Reset() override { Phase = 0.0f; }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 Cursor.Reset();
@@ -300,12 +285,6 @@ namespace Lumina
                 , BlockSeconds((float)kAudioGraphBlockFrames / (float)Params.SampleRate)
             {}
 
-            void Reset() override
-            {
-                Value   = 0.0f;
-                bPrimed = false;
-            }
-
             void Execute(const FAudioGraphBlockContext&) override
             {
                 const float Target = *TargetIn;
@@ -347,8 +326,6 @@ namespace Lumina
                 , ValueIn(Params.FloatIn(1))
                 , Out(Params.FloatOut(0))
             {}
-
-            void Reset() override { Held = 0.0f; }
 
             void Execute(const FAudioGraphBlockContext&) override
             {

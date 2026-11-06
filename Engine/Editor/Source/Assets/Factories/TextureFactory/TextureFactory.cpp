@@ -618,6 +618,17 @@ namespace Lumina
         }
     }
 
+    static float SRGBToLinear(float C)
+    {
+        return C <= 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f);
+    }
+
+    static float LinearToSRGB(float C)
+    {
+        C = Math::Clamp(C, 0.0f, 1.0f);
+        return C <= 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
+    }
+
     // A box-filtered chain down to 1x1, each level's alpha scaled so an alpha test keeps mip 0's coverage.
     static void BuildCoveragePreservingMips(const TVector<uint8>& Pixels, FUIntVector2 Dimensions, bool bSRGB, float Cutoff,
                                             basisu::vector<basisu::image>& OutMips)
@@ -626,16 +637,11 @@ namespace Lumina
         for (int32 i = 0; i < 256; ++i)
         {
             const float C = float(i) / 255.0f;
-            ToLinear[i] = bSRGB ? (C <= 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f)) : C;
+            ToLinear[i] = bSRGB ? SRGBToLinear(C) : C;
         }
         auto ToStored = [bSRGB](float C) -> uint8
         {
-            C = Math::Clamp(C, 0.0f, 1.0f);
-            if (bSRGB)
-            {
-                C = C <= 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
-            }
-            return (uint8)std::lround(Math::Clamp(C, 0.0f, 1.0f) * 255.0f);
+            return (uint8)std::lround(Math::Clamp(bSRGB ? LinearToSRGB(C) : C, 0.0f, 1.0f) * 255.0f);
         };
 
         uint32 Width = Dimensions.x;
@@ -704,17 +710,6 @@ namespace Lumina
             OutMips.push_back(basisu::image());
             OutMips.back().init(Stored.GetData(), Width, Height, 4);
         }
-    }
-
-    static float SRGBToLinear(float C)
-    {
-        return C <= 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f);
-    }
-
-    static float LinearToSRGB(float C)
-    {
-        C = Math::Clamp(C, 0.0f, 1.0f);
-        return C <= 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
     }
 
     // Formats with no sRGB variant hold linear values, and these are the settings the cook writes without basisu.
@@ -1657,10 +1652,8 @@ namespace Lumina
     static uint8 HdrChannelToSRGB8(float Linear)
     {
         constexpr float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-        const float Mapped = Math::Clamp((Linear * (a * Linear + b)) / (Linear * (c * Linear + d) + e), 0.0f, 1.0f);
-        const float Srgb = (Mapped <= 0.0031308f) ? (12.92f * Mapped)
-                                                  : (1.055f * std::pow(Mapped, 1.0f / 2.4f) - 0.055f);
-        return (uint8)Math::Clamp((int32)std::lround(Srgb * 255.0f), 0, 255);
+        const float Mapped = (Linear * (a * Linear + b)) / (Linear * (c * Linear + d) + e);
+        return (uint8)Math::Clamp((int32)std::lround(LinearToSRGB(Mapped) * 255.0f), 0, 255);
     }
 
     // Float sources are tonemapped so they no longer clip to white, while 8-bit sources pass through.

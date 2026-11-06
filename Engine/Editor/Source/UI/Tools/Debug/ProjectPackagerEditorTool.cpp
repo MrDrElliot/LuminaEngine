@@ -31,10 +31,6 @@ namespace Lumina
         });
     }
 
-    void FProjectPackagerEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
-    {
-    }
-
     void FProjectPackagerEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("What this does",

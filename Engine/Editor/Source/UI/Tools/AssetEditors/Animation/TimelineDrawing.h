@@ -2,6 +2,8 @@
 
 #include <imgui.h>
 
+#include "Containers/Name.h"
+#include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
@@ -28,6 +30,8 @@ namespace Lumina::Timeline
     inline constexpr ImU32 TrackTextColor      = IM_COL32(205, 208, 218, 255);
     inline constexpr ImU32 ItemTextColor       = IM_COL32(240, 242, 248, 255);
     inline constexpr ImU32 PlayheadColor       = IM_COL32(255, 204, 64, 255);
+
+    using FRenameBuffer = char[128];
 
     struct FView
     {
@@ -67,6 +71,9 @@ namespace Lumina::Timeline
     void DrawPlayhead(ImDrawList* DrawList, const FView& View, float RulerY0, float TrackAreaY0, float CanvasY1, float Time, int32 FrameRate);
     void DrawTrackHeader(ImDrawList* DrawList, const ImVec2& Min, const ImVec2& Max, const FVector4& Color, const char* Icon,
                          const char* Name, int32 Count, bool bSelected, bool bHovered);
+
+    // Returns None until Enter commits a changed name that is not empty and not one of Taken.
+    FName DrawRenameField(const char* Label, float Width, FRenameBuffer& Buffer, FName Current, TSpan<const FName> Taken = {});
 
     FPointGeometry GetPointGeometry(float X, float RowY0, float RowY1, const char* Name, bool bPinnedToBar);
     bool HitPoint(const FPointGeometry& Geometry, float X, const ImVec2& Mouse, bool bWithTag);

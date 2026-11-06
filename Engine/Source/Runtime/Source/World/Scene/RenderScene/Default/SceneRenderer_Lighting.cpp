@@ -413,7 +413,7 @@ namespace Lumina
         const int32 UAVD = GetNamedImage(ENamedImage::GBufferD).GetMipUAVIndex(0);
         if (UAVA < 0 || UAVB < 0 || UAVC < 0 || UAVD < 0)
         {
-            LOG_ERROR("Deferred material pass: a GBuffer target has no storage heap slot; skipping the pass.");
+            LOG_ERROR_ONCE("Deferred material pass: a GBuffer target has no storage heap slot; skipping the pass.");
             return;
         }
         PC.GBufferAUAV = (uint32)UAVA;
@@ -445,7 +445,7 @@ namespace Lumina
             RHI::AllocTransient(ArgsStride * Layout.NumSlots);
         if (ArgsAlloc.Cpu == nullptr)
         {
-            LOG_ERROR("Deferred material pass: could not stage {} argument blocks; skipping the pass.",
+            LOG_ERROR_ONCE("Deferred material pass: could not stage {} argument blocks; skipping the pass.",
                 Layout.NumSlots);
             return;
         }
@@ -509,7 +509,7 @@ namespace Lumina
         const int32 HDRUAV = HDR.GetMipUAVIndex(0);
         if (HDRUAV < 0)
         {
-            LOG_ERROR("Deferred lighting: the HDR target has no storage heap slot; skipping the pass.");
+            LOG_ERROR_ONCE("Deferred lighting: the HDR target has no storage heap slot; skipping the pass.");
             return;
         }
 
@@ -582,7 +582,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
 
-        if (TranslucentDrawList.IsEmpty())
+        if (!Frame.Geometry.bHasBlendedTranslucency)
         {
             return;
         }
@@ -676,10 +676,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::OITResolvePass(RHI::FCmdListH CL)
     {
-        const FFrameData& Frame = *RenderFrame;
-        const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
-
-        if (TranslucentDrawList.IsEmpty())
+        if (!RenderFrame->Geometry.bHasBlendedTranslucency)
         {
             return;
         }
@@ -746,19 +743,9 @@ namespace Lumina
     void FDefaultSceneRenderer::UnorderedTranslucentPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const auto& DrawCommands        = Frame.Geometry.DrawCommands;
         const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
 
-        bool bHasUnordered = false;
-        for (uint32 Idx : TranslucentDrawList)
-        {
-            if (DrawCommands[Idx].bAdditive || DrawCommands[Idx].bModulate)
-            {
-                bHasUnordered = true;
-                break;
-            }
-        }
-        if (!bHasUnordered)
+        if (!Frame.Geometry.bHasUnorderedTranslucency)
         {
             return;
         }

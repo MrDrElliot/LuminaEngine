@@ -2,14 +2,10 @@ using System;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// A live UI event listener, returned by <see cref="UIElement.On"/> / <see cref="UIElement.OnClick(System.Action{UIEvent})"/>.
-/// Dispose it to unsubscribe. Undisposed is safe: the native listener owns the binding, so destroying the
-/// element, the world or the script generation releases the callback on its own.
-/// </summary>
+// Dispose to unsubscribe; leaving it undisposed is safe since the native listener releases the callback with its element, world or script generation.
 public sealed class UIEventSubscription : IDisposable
 {
-    /// <summary>An inert subscription (returned when the element was invalid or the connect failed).</summary>
+    // Returned when the element was invalid or the connect failed.
     internal static readonly UIEventSubscription Empty = new();
 
     private readonly ulong World;
@@ -27,7 +23,6 @@ public sealed class UIEventSubscription : IDisposable
         this.Binding = Binding;
     }
 
-    /// <summary>True while connected; false for an inert subscription or after <see cref="Dispose"/>.</summary>
     public bool IsActive => Listener.IsValid;
 
     public void Dispose()

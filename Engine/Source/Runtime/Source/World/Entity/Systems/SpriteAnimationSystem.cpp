@@ -7,18 +7,18 @@
 
 namespace Lumina
 {
-    void SSpriteAnimationSystem::Configure()
+    void CSpriteAnimationSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 
     // Every animated sprite also has a sprite, so a group lets the per-frame walk index both pools at one slot.
-    void SSpriteAnimationSystem::OnStartup(const SExclusiveContext& Context)
+    void CSpriteAnimationSystem::OnStartup(const SExclusiveContext& Context)
     {
         (void)Context.GetRegistry().DeclareGroup<SAnimatedSprite3DComponent, SSprite3DComponent>();
     }
 
-    void SSpriteAnimationSystem::OnUpdate(const SSystemContext& Context)
+    void CSpriteAnimationSystem::OnUpdate(const SSystemContext& Context)
     {
         const float Dt = Context.GetDeltaTime();
 

@@ -6,14 +6,14 @@
 
 namespace Lumina
 {
-    void SSaveGameSystem::Configure()
+    void CSaveGameSystem::Configure()
     {
         // Paused too, since a pause menu is where a player usually saves and loads.
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    void SSaveGameSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
+    void CSaveGameSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
         // A restore spawns and destroys, but nothing commits until this update returns, so the range holds still.
         for (const SSaveGameRequestEvent& Request : Requests.Read())
@@ -22,7 +22,7 @@ namespace Lumina
         }
     }
 
-    void SSaveGameSystem::Run(CWorld* World, const SSaveGameRequestEvent& Request) const
+    void CSaveGameSystem::Run(CWorld* World, const SSaveGameRequestEvent& Request) const
     {
         SSaveGameCompletedEvent Done;
         Done.Action    = Request.Action;

@@ -5,7 +5,7 @@
 struct VSOutput
 {
     float4 Position : SV_Position;
-    float4 Colour   : COLOR;
+    float4 Color    : COLOR;
     float2 UV       : TEXCOORD0;
     nointerpolation uint DrawIndex : TEXCOORD1;
 };
@@ -19,10 +19,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
 
     VSOutput Output;
     Output.Position  = mul(Draw.MVP, float4(V.Position, 0.0, 1.0));
-    Output.Colour    = float4( (V.Colour        & 0xFFu),
-                               ((V.Colour >>  8) & 0xFFu),
-                               ((V.Colour >> 16) & 0xFFu),
-                               ((V.Colour >> 24) & 0xFFu)) / 255.0;
+    Output.Color     = UnpackColor(V.Color);
     Output.UV        = V.UV;
     Output.DrawIndex = V.DrawIndex;
     return Output;

@@ -268,15 +268,6 @@ namespace Lumina::DotNet
             return Filesystem::CopyTree(Src, Dst);
         }
 
-        // Core owns the cache but knows nothing about the managed runtime, so it calls back through here.
-        void FreeManagedGCHandle(void* Handle)
-        {
-            if (Handle != nullptr && GManaged.FreeHandle != nullptr)
-            {
-                GManaged.FreeHandle(Handle);
-            }
-        }
-
         bool IsManagedGCHandleAlive(void* Handle)
         {
             return Handle != nullptr && (GManaged.IsHandleAlive == nullptr || GManaged.IsHandleAlive(Handle) != 0);
@@ -291,7 +282,7 @@ namespace Lumina::DotNet
         }
 
         // A packaged game ships the runtime in its data folder, so probe that before the install dir.
-        const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
+        const FString ExeDir = Paths::Parent(Platform::GetCurrentProcessPath());
 
         FString Bundled = Join(Paths::GetGameDataDirectory(), FString("Runtime/") + RuntimeRid());
         if (!Filesystem::Exists(Bundled))
@@ -482,7 +473,7 @@ namespace Lumina::DotNet
         bInitialized = true;
 
         // Core must not know about GC handles, so hand it the free function once managed can service one.
-        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedGCHandle);
+        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedHandle);
         Lumina::ManagedInstances::SetIsHandleAliveFn(&IsManagedGCHandleAlive);
 
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
@@ -614,7 +605,7 @@ namespace Lumina::DotNet
                 Bucket.References += Unit.References[Index];
             }
 
-            Out.Buckets.Add(std::move(Bucket));
+            Out.Buckets.Add(Move(Bucket));
         }
 
         for (const FSourceBucket& Bucket : Out.Buckets)
@@ -1024,7 +1015,7 @@ namespace Lumina::DotNet
             Packaged.DllSourcePath = Unit.AssemblyPath;
             Packaged.Deps          = Unit.Deps;
             Packaged.References    = Unit.References;
-            Out.Add(std::move(Packaged));
+            Out.Add(Move(Packaged));
         }
 
         // The live generation is the optimized one until this puts a debuggable build back in the editor.
@@ -1111,6 +1102,14 @@ namespace Lumina::DotNet
     bool IsInitialized()
     {
         return bInitialized;
+    }
+
+    void FreeManagedHandle(void* Handle)
+    {
+        if (Handle != nullptr && GManaged.FreeHandle != nullptr)
+        {
+            GManaged.FreeHandle(Handle);
+        }
     }
 
     namespace

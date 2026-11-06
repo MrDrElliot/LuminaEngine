@@ -63,8 +63,8 @@ namespace
 
         FScopedPackageMount()
         {
-            Dir = std::filesystem::temp_directory_path() / "LuminaTextureStreamingTests";
-            std::filesystem::remove_all(Dir);
+            // Unique per mount so parallel test runs never share or delete each other's folder.
+            Dir = std::filesystem::temp_directory_path() / *Format("LuminaTextureStreamingTests_{}", FGuid::New().ToString());
             std::filesystem::create_directories(Dir);
 
             VFS::Mount<VFS::FNativeFileSystem>(Alias, FStringView(Dir.string().c_str()));

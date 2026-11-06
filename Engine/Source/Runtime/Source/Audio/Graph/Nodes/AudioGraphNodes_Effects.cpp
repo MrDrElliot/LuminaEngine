@@ -54,8 +54,6 @@ namespace Lumina
                 Reverb.Initialize(2, Params.SampleRate);
             }
 
-            void Reset() override { Reverb.Clear(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 FAudioReverbParams Settings;
@@ -118,8 +116,6 @@ namespace Lumina
                 , OutRight(Params.AudioOut(1))
                 , ReductionOut(Params.FloatOut(2))
             {}
-
-            void Reset() override { Reduction = FEnvelopeDetector(); }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -192,8 +188,6 @@ namespace Lumina
                 , SignalOut(Params.AudioOut(1))
             {}
 
-            void Reset() override { Detector = FEnvelopeDetector(); }
-
             void Execute(const FAudioGraphBlockContext& Context) override
             {
                 const float Attack  = SmoothingCoefficient(Math::Max(*AttackIn, 0.0f), Context.SampleRate);
@@ -229,12 +223,6 @@ namespace Lumina
                 , MixIn(Params.FloatIn(3))
                 , Out(Params.AudioOut(0))
             {}
-
-            void Reset() override
-            {
-                Held     = 0.0f;
-                HoldLeft = 0.0f;
-            }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
@@ -282,12 +270,6 @@ namespace Lumina
                 , Out(Params.AudioOut(0))
             {
                 Line.Initialize((uint32)(kMaxDelaySeconds * (float)Params.SampleRate));
-            }
-
-            void Reset() override
-            {
-                Line.Clear();
-                Phase = 0.0f;
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override

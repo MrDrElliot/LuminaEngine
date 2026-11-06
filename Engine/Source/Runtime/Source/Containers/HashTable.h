@@ -25,7 +25,7 @@
 
 namespace Lumina::Containers
 {
-    /** Hashes anything with a GetTypeHash found by ADL, which is what makes lookup heterogeneous by default. */
+    // Hashes anything with a GetTypeHash found by ADL, which is what makes lookup heterogeneous by default.
     struct FDefaultHash
     {
         using is_transparent = void;
@@ -71,7 +71,7 @@ namespace HashTableInternal
     NODISCARD FORCEINLINE constexpr bool IsDeleted(FCtrl Value) noexcept { return Value == CtrlDeleted; }
     NODISCARD FORCEINLINE constexpr bool IsEmptyOrDeleted(FCtrl Value) noexcept { return Value < CtrlSentinel; }
 
-    /** H1 picks the group, H2 is the 7 bits stored in the control byte and matched a group at a time. */
+    // H1 picks the group, H2 is the 7 bits stored in the control byte and matched a group at a time.
     NODISCARD FORCEINLINE constexpr size_t H1(uint64 Hash) noexcept { return Hash >> 7; }
     NODISCARD FORCEINLINE constexpr FCtrl H2(uint64 Hash) noexcept { return static_cast<FCtrl>(Hash & 0x7F); }
 
@@ -136,7 +136,7 @@ namespace HashTableInternal
             return FMask(static_cast<uint16>(_mm_movemask_epi8(_mm_cmpeq_epi8(Wanted, Ctrl))));
         }
 
-        /** Empty and deleted are the only bytes below the sentinel, so one signed compare separates them from full. */
+        // Empty and deleted are the only bytes below the sentinel, so one signed compare separates them from full.
         NODISCARD FMask MatchEmptyOrDeleted() const noexcept
         {
             const __m128i Special = _mm_set1_epi8(static_cast<char>(CtrlSentinel));
@@ -168,7 +168,7 @@ namespace HashTableInternal
     };
 #endif
 
-    /** Byte-parallel fallback for any target without SSE2; half the group width, identical semantics. */
+    // Byte-parallel fallback for any target without SSE2; half the group width, identical semantics.
     struct FGroupPortable
     {
         static constexpr size_t kWidth = 8;
@@ -236,7 +236,7 @@ namespace HashTableInternal
         return Count == 0 ? 1 : (~size_t(0) >> std::countl_zero(Count));
     }
 
-    /** The table grows at 7/8, which is the load the group probe absorbs without long chains. */
+    // The table grows at 7/8, which is the load the group probe absorbs without long chains.
     NODISCARD FORCEINLINE constexpr size_t CapacityToGrowth(size_t Cap) noexcept
     {
         return Cap - Cap / 8;
@@ -262,7 +262,7 @@ namespace HashTableInternal
         return SlotOffset(Cap, SlotAlign) + Cap * SlotSize;
     }
 
-    /** A capacity-0 table probes this instead of branching on null; the leading sentinel stops every search. */
+    // A capacity-0 table probes this instead of branching on null; the leading sentinel stops every search.
     alignas(16) inline constexpr FCtrl kEmptyGroup[] =
     {
         CtrlSentinel, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty, CtrlEmpty,
@@ -281,7 +281,7 @@ namespace HashTableInternal
         Ctrl[Cap] = CtrlSentinel;
     }
 
-    /** The mirrored write keeps the cloned tail bytes in step, so a group load near the end stays valid. */
+    // The mirrored write keeps the cloned tail bytes in step, so a group load near the end stays valid.
     FORCEINLINE void SetCtrl(FCtrl* Ctrl, size_t Cap, size_t Index, FCtrl Value) noexcept
     {
         Ctrl[Index] = Value;
@@ -311,7 +311,7 @@ namespace HashTableInternal
         NODISCARD FORCEINLINE size_t GetOffset(size_t Slot) const noexcept { return (Offset + Slot) & Mask; }
         NODISCARD FORCEINLINE size_t GetIndex() const noexcept { return Index; }
 
-        /** Triangular steps visit every group exactly once when the capacity is a power of two minus one. */
+        // Triangular steps visit every group exactly once when the capacity is a power of two minus one.
         FORCEINLINE void Next() noexcept
         {
             Index += kGroupWidth;
@@ -373,7 +373,7 @@ namespace Private
         alignas(Align) uint8 Buffer[Bytes];
     };
 
-    /** Empty base, so a table with no inline capacity stays at five words. */
+    // Empty base, so a table with no inline capacity stays at five words.
     template <size_t Align>
     struct THashInlineStorage<0, Align>
     {
@@ -426,7 +426,7 @@ namespace Private
     {
         using FMutablePair = TPair<K, V>;
 
-        /** The caller sees a const key, which cannot be moved; the mutable twin is what a rehash relocates. */
+        // The caller sees a const key, which cannot be moved; the mutable twin is what a rehash relocates.
         union FMapSlot
         {
             TPair<const K, V> Value;
@@ -468,7 +468,7 @@ namespace Private
         }
     };
 
-    /** Slot is a pointer to a separately allocated element, so an element address survives every rehash. */
+    // Slot is a pointer to a separately allocated element, so an element address survives every rehash.
     template <typename T, ContainerAllocatorType TAllocator>
     struct TNodeSetPolicy
     {
@@ -499,7 +499,7 @@ namespace Private
             *Slot = nullptr;
         }
 
-        /** Only the pointer moves, which is exactly why the element address is stable. */
+        // Only the pointer moves, which is exactly why the element address is stable.
         FORCEINLINE static void Transfer(slot_type* Destination, slot_type* Source) noexcept
         {
             *Destination = *Source;
@@ -548,7 +548,7 @@ namespace Private
         }
     };
 
-    /** Open-addressed table with one control byte per slot, probed a whole group at a time. */
+    // Open-addressed table with one control byte per slot, probed a whole group at a time.
     template <typename TPolicy, typename THasher, typename TEqual, ContainerAllocatorType TAllocator, size_t InlineCapacity = 0>
     class TRawHashTable : private Private::THashStorageFor<TPolicy, InlineCapacity>
     {
@@ -779,7 +779,7 @@ namespace Private
         template <typename TSelf>
         NODISCARD FORCEINLINE auto end(this TSelf&&) noexcept { return TIterator<std::is_const_v<std::remove_reference_t<TSelf>>>(); }
 
-        /** Walks the table with the option to remove the element it stands on, as Unreal's CreateIterator does. */
+        // Walks the table with the option to remove the element it stands on, as Unreal's CreateIterator does.
         template <bool bConst>
         class TCursor
         {
@@ -824,7 +824,7 @@ namespace Private
         NODISCARD TCursor<false> CreateIterator() noexcept { return TCursor<false>(*this); }
         NODISCARD TCursor<true> CreateConstIterator() const noexcept { return TCursor<true>(*this); }
 
-        /** Drops every element but keeps the block, so refilling it does not rehash. */
+        // Drops every element but keeps the block, so refilling it does not rehash.
         void Reset() noexcept
         {
             DestroyAllSlots();
@@ -836,7 +836,7 @@ namespace Private
             }
         }
 
-        /** Drops every element and the block, keeping room for Slack entries. */
+        // Drops every element and the block, keeping room for Slack entries.
         void Empty(int32 Slack = 0)
         {
             if (Slack > 0 && !IsInline() && Cap == CapacityFor(static_cast<uint32>(Slack)))
@@ -881,7 +881,7 @@ namespace Private
             return 1;
         }
 
-        /** Removes the element Position stands on and hands back the iterator to the one after it. */
+        // Removes the element Position stands on and hands back the iterator to the one after it.
         iterator Remove(const_iterator Position) noexcept { return EraseIterator(Position); }
 
         template <typename TPredicate>
@@ -903,7 +903,7 @@ namespace Private
             return Removed;
         }
 
-        /** Looks up with a caller-supplied hash and equality, for a key type the table is not built on. */
+        // Looks up with a caller-supplied hash and equality, for a key type the table is not built on.
         template <typename TKeyArg, typename THashFn, typename TEqualFn, typename TSelf>
         NODISCARD auto FindAs(this TSelf&& Self, const TKeyArg& Key, THashFn&& HashFn, TEqualFn&& EqualFn) noexcept -> TLikeSelf<TSelf, value_type>*
         {
@@ -916,7 +916,7 @@ namespace Private
             Left.SwapWith(Right);
         }
 
-        /** True while the table still lives in its inline block rather than a heap allocation. */
+        // True while the table still lives in its inline block rather than a heap allocation.
         NODISCARD FORCEINLINE bool IsInline() const noexcept
         {
             if constexpr (kInlineCapacity == 0)
@@ -932,7 +932,7 @@ namespace Private
         NODISCARD hasher GetHasher() const { return Hasher; }
         NODISCARD key_equal GetKeyEqual() const { return Equal; }
 
-        /** Bytes held by the table, so a memory report can attribute them without guessing. */
+        // Bytes held by the table, so a memory report can attribute them without guessing.
         NODISCARD size_t GetAllocatedSize() const noexcept
         {
             return (Cap == 0 || IsInline()) ? 0 : HashTableInternal::AllocSize(Cap, sizeof(slot_type), kSlotAlign);
@@ -955,7 +955,7 @@ namespace Private
             return Index == kNoIndex ? FIterator() : FIterator(Self.Ctrl + Index, Self.Slots + Index);
         }
 
-        /** Staging the element first is what lets an arbitrary argument pack find its own key. */
+        // Staging the element first is what lets an arbitrary argument pack find its own key.
         template <typename... TArgs>
         TPair<iterator, bool> EmplaceElement(TArgs&&... Args)
         {
@@ -1122,7 +1122,7 @@ namespace Private
             return { IteratorAt(Index), true };
         }
 
-        /** Finds Key, or claims a slot and reports that the caller still has to build the element in it. */
+        // Finds Key, or claims a slot and reports that the caller still has to build the element in it.
         template <typename TKeyArg>
         TPair<size_t, bool> FindOrPrepareInsert(const TKeyArg& Key)
         {
@@ -1254,7 +1254,7 @@ namespace Private
             HashTableInternal::ResetCtrl(Ctrl, Cap);
         }
 
-        /** A heap table hands over its pointers; an inline one has to move its elements slot for slot. */
+        // A heap table hands over its pointers; an inline one has to move its elements slot for slot.
         void AdoptFrom(TRawHashTable& Other) noexcept
         {
             if (!Other.IsInline())
@@ -1324,7 +1324,7 @@ namespace Private
             ResetToInline();
         }
 
-        /** An erase whose group still holds an empty byte can clear the slot outright: no probe ran past it. */
+        // An erase whose group still holds an empty byte can clear the slot outright, since no probe ran past it.
         void EraseMetaOnly(size_t Index) noexcept
         {
             --ElementCount;
@@ -1488,7 +1488,7 @@ namespace Private
         const value_type& Add(const value_type& Value) { return *this->InsertValue(Value).Key; }
         const value_type& Add(value_type&& Value) { return *this->InsertValue(std::move(Value)).Key; }
 
-        /** Adds the element unless an equal one is present, and says which happened. */
+        // Adds the element unless an equal one is present, and says which happened.
         bool TryAdd(const value_type& Value) { return this->InsertValue(Value).Value; }
         bool TryAdd(value_type&& Value) { return this->InsertValue(std::move(Value)).Value; }
 
@@ -1572,7 +1572,7 @@ namespace Private
         using ValueType   = mapped_type;
         using ElementType = value_type;
 
-        /** Sets Key to Value, replacing what it held, as Unreal's TMap::Add does. */
+        // Sets Key to Value, replacing what it held, as Unreal's TMap::Add does.
         template <typename TKeyArg, typename TValueArg>
         mapped_type& Add(TKeyArg&& Key, TValueArg&& Value)
         {
@@ -1596,7 +1596,7 @@ namespace Private
             return Placed.Key->Value;
         }
 
-        /** The value under Key, default-constructed and added first when there is none. */
+        // The value under Key, default-constructed and added first when there is none.
         template <typename TKeyArg>
         mapped_type& FindOrAdd(TKeyArg&& Key)
         {
@@ -1609,7 +1609,7 @@ namespace Private
             return TryEmplace(std::forward<TKeyArg>(Key), std::forward<TArg>(Arg), std::forward<TArgs>(Args)...).Key->Value;
         }
 
-        /** Adds Key unless it is present, leaving an existing value alone, and says which happened. */
+        // Adds Key unless it is present, leaving an existing value alone, and says which happened.
         template <typename TKeyArg, typename... TArgs>
         bool TryAdd(TKeyArg&& Key, TArgs&&... Args)
         {
@@ -1623,7 +1623,7 @@ namespace Private
             return Pair != nullptr ? &Pair->Value : nullptr;
         }
 
-        /** A copy of the value under Key, or a default one when there is none. */
+        // A copy of the value under Key, or a default one when there is none.
         template <typename TKeyArg>
         NODISCARD mapped_type FindRef(const TKeyArg& Key) const
         {
@@ -1775,7 +1775,7 @@ namespace Private
         }
     };
 
-    /** Elements live in the table, so a rehash moves them and no reference into one survives an insert. */
+    // Elements live in the table, so a rehash moves them and no reference into one survives an insert.
     template <typename T,
               typename THasher = FDefaultHash,
               typename TEqual = FDefaultEqual,
@@ -1789,7 +1789,7 @@ namespace Private
               ContainerAllocatorType TAllocator = FHeapAllocator>
     using THashMap = TBasicHashMap<TMapPolicy<K, V>, THasher, TEqual, TAllocator, 0>;
 
-    /** Elements are separately allocated, so an element address stays valid for as long as the element does. */
+    // Elements are separately allocated, so an element address stays valid for as long as the element does.
     template <typename T,
               typename THasher = FDefaultHash,
               typename TEqual = FDefaultEqual,
@@ -1803,7 +1803,7 @@ namespace Private
               ContainerAllocatorType TAllocator = FHeapAllocator>
     using TNodeHashMap = TBasicHashMap<TNodeMapPolicy<K, V, TAllocator>, THasher, TEqual, TAllocator, 0>;
 
-    /** Carries room for N entries inline; once it outgrows them it moves to the heap and stays there. */
+    // Carries room for N entries inline; once it outgrows them it moves to the heap and stays there.
     template <typename T,
               size_t N,
               typename THasher = FDefaultHash,

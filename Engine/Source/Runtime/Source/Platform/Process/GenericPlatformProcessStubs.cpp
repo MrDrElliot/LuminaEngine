@@ -9,32 +9,24 @@
 
 namespace Lumina::Platform
 {
-    // Per-callsite once-flag; a single shared static would swallow every call after the first.
-    #define LUMINA_WARN_ONCE(What) \
-        do { \
-            static bool bWarned_ = false; \
-            if (!bWarned_) { bWarned_ = true; \
-                LOG_WARN("{0}: no implementation on this platform; ignoring.", What); } \
-        } while (0)
-
     void ShowFileInExplorer(const TCHAR* /*Path*/)
     {
-        LUMINA_WARN_ONCE("Platform::ShowFileInExplorer");
+        LOG_WARN_ONCE("Platform::ShowFileInExplorer: no implementation on this platform; ignoring.");
     }
 
     void ShowFolderInExplorer(const TCHAR* /*Directory*/)
     {
-        LUMINA_WARN_ONCE("Platform::ShowFolderInExplorer");
+        LOG_WARN_ONCE("Platform::ShowFolderInExplorer: no implementation on this platform; ignoring.");
     }
 
     void OpenTerminalAt(const TCHAR* /*Directory*/)
     {
-        LUMINA_WARN_ONCE("Platform::OpenTerminalAt");
+        LOG_WARN_ONCE("Platform::OpenTerminalAt: no implementation on this platform; ignoring.");
     }
 
     void OpenSourceFile(const TCHAR* /*Path*/, int32 /*Line*/)
     {
-        LUMINA_WARN_ONCE("Platform::OpenSourceFile");
+        LOG_WARN_ONCE("Platform::OpenSourceFile: no implementation on this platform; ignoring.");
     }
 
     FString GetEnvVariable(FStringView Variable)
@@ -62,8 +54,6 @@ namespace Lumina::Platform
         LOG_WARN("Failed to set environment variable {}", Name);
         return false;
     }
-
-    #undef LUMINA_WARN_ONCE
 }
 
 #endif

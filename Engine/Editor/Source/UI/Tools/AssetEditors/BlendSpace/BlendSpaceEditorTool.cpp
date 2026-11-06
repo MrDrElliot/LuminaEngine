@@ -1,4 +1,5 @@
 ﻿#include "BlendSpaceEditorTool.h"
+#include "World/World.h"
 #include "World/ECS/Registry.h"
 
 #include "Animation/TaskSystem/AnimTaskExecutor.h"

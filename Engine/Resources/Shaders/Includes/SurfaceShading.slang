@@ -43,13 +43,6 @@ float3 MeshletDebugColor(uint Index)
     );
 }
 
-float3 FresnelSchlick(float CosTheta, float3 F0)
-{
-    float x = saturate(1.0 - CosTheta);
-    float x2 = x * x;
-    return F0 + (1.0 - F0) * (x2 * x2 * x);
-}
-
 // CosTheta and F0 are both in [0,1], so fp16 is ample.
 half3 FresnelSchlickHalf(half CosTheta, half3 F0)
 {

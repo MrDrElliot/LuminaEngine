@@ -10,10 +10,10 @@
 
 namespace Lumina
 {
-    void SAudioSystem::Configure()
+    void CAudioSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
-        RunsAfter<SCameraSystem>();
+        RunsAfter<CCameraSystem>();
     }
 
 	namespace AudioSystemInternal
@@ -164,12 +164,12 @@ namespace Lumina
 		}
 	}
 
-	bool SAudioSystem::HasWork(const SSystemContext& Context)
+	bool CAudioSystem::HasWork(const SSystemContext& Context)
 	{
 		return AnyQueryHasRows(Listeners, Volumes, Sources, ProceduralSources);
 	}
 
-	void SAudioSystem::OnTeardown(const SExclusiveContext& Context)
+	void CAudioSystem::OnTeardown(const SExclusiveContext& Context)
 	{
 
 		// No audio device in a headless dedicated server (Audio::Initialize is skipped).
@@ -203,7 +203,7 @@ namespace Lumina
 		});
 	}
 
-	void SAudioSystem::OnUpdate(const SSystemContext& Context)
+	void CAudioSystem::OnUpdate(const SSystemContext& Context)
 	{
 		using namespace AudioSystemInternal;
 
@@ -269,16 +269,16 @@ namespace Lumina
 		{
 			Sources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioSourceComponent> Source, const STransformComponent& Transform)
 			{
-				SAudioSourceComponent& Audio = Source.GetMut();
+				const SAudioSourceComponent& Audio = Source.Get();
 				const FVector3 Position = Transform.GetWorldLocation();
-				Audio.LastPosition = Position;
+				Source.SetIfChanged(&SAudioSourceComponent::LastPosition, Position);
 
 				// The mixer may have retired the voice (one-shot ended, evicted by a higher priority).
 				if (Audio.bPlaying && Audio::Context().GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
 				{
-					Audio.bPlaying = false;
-					Audio.bPaused = false;
-					Audio.ActiveHandle = SAudioHandle::Invalid();
+					Source->bPlaying = false;
+					Source->bPaused = false;
+					Source->ActiveHandle = SAudioHandle::Invalid();
 				}
 
 				const bool bInRange = !Audio.bSpatialized || !Audio.bCullBeyondMaxDistance || !bHasListener ||
@@ -286,11 +286,11 @@ namespace Lumina
 
 				if (!Audio.bReady)
 				{
-					Audio.bReady = true;
+					Source->bReady = true;
 
 					if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsPlayable() && bInRange)
 					{
-						Audio.Play();
+						Source->Play();
 					}
 					return;
 				}
@@ -300,12 +300,12 @@ namespace Lumina
 				{
 					if (!Audio.bPlaying && bInRange)
 					{
-						Audio.Play();
+						Source->Play();
 					}
 					else if (Audio.bPlaying && Audio.bSpatialized && Audio.bCullBeyondMaxDistance && bHasListener &&
 						Math::Distance(Position, ListenerPosition) > Audio.Attenuation.Resolve().MaxDistance * 1.1f)
 					{
-						Audio.StopWithMode(EAudioStopMode::Immediate);
+						Source->StopWithMode(EAudioStopMode::Immediate);
 					}
 				}
 
@@ -329,25 +329,25 @@ namespace Lumina
 				if (Audio.bVolumeDirty)
 				{
 					Audio::Context().SetVolume(Audio.ActiveHandle, Audio.Volume);
-					Audio.bVolumeDirty = false;
+					Source->bVolumeDirty = false;
 				}
 
 				if (Audio.bPitchDirty)
 				{
 					Audio::Context().SetPitch(Audio.ActiveHandle, Audio.Pitch);
-					Audio.bPitchDirty = false;
+					Source->bPitchDirty = false;
 				}
 
 				if (Audio.bLoopingDirty)
 				{
 					Audio::Context().SetLooping(Audio.ActiveHandle, Audio.bLooping);
-					Audio.bLoopingDirty = false;
+					Source->bLoopingDirty = false;
 				}
 
 				if (Audio.bAttenuationDirty)
 				{
 					Audio::Context().SetAttenuation(Audio.ActiveHandle, Audio.Attenuation.Resolve());
-					Audio.bAttenuationDirty = false;
+					Source->bAttenuationDirty = false;
 				}
 
 				if (!Audio.Occlusion.bEnabled || !Audio.bSpatialized || !bOcclusionAllowed)
@@ -355,11 +355,12 @@ namespace Lumina
 					return;
 				}
 
-				Audio.OcclusionTraceTimer -= DeltaTime;
-				if (Audio.OcclusionTraceTimer <= 0.0f && PhysicsScene != nullptr && TraceBudget > 0)
+				float& TraceTimer = Source.BypassChangeDetection().OcclusionTraceTimer;
+				TraceTimer -= DeltaTime;
+				if (TraceTimer <= 0.0f && PhysicsScene != nullptr && TraceBudget > 0)
 				{
 					--TraceBudget;
-					Audio.OcclusionTraceTimer = Audio.Occlusion.TraceInterval * (float)Significance.Get(Entity).TickInterval;
+					TraceTimer = Audio.Occlusion.TraceInterval * (float)Significance.Get(Entity).TickInterval;
 
 					SRayCastSettings Trace;
 					Trace.Start     = ListenerPosition;
@@ -372,12 +373,12 @@ namespace Lumina
 						Trace.IgnoreEntities.Add(BodyID);
 					}
 
-					Audio.OcclusionTarget = PhysicsScene->CastRay(Trace).IsSet() ? 1.0f : 0.0f;
+					Source.SetIfChanged(&SAudioSourceComponent::OcclusionTarget, PhysicsScene->CastRay(Trace).IsSet() ? 1.0f : 0.0f);
 				}
 
 				const float PreviousOcclusion = Audio.OcclusionCurrent;
 				const float Rate = Audio.Occlusion.InterpTime > 0.0f ? (DeltaTime / Audio.Occlusion.InterpTime) : 1.0f;
-				Audio.OcclusionCurrent = MoveTowards(Audio.OcclusionCurrent, Audio.OcclusionTarget, Rate);
+				Source.SetIfChanged(&SAudioSourceComponent::OcclusionCurrent, MoveTowards(Audio.OcclusionCurrent, Audio.OcclusionTarget, Rate));
 
 				if (Math::Abs(Audio.OcclusionCurrent - PreviousOcclusion) > 0.001f)
 				{
@@ -390,21 +391,21 @@ namespace Lumina
 		{
 			ProceduralSources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SProceduralAudioComponent> Source)
 			{
-				SProceduralAudioComponent& Audio = Source.GetMut();
+				const SProceduralAudioComponent& Audio = Source.Get();
 				if (!Audio.bReady)
 				{
-					Audio.bReady = true;
+					Source->bReady = true;
 
 					if (Audio.bPlayOnReady)
 					{
-						Audio.Start();
+						Source->Start();
 					}
 				}
 
 				if (Audio.bPlaying && Audio::Context().GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
 				{
-					Audio.bPlaying = false;
-					Audio.ActiveHandle = SAudioHandle::Invalid();
+					Source->bPlaying = false;
+					Source->ActiveHandle = SAudioHandle::Invalid();
 				}
 
 				if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
@@ -418,13 +419,13 @@ namespace Lumina
 					if (Audio.bVolumeDirty)
 					{
 						Audio::Context().SetVolume(Audio.ActiveHandle, Audio.Volume);
-						Audio.bVolumeDirty = false;
+						Source->bVolumeDirty = false;
 					}
 
 					if (Audio.bPitchDirty)
 					{
 						Audio::Context().SetPitch(Audio.ActiveHandle, Audio.Pitch);
-						Audio.bPitchDirty = false;
+						Source->bPitchDirty = false;
 					}
 				}
 			});

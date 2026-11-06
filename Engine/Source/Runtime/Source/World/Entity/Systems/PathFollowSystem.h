@@ -21,7 +21,7 @@ namespace Lumina
 
     // Follows each agent's cached path and writes a move direction into its controller, in PrePhysics so input lands the same step.
     REFLECT()
-    class RUNTIME_API SPathFollowSystem : public CEntitySystem
+    class RUNTIME_API CPathFollowSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

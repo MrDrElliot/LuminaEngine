@@ -217,8 +217,8 @@ namespace Lumina
         const FSceneImage& Bloom = CurrentView->BloomChainImage;
         const uint32 HDRWidth = HDR.GetSizeX();
         const uint32 HDRHght  = HDR.GetSizeY();
-        const uint32 Mip0W    = std::max<uint32>(HDRWidth >> 1u, 1u);
-        const uint32 Mip0H    = std::max<uint32>(HDRHght  >> 1u, 1u);
+        const uint32 Mip0W    = Math::Max<uint32>(HDRWidth >> 1u, 1u);
+        const uint32 Mip0H    = Math::Max<uint32>(HDRHght  >> 1u, 1u);
 
         const uint32 MinDim  = Math::Min(Mip0W, Mip0H);
         const uint32 Octaves = MinDim >= 8u ? (uint32)Math::Log2((float)MinDim) - 2u : 1u;
@@ -233,10 +233,10 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DownCS));
         for (uint32 Mip = 0; Mip < NumMips; ++Mip)
         {
-            const uint32 DstW = std::max<uint32>(Mip0W >> Mip, 1u);
-            const uint32 DstH = std::max<uint32>(Mip0H >> Mip, 1u);
-            const uint32 SrcW = (Mip == 0) ? HDRWidth : std::max<uint32>(Mip0W >> (Mip - 1u), 1u);
-            const uint32 SrcH = (Mip == 0) ? HDRHght  : std::max<uint32>(Mip0H >> (Mip - 1u), 1u);
+            const uint32 DstW = Math::Max<uint32>(Mip0W >> Mip, 1u);
+            const uint32 DstH = Math::Max<uint32>(Mip0H >> Mip, 1u);
+            const uint32 SrcW = (Mip == 0) ? HDRWidth : Math::Max<uint32>(Mip0W >> (Mip - 1u), 1u);
+            const uint32 SrcH = (Mip == 0) ? HDRHght  : Math::Max<uint32>(Mip0H >> (Mip - 1u), 1u);
 
             if (Mip > 0)
             {
@@ -273,10 +273,10 @@ namespace Lumina
         {
             const uint32 SrcMip = i;
             const uint32 DstMip = i - 1;
-            const uint32 SrcW   = std::max<uint32>(Mip0W >> SrcMip, 1u);
-            const uint32 SrcH   = std::max<uint32>(Mip0H >> SrcMip, 1u);
-            const uint32 DstW   = std::max<uint32>(Mip0W >> DstMip, 1u);
-            const uint32 DstH   = std::max<uint32>(Mip0H >> DstMip, 1u);
+            const uint32 SrcW   = Math::Max<uint32>(Mip0W >> SrcMip, 1u);
+            const uint32 SrcH   = Math::Max<uint32>(Mip0H >> SrcMip, 1u);
+            const uint32 DstW   = Math::Max<uint32>(Mip0W >> DstMip, 1u);
+            const uint32 DstH   = Math::Max<uint32>(Mip0H >> DstMip, 1u);
 
             // Order against the previous mip's writes (down chain, then each up step).
             RHI::CmdBarrier(CL,
@@ -659,7 +659,7 @@ namespace Lumina
             RHI::CmdEndRenderPass(CL);
             Barriers::RasterToRead(CL);
 
-            std::swap(Source, Dest);
+            ElementOps::SwapElements(Source, Dest);
         }
 
         const FSceneImage& LDR = GetNamedImage(ENamedImage::LDR);
@@ -1145,6 +1145,7 @@ namespace Lumina
         Inputs.Velocity           = ToInput(GetNamedImage(ENamedImage::Velocity));
         Inputs.AdaptedLuminance   = ToInput(GetNamedImage(ENamedImage::AdaptedLuminance));
         Inputs.Output             = ToInput(Output);
+        Inputs.ViewKey            = this;
         Inputs.RenderSize         = CurrentView->Size;
         Inputs.DisplaySize        = CurrentView->DisplaySize;
         Inputs.Mode               = Upscaling::GetRequest().Mode;

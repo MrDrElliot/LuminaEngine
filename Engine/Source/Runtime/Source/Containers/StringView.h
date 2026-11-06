@@ -522,6 +522,12 @@ namespace Lumina::Containers
     }
 
     template <typename TChar>
+    NODISCARD constexpr bool EndsWithIgnoreCase(TStringView<TChar> View, std::type_identity_t<TStringView<TChar>> Suffix) noexcept
+    {
+        return View.Len() >= Suffix.Len() && EqualsIgnoreCase(View.Mid(View.Len() - Suffix.Len()), Suffix);
+    }
+
+    template <typename TChar>
     NODISCARD inline uint64 GetTypeHash(TStringView<TChar> View) noexcept
     {
         return HashBytes(View.GetData(), static_cast<size_t>(View.Len()) * sizeof(TChar));

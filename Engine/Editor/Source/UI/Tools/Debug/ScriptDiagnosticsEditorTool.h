@@ -25,7 +25,6 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_LANGUAGE_CSHARP; }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
 
     private:
 

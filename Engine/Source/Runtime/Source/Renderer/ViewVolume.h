@@ -30,12 +30,11 @@ namespace Lumina
         FViewVolume& SetView(const FVector3& Position, const FVector3& ViewDirection, const FVector3& UpDirection);
         FViewVolume& SetPerspective(float InFov, float InAspect);
 
-        /** InWidth is the world-space width the viewport spans; height follows from the aspect. */
+        // InWidth is the world-space width the viewport spans; height follows from the aspect.
         FViewVolume& SetOrthographic(float InWidth, float InAspect);
 
         FViewVolume& SetAspectRatio(float InAspect);
         FViewVolume& SetFOV(float InFOV);
-        FViewVolume& Rotate(float Angle, FVector3 Axis);
 
         FORCEINLINE EViewProjectionMode GetProjectionMode() const { return ProjectionMode; }
         FORCEINLINE bool IsOrthographic() const { return ProjectionMode == EViewProjectionMode::Orthographic; }
@@ -51,17 +50,17 @@ namespace Lumina
         FORCEINLINE const FVector3& GetForwardVector() const { return ForwardVector; }
         FORCEINLINE const FVector3& GetRightVector() const { return RightVector; }
         FORCEINLINE const FVector3& GetUpVector() const { return UpVector; }
-        FMatrix4 ToReverseDepthViewProjectionMatrix() const;
+        FMatrix4 ToStandardDepthViewProjectionMatrix() const;
 
         // False once the point is at or behind the near plane, where the divide would mirror it on screen.
         bool WorldToScreen(const FVector3& WorldLocation, const FVector2& ViewportSize,
             FVector2& OutScreen, float& OutViewDepth) const;
 
-        /** Pixel coordinates to a world ray. Origin lands on the near plane; Direction is normalized. */
+        // Pixel coordinates to a world ray. Origin lands on the near plane; Direction is normalized.
         void ScreenToWorldRay(const FVector2& ScreenPosition, const FVector2& ViewportSize,
             FVector3& OutOrigin, FVector3& OutDirection) const;
 
-        /** A point WorldDistance along the ray through ScreenPosition, measured from the near plane. */
+        // A point WorldDistance along the ray through ScreenPosition, measured from the near plane.
         FVector3 DeprojectScreenToWorld(const FVector2& ScreenPosition, const FVector2& ViewportSize,
             float WorldDistance) const;
 
@@ -71,12 +70,12 @@ namespace Lumina
         FORCEINLINE float GetFOV() const { return FOV; }
         FORCEINLINE float GetAspectRatio() const { return AspectRatio; }
 
-        static FVector3 UpAxis;
-        static FVector3 DownAxis;
-        static FVector3 RightAxis;
-        static FVector3 LeftAxis;
-        static FVector3 ForwardAxis;
-        static FVector3 BackwardAxis;
+        static constexpr FVector3 UpAxis        = FVector3(0.0f,  1.0f,  0.0f);
+        static constexpr FVector3 DownAxis      = FVector3(0.0f, -1.0f,  0.0f);
+        static constexpr FVector3 RightAxis     = FVector3(1.0f,  0.0f,  0.0f);
+        static constexpr FVector3 LeftAxis      = FVector3(-1.0f, 0.0f,  0.0f);
+        static constexpr FVector3 ForwardAxis   = FVector3(0.0f,  0.0f,  1.0f);
+        static constexpr FVector3 BackwardAxis  = FVector3(0.0f,  0.0f, -1.0f);
         
     private:
 

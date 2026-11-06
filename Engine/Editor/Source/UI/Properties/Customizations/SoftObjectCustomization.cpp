@@ -198,6 +198,18 @@ namespace Lumina
                 ImGui::EndCombo();
             }
 
+            // Binds by path like the list above, so taking the selection never loads the asset.
+            const FAssetData* BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(PropertyClass);
+            if (AssetPickerFilter::DrawUseSelectedButton(BrowserSelection != nullptr, "Select a compatible asset in the Content Browser to use it here."))
+            {
+                Path.SetPath(FStringView(*BrowserSelection->Path, BrowserSelection->Path.Len()));
+                bWasChanged = true;
+            }
+            ImGui::SameLine();
+
+            AssetPickerFilter::DrawBrowseButton(PathView);
+            ImGui::SameLine();
+
             ImGui::BeginDisabled(!bHasPath);
             if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", AssetPickerFilter::kButtonSize))
             {
@@ -205,15 +217,11 @@ namespace Lumina
             }
             ImGui::SameLine();
 
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-            if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##Clear", AssetPickerFilter::kButtonSize))
+            if (AssetPickerFilter::DrawClearButton("Clear the reference."))
             {
                 Path.Reset();
                 bWasChanged = true;
             }
-            ImGui::PopStyleColor(3);
             ImGui::EndDisabled();
 
             ImGui::EndGroup();

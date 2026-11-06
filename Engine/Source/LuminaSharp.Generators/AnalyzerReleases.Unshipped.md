@@ -20,4 +20,11 @@ LUM0111 | LuminaSharp | Error    | Script struct must be declared at namespace s
 LUM0112 | LuminaSharp | Warning  | Class derives from an engine class without [Reflect], so the engine never registers it.
 LUM0120 | LuminaSharp | Error    | Component held by value; it only exists in its entity's storage, so reach it through a ref or a TComponentRef.
 LUM0121 | LuminaSharp | Error    | Component created as a value; add it to an entity instead.
+LUM0130 | LuminaSharp | Error    | [Function] name declared more than once; native and the dispatcher look it up by name.
 LUM0201 | LuminaSharp | Error    | Write through the indexer of a TVector whose element is marshalled.
+LUM0301 | LuminaSharp | Error    | Instance [NativeCall] on a type with no Handle that is not a mutable unmanaged struct.
+LUM0302 | LuminaSharp | Error    | [NativeCall] name declared more than once in a type; its binding is named after the method.
+LUM0303 | LuminaSharp | Error    | [NativeCall] parameter passed by ref, in or out.
+LUM0304 | LuminaSharp | Error    | Two different methods share one [ManagedExport] name.
+LUM0305 | LuminaSharp | Error    | [ManagedExport] method is not static with a Stdcall [UnmanagedCallersOnly].
+LUM0306 | LuminaSharp | Error    | [NativeCall] in a non-partial or generic type chain, or on a generic method.

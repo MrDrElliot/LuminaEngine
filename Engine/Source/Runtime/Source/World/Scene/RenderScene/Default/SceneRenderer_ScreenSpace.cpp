@@ -49,7 +49,7 @@ namespace Lumina
         P.DepthSlot = Depth.GetResourceID();
         if (P.DepthSlot < 0 || !WorkingDepth.IsValid() || WorkingDepth.GetNumMips() < GTAODepthMipLevels)
         {
-            LOG_ERROR("GTAO working depth pyramid is missing or too shallow; skipping the pass.");
+            LOG_ERROR_ONCE("GTAO working depth pyramid is missing or too shallow; skipping the pass.");
             return false;
         }
 
@@ -107,7 +107,7 @@ namespace Lumina
             const int32 Slot = WorkingDepth.GetMipUAVIndex(Mip);
             if (Slot < 0)
             {
-                LOG_ERROR("GTAO working depth mip {} has no storage heap slot; skipping the pass.", Mip);
+                LOG_ERROR_ONCE("GTAO working depth mip {} has no storage heap slot; skipping the pass.", Mip);
                 return false;
             }
             PC.MipUAV[Mip] = (uint32)Slot;
@@ -121,10 +121,7 @@ namespace Lumina
             RenderUtils::GetGroupCount(P.Width, PrefilterTile),
             RenderUtils::GetGroupCount(P.Height, PrefilterTile), 1);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
         return true;
     }
 
@@ -158,7 +155,7 @@ namespace Lumina
         const int32 EdgesSlot        = Edges.GetMipUAVIndex(0);
         if (WorkingDepthSlot < 0 || TermSlot < 0 || EdgesSlot < 0)
         {
-            LOG_ERROR("GTAO main pass is missing a heap slot; skipping the pass.");
+            LOG_ERROR_ONCE("GTAO main pass is missing a heap slot; skipping the pass.");
             return false;
         }
 
@@ -184,10 +181,7 @@ namespace Lumina
             RenderUtils::GetGroupCount(P.Width, 8u),
             RenderUtils::GetGroupCount(P.Height, 8u), 1);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::Barriers::ComputeToCompute(CL);
         return true;
     }
 
@@ -214,7 +208,7 @@ namespace Lumina
         const int32 EdgesSlot = Edges.GetResourceID();
         if (EdgesSlot < 0)
         {
-            LOG_ERROR("GTAO edge texture has no sampled heap slot; skipping the denoise.");
+            LOG_ERROR_ONCE("GTAO edge texture has no sampled heap slot; skipping the denoise.");
             return false;
         }
 
@@ -240,7 +234,7 @@ namespace Lumina
             const int32 DstSlot = Dst.GetMipUAVIndex(0);
             if (SrcSlot < 0 || DstSlot < 0)
             {
-                LOG_ERROR("GTAO denoise pass {} is missing a heap slot; stopping the chain.", PassIndex);
+                LOG_ERROR_ONCE("GTAO denoise pass {} is missing a heap slot; stopping the chain.", PassIndex);
                 return false;
             }
 
@@ -289,7 +283,7 @@ namespace Lumina
         const int32 OutputSlot    = Output.GetMipUAVIndex(0);
         if (AOSlot < 0 || HalfDepthSlot < 0 || OutputSlot < 0)
         {
-            LOG_ERROR("GTAO upsample is missing a heap slot; skipping it.");
+            LOG_ERROR_ONCE("GTAO upsample is missing a heap slot; skipping it.");
             return false;
         }
 
@@ -315,13 +309,6 @@ namespace Lumina
 
     namespace ScreenSpaceInternal
     {
-        void ComputeToCompute(RHI::FCmdListH CL)
-        {
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-        }
-
         // Shared by SSRHiZ.slang and SSRFilter.slang, which both build one level of a chain from the level below.
         struct FChainLevelPushConstants
         {
@@ -452,7 +439,7 @@ namespace Lumina
         PC.Scale          = P.Scale;
 
         DispatchCompute(CL, DownsampleCS, PC, RenderUtils::GetGroupCount(P.TraceW, 8u), RenderUtils::GetGroupCount(P.TraceH, 8u), 1u);
-        ScreenSpaceInternal::ComputeToCompute(CL);
+        RHI::Barriers::ComputeToCompute(CL);
     }
 
     void FDefaultSceneRenderer::SSRBuildChain(RHI::FCmdListH CL, const FSSRParams& P, FShaderH LevelCS, const FSceneImage& ChainImage)
@@ -470,7 +457,7 @@ namespace Lumina
             PC.DestH      = Math::Max(P.TraceH >> Mip, 1u);
 
             DispatchCompute(CL, LevelCS, PC, RenderUtils::GetGroupCount(PC.DestW, 8u), RenderUtils::GetGroupCount(PC.DestH, 8u), 1u);
-            ScreenSpaceInternal::ComputeToCompute(CL);
+            RHI::Barriers::ComputeToCompute(CL);
         }
     }
 
@@ -524,7 +511,7 @@ namespace Lumina
         PC.Scale           = P.Scale;
 
         DispatchCompute(CL, TraceCS, PC, RenderUtils::GetGroupCount(P.TraceW, 8u), RenderUtils::GetGroupCount(P.TraceH, 8u), 1u);
-        ScreenSpaceInternal::ComputeToCompute(CL);
+        RHI::Barriers::ComputeToCompute(CL);
     }
 
     void FDefaultSceneRenderer::SSRResolve(RHI::FCmdListH CL, const FSSRParams& P, FShaderH ResolveCS)

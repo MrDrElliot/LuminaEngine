@@ -31,7 +31,7 @@ namespace Lumina
 
     // Drives entities with an SSocketAttachmentComponent from their parent's final pose this frame, paused worlds included.
     REFLECT()
-    class RUNTIME_API SSocketAttachmentSystem : public CEntitySystem
+    class RUNTIME_API CSocketAttachmentSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

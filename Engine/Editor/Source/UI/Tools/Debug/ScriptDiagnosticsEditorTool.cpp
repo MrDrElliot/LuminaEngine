@@ -46,11 +46,6 @@ namespace Lumina
         CreateToolWindow("C# Diagnostics", [this](bool bIsFocused) { DrawWindow(bIsFocused); });
     }
 
-    void FScriptDiagnosticsEditorTool::OnDeinitialize(const FUpdateContext&)
-    {
-        // The managed host is only polled from DrawWindow, so closing the window already stops every cost.
-    }
-
     namespace
     {
         FString SummarizeMintedClasses()
@@ -68,7 +63,7 @@ namespace Lumina
                 {
                     NativeBase = NativeBase->GetSuperClass();
                 }
-                auto Found = std::find_if(Counts.begin(), Counts.end(), [&](const TPair<const CClass*, int32>& Entry) { return Entry.Key == NativeBase; });
+                auto Found = Algo::FindIf(Counts, [&](const TPair<const CClass*, int32>& Entry) { return Entry.Key == NativeBase; });
                 if (Found != Counts.end())
                 {
                     ++Found->Value;

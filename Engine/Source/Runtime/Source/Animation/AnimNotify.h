@@ -1,12 +1,13 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
-
+#include "World/ECS/Entity.h"
 #include "Core/Object/ObjectMacros.h"
 #include "AnimNotify.generated.h"
 
 namespace Lumina
 {
+    namespace ECS { class FRegistry; }
+
     // One instance is shared by every entity playing the clip, so keep per-entity state on the entity.
     REFLECT()
     struct RUNTIME_API SAnimNotify

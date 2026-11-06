@@ -15,7 +15,7 @@
 
 namespace Lumina
 {
-    /** How many threads may touch each end. Naming the guarantee lets the ring drop what it cannot need. */
+    // How many threads may touch each end. Naming the guarantee lets the ring drop what it cannot need.
     enum class EQueueConcurrency : uint8
     {
         SPSC,
@@ -36,7 +36,7 @@ namespace Lumina
             return Result;
         }
 
-        /** Carries the lap number a reader or writer must see before the slot is theirs. */
+        // Carries the lap number a reader or writer must see before the slot is theirs.
         template <typename T>
         struct TSequencedCell
         {
@@ -44,7 +44,7 @@ namespace Lumina
             T               Data{};
         };
 
-        /** SPSC publishes strictly in order, so the two cursors already say everything a cell would. */
+        // SPSC publishes strictly in order, so the two cursors already say everything a cell would.
         template <typename T>
         struct TPlainCell
         {
@@ -52,7 +52,7 @@ namespace Lumina
         };
     }
 
-    /** Bounded ring specialized on how many threads touch each end; FixedCapacity 0 sizes it at runtime. */
+    // Bounded ring specialized on how many threads touch each end; FixedCapacity 0 sizes it at runtime.
     template <typename T, EQueueConcurrency Concurrency = EQueueConcurrency::MPMC, uint32 FixedCapacity = 0>
     class TBoundedQueue
     {
@@ -89,7 +89,7 @@ namespace Lumina
 
         static constexpr bool IsFixedCapacity() { return bFixed; }
 
-        /** A no-op on a fixed-capacity ring, so a call site can read the same across both. */
+        // A no-op on a fixed-capacity ring, so a call site can read the same across both.
         void Initialize(uint32 InCapacity)
         {
             if constexpr (bFixed)
@@ -147,12 +147,12 @@ namespace Lumina
 
         uint64 GetCapacity() const { return Mask() + 1; }
 
-        /** Spins through a transient refusal and always succeeds, which is what a pool free list needs. */
+        // Spins through a transient refusal and always succeeds, which is what a pool free list needs.
         void Enqueue(const T& Item) { EnqueueInternal(Item); }
 
         void Enqueue(T&& Item) { EnqueueInternal(Move(Item)); }
 
-        /** Multi-producer refusal can also mean a consumer is mid-claim, so it does not prove fullness. */
+        // Multi-producer refusal can also mean a consumer is mid-claim, so it does not prove fullness.
         bool TryEnqueue(const T& Item) { return TryEnqueueInternal(Item); }
 
         bool TryEnqueue(T&& Item) { return TryEnqueueInternal(Move(Item)); }
@@ -169,7 +169,7 @@ namespace Lumina
             }
         }
 
-        /** Racy by nature for the multi shapes; for stats and wake heuristics only. */
+        // Racy by nature for the multi shapes; for stats and wake heuristics only.
         uint32 SizeApprox() const
         {
             const uint64 Tail = EnqueuePos.load(Atomic::MemoryOrderRelaxed);

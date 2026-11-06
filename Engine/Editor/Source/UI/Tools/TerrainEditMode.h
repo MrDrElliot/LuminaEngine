@@ -93,8 +93,28 @@ namespace Lumina
         // first dab, committed on mouse release). Lets one Ctrl+Z revert a whole stroke.
         bool      bTransactionOpen = false;
 
+        // Undo name of the layer Name or UV Scale edit in flight, null when no such edit is open.
+        const char* OpenLayerEditName = nullptr;
+
         // Reused so we act on whatever terrain entity is currently in the world.
         ECS::FEntity FindPreferredTerrain(CWorld* World) const;
+
+        template<typename TEdit>
+        void RunModeTransaction(const char* Name, TEdit&& Edit)
+        {
+            if (Context)
+            {
+                Context->BeginModeTransaction();
+            }
+            Edit();
+            if (Context)
+            {
+                Context->EndModeTransaction(Name);
+            }
+        }
+
+        void TrackLayerEditTransaction(const char* Name);
+        void CloseLayerEditTransaction();
 
         void DrawLayerPanel(STerrainComponent& Terrain);
         static void EnsureLayerWeightStorage(STerrainComponent& Terrain);

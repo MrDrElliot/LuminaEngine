@@ -1,6 +1,5 @@
 #include "RmlBindingAnalysis.h"
 
-#include <algorithm>
 #include <cctype>
 
 namespace Lumina::RmlBinding
@@ -57,7 +56,7 @@ namespace Lumina::RmlBinding
 
             int32 LineAt(size_t Offset) const
             {
-                return (int32)(std::upper_bound(Newlines.begin(), Newlines.end(), Offset) - Newlines.begin()) + 1;
+                return (int32)(Algo::UpperBound(Newlines, Offset) - Newlines.begin()) + 1;
             }
 
             TVector<size_t> Newlines;
@@ -564,7 +563,7 @@ namespace Lumina::RmlBinding
                 }
                 for (FUIDesignList& List : Model.Lists)
                 {
-                    if (List.Name == Scope->List && std::find(List.Members.begin(), List.Members.end(), Ref.Member) == List.Members.end())
+                    if (List.Name == Scope->List && !Algo::Contains(List.Members, Ref.Member))
                     {
                         List.Members.Add(Ref.Member);
                     }
@@ -715,7 +714,7 @@ namespace Lumina::RmlBinding
                 }
                 for (const FUIDesignList& List : Model->Lists)
                 {
-                    if (List.Name == Scope->List && std::find(List.Members.begin(), List.Members.end(), Ref.Member) == List.Members.end())
+                    if (List.Name == Scope->List && !Algo::Contains(List.Members, Ref.Member))
                     {
                         Add(Ref.Line, "'" + Ref.Name + "." + Ref.Member + "' is not a [Property(Bind)] member of the items in " + List.Name + ".", true);
                     }
@@ -740,7 +739,7 @@ namespace Lumina::RmlBinding
             }
         }
 
-        std::stable_sort(Out.begin(), Out.end(), [](const FProblem& A, const FProblem& B) { return A.Line < B.Line; });
+        Algo::StableSort(Out, [](const FProblem& A, const FProblem& B) { return A.Line < B.Line; });
     }
 
     void ReadDataAttributes(std::string_view Text, size_t OpenLt, TVector<FAttribute>& Out)

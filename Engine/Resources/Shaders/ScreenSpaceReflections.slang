@@ -32,8 +32,6 @@ struct FSSRTraceArgs
 };
 FSSRTraceArgs* Pass() { return GetPassArgs<FSSRTraceArgs>(); }
 
-static const float kPi = 3.14159265359;
-
 static const float kMinMipLevel = 1.0;
 
 // Nudges a cell boundary just past itself, so the next step lands in the neighbor rather than on the edge.
@@ -274,14 +272,14 @@ FSSRResult TraceTexel(int2 Texel)
         float3 Radiance = SanitizeRadiance(Pass().SceneColor.Load(SSR_KeptPixel(HitTexel)).rgb);
 
         // Compressed so the roughness blur averages bright and dark hits evenly, and the resolve undoes it.
-        Radiance /= 1.0 + dot(Radiance, float3(0.2126, 0.7152, 0.0722));
+        Radiance = FireflyTonemap(Radiance);
         Result.Color = float4(Radiance, 1.0) * Validity;
     }
 
     if (Roughness > 0.001)
     {
         // The widest sphere that fits inside the reflection cone, which keeps the blur from reaching past what the lobe covers.
-        const float ConeAngle  = min(Roughness, 0.999) * kPi * 0.5;
+        const float ConeAngle  = min(Roughness, 0.999) * PI * 0.5;
         const float ConeLength = max(RayLength, 1e-6);
         const float Opposite   = 2.0 * tan(ConeAngle) * ConeLength;
         const float BlurRadius = (Opposite * (sqrt(Opposite * Opposite + 4.0 * ConeLength * ConeLength) - Opposite)) / (4.0 * ConeLength);

@@ -60,18 +60,13 @@ namespace Lumina
         // Disabled rather than hidden while listening, or the activating click would land on it.
         ImGui::SameLine(0.0f, St.ItemSpacing.x);
         ImGui::BeginDisabled(!bValid || bCapturing);
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-        if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##clearskey", AssetPickerFilter::kButtonSize))
+        if (AssetPickerFilter::DrawClearButton("Clear the binding."))
         {
             Value.Clear();
             bCapturing = false;
             bCommitted = true;
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndDisabled();
-        ImGuiX::TextTooltip("{}", "Clear the binding.");
 
         if (!bCapturing)
         {

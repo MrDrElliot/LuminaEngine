@@ -879,7 +879,7 @@ namespace Lumina
         {
             const TVector<uint32>& WriterScopes = (*ScopeIt);
             const bool bReaderInside = WriterScopes.Num() <= StateScopes.Num() &&
-                std::equal(WriterScopes.begin(), WriterScopes.end(), StateScopes.begin());
+                Algo::Equal(WriterScopes.begin(), WriterScopes.end(), StateScopes.begin());
             bCachedPoseLeavesItsState |= !bReaderInside;
         }
         return true;

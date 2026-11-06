@@ -64,8 +64,6 @@
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/TerrainMeshletBuilder.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
-#include "Renderer/SMAA/AreaTex.h"
-#include "Renderer/SMAA/SearchTex.h"
 #include "Core/Threading/Sync.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"

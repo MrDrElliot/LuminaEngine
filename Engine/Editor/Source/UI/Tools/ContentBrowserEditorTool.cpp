@@ -198,13 +198,8 @@ namespace Lumina
         };
 
 
-        constexpr ImVec4 kMenuText          = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
-        constexpr ImVec4 kMenuTextDim       = ImVec4(0.55f, 0.56f, 0.62f, 1.00f);
-        constexpr ImVec4 kMenuTextSection   = ImVec4(0.50f, 0.58f, 0.72f, 1.00f);
         constexpr ImVec4 kMenuAccent        = ImVec4(0.36f, 0.66f, 1.00f, 1.00f);
-        constexpr ImVec4 kMenuAccentFolder  = ImVec4(1.00f, 0.78f, 0.40f, 1.00f);
         constexpr ImVec4 kMenuAccentScript  = ImVec4(0.52f, 0.85f, 0.55f, 1.00f);
-        constexpr ImVec4 kMenuDanger        = ImVec4(0.96f, 0.36f, 0.38f, 1.00f);
         constexpr ImVec4 kMenuDangerHover   = ImVec4(0.85f, 0.22f, 0.24f, 0.45f);
         constexpr ImVec4 kMenuHeaderBg      = ImVec4(0.16f, 0.17f, 0.20f, 1.00f);
 
@@ -212,7 +207,7 @@ namespace Lumina
         {
             ImGui::Spacing();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::TinyBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kMenuTextSection);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
             const float OldX = ImGui::GetCursorPosX();
             ImGui::SetCursorPosX(OldX + 4.0f);
             ImGui::TextUnformatted(Label);
@@ -256,7 +251,7 @@ namespace Lumina
 
             ImGui::SameLine(0, 6.0f);
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::SmallBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kMenuText);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
             ImGui::TextUnformatted(TitleStr);
             ImGui::PopStyleColor();
             ImGuiX::Font::PopFont();
@@ -265,7 +260,7 @@ namespace Lumina
             {
                 ImGui::SetCursorScreenPos(ImVec2(P0.x + 9.0f, P0.y + TopPad + TitleH));
                 ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-                ImGui::PushStyleColor(ImGuiCol_Text, kMenuTextDim);
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
                 ImGui::TextUnformatted(SubtitleStr);
                 ImGui::PopStyleColor();
                 ImGuiX::Font::PopFont();
@@ -778,11 +773,11 @@ namespace Lumina
             if (!Info.BaseClass.IsEmpty())
             {
                 ImGui::SameLine(0.0f, 6.0f);
-                ImGui::TextColored(kMenuTextDim, ": %s", *Info.BaseClass);
+                ImGui::TextColored(EditorColors::TextDim(), ": %s", *Info.BaseClass);
             }
             if (!Info.Namespace.IsEmpty())
             {
-                ImGui::TextColored(kMenuTextDim, "namespace %s", *Info.Namespace);
+                ImGui::TextColored(EditorColors::TextDim(), "namespace %s", *Info.Namespace);
             }
 
             if (!Info.Summary.IsEmpty())
@@ -794,7 +789,7 @@ namespace Lumina
             if (!Info.Lifecycle.IsEmpty())
             {
                 ImGui::Spacing();
-                ImGui::TextColored(kMenuTextSection, "Lifecycle");
+                ImGui::TextColored(EditorColors::SectionHeader(), "Lifecycle");
                 FString Line;
                 for (int32 i = 0; i < Info.Lifecycle.Num(); ++i)
                 {
@@ -807,7 +802,7 @@ namespace Lumina
             if (!Info.Properties.IsEmpty())
             {
                 ImGui::Spacing();
-                ImGui::TextColored(kMenuTextSection, "Properties");
+                ImGui::TextColored(EditorColors::SectionHeader(), "Properties");
                 const int32 Max = 12;
                 for (int32 i = 0; i < Info.Properties.Num() && i < Max; ++i)
                 {
@@ -815,19 +810,19 @@ namespace Lumina
                     if (i < Info.PropertyTips.Num() && !Info.PropertyTips[i].IsEmpty())
                     {
                         ImGui::Indent(14.0f);
-                        ImGui::TextColored(kMenuTextDim, "%s", *Info.PropertyTips[i]);
+                        ImGui::TextColored(EditorColors::TextDim(), "%s", *Info.PropertyTips[i]);
                         ImGui::Unindent(14.0f);
                     }
                 }
                 if (Info.Properties.Num() > Max)
                 {
-                    ImGui::TextColored(kMenuTextDim, "(+%d more)", Info.Properties.Num() - Max);
+                    ImGui::TextColored(EditorColors::TextDim(), "(+%d more)", Info.Properties.Num() - Max);
                 }
             }
 
             if (Info.Summary.IsEmpty() && Info.Lifecycle.IsEmpty() && Info.Properties.IsEmpty())
             {
-                ImGui::TextColored(kMenuTextDim, "C# script source");
+                ImGui::TextColored(EditorColors::TextDim(), "C# script source");
             }
         }
 
@@ -838,10 +833,10 @@ namespace Lumina
             if (!Stat.IsFile()) { return; }
             const uint64 Bytes = Stat.Size;
             const double B = (double)Bytes;
-            if (Bytes < Constants::kKiB)            { ImGui::TextColored(kMenuTextDim, "Size: %llu B", (unsigned long long)Bytes); }
-            else if (Bytes < Constants::kMiB)       { ImGui::TextColored(kMenuTextDim, "Size: %.1f KB", B / double(Constants::kKiB)); }
-            else if (Bytes < Constants::kGiB)       { ImGui::TextColored(kMenuTextDim, "Size: %.1f MB", B / double(Constants::kMiB)); }
-            else                                    { ImGui::TextColored(kMenuTextDim, "Size: %.2f GB", B / double(Constants::kGiB)); }
+            if (Bytes < Constants::kKiB)            { ImGui::TextColored(EditorColors::TextDim(), "Size: %llu B", (unsigned long long)Bytes); }
+            else if (Bytes < Constants::kMiB)       { ImGui::TextColored(EditorColors::TextDim(), "Size: %.1f KB", B / double(Constants::kKiB)); }
+            else if (Bytes < Constants::kGiB)       { ImGui::TextColored(EditorColors::TextDim(), "Size: %.1f MB", B / double(Constants::kMiB)); }
+            else                                    { ImGui::TextColored(EditorColors::TextDim(), "Size: %.2f GB", B / double(Constants::kGiB)); }
         }
 
         // The rich tooltip body for a .lasset, covering type, plugin, refs, flags, size and GUID.
@@ -851,7 +846,7 @@ namespace Lumina
             const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VPath);
             if (Data == nullptr)
             {
-                ImGui::TextColored(kMenuTextDim, "Asset (not yet indexed)");
+                ImGui::TextColored(EditorColors::TextDim(), "Asset (not yet indexed)");
                 DrawItemSizeLine(Info);
                 return;
             }
@@ -863,16 +858,16 @@ namespace Lumina
             if (Data->IsClassMissing())
             {
                 ImGui::TextColored(EditorColors::Danger(), LE_ICON_FILE_ALERT_OUTLINE " The type '%s' no longer exists.", *Data->AssetClass);
-                ImGui::TextColored(kMenuTextDim, "This asset cannot be loaded or opened. Delete it, or restore the type or the plugin that defines it.");
+                ImGui::TextColored(EditorColors::TextDim(), "This asset cannot be loaded or opened. Delete it, or restore the type or the plugin that defines it.");
             }
 
             if (!Data->OwningPlugin.IsNone())
             {
-                ImGui::TextColored(kMenuTextDim, "Plugin: %s", *Data->OwningPlugin);
+                ImGui::TextColored(EditorColors::TextDim(), "Plugin: %s", *Data->OwningPlugin);
             }
             if (!Data->Dependencies.IsEmpty())
             {
-                ImGui::TextColored(kMenuTextDim, "References: %d", Data->Dependencies.Num());
+                ImGui::TextColored(EditorColors::TextDim(), "References: %d", Data->Dependencies.Num());
             }
 
             FString Flags;
@@ -887,15 +882,15 @@ namespace Lumina
             if (HasFlag(Data->Flags, EAssetFlags::NeverCook))   { AddFlag("Never Cook"); }
             if (!Flags.IsEmpty())
             {
-                ImGui::TextColored(kMenuTextDim, "Flags: %s", *Flags);
+                ImGui::TextColored(EditorColors::TextDim(), "Flags: %s", *Flags);
             }
             if (const FName Group = FAssetManager::Get().GetGroupOfClass(Data->AssetClass); !Group.IsNone())
             {
-                ImGui::TextColored(kMenuTextDim, "Group: %s", *Group);
+                ImGui::TextColored(EditorColors::TextDim(), "Group: %s", *Group);
             }
 
             DrawItemSizeLine(Info);
-            ImGui::TextColored(kMenuTextDim, "GUID: %s", *Data->AssetGUID.ToString(false, true));
+            ImGui::TextColored(EditorColors::TextDim(), "GUID: %s", *Data->AssetGUID.ToString(false, true));
         }
 
     }
@@ -908,6 +903,8 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_Text, ContentBrowserEditorToolInternal::kMenuAccent);
         ImGui::TextUnformatted(*FileInfo.Name);
         ImGui::PopStyleColor();
+        const FStringView Folder = VFS::Parent(FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()), true);
+        ImGui::TextColored(EditorColors::TextDim(), LE_ICON_FOLDER " %.*s", Folder.Len(), Folder.GetData());
         if (FileInfo.IsReadOnly())
         {
             ImGui::TextColored(EditorColors::Warning(), LE_ICON_LOCK " Read-only on disk, so it cannot be saved, renamed, moved or deleted until it is made writable.");
@@ -934,24 +931,24 @@ namespace Lumina
                 int32 Count = 0;
                 const FStringView VPath(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
                 VFS::DirectoryIterator(VPath, [&Count](const VFS::FFileInfo&) { ++Count; });
-                ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "Folder - %d item%s", Count, Count == 1 ? "" : "s");
+                ImGui::TextColored(EditorColors::TextDim(), "Folder - %d item%s", Count, Count == 1 ? "" : "s");
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Markup:
             {
-                ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "UI Document (.rml)");
+                ImGui::TextColored(EditorColors::TextDim(), "UI Document (.rml)");
                 ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Stylesheet:
             {
-                ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "UI Stylesheet (.rcss)");
+                ImGui::TextColored(EditorColors::TextDim(), "UI Stylesheet (.rcss)");
                 ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Audio:
             {
-                ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "Audio Clip (%s)", *FileInfo.GetExt());
+                ImGui::TextColored(EditorColors::TextDim(), "Audio Clip (%s)", *FileInfo.GetExt());
                 ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
                 break;
             }
@@ -960,7 +957,7 @@ namespace Lumina
                 const FString Ext = FileInfo.GetExt();
                 if (!Ext.IsEmpty())
                 {
-                    ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "%s file", *Ext);
+                    ImGui::TextColored(EditorColors::TextDim(), "%s file", *Ext);
                 }
                 ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
                 break;
@@ -968,7 +965,7 @@ namespace Lumina
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ContentBrowserEditorToolInternal::kMenuTextDim, "%s", *FileInfo.VirtualPath);
+        ImGui::TextColored(EditorColors::TextDim(), "%s", *FileInfo.VirtualPath);
 
         ImGui::PopTextWrapPos();
     }
@@ -1088,6 +1085,49 @@ namespace Lumina
                 Order = LHS.Info.Name <=> RHS.Info.Name;
             }
             return bAscending ? Order < 0 : Order > 0;
+        });
+    }
+
+    void FContentBrowserEditorTool::ReadFolderListing(FStringView Folder, bool bRecursive, TVector<FListingEntry>& OutEntries)
+    {
+        static const FName FolderLabel("FOLDER");
+
+        VFS::DirectoryIterator(Folder, [&](VFS::FFileInfo& FileInfo)
+        {
+            FName TypeLabel;
+            if (FileInfo.IsDirectory())
+            {
+                // Hide dot-entries (e.g. the .lmeta sidecar tree) and build/IDE folders.
+                if (ContentBrowserEditorToolInternal::ShouldHideDirectory(FileInfo))
+                {
+                    return;
+                }
+                if (bRecursive)
+                {
+                    ReadFolderListing(FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()), true, OutEntries);
+                }
+                TypeLabel = FolderLabel;
+            }
+            else
+            {
+                const int32 Dot = FileInfo.Name.FindLastOf('.');
+                const FStringView Ext = Dot == Constants::kIndexNone ? FStringView() : FStringView(*FileInfo.Name + Dot, FileInfo.Name.Len() - Dot);
+
+                // Only extensions the engine authors or consumes are surfaced, and the rest stay hidden.
+                if (!ContentBrowserEditorToolInternal::IsBrowsableFileExtension(Ext))
+                {
+                    return;
+                }
+
+                // An asset's label comes from its class, which the registry pass fills in.
+                if (!FileInfo.IsLAsset())
+                {
+                    const FFixedString Label = MakeTypeLabel(FileInfo);
+                    TypeLabel = Label.IsEmpty() ? NAME_None : FName(*Label);
+                }
+            }
+
+            OutEntries.Emplace(Move(FileInfo), TypeLabel, NAME_None);
         });
     }
 
@@ -1429,8 +1469,8 @@ namespace Lumina
 
         ContentBrowserTileViewContext.RebuildTreeFunction = [this] (FTileViewWidget* Tree)
         {
-            // A search or filter change reuses the folder as read, so only navigation and file changes walk it again.
-            if (bListingStale || FStringView(*ListingFolder, ListingFolder.Len()) != FStringView(*SelectedPath, SelectedPath.Len()))
+            // A filter change or refined search reuses the folder as read, so only navigation, file changes and starting or clearing a search walk it again.
+            if (bListingStale || bListingRecursive == SearchText.IsEmpty() || FStringView(*ListingFolder, ListingFolder.Len()) != FStringView(*SelectedPath, SelectedPath.Len()))
             {
                 LUMINA_PROFILE_SECTION("ContentBrowser Listing Read");
 
@@ -1447,42 +1487,11 @@ namespace Lumina
                 ListingFolder = SelectedPath;
                 bListingStale = false;
 
-                static const FName FolderLabel("FOLDER");
                 static const FName UnregisteredLabel("ASSET");
 
-                VFS::DirectoryIterator(SelectedPath, [&](VFS::FFileInfo& FileInfo)
-                {
-                    FName TypeLabel;
-                    if (FileInfo.IsDirectory())
-                    {
-                        // Hide dot-entries (e.g. the .lmeta sidecar tree) and build/IDE folders.
-                        if (ContentBrowserEditorToolInternal::ShouldHideDirectory(FileInfo))
-                        {
-                            return;
-                        }
-                        TypeLabel = FolderLabel;
-                    }
-                    else
-                    {
-                        const int32 Dot = FileInfo.Name.FindLastOf('.');
-                        const FStringView Ext = Dot == Constants::kIndexNone ? FStringView() : FStringView(*FileInfo.Name + Dot, FileInfo.Name.Len() - Dot);
-
-                        // Only extensions the engine authors or consumes are surfaced, and the rest stay hidden.
-                        if (!ContentBrowserEditorToolInternal::IsBrowsableFileExtension(Ext))
-                        {
-                            return;
-                        }
-
-                        // An asset's label comes from its class, which the registry pass below fills in.
-                        if (!FileInfo.IsLAsset())
-                        {
-                            const FFixedString Label = MakeTypeLabel(FileInfo);
-                            TypeLabel = Label.IsEmpty() ? NAME_None : FName(*Label);
-                        }
-                    }
-
-                    Listing.Emplace(Move(FileInfo), TypeLabel, NAME_None);
-                });
+                // A search looks through the whole subtree, so a match in a subfolder is found without browsing into it.
+                bListingRecursive = !SearchText.IsEmpty();
+                ReadFolderListing(FStringView(*SelectedPath, SelectedPath.Len()), bListingRecursive, Listing);
 
                 // Looked up as one batch, since thousands of threads or calls on the registry lock cost more than the lookups.
                 TVector<FStringView> AssetPaths;
@@ -2378,18 +2387,10 @@ namespace Lumina
         }
         Watchers.Reset();
 
-        auto TrimTrailingSeparators = [](FFixedString& Path)
-        {
-            while (!Path.IsEmpty() && (Path.Last() == '/' || Path.Last() == '\\'))
-            {
-                Path.LeftChopInline(1);
-            }
-        };
-
-        auto SpawnWatcher = [this, &TrimTrailingSeparators](FFixedString DiskRoot, FStringView VirtualPrefix)
+        auto SpawnWatcher = [this](FFixedString DiskRoot, FStringView VirtualPrefix)
         {
             Paths::Normalize(DiskRoot);
-            TrimTrailingSeparators(DiskRoot);
+            DiskRoot.SetLen(Paths::TrimTrailingSeparators(DiskRoot).Len());
             if (DiskRoot.IsEmpty())
             {
                 return;
@@ -3522,7 +3523,7 @@ namespace Lumina
         if (bIsDirectory)
         {
             HeaderIcon = LE_ICON_FOLDER_OPEN;
-            HeaderTint = ContentBrowserEditorToolInternal::kMenuAccentFolder;
+            HeaderTint = EditorColors::AccentAlt();
             TypeLabel  = "Folder";
         }
         else if (bIsAsset)
@@ -3698,7 +3699,7 @@ namespace Lumina
         ImGui::Spacing();
         ImGui::Separator();
 
-        ImGui::PushStyleColor(ImGuiCol_Text,          ContentBrowserEditorToolInternal::kMenuDanger);
+        ImGui::PushStyleColor(ImGuiCol_Text,          EditorColors::Danger());
         const bool bWorldActive = IsAnyWorldPlayingOrSimulating();
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ContentBrowserEditorToolInternal::kMenuDangerHover);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.85f, 0.22f, 0.24f, 0.85f));
@@ -3708,7 +3709,7 @@ namespace Lumina
         if (bIsProtected)
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-            ImGui::PushStyleColor(ImGuiCol_Text, ContentBrowserEditorToolInternal::kMenuTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             const float OldX = ImGui::GetCursorPosX();
             ImGui::SetCursorPosX(OldX + 4.0f);
             ImGui::TextUnformatted(LE_ICON_LOCK " Protected, cannot be deleted");
@@ -3718,7 +3719,7 @@ namespace Lumina
         else if (bWorldActive)
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-            ImGui::PushStyleColor(ImGuiCol_Text, ContentBrowserEditorToolInternal::kMenuTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             const float OldX = ImGui::GetCursorPosX();
             ImGui::SetCursorPosX(OldX + 4.0f);
             ImGui::TextUnformatted(LE_ICON_LOCK " Stop play to delete");
@@ -3865,7 +3866,7 @@ namespace Lumina
 
         const bool bAllProtected = ProtectedCount == Items.Num();
 
-        ImGui::PushStyleColor(ImGuiCol_Text,          ContentBrowserEditorToolInternal::kMenuDanger);
+        ImGui::PushStyleColor(ImGuiCol_Text,          EditorColors::Danger());
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ContentBrowserEditorToolInternal::kMenuDangerHover);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.85f, 0.22f, 0.24f, 0.85f));
         const bool bDeleteClicked = ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Selected", "Del", false, !bAllProtected && !bWorldActive);
@@ -3875,7 +3876,7 @@ namespace Lumina
         if (bAllProtected || bWorldActive || ProtectedCount > 0)
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-            ImGui::PushStyleColor(ImGuiCol_Text, ContentBrowserEditorToolInternal::kMenuTextDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
 
             if (bWorldActive)
@@ -3959,7 +3960,7 @@ namespace Lumina
             FolderTitle = "Content";
         }
 
-        ContentBrowserEditorToolInternal::DrawMenuHeader(LE_ICON_FOLDER_OPEN, *FolderTitle, *SelectedPath, ContentBrowserEditorToolInternal::kMenuAccentFolder);
+        ContentBrowserEditorToolInternal::DrawMenuHeader(LE_ICON_FOLDER_OPEN, *FolderTitle, *SelectedPath, EditorColors::AccentAlt());
 
         // This is what stops scripts landing outside Scripts and assets landing inside it.
         const bool bScriptDir = ContentBrowserEditorToolInternal::IsScriptDirectory(FStringView(*SelectedPath, SelectedPath.Len()));

@@ -29,13 +29,14 @@ namespace Lumina
         Health = Math::Max(0.0f, Health - Damage);
         RegenCooldown = RegenDelay;
 
+        // Latched before any broadcast so a listener that damages again cannot fire OnDied a second time.
+        const bool bDied = Health <= 0.0f;
+        bDead = bDied;
+
         const SHealthChangedEvent Event = MakeHealthEvent(*this, Health - Before, Instigator);
         OnHealthChanged.Broadcast(Event);
-
-        // Latched before the broadcast so a listener that heals from OnDied is not treated as still alive.
-        if (Health <= 0.0f)
+        if (bDied)
         {
-            bDead = true;
             OnDied.Broadcast(Event);
         }
         return Health;

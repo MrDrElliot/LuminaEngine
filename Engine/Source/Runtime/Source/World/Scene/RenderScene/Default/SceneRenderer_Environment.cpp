@@ -453,8 +453,7 @@ namespace Lumina
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // Mirrors the bit-cast the extract does into Misc.x; specializing on it strips the other modes.
-        uint32 SkyModeBits = GSkyMode_Runtime;
-        std::memcpy(&SkyModeBits, &RenderFrame->Volumetrics.EnvironmentParams.Misc.x, sizeof(uint32));
+        const uint32 SkyModeBits = std::bit_cast<uint32>(RenderFrame->Volumetrics.EnvironmentParams.Misc.x);
 
         FGraphicsPipelineKey Key;
         Key.VS          = VertexShader;

@@ -332,12 +332,12 @@ namespace LuminaSaveGameTests
         FLevel                 Level = LoadLevel();
         FEventLog              Log;
         CSaveGameTestSystem*   Listener = nullptr;
-        SSaveGameSystem*       Saver = nullptr;
+        CSaveGameSystem*       Saver = nullptr;
 
         FRunningWorld()
         {
             Listener = NewObject<CSaveGameTestSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
-            Saver = NewObject<SSaveGameSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            Saver = NewObject<CSaveGameSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
             for (CEntitySystem* System : { (CEntitySystem*)Listener, (CEntitySystem*)Saver })
             {
                 System->SetOwningWorld(Level.World);

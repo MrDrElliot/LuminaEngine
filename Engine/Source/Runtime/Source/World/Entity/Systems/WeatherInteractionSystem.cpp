@@ -172,16 +172,16 @@ namespace Lumina
         };
     }
 
-    void SWeatherInteractionSystem::Configure()
+    void CWeatherInteractionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
 
         // Reads this frame's weather and resolved view.
-        RunsAfter<SWeatherSystem, SCameraSystem>();
+        RunsAfter<CWeatherSystem, CCameraSystem>();
     }
 
-    void SWeatherInteractionSystem::OnUpdate(const SSystemContext& Context)
+    void CWeatherInteractionSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace WeatherInteractionSystemInternal;
 

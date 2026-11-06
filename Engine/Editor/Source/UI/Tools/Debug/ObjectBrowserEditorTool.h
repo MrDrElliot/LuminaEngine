@@ -67,7 +67,6 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_LIST_BOX; }
 
         void OnInitialize() override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
         void Update(const FUpdateContext& UpdateContext) override;
 

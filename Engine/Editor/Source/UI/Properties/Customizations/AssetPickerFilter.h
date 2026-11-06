@@ -3,6 +3,12 @@
 #include "Containers/String.h"
 #include "imgui.h"
 
+namespace Lumina
+{
+    class CClass;
+    struct FAssetData;
+}
+
 namespace Lumina::AssetPickerFilter
 {
     // One definition for every picker row, so object, id and document slots match and unity builds see no duplicates.
@@ -46,4 +52,15 @@ namespace Lumina::AssetPickerFilter
     /** The filter button plus its popup, drawn inline in a picker's search row. Tinted while any filter is
      *  active, so a short result list reads as "filtered" rather than as "that asset is missing". */
     void DrawFilterButton(float ButtonWidth);
+
+    // The Content Browser selection when its class is-a Class, else null.
+    NODISCARD const FAssetData* GetSelectedAssetOfClass(const CClass* Class);
+
+    // Disabled with Hint as its tooltip until the Content Browser selection fits, true on click.
+    bool DrawUseSelectedButton(bool bSelectionFits, const char* Hint);
+
+    // Reveals AssetPath in the Content Browser, disabled while the path is empty.
+    void DrawBrowseButton(FStringView AssetPath);
+
+    bool DrawClearButton(const char* Tooltip);
 }

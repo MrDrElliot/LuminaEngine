@@ -41,7 +41,7 @@ namespace Lumina
 
     // Bakes the active camera and its post process blend into the FResolvedSceneView singleton CWorld::Extract forwards, after the systems that move cameras.
     REFLECT()
-    class SCameraSystem : public CEntitySystem
+    class CCameraSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

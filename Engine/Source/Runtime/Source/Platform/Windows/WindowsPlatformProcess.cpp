@@ -128,11 +128,6 @@ namespace Lumina::Platform
         return FreeLibrary((HMODULE)DLLHandle);
     }
 
-    void* GetDLLExport(void* DLLHandle, const char* ProcName)
-    {
-        return (void*)::GetProcAddress((HMODULE)DLLHandle, ProcName);
-    }
-
     void AddDLLDirectory(const FString& Directory)
     {
         for (const FString& Existing : GDLLSearchPaths)
@@ -159,97 +154,6 @@ namespace Lumina::Platform
         GDLLSearchPaths.Add(Narrow);
 
         LOG_INFO("Pushing DLL Search Path: {0}", Narrow);
-    }
-
-    void PopDLLDirectory()
-    {
-        GDLLSearchPaths.Pop();
-
-        if (GDLLSearchPaths.IsEmpty())
-        {
-            SetDllDirectory(L"");
-        }
-        else
-        {
-            SetDllDirectory(*StringUtils::ToWideString(GDLLSearchPaths.Last()));
-        }
-    }
-
-    uint32 GetCurrentProcessID()
-    {
-        return 0;
-    }
-
-    uint32 GetCurrentCoreNumber()
-    {
-        return ::GetCurrentProcessorNumber();
-    }
-
-    const FCpuTopology& GetCpuTopology()
-    {
-        static const FCpuTopology Topo = []
-        {
-            FCpuTopology T;
-            for (ECpuCoreType& C : T.CoreTypes) C = ECpuCoreType::Unknown;
-
-            DWORD Len = 0;
-            GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &Len);
-
-            TVector<uint8> Buffer(Len);
-            const bool bOk = Len != 0
-                && GetLogicalProcessorInformationEx(RelationProcessorCore,
-                       reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(Buffer.GetData()), &Len);
-
-            if (!bOk)
-            {
-                // With no topology, treat every logical core as a performance core.
-                const DWORD N = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-                T.NumLogicalCores = N < 256 ? N : 256;
-                T.NumPerformance  = T.NumLogicalCores;
-                for (uint32 i = 0; i < T.NumLogicalCores; ++i) T.CoreTypes[i] = ECpuCoreType::Performance;
-                return T;
-            }
-
-            // A higher efficiency class is the more performant core, so the max class is the P-cores.
-            uint8 EffClass[256];
-            memset(EffClass, 0xFF, sizeof(EffClass));
-            uint8 MaxClass = 0;
-
-            uint8* Cursor = Buffer.GetData();
-            uint8* End    = Buffer.GetData() + Len;
-            while (Cursor < End)
-            {
-                auto* Info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(Cursor);
-                if (Info->Relationship == RelationProcessorCore)
-                {
-                    const PROCESSOR_RELATIONSHIP& PR = Info->Processor;
-                    if (PR.EfficiencyClass > MaxClass) MaxClass = PR.EfficiencyClass;
-                    for (WORD g = 0; g < PR.GroupCount; ++g)
-                    {
-                        const KAFFINITY Mask = PR.GroupMask[g].Mask;
-                        for (uint32 Bit = 0; Bit < sizeof(KAFFINITY) * 8; ++Bit)
-                        {
-                            if ((Mask & (static_cast<KAFFINITY>(1) << Bit)) == 0) continue;
-                            const uint32 Logical = static_cast<uint32>(PR.GroupMask[g].Group) * 64u + Bit;
-                            if (Logical < 256) EffClass[Logical] = PR.EfficiencyClass;
-                        }
-                    }
-                }
-                Cursor += Info->Size;
-            }
-
-            // The top class is the P-cores and anything below it is an E-core.
-            for (uint32 i = 0; i < 256; ++i)
-            {
-                if (EffClass[i] == 0xFF) continue;
-                ++T.NumLogicalCores;
-                if (EffClass[i] >= MaxClass) { T.CoreTypes[i] = ECpuCoreType::Performance; ++T.NumPerformance; }
-                else                         { T.CoreTypes[i] = ECpuCoreType::Efficiency;  ++T.NumEfficiency;  }
-            }
-            T.bHybrid = T.NumEfficiency > 0;
-            return T;
-        }();
-        return Topo;
     }
 
     FString GetEnvVariable(FStringView Variable)

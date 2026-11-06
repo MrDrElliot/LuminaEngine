@@ -31,6 +31,13 @@ public partial class CEntityScript
 
     public CWorld World => CachedWorld ??= GetWorld();
 
+    // Lower runs first among this entity's C++ and C# scripts, and setting it in OnAttach orders the very first update.
+    public int UpdatePriority
+    {
+        get => GetUpdatePriority();
+        set => SetUpdatePriority(value);
+    }
+
     private System.Threading.CancellationTokenSource? DestroyCts;
 
     // Canceled when this script is detached or destroyed, so a GameTask await given it stops cleanly.

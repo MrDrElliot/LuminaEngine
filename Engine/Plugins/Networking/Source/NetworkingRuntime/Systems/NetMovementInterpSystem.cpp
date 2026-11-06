@@ -14,14 +14,14 @@
 
 namespace Lumina
 {
-    void SNetMovementInterpSystem::Configure()
+    void CNetMovementInterpSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PostPhysics);
         // Remote entities are placed before anything reads where they are this frame.
-        RunsBefore<SAudioSystem, SEntityScriptSystem>();
+        RunsBefore<CAudioSystem, CEntityScriptSystem>();
     }
 
-    void SNetMovementInterpSystem::OnUpdate(const SSystemContext& Context)
+    void CNetMovementInterpSystem::OnUpdate(const SSystemContext& Context)
     {
         if (!Clock->bNetworked)
         {

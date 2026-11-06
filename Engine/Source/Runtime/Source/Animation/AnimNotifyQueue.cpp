@@ -62,7 +62,7 @@ namespace Lumina
         {
             for (FRecord& Record : Slot)
             {
-                Records.Add(std::move(Record));
+                Records.Add(Move(Record));
             }
             Slot.Reset();
         }
@@ -83,7 +83,7 @@ namespace Lumina
             return;
         }
 
-        Bus.Enqueue([Records = std::move(Records)](ECS::FRegistry& Registry)
+        Bus.Enqueue([Records = Move(Records)](ECS::FRegistry& Registry)
         {
             Dispatch(Records, Registry);
         });
@@ -97,7 +97,7 @@ namespace Lumina
             return;
         }
 
-        Context.Defer([Records = std::move(Records)](const SExclusiveContext& Exclusive)
+        Context.Defer([Records = Move(Records)](const SExclusiveContext& Exclusive)
         {
             Dispatch(Records, Exclusive.GetRegistry());
         });

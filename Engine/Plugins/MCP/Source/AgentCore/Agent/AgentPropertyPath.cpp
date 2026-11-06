@@ -145,6 +145,9 @@ namespace Lumina::Agent
         FProperty* Property = nullptr;
         void* ValuePtr = nullptr;
 
+        // Names the value reached so far, such as "Values[0]", since an index segment has no name of its own.
+        FString Label;
+
         for (int32 Step = 0; Step < Segments.Num(); ++Step)
         {
             const FSegment& Segment = Segments[Step];
@@ -165,6 +168,7 @@ namespace Lumina::Agent
                 }
 
                 ValuePtr = Property->GetValuePtr<uint8>(Data);
+                Label    = Segment.Name;
             }
             else
             {
@@ -186,6 +190,7 @@ namespace Lumina::Agent
 
                 ValuePtr = Array->GetAt(ValuePtr, Segment.Index);
                 Property = Array->GetInternalProperty();
+                Label    = Lumina::Format("{}[{}]", Label, Segment.Index);
 
                 if (Property == nullptr)
                 {
@@ -216,7 +221,7 @@ namespace Lumina::Agent
                 CObject* Object = static_cast<TStrongObjectPtr<CObject>*>(ValuePtr)->Get();
                 if (Object == nullptr)
                 {
-                    OutError = Lumina::Format("'{}' is null, so nothing can follow it in the path.", Segment.Name);
+                    OutError = Lumina::Format("'{}' is null, so nothing can follow it in the path.", Label);
                     return false;
                 }
                 Struct = Object->GetClass();
@@ -224,8 +229,7 @@ namespace Lumina::Agent
             }
             else
             {
-                OutError = Lumina::Format("'{}' holds a value, so nothing can follow it in the path.",
-                    Segment.Name);
+                OutError = Lumina::Format("'{}' holds a value, so nothing can follow it in the path.", Label);
                 return false;
             }
         }

@@ -328,6 +328,12 @@ namespace Lumina
 			return;
 		}
 
+		if (Cmd.Type == EAudioCommandType::SetListenerEnabled)
+		{
+			Mixer.SetListenerEnabled(Cmd.ByteValue, Cmd.bValue);
+			return;
+		}
+
 		if (Cmd.Type == EAudioCommandType::SetPriority)
 		{
 			if (Cmd.Handle.Index < MaxVoiceSlots &&
@@ -854,7 +860,7 @@ namespace Lumina
 
 	void FLuminaAudioContext::SetListenerEnabled(uint32 ListenerIndex, bool bEnabled)
 	{
-		Mixer.SetListenerEnabled(ListenerIndex, bEnabled);
+		PostToMixer(FAudioCommand::MakeSetListenerEnabled(ListenerIndex, bEnabled));
 	}
 
 	void FLuminaAudioContext::FDeviceRouter::RenderAudio(float* OutInterleaved, uint32 FrameCount)

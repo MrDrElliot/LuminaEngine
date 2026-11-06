@@ -19,6 +19,7 @@
 #include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
+#include "World/World.h"
 #include "imgui.h"
 #include "Renderer/SkeletonResource.h"
 #include "Tools/UI/ImGui/EditorColors.h"
@@ -121,85 +122,6 @@ namespace Lumina
         Body.HalfExtent = FVector3(Body.Radius);
         Body.TranslationOffset = FVector3(0.0f);
         Body.RotationOffset = FVector3(0.0f);
-        return true;
-    }
-
-    // False when the two are near-parallel, where t runs away to nothing useful.
-    static bool PhysicsAssetClosestParamOnAxisToRay(const FVector3& Anchor, const FVector3& Axis,
-                                        const FVector3& RayOrigin, const FVector3& RayDirection, float& OutT)
-    {
-        const FVector3 ToAnchor = Anchor - RayOrigin;
-        const float AxisDotRay = Math::Dot(Axis, RayDirection);
-        const float Denominator = 1.0f - AxisDotRay * AxisDotRay;
-        if (Math::Abs(Denominator) < 1e-5f)
-        {
-            return false;
-        }
-
-        OutT = (AxisDotRay * Math::Dot(RayDirection, ToAnchor) - Math::Dot(Axis, ToAnchor)) / Denominator;
-        return true;
-    }
-
-    static bool PhysicsAssetRayHitsSphere(const FVector3& Origin, const FVector3& Direction, const FVector3& Center, float Radius, float& OutT)
-    {
-        const FVector3 ToOrigin = Origin - Center;
-        const float B = Math::Dot(ToOrigin, Direction);
-        const float C = Math::Dot(ToOrigin, ToOrigin) - Radius * Radius;
-
-        if (C > 0.0f && B > 0.0f)
-        {
-            return false;
-        }
-
-        const float Discriminant = B * B - C;
-        if (Discriminant < 0.0f)
-        {
-            return false;
-        }
-
-        OutT = Math::Max(0.0f, -B - Math::Sqrt(Discriminant));
-        return true;
-    }
-
-    // OutT is the ray parameter at closest approach, close enough to order overlapping bodies.
-    static bool RayHitsCapsule(const FVector3& Origin, const FVector3& Direction,
-                               const FVector3& SegmentStart, const FVector3& SegmentEnd, float Radius, float& OutT)
-    {
-        const FVector3 Segment = SegmentEnd - SegmentStart;
-        const float SegmentLengthSq = Math::LengthSquared(Segment);
-        if (SegmentLengthSq < 1e-8f)
-        {
-            return PhysicsAssetRayHitsSphere(Origin, Direction, SegmentStart, Radius, OutT);
-        }
-
-        const FVector3 ToStart = Origin - SegmentStart;
-        const float DirDotSeg = Math::Dot(Direction, Segment);
-        const float DirDotToStart = Math::Dot(Direction, ToStart);
-        const float SegDotToStart = Math::Dot(Segment, ToStart);
-
-        float SegmentParam = 0.0f;
-        const float Denominator = SegmentLengthSq - DirDotSeg * DirDotSeg;
-        if (Math::Abs(Denominator) > 1e-6f)
-        {
-            SegmentParam = Math::Clamp((SegDotToStart - DirDotSeg * DirDotToStart) / Denominator, 0.0f, 1.0f);
-        }
-
-        // Ray parameter for the closest point on the (clamped) segment, then re-clamp behind the eye.
-        float RayParam = DirDotSeg * SegmentParam - DirDotToStart;
-        if (RayParam < 0.0f)
-        {
-            RayParam = 0.0f;
-            SegmentParam = Math::Clamp(SegDotToStart / SegmentLengthSq, 0.0f, 1.0f);
-        }
-
-        const FVector3 PointOnRay = Origin + Direction * RayParam;
-        const FVector3 PointOnSegment = SegmentStart + Segment * SegmentParam;
-        if (Math::LengthSquared(PointOnRay - PointOnSegment) > Radius * Radius)
-        {
-            return false;
-        }
-
-        OutT = RayParam;
         return true;
     }
 
@@ -746,13 +668,13 @@ namespace Lumina
             case ERagdollBodyShape::Capsule:
                 {
                     const FVector3 Axis = Math::Normalize(FVector3(BodyMatrix[1]));
-                    bHit = RayHitsCapsule(RayOrigin, RayDirection, Center - Axis * Body.HalfHeight,
+                    bHit = ShapeHandles::RayHitsCapsule(RayOrigin, RayDirection, Center - Axis * Body.HalfHeight,
                                           Center + Axis * Body.HalfHeight, Body.Radius, Distance);
                 }
                 break;
 
             case ERagdollBodyShape::Sphere:
-                bHit = PhysicsAssetRayHitsSphere(RayOrigin, RayDirection, Center, Body.Radius, Distance);
+                bHit = ShapeHandles::RayHitsSphere(RayOrigin, RayDirection, Center, Body.Radius, Distance);
                 break;
 
             case ERagdollBodyShape::Box:
@@ -817,7 +739,7 @@ namespace Lumina
         }
 
         float AxisDistance = 0.0f;
-        if (!PhysicsAssetClosestParamOnAxisToRay(Handle.Anchor, Handle.Axis, RayOrigin, RayDirection, AxisDistance))
+        if (!ShapeHandles::ClosestParamOnAxisToRay(Handle.Anchor, Handle.Axis, RayOrigin, RayDirection, AxisDistance))
         {
             return;
         }

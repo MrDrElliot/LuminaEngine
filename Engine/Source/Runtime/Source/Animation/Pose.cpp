@@ -137,11 +137,11 @@ namespace Lumina
 
     void FPose::Swap(FPose& Other)
     {
-        std::swap(Data, Other.Data);
-        std::swap(NumBones, Other.NumBones);
-        std::swap(Stride, Other.Stride);
-        std::swap(Capacity, Other.Capacity);
-        std::swap(AdditiveSpace, Other.AdditiveSpace);
+        ElementOps::SwapElements(Data, Other.Data);
+        ElementOps::SwapElements(NumBones, Other.NumBones);
+        ElementOps::SwapElements(Stride, Other.Stride);
+        ElementOps::SwapElements(Capacity, Other.Capacity);
+        ElementOps::SwapElements(AdditiveSpace, Other.AdditiveSpace);
     }
 
     void FPose::FillIdentity(int32 First, int32 Last)

@@ -1,7 +1,6 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
-
+#include "World/ECS/Entity.h"
 #include "PhysicsTypes.h"
 #include "Core/Templates/Optional.h"
 #include "Containers/Function.h"
@@ -11,7 +10,6 @@
 #include "Core/Math/AABB.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Ray/RayCast.h"
-#include "Renderer/SkeletonResource.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PhysicsScene.generated.h"
 

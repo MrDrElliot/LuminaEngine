@@ -114,7 +114,83 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     FVisTriangle T   = ResolveVisTriangle(Raw, Pass().DrawListCount);
 
     FGBufferData G = DefaultGBufferData();
-    if (T.bValid)
+    if (IsVisProxy(Raw))
+    {
+        // A far proxy has no triangle, so the splat's own averaged attributes stand in for the interpolated surface.
+        const FVisProxy P = ResolveVisProxy(Raw);
+        if (P.bValid)
+        {
+            const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
+            const float3 LocalNormal = UnpackNormal(P.Proxy.PackedNormal);
+            float3 NormalWS = mul(CalculateNormalMatrix(P.Model), LocalNormal);
+            NormalWS = dot(NormalWS, NormalWS) > 1e-12 ? normalize(NormalWS) : float3(0.0, 1.0, 0.0);
+
+            // A pixel-sized splat faces the camera more than its averaged normal does, so the normal leans toward the eye.
+            const float3 WorldPosition = mul(P.Model, float4(P.Proxy.LocalCenter, 1.0)).xyz;
+            const float3 ToEye = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
+            NormalWS = normalize(lerp(NormalWS, ToEye, 0.5));
+
+            const float3 Helper    = abs(NormalWS.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+            const float3 TangentWS = normalize(cross(Helper, NormalWS));
+
+            const float4 ViewPos = CameraViewPosition(WorldPosition);
+            const float4 ClipPos = CameraClipPosition(ViewPos);
+            const float  InvW    = 1.0 / max(ClipPos.w, 1e-6);
+            const float2 UV      = UnpackHalf2(P.Proxy.PackedUV);
+
+            FBaseVertexOutput Input;
+            Input.FragColor     = UnpackColor(P.Proxy.Color);
+            Input.NormalVS      = float4(normalize(NormalWorldToView(NormalWS)), 1.0);
+            Input.NormalWS      = float4(NormalWS, 1.0);
+            Input.TangentWS     = float4(TangentWS, 1.0);
+            Input.FragPos       = ViewPos;
+            Input.WorldPosNoWPO = WorldPosition;
+            Input.UV            = UV;
+            Input.UV1           = UV;
+            Input.InstanceIndex = 0u;
+            Input.EntityID      = P.Static.EntityID;
+            Input.MaterialIndex = P.Static.MaterialIndex;
+            Input.InstanceFlags = (uint)EInstanceFlags::ReceiveShadow;
+            Input.MeshletIndex  = 0u;
+            Input.Position      = float4(float2(Texel) + 0.5, ClipPos.z * InvW, InvW);
+
+            uint   EntityID       = Input.EntityID;
+            uint   MaterialIndex  = Input.MaterialIndex;
+            bool   bReceiveShadow = true;
+            float3 WorldPositionExcludingOffsets = WorldPosition;
+            float3 WorldNormal    = NormalWS;
+            float4 WorldTangent   = Input.TangentWS;
+            float2 UV0            = UV;
+            float2 UV1            = UV;
+            float4 VertexColor    = Input.FragColor;
+            float3 ViewPosition   = ViewPos.xyz;
+            // The whole texture across a couple of pixels, so every sample lands on its coarsest mips.
+            float2 UV0_DDX        = float2(0.5, 0.0);
+            float2 UV0_DDY        = float2(0.0, 0.5);
+            float2 UV1_DDX        = UV0_DDX;
+            float2 UV1_DDY        = UV0_DDY;
+            float3 WorldPosition_DDX = float3(0.0, 0.0, 0.0);
+            float3 WorldPosition_DDY = float3(0.0, 0.0, 0.0);
+            float3 WorldPositionExcludingOffsets_DDX = WorldPosition_DDX;
+            float3 WorldPositionExcludingOffsets_DDY = WorldPosition_DDY;
+            float4 VertexColor_DDX   = float4(0.0, 0.0, 0.0, 0.0);
+            float4 VertexColor_DDY   = float4(0.0, 0.0, 0.0, 0.0);
+
+            if ((LinearGroup + Pass().FeedbackPhase) % STREAMING_FEEDBACK_WINDOW == 0u)
+            {
+                RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
+            }
+            $MATERIAL_INPUTS
+
+            G = BuildGBufferData(Input, Material);
+
+            if (SPEC_DEFERRED_VELOCITY != 0u && Pass().Velocity.IsValid())
+            {
+                Pass().Velocity[int2(Texel)] = float4(0.0, 0.0, 0.0, 0.0);
+            }
+        }
+    }
+    else if (T.bValid)
     {
         // Loaded once, since a per-corner Ref.Inst fetch is a dependent PhysicalStorageBuffer load SPIR-V LICM will not merge.
         const float4x4 ModelMatrix    = T.Ref.ModelMatrix;

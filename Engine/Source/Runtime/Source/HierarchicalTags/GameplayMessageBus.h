@@ -2,9 +2,11 @@
 
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
+#include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/Object/Class.h"
+#include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "HierarchicalTags/HierarchicalTag.h"
 #include "HierarchicalTags/HierarchicalTagRegistry.h"
@@ -139,14 +141,14 @@ namespace Lumina
         template<CGameplayMessagePayload T, typename TFunc>
         uint64 Subscribe(const SHierarchicalTag& Channel, TFunc&& Handler, EHierarchicalTagMatch Match = EHierarchicalTagMatch::Partial)
         {
-            return SubscribeTyped<T>(ECS::NullEntity, Channel, std::forward<TFunc>(Handler), Match);
+            return SubscribeTyped<T>(ECS::NullEntity, Channel, Forward<TFunc>(Handler), Match);
         }
 
         // Handler may return bool, and true stops a routed send at this entity.
         template<CGameplayMessagePayload T, typename TFunc>
         uint64 Subscribe(ECS::FEntity Owner, const SHierarchicalTag& Channel, TFunc&& Handler, EHierarchicalTagMatch Match = EHierarchicalTagMatch::Partial)
         {
-            return Owner.IsNull() ? 0 : SubscribeTyped<T>(Owner, Channel, std::forward<TFunc>(Handler), Match);
+            return Owner.IsNull() ? 0 : SubscribeTyped<T>(Owner, Channel, Forward<TFunc>(Handler), Match);
         }
 
         template<CGameplayMessagePayload T>
@@ -204,7 +206,7 @@ namespace Lumina
             Params.Owner   = Owner;
             Params.Type    = GetGameplayMessageType<T>();
             Params.Match   = Match;
-            Params.Context = new THandler(std::forward<TFunc>(Handler));
+            Params.Context = new THandler(Forward<TFunc>(Handler));
             Params.Destroy = [](void* Context) { delete static_cast<THandler*>(Context); };
             Params.Invoke  = [](void* Context, const FGameplayMessage* Message) -> uint32
             {
@@ -225,6 +227,7 @@ namespace Lumina
 
         struct FListener
         {
+            uint64            Id       = 0;
             uint64            Type     = 0;
             uint32            Channel  = 0;
             ECS::FEntity      Owner    = ECS::NullEntity;
@@ -235,8 +238,11 @@ namespace Lumina
             bool              bManaged = false;
         };
 
+        using FListenerSnapshot = TInlineVector<FListener, 8>;
+
         void Deliver(EGameplayMessageRoute Route, ECS::FEntity Entity, uint32 Channel, const FGameplayMessagePayloadRef& Payload, bool bIncludeSelf);
-        bool DeliverTo(const TVector<uint64>& Ids, FGameplayMessage& Message, const TVector<uint32>& ChannelChain, bool bRouted);
+        uint64 SnapshotListeners(const THashMap<uint32, TVector<uint64>>& Index, uint32 Key, const FGameplayMessage& Message, TSpan<const uint32> ChannelChain, bool bRouted, FListenerSnapshot& Out) const;
+        bool DeliverTo(const FListenerSnapshot& Listeners, uint64 SnapshotRemovals, const FGameplayMessage& Message, uint32 SentChannel, bool bRouted);
         bool RemoveLocked(uint64 Id);
         void DestroyRetired();
 
@@ -252,6 +258,8 @@ namespace Lumina
         // Kept until no delivery is running, since a handler may unsubscribe itself mid-call.
         TVector<FListener>                   Retired;
         uint32                               DispatchDepth = 0;
+        // Bumped on every removal so a delivery only re-checks a snapshotted listener after one happened.
+        TAtomic<uint64>                      Removals{0};
         uint64                               NextId = 1;
     };
 }

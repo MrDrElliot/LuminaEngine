@@ -32,7 +32,7 @@ namespace Lumina
         float Damage = 0.0f;
     };
 
-    // A moving projectile. SProjectileSystem sweeps it forward each frame (continuous, so it can't tunnel
+    // A moving projectile. CProjectileSystem sweeps it forward each frame (continuous, so it can't tunnel
     // through thin geometry), reports the first hit through OnHit, and optionally destroys it. Spawn one
     // with CSpawnSubsystem::SpawnProjectile, or add this component to any entity.
     REFLECT(Component, Category = "Gameplay")

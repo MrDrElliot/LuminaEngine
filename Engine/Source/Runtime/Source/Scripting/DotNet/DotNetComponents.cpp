@@ -3,6 +3,7 @@
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/DotNet/ExportSignature.h"
 #include "Core/Delegates/ScriptDelegate.h"
+#include "Scripting/EntityScript.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "World/ECS/Registry.h"
@@ -42,6 +43,7 @@ namespace
 // Managed code writes through what it gets without crossing again, so a tracked pool stamps here and counts the pointer as cached.
 LUMINA_DOTNET_EXPORT(void*, GetComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "GetComponent");
     Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
     if (Pool == nullptr)
     {
@@ -54,6 +56,7 @@ LUMINA_DOTNET_EXPORT(void*, GetComponent)(uint64 World, uint32 Entity, const voi
 // For read access, which neither stamps the row nor counts the pointer as escaped, since nothing is written through it.
 LUMINA_DOTNET_EXPORT(const void*, GetComponentRead)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "GetComponentRead");
     const Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
     return Pool != nullptr ? Pool->GetRaw(static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
 }
@@ -61,6 +64,7 @@ LUMINA_DOTNET_EXPORT(const void*, GetComponentRead)(uint64 World, uint32 Entity,
 // Also hands back the pool's layout epoch, so the view can revalidate itself without crossing again.
 LUMINA_DOTNET_EXPORT(void*, GetComponentTracked)(uint64 World, uint32 Entity, const void* Ops, const uint32** OutEpoch)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "GetComponentTracked");
     *OutEpoch = nullptr;
     Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
     if (Pool == nullptr)
@@ -113,6 +117,7 @@ LUMINA_DOTNET_EXPORT(int, TrackComponentPointer)(const void* Payload, const void
 
 LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "HasComponent");
     const Lumina::ECS::FSparseSet* Pool = LmFindPool(World, Ops);
     return Pool && Pool->Contains(static_cast<Lumina::ECS::FEntity>(Entity)) ? 1 : 0;
 }
@@ -120,6 +125,7 @@ LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void*
 // Get-or-emplace a default component, returning the live pointer to configure in place.
 LUMINA_DOTNET_EXPORT(void*, EmplaceComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "EmplaceComponent");
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     return (R && O) ? O->Emplace(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
@@ -127,6 +133,7 @@ LUMINA_DOTNET_EXPORT(void*, EmplaceComponent)(uint64 World, uint32 Entity, const
 
 LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
+    Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "RemoveComponent");
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     if (R == nullptr || O == nullptr)

@@ -15,30 +15,27 @@ public enum EPropertyType : byte
     Entity, ComponentRef,
 }
 
-/// <summary>The resolved, recursive shape of a script property's type, resolved once per type and shared.</summary>
+// The recursive shape of a script property's type, resolved once per type and shared.
 public sealed class ScriptType
 {
     public EPropertyType Kind { get; init; } = EPropertyType.None;
 
-    /// <summary>The CLR type this describes.</summary>
     public Type Clr { get; init; } = typeof(object);
 
     // An input binding, stored as its action name and drawn as a picker of the project's actions.
     public bool IsInputAction { get; init; }
 
-    /// <summary>Element shape when <see cref="Kind"/> is <see cref="EPropertyType.Vector"/>.</summary>
+    // Set for a Vector or Optional kind.
     public ScriptType? Element { get; init; }
 
-    /// <summary>Key shape when <see cref="Kind"/> is <see cref="EPropertyType.Map"/>.</summary>
     public ScriptType? KeyType { get; init; }
 
-    /// <summary>Value shape when <see cref="Kind"/> is <see cref="EPropertyType.Map"/>.</summary>
     public ScriptType? ValueType { get; init; }
 
-    /// <summary>Native CStruct name the editor resolves via FindObject.</summary>
+    // The native CStruct name the editor resolves through FindObject.
     public string? NativeName { get; init; }
 
-    /// <summary>Asset class filter for a soft object reference; empty means any.</summary>
+    // The asset class an object reference is filtered to, empty for any.
     public string? TargetClass { get; init; }
 
     public string? EnumName { get; init; }
@@ -69,10 +66,10 @@ public sealed class ScriptFunction
 
     public string Name { get; }
 
-    /// <summary>Arguments in declaration order, the return value last when there is one.</summary>
+    // Arguments in declaration order, the return value last when there is one.
     public IReadOnlyList<ScriptProperty> Params { get; }
 
-    /// <summary>Index into Params of the return value, or -1 for a function that returns nothing.</summary>
+    // Index of the return value in Params, or -1 for a function that returns nothing.
     public int ReturnIndex { get; }
 }
 
@@ -89,9 +86,8 @@ public sealed class ScriptProperty
     // A [Property(Hidden)], stored and saved but drawn nowhere.
     public bool Hidden { get; init; }
 
-    /// <summary>Prior member names so a renamed field's saved value still replays.</summary>
+    // Prior member names, so a renamed field's saved value still replays.
     public IReadOnlyList<string>? Aliases { get; init; }
-    /// <summary>Reset to default on a hot reload instead of carrying the previous value.</summary>
     public bool SkipHotReload { get; init; }
 
     // The most sends a second a Sync field allows, or zero for every change.

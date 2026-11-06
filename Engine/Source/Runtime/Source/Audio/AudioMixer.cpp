@@ -485,6 +485,22 @@ namespace Lumina
 		PublishSlot(Slot, EAudioVoiceState::Free, 0);
 	}
 
+	void FAudioMixer::StopVoice(FVoice& Voice, uint32 Slot, const FAudioCommand& Cmd)
+	{
+		// Paused and start-delayed voices never render, so their fade would never advance; they are silent anyway.
+		const bool bRendering = !Voice.bPaused && Voice.StartDelayFrames == 0;
+		if (bRendering && Cmd.StopMode == EAudioStopMode::AllowFadeOut && Cmd.ValueA > 0.0f)
+		{
+			Voice.FadeTarget     = 0.0f;
+			Voice.FadeStep       = 1.0f / Math::Max(Cmd.ValueA * (float)SampleRate, 1.0f);
+			Voice.bStopAfterFade = true;
+		}
+		else
+		{
+			DeactivateVoice(Voice, Slot);
+		}
+	}
+
 	void FAudioMixer::ApplyCommand(const FAudioCommand& Cmd)
 	{
 		if (Cmd.Type == EAudioCommandType::UpdateListener)
@@ -497,20 +513,9 @@ namespace Lumina
 			for (uint32 Slot = 0; Slot < MaxVoices; ++Slot)
 			{
 				FVoice& Voice = Voices[Slot];
-				if (!Voice.bActive)
+				if (Voice.bActive)
 				{
-					continue;
-				}
-
-				if (Cmd.StopMode == EAudioStopMode::AllowFadeOut && Cmd.ValueA > 0.0f)
-				{
-					Voice.FadeTarget     = 0.0f;
-					Voice.FadeStep       = 1.0f / Math::Max(Cmd.ValueA * (float)SampleRate, 1.0f);
-					Voice.bStopAfterFade = true;
-				}
-				else
-				{
-					DeactivateVoice(Voice, Slot);
+					StopVoice(Voice, Slot, Cmd);
 				}
 			}
 			return;
@@ -531,16 +536,7 @@ namespace Lumina
 		switch (Cmd.Type)
 		{
 		case EAudioCommandType::StopSound:
-			if (Cmd.StopMode == EAudioStopMode::AllowFadeOut && Cmd.ValueA > 0.0f)
-			{
-				Voice.FadeTarget     = 0.0f;
-				Voice.FadeStep       = 1.0f / Math::Max(Cmd.ValueA * (float)SampleRate, 1.0f);
-				Voice.bStopAfterFade = true;
-			}
-			else
-			{
-				DeactivateVoice(Voice, Slot);
-			}
+			StopVoice(Voice, Slot, Cmd);
 			break;
 
 		case EAudioCommandType::SetVolume:
@@ -620,14 +616,13 @@ namespace Lumina
 		if (Voice.bSpatialized && Doppler > 0.0f)
 		{
 			FMixerListener Listener;
-			SelectListener(Voice.Position, Listener);
-
-			const FVector3 ToVoice = Voice.Position - Listener.Position;
+			const FVector3 ToVoice = SelectVoiceListener(Voice, Listener);
 			const float Distance = Math::Length(ToVoice);
 			if (Distance > 0.0001f)
 			{
 				const FVector3 Direction = ToVoice / Distance;
-				const float ListenerSpeed = Math::Dot(Listener.Velocity, Direction);
+				const bool bRidesWithListener = Voice.Attenuation.Positioning == EAudioPositioning::Relative;
+				const float ListenerSpeed = bRidesWithListener ? 0.0f : Math::Dot(Listener.Velocity, Direction);
 				const float VoiceSpeed    = Math::Dot(Voice.Velocity, Direction);
 
 				const float Denominator = kSpeedOfSound + VoiceSpeed;
@@ -642,6 +637,14 @@ namespace Lumina
 		return Pitch;
 	}
 
+	FVector3 FAudioMixer::SelectVoiceListener(const FVoice& Voice, FMixerListener& OutListener) const
+	{
+		SelectListener(Voice.Position, OutListener);
+		return Voice.Attenuation.Positioning == EAudioPositioning::Relative
+			? Voice.Position
+			: Voice.Position - OutListener.Position;
+	}
+
 	void FAudioMixer::ComputeVoiceGains(const FVoice& Voice, float* OutGains) const
 	{
 		float Gain = Voice.BaseVolume * Voice.OcclusionGain * Voice.FadeGain;
@@ -650,12 +653,7 @@ namespace Lumina
 		if (Voice.bSpatialized)
 		{
 			FMixerListener Listener;
-			SelectListener(Voice.Position, Listener);
-
-			const FVector3 ToVoice = Voice.Attenuation.Positioning == EAudioPositioning::Relative
-				? Voice.Position
-				: Voice.Position - Listener.Position;
-
+			const FVector3 ToVoice = SelectVoiceListener(Voice, Listener);
 			const float Distance = Math::Length(ToVoice);
 			Gain *= AttenuationGain(Voice.Attenuation, Distance);
 			Gain *= ConeGain(Voice.Attenuation, Voice.Direction, -ToVoice);

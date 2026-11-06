@@ -13,11 +13,11 @@ namespace Lumina::ECS
     {
         if constexpr (std::is_invocable_v<TFunc&, FEntity, TArgs...>)
         {
-            Func(Entity, std::forward<TArgs>(Args)...);
+            Func(Entity, Forward<TArgs>(Args)...);
         }
         else
         {
-            Func(std::forward<TArgs>(Args)...);
+            Func(Forward<TArgs>(Args)...);
         }
     }
 

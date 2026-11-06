@@ -127,7 +127,7 @@ namespace Lumina
 
     void CParticleModule_SetValueUpdate::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        const FString Scale = bScaleByCurve ? "SampleCurveLUT(" + Compiler.ParamCurve("Curve", Curve) + ", LifeRatio)" : FString();
+        const FString Scale = bScaleByCurve ? OverLifeExpr(Compiler, "Curve", Curve) : FString();
         GenerateInto(Compiler, EParticleContext::Update, ModuleIndex, Scale, bPerSecond);
     }
 

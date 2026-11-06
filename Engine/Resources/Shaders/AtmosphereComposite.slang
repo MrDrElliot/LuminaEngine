@@ -160,10 +160,8 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewP
 
     // Reverse-Z puts the far plane at 0, and view space is +Z forward so visible rays have ViewRay.z > 0.
     float3 CamPos  = GetCameraPosition();
-    float2 NDC     = UV * 2.0 - 1.0;
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
-    float3 RayDir  = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
+    float3 ViewRay = GetCameraViewRay(UV);
+    float3 RayDir  = GetCameraWorldRayDir(UV);
     // View-Z per unit of ray length, converting the froxel slicing distances into ray parameters.
     float  ZPerT   = max(ViewRay.z, 1e-4) / length(ViewRay);
 

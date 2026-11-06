@@ -2,6 +2,7 @@
 #include "World/Subsystems/EnvironmentSubsystem.h"
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "World/Entity/Components/FoliageComponent.h"
 #include "World/World.h"
 
 namespace Lumina

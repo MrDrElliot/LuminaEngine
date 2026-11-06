@@ -88,10 +88,10 @@ namespace Lumina
         {
             if (ECS::FCommandBus::ShouldDefer())
             {
-                CommandBus->Emplace<T>(Entity, std::forward<TArgs>(Args)...);
+                CommandBus->Emplace<T>(Entity, Forward<TArgs>(Args)...);
                 return;
             }
-            Registry->EmplaceOrReplace<T>(Entity, std::forward<TArgs>(Args)...);
+            Registry->EmplaceOrReplace<T>(Entity, Forward<TArgs>(Args)...);
         }
 
         // Edits the component in place once it exists, so a spawn can be filled in after its Emplace either way.
@@ -100,7 +100,7 @@ namespace Lumina
         {
             if (ECS::FCommandBus::ShouldDefer())
             {
-                CommandBus->Patch<T>(Entity, std::forward<TFunc>(Mutator));
+                CommandBus->Patch<T>(Entity, Forward<TFunc>(Mutator));
                 return;
             }
             if (Registry->TryGet<T>(Entity) != nullptr)
@@ -218,7 +218,7 @@ namespace Lumina
     template<typename TFunc>
     void SSystemContext::Defer(TFunc&& Func) const
     {
-        CommandBus->Enqueue([Shared = *this, Func = std::forward<TFunc>(Func)]() mutable
+        CommandBus->Enqueue([Shared = *this, Func = Forward<TFunc>(Func)]() mutable
         {
             const SExclusiveContext Exclusive(Shared);
             Func(Exclusive);

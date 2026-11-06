@@ -11,11 +11,6 @@ namespace Lumina
         Curve.Curve.AddKey(1.0f, Value);
     }
 
-    static FString OverLifeExpr(FParticleCompiler& Compiler, const char* Name, const SCurve& Curve)
-    {
-        return "SampleCurveLUT(" + Compiler.ParamCurve(Name, Curve) + ", LifeRatio)";
-    }
-
     void CParticleModule_SpeedLimit::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
         const FString Limit = LocalVar(ModuleIndex, "limit");
@@ -63,7 +58,7 @@ namespace Lumina
         const FString Angle = LocalVar(ModuleIndex, "angle");
         const FString Arm   = LocalVar(ModuleIndex, "arm");
         const FString Axis  = LocalVar(ModuleIndex, "axis");
-        Compiler.EmitUpdate("const float " + Angle + " = 6.2831853 * " + Compiler.Param("TurnsPerSecond", TurnsPerSecond) + " * "
+        Compiler.EmitUpdate("const float " + Angle + " = TWO_PI * " + Compiler.Param("TurnsPerSecond", TurnsPerSecond) + " * "
             + OverLifeExpr(Compiler, "OverLife", OverLife) + " * DeltaTime;");
         Compiler.EmitUpdate("const float3 " + Axis + " = SimParams().EmitterUp.xyz;");
         Compiler.EmitUpdate("const float3 " + Arm + " = P.Position - SimParams().EmitterPosition.xyz;");
@@ -119,7 +114,7 @@ namespace Lumina
 
     void CParticleModule_HueVariation::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitSpawn("P.Color.rgb = RotateHue(P.Color.rgb, RandSigned(Seed) * 6.2831853 * " + Compiler.Param("Variation", Variation) + ");");
+        Compiler.EmitSpawn("P.Color.rgb = RotateHue(P.Color.rgb, RandSigned(Seed) * TWO_PI * " + Compiler.Param("Variation", Variation) + ");");
     }
 
     void CParticleModule_AttractorForce::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)

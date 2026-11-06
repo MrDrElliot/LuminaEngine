@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "World/ECS/Registry.h"
+#include "World/ECS/Entity.h"
 
 
 
@@ -117,18 +117,18 @@ namespace Lumina
         PROPERTY(Hidden)
         FVector3 Normal;
 
-        /** Normalized distance along ray (0 = start, 1 = end). */
+        // Normalized distance along ray (0 = start, 1 = end).
         PROPERTY(Hidden)
         float Fraction;
 
         PROPERTY(Hidden)
         float Distance;
 
-        /** Skeleton bone the hit body belongs to (ragdoll per-bone bodies); Constants::kIndexNone otherwise. */
+        // Skeleton bone the hit body belongs to (ragdoll per-bone bodies); Constants::kIndexNone otherwise.
         PROPERTY(Hidden)
         int32 BoneIndex = Constants::kIndexNone;
 
-        /** Index of the hit static instance (foliage) within its owner Entity; Constants::kIndexNone otherwise. */
+        // Index of the hit static instance (foliage) within its owner Entity; Constants::kIndexNone otherwise.
         PROPERTY(Hidden)
         int32 InstanceIndex = Constants::kIndexNone;
 
@@ -151,7 +151,7 @@ namespace Lumina
         PROPERTY(Hidden)
         bool bDrawDebug = false;
 
-        /** Seconds; 0 = one frame. */
+        // Seconds; 0 = one frame.
         PROPERTY(Hidden)
         float DebugDuration = 0.0f;
         
@@ -188,14 +188,14 @@ namespace Lumina
         PROPERTY(Hidden)
         FVector3 End = FVector3(0.0f);
 
-        /** Sphere radius (meters). */
+        // Sphere radius (meters).
         PROPERTY(Hidden)
         float Radius = 0.0f;
 
         PROPERTY(Hidden)
         bool bDrawDebug = false;
 
-        /** Seconds; 0 = one frame. */
+        // Seconds; 0 = one frame.
         PROPERTY(Hidden)
         float DebugDuration = 0.0f;
 

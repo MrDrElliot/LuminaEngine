@@ -15,6 +15,7 @@
 #include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/InfoTable.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -308,16 +309,10 @@ namespace Lumina
         {
             if (ImGui::BeginTable("##Totals", 2, ImGuiTableFlags_SizingFixedFit))
             {
-                auto Row = [](const char* K, const FString& V)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn(); ImGui::TextUnformatted(K);
-                    ImGui::TableNextColumn(); ImGui::TextUnformatted(*V);
-                };
-                Row("Sent",            FormatBytesNice((double)Stats.TotalSentBytes));
-                Row("Received",        FormatBytesNice((double)Stats.TotalReceivedBytes));
-                Row("Packets Sent",    FString(*Format("{}", Stats.TotalSentPackets)));
-                Row("Packets Recv",    FString(*Format("{}", Stats.TotalReceivedPackets)));
+                InfoTable::Row("Sent",         FormatBytesNice((double)Stats.TotalSentBytes));
+                InfoTable::Row("Received",     FormatBytesNice((double)Stats.TotalReceivedBytes));
+                InfoTable::Row("Packets Sent", Format("{}", Stats.TotalSentPackets));
+                InfoTable::Row("Packets Recv", Format("{}", Stats.TotalReceivedPackets));
                 ImGui::EndTable();
             }
 

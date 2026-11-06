@@ -105,8 +105,7 @@ namespace Lumina
         return FVector4(Math::Normalize(t), Sign);
     }
 
-    /** CPU-side interleaved staging for import, procedural primitives and geometry collections.
-     *  NOT a GPU format and has no Slang counterpart, so nothing here is size-constrained. */
+    // CPU-only interleaved staging for import and procedural geometry, with no Slang mirror, so its size is unconstrained.
     struct FSourceVertex
     {
         FVector3       Position;
@@ -152,7 +151,7 @@ namespace Lumina
         int32 Total = 0;
         for (int32 i = 0; i < 4; ++i)
         {
-            // Non-negative, so a truncating cast IS floor -- no Math::Floor dependency in this header.
+            // Non-negative, so a truncating cast is floor and this header needs no Math::Floor.
             const float Scaled = W[i] * Scale;
             Quantized[i] = (int32)Scaled;
             Remainder[i] = Scaled - (float)Quantized[i];

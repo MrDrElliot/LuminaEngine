@@ -1,6 +1,7 @@
 // Fullscreen postprocess for RmlUi's layer stack, one pass per filter, all colors premultiplied.
 #pragma once
 #include "Includes/GlobalRHI.slang"
+#include "Includes/UiClipMask.slang"
 
 #define UI_FILTER_COPY         0u
 #define UI_FILTER_COLOR_MATRIX 1u
@@ -8,20 +9,6 @@
 #define UI_FILTER_BLUR         3u
 #define UI_FILTER_DROP_SHADOW  4u
 #define UI_FILTER_MASK_IMAGE   5u
-
-// Must match RmlUiCommon.slang::FUiClipMask, duplicated because that header declares its own Pass().
-struct FUiClipMask
-{
-    float4 Rect;
-    float4 Radii;
-    float4 Params;
-    float4 InvTransform;
-};
-
-float2 UiClipLocal(FUiClipMask Mask, float2 FragCoord)
-{
-    return float2(dot(Mask.InvTransform.xy, FragCoord), dot(Mask.InvTransform.zw, FragCoord)) + Mask.Params.yz;
-}
 
 // Matches FUiFilterArgs in RmlUiRenderer.cpp.
 struct FUiFilterArgs
@@ -55,28 +42,16 @@ struct PSInput
     float2 UV       : TEXCOORD0;
 };
 
-float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
-{
-    float2 Pair   = (P.x > 0.0) ? Radii.yz : Radii.xw;
-    float  Radius = (P.y > 0.0) ? Pair.y : Pair.x;
-    float2 Q      = abs(P) - HalfExtent + Radius;
-    return min(max(Q.x, Q.y), 0.0) + length(max(Q, 0.0)) - Radius;
-}
-
 // RmlUi clips the composite as well as the geometry, which is what rounds a backdrop filter.
 float ClipCoverage(FUiFilterArgs Args, float2 FragCoord)
 {
-    const uint Count  = Args.ClipMaskRange & 0xFFu;
-    const uint Offset = Args.ClipMaskRange >> 8u;
+    const uint Count  = UI_CLIP_COUNT(Args.ClipMaskRange);
+    const uint Offset = UI_CLIP_OFFSET(Args.ClipMaskRange);
 
     float Coverage = 1.0;
     for (uint i = 0u; i < Count; ++i)
     {
-        FUiClipMask Mask = Args.ClipMasks[Offset + i];
-        const float Dist  = SdRoundedBox(UiClipLocal(Mask, FragCoord) - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
-        const float Width = max(fwidth(Dist), 1e-5);
-        const float Cover = saturate(0.5 - Dist / Width);
-        Coverage *= (Mask.Params.x != 0.0) ? (1.0 - Cover) : Cover;
+        Coverage *= UiClipMaskCoverage(Args.ClipMasks[Offset + i], FragCoord);
     }
     return Coverage;
 }
