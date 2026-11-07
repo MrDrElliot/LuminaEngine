@@ -465,6 +465,13 @@ namespace Lumina::RmlUi
             // Bumped with each such save so world widgets stat their documents only after one.
             TAtomic<uint64>                     UIFileChangeSerial{0};
 
+            // Bumped when live documents are restyled, so a dormant world widget wakes to lay out and draw the new styles.
+            uint64                              UIReloadSerial = 0;
+
+            // RmlUi ships no user agent stylesheet, so this is combined under every document's own sheets.
+            Rml::String                         DefaultRcss;
+            bool                                bDefaultRcssLoaded = false;
+
             // .rml files saved since the last reload pass, handed to the scripts showing them. Written by the watcher thread.
             FMutex                              ChangedDocumentsMutex;
             TVector<FString>                    ChangedDocuments;
@@ -737,6 +744,36 @@ namespace Lumina::RmlUi
             return PlatformTime::ToSeconds(Since) >= kUIReloadQuietSeconds;
         }
 
+        // Without the default sheet underneath, every div in the document lays out inline.
+        void CombineDefaultStyleSheet(Rml::ElementDocument* Document)
+        {
+            FState& State = S();
+            if (!State.bDefaultRcssLoaded)
+            {
+                State.bDefaultRcssLoaded = true;
+                FString Source;
+                if (VFS::ReadFile(Source, "/Engine/Resources/UI/Default.rcss"))
+                {
+                    State.DefaultRcss = Rml::String(*Source);
+                }
+            }
+
+            if (Document == nullptr || State.DefaultRcss.empty())
+            {
+                return;
+            }
+
+            // Parsed per document, because combining mutates the sheet it starts from.
+            Rml::SharedPtr<Rml::StyleSheetContainer> Base = Rml::Factory::InstanceStyleSheetString(State.DefaultRcss);
+            if (Base == nullptr)
+            {
+                return;
+            }
+
+            const Rml::StyleSheetContainer* Own = Document->GetStyleSheetContainer();
+            Document->SetStyleSheetContainer(Own != nullptr ? Base->CombineStyleSheetContainer(*Own) : Base);
+        }
+
         void ProcessPendingUIReload()
         {
             FState& State = S();
@@ -746,6 +783,7 @@ namespace Lumina::RmlUi
             }
             State.bUIReloadPending.store(false, Atomic::MemoryOrderRelease);
             NoteUIChanged();
+            ++State.UIReloadSerial;
 
             Rml::Factory::ClearStyleSheetCache();
             Rml::Factory::ClearTemplateCache();
@@ -766,6 +804,7 @@ namespace Lumina::RmlUi
                     if (Doc != nullptr && !Doc->GetSourceURL().empty())
                     {
                         Doc->ReloadStyleSheet();
+                        CombineDefaultStyleSheet(Doc);
                     }
                 }
             }
@@ -916,13 +955,13 @@ namespace Lumina::RmlUi
                 Rml::Factory::ClearStyleSheetCache();
                 Rml::Factory::ClearTemplateCache();
                 NoteUIChanged();
+                ++S().UIReloadSerial;
             }
         }
     }
 
     namespace
     {
-        // RmlUi ships no user agent stylesheet, so without this every div in every document lays out inline.
         class FDefaultStyleSheetPlugin final : public Rml::Plugin
         {
         public:
@@ -931,36 +970,8 @@ namespace Lumina::RmlUi
 
             void OnDocumentLoad(Rml::ElementDocument* Document) override
             {
-                if (!bLoaded)
-                {
-                    bLoaded = true;
-                    FString Source;
-                    if (VFS::ReadFile(Source, "/Engine/Resources/UI/Default.rcss"))
-                    {
-                        DefaultRcss = Rml::String(*Source);
-                    }
-                }
-
-                if (Document == nullptr || DefaultRcss.empty())
-                {
-                    return;
-                }
-
-                // Parsed per document, because combining mutates the sheet it starts from.
-                Rml::SharedPtr<Rml::StyleSheetContainer> Base = Rml::Factory::InstanceStyleSheetString(DefaultRcss);
-                if (Base == nullptr)
-                {
-                    return;
-                }
-
-                const Rml::StyleSheetContainer* Own = Document->GetStyleSheetContainer();
-                Document->SetStyleSheetContainer(Own != nullptr ? Base->CombineStyleSheetContainer(*Own) : Base);
+                CombineDefaultStyleSheet(Document);
             }
-
-        private:
-
-            Rml::String DefaultRcss;
-            bool bLoaded = false;
         };
 
         class FElementLifetimePlugin final : public Rml::Plugin
@@ -1599,8 +1610,11 @@ namespace Lumina::RmlUi
                 R.DocWriteTime = CurrentWriteTime;
             }
             
+            const bool bRestyled = R.SeenUIReloadSerial != State.UIReloadSerial;
+            R.SeenUIReloadSerial = State.UIReloadSerial;
+
             const int32 DormancyFrames = CVarWidgetDormancyFrames.GetValue();
-            if (DormancyFrames > 0 && R.bRmlIdle && !bPathChanged && !bFileChanged && R.Target.IsValid() && State.Renderer != nullptr)
+            if (DormancyFrames > 0 && R.bRmlIdle && !bPathChanged && !bFileChanged && !bRestyled && R.Target.IsValid() && State.Renderer != nullptr)
             {
                 if (State.Renderer->GetTargetStableFrames(R.Target.Texture) >= (uint32)DormancyFrames)
                 {

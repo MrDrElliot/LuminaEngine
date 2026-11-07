@@ -10,6 +10,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompileScheduler.h"
 #include "Particles/ParticleCompileScheduler.h"
+#include "Play/StandaloneLauncher.h"
 
 
 
@@ -200,6 +201,8 @@ namespace Lumina
 
         // Exits a few frames from now past the unsaved-changes prompt and any other modal, so an agent's reply goes out first.
         void QuitWithoutPrompt();
+
+        FStandaloneLauncher& GetStandaloneLauncher() { return StandaloneLauncher; }
 
         // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
         // A member (not a function-local static) so Cancel can re-arm it.
@@ -395,6 +398,7 @@ namespace Lumina
         TVector<FEditorTool*>                           EditorTools;
         FMaterialCompileScheduler                       MaterialCompiles;
         FParticleCompileScheduler                       ParticleCompiles;
+        FStandaloneLauncher                             StandaloneLauncher;
 
         TVector<FFooterDrawer>                          FooterDrawers;
         FEditorTool*                                    OpenDrawer = nullptr;   // tool whose drawer is open (nullptr = none)

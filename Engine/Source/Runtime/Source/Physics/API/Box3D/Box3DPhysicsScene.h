@@ -190,7 +190,7 @@ namespace Lumina::Physics
         void FollowTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, SCharacterPhysicsComponent& Physics,
             SCharacterMovementComponent& Movement, float FixedDt);
         void BuildInterpolatedTransforms(float Alpha);
-        void ApplyInterpolatedTransforms();
+        void ApplyInterpolatedTransforms(bool bCarriersOnly);
 
         EPhysicsBodyStatus GetBodyStatus(ECS::FEntity Entity) const override;
         bool TryGetBodyState(ECS::FEntity Entity, FPhysicsBodyState& Out) const override;
@@ -376,6 +376,7 @@ namespace Lumina::Physics
         void MarkAuthoredKinematic(uint32 Handle);
         uint32 StageInterpSlot(uint32 BodyHandle, const FVector3& Position, const FQuat& Rotation);
         void ResetInterpStaging();
+        void StageSettledBodies();
         void DropCharacterInterpSlots();
 
         void BulkCreateRigidBodies(ECS::FRegistry& Registry);
@@ -703,13 +704,18 @@ namespace Lumina::Physics
         // Characters are restaged on every blend, so their slots trail the bodies and are dropped before the next one.
         uint32                                  InterpBodySlots = 0;
         bool                                    bInterpCharacterTail = false;
-        TVector<uint32>                         InterpApplied;
         TVector<uint32>                         InterpAppliedParented;
+
+        // Slots of parented bodies with kinematic or static riders, valid until the staging is rebuilt.
+        TVector<uint32>                         InterpCarrierSlots;
         TVector<uint8>                          InterpCategory;
 
         // Body handle to staging slot for this frame, reset through StagedBodyHandles so it stays O(moved).
         TVector<uint32>                         BodyStagingSlot;
         TVector<uint32>                         StagedBodyHandles;
+
+        // Bodies the last blend left between two poses, which settle on the simulated one if no move event refreshes them.
+        TVector<uint32>                         SettleCandidates;
 
         // Dense wake state per body handle, diffed against the move events to raise OnWake / OnSleep.
         TVector<uint8>                          BodyAwake;

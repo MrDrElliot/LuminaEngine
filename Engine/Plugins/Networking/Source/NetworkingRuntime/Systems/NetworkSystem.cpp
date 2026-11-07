@@ -217,7 +217,7 @@ namespace Lumina
             // The diff baselines are seeded here, so later updates carry only what changes after the spawn.
             CollectBaseline(Registry, State, Entity, Guid, &Registry.GetOrEmplace<FComponentRepState>(Entity), nullptr);
 
-            Net::WriteSpawnComponents(Writer, Registry, Entity);
+            Net::WriteSpawnComponents(Writer, Registry, State, Entity);
             Net::WriteScriptManifest(Writer, Registry, Entity);
             Net::WriteScriptStates(Writer, Registry, Entity);
 
@@ -414,7 +414,7 @@ namespace Lumina
 
             Net::BindReaders(Reader, State, SenderConn);
             const ECS::FEntity Entity = Registry.Create();
-            Net::ReadSpawnComponents(Reader, Registry, Entity);
+            Net::ReadSpawnComponents(Reader, Registry, State, Entity);
             const uint32 ScriptCount = Net::ReadScriptManifest(Reader, Registry, Entity);
             Net::ReadScriptStates(Reader, Registry, Entity, ScriptCount);
 
@@ -476,7 +476,7 @@ namespace Lumina
             if (Entity != ECS::NullEntity && Registry.IsValid(Entity))
             {
                 Net::BindReaders(Reader, State, SenderConn);
-                Net::ReadEntityComponents(Reader, Registry, Entity);
+                Net::ReadEntityComponents(Reader, Registry, State, Entity);
                 if (!Reader.HasError() && Registry.IsValid(Entity))
                 {
                     Net::ReadEntityScripts(Reader, Registry, Entity);
@@ -1790,7 +1790,7 @@ namespace Lumina
                     TVector<uint8> Buffer;
                     FNetArchive Writer(Buffer);
                     uint8  Type  = static_cast<uint8>(ENetMessage::ClientReady);
-                    uint32 Proto = Net::GetProtocolHash();
+                    uint32 Proto = Net::GetProtocolHash(State.ReplTypes);
                     Writer << Type;
                     Writer << Proto;
                     Net::SendFramed(*State.Transport, State.ServerConnection, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 0, ESendMode::Reliable);
@@ -2009,7 +2009,7 @@ namespace Lumina
                         TVector<uint8> WelcomeBuf;
                         FNetArchive WWriter(WelcomeBuf);
                         uint8  WType  = static_cast<uint8>(ENetMessage::Welcome);
-                        uint32 WProto = Net::GetProtocolHash();
+                        uint32 WProto = Net::GetProtocolHash(State->ReplTypes);
                         uint16 Len    = static_cast<uint16>(MapPath.Len());
                         WWriter << WType;
                         WWriter << WProto; // client refuses the connection on a protocol/build mismatch
@@ -2166,10 +2166,10 @@ namespace Lumina
                             Reader << Proto;
 
                             // The type table, RPC ids and field order all assume same-build peers.
-                            if (Proto != Net::GetProtocolHash())
+                            if (Proto != Net::GetProtocolHash(State->ReplTypes))
                             {
                                 LOG_ERROR("[Net][Client] Protocol mismatch (server {:#x}, client {:#x}) -- disconnecting. Client and server builds differ.",
-                                    Proto, Net::GetProtocolHash());
+                                    Proto, Net::GetProtocolHash(State->ReplTypes));
                                 State->Transport->Disconnect(Event.Connection, /*Reason*/1, /*bForce*/false);
                                 State->PendingLeaveReason = ENetLeaveReason::ProtocolMismatch;
                                 break;
@@ -2213,10 +2213,10 @@ namespace Lumina
                                 uint32 RProto = 0;
                                 RReader << RType;
                                 RReader << RProto;
-                                if (RReader.HasError() || RProto != Net::GetProtocolHash())
+                                if (RReader.HasError() || RProto != Net::GetProtocolHash(State->ReplTypes))
                                 {
                                     LOG_WARN("[Net][Server] Kicking client {}: protocol mismatch (client {:#x}, server {:#x}).",
-                                        Event.Connection.Value, RProto, Net::GetProtocolHash());
+                                        Event.Connection.Value, RProto, Net::GetProtocolHash(State->ReplTypes));
                                     State->Transport->Disconnect(Event.Connection, /*Reason*/1, /*bForce*/false);
                                     break;
                                 }

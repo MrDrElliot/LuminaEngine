@@ -78,6 +78,10 @@ namespace Lumina
 
         static void DrawGizmoOperationCombo(ImGuizmo::OPERATION& InOutOp);
 
+        // Opens an undo step that snapshots the whole asset, for edits made through a tool's own widgets.
+        void BeginAssetTransaction(FName Name);
+        void EndAssetTransaction();
+
         TStrongObjectPtr<CObject>   Asset;
         mutable FFixedString        AssetVirtualPath;
         FPropertyTable              PropertyTable;

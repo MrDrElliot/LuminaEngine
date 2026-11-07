@@ -310,8 +310,6 @@ namespace Lumina::Physics
 
         DropCharacterInterpSlots();
 
-        ECS::FRegistry& Registry = World->GetEntityRegistry();
-        auto RigidStorage = Registry.GetStorage<SRigidBodyComponent>();
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
 
         for (int32 i = 0; i < Events.moveCount; ++i)
@@ -321,12 +319,8 @@ namespace Lumina::Physics
             // The event carries the user data, so resolving the entity costs no body lookup.
             const ECS::FEntity Entity = UnpackEntity(Event.userData);
             const uint32 Handle = UnpackHandle(Event.userData);
-            if (!RigidStorage.Contains(Entity))
-            {
-                continue;
-            }
 
-            // One lookup per event, since every field below lives on this record.
+            // One lookup per event, since every field below lives on this record, which exists only while the rigid body component does.
             FBodyRecord* Found = RigidBodies.Find(Entity);
             if (Found == nullptr || Found->Handle != Handle)
             {
@@ -385,6 +379,18 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::ResetInterpStaging()
     {
+        // Only a blend leaves a body short of its simulated pose, so a body staged at rest already shows it.
+        SettleCandidates.Reset();
+        for (int32 Slot = 0; Slot < StagedBodyHandles.Num(); ++Slot)
+        {
+            if (InterpStaging.Flags[Slot] == EInterpFlag::Interpolate && (InterpStaging.PrevPos[Slot] != InterpStaging.CurrPos[Slot]
+                || InterpStaging.PrevQx[Slot] != InterpStaging.CurrQx[Slot] || InterpStaging.PrevQy[Slot] != InterpStaging.CurrQy[Slot]
+                || InterpStaging.PrevQz[Slot] != InterpStaging.CurrQz[Slot] || InterpStaging.PrevQw[Slot] != InterpStaging.CurrQw[Slot]))
+            {
+                SettleCandidates.Add(StagedBodyHandles[Slot]);
+            }
+        }
+
         for (uint32 Handle : StagedBodyHandles)
         {
             if (Handle < static_cast<uint32>(BodyStagingSlot.Num()))
@@ -393,8 +399,40 @@ namespace Lumina::Physics
             }
         }
         StagedBodyHandles.Reset();
+        InterpCarrierSlots.Reset();
         InterpStaging.Clear();
         bInterpCharacterTail = false;
+    }
+
+    // A body shown at a blend that got no move event since (asleep, or put to sleep by hand) is staged at rest on its simulated pose.
+    void FBox3DPhysicsScene::StageSettledBodies()
+    {
+        DropCharacterInterpSlots();
+        for (uint32 Handle : SettleCandidates)
+        {
+            if (Handle < static_cast<uint32>(BodyStagingSlot.Num()) && BodyStagingSlot[Handle] != InvalidBodyHandle)
+            {
+                continue;
+            }
+
+            // Gameplay owns where an authored kinematic body draws.
+            if (Handle < static_cast<uint32>(BodyAuthoredKinematic.Num()) && BodyAuthoredKinematic[Handle] != 0)
+            {
+                continue;
+            }
+
+            // The record holds the pose the body was last simulated or teleported to, so a teleport is never undone.
+            const ECS::FEntity Entity = EntityOfBody(ResolveBody(Handle));
+            const FBodyRecord* Record = RigidBodies.Find(Entity);
+            if (Record == nullptr || Record->Handle != Handle)
+            {
+                continue;
+            }
+
+            const uint32 Slot = StageInterpSlot(Handle, Record->LastBodyPosition, Record->LastBodyRotation);
+            InterpStaging.Entities[Slot] = Entity;
+        }
+        SettleCandidates.Reset();
     }
 
     void FBox3DPhysicsScene::DropCharacterInterpSlots()
@@ -461,6 +499,7 @@ namespace Lumina::Physics
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
 
         DropCharacterInterpSlots();
+        InterpCarrierSlots.Reset();
         InterpBodySlots = (uint32)InterpStaging.Entities.Num();
         bInterpCharacterTail = true;
 
@@ -565,7 +604,7 @@ namespace Lumina::Physics
     }
 
     // Writes the blend into the transform itself, so cameras, attachments and scripts see one pose and the body keeps the simulated one.
-    void FBox3DPhysicsScene::ApplyInterpolatedTransforms()
+    void FBox3DPhysicsScene::ApplyInterpolatedTransforms(bool bCarriersOnly)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -582,68 +621,13 @@ namespace Lumina::Physics
         ECS::Utils::FlushDirtyPhysicsBodies(Registry);
 
         const auto PendingTeleport = Registry.GetStorage<FNeedsPhysicsBodyUpdate>();
-
-        InterpApplied.Reset();
-        InterpAppliedParented.Reset();
-
-        enum : uint8 { kInterpSkip = 0, kInterpFlat = 1, kInterpParented = 2, kInterpKill = 3 };
-        InterpCategory.SetNum(Count);
-        std::atomic<uint32> KillCount{0};
-
-        // Reads only, so it fans out; a kill is structural and is handled serially below.
-        const auto Classify = [&](uint32 i)
-        {
-            const EInterpFlag Flag = InterpStaging.Flags[i];
-            const ECS::FEntity Entity = InterpStaging.Entities[i];
-            uint8 Category = kInterpSkip;
-            if (Flag != EInterpFlag::Skip && Registry.IsValid(Entity))
-            {
-                if (Flag == EInterpFlag::BelowKill)
-                {
-                    Category = kInterpKill;
-                    KillCount.fetch_add(1, std::memory_order_relaxed);
-                }
-                // An authored move outranks the body pose until the teleport reaches the body.
-                else if (TransformStorage.Contains(Entity) && !PendingTeleport.Contains(Entity))
-                {
-                    Category = TransformStorage.Get(Entity).bIsFlat ? kInterpFlat : kInterpParented;
-                }
-            }
-            InterpCategory[i] = Category;
-        };
-        if (Count > InterpParallelThreshold)
-        {
-            Jobs::ParallelFor(Count, Classify);
-        }
-        else
-        {
-            for (uint32 i = 0; i < Count; ++i)
-            {
-                Classify(i);
-            }
-        }
-
-        // A destroy can take later entries with it, so a frame with a kill walks the list serially as before.
-        const bool bAnyKill = KillCount.load(std::memory_order_relaxed) != 0;
-        if (bAnyKill)
-        {
-            for (uint32 i = 0; i < Count; ++i)
-            {
-                const ECS::FEntity Entity = InterpStaging.Entities[i];
-                if (InterpCategory[i] == kInterpSkip || !Registry.IsValid(Entity))
-                {
-                    continue;
-                }
-                if (InterpCategory[i] == kInterpKill)
-                {
-                    Registry.Destroy(Entity);
-                    continue;
-                }
-                (InterpCategory[i] == kInterpFlat ? InterpApplied : InterpAppliedParented).Add(i);
-            }
-        }
-
         const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+
+        // An authored move outranks the body pose until the teleport reaches the body.
+        const auto IsWritable = [&](ECS::FEntity Entity)
+        {
+            return Registry.IsValid(Entity) && TransformStorage.Contains(Entity) && !PendingTeleport.Contains(Entity);
+        };
 
         // The body pose is world space, so a parented entity takes it relative to where its parent now is.
         auto WritePose = [&](uint32 i)
@@ -654,10 +638,11 @@ namespace Lumina::Physics
             const FQuat Previous(InterpStaging.PrevQw[i], InterpStaging.PrevQx[i], InterpStaging.PrevQy[i], InterpStaging.PrevQz[i]);
             const FQuat Current(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]);
             const bool bResting = InterpStaging.PrevPos[i] == InterpStaging.CurrPos[i] && Previous == Current;
+            const bool bSimulated = bResting || bCarriersOnly;
 
-            FVector3 Location = bResting ? InterpStaging.CurrPos[i] : InterpStaging.LerpPos[i];
-            FQuat    Rotation = bResting ? Current
-                                         : FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]);
+            FVector3 Location = bSimulated ? InterpStaging.CurrPos[i] : InterpStaging.LerpPos[i];
+            FQuat    Rotation = bSimulated ? Current
+                                           : FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]);
 
             const ECS::FEntity Parent = Transform.bIsFlat ? ECS::NullEntity : Hierarchy.GetParent(Entity);
             if (!Parent.IsNull() && Registry.IsValid(Parent))
@@ -676,42 +661,95 @@ namespace Lumina::Physics
             Transform.SetFromPhysics(Location, Rotation);
         };
 
-        if (bAnyKill)
+        // Reports whether the entity carries a rider, which the pre-step pass then moves to the carrier's simulated pose.
+        auto BodyStorage = Registry.GetStorage<SRigidBodyComponent>();
+        auto WriteWithRiders = [&](uint32 i)
         {
-            for (uint32 i : InterpApplied)
+            WritePose(i);
+
+            // A static or kinematic body under a simulated one rides along, while a simulated descendant keeps its own motion.
+            bool bCarries = false;
+            Hierarchy.ForEachDescendant(InterpStaging.Entities[i], [&](ECS::FEntity Descendant)
             {
-                WritePose(i);
+                if (BodyStorage.Contains(Descendant) && BodyStorage.Get(Descendant).BodyType != EBodyType::Dynamic)
+                {
+                    Registry.EmplaceOrReplace<FNeedsPhysicsBodyUpdate>(Descendant);
+                    bCarries = true;
+                }
+            });
+            return bCarries;
+        };
+
+        if (bCarriersOnly)
+        {
+            for (uint32 i : InterpCarrierSlots)
+            {
+                if (IsWritable(InterpStaging.Entities[i]))
+                {
+                    WriteWithRiders(i);
+                }
             }
+            return;
         }
-        else if (Count > InterpParallelThreshold)
+
+        enum : uint8 { kInterpSkip = 0, kInterpParented = 1, kInterpKill = 2 };
+        InterpCategory.SetNum(Count);
+        std::atomic<uint32> KillCount{0};
+
+        // A flat entity is nobody's parent, so its pose is written as it is sorted, while a kill is structural and waits for the serial pass.
+        const auto WriteFlat = [&](uint32 i)
         {
-            Jobs::ParallelFor(Count, [&](uint32 i)
+            const EInterpFlag Flag = InterpStaging.Flags[i];
+            const ECS::FEntity Entity = InterpStaging.Entities[i];
+            uint8 Category = kInterpSkip;
+            if (Flag == EInterpFlag::BelowKill && Registry.IsValid(Entity))
             {
-                if (InterpCategory[i] == kInterpFlat)
+                Category = kInterpKill;
+                KillCount.fetch_add(1, std::memory_order_relaxed);
+            }
+            else if (Flag != EInterpFlag::Skip && IsWritable(Entity))
+            {
+                if (TransformStorage.Get(Entity).bIsFlat)
                 {
                     WritePose(i);
                 }
-            });
+                else
+                {
+                    Category = kInterpParented;
+                }
+            }
+            InterpCategory[i] = Category;
+        };
+        if (Count > InterpParallelThreshold)
+        {
+            Jobs::ParallelFor(Count, WriteFlat);
         }
         else
         {
             for (uint32 i = 0; i < Count; ++i)
             {
-                if (InterpCategory[i] == kInterpFlat)
+                WriteFlat(i);
+            }
+        }
+
+        if (KillCount.load(std::memory_order_relaxed) != 0)
+        {
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                if (InterpCategory[i] == kInterpKill && Registry.IsValid(InterpStaging.Entities[i]))
                 {
-                    WritePose(i);
+                    Registry.Destroy(InterpStaging.Entities[i]);
                 }
             }
         }
 
-        if (!bAnyKill)
+        InterpAppliedParented.Reset();
+        InterpCarrierSlots.Reset();
+        for (uint32 i = 0; i < Count; ++i)
         {
-            for (uint32 i = 0; i < Count; ++i)
+            if (InterpCategory[i] == kInterpParented)
             {
-                if (InterpCategory[i] == kInterpParented)
-                {
-                    InterpAppliedParented.Add(i);
-                }
+                InterpAppliedParented.Add(i);
             }
         }
         if (InterpAppliedParented.IsEmpty())
@@ -726,24 +764,13 @@ namespace Lumina::Physics
             return Hierarchy.GetSlot(InterpStaging.Entities[A]) < Hierarchy.GetSlot(InterpStaging.Entities[B]);
         });
 
-        auto BodyStorage = Registry.GetStorage<SRigidBodyComponent>();
+        // A destroy above can take a parented entry with it.
         for (uint32 i : InterpAppliedParented)
         {
-            const ECS::FEntity Entity = InterpStaging.Entities[i];
-            if (!Registry.IsValid(Entity))
+            if (Registry.IsValid(InterpStaging.Entities[i]) && WriteWithRiders(i))
             {
-                continue;
+                InterpCarrierSlots.Add(i);
             }
-            WritePose(i);
-
-            // A static or kinematic body under a simulated one rides along, while a simulated descendant keeps its own motion.
-            Hierarchy.ForEachDescendant(Entity, [&](ECS::FEntity Descendant)
-            {
-                if (BodyStorage.Contains(Descendant) && BodyStorage.Get(Descendant).BodyType != EBodyType::Dynamic)
-                {
-                    Registry.EmplaceOrReplace<FNeedsPhysicsBodyUpdate>(Descendant);
-                }
-            });
         }
     }
 
@@ -771,31 +798,35 @@ namespace Lumina::Physics
             ? Math::Min((uint32)WorldSettings.MaxPhysicsSteps, (uint32)(Accumulator / FixedTimestep))
             : 0;
 
-        // Move events only come from a step, so a frame without one blends the last step's bodies again at its own alpha.
-        if (CollisionSteps > 0)
-        {
-            // Fixed scripts start from the simulated pose, and a body that stops moving rests where it was simulated.
-            BuildInterpolatedTransforms(1.0f);
-            ApplyInterpolatedTransforms();
-            ResetInterpStaging();
-        }
         ContactDrainScratch.Reset();
         ActivationDrainScratch.Reset();
 
+        // Move events only come from a step, so a frame without one blends the last step's bodies again at its own alpha.
         if (CollisionSteps > 0)
         {
+            // Fixed scripts and a ragdoll following its entity read every pose, otherwise only riders follow their carrier's simulated one.
+            if ((PreStepCallback && PreStepReadsTransforms()) || !OwnedRagdolls.IsEmpty())
+            {
+                BuildInterpolatedTransforms(1.0f);
+                ApplyInterpolatedTransforms(false);
+            }
+            else
+            {
+                ApplyInterpolatedTransforms(true);
+            }
+            ResetInterpStaging();
 
             for (uint32 Step = 0; Step < CollisionSteps; ++Step)
             {
+                // Later steps read the pose the previous one produced, and after the reset only a full pass knows the carriers.
+                if (Step > 0)
+                {
+                    BuildInterpolatedTransforms(1.0f);
+                    ApplyInterpolatedTransforms(false);
+                }
+
                 if (PreStepCallback)
                 {
-                    // Later steps read the pose the previous one produced, so it is written through at alpha 1.
-                    if (Step > 0)
-                    {
-                        BuildInterpolatedTransforms(1.0f);
-                        ApplyInterpolatedTransforms();
-                    }
-
                     PreStepCallback(FixedTimestep);
                 }
 
@@ -819,6 +850,7 @@ namespace Lumina::Physics
                 if (CharacterStepHook) { CharacterStepHook(FixedTimestep, true); }
             }
 
+            StageSettledBodies();
             MonitorBreakableConstraints(FixedTimestep);
 
             Accumulator -= (float)CollisionSteps * FixedTimestep;
@@ -844,7 +876,7 @@ namespace Lumina::Physics
         LUMINA_PROFILE_SCOPE();
 
         // Written before contact callbacks so scripts read fresh transforms.
-        ApplyInterpolatedTransforms();
+        ApplyInterpolatedTransforms(false);
         PoseVehicleWheels();
         DispatchContactEvents();
         DispatchActivationEvents();

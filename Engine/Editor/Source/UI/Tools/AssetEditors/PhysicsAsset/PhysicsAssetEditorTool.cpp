@@ -11,7 +11,6 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/Transactions/EditorTransaction.h"
-#include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/LightComponent.h"
@@ -761,19 +760,6 @@ namespace Lumina
 
         // Rows read through to the struct, so rebuilding the tree every drag frame is pure cost.
         NotifyAssetDataChanged();
-    }
-
-    void FPhysicsAssetEditorTool::BeginAssetTransaction(FName Name)
-    {
-        FTransactionManager& Manager = GetTransactionManager();
-        Manager.BeginTransaction(Name);
-        Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Name));
-    }
-
-    void FPhysicsAssetEditorTool::EndAssetTransaction()
-    {
-        // The command captures its after-image here and drops itself if the drag changed nothing.
-        GetTransactionManager().CommitTransaction();
     }
 
     void FPhysicsAssetEditorTool::CloseOpenDragTransaction()

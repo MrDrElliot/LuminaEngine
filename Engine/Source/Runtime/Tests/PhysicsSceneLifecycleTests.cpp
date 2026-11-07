@@ -110,7 +110,7 @@ TEST_F(PhysicsSceneLifecycle, FixedCallbackCanSpawnAndLaunchInTheSameStep)
     {
         Entity = Spawn();
         Scene->SetLinearVelocity(Entity, FVector3(4.0f, 0.0f, 0.0f));
-    });
+    }, [] { return false; });
     Scene->Update(Dt);
     EXPECT_NEAR(Scene->GetLinearVelocity(Entity).x, 4.0f, 0.001f);
     EXPECT_GT(Scene->GetBodyPosition(Entity).x, 0.0f);

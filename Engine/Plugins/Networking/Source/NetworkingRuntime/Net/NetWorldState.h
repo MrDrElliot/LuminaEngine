@@ -15,6 +15,7 @@
 namespace Lumina
 {
     class CObject;
+    class CStruct;
     class FNetCountingTransport;
 
     // Where a server tick's network time goes, for the -netstats breakdown.
@@ -99,9 +100,34 @@ namespace Lumina
         uint32 RelevantMax             = 0; // max relevant entities on any one client
     };
 
+    // The replicated component types, built with the session so a type a script reload rebinds reaches the next session.
+    struct NETWORKINGRUNTIME_API FReplTypeTable
+    {
+        FReplTypeTable();
+        ~FReplTypeTable();
+        FReplTypeTable(const FReplTypeTable&) = delete;
+        FReplTypeTable& operator = (const FReplTypeTable&) = delete;
+
+        // The default instance every spawn of this type diffs against, made on first use.
+        void* DefaultFor(uint32 WireIndex);
+
+        struct FEntry
+        {
+            uint32   Hash    = 0;
+            CStruct* Struct  = nullptr;
+            void*    Default = nullptr;
+        };
+
+        // Sorted by name hash, so the same build gives the same order and the wire carries an index, not the hash.
+        TVector<FEntry> ByIndex;
+        TVector<int32>  TypeIdToIndex;
+    };
+
     // Per-world networking state.
     struct FNetWorldState
     {
+        FReplTypeTable                ReplTypes;
+
         TUniquePtr<INetworkTransport> Transport;
 
         // The same transport when -netstats wrapped it in a byte counter.

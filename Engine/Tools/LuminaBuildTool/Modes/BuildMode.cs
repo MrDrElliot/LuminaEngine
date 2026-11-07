@@ -376,9 +376,10 @@ public static class BuildMode
 
             if (Outdated.Count == 0)
             {
-                // Loading the cache prunes dead closures; without this the pruning is redone and never kept.
+                // Loading the records prunes dead outputs; without this the pruning is redone and never kept.
+                History.Save();
                 HeaderDependencies.Save();
-                Phase("  DependencyCache.Save", PhaseTimer);
+                Phase("  Build records save", PhaseTimer);
 
                 // A header no module here includes still moves the BuildId, and these binaries are unaffected by it.
                 ModuleManifest.Write(Target, EngineBuildId);

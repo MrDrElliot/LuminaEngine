@@ -33,20 +33,40 @@ public sealed class ActionHistory
         ActionHistory History = new(HistoryFile);
         ActionHistoryData? Data = JsonStore.Load<ActionHistoryData>(HistoryFile);
 
-        if (Data is not null)
+        if (Data is null)
         {
-            foreach ((string Output, string Key) in Data.CommandKeys)
-            {
-                History.CommandKeys[Output] = Key;
-            }
+            return History;
+        }
 
-            foreach ((string Output, string Fingerprint) in Data.InputFingerprints)
-            {
-                History.InputFingerprints[Output] = Fingerprint;
-            }
+        int Dropped = LoadExisting(Data.CommandKeys, History.CommandKeys)
+            + LoadExisting(Data.InputFingerprints, History.InputFingerprints);
+
+        if (Dropped > 0)
+        {
+            // Marked dirty so the pruned form is written back, rather than orphans being reloaded and re-dropped each build.
+            History.bDirty = true;
+            Log.Verbose("Dropped {0} action history entries for outputs that no longer exist", Dropped);
         }
 
         return History;
+    }
+
+    private static int LoadExisting(Dictionary<string, string> Recorded, ConcurrentDictionary<string, string> Into)
+    {
+        int Dropped = 0;
+
+        foreach ((string Output, string Value) in Recorded)
+        {
+            if (PathUtils.IsMissingFile(Output))
+            {
+                Dropped++;
+                continue;
+            }
+
+            Into[Output] = Value;
+        }
+
+        return Dropped;
     }
 
     public void Save()

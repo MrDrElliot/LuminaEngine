@@ -27,8 +27,6 @@ namespace Lumina::DotNet
         FScriptReferenceSet Declared;     // kept so the generated project can name the packages rather than their DLLs
     };
 
-    FString Join(FStringView Left, FStringView Right);
-
     // A path the OS accepts, with native separators.
     FString NativePath(FStringView Path);
 

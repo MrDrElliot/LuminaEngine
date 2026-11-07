@@ -5,6 +5,7 @@
 #include "Containers/Span.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
+#include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Platform/Process/PlatformProcess.h"
 
@@ -16,17 +17,6 @@ namespace Lumina::DotNet
 {
     namespace
     {
-        FString JoinPath(FStringView A, FStringView B)
-        {
-            FString Result(A.GetData(), A.Len());
-            if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
-            {
-                Result += "/";
-            }
-            Result.Append(B.GetData(), B.Len());
-            return Result;
-        }
-
         bool IsAbsolutePath(FStringView Path)
         {
             if (Path.Len() >= 2 && Path[1] == ':')
@@ -42,6 +32,7 @@ namespace Lumina::DotNet
                 TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len()));
         }
 
+        // Not Paths::Normalize, which also collapses doubled slashes and so breaks a UNC prefix.
         FString Slashed(FStringView Path)
         {
             FString Result(Path.GetData(), Path.Len());
@@ -203,7 +194,7 @@ namespace Lumina::DotNet
                     {
                         for (const FString& Folder : Folders)
                         {
-                            const FString Candidate = JoinPath(Slashed(Folder), JoinPath(Relative, Asset.View()));
+                            const FString Candidate(Paths::Combine(Slashed(Folder), Relative, Asset));
                             if (Filesystem::Exists(Candidate))
                             {
                                 Out.Add(Candidate);
@@ -284,7 +275,7 @@ namespace Lumina::DotNet
                 continue;
             }
             const FStringView View = Entry.AsString();
-            Out.Assemblies.Add(IsAbsolutePath(View) ? Slashed(View) : Slashed(JoinPath(RootDir, View)));
+            Out.Assemblies.Add(IsAbsolutePath(View) ? Slashed(View) : Slashed(Paths::Combine(RootDir, View)));
         }
 
         return !Out.IsEmpty();
@@ -326,9 +317,9 @@ namespace Lumina::DotNet
 
             Filesystem::MakeDirectoryTree(RestoreDir);
 
-            const FString ProjectPath  = JoinPath(RestoreDir, FString(UnitName) + ".Packages.csproj");
-            const FString AssetsPath   = JoinPath(RestoreDir, "obj/project.assets.json");
-            const FString StampPath    = JoinPath(RestoreDir, "packages.stamp");
+            const FString ProjectPath(Paths::Combine(RestoreDir, FString(UnitName) + ".Packages.csproj"));
+            const FString AssetsPath(Paths::Combine(RestoreDir, "obj/project.assets.json"));
+            const FString StampPath(Paths::Combine(RestoreDir, "packages.stamp"));
             const FString Stamp        = PackageFingerprint(Declared);
 
             FString Previous;

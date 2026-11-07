@@ -284,10 +284,10 @@ namespace Lumina::DotNet
         // A packaged game ships the runtime in its data folder, so probe that before the install dir.
         const FString ExeDir = Paths::Parent(Platform::GetCurrentProcessPath());
 
-        FString Bundled = Join(Paths::GetGameDataDirectory(), FString("Runtime/") + RuntimeRid());
+        FString Bundled(Paths::Combine(Paths::GetGameDataDirectory(), "Runtime", RuntimeRid()));
         if (!Filesystem::Exists(Bundled))
         {
-            Bundled = Join(Paths::GetEngineInstallDirectory(), FString("External/DotNet/runtime/") + RuntimeRid());
+            Bundled = Paths::Combine(Paths::GetEngineInstallDirectory(), "External/DotNet/runtime", RuntimeRid());
         }
         if (!Filesystem::Exists(Bundled))
         {
@@ -297,7 +297,7 @@ namespace Lumina::DotNet
         Bundled = NativePath(Bundled);
 
         // Locate host/fxr/<version>/hostfxr.<ext> under the bundled root.
-        const FString FxrRoot  = Join(Bundled, "host/fxr");
+        const FString FxrRoot(Paths::Combine(Bundled, "host/fxr"));
         const FString FxrName  = FString(kSharedPrefix) + "hostfxr" + kSharedExt;
 
         FString HostfxrPath;
@@ -308,7 +308,7 @@ namespace Lumina::DotNet
                 return Filesystem::EVisit::Continue;
             }
 
-            FString Candidate = Join(Entry.FullPath, FxrName);
+            const FFixedString Candidate = Paths::Combine(Entry.FullPath, FxrName);
             if (!Filesystem::Exists(Candidate))
             {
                 return Filesystem::EVisit::Continue;
@@ -342,22 +342,22 @@ namespace Lumina::DotNet
 
         // Managed bootstrap, built next to the binaries by the LuminaSharp project.
         const FString ExePath    = NativePath(Platform::GetCurrentProcessPath());
-        const FString PackagedManagedDir = Join(Paths::GetGameDataDirectory(), "Managed");
-        const FString ManagedDir = Filesystem::Exists(Join(PackagedManagedDir, "LuminaSharp.dll"))
+        const FString PackagedManagedDir(Paths::Combine(Paths::GetGameDataDirectory(), "Managed"));
+        const FString ManagedDir = Filesystem::Exists(Paths::Combine(PackagedManagedDir, "LuminaSharp.dll"))
             ? PackagedManagedDir
-            : Join(ExeDir, "DotNet/Managed");
+            : FString(Paths::Combine(ExeDir, "DotNet/Managed"));
 
         // Loading from a shadow copy leaves the canonical output free for a packaging build to overwrite.
         FString LoadDir = ManagedDir;
     #if WITH_EDITOR
         {
-            const FString ShadowDir = Join(ExeDir, "DotNet/ManagedShadow");
+            const FString ShadowDir(Paths::Combine(ExeDir, "DotNet/ManagedShadow"));
 
             // Once per process: a runtime cannot unload, so a later start would rewrite files it still has mapped.
             static const bool bShadowCopied = CopyTreeBestEffort(ManagedDir, ShadowDir);
             if (bShadowCopied
-                && Filesystem::Exists(Join(ShadowDir, "LuminaSharp.dll"))
-                && Filesystem::Exists(Join(ShadowDir, "LuminaSharp.runtimeconfig.json")))
+                && Filesystem::Exists(Paths::Combine(ShadowDir, "LuminaSharp.dll"))
+                && Filesystem::Exists(Paths::Combine(ShadowDir, "LuminaSharp.runtimeconfig.json")))
             {
                 LoadDir = ShadowDir;
             }
@@ -368,8 +368,8 @@ namespace Lumina::DotNet
         }
     #endif
 
-        const FString BootstrapDll = NativePath(Join(LoadDir, "LuminaSharp.dll"));
-        const FString BootstrapCfg = NativePath(Join(LoadDir, "LuminaSharp.runtimeconfig.json"));
+        const FString BootstrapDll = NativePath(Paths::Combine(LoadDir, "LuminaSharp.dll"));
+        const FString BootstrapCfg = NativePath(Paths::Combine(LoadDir, "LuminaSharp.runtimeconfig.json"));
         if (!Filesystem::Exists(BootstrapDll) || !Filesystem::Exists(BootstrapCfg))
         {
             LOG_ERROR("C# scripting disabled: managed bootstrap missing under '{}'. Did LuminaSharp build?", LoadDir);

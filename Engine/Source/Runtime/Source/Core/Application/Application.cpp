@@ -123,12 +123,17 @@ namespace Lumina
             {
                 // Ahead of the event pump, so the mouse position this frame acts on is sampled after the
                 // block rather than before it. Waiting later costs a whole frame of input latency.
-                if (FRenderManager* RenderManager = TryRender())
+                FRenderManager* RenderManager = TryRender();
+                if (RenderManager)
                 {
                     RenderManager->WaitForFrameSlot();
                 }
 
                 MainWindow->ProcessMessages();
+                if (RenderManager)
+                {
+                    RenderManager->MarkInputRead();
+                }
                 FCoreDelegates::Get().OnInputPumped.Broadcast();
             }
 

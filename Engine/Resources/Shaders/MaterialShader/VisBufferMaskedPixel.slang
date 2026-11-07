@@ -32,9 +32,7 @@ bool MaskedVisKeep(FMaskedVertexOutput Input, bool bVoxelSplat)
     // A splat's mipped opacity is the share of its cards that block the view, so it takes the fully faded uniform threshold.
     const float  ViewDistance = bVoxelSplat ? max(length(ViewPosition), kHashFadeEnd) : length(ViewPosition);
     // Anchored in world space so the dithered edge holds still as the camera moves.
-    const float  ClipCutoff = HashedAlphaThreshold(WorldPosition, ViewDistance,
-                                                   GetMaterialOpacityClip(MaterialIndex));
-    return Material.Opacity >= ClipCutoff;
+    return MaskedAlphaKeep(WorldPosition, ViewDistance, Material.Opacity, GetMaterialOpacityClip(MaterialIndex), !bVoxelSplat);
 }
 
 [shader("fragment")]

@@ -114,11 +114,6 @@ namespace Lumina
 
         // Writes a gizmo-edited world frame back into the bone-relative offsets the asset stores.
 
-        // A viewport drag is one undo step: the snapshot is taken when the drag starts, not per frame,
-        // so scrubbing a handle across the viewport collapses to a single entry.
-        void BeginAssetTransaction(FName Name);
-        void EndAssetTransaction();
-
         // Closes whatever a drag left open when it is cut short (entering simulation, closing the tool)
         // rather than the mouse being released.
         void CloseOpenDragTransaction();

@@ -154,6 +154,7 @@ public static class Program
               -List                     List the discovered suites and where they live
               -Filter=<pattern>         Passed on as --gtest_filter
               -BuildOnly                Compile the suites without running them
+              -SuiteTimeoutSeconds=<n>  Kill and fail a suite that runs longer (default: 1800, 0 for none)
               -Benchmarks               Run the Benchmarks suites instead of the Tests ones
 
             Includes options (reads the graph the last build recorded):

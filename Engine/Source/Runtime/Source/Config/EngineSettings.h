@@ -342,6 +342,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Display", ClampMin = 0, ClampMax = 1000)
         int32 MaxFPS = 0;
 
+        // Waits for the previous frame's GPU work before reading input, trading GPU throughput for a frame less input latency when GPU-bound.
+        PROPERTY(Editable, Category = "Display")
+        bool bLowLatencyMode = false;
+
         void PostInitSettings() override;
 
         // Pushes PresentMode to the RHI, rebuilding the primary swapchain if one already exists.
@@ -474,6 +478,14 @@ namespace Lumina
         /** Edge-detection quality. Higher qualities detect more edges at higher GPU cost. */
         PROPERTY(Editable, Category = "Anti-Aliasing")
         ESMAAQuality SMAAQuality = ESMAAQuality::High;
+
+        // Lowers the edge threshold where depth jumps, so a silhouette against a similar color, such as grass over grass, is still smoothed.
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        bool bSMAADepthEdges = true;
+
+        // With no temporal resolve, sharpens resolved masked edges to about one pixel so hashed alpha dithers only that band, and keeps the plain hash where leaves are too small to resolve.
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        bool bSharpenedAlphaTest = true;
 
         // T2x history contribution. 0.5 is the true two-sample average; lower trades aliasing for less ghosting.
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 0.5f)

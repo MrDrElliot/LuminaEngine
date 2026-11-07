@@ -44,7 +44,7 @@ public sealed class DependencyCache
         foreach ((string Output, List<int> Indices) in Data.Dependencies)
         {
             // An output no longer on disk is rebuilt anyway, so freshness is unaffected, but orphaned entries accumulate.
-            if (!File.Exists(Output))
+            if (PathUtils.IsMissingFile(Output))
             {
                 Dropped++;
                 continue;

@@ -111,6 +111,9 @@ namespace Lumina
         // Called before input is pumped, so this longest wait in the frame does not count as input latency.
         void WaitForFrameSlot();
 
+        // Called right after the event pump, as the start of the input latency plots.
+        void MarkInputRead();
+
         // ImGui::NewFrame (and any other backend per-frame init).
         void FrameStart(const FUpdateContext& UpdateContext);
 
@@ -167,6 +170,9 @@ namespace Lumina
         // Runs once the slot's fence has been waited, which is when its copy is complete.
         void ResolveWindowCapture(uint8 FrameIndex);
 
+        // Runs once the slot's fence has been waited, which is when its frame finished on the GPU.
+        void PlotInputToGPUComplete(uint8 FrameIndex);
+
         #if USING(WITH_DEV_UI)
         IImGuiRenderer*                     ImGuiRenderer = nullptr;
         #endif
@@ -202,6 +208,11 @@ namespace Lumina
 
         // Set by WaitForFrameSlot, cleared by the FrameEnd that consumes it.
         bool                                bFrameSlotWaited = false;
+
+        // Zero means no read to measure, as in a headless or minimized frame.
+        double                              InputReadSeconds = 0.0;
+        // The read of the frame each slot last presented, cleared once its fence is waited.
+        double                              SlotInputReadSeconds[RHI::kFramesInFlight] = {};
 
         struct FInFlightWindowCapture
         {

@@ -54,7 +54,6 @@ groupshared uint gsBlockFlags[MESHLET_CULL_GROUP_SIZE];
 groupshared uint gsBlockStart[MESHLET_CULL_GROUP_SIZE + 1];
 groupshared uint gsBlockVisibleBits[MESHLET_CULL_GROUP_SIZE];
 groupshared FMeshletCullContext gsBlockContext[MESHLET_CULL_GROUP_SIZE];
-groupshared FCullView gsBlockView[MESHLET_CULL_GROUP_SIZE];
 
 // Inverts the dense prefix BuildMeshletCullArgs writes, since blocks are sparse across the arena.
 uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
@@ -215,7 +214,6 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
             Ctx.LODErrorMultiplier = Pass().SurfaceDescs.At(Ctx.SurfaceDescIndex).LODErrorMultiplier;
         }
         gsBlockContext[ThreadID] = Ctx;
-        gsBlockView[ThreadID]    = CullViews().GetAligned(ArgIdx / NumDraws);
     }
     if (ThreadID == 0u)
     {
@@ -249,7 +247,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
             if (bLate || bEmitPhase)
             {
                 const FMeshletCullContext Ctx = gsBlockContext[Owner];
-                const FCullView View          = gsBlockView[Owner];
+                // Blocks of a group nearly always share a view, so this load hits one address across the wave.
+                const FCullView View          = CullViews().GetAligned(KeepArg / NumDraws);
                 FMeshletBoundsCache Cache     = MakeMeshletBoundsCache();
 
                 // No Hi-Z in the early replay, since the late phase never re-emits what the early phase drew.

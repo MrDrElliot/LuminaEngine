@@ -28,6 +28,7 @@ namespace Lumina
         FString               LoadedPath;
         int64                 DocWriteTime = 0;   // last-seen .rml mtime, for hot-reload
         uint64                SeenUIFileChangeSerial = 0;
+        uint64                SeenUIReloadSerial = 0;
         int32                 ResourceID   = -1;  // global-heap id of Target, read by the gather
         bool                  bVisible     = true;// set by the render gather (frustum); gates Update/rasterize
         bool                  bRmlIdle     = false;// last Update reported no pending animation/transition (GetNextUpdateDelay infinite)
@@ -48,6 +49,7 @@ namespace Lumina
             LoadedPath   = Move(Other.LoadedPath);
             DocWriteTime = Other.DocWriteTime;
             SeenUIFileChangeSerial = Other.SeenUIFileChangeSerial;
+            SeenUIReloadSerial = Other.SeenUIReloadSerial;
             ResourceID   = Other.ResourceID;
             bVisible     = Other.bVisible;
             bRmlIdle     = Other.bRmlIdle;

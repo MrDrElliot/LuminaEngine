@@ -502,7 +502,7 @@ namespace Lumina::Platform
     }
 
     int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback,
-                                 uint32 TimeoutMilliseconds)
+                                 uint32 TimeoutMilliseconds, const FThreadStop* Stop)
     {
         if (!Executable)
         {
@@ -568,8 +568,11 @@ namespace Lumina::Platform
 
         PROCESS_INFORMATION pi{};
 
+        // Killing a batch file's cmd.exe leaves the tools it started running, so the child starts suspended and joins its own job first.
+        const HANDLE Job = CreateJobObjectW(nullptr, nullptr);
+
         // The editor is not a console app and output is captured, so suppress the popup.
-        const DWORD CreationFlags = CREATE_NO_WINDOW | (bHandleList ? EXTENDED_STARTUPINFO_PRESENT : 0);
+        const DWORD CreationFlags = CREATE_NO_WINDOW | CREATE_SUSPENDED | (bHandleList ? EXTENDED_STARTUPINFO_PRESENT : 0);
 
         BOOL ok = CreateProcessW(
             nullptr,
@@ -594,22 +597,18 @@ namespace Lumina::Platform
         if (!ok)
         {
             CloseHandle(ReadEnd);
+            if (Job != nullptr)
+            {
+                CloseHandle(Job);
+            }
             return -1;
         }
 
-        // Killing a stuck child closes its end of the pipe, which is what lets the blocking read below return.
-        FThread Watchdog;
-        if (TimeoutMilliseconds > 0)
-        {
-            const HANDLE Process = pi.hProcess;
-            Watchdog = FThread([Process, TimeoutMilliseconds]()
-            {
-                if (WaitForSingleObject(Process, TimeoutMilliseconds) == WAIT_TIMEOUT)
-                {
-                    TerminateProcess(Process, (UINT)ProcessTimedOutExitCode);
-                }
-            });
-        }
+        const bool bInJob = Job != nullptr && AssignProcessToJobObject(Job, pi.hProcess);
+        ResumeThread(pi.hThread);
+
+        const ULONGLONG Deadline = TimeoutMilliseconds > 0 ? GetTickCount64() + TimeoutMilliseconds : 0;
+        bool bKilled = false;
 
         FString Pending;
         TVector<char> ReadBuf(64 * 1024);
@@ -618,6 +617,24 @@ namespace Lumina::Platform
         // Done once the child exits and the pipe drains, since a grandchild like mspdbsrv can hold the write end open for minutes.
         for (;;)
         {
+            if (!bKilled && WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT)
+            {
+                const bool bTimedOut = Deadline != 0 && GetTickCount64() >= Deadline;
+                if (bTimedOut || (Stop != nullptr && Stop->ShouldStop()))
+                {
+                    const UINT KillCode = bTimedOut ? (UINT)ProcessTimedOutExitCode : 1u;
+                    if (bInJob)
+                    {
+                        TerminateJobObject(Job, KillCode);
+                    }
+                    else
+                    {
+                        TerminateProcess(pi.hProcess, KillCode);
+                    }
+                    bKilled = true;
+                }
+            }
+
             DWORD Available = 0;
             if (!PeekNamedPipe(ReadEnd, nullptr, 0, nullptr, &Available, nullptr))
             {
@@ -677,15 +694,15 @@ namespace Lumina::Platform
         CloseHandle(ReadEnd);
 
         WaitForSingleObject(pi.hProcess, INFINITE);
-        if (Watchdog.Joinable())
-        {
-            Watchdog.Join();
-        }
         DWORD ExitCode = 1;
         GetExitCodeProcess(pi.hProcess, &ExitCode);
 
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+        if (Job != nullptr)
+        {
+            CloseHandle(Job);
+        }
 
         return (int)ExitCode;
     }

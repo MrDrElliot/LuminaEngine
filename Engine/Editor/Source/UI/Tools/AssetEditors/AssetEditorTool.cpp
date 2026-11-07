@@ -137,6 +137,19 @@ namespace Lumina
         WirePropertyTableUndo(PropertyTable);
     }
 
+    void FAssetEditorTool::BeginAssetTransaction(FName Name)
+    {
+        FTransactionManager& Manager = GetTransactionManager();
+        Manager.BeginTransaction(Name);
+        Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Name));
+    }
+
+    void FAssetEditorTool::EndAssetTransaction()
+    {
+        // The command captures its after-image here and drops itself if nothing changed.
+        GetTransactionManager().CommitTransaction();
+    }
+
     void FAssetEditorTool::WirePropertyTableUndo(FPropertyTable& Table)
     {
         // The table often shows a graph node or another sub-object, so the snapshot follows what it shows.

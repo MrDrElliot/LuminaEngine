@@ -72,6 +72,21 @@ namespace Lumina::MCP
             { "LookDev Overhang",  &CPrimitiveManager::CubeMesh,     FVector3(2.5f, 0.55f, 0.0f),   FVector3(1.5f, 0.1f, 1.0f) },
         };
 
+        // Alpha-tested hedge pairs at three ranges, spread wider as they come nearer so GrassGrazing sees each one past the nearer ones.
+        struct FLookDevHedge
+        {
+            float Depth;
+            float HalfGap;
+        };
+        const FLookDevHedge kHedges[] = { { 20.0f, 6.5f }, { 30.0f, 4.5f }, { 45.0f, 2.0f } };
+        const FVector3 kHedgeScale(3.0f, 2.0f, 0.02f);
+        constexpr float kHedgeCenterY = 1.0f;
+
+        // The leaf pattern's mean opacity, which ordinary mips fade it to, a little under the default 0.333 clip, as sparse leaves are.
+        constexpr float kLeafMeanOpacity = 0.317f;
+        // The clip itself, which coverage-preserving mips fade it to so the alpha test keeps the leaves it passed up close.
+        constexpr float kLeafCoverageOpacity = 0.333f;
+
         const FVector3 kPointLightOffset(1.2f, 1.2f, 1.0f);
         const FVector3 kSpotLightOffset(-1.5f, 2.5f, 1.5f);
         const FVector3 kSpotLightTarget(-0.6f, 0.0f, 0.0f);
@@ -171,6 +186,50 @@ namespace Lumina::MCP
             return Material;
         }
 
+        // Leaf blobs in UV whose contrast fades as a cell shrinks to two pixels, the way a texture's mips do, toward SettleOpacity.
+        TStrongObjectPtr<CMaterial> MakeLeafMaterial(const char* Name, float SettleOpacity)
+        {
+            const FString Inputs = Lumina::Format(R"(
+    FMaterialPixelInputs Material = DefaultMaterialInputs();
+    float2 _LeafCells = UV0 * float2(160.0, 80.0);
+    float2 _LeafFootprint = (abs(UV0_DDX) + abs(UV0_DDY)) * float2(160.0, 80.0);
+    float _LeafDetail = saturate(1.0 - 2.0 * max(_LeafFootprint.x, _LeafFootprint.y));
+    float _LeafAlpha = saturate(2.0 * sin(6.2831853 * _LeafCells.x) * sin(6.2831853 * _LeafCells.y));
+    Material.Diffuse = float3(0.08, 0.25, 0.04);
+    Material.Roughness = 0.7;
+    Material.Opacity = lerp({:.3f}, _LeafAlpha, _LeafDetail);
+)", SettleOpacity);
+            TStrongObjectPtr<CMaterial> Material(CMaterial::CreateBuiltinMaterial(Name, Inputs, {}, EBlendMode::Masked));
+            if (Material.IsValid())
+            {
+                Material->RemoveFromRoot();
+            }
+            return Material;
+        }
+
+        void BuildHedges(FLookDevFixtureState& State, CWorld* World)
+        {
+            if (!State.MippedLeaves.IsValid())
+            {
+                State.MippedLeaves   = MakeLeafMaterial("LookDevLeavesMipped", kLeafMeanOpacity);
+                State.CoverageLeaves = MakeLeafMaterial("LookDevLeavesCoverage", kLeafCoverageOpacity);
+            }
+
+            for (const FLookDevHedge& Hedge : kHedges)
+            {
+                const auto Spawn = [&](const char* Name, float X, CMaterial* Material)
+                {
+                    const ECS::FEntity Entity = World->ConstructEntity(Name, FTransform(kOrigin + FVector3(X, kHedgeCenterY, Hedge.Depth), FVector3(0.0f), kHedgeScale));
+                    SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
+                    Mesh.SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());
+                    Mesh.SetMaterialAtSlot(Material, 0);
+                    State.Entities.Add(Entity);
+                };
+                Spawn("LookDev Leaves Mipped", -Hedge.HalfGap, State.MippedLeaves.Get());
+                Spawn("LookDev Leaves Coverage", Hedge.HalfGap, State.CoverageLeaves.Get());
+            }
+        }
+
         ECS::FEntity BuildTerrainPatch(CWorld* World, CMaterial* GrassMaterial)
         {
             const ECS::FEntity Entity = FTerrainEditMode::CreateDefaultTerrain(World);
@@ -231,7 +290,9 @@ namespace Lumina::MCP
                     }
                 }
             }
-            State = {};
+            State.World = nullptr;
+            State.Entities.Reset();
+            State.DisabledSuns.Reset();
         }
 
         void BuildFixture(const SLookDevBuildParams& In, FLookDevFixtureState& State, CWorld* World, CMaterial* GrassMaterial)
@@ -259,6 +320,7 @@ namespace Lumina::MCP
             }
 
             State.Entities.Add(BuildTerrainPatch(World, GrassMaterial));
+            BuildHedges(State, World);
 
             const ECS::FEntity Sun = World->ConstructEntity("LookDev Sun", FTransform(kOrigin + FVector3(0.0f, 5.0f, 0.0f)));
             World->EmplaceComponent<SDirectionalLightComponent>(Sun).Direction = SunDirection(In.SunElevationDegrees, In.SunAzimuthDegrees);

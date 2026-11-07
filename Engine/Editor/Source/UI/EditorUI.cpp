@@ -6,7 +6,6 @@
 #include <string>
 #include "Core/CoreEditorDelegates.h"
 #include "Tools/Screenshot/MovieCapture.h"
-#include "Play/StandaloneLauncher.h"
 #include <cfloat>
 #include <cstdlib>
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -707,6 +706,7 @@ namespace Lumina
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
+        StandaloneLauncher.Shutdown();
         FCoreEditorDelegates::OnAssetDeleted.Remove(AssetDeletedHandle);
         FObjectReferenceProviders::Unregister(this);
         CPrefab::SetLoadedWorldRefreshHook({});
@@ -1021,7 +1021,7 @@ namespace Lumina
         }
 
         // A standalone launch waiting on its build finishes here, on the thread that may spawn it.
-        FStandaloneLauncher::Tick();
+        StandaloneLauncher.Tick();
 
         // The registry has to be populated before a GUID resolves, and focus wants a live ImGui frame.
         if (bSessionRestorePending)

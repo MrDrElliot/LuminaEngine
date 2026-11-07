@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 using LuminaBuildTool.Graph;
 using LuminaBuildTool.Platform;
 using LuminaBuildTool.Rules;
@@ -10,6 +11,8 @@ namespace LuminaBuildTool.Modes;
 // Builds and runs the test suites discovered beside modules, one binary per module.
 public static class TestMode
 {
+    private const int DefaultSuiteTimeoutSeconds = 1800;
+
     public static async Task<int> RunAsync(CommandLine Arguments, BuildDirectories Directories, CancellationToken Cancellation)
     {
         RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
@@ -146,6 +149,8 @@ public static class TestMode
 
         SuiteArguments.AddRange(Arguments.ForwardedArguments);
 
+        TimeSpan SuiteTimeout = TimeSpan.FromSeconds(Arguments.GetInt("SuiteTimeoutSeconds", DefaultSuiteTimeoutSeconds));
+
         List<string> Failed = new();
 
         foreach (TestSuite Suite in Suites)
@@ -171,7 +176,7 @@ public static class TestMode
                 .Select(M => M.OutputDirectory));
             string LibraryPath = string.Join(Path.PathSeparator, SearchDirectories.Distinct(StringComparer.OrdinalIgnoreCase));
 
-            if (await LaunchAsync(Executable, SuiteArguments, LibraryPath, Cancellation).ConfigureAwait(false) != 0)
+            if (await LaunchAsync(Suite.SuiteName, Executable, SuiteArguments, LibraryPath, SuiteTimeout, Cancellation).ConfigureAwait(false) != 0)
             {
                 Failed.Add(Suite.SuiteName);
             }
@@ -188,7 +193,12 @@ public static class TestMode
     }
 
     private static async Task<int> LaunchAsync(
-        string Executable, IReadOnlyList<string> LaunchArguments, string LibrarySearchPath, CancellationToken Cancellation)
+        string SuiteName,
+        string Executable,
+        IReadOnlyList<string> LaunchArguments,
+        string LibrarySearchPath,
+        TimeSpan Timeout,
+        CancellationToken Cancellation)
     {
         Cancellation.ThrowIfCancellationRequested();
 
@@ -221,14 +231,27 @@ public static class TestMode
                 return 1;
             }
 
+            using CancellationTokenSource Deadline = CancellationTokenSource.CreateLinkedTokenSource(Cancellation);
+            if (Timeout > TimeSpan.Zero)
+            {
+                Deadline.CancelAfter(Timeout);
+            }
+
             try
             {
-                await Runner.WaitForExitAsync(Cancellation).ConfigureAwait(false);
+                await Runner.WaitForExitAsync(Deadline.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                Runner.Kill(entireProcessTree: true);
-                throw;
+                ProcessRunner.TryKill(Runner);
+
+                if (Cancellation.IsCancellationRequested)
+                {
+                    throw;
+                }
+
+                Log.Error("Test suite '{0}' timed out after {1}s and was killed.", SuiteName, Timeout.TotalSeconds);
+                return 1;
             }
 
             // Ctrl+C on the shared console can end the suite before the cancel handler runs.

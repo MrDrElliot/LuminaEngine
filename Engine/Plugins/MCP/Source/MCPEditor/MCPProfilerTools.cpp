@@ -108,6 +108,174 @@ namespace Lumina::MCP
         return Ranked;
     }
 
+    void AddTracyEventLine(FStringView Line, FProfilerZoneEvents& Out)
+    {
+        using MCPProfilerToolsInternal::ProfilerNumber;
+        if (Out.bHeaderPending)
+        {
+            Out.bHeaderPending = false;
+            return;
+        }
+
+        const TVector<FStringView> Fields = SplitProfilerFields(Line);
+        if (Fields.Num() < 6)
+        {
+            return;
+        }
+
+        const FString Name(Fields[0].GetData(), Fields[0].Len());
+        auto Found = Out.NameIds.Find(Name);
+        if (Found == nullptr)
+        {
+            Found = &Out.NameIds.FindOrAdd(Name, Out.Names.Num());
+            Out.Names.Add(Name);
+        }
+
+        FProfilerZoneEvent& Event = Out.Events.EmplaceGetRef();
+        Event.Name = (*Found);
+        Event.Start = (int64)ProfilerNumber(Fields[3]);
+        Event.Duration = (int64)ProfilerNumber(Fields[4]);
+        Event.Thread = (int32)ProfilerNumber(Fields[5]);
+    }
+
+    namespace MCPProfilerToolsInternal
+    {
+        void RankHitchZones(const THashMap<int32, SProfilerHitchZone>& Totals, int32 Top, TVector<SProfilerHitchZone>& Out)
+        {
+            for (const auto& [Id, Zone] : Totals)
+            {
+                Out.Add(Zone);
+            }
+            Algo::Sort(Out, [](const SProfilerHitchZone& A, const SProfilerHitchZone& B) { return A.SelfMs > B.SelfMs; });
+            if (Out.Num() > Top)
+            {
+                Out.SetNum(Top);
+            }
+        }
+    }
+
+    Agent::FToolResult AnalyzeProfilerHitches(FProfilerZoneEvents& Zones, const SProfilerReportParams& In, SProfilerHitchResult& Out)
+    {
+        using namespace MCPProfilerToolsInternal;
+        TVector<FProfilerZoneEvent>& Events = Zones.Events;
+        const auto FrameName = Zones.NameIds.Find(FString(TracyFrameZone));
+        if (FrameName == nullptr)
+        {
+            return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to find frames by.", Out.CaptureFile, TracyFrameZone));
+        }
+
+        // Parents sort before the children they contain, which is what the self-time pass below walks.
+        Algo::Sort(Events, [](const FProfilerZoneEvent& A, const FProfilerZoneEvent& B)
+        {
+            if (A.Thread != B.Thread) { return A.Thread < B.Thread; }
+            if (A.Start != B.Start) { return A.Start < B.Start; }
+            return A.Duration > B.Duration;
+        });
+
+        TVector<int32> Open;
+        for (int32 Index = 0; Index < Events.Num(); ++Index)
+        {
+            FProfilerZoneEvent& Event = Events[Index];
+            Event.Self = Event.Duration;
+            while (!Open.IsEmpty())
+            {
+                const FProfilerZoneEvent& Parent = Events[Open.Last()];
+                if (Parent.Thread == Event.Thread && Event.Start < Parent.Start + Parent.Duration)
+                {
+                    break;
+                }
+                Open.Pop();
+            }
+            if (!Open.IsEmpty())
+            {
+                Events[Open.Last()].Self -= Event.Duration;
+            }
+            Open.Add(Index);
+        }
+
+        TVector<int32> Frames;
+        int64 FirstStart = INT64_MAX;
+        for (int32 Index = 0; Index < Events.Num(); ++Index)
+        {
+            FirstStart = Math::Min(FirstStart, Events[Index].Start);
+            if (Events[Index].Name == (*FrameName))
+            {
+                Frames.Add(Index);
+            }
+        }
+
+        if (Frames.Num() < 2)
+        {
+            return Agent::FToolResult::Error("The trace recorded no whole frames.");
+        }
+
+        // A frame lasts until the next one starts, so a stall on the GPU fence outside the frame zone still counts.
+        for (int32 Slot = 0; Slot + 1 < Frames.Num(); ++Slot)
+        {
+            Events[Frames[Slot]].Duration = Events[Frames[Slot + 1]].Start - Events[Frames[Slot]].Start;
+        }
+        // No next frame marks where the last one ends, so it would read short.
+        Frames.Pop();
+
+        TVector<float> Sorted;
+        for (int32 Index : Frames)
+        {
+            Sorted.Add((float)(Events[Index].Duration / 1.0e6));
+        }
+        Algo::Sort(Sorted, [](float A, float B) { return A < B; });
+        Out.Frames = Sorted.Num();
+        Out.MedianFrameMs = Sorted[Sorted.Num() / 2];
+        Out.P99FrameMs = Sorted[Math::Min(Sorted.Num() - 1, static_cast<int32>((float)Sorted.Num() * 0.99f))];
+        Out.ThresholdMs = In.ThresholdMs > 0.0f ? In.ThresholdMs : Math::Max(Out.MedianFrameMs * 2.0f, Out.MedianFrameMs + 8.0f);
+
+        TVector<int32> Slow;
+        for (int32 Index : Frames)
+        {
+            if ((float)(Events[Index].Duration / 1.0e6) > Out.ThresholdMs)
+            {
+                Slow.Add(Index);
+            }
+        }
+        Out.HitchCount = Slow.Num();
+        Algo::Sort(Slow, [&Events](int32 A, int32 B) { return Events[A].Duration > Events[B].Duration; });
+        if (Slow.Num() > Math::Max(In.MaxHitches, 0))
+        {
+            Slow.SetNum(Math::Max(In.MaxHitches, 0));
+        }
+
+        const int32 Top = Math::Clamp(In.TopZones, 1, 50);
+        for (int32 FrameIndex : Slow)
+        {
+            const FProfilerZoneEvent& Frame = Events[FrameIndex];
+            const int64 End = Frame.Start + Frame.Duration;
+            THashMap<int32, SProfilerHitchZone> Game;
+            THashMap<int32, SProfilerHitchZone> Workers;
+            for (const FProfilerZoneEvent& Event : Events)
+            {
+                if (Event.Start < Frame.Start || Event.Start >= End || Event.Self <= 0)
+                {
+                    continue;
+                }
+                THashMap<int32, SProfilerHitchZone>& Into = Event.Thread == Frame.Thread ? Game : Workers;
+                SProfilerHitchZone& Zone = Into.FindOrAdd(Event.Name);
+                Zone.Name = Zones.Names[Event.Name];
+                Zone.SelfMs += (float)(Event.Self / 1.0e6);
+                Zone.Count += 1;
+            }
+
+            SProfilerHitch& Hitch = Out.Hitches.EmplaceGetRef();
+            Hitch.AtSeconds = (float)((Frame.Start - FirstStart) / 1.0e9);
+            Hitch.FrameMs = (float)(Frame.Duration / 1.0e6);
+            RankHitchZones(Game, Top, Hitch.GameThread);
+            RankHitchZones(Workers, Top, Hitch.Workers);
+        }
+
+        return Agent::FToolResult::Ok(Lumina::Format(
+            "{} frames, median {:.2f} ms, p99 {:.2f} ms. {} over {:.1f} ms{}.",
+            Out.Frames, Out.MedianFrameMs, Out.P99FrameMs, Out.HitchCount, Out.ThresholdMs,
+            Out.Hitches.IsEmpty() ? FString() : Lumina::Format(", the worst {:.1f} ms", Out.Hitches[0].FrameMs)));
+    }
+
     namespace MCPProfilerToolsInternal
     {
 
@@ -348,29 +516,6 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Message);
         }
 
-        // One zone event from an unwrapped export, with its name interned.
-        struct FProfilerZoneEvent
-        {
-            int64 Start = 0;
-            int64 Duration = 0;
-            int64 Self = 0;
-            int32 Name = 0;
-            int32 Thread = 0;
-        };
-
-        void RankHitchZones(const THashMap<int32, SProfilerHitchZone>& Totals, int32 Top, TVector<SProfilerHitchZone>& Out)
-        {
-            for (const auto& [Id, Zone] : Totals)
-            {
-                Out.Add(Zone);
-            }
-            Algo::Sort(Out, [](const SProfilerHitchZone& A, const SProfilerHitchZone& B) { return A.SelfMs > B.SelfMs; });
-            if (Out.Num() > Top)
-            {
-                Out.SetNum(Top);
-            }
-        }
-
         Agent::FToolResult FindProfilerHitches(const SProfilerReportParams& In, SProfilerHitchResult& Out)
         {
             Out.CaptureFile = In.CaptureFile;
@@ -385,158 +530,18 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error("No trace to read; record one with profiler.capture or pass CaptureFile.");
             }
 
-            THashMap<FString, int32> NameIds;
-            TVector<FString> Names;
-            TVector<FProfilerZoneEvent> Events;
-            bool bHeader = true;
+            FProfilerZoneEvents Zones;
             FString ExportLine;
             const bool bExported = RunTracyTool(TracyToolPath("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", TracySeparator, Out.CaptureFile), [&](FStringView Line)
             {
                 ExportLine = FString(Line.GetData(), Line.Len());
-                if (bHeader)
-                {
-                    bHeader = false;
-                    return;
-                }
-
-                const TVector<FStringView> Fields = SplitProfilerFields(Line);
-                if (Fields.Num() < 6)
-                {
-                    return;
-                }
-
-                const FString Name(Fields[0].GetData(), Fields[0].Len());
-                auto Found = NameIds.Find(Name);
-                if (Found == nullptr)
-                {
-                    Found = &NameIds.FindOrAdd(Name, Names.Num());
-                    Names.Add(Name);
-                }
-
-                FProfilerZoneEvent& Event = Events.EmplaceGetRef();
-                Event.Name = (*Found);
-                Event.Start = (int64)ProfilerNumber(Fields[3]);
-                Event.Duration = (int64)ProfilerNumber(Fields[4]);
-                Event.Thread = (int32)ProfilerNumber(Fields[5]);
+                AddTracyEventLine(Line, Zones);
             }, TracyUnwrapTimeoutMs);
             if (!bExported)
             {
                 return TracyExportFailed(Out.CaptureFile, ExportLine);
             }
-
-            const auto FrameName = NameIds.Find(FString(TracyFrameZone));
-            if (FrameName == nullptr)
-            {
-                return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to find frames by.", Out.CaptureFile, TracyFrameZone));
-            }
-
-            // Parents sort before the children they contain, which is what the self-time pass below walks.
-            Algo::Sort(Events, [](const FProfilerZoneEvent& A, const FProfilerZoneEvent& B)
-            {
-                if (A.Thread != B.Thread) { return A.Thread < B.Thread; }
-                if (A.Start != B.Start) { return A.Start < B.Start; }
-                return A.Duration > B.Duration;
-            });
-
-            TVector<int32> Open;
-            for (int32 Index = 0; Index < Events.Num(); ++Index)
-            {
-                FProfilerZoneEvent& Event = Events[Index];
-                Event.Self = Event.Duration;
-                while (!Open.IsEmpty())
-                {
-                    const FProfilerZoneEvent& Parent = Events[Open.Last()];
-                    if (Parent.Thread == Event.Thread && Event.Start < Parent.Start + Parent.Duration)
-                    {
-                        break;
-                    }
-                    Open.Pop();
-                }
-                if (!Open.IsEmpty())
-                {
-                    Events[Open.Last()].Self -= Event.Duration;
-                }
-                Open.Add(Index);
-            }
-
-            TVector<int32> Frames;
-            int64 FirstStart = INT64_MAX;
-            for (int32 Index = 0; Index < Events.Num(); ++Index)
-            {
-                FirstStart = Math::Min(FirstStart, Events[Index].Start);
-                if (Events[Index].Name == (*FrameName))
-                {
-                    Frames.Add(Index);
-                }
-            }
-            if (Frames.IsEmpty())
-            {
-                return Agent::FToolResult::Error("The trace recorded no whole frames.");
-            }
-
-            // A frame lasts until the next one starts, so a stall on the GPU fence outside the frame zone still counts.
-            for (int32 Slot = 0; Slot + 1 < Frames.Num(); ++Slot)
-            {
-                Events[Frames[Slot]].Duration = Events[Frames[Slot + 1]].Start - Events[Frames[Slot]].Start;
-            }
-
-            TVector<float> Sorted;
-            for (int32 Index : Frames)
-            {
-                Sorted.Add((float)(Events[Index].Duration / 1.0e6));
-            }
-            Algo::Sort(Sorted, [](float A, float B) { return A < B; });
-            Out.Frames = Sorted.Num();
-            Out.MedianFrameMs = Sorted[Sorted.Num() / 2];
-            Out.P99FrameMs = Sorted[Math::Min(Sorted.Num() - 1, static_cast<int32>((float)Sorted.Num() * 0.99f))];
-            Out.ThresholdMs = In.ThresholdMs > 0.0f ? In.ThresholdMs : Math::Max(Out.MedianFrameMs * 2.0f, Out.MedianFrameMs + 8.0f);
-
-            TVector<int32> Slow;
-            for (int32 Index : Frames)
-            {
-                if ((float)(Events[Index].Duration / 1.0e6) > Out.ThresholdMs)
-                {
-                    Slow.Add(Index);
-                }
-            }
-            Out.HitchCount = Slow.Num();
-            Algo::Sort(Slow, [&Events](int32 A, int32 B) { return Events[A].Duration > Events[B].Duration; });
-            if (Slow.Num() > Math::Max(In.MaxHitches, 0))
-            {
-                Slow.SetNum(Math::Max(In.MaxHitches, 0));
-            }
-
-            const int32 Top = Math::Clamp(In.TopZones, 1, 50);
-            for (int32 FrameIndex : Slow)
-            {
-                const FProfilerZoneEvent& Frame = Events[FrameIndex];
-                const int64 End = Frame.Start + Frame.Duration;
-                THashMap<int32, SProfilerHitchZone> Game;
-                THashMap<int32, SProfilerHitchZone> Workers;
-                for (const FProfilerZoneEvent& Event : Events)
-                {
-                    if (Event.Start < Frame.Start || Event.Start >= End || Event.Self <= 0)
-                    {
-                        continue;
-                    }
-                    THashMap<int32, SProfilerHitchZone>& Into = Event.Thread == Frame.Thread ? Game : Workers;
-                    SProfilerHitchZone& Zone = Into.FindOrAdd(Event.Name);
-                    Zone.Name = Names[Event.Name];
-                    Zone.SelfMs += (float)(Event.Self / 1.0e6);
-                    Zone.Count += 1;
-                }
-
-                SProfilerHitch& Hitch = Out.Hitches.EmplaceGetRef();
-                Hitch.AtSeconds = (float)((Frame.Start - FirstStart) / 1.0e9);
-                Hitch.FrameMs = (float)(Frame.Duration / 1.0e6);
-                RankHitchZones(Game, Top, Hitch.GameThread);
-                RankHitchZones(Workers, Top, Hitch.Workers);
-            }
-
-            return Agent::FToolResult::Ok(Lumina::Format(
-                "{} frames, median {:.2f} ms, p99 {:.2f} ms. {} over {:.1f} ms{}.",
-                Out.Frames, Out.MedianFrameMs, Out.P99FrameMs, Out.HitchCount, Out.ThresholdMs,
-                Out.Hitches.IsEmpty() ? FString() : Lumina::Format(", the worst {:.1f} ms", Out.Hitches[0].FrameMs)));
+            return AnalyzeProfilerHitches(Zones, In, Out);
         }
 
         Agent::FToolResult CaptureProfile(const SProfilerCaptureParams& In, SProfilerCaptureResult& Out)

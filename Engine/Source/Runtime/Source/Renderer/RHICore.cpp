@@ -514,6 +514,34 @@ namespace Lumina::RHI
         return GCore.LastTransientDemand;
     }
 
+    // Every queue that submitted into this slot, not just the last one to do so.
+    static void WaitSlotFence(uint32 Slot)
+    {
+        for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
+        {
+            const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
+            if (WaitValue != 0)
+            {
+                WaitSemaphore(GCore.QueueTimeline[QueueIndex], WaitValue);
+                GCore.SlotWaitValue[Slot][QueueIndex] = 0;
+            }
+        }
+    }
+
+    void WaitForSlotGPU(uint32 SlotIndex)
+    {
+        if (!GCore.bInitialized)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("RHI::WaitForSlotGPU", tracy::Color::Crimson);
+
+        // The async present submits the slot's last graphics value, so it must have run before that value is read.
+        WaitPendingPresent();
+        WaitSlotFence(SlotIndex % kFramesInFlight);
+    }
+
     void BeginFrame(uint32 SlotIndex)
     {
         if (!GCore.bInitialized)
@@ -528,17 +556,7 @@ namespace Lumina::RHI
         {
             // Present writes this slot's last value, so the wait absorbs display pacing too.
             LUMINA_PROFILE_SECTION_COLORED("RHI::SlotFence (GPU/Present)", tracy::Color::Crimson);
-
-            // Every queue that submitted into this slot, not just the last one to do so.
-            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
-            {
-                const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
-                if (WaitValue != 0)
-                {
-                    WaitSemaphore(GCore.QueueTimeline[QueueIndex], WaitValue);
-                    GCore.SlotWaitValue[Slot][QueueIndex] = 0;
-                }
-            }
+            WaitSlotFence(Slot);
         }
         
         RHI::ApplyDeferredHeapWrites(Slot);

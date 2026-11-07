@@ -737,6 +737,10 @@ namespace Lumina
         PhysicsScene->SetPreStepCallback([this](float FixedDeltaTime)
         {
             EntityScripts::TickFixed(EntityRegistry, FixedDeltaTime);
+        }, [this]
+        {
+            const auto Scripts = EntityRegistry.FindStorage<SEntityScriptComponent>();
+            return Scripts && !Scripts->IsEmpty();
         });
     }
 

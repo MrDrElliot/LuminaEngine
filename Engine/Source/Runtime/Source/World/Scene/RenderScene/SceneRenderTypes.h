@@ -1556,7 +1556,8 @@ namespace Lumina
         // Geometric specular antialiasing, off while the variance scale is zero.
         float           SpecularAAVariance  = 0.0f;
         float           SpecularAAThreshold = 0.0f;
-        uint32          _PadFogParams     = 0;
+        // Masked materials sharpen resolved alpha edges ahead of the hash, only while no temporal resolve runs.
+        uint32          bSharpenedAlphaTest      = 0;
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};
@@ -1582,7 +1583,7 @@ namespace Lumina
     static_assert(offsetof(FSceneGlobalData, Weather) % 16 == 0, "Weather must follow DBufferDIndex with no C++ padding.");
     // alignas(16) here but 4-byte aligned in scalar layout, so C++ must not pad in front of it, which the 16 check alone cannot see.
     static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0 &&
-                  offsetof(FSceneGlobalData, FogParams) == offsetof(FSceneGlobalData, _PadFogParams) + sizeof(FSceneGlobalData::_PadFogParams),
+                  offsetof(FSceneGlobalData, FogParams) == offsetof(FSceneGlobalData, bSharpenedAlphaTest) + sizeof(FSceneGlobalData::bSharpenedAlphaTest),
                   "FogParams must follow the field before it with no C++ padding, since the shader's scalar layout has none.");
 
     struct FMeshPass

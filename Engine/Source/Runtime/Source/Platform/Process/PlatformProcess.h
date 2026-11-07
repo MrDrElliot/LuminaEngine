@@ -6,6 +6,10 @@
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
+namespace Lumina
+{
+    class FThreadStop;
+}
 
 namespace Lumina::Platform
 {
@@ -38,11 +42,9 @@ namespace Lumina::Platform
     // Synchronously run a command line in its own console window; blocks, returns the exit code (-1 if spawn failed).
     RUNTIME_API int RunProcessAndWait(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory = nullptr);
 
-    // Like RunProcessAndWait but no console; merged stdout+stderr stream back via LineCallback, one line per call.
-    // Callback runs on the calling thread (safe for lockless UI updates); returns the exit code (-1 if spawn failed).
-    // A process still running after TimeoutMilliseconds is killed and reports ProcessTimedOutExitCode; zero waits as long as it takes.
+    // No console, each merged output line goes to LineCallback on the calling thread, and a timeout (ProcessTimedOutExitCode) or a raised Stop kills the whole process tree.
     RUNTIME_API int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback,
-                                             uint32 TimeoutMilliseconds = 0);
+                                             uint32 TimeoutMilliseconds = 0, const FThreadStop* Stop = nullptr);
 
     inline constexpr int ProcessTimedOutExitCode = 124;
 

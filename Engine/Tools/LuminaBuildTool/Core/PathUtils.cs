@@ -59,6 +59,12 @@ public static class PathUtils
         return string.Equals(Normalize(Left), Normalize(Right), StringComparison.OrdinalIgnoreCase);
     }
 
+    // Keys that are not rooted paths, such as Reflection/<Target>, name no file and never count as missing.
+    public static bool IsMissingFile(string RecordKey)
+    {
+        return Path.IsPathRooted(RecordKey) && !File.Exists(RecordKey);
+    }
+
     public static bool IsUnder(string CandidatePath, string DirectoryPath)
     {
         string Candidate = Normalize(CandidatePath);

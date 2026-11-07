@@ -12,7 +12,6 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/Transactions/EditorTransaction.h"
-#include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
@@ -505,18 +504,6 @@ namespace Lumina
                 SampleTable->MarkDirty();
             }
         }
-    }
-
-    void FBlendSpaceEditorTool::BeginAssetTransaction(FName Name)
-    {
-        FTransactionManager& Manager = GetTransactionManager();
-        Manager.BeginTransaction(Name);
-        Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Name));
-    }
-
-    void FBlendSpaceEditorTool::EndAssetTransaction()
-    {
-        GetTransactionManager().CommitTransaction();
     }
 
     void FBlendSpaceEditorTool::DrawGridWindow()

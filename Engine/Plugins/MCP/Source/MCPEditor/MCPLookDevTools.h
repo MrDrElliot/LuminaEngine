@@ -11,6 +11,8 @@
 
 namespace Lumina
 {
+    class CMaterial;
+
     REFLECT()
     struct MCPEDITOR_API SLookDevBuildParams
     {
@@ -80,6 +82,10 @@ namespace Lumina
 
             // Suns that were lit before the build, turned off so the renderer picks the fixture's own.
             TVector<ECS::FEntity> DisabledSuns;
+
+            // Compiled once and kept across rebuilds, since a builtin material's name can be taken only once.
+            TStrongObjectPtr<CMaterial> MippedLeaves;
+            TStrongObjectPtr<CMaterial> CoverageLeaves;
         };
 
         MCPEDITOR_API void RegisterLookDevTools(FStringView Owner);

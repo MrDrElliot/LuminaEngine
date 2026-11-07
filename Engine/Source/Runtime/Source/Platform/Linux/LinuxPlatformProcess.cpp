@@ -245,8 +245,11 @@ namespace Lumina::Platform
             const TVector<FString>& Arguments,
             const TCHAR* WorkingDirectory,
             const TFunction<void(FStringView)>* LineCallback,
-            uint32 TimeoutMilliseconds = 0)
+            uint32 TimeoutMilliseconds = 0,
+            const FThreadStop* Stop = nullptr)
         {
+            const bool bCanKill = TimeoutMilliseconds > 0 || Stop != nullptr;
+
             int Pipe[2] = { -1, -1 };
 
             if (LineCallback != nullptr && ::pipe2(Pipe, O_CLOEXEC) != 0)
@@ -273,10 +276,20 @@ namespace Lumina::Platform
             TVector<FString> Storage;
             TVector<char*> Argv = BuildArgv(Program, Arguments, Storage);
 
+            // Its own process group, so a kill reaches everything a script started.
+            posix_spawnattr_t Attributes;
+            posix_spawnattr_init(&Attributes);
+            if (bCanKill)
+            {
+                posix_spawnattr_setflags(&Attributes, POSIX_SPAWN_SETPGROUP);
+                posix_spawnattr_setpgroup(&Attributes, 0);
+            }
+
             pid_t Child = -1;
-            const int SpawnResult = ::posix_spawn(&Child, *Program, &Actions, nullptr, Argv.GetData(), environ);
+            const int SpawnResult = ::posix_spawn(&Child, *Program, &Actions, &Attributes, Argv.GetData(), environ);
 
             posix_spawn_file_actions_destroy(&Actions);
+            posix_spawnattr_destroy(&Attributes);
 
             if (SpawnResult != 0)
             {
@@ -294,14 +307,22 @@ namespace Lumina::Platform
             // Killing a stuck child closes its end of the pipe, which is what lets the blocking read below return.
             std::atomic<bool> bTimedOut = false;
             FThread Watchdog;
-            if (TimeoutMilliseconds > 0)
+            if (bCanKill)
             {
-                Watchdog = FThread([Child, TimeoutMilliseconds, &bTimedOut](const FThreadStop& Reaped)
+                Watchdog = FThread([Child, TimeoutMilliseconds, Stop, &bTimedOut](const FThreadStop& Reaped)
                 {
-                    if (!Reaped.WaitForStop(TimeoutMilliseconds))
+                    constexpr uint32 StopPollMilliseconds = 50;
+                    uint32 Waited = 0;
+                    while (!Reaped.WaitForStop(StopPollMilliseconds))
                     {
-                        bTimedOut = true;
-                        ::kill(Child, SIGKILL);
+                        Waited += StopPollMilliseconds;
+                        const bool bExpired = TimeoutMilliseconds > 0 && Waited >= TimeoutMilliseconds;
+                        if (bExpired || (Stop != nullptr && Stop->ShouldStop()))
+                        {
+                            bTimedOut = bExpired;
+                            ::kill(-Child, SIGKILL);
+                            return;
+                        }
                     }
                 });
             }
@@ -749,14 +770,15 @@ namespace Lumina::Platform
         const TCHAR* Params,
         const TCHAR* WorkingDirectory,
         const TFunction<void(FStringView)>& LineCallback,
-        uint32 TimeoutMilliseconds)
+        uint32 TimeoutMilliseconds,
+        const FThreadStop* Stop)
     {
         if (Executable == nullptr)
         {
             return -1;
         }
 
-        return SpawnAndWait(FString(Executable), TokenizeArguments(Params), WorkingDirectory, &LineCallback, TimeoutMilliseconds);
+        return SpawnAndWait(FString(Executable), TokenizeArguments(Params), WorkingDirectory, &LineCallback, TimeoutMilliseconds, Stop);
     }
 
 

@@ -41,6 +41,9 @@ namespace Lumina::RHI
     // Exported so a host without the engine's frame loop, RHITests or a dedicated server, can drive the ring.
     RUNTIME_API void BeginFrame(uint32 SlotIndex);
 
+    // Blocks until all GPU work submitted into the slot, its present included, has finished.
+    void WaitForSlotGPU(uint32 SlotIndex);
+
     // Returns the value signaled on GetQueueTimeline(Queue); never reset a submitted list, since the frame ring recycles it.
     RUNTIME_API uint64 Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {});
 

@@ -83,10 +83,8 @@ void SMAANeighborhoodBlendingOffsets(float2 texcoord, out float4 offset)
     offset = SMAA_mad(SMAA_RT_METRICS.xyxy, float4(1.0, 0.0, 0.0, 1.0), texcoord.xyxy);
 }
 
-float2 SMAALumaEdgeDetectionPS(float2 texcoord, float4 offset[3], SMAATex colorTex, float thresholdScalar)
+float2 SMAALumaEdgeDetectionPS(float2 texcoord, float4 offset[3], SMAATex colorTex, float2 threshold)
 {
-    float2 threshold = float2(thresholdScalar, thresholdScalar);
-
     static const float3 weights = float3(0.2126, 0.7152, 0.0722);
     float L = dot(colorTex.Sample(texcoord).rgb, weights);
 

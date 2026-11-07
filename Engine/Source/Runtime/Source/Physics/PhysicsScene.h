@@ -326,8 +326,12 @@ namespace Lumina::Physics
         virtual void PreUpdate() = 0;
         virtual void Update(double DeltaTime) = 0;
 
-        // Runs before each solver step, the only place a force survives the accumulator reset.
-        void SetPreStepCallback(TFunction<void(float)> Callback) { PreStepCallback = Move(Callback); }
+        // Runs before each solver step, the only place a force survives the accumulator reset. ReadsTransforms says whether it reads entity transforms.
+        void SetPreStepCallback(TFunction<void(float)> Callback, TFunction<bool()> ReadsTransforms)
+        {
+            PreStepCallback = Move(Callback);
+            PreStepReadsTransforms = Move(ReadsTransforms);
+        }
 
         // Runs around every fixed character step, after input is latched, so netcode can record or replace it.
         void SetCharacterStepHook(TFunction<void(float, bool)> Hook) { CharacterStepHook = Move(Hook); }
@@ -382,6 +386,7 @@ namespace Lumina::Physics
     protected:
 
         TFunction<void(float)> PreStepCallback;
+        TFunction<bool()> PreStepReadsTransforms;
         TFunction<void(float, bool)> CharacterStepHook;
         bool bDebugDraw = false;
     };

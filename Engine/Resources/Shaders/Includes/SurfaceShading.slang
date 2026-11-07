@@ -1124,9 +1124,7 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     if (HasFlag(MatFlags, MatFlag_Masked))
     {
         const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-        const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
-                                                       GetMaterialOpacityClip(Input.MaterialIndex));
-        if (Material.Opacity < ClipCutoff)
+        if (!MaskedAlphaKeep(ClipAnchor, length(Input.FragPos.xyz), Material.Opacity, GetMaterialOpacityClip(Input.MaterialIndex), true))
         {
             discard;
         }

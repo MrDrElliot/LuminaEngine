@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Agent/AgentTool.h"
 #include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
@@ -189,6 +190,7 @@ namespace Lumina
         PROPERTY()
         FString CaptureFile;
 
+        // Leaves out the last frame, whose span to the next frame's start was never recorded.
         PROPERTY()
         int32 Frames = 0;
 
@@ -258,6 +260,30 @@ namespace Lumina
         MCPEDITOR_API void AddTracyZoneLine(FStringView Line, bool bGpuRows, bool& bHeaderPending, THashMap<FString, FProfilerZoneTotals>& Out);
 
         MCPEDITOR_API TVector<SProfilerZone> RankProfilerZones(const THashMap<FString, FProfilerZoneTotals>& Zones, int32 Frames, int32 Top, const FString& Filter);
+
+        // One zone event from an unwrapped export, with its name interned.
+        struct FProfilerZoneEvent
+        {
+            int64 Start = 0;
+            int64 Duration = 0;
+            int64 Self = 0;
+            int32 Name = 0;
+            int32 Thread = 0;
+        };
+
+        struct FProfilerZoneEvents
+        {
+            THashMap<FString, int32> NameIds;
+            TVector<FString> Names;
+            TVector<FProfilerZoneEvent> Events;
+            bool bHeaderPending = true;
+        };
+
+        // Adds one line of a tracy-csvexport -u run, skipping the header line and rows with too few fields.
+        MCPEDITOR_API void AddTracyEventLine(FStringView Line, FProfilerZoneEvents& Out);
+
+        // Fills everything but CaptureFile, which the error messages name.
+        MCPEDITOR_API Agent::FToolResult AnalyzeProfilerHitches(FProfilerZoneEvents& Zones, const SProfilerReportParams& In, SProfilerHitchResult& Out);
 
         void RegisterProfilerTools(FStringView Owner);
     }

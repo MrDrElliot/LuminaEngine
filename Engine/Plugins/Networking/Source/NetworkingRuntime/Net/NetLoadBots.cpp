@@ -105,10 +105,10 @@ namespace Lumina
 
     void FNetLoadBotSwarm::Tick()
     {
-        // The type table behind the hash is built once, so asking before every module registered would freeze it short.
+        // Asked on the first tick rather than in Begin, so every module has registered its component types.
         if (ProtocolHash == 0)
         {
-            ProtocolHash = Net::GetProtocolHash();
+            ProtocolHash = Net::GetProtocolHash(FReplTypeTable());
         }
 
         const double Now = PlatformTime::Seconds();

@@ -82,9 +82,6 @@ namespace Lumina
 
         void RefreshAfterStructuralEdit();
 
-        void BeginAssetTransaction(FName Name);
-        void EndAssetTransaction();
-
         TUniquePtr<FPropertyTable>  SampleTable;
         void*                       SampleTarget = nullptr;
         int32                       SampleTableSourceCount = 0;

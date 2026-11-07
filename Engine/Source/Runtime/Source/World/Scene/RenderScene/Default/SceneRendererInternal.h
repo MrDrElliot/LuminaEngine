@@ -127,10 +127,9 @@ namespace Lumina
     inline constexpr uint32 GSkinnedLayoutGrain = 256;
 
 
-    // A ceiling reserves nothing, so it scales with the card instead of risking a failed allocation on a small GPU.
-    inline uint64 AutoPreSkinnedBudgetMiB()
+    // Resolved once, so another process using VRAM never resizes the buffers sized from it.
+    inline uint64 DeviceLocalVRAMMiB()
     {
-        // Resolved once, so another process using VRAM never resizes the buffer.
         static const uint64 Resolved = []
         {
             RHI::FGPUMemoryStats Stats;
@@ -144,10 +143,20 @@ namespace Lumina
                     DeviceLocalBytes = Math::Max(DeviceLocalBytes, Heap.BudgetBytes);
                 }
             }
+            return DeviceLocalBytes >> 20;
+        }();
 
-            const uint64 MiB = Math::Clamp((DeviceLocalBytes >> 20) * 8ull / 100ull, 64ull, 2048ull);
+        return Resolved;
+    }
+
+    // A ceiling reserves nothing, so it scales with the card instead of risking a failed allocation on a small GPU.
+    inline uint64 AutoPreSkinnedBudgetMiB()
+    {
+        static const uint64 Resolved = []
+        {
+            const uint64 MiB = Math::Clamp(DeviceLocalVRAMMiB() * 8ull / 100ull, 64ull, 2048ull);
             LOG_INFO("RenderScene: pre-skinned vertex budget auto-set to {} MiB, 8% of {} MiB device-local VRAM.",
-                     MiB, DeviceLocalBytes >> 20);
+                     MiB, DeviceLocalVRAMMiB());
             return MiB;
         }();
 
@@ -181,6 +190,12 @@ namespace Lumina
             return ESMAAQuality::High;
         }
         return Settings->SMAAQuality;
+    }
+
+    inline bool IsSMAADepthEdgesEnabled()
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        return Settings != nullptr && Settings->bSMAADepthEdges;
     }
 
     inline bool IsGTAOEnabled()

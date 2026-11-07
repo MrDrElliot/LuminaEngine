@@ -17,17 +17,6 @@
 
 namespace Lumina::DotNet
 {
-    FString Join(FStringView Left, FStringView Right)
-    {
-        FString Result(Left.GetData(), Left.Len());
-        if (!Result.IsEmpty() && Result.Last() != '/' && Result.Last() != '\\')
-        {
-            Result.AppendChar('/');
-        }
-        Result.Append(Right.GetData(), Right.Len());
-        return Result;
-    }
-
     // File name without directory or extension, which for a managed assembly is also its simple name.
     FString StemOf(FStringView Path)
     {
@@ -186,8 +175,8 @@ namespace Lumina::DotNet
             Engine.DiskDir = Paths::GetEngineResourceDirectory() + "/Scripts";
             // Engine example scripts live next to the engine binaries (a sibling of DotNet/Managed, not in it).
             const FString ExeDir = Paths::Parent(Platform::GetCurrentProcessPath());
-            Engine.BinaryDir       = NativePath(Join(ExeDir, "DotNet"));
-            Engine.IntermediateDir = NativePath(Join(ExeDir, "DotNet/obj/Engine"));
+            Engine.BinaryDir       = NativePath(Paths::Combine(ExeDir, "DotNet"));
+            Engine.IntermediateDir = NativePath(Paths::Combine(ExeDir, "DotNet/obj/Engine"));
             Engine.AssemblyPath    = Engine.BinaryDir + "/Engine.dll";
             Units.Add(Move(Engine));
         }
@@ -201,8 +190,8 @@ namespace Lumina::DotNet
         TVector<FScriptUnit> Units;
 
         // A package keeps its script assemblies with LuminaSharp in the data folder's Managed directory.
-        const FString ScriptsDir   = Join(Paths::GetGameDataDirectory(), "Managed");
-        const FString ManifestPath = Join(ScriptsDir, "scripts.manifest.json");
+        const FString ScriptsDir(Paths::Combine(Paths::GetGameDataDirectory(), "Managed"));
+        const FString ManifestPath(Paths::Combine(ScriptsDir, "scripts.manifest.json"));
 
         FString Text;
         if (!Filesystem::ReadFile(Text, ManifestPath))
@@ -239,7 +228,7 @@ namespace Lumina::DotNet
             FScriptUnit Unit;
             Unit.Name = Name;
             const FString Dll = Entry.GetString("Dll", (Name + ".dll").View());
-            Unit.AssemblyPath = Join(ScriptsDir, Dll.View());
+            Unit.AssemblyPath = Paths::Combine(ScriptsDir, Dll);
 
             for (const FJsonValue& Dep : Entry["Deps"].AsArray())
             {
@@ -254,7 +243,7 @@ namespace Lumina::DotNet
             {
                 if (Reference.IsString())
                 {
-                    Unit.References.Add(Join(ScriptsDir, Reference.AsString()));
+                    Unit.References.Emplace(Paths::Combine(ScriptsDir, Reference.AsString()));
                 }
             }
             Units.Add(Move(Unit));
@@ -316,7 +305,7 @@ namespace Lumina::DotNet
     // The absolute path of the generated IDE project for a unit ("<DiskDir>/<Name>.Scripts.csproj").
     FString UnitProjectPath(const FScriptUnit& Unit)
     {
-        return NativePath(Join(Unit.DiskDir, Unit.Name + ".Scripts.csproj"));
+        return NativePath(Paths::Combine(Unit.DiskDir, Unit.Name + ".Scripts.csproj"));
     }
 
     // Matches the runtime cross-assembly references exactly, so IntelliSense sees the same graph.
@@ -352,7 +341,7 @@ namespace Lumina::DotNet
         Xml += "    </Reference>\n";
         // The generator the runtime compile loads; without it partial NativeCall bodies are missing.
         Xml += "    <Analyzer Include=\""
-            + NativePath(Join(Paths::Parent(LuminaSharpDll), "LuminaSharp.Generators.dll"))
+            + NativePath(Paths::Combine(Paths::Parent(LuminaSharpDll), "LuminaSharp.Generators.dll"))
             + "\" />\n";
         // Matches the imports ScriptCompiler adds to every runtime compile, so LoadObject<T> and bare specifiers resolve the same in the IDE.
         Xml += "    <Using Include=\"LuminaSharp.ObjectCore\" Static=\"true\" />\n";
@@ -461,7 +450,7 @@ namespace Lumina::DotNet
         {
             ProjectName = "Game";
         }
-        const FString SlnPath = NativePath(Join(GEngine->GetProjectPath(), ProjectName + ".GameScripts.sln"));
+        const FString SlnPath = NativePath(Paths::Combine(GEngine->GetProjectPath(), ProjectName + ".GameScripts.sln"));
         WriteTextIfChanged(SlnPath, Sln);
     }
 
@@ -614,7 +603,7 @@ namespace Lumina::DotNet
         }
 
         const FString ExePath = NativePath(Platform::GetCurrentProcessPath());
-        const FString Dll = NativePath(Join(Paths::Parent(ExePath), "DotNet/Managed/LuminaSharp.dll"));
+        const FString Dll = NativePath(Paths::Combine(Paths::Parent(ExePath), "DotNet/Managed/LuminaSharp.dll"));
 
         // The same unit graph the runtime compiles, so the IDE view matches what actually builds.
         const TVector<FScriptUnit> Units = BuildScriptUnits();

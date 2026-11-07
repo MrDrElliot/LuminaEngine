@@ -4,7 +4,7 @@
 #include "World/ECS/Registry.h"
 #include "WorldEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
-#include "Play/StandaloneLauncher.h"
+#include "UI/EditorUI.h"
 #include "Core/Math/Math.h"
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -3673,7 +3673,7 @@ namespace Lumina
         ImGui::Separator();
         ImGui::TextUnformatted("Standalone");
         {
-            const bool bBuilding = FStandaloneLauncher::IsBuilding();
+            const bool bBuilding = static_cast<FEditorUI*>(ToolContext)->GetStandaloneLauncher().IsBuilding();
 
             ImGui::Checkbox("Current map", &PlaySettings.bStandaloneCurrentMap);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -3745,7 +3745,7 @@ namespace Lumina
             Options.MapPath = FStringView(*MapPath, MapPath.Len());
         }
 
-        FStandaloneLauncher::Request(Options);
+        static_cast<FEditorUI*>(ToolContext)->GetStandaloneLauncher().Request(Options);
     }
 
     ENetMode FWorldEditorTool::ResolvePlayerNetMode(int32 PlayerIndex) const

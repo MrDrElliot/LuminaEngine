@@ -20,6 +20,7 @@ namespace Lumina
     struct FNetAssetMap;
     struct FNetNameMap;
     struct FNetWorldState;
+    struct FReplTypeTable;
     struct FComponentRepState;
     enum class ESendMode : uint8;
     enum class ENetMessage : uint8;
@@ -39,7 +40,7 @@ namespace Lumina
         // compact type hash, carrying only Replicated properties. Works for any REFLECT(Component).
 
         // Hash of the wire protocol
-        uint32 GetProtocolHash();
+        NETWORKINGRUNTIME_API uint32 GetProtocolHash(const FReplTypeTable& Types);
 
         // Compact NetGUID codec. Stable ids are small; dynamic (spawned) ids carry the high bit, which would
         // varint to 5 bytes, so the two ranges are interleaved (LSB = dynamic flag) and the remainder
@@ -70,15 +71,15 @@ namespace Lumina
             const TVector<FComponentRepOut>* Components = nullptr);
 
         // A spawn sends full state, since unreplicated configuration would otherwise arrive as defaults.
-        void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
-        void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity);
+        void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity);
 
         // Every script's full state, in manifest order, for the same reason.
         void WriteScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
         void ReadScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Count);
 
         // Client, recreate/refresh components on Entity, then apply the replicated attachment link.
-        void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity);
 
         // One script's diff, keyed by its index on the entity. Block has the same layout as a component's.
         struct FScriptRepOut

@@ -809,6 +809,7 @@ namespace Lumina
 
         FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
         PC.TexIndex0 = (uint32)InputColor.GetResourceID();
+        PC.TexIndex1 = IsSMAADepthEdgesEnabled() ? (uint32)GetNamedImage(ENamedImage::DepthAttachment).GetResourceID() : RHI::kInvalidHeapSlot;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);

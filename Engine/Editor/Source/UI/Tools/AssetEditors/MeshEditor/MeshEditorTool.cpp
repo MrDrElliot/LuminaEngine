@@ -670,12 +670,10 @@ namespace Lumina
 
             if (Volume.IsValid() && ImGui::MenuItem(LE_ICON_DELETE " Clear Distance Field"))
             {
-                const FName Label("Clear Distance Field");
-                GetTransactionManager().BeginTransaction(Label);
-                GetTransactionManager().Record(MakeUnique<FObjectSnapshotCommand>(Mesh, Label));
+                BeginAssetTransaction("Clear Distance Field");
                 Mesh->DistanceFieldSettings.bEnabled = false;
                 Mesh->BuildDistanceField();
-                GetTransactionManager().CommitTransaction();
+                EndAssetTransaction();
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();
             }
@@ -744,12 +742,10 @@ namespace Lumina
                     SocketName = FName(*Numbered);
                 }
 
-                const FName Label("Add Socket");
-                GetTransactionManager().BeginTransaction(Label);
-                GetTransactionManager().Record(MakeUnique<FObjectSnapshotCommand>(Mesh, Label));
+                BeginAssetTransaction("Add Socket");
                 SMeshSocket& Socket = Mesh->Sockets.EmplaceGetRef();
                 Socket.SocketName = SocketName;
-                GetTransactionManager().CommitTransaction();
+                EndAssetTransaction();
 
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();

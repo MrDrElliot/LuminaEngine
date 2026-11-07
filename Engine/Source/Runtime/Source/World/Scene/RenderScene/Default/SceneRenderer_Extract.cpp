@@ -203,6 +203,7 @@ namespace Lumina
         SceneGlobalData.CameraData.Projection           = ViewVolume.GetProjectionMatrix();
         SceneGlobalData.CameraData.InverseProjection    = ViewVolume.GetInverseProjectionMatrix();
 
+        const CRendererSettings* RenderSettings = GetDefault<CRendererSettings>();
         {
             FSceneView& PrimaryView = SceneViews[0];
 
@@ -228,11 +229,13 @@ namespace Lumina
 
                 // Same period as the jitter, or the samples the resolve averages never repeat and never settle.
                 SceneGlobalData.TemporalPhase = PrimaryView.PendingTemporalFrameIndex % GetTemporalPhaseCount(PrimaryView);
+                SceneGlobalData.bSharpenedAlphaTest = 0u;
             }
             else
             {
                 PrimaryView.bTemporalHistoryValid = false;
                 SceneGlobalData.TemporalPhase    = 0u;
+                SceneGlobalData.bSharpenedAlphaTest = RenderSettings != nullptr && RenderSettings->bSharpenedAlphaTest;
             }
 
             SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
@@ -242,7 +245,6 @@ namespace Lumina
         // Below zero when upscaling, so textures pick the mips the display resolution would have.
         SceneGlobalData.TextureMipBias                  = PrimarySize.x < DisplaySize.x
                                                         ? Math::Log2((float)PrimarySize.x / (float)DisplaySize.x) : 0.0f;
-        const CRendererSettings* RenderSettings         = GetDefault<CRendererSettings>();
         const bool bSpecularAA                          = RenderSettings != nullptr && RenderSettings->bSpecularAntiAliasing;
         SceneGlobalData.SpecularAAVariance              = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingStrength, 0.0f, 1.0f) : 0.0f;
         SceneGlobalData.SpecularAAThreshold             = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingLimit, 0.0f, 1.0f) : 0.0f;

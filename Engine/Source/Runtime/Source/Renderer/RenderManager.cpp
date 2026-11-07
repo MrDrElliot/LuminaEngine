@@ -513,9 +513,36 @@ namespace Lumina
     {
         LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
 
+        if (GetDefault<CRendererSettings>()->bLowLatencyMode)
+        {
+            const uint8 PreviousFrameIndex = (CurrentFrameIndex + RHI::kFramesInFlight - 1) % RHI::kFramesInFlight;
+            RHI::WaitForSlotGPU(PreviousFrameIndex);
+            PlotInputToGPUComplete(PreviousFrameIndex);
+        }
+
         // FrameEnd records into CurrentFrameIndex and advances afterwards, so this is that same slot.
         RHI::BeginFrame(CurrentFrameIndex);
+        PlotInputToGPUComplete(CurrentFrameIndex);
         bFrameSlotWaited = true;
+    }
+
+    void FRenderManager::MarkInputRead()
+    {
+        InputReadSeconds = PlatformTime::Seconds();
+    }
+
+    static void PlotMilliseconds(const char* PlotName, double StartSeconds, double EndSeconds)
+    {
+        TracyPlot(PlotName, (EndSeconds - StartSeconds) * 1000.0);
+    }
+
+    void FRenderManager::PlotInputToGPUComplete(uint8 FrameIndex)
+    {
+        if (SlotInputReadSeconds[FrameIndex] != 0.0)
+        {
+            PlotMilliseconds("Latency/InputToGPUComplete (ms)", SlotInputReadSeconds[FrameIndex], PlatformTime::Seconds());
+            SlotInputReadSeconds[FrameIndex] = 0.0;
+        }
     }
 
     void FRenderManager::FrameStart(const FUpdateContext& UpdateContext)
@@ -535,6 +562,11 @@ namespace Lumina
         const uint8 ThisFrameIndex = CurrentFrameIndex;
         CurrentFrameIndex = (CurrentFrameIndex + 1) % RHI::kFramesInFlight;
 
+        // Cleared here so a frame that never presents leaves no stale read behind for a later frame to plot.
+        const double FrameInputReadSeconds = InputReadSeconds;
+        const double ExtractedSeconds      = PlatformTime::Seconds();
+        InputReadSeconds = 0.0;
+
         [[maybe_unused]] ImDrawData* ImGuiDrawData = nullptr;
         #if USING(WITH_DEV_UI)
         ImGuiDrawData = ImGuiRenderer->BuildFrame();
@@ -546,6 +578,7 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
                 RHI::BeginFrame(ThisFrameIndex);
+                PlotInputToGPUComplete(ThisFrameIndex);
             }
             bFrameSlotWaited = false;
 
@@ -624,6 +657,12 @@ namespace Lumina
 
             {
                 LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
+                if (FrameInputReadSeconds != 0.0)
+                {
+                    PlotMilliseconds("Latency/InputToExtract (ms)", FrameInputReadSeconds, ExtractedSeconds);
+                    PlotMilliseconds("Latency/InputToPresentSubmit (ms)", FrameInputReadSeconds, PlatformTime::Seconds());
+                    SlotInputReadSeconds[ThisFrameIndex] = FrameInputReadSeconds;
+                }
                 // A secondary viewport's present waits this one out, so only a frame with tool windows torn off serializes.
                 SwapchainTarget.PresentAsync(CL);
             }

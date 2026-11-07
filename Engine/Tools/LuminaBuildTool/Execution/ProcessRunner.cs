@@ -159,7 +159,7 @@ public static class ProcessRunner
         }
     }
 
-    private static void TryKill(Process Runner)
+    internal static void TryKill(Process Runner)
     {
         try
         {

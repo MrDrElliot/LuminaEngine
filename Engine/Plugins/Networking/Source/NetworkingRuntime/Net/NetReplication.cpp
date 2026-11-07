@@ -24,6 +24,56 @@
 #include "Scripting/ScriptableObject.h"
 #include "Scripting/DotNet/NetScriptBridge.h"
 
+namespace Lumina
+{
+    FReplTypeTable::FReplTypeTable()
+    {
+        ForEachComponentStruct([this](CStruct* St)
+        {
+            // Event types are bound to the type registry too, without component ops.
+            if (St->GetComponentOps() != nullptr)
+            {
+                ByIndex.Emplace(Hash::GetHash32(*St->GetName()), St);
+            }
+        });
+        Algo::Sort(ByIndex, [](const FEntry& A, const FEntry& B)
+        {
+            return A.Hash < B.Hash;
+        });
+
+        for (int32 i = 0; i < ByIndex.Num(); ++i)
+        {
+            const int32 TypeId = static_cast<int32>(ByIndex[i].Struct->GetComponentOps()->TypeId);
+            if (TypeId >= TypeIdToIndex.Num())
+            {
+                TypeIdToIndex.SetNum(TypeId + 1, Constants::kIndexNone);
+            }
+            TypeIdToIndex[TypeId] = i;
+        }
+    }
+
+    FReplTypeTable::~FReplTypeTable()
+    {
+        for (const FEntry& Entry : ByIndex)
+        {
+            if (Entry.Default != nullptr)
+            {
+                Entry.Struct->GetComponentOps()->Delete(Entry.Default);
+            }
+        }
+    }
+
+    void* FReplTypeTable::DefaultFor(uint32 WireIndex)
+    {
+        FEntry& Entry = ByIndex[WireIndex];
+        if (Entry.Default == nullptr)
+        {
+            Entry.Default = Entry.Struct->GetComponentOps()->New();
+        }
+        return Entry.Default;
+    }
+}
+
 namespace Lumina::Net
 {
     namespace
@@ -46,51 +96,9 @@ namespace Lumina::Net
             return nullptr;
         }
 
-        struct FReplType
-        {
-            uint32   Hash;
-            CStruct* Struct;
-        };
-
-        // The same build gives an identical order, so the wire carries a 1-byte index, not the hash.
-        struct FReplTypeTable
-        {
-            TVector<FReplType> ByIndex;
-            TVector<int32>     TypeIdToIndex;
-        };
-
-        const FReplTypeTable& ReplTypes()
-        {
-            static const FReplTypeTable Table = []
-            {
-                FReplTypeTable T;
-                ForEachComponentStruct([&T](CStruct* St)
-                {
-                    T.ByIndex.Emplace(Hash::GetHash32(*St->GetName()), St);
-                });
-                Algo::Sort(T.ByIndex,[](const FReplType& A, const FReplType& B)
-                {
-                    return A.Hash < B.Hash;
-                });
-
-                for (int32 i = 0; i < T.ByIndex.Num(); ++i)
-                {
-                    const uint64 TypeId = T.ByIndex[i].Struct->GetComponentOps()->TypeId;
-                    if (TypeId >= static_cast<uint64>(T.TypeIdToIndex.Num()))
-                    {
-                        T.TypeIdToIndex.SetNum(static_cast<int32>(TypeId) + 1, Constants::kIndexNone);
-                    }
-                    T.TypeIdToIndex[static_cast<int32>(TypeId)] = i;
-                }
-                return T;
-            }();
-            return Table;
-        }
-
         template<typename TFunc>
-        void ForEachReplicatedComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, TFunc&& Func)
+        void ForEachReplicatedComponent(ECS::FRegistry& Registry, const FReplTypeTable& Types, ECS::FEntity Entity, TFunc&& Func)
         {
-            const FReplTypeTable& Types = ReplTypes();
             for (ECS::FSparseSet* Set : Registry.GetActiveStorages())
             {
                 const ECS::FComponentTypeID Id = Set->GetTypeInfo().TypeID;
@@ -178,7 +186,7 @@ namespace Lumina::Net
         return PNet != nullptr && PNet->bReplicates && PNet->bNetLoadOnClient && PNet->NetGUID.Value != 0;
     }
 
-    uint32 GetProtocolHash()
+    uint32 GetProtocolHash(const FReplTypeTable& Types)
     {
         // Bump on any hand-rolled wire-format change (message layout, codec) that reflection won't catch.
         constexpr uint32 NetProtocolVersion = 4;
@@ -187,7 +195,7 @@ namespace Lumina::Net
         uint32 H = 2166136261u;
         auto Combine = [&H](uint32 V) { H ^= V; H *= 16777619u; };
         Combine(NetProtocolVersion);
-        for (const FReplType& T : ReplTypes().ByIndex)
+        for (const FReplTypeTable::FEntry& T : Types.ByIndex)
         {
             Combine(T.Hash);
         }
@@ -228,7 +236,7 @@ namespace Lumina::Net
         FNetArchive HookSrc(HookScratch);
         Net::BindWriters(HookSrc, State);
 
-        ForEachReplicatedComponent(Registry, Entity, [&](uint32 WireIndex, CStruct* St, void* Ptr)
+        ForEachReplicatedComponent(Registry, State.ReplTypes, Entity, [&](uint32 WireIndex, CStruct* St, void* Ptr)
         {
             // Current field bytes, flat; compare to the last-sent baseline to build the changed-field mask.
             St->NetSerializeReplicatedFlat(HookSrc, Ptr, CurBytes, CurOffsets);
@@ -323,7 +331,7 @@ namespace Lumina::Net
         WriteNetGuid(Ar, ParentGuid);
     }
 
-    void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
         uint16 Count = 0;
@@ -332,7 +340,7 @@ namespace Lumina::Net
         // Patched after the loop so an OnRep handler sees every other component already applied.
         TVector<CStruct*> Applied;
 
-        const FReplTypeTable& Types = ReplTypes();
+        const FReplTypeTable& Types = State.ReplTypes;
         for (uint16 i = 0; i < Count; ++i)
         {
             const uint32 Index = ReadVarUInt(Ar);
@@ -350,11 +358,6 @@ namespace Lumina::Net
             }
 
             CStruct* St = Types.ByIndex[Index].Struct;
-            if (St == nullptr)
-            {
-                Ar.SetHasError(true);
-                return;
-            }
 
             // The bitmask width is the struct's replicated-field count, the same on both peers.
             const uint32 N = St->GetNetReplicatedPropertyCount();
@@ -373,10 +376,7 @@ namespace Lumina::Net
             void* Ptr = FindComponentPtr(Registry, Entity, St);
             if (Ptr == nullptr)
             {
-                if (const FComponentOps* Ops = St->GetComponentOps())
-                {
-                    Ops->EmplaceDefault(Registry, Entity);
-                }
+                St->GetComponentOps()->EmplaceDefault(Registry, Entity);
                 Ptr = FindComponentPtr(Registry, Entity, St);
             }
 
@@ -399,10 +399,7 @@ namespace Lumina::Net
             {
                 break; // a prior handler's script logic destroyed the entity
             }
-            if (const FComponentOps* Ops = Type->GetComponentOps())
-            {
-                Ops->Patch(Registry, Entity);
-            }
+            Type->GetComponentOps()->Patch(Registry, Entity);
         }
 
         // Always read to stay aligned, then resolved and reparented.
@@ -740,27 +737,14 @@ namespace Lumina::Net
         AppendFramedMessage(Batch, Message.GetData(), static_cast<SIZE_T>(Message.Num()));
     }
 
-    // A default instance per component type, kept for the process so every spawn diffs against the same baseline.
-    static void* DefaultComponentFor(CStruct* Struct)
-    {
-        static THashMap<CStruct*, void*> Defaults;
-        if (void** Found = Defaults.Find(Struct))
-        {
-            return *Found;
-        }
-        void* Default = Struct->GetComponentOps() != nullptr ? Struct->GetComponentOps()->New() : nullptr;
-        Defaults.Add(Struct, Default);
-        return Default;
-    }
-
-    void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
         struct FSpawnComponent { uint32 WireIndex; CStruct* Struct; void* Data; };
         TVector<FSpawnComponent> Components;
 
         const CStruct* TransformStruct = STransformComponent::StaticStruct();
-        ForEachReplicatedComponent(Registry, Entity, [&](uint32 WireIndex, CStruct* St, void* Data)
+        ForEachReplicatedComponent(Registry, State.ReplTypes, Entity, [&](uint32 WireIndex, CStruct* St, void* Data)
         {
             const FSpawnComponent Entry{ WireIndex, St, Data };
             if (St == TransformStruct)
@@ -778,10 +762,9 @@ namespace Lumina::Net
         for (const FSpawnComponent& Component : Components)
         {
             WriteVarUInt(Ar, Component.WireIndex);
-            if (Component.Struct->GetComponentOps() != nullptr && Component.Data != nullptr)
+            if (Component.Data != nullptr)
             {
-                void* Defaults = DefaultComponentFor(Component.Struct);
-                if (Defaults != nullptr)
+                if (void* Defaults = State.ReplTypes.DefaultFor(Component.WireIndex))
                 {
                     Component.Struct->NetWriteAllDelta(Ar, Component.Data, Defaults);
                 }
@@ -801,14 +784,14 @@ namespace Lumina::Net
         WriteNetGuid(Ar, ParentGuid);
     }
 
-    void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
         uint16 Count = 0;
         Ar << Count;
 
         TVector<CStruct*> Applied;
-        const FReplTypeTable& Types = ReplTypes();
+        const FReplTypeTable& Types = State.ReplTypes;
         for (uint16 i = 0; i < Count; ++i)
         {
             const uint32 Index = ReadVarUInt(Ar);
@@ -818,12 +801,7 @@ namespace Lumina::Net
                 return;
             }
             CStruct* St = Types.ByIndex[Index].Struct;
-            const FComponentOps* Ops = St != nullptr ? St->GetComponentOps() : nullptr;
-            if (Ops == nullptr)
-            {
-                Ar.SetHasError(true);
-                return;
-            }
+            const FComponentOps* Ops = St->GetComponentOps();
 
             // Read into a detached copy first, so the component's construct hooks see its real values.
             void* Staged = Ops->New();

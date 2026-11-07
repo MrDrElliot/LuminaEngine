@@ -154,8 +154,8 @@ namespace Lumina
         static void CreateDefaultMaterial();
         static void CreateDefaultTerrainMaterial();
 
-        // Compiles a rooted PBR material from a pixel-inputs snippet. The caller owns the root reference.
-        static CMaterial* CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const SMaterialParameter> InParameters = {});
+        // Compiles a rooted PBR material from a pixel-inputs snippet. The caller owns the root reference. A masked snippet may read only UV0 among the interpolants.
+        static CMaterial* CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const SMaterialParameter> InParameters = {}, EBlendMode InBlendMode = EBlendMode::Opaque);
 
         // Content hash of every source a material template can reach.
         static uint64 GetShaderTemplateHash();

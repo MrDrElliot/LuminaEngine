@@ -1320,7 +1320,7 @@ namespace Lumina
         GErrorMaterial = CreateBuiltinMaterial("ErrorMaterial", ErrorInputs);
     }
 
-    CMaterial* CMaterial::CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const SMaterialParameter> InParameters)
+    CMaterial* CMaterial::CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const SMaterialParameter> InParameters, EBlendMode InBlendMode)
     {
         IShaderCompiler* Compiler = GShaderCompiler;
         if (Compiler == nullptr)
@@ -1334,6 +1334,7 @@ namespace Lumina
 
         CMaterial* Material = NewObject<CMaterial>(nullptr, Name);
         Material->AddToRoot();
+        Material->BlendMode = InBlendMode;
         Material->Parameters.Reset();
         Material->Parameters.Append(InParameters.begin(), InParameters.end());
 
@@ -1346,6 +1347,12 @@ namespace Lumina
         CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMeshMasked, "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM",      { { kVertexInputsToken, NoOffset } });
         CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshShadowMasked,    "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", { { kVertexInputsToken, NoOffset } });
         CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Pixel,               "BasePixelPass.slang",    nullptr,                      { { kPixelInputsToken, PixelInputs } });
+        if (InBlendMode == EBlendMode::Masked)
+        {
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixel,       "VisBufferMaskedPixel.slang", nullptr,               { { kPixelInputsToken, PixelInputs } });
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixelVertex, "VisBufferMaskedPixel.slang", "MESHLET_VERTEX_PATH", { { kPixelInputsToken, PixelInputs } });
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::ShadowMaskedPixel,          "ShadowMaskedPixel.slang",    nullptr,               { { kPixelInputsToken, PixelInputs } });
+        }
 
         // The deferred compute shader carries both graphs, the offset reconstruction and the pixel inputs.
         CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Deferred, "DeferredMaterial.slang", nullptr,

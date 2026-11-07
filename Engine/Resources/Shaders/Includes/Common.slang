@@ -1160,7 +1160,8 @@ struct FSceneGlobalData
     // Geometric specular antialiasing, off while the variance scale is zero.
     float      SpecularAAVariance;
     float      SpecularAAThreshold;
-    uint       _PadFogParams;
+    // Masked materials sharpen resolved alpha edges ahead of the hash, only while no temporal resolve runs.
+    uint       bSharpenedAlphaTest;
 
     // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
     FExponentialHeightFogParams FogParams;

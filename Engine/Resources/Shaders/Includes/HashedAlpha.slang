@@ -10,6 +10,9 @@ static const float kHashScale = 1.0;
 static const float kHashFadeStart = 8.0;
 static const float kHashFadeEnd   = 25.0;
 
+// The inverse of the opacity change per pixel at which an alpha edge counts as resolved and is sharpened outright.
+static const float kSharpenSlopeScale = 4.0;
+
 float HashedAlpha_Hash1D(float2 V)
 {
     return frac(1.0e4 * sin(17.0 * V.x + 0.1 * V.y) * (0.1 + abs(sin(13.0 * V.y + V.x))));
@@ -53,4 +56,15 @@ float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
     const float Threshold = (X < (1.0 - A)) ? ((X < A) ? Cases.x : Cases.y) : Cases.z;
 
     return lerp(Cutoff, clamp(Threshold, 1.0e-6, 1.0), Fade);
+}
+
+// Whether a masked texel survives the alpha test. Pixel lanes only, since it needs a quad.
+bool MaskedAlphaKeep(float3 Anchor, float ViewDistance, float Opacity, float Cutoff, bool bAllowSharpen)
+{
+    // Opacity sharpened by its screen-space slope, so a resolved cutoff edge is about one pixel wide and the hash dithers only that band.
+    const float Slope     = fwidth(Opacity);
+    const float Sharpened = saturate((Opacity - Cutoff) / max(Slope, 1e-4) + Cutoff);
+    // A flat fractional opacity is a mip average of leaves too small to resolve, which only the plain hash keeps at its density.
+    const float Resolved  = (bAllowSharpen && Scene().bSharpenedAlphaTest != 0u) ? saturate(Slope * kSharpenSlopeScale) : 0.0;
+    return lerp(Opacity, Sharpened, Resolved) >= HashedAlphaThreshold(Anchor, ViewDistance, Cutoff);
 }

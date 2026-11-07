@@ -77,6 +77,7 @@ namespace
             {
                 ECS::Utils::ResolveAllDirtyTransforms(Registry());
                 Scene().Update(1.0 / 60.0);
+                Scene().DispatchPendingEvents();
                 ECS::Utils::ResolveAllDirtyTransforms(Registry());
             }
         }

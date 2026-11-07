@@ -451,9 +451,9 @@ namespace Lumina::Physics
         }
         CarriedMotion.Reset();
 
-        TVector<ECS::FEntity> Characters;
-        swap(Characters, PendingCharacters);
-        for (ECS::FEntity Entity : Characters)
+        PendingDrainScratch.Reset();
+        swap(PendingDrainScratch, PendingCharacters);
+        for (ECS::FEntity Entity : PendingDrainScratch)
         {
             if (Registry.IsValid(Entity) && CharacterBodies.Contains(Entity))
             {

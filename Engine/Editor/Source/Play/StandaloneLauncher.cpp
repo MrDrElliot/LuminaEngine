@@ -6,27 +6,12 @@
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Containers/StringFormat.h"
-#include "Core/Threading/Thread.h"
-#include "Memory/SmartPtr.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-
-#include <atomic>
 
 namespace Lumina
 {
     namespace
     {
-        struct FLaunchSession
-        {
-            std::atomic<bool>           bDone{false};
-            std::atomic<bool>           bSuccess{false};
-            FString                     ErrorMessage;
-            FStandaloneLaunchOptions    Options;
-        };
-
-        TSharedPtr<FLaunchSession>  GSession;
-        FThread                     GWorker;
-
         FFixedString GameExecutablePath()
         {
             return Paths::Combine(Paths::GetEngineInstallDirectory(), "Binaries", LUMINA_PLATFORM_NAME, Paths::MakeGameApplicationName());
@@ -161,11 +146,6 @@ namespace Lumina
         return Paths::GetBuildToolScript() + " " + BuildArguments();
     }
 
-    bool FStandaloneLauncher::IsBuilding()
-    {
-        return GSession != nullptr;
-    }
-
     void FStandaloneLauncher::Request(const FStandaloneLaunchOptions& Options)
     {
         if (GEngine == nullptr || !GEngine->HasLoadedProject())
@@ -196,17 +176,16 @@ namespace Lumina
 
         ImGuiX::Notifications::NotifyInfo("Building the Game target for standalone play.");
 
-        GSession = MakeShared<FLaunchSession>();
-        GSession->Options = Options;
+        PendingOptions = Options;
+        bBuildDone.store(false, std::memory_order_relaxed);
 
-        TSharedPtr<FLaunchSession> Session = GSession;
         const FString Tool = Paths::GetBuildToolScript();
         const FString Args = BuildArguments();
         const FString WorkingDirectory(Paths::GetEngineInstallDirectory());
 
-        GWorker = FThread([Session, Tool, Args, WorkingDirectory]()
+        Worker = FThread([this, Tool, Args, WorkingDirectory](const FThreadStop& Stop)
         {
-            const int ExitCode = Platform::RunProcessAndWaitCapture(
+            BuildExitCode = Platform::RunProcessAndWaitCapture(
                 UTF8_TO_TCHAR(*Tool),
                 UTF8_TO_TCHAR(*Args),
                 UTF8_TO_TCHAR(*WorkingDirectory),
@@ -216,40 +195,46 @@ namespace Lumina
                     {
                         LOG_INFO("[Standalone build] {}", *FString(Line.GetData(), Line.Len()));
                     }
-                });
+                },
+                0, &Stop);
 
-            if (ExitCode != 0)
-            {
-                Session->ErrorMessage = Format("Game build failed (exit code {}). See the log above.", ExitCode);
-            }
-
-            Session->bSuccess.store(ExitCode == 0, std::memory_order_release);
-            Session->bDone.store(true, std::memory_order_release);
+            bBuildDone.store(true, std::memory_order_release);
         });
     }
 
     void FStandaloneLauncher::Tick()
     {
-        if (GSession == nullptr || !GSession->bDone.load(std::memory_order_acquire))
+        if (!IsBuilding() || !bBuildDone.load(std::memory_order_acquire))
         {
             return;
         }
 
-        if (GWorker.joinable())
-        {
-            GWorker.join();
-        }
+        Worker.Join();
 
-        TSharedPtr<FLaunchSession> Finished = Move(GSession);
-        GSession = nullptr;
-
-        if (!Finished->bSuccess.load(std::memory_order_acquire))
+        if (BuildExitCode != 0)
         {
-            LOG_ERROR("Standalone: {}", *Finished->ErrorMessage);
-            ImGuiX::Notifications::NotifyError("{}", *Finished->ErrorMessage);
+            const FString Error = Format("Game build failed (exit code {}). See the log above.", BuildExitCode);
+            LOG_ERROR("Standalone: {}", *Error);
+            ImGuiX::Notifications::NotifyError("{}", *Error);
             return;
         }
 
-        LaunchOrReport(Finished->Options);
+        LaunchOrReport(PendingOptions);
+    }
+
+    void FStandaloneLauncher::Shutdown()
+    {
+        if (!IsBuilding())
+        {
+            return;
+        }
+
+        if (!bBuildDone.load(std::memory_order_acquire))
+        {
+            LOG_WARN("Standalone: stopping the game build because the editor is shutting down.");
+        }
+
+        Worker.RequestStop();
+        Worker.Join();
     }
 }
