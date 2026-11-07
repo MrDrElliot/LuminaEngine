@@ -115,6 +115,29 @@ TEST(MCPLog, TheHistoryKeepsOnlyTheNewestEntriesAndClipsPayloads)
     EXPECT_LT(Transactions[0]->Response.Len(), FLog::kMaxPayloadBytes + 64);
 }
 
+TEST(MCPLog, TheRecordedCountKeepsRisingPastAFullRingAndAcrossClear)
+{
+    FLog Log;
+    TVector<TSharedPtr<const FTransaction>> Transactions;
+    TVector<FConnection> Connections;
+
+    for (int32 Index = 0; Index < FLog::kCapacity; ++Index)
+    {
+        (void)Log.Record("", R"({"jsonrpc":"2.0","id":1,"method":"ping"})", "", 0.0);
+    }
+    const uint64 Full = Log.Snapshot(Transactions, Connections);
+    EXPECT_EQ(Full, static_cast<uint64>(FLog::kCapacity));
+
+    (void)Log.Record("", R"({"jsonrpc":"2.0","id":2,"method":"ping"})", "", 0.0);
+    Log.RecordDisconnect("");
+    EXPECT_EQ(Log.Snapshot(Transactions, Connections), Full + 2);
+    EXPECT_EQ(Transactions.Num(), FLog::kCapacity);
+
+    Log.Clear();
+    EXPECT_EQ(Log.Snapshot(Transactions, Connections), Full + 2);
+    EXPECT_TRUE(Transactions.IsEmpty());
+}
+
 TEST(MCPLog, ClippingBacksUpToTheStartOfASplitCharacter)
 {
     EXPECT_EQ(ClipText("abcdef", 3), "abc [3 more bytes]");

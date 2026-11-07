@@ -527,6 +527,34 @@ namespace Lumina::Containers
         return View.Len() >= Suffix.Len() && EqualsIgnoreCase(View.Mid(View.Len() - Suffix.Len()), Suffix);
     }
 
+    // Advances Index past one codepoint, returning U+FFFD on bad input and leaving a byte that broke the sequence unread.
+    NODISCARD constexpr uint32 DecodeUTF8Codepoint(TStringView<char> Text, int32& Index) noexcept
+    {
+        constexpr uint32 Replacement = 0xFFFD;
+        const uint8 Lead = static_cast<uint8>(Text[Index++]);
+        if (Lead < 0x80)
+        {
+            return Lead;
+        }
+
+        int32 Continuations;
+        uint32 Codepoint;
+        if ((Lead & 0xE0) == 0xC0)      { Continuations = 1; Codepoint = Lead & 0x1F; }
+        else if ((Lead & 0xF0) == 0xE0) { Continuations = 2; Codepoint = Lead & 0x0F; }
+        else if ((Lead & 0xF8) == 0xF0) { Continuations = 3; Codepoint = Lead & 0x07; }
+        else                            { return Replacement; }
+
+        for (int32 i = 0; i < Continuations; ++i, ++Index)
+        {
+            if (Index >= Text.Len() || (static_cast<uint8>(Text[Index]) & 0xC0) != 0x80)
+            {
+                return Replacement;
+            }
+            Codepoint = (Codepoint << 6) | (static_cast<uint8>(Text[Index]) & 0x3F);
+        }
+        return Codepoint;
+    }
+
     template <typename TChar>
     NODISCARD inline uint64 GetTypeHash(TStringView<TChar> View) noexcept
     {
@@ -544,6 +572,7 @@ namespace Lumina
 {
     using FStringView  = Containers::TStringView<char>;
     using FCStringView = Containers::TCStringView<char>;
+    using Containers::DecodeUTF8Codepoint;
 }
 
 // Views borrow, so a ranges algorithm on a temporary one returns a usable iterator rather than a dangling marker.

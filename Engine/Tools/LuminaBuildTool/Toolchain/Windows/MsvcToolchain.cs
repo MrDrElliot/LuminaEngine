@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
 using LuminaBuildTool.Graph;
@@ -142,7 +143,51 @@ public sealed class MsvcToolchain : IToolchain
             Actions.Add(CreateCompileAction(Target, Module, Source, bIsC: true, null, PchMode.None));
         }
 
+        // A static library cannot carry resources into the image that absorbs it.
+        if (Module.BinaryType.IsLoadableImage())
+        {
+            foreach (FileItem Script in Module.Sources.ResourceFiles.Where(F => F.Extension.Equals(".rc", StringComparison.OrdinalIgnoreCase)))
+            {
+                Actions.Add(CreateResourceCompileAction(Module, Script));
+            }
+        }
+
         return Actions;
+    }
+
+    private BuildAction CreateResourceCompileAction(BuildModule Module, FileItem Script)
+    {
+        string ResourceFile = Path.ChangeExtension(GetObjectFilePath(Module, Script), ".res");
+
+        BuildAction Action = new(ActionType.ResourceCompile, Module.Name)
+        {
+            StatusText = Script.Name,
+            ToolPath = Path.Combine(Sdk.BinDirectory, "rc.exe"),
+            Arguments = $"/nologo /fo{PathUtils.Quote(ResourceFile)} {PathUtils.Quote(Script.Location)}",
+            WorkingDirectory = Script.Directory,
+            EnvironmentOverrides = Environment,
+            ToolchainIdentity = VersionKey,
+        };
+
+        Action.PrerequisiteItems.Add(Script);
+        Action.PrerequisiteItems.AddRange(FindFilesNamedByResourceScript(Script));
+        Action.ProducedItems.Add(FileItem.Get(ResourceFile));
+
+        return Action;
+    }
+
+    // rc.exe reports no dependencies, so any quoted path that resolves from the script's folder to a file stands in for an icon or bitmap it embeds.
+    private static IEnumerable<FileItem> FindFilesNamedByResourceScript(FileItem Script)
+    {
+        foreach (Match Quoted in Regex.Matches(File.ReadAllText(Script.Location), "\"([^\"\\r\\n]+)\""))
+        {
+            FileItem Candidate = FileItem.Get(Path.GetFullPath(Quoted.Groups[1].Value, Script.Directory));
+
+            if (Candidate.Exists)
+            {
+                yield return Candidate;
+            }
+        }
     }
 
     private enum PchMode
@@ -554,7 +599,8 @@ public sealed class MsvcToolchain : IToolchain
 
         List<FileItem> ObjectFiles = CompileActions
             .SelectMany(A => A.ProducedItems)
-            .Where(F => F.Extension.Equals(".obj", StringComparison.OrdinalIgnoreCase))
+            .Where(F => F.Extension.Equals(".obj", StringComparison.OrdinalIgnoreCase)
+                || F.Extension.Equals(".res", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (ObjectFiles.Count == 0)

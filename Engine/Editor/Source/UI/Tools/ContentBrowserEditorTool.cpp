@@ -3470,8 +3470,8 @@ namespace Lumina
             FStringView(*SourcePath, SourcePath.Len()), "_Variant");
 
         // A variant owns no data, only a parent link, which is what keeps it following that parent.
-        CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(*NewPath, NewPath.Len()));
-        if (Variant == nullptr)
+        const TStrongObjectPtr<CPrefab> Variant(CFactory::CreateNewOf<CPrefab>(FStringView(*NewPath, NewPath.Len())));
+        if (!Variant)
         {
             ImGuiX::Notifications::NotifyError("Could not create '{0}'.", NewPath);
             return;
@@ -3483,10 +3483,11 @@ namespace Lumina
         if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(*NewPath, NewPath.Len())))
         {
             ImGuiX::Notifications::NotifyError("Failed to save variant '{0}'.", NewPath);
+            CFactory::DiscardNew(Variant.Get());
             return;
         }
 
-        FAssetRegistry::Get().AssetCreated(Variant);
+        FAssetRegistry::Get().AssetCreated(Variant.Get());
         ImGuiX::Notifications::NotifySuccess("Created variant '{0}'.", NewPath);
 
         QueueRenameAfterCreate(FStringView(*NewPath, NewPath.Len()));

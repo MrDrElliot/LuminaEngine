@@ -39,6 +39,8 @@ namespace Lumina
 
         // true only while this node's title bar is an edit field.
         bool bRenamingParameter = false;
+        bool bParameterRenameNeedsFocus = false;
+        FString ParameterRenameText;
     };
 
     // Shared base for the binary/unary math nodes; not a node in its own right.

@@ -36,7 +36,16 @@ namespace Lumina
         {
             return false;
         }
-        return !Params.bHalfTrace || GTAOUpsample(CL, Params, UpsampleCS);
+        if (!Params.bHalfTrace)
+        {
+            return true;
+        }
+
+        SCENE_GPU_SCOPE(CL, "GTAO Upsample");
+        // The final denoise pass wrote the ping-pong target its parity selects.
+        const uint32 NumPasses = (uint32)Math::Max(Params.DenoisePasses, 1);
+        const ENamedImage Denoised = ((NumPasses - 1u) & 1u) == 0u ? ENamedImage::GTAODenoise : ENamedImage::GTAO;
+        return GTAOUpsample(CL, Params, UpsampleCS, GetNamedImage(Denoised), GetNamedImage(ENamedImage::GTAOBlur), 1u);
     }
 
     bool FDefaultSceneRenderer::MakeGTAOParams(FGTAOParams& P) const
@@ -255,14 +264,10 @@ namespace Lumina
         return true;
     }
 
-    bool FDefaultSceneRenderer::GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS)
+    bool FDefaultSceneRenderer::GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS,
+        const FSceneImage& Source, const FSceneImage& Output, uint32 DepthScale)
     {
-        SCENE_GPU_SCOPE(CL, "GTAO Upsample");
-
         const FSceneImage& WorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
-        const FSceneImage& TermA        = GetNamedImage(ENamedImage::GTAO);
-        const FSceneImage& TermB        = GetNamedImage(ENamedImage::GTAODenoise);
-        const FSceneImage& Output       = GetNamedImage(ENamedImage::GTAOBlur);
 
         struct FUpsampleConstants
         {
@@ -272,29 +277,27 @@ namespace Lumina
             uint32 HalfDepthIndex;
             uint32 FullDepthIndex;
             uint32 OutputUAV;
+            uint32 DepthScale;
         } PC = {};
 
-        // The final denoise pass wrote the ping-pong target its parity selects.
-        const uint32 NumPasses = (uint32)Math::Max(P.DenoisePasses, 1);
-        const FSceneImage& Denoised = ((NumPasses - 1u) & 1u) == 0u ? TermB : TermA;
-
-        const int32 AOSlot        = Denoised.GetResourceID();
+        const int32 AOSlot        = Source.GetResourceID();
         const int32 HalfDepthSlot = WorkingDepth.GetResourceID();
         const int32 OutputSlot    = Output.GetMipUAVIndex(0);
         if (AOSlot < 0 || HalfDepthSlot < 0 || OutputSlot < 0)
         {
-            LOG_ERROR_ONCE("GTAO upsample is missing a heap slot; skipping it.");
+            LOG_ERROR_ONCE("Bilateral upsample is missing a heap slot; skipping it.");
             return false;
         }
 
         PC.FullSize[0]    = Output.GetSizeX();
         PC.FullSize[1]    = Output.GetSizeY();
-        PC.HalfSize[0]    = P.Width;
-        PC.HalfSize[1]    = P.Height;
+        PC.HalfSize[0]    = Source.GetSizeX();
+        PC.HalfSize[1]    = Source.GetSizeY();
         PC.AOIndex        = (uint32)AOSlot;
         PC.HalfDepthIndex = (uint32)HalfDepthSlot;
         PC.FullDepthIndex = (uint32)P.DepthSlot;
         PC.OutputUAV      = (uint32)OutputSlot;
+        PC.DepthScale     = DepthScale;
 
         DispatchCompute(CL, UpsampleCS, PC,
             RenderUtils::GetGroupCount(PC.FullSize[0], 8u),
@@ -309,7 +312,7 @@ namespace Lumina
 
     namespace
     {
-        // Denser than GTAO's tables, since nothing accumulates the bounce across frames to hide the noise.
+        // Denser than GTAO's tables, since only a temporal upscaler accumulates the bounce across frames to hide the noise.
         constexpr uint32 kScreenSpaceGISlices        = 4u;
         constexpr uint32 kScreenSpaceGIStepsPerSlice = 8u;
     }
@@ -321,17 +324,18 @@ namespace Lumina
 
     bool FDefaultSceneRenderer::IsScreenSpaceGITraced() const
     {
-        return WantsScreenSpaceGI(*CurrentView) && CurrentView->bScreenSpaceGIHistoryValid
+        return WantsScreenSpaceGI(*CurrentView) && CurrentView->bScreenSpaceGIHistoryValid && CameraCutFramesLeft == 0u
             && !RenderFrame->Geometry.DrawCommands.IsEmpty();
     }
 
     void FDefaultSceneRenderer::ScreenSpaceGIPass(RHI::FCmdListH CL)
     {
-        static const FString  DenoiseDefine = "SSGI_DENOISE";
-        static const FShaderH TraceCS       = FShaderLibrary::Get("ScreenSpaceGI.slang");
-        static const FShaderH DenoiseCS     = FShaderLibrary::Get("ScreenSpaceGI.slang", TSpan<const FString>(&DenoiseDefine, 1));
+        static const FString  BlurDefine = "SSGI_BLUR";
+        static const FShaderH TraceCS    = FShaderLibrary::Get("ScreenSpaceGI.slang");
+        static const FShaderH BlurCS     = FShaderLibrary::Get("ScreenSpaceGI.slang", TSpan<const FString>(&BlurDefine, 1));
+        static const FShaderH UpsampleCS = FShaderLibrary::Get("GTAOUpsample.slang");
         FGTAOParams P;
-        if (!TraceCS || !DenoiseCS || !MakeGTAOParams(P))
+        if (!TraceCS || !BlurCS || !UpsampleCS || !MakeGTAOParams(P))
         {
             return;
         }
@@ -340,15 +344,16 @@ namespace Lumina
 
         const FSceneImage& WorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
         const FSceneImage& Trace        = GetNamedImage(ENamedImage::ScreenSpaceGITrace);
-        const FSceneImage& Output       = GetNamedImage(ENamedImage::ScreenSpaceGI);
+        const FSceneImage& Blur         = GetNamedImage(ENamedImage::ScreenSpaceGIBlur);
         const FSceneImage& History      = GetNamedImage(ENamedImage::ScreenSpaceGIHistory);
 
         const int32 WorkingDepthSlot = WorkingDepth.GetResourceID();
         const int32 HistorySlot      = History.GetResourceID();
         const int32 TraceSlot        = Trace.GetResourceID();
         const int32 TraceUAV         = Trace.GetMipUAVIndex(0);
-        const int32 OutputUAV        = Output.GetMipUAVIndex(0);
-        if (WorkingDepthSlot < 0 || HistorySlot < 0 || TraceSlot < 0 || TraceUAV < 0 || OutputUAV < 0)
+        const int32 BlurSlot         = Blur.GetResourceID();
+        const int32 BlurUAV          = Blur.GetMipUAVIndex(0);
+        if (WorkingDepthSlot < 0 || HistorySlot < 0 || TraceSlot < 0 || TraceUAV < 0 || BlurSlot < 0 || BlurUAV < 0)
         {
             LOG_ERROR_ONCE("Screen space GI is missing a heap slot; skipping the pass.");
             return;
@@ -360,7 +365,6 @@ namespace Lumina
             uint32   OutputSize[2];
             uint32   WorkingDepthSize[2];
             uint32   WorkingDepthIndex;
-            uint32   SceneDepthIndex;
             uint32   SceneColorHistoryIndex;
             uint32   OutputUAV;
             uint32   DepthScale;
@@ -371,18 +375,18 @@ namespace Lumina
             float    SampleDistributionPower;
             float    ThinOccluderCompensation;
             float    DepthMIPSamplingOffset;
+            uint32   NoiseIndex;
         } PC = {};
 
         // The working depth is already half size below ultra quality, and full size steps two texels per output.
         const uint32 DepthScale = P.bHalfTrace ? 1u : 2u;
 
         PC.HistoryViewProjection    = CurrentView->ScreenSpaceGIHistoryViewProjection;
-        PC.OutputSize[0]            = Output.GetSizeX();
-        PC.OutputSize[1]            = Output.GetSizeY();
+        PC.OutputSize[0]            = Trace.GetSizeX();
+        PC.OutputSize[1]            = Trace.GetSizeY();
         PC.WorkingDepthSize[0]      = P.Width;
         PC.WorkingDepthSize[1]      = P.Height;
         PC.WorkingDepthIndex        = (uint32)WorkingDepthSlot;
-        PC.SceneDepthIndex          = (uint32)P.DepthSlot;
         PC.SceneColorHistoryIndex   = (uint32)HistorySlot;
         PC.OutputUAV                = (uint32)TraceUAV;
         PC.DepthScale               = DepthScale;
@@ -393,37 +397,47 @@ namespace Lumina
         PC.SampleDistributionPower  = P.SampleDistributionPower;
         PC.ThinOccluderCompensation = P.ThinOccluderCompensation;
         PC.DepthMIPSamplingOffset   = P.DepthMipSamplingOffset;
+        // Only a temporal upscaler averages enough frames to hide rotating noise, and T2x's two-frame blend makes it crawl.
+        PC.NoiseIndex               = IsTemporalUpscalerFor(*CurrentView) ? (CurrentView->TemporalFrameIndex % 64u) : 0u;
 
-        const uint32 GroupsX = RenderUtils::GetGroupCount(PC.OutputSize[0], 8u);
-        const uint32 GroupsY = RenderUtils::GetGroupCount(PC.OutputSize[1], 8u);
-        DispatchCompute(CL, TraceCS, PC, GroupsX, GroupsY, 1);
+        DispatchCompute(CL, TraceCS, PC,
+            RenderUtils::GetGroupCount(PC.OutputSize[0], 8u),
+            RenderUtils::GetGroupCount(PC.OutputSize[1], 8u), 1);
         RHI::Barriers::ComputeToCompute(CL);
 
-        struct FDenoiseConstants
+        struct FBlurConstants
         {
-            uint32 OutputSize[2];
+            uint32 Size[2];
             uint32 WorkingDepthSize[2];
+            int32  Direction[2];
             uint32 WorkingDepthIndex;
             uint32 SourceIndex;
             uint32 OutputUAV;
             uint32 DepthScale;
-        } DenoisePC = {};
+        } BlurPC = {};
 
-        DenoisePC.OutputSize[0]       = PC.OutputSize[0];
-        DenoisePC.OutputSize[1]       = PC.OutputSize[1];
-        DenoisePC.WorkingDepthSize[0] = P.Width;
-        DenoisePC.WorkingDepthSize[1] = P.Height;
-        DenoisePC.WorkingDepthIndex   = (uint32)WorkingDepthSlot;
-        DenoisePC.SourceIndex         = (uint32)TraceSlot;
-        DenoisePC.OutputUAV           = (uint32)OutputUAV;
-        DenoisePC.DepthScale          = DepthScale;
+        BlurPC.Size[0]             = PC.OutputSize[0];
+        BlurPC.Size[1]             = PC.OutputSize[1];
+        BlurPC.WorkingDepthSize[0] = P.Width;
+        BlurPC.WorkingDepthSize[1] = P.Height;
+        BlurPC.WorkingDepthIndex   = (uint32)WorkingDepthSlot;
+        BlurPC.DepthScale          = DepthScale;
 
-        DispatchCompute(CL, DenoiseCS, DenoisePC, GroupsX, GroupsY, 1);
+        // Across from the trace into the blur target, then down back into the trace.
+        for (const bool bVertical : { false, true })
+        {
+            BlurPC.Direction[0] = bVertical ? 0 : 1;
+            BlurPC.Direction[1] = bVertical ? 1 : 0;
+            BlurPC.SourceIndex  = (uint32)(bVertical ? BlurSlot : TraceSlot);
+            BlurPC.OutputUAV    = (uint32)(bVertical ? TraceUAV : BlurUAV);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            DispatchCompute(CL, BlurCS, BlurPC,
+                RenderUtils::GetGroupCount(BlurPC.Size[0], 8u),
+                RenderUtils::GetGroupCount(BlurPC.Size[1], 8u), 1);
+            RHI::Barriers::ComputeToCompute(CL);
+        }
+
+        GTAOUpsample(CL, P, UpsampleCS, Trace, GetNamedImage(ENamedImage::ScreenSpaceGI), DepthScale);
     }
 
     void FDefaultSceneRenderer::CaptureScreenSpaceGIHistory(RHI::FCmdListH CL)
@@ -441,8 +455,7 @@ namespace Lumina
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer,
             RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute | RHI::EStageFlags::RasterColorOut);
 
-        const FCameraData& Camera = RenderFrame->SceneGlobalData.CameraData;
-        CurrentView->ScreenSpaceGIHistoryViewProjection = Camera.Projection * Camera.View;
+        CurrentView->ScreenSpaceGIHistoryViewProjection = CurrentView->PendingViewProjection;
         CurrentView->bScreenSpaceGIHistoryValid         = true;
     }
 

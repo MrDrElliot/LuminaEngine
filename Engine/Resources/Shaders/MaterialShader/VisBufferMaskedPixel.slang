@@ -3,7 +3,7 @@
 // The compiler substitutes the first material-inputs token, so never name it in a comment above its use.
 
 // Returns true when the texel should be kept, its opacity at or above the material's cutoff.
-bool MaskedVisKeep(FMaskedVertexOutput Input)
+bool MaskedVisKeep(FMaskedVertexOutput Input, bool bVoxelSplat)
 {
     uint EntityID           = MaskedEntityID(Input);
     uint MaterialIndex      = Input.MaterialIndex;
@@ -29,8 +29,10 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
 
     $MATERIAL_INPUTS
 
+    // A splat's mipped opacity is the share of its cards that block the view, so it takes the fully faded uniform threshold.
+    const float  ViewDistance = bVoxelSplat ? max(length(ViewPosition), kHashFadeEnd) : length(ViewPosition);
     // Anchored in world space so the dithered edge holds still as the camera moves.
-    const float  ClipCutoff = HashedAlphaThreshold(WorldPosition, length(ViewPosition),
+    const float  ClipCutoff = HashedAlphaThreshold(WorldPosition, ViewDistance,
                                                    GetMaterialOpacityClip(MaterialIndex));
     return Material.Opacity >= ClipCutoff;
 }
@@ -38,7 +40,7 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
 [shader("fragment")]
 uint FragmentMain(FMaskedVertexOutput Input, VIS_ID_INPUT) : SV_Target0
 {
-    if (!MaskedIsVoxelSplat(Input) && !MaskedVisKeep(Input))
+    if (!MaskedVisKeep(Input, MaskedIsVoxelSplat(Input)))
     {
         discard;
     }

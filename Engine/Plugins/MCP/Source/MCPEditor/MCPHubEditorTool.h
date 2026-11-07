@@ -44,6 +44,7 @@ namespace Lumina
         MCP::FServer* Server = nullptr;
 
         uint64 SeenRevision = ~0ull;
+        uint64 SeenRecorded = 0;
         TVector<TSharedPtr<const MCP::FTransaction>> Transactions;
         TVector<MCP::FConnection> Connections;
         TVector<FString> Methods;

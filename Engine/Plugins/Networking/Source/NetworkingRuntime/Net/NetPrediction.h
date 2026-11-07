@@ -61,11 +61,17 @@ namespace Lumina
         // A character moves by commands the host simulates, never by a pose its owner uploads.
         bool IsPredictedCharacter(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
+        // How many unconfirmed moves ride in each upload, so a lost packet is covered by the next ones.
+        constexpr uint32 MaxMovesPerUpload = 32;
+
         // One framed-ready MoveCommands message, shared by the predicting client and the load bots.
-        void WriteMoveCommands(TVector<uint8>& Buffer, uint32 Guid, const FNetMoveCommand* Commands, uint32 Count);
+        NETWORKINGRUNTIME_API void WriteMoveCommands(TVector<uint8>& Buffer, uint32 Guid, const FNetMoveCommand* Commands, uint32 Count);
+
+        // False on a truncated message or one carrying more than MaxMovesPerUpload moves.
+        NETWORKINGRUNTIME_API bool ReadMoveCommands(const uint8* Data, SIZE_T Size, uint32& OutGuid, TVector<FNetMoveCommand>& OutCommands);
 
         // Quantized exactly as a client's own step records it, from a world-space move and a yaw in degrees.
-        FNetMoveCommand MakeMoveCommand(uint32 Seq, const FVector3& Move, float YawDegrees, uint32 Buttons);
+        NETWORKINGRUNTIME_API FNetMoveCommand MakeMoveCommand(uint32 Seq, const FVector3& Move, float YawDegrees, uint32 Buttons);
 
         // After roles refresh, decides who simulates each networked character.
         void RefreshDrives(CWorld* World, ECS::FRegistry& Registry, bool bServer);

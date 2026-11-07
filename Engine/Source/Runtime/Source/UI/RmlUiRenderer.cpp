@@ -83,25 +83,6 @@ namespace Lumina
     // BeginFrame fences the slot it reuses, so a resource this many engine frames old has already retired.
     static constexpr uint64 GFramesInFlight = RHI::kFramesInFlight;
 
-    // A dropped draw is silent and the hardest failure to chase here, so every distinct skip reports once.
-    static void WarnDroppedDrawOnce(const char* Reason)
-    {
-        static const char* Reported[8] = {};
-        for (const char*& Slot : Reported)
-        {
-            if (Slot == Reason)
-            {
-                return;
-            }
-            if (Slot == nullptr)
-            {
-                Slot = Reason;
-                LOG_WARN("[RmlUi] Dropping a draw from the batch, {}. It renders nothing.", Reason);
-                return;
-            }
-        }
-    }
-
     // Count in the low 8 bits so one draw carries a whole intersection without growing FUiDraw.
     static constexpr uint32 PackClipRange(uint32 Offset, uint32 Count)
     {
@@ -320,7 +301,7 @@ namespace Lumina
         }
         if (LiveLayers >= GMaxLiveLayers)
         {
-            LOG_WARN("[RmlUi] Layer budget of {} reached; effects on this frame are skipped.", GMaxLiveLayers);
+            LOG_WARN_ONCE("[RmlUi] Layer budget of {} reached; effects on this frame are skipped.", GMaxLiveLayers);
             return kNoLayer;
         }
 
@@ -346,7 +327,7 @@ namespace Lumina
         });
         if (!Layer.Color.IsValid() || Layer.Color.SampledSlot == RHI::kInvalidHeapSlot)
         {
-            LOG_WARN("[RmlUi] Failed to create a layer render target; effects on this frame are skipped.");
+            LOG_WARN_ONCE("[RmlUi] Failed to create a layer render target; effects on this frame are skipped.");
             return kNoLayer;
         }
         Layer.SampledSlot   = Layer.Color.SampledSlot;
@@ -847,15 +828,16 @@ namespace Lumina
                 DrawIndexOffsets[ThisDraw] = uint32(BatchIndices.Num());
 
                 auto GeomIt = Geometries.Find(Draw.Geometry);
+                // A dropped draw is silent and the hardest failure to chase here, so every distinct skip reports once.
                 if (GeomIt == nullptr)
                 {
-                    WarnDroppedDrawOnce("its geometry was released before the batch was built");
+                    LOG_WARN_ONCE("[RmlUi] Dropping a draw from the batch, its geometry was released before the batch was built. It renders nothing.");
                     continue;
                 }
                 const FGeometry& Geom = (*GeomIt);
                 if (Geom.VertexData.IsEmpty() || Geom.IndexData.IsEmpty() || Geom.IndexCount == 0)
                 {
-                    WarnDroppedDrawOnce("its geometry is empty");
+                    LOG_WARN_ONCE("[RmlUi] Dropping a draw from the batch, its geometry is empty. It renders nothing.");
                     continue;
                 }
 
@@ -876,7 +858,7 @@ namespace Lumina
                 }
                 if (ResourceID == RHI::kInvalidHeapSlot)
                 {
-                    WarnDroppedDrawOnce("no texture resolved and the default is unavailable");
+                    LOG_WARN_ONCE("[RmlUi] Dropping a draw from the batch, no texture resolved and the default is unavailable. It renders nothing.");
                     continue;
                 }
 
@@ -908,12 +890,12 @@ namespace Lumina
                     auto ShaderIt = Shaders.Find(Draw.Shader);
                     if (ShaderIt == nullptr)
                     {
-                        WarnDroppedDrawOnce("its gradient shader was released before the batch was built");
+                        LOG_WARN_ONCE("[RmlUi] Dropping a draw from the batch, its gradient shader was released before the batch was built. It renders nothing.");
                         continue;
                     }
                     if (ShaderIt->Stops.IsEmpty())
                     {
-                        WarnDroppedDrawOnce("its gradient shader compiled with no color stops");
+                        LOG_WARN_ONCE("[RmlUi] Dropping a draw from the batch, its gradient shader compiled with no color stops. It renders nothing.");
                         continue;
                     }
                     const FShader& Sh = (*ShaderIt);
@@ -1306,8 +1288,7 @@ namespace Lumina
 
         RHI::FPipelineH LayerPipeline = GetPipelineForFormat(EFormat::RGBA8_UNORM);
 
-        static thread_local TVector<uint32> Stack;
-        Stack.Reset();
+        ReplayLayerStack.Reset();
 
         uint32 Active = kNoLayer;
         uint32 NextDraw = 0;
@@ -1387,16 +1368,16 @@ namespace Lumina
                     ClearLayer(CL, Cmd.TargetLayer);
                     bPassScissorSet = bSaved;
                 }
-                Stack.Add(Cmd.TargetLayer);
+                ReplayLayerStack.Add(Cmd.TargetLayer);
                 Active = Cmd.TargetLayer;
                 break;
 
             case ELayerOp::Pop:
-                if (!Stack.IsEmpty())
+                if (!ReplayLayerStack.IsEmpty())
                 {
-                    Stack.Pop();
+                    ReplayLayerStack.Pop();
                 }
-                Active = Stack.IsEmpty() ? kNoLayer : Stack.Last();
+                Active = ReplayLayerStack.IsEmpty() ? kNoLayer : ReplayLayerStack.Last();
                 break;
 
             case ELayerOp::Composite:
@@ -2277,7 +2258,7 @@ namespace Lumina
         const uint32 Index = AcquireLayer();
         if (Index == kNoLayer)
         {
-            LOG_WARN("[RmlUi] SaveLayerAsMaskImage got no layer, so the masked element draws nothing.");
+            LOG_WARN_ONCE("[RmlUi] SaveLayerAsMaskImage got no layer, so the masked element draws nothing.");
             return 0;
         }
 
@@ -2505,8 +2486,7 @@ namespace Lumina
         const float Time = static_cast<float>(PlatformTime::Seconds());
 
         // Brushes are shared across contexts, so scope the work to the drawing context and de-dup.
-        static thread_local TVector<Rml::TextureHandle> Rendered;
-        Rendered.Reset();
+        RenderedBrushes.Reset();
 
         bool bAnyWrites = false;
 
@@ -2550,16 +2530,11 @@ namespace Lumina
                 continue;
             }
 
-            bool bAlready = false;
-            for (Rml::TextureHandle H : Rendered)
-            {
-                if (H == Draw.Texture) { bAlready = true; break; }
-            }
-            if (bAlready)
+            if (RenderedBrushes.Contains(Draw.Texture))
             {
                 continue;
             }
-            Rendered.Add(Draw.Texture);
+            RenderedBrushes.Add(Draw.Texture);
 
             FTexture& Tex = (*It);
             CMaterialInterface* Material = Tex.BrushMaterial.Get();

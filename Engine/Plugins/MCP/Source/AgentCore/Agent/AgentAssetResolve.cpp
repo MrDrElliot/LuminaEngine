@@ -59,7 +59,7 @@ namespace Lumina::Agent
             for (TObjectIterator<CClass> It; It; ++It)
             {
                 const FString Candidate = (*It)->GetName().ToString();
-                if (Candidate.Len() > Suffix.Len() && Candidate.EndsWith(Suffix))
+                if (Candidate.Len() > Suffix.Len() && EndsWithIgnoreCase(FStringView(Candidate), FStringView(Suffix)))
                 {
                     Class = *It;
                     ++Matches;

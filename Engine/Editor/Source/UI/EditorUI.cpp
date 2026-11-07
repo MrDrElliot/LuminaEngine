@@ -174,10 +174,11 @@
 #include "Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/AssetEditors/FontEditor/FontEditorTool.h"
 #include "Tools/AssetEditors/SpriteSheetEditor/SpriteSheetEditorTool.h"
-#include "Tools/UI/ImGui/ImGuiAllocator.h"
+#include "Tools/UI/ImGui/ImGuiModule.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/ImGuiKeyCapture.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/LightComponent.h"
@@ -503,14 +504,8 @@ namespace Lumina
 
         ImGuiContext* Context = Render().GetImGuiRenderer()->GetImGuiContext();
         ImPlotContext* PlotContext = Render().GetImGuiRenderer()->GetImPlotContext();
-        ImGui::SetCurrentContext(Context);
-        ImPlot::SetCurrentContext(PlotContext);
-
-        // Editor links its own ImGui copy; install allocator here because StartupModule never runs (editor links directly, not LoadModule'd).
-        ImGuiX::InstallImGuiAllocator();
-
-        // Only the ImGui copy that builds the font atlas fills its word-wrap tables, so this one breaks text mid-word until told to.
-        ImTextInitClassifiers();
+        // Editor links its own ImGui copy and is linked directly rather than loaded, so no module hook syncs it.
+        ImGuiX::AdoptImGuiContext(Context, PlotContext);
 
         // Plugin DLLs link their own ImGui, so the module manager syncs every plugin that opted in.
         FModuleManager::Get().NotifyImGuiReady(Context, PlotContext);
@@ -841,35 +836,6 @@ namespace Lumina
             LaunchTracyProfiler();
         }
 
-        // The chord is rebindable in Editor Settings, General, Hotkeys.
-        {
-            // EKey holds GLFW keycodes, which run contiguously, so they map onto ImGuiKey ranges by offset.
-            auto EKeyToImGuiKey = [](EKey Key) -> ImGuiKey
-            {
-                const int Code = (int)Key;
-                if (Key >= EKey::A  && Key <= EKey::Z)   { return (ImGuiKey)(ImGuiKey_A  + (Code - (int)EKey::A)); }
-                if (Key >= EKey::D0 && Key <= EKey::D9)  { return (ImGuiKey)(ImGuiKey_0  + (Code - (int)EKey::D0)); }
-                if (Key >= EKey::F1 && Key <= EKey::F12) { return (ImGuiKey)(ImGuiKey_F1 + (Code - (int)EKey::F1)); }
-                return ImGuiKey_None;
-            };
-
-            const SKey& Bind = GetDefault<CEditorSettings>()->ReloadScriptsHotkey;
-            const ImGuiKey ReloadKey = Bind.IsKeyboard() ? EKeyToImGuiKey(Bind.Key) : ImGuiKey_None;
-            if (ReloadKey != ImGuiKey_None)
-            {
-                ImGuiKeyChord Chord = ReloadKey;
-                if (Bind.bCtrl)  { Chord |= ImGuiMod_Ctrl; }
-                if (Bind.bShift) { Chord |= ImGuiMod_Shift; }
-                if (Bind.bAlt)   { Chord |= ImGuiMod_Alt; }
-
-                if (ImGui::IsKeyChordPressed(Chord))
-                {
-                    DotNet::RequestScriptReload();
-                }
-            }
-        }
-
-
         if (!FocusTargetWindowName.IsEmpty())
         {
             // An unresolvable target only drops the focus request; returning here dropped the whole UI frame.
@@ -1077,6 +1043,12 @@ namespace Lumina
             && ImGui::IsKeyPressed(ImGuiKey_P, false))
         {
             OpenAssetSearchModal();
+        }
+
+        // Rebindable in Editor Settings, and the code workspace runs its own reload binding while it has focus.
+        if (!bCodeFocused && ImGuiX::IsShortcutPressed(GetDefault<CEditorSettings>()->ReloadScriptsHotkey, 0, ImGuiInputFlags_RouteGlobal))
+        {
+            DotNet::RequestScriptReload();
         }
 
         // A small budget avoids a hitch while cold thumbnails fill in a few per frame.
@@ -4406,12 +4378,12 @@ namespace Lumina
 
         if (ImGui::BeginMenu(LE_ICON_HAMMER " Shaders"))
         {
-            if (ImGui::MenuItem(LE_ICON_MATERIAL_DESIGN " Recompile Default Material"))
+            if (ImGui::MenuItem(LE_ICON_MATERIAL_DESIGN " Recompile Default Material", "F5"))
             {
                 CMaterial::CreateDefaultMaterial();
             }
 
-            if (ImGui::MenuItem(LE_ICON_FOLDER " Open Shaders Directory", "F6"))
+            if (ImGui::MenuItem(LE_ICON_FOLDER " Open Shaders Directory"))
             {
                 Platform::LaunchURL(UTF8_TO_TCHAR(*Paths::GetEngineShadersDirectory()));
             }
@@ -4436,7 +4408,7 @@ namespace Lumina
             return;
         }
         
-        if (ImGui::MenuItem(LE_ICON_FOLDER_PLUS " New Project...", "Ctrl+N"))
+        if (ImGui::MenuItem(LE_ICON_FOLDER_PLUS " New Project..."))
         {
             NewProjectDialog();
         }
@@ -4528,7 +4500,7 @@ namespace Lumina
             LaunchTracyProfiler();
         }
         
-        if (ImGui::MenuItem(LE_ICON_CAMERA " RenderDoc Capture", "F11"))
+        if (ImGui::MenuItem(LE_ICON_CAMERA " RenderDoc Capture"))
         {
             FRenderDoc::Get().TriggerCapture();
         }

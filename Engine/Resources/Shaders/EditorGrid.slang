@@ -1,11 +1,9 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Mirror of FEditorGridPC in SceneRenderer_Editor.cpp, with the matrices and vectors first.
+// Mirror of FEditorGridPC in SceneRenderer_Editor.cpp, with the vectors first.
 struct FEditorGridArgs
 {
-    float4x4   ViewProjection;
-    float4x4   InverseViewProjection;
     float4     MinorColor;
     float4     MajorColor;
     float4     AxisXColor;
@@ -29,12 +27,6 @@ struct FragmentInput
 
 static const float kMinCellPixels = 6.0;
 
-float3 Unproject(float2 UV, float Depth)
-{
-    const float4 World = mul(Pass().InverseViewProjection, float4(UV * 2.0 - 1.0, Depth, 1.0));
-    return World.xyz / World.w;
-}
-
 // Ben Golus' pristine grid: a line keeps its requested width until it would be thinner than a pixel, then fades to its average coverage.
 float PristineGrid(float2 UV, float2 UVDeriv, float2 LineWidth)
 {
@@ -54,10 +46,11 @@ float PristineGrid(float2 UV, float2 UVDeriv, float2 LineWidth)
     return lerp(Grid2.x, 1.0, Grid2.y);
 }
 
-float GridLevel(float2 Coord, float2 WorldDeriv, float Cell, float WidthPixels)
+// The camera's cell phase is one value for the whole screen, so far from the origin its rounding shifts the grid instead of warping it.
+float GridLevel(float2 CameraXZ, float2 Offset, float2 WorldDeriv, float Cell, float WidthPixels)
 {
     const float2 UVDeriv = WorldDeriv / Cell;
-    return PristineGrid(Coord / Cell, UVDeriv, min(UVDeriv * WidthPixels, 1.0));
+    return PristineGrid(frac(CameraXZ / Cell) + Offset / Cell, UVDeriv, min(UVDeriv * WidthPixels, 1.0));
 }
 
 float AxisLine(float DistancePixels, float WidthPixels)
@@ -73,18 +66,20 @@ float4 Over(float4 Below, float3 Color, float Alpha)
 [shader("fragment")]
 float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
-    const float3 Near = Unproject(Input.UV, 1.0);
-    const float3 Dir  = Unproject(Input.UV, 0.5) - Near;
+    // Camera-relative, since a camera translation folded into the ray leaves too few float bits for the hit at height or far out.
+    const float3 Camera  = GetCameraPosition();
+    const float3 NearRel = mul((float3x3)GetInverseCameraView(), GetCameraViewRay(Input.UV + GetTemporalJitterUV()));
+    const float3 Dir     = IsCameraOrthographic() ? GetCameraForward() : NearRel;
 
     // A ray that never reaches the plane still lands somewhere, so the derivatives below stay defined across the horizon.
     const float  Denominator = abs(Dir.y) > 1e-7 ? Dir.y : 1e-7;
-    const float  T           = -Near.y / Denominator;
+    const float  T           = -(Camera.y + NearRel.y) / Denominator;
     const bool   bHits       = T > 0.0;
-    const float3 Hit         = Near + Dir * max(T, 0.0);
+    const float3 Offset      = NearRel + Dir * max(T, 0.0);
 
-    const float2 Coord      = Hit.xz;
-    const float2 WorldDeriv = max(float2(length(float2(ddx(Coord.x), ddy(Coord.x))),
-                                         length(float2(ddx(Coord.y), ddy(Coord.y)))), 1e-6);
+    const float2 Coord      = Camera.xz + Offset.xz;
+    const float2 WorldDeriv = max(float2(length(float2(ddx(Offset.x), ddy(Offset.x))),
+                                         length(float2(ddx(Offset.z), ddy(Offset.z)))), 1e-6);
 
     const float Spacing = max(Pass().Spacing, 1e-4);
     const float Lod     = max(log10(max(WorldDeriv.x, WorldDeriv.y) * kMinCellPixels / Spacing), -1.0);
@@ -96,21 +91,20 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     const float  Width = Pass().LineWidth;
 
     float4 Result = float4(0.0, 0.0, 0.0, 0.0);
-    Result = Over(Result, Major.rgb, Major.a * Fade * GridLevel(Coord, WorldDeriv, Fine * 100.0, Width));
-    Result = Over(Result, lerp(Major.rgb, Minor.rgb, Fade), lerp(Major.a, Minor.a, Fade) * GridLevel(Coord, WorldDeriv, Fine * 10.0, Width));
-    Result = Over(Result, Minor.rgb, Minor.a * (1.0 - Fade) * GridLevel(Coord, WorldDeriv, Fine, Width));
+    Result = Over(Result, Major.rgb, Major.a * Fade * GridLevel(Camera.xz, Offset.xz, WorldDeriv, Fine * 100.0, Width));
+    Result = Over(Result, lerp(Major.rgb, Minor.rgb, Fade), lerp(Major.a, Minor.a, Fade) * GridLevel(Camera.xz, Offset.xz, WorldDeriv, Fine * 10.0, Width));
+    Result = Over(Result, Minor.rgb, Minor.a * (1.0 - Fade) * GridLevel(Camera.xz, Offset.xz, WorldDeriv, Fine, Width));
 
     const float2 AxisDistance = abs(Coord) / WorldDeriv;
     Result = Over(Result, Pass().AxisZColor.rgb, Pass().AxisZColor.a * AxisLine(AxisDistance.x, Pass().AxisWidth));
     Result = Over(Result, Pass().AxisXColor.rgb, Pass().AxisXColor.a * AxisLine(AxisDistance.y, Pass().AxisWidth));
 
-    const float3 Camera       = GetCameraPosition();
     const float  Reach        = max(Pass().FadeDistance, abs(Camera.y) * 10.0);
-    const float  DistanceFade = 1.0 - smoothstep(Reach * 0.35, Reach, length(Hit.xz - Camera.xz));
+    const float  DistanceFade = 1.0 - smoothstep(Reach * 0.35, Reach, length(Offset.xz));
     const float  HorizonFade  = saturate(abs(normalize(Dir).y) * 25.0);
 
     // Reverse-Z, so the scene hides the grid where it is nearer; the margin keeps a floor at the plane from flickering over it.
-    const float4 HitClip    = mul(Pass().ViewProjection, float4(Hit, 1.0));
+    const float4 HitClip    = ViewToClip(mul((float3x3)GetCameraView(), Offset));
     const float  HitDepth   = HitClip.z / HitClip.w;
     const float  SceneDepth = Pass().Depth.SampleLevel(Samplers::PointClamp, Input.UV, 0.0).r;
     const float  Visible    = SceneDepth > HitDepth * 1.002 + 1e-7 ? 0.0 : 1.0;

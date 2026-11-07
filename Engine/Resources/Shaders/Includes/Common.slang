@@ -9,7 +9,7 @@ static const float TWO_PI = 6.28318530718;
 static const float INV_PI = 0.31830988618;
 
 
-// Upper bound for the sun cascade's tap count, which the renderer's Shadow Quality forwards through ShadowParams2.y.
+// Upper bound for the sun cascade's tap count, which the renderer's Shadow Quality forwards through FSunShadowParams::FilterTaps.
 #define SHADOW_MAX_SAMPLE_COUNT 32
 
 #define INDEX_NONE -1
@@ -45,13 +45,13 @@ enum ELightFlags
     Spot        = BIT(2),
     CastShadow  = BIT(3),
     Volumetric  = BIT(4),
-    // Local lights only.
+    // Local lights only, with its reach at LIGHT_CONTACT_LENGTH_SHIFT.
     ContactShadow = BIT(5),
     // Its atlas tile sits at LIGHT_FUNCTION_SLOT_SHIFT.
     LightFunction = BIT(6),
     // A one-sided rectangle. Angles holds its half width and height, and VolumetricScatteringRadius its packed right axis.
     Area        = BIT(7),
-    // Bits 8-15 and 24-31 are not free, see LIGHT_FUNCTION_SLOT_SHIFT and LIGHT_MIN_ROUGHNESS_SHIFT.
+    // Bits 8-31 are not free, see LIGHT_FUNCTION_SLOT_SHIFT, LIGHT_CONTACT_LENGTH_SHIFT and LIGHT_MIN_ROUGHNESS_SHIFT.
 }
 
 enum EInstanceFlags
@@ -896,6 +896,23 @@ struct FLightFunction
     float4 Up;
 };
 
+// Mirror of Lumina::FSunShadowParams.
+struct FSunShadowParams
+{
+    float NormalBias;
+    float DepthBias;
+    float FilterRadiusTexels;   // in cascade-0 texels
+    float CascadeBlend;
+    float DistanceFade;         // fraction of the last cascade the shadow fades out over
+    uint  FilterTaps;
+    uint  ActiveCascadeCount;
+    uint  bFarCascade;          // 1 when the last active cascade is the far one
+    float TanSunRadius;         // tangent of the sun's angular radius
+    uint  BlockerTaps;          // near cascade blocker search taps, 0 keeps the fixed-width kernel
+    float MinFilterRadiusTexels; // narrowest contact-hardened kernel, in cascade-0 texels
+    uint  _Pad;
+};
+
 struct FLightData
 {
     uint   bHasIBL;       // 0 falls back to flat skylight ambient
@@ -908,10 +925,7 @@ struct FLightData
     float4 CascadeResolutions;
     // Ortho depth range of each cascade, which turns a shadow-map NDC z delta into world units.
     float4 CascadeDepthRanges;
-    // Mirrors FSceneLightData::ShadowParams (normal bias, depth bias, PCF radius in cascade-0 texels, cascade blend).
-    float4 ShadowParams;
-    // Far-cascade fade fraction, PCF tap count, active cascade count, and 1 when the last cascade is the far one.
-    float4 ShadowParams2;
+    FSunShadowParams SunShadow;
     float4 AmbientLight;
     // Each carries its own live count, so no caller has to remember a separate bound.
     GPUSpan<FLight>           Lights;

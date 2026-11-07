@@ -17,8 +17,6 @@ namespace Lumina
 {
     namespace
     {
-        TUniquePtr<FNetLoadBotSwarm> GSwarm;
-
         // Several unconfirmed moves ride in each upload, so a lost packet is covered by the next one.
         constexpr uint32 MovesPerUpload = 3;
 
@@ -56,12 +54,12 @@ namespace Lumina
         }
     }
 
-    void FNetLoadBotSwarm::StartFromCommandLine()
+    TUniquePtr<FNetLoadBotSwarm> FNetLoadBotSwarm::CreateFromCommandLine()
     {
         TOptional<int> Count = GCommandLine->GetInt("netbots");
         if (!Count.IsSet() || Count.GetValue() <= 0)
         {
-            return;
+            return nullptr;
         }
 
         FConfig Config;
@@ -87,21 +85,9 @@ namespace Lumina
             Config.RpcClass = FString(*(*RpcClass));
         }
 
-        GSwarm = MakeUnique<FNetLoadBotSwarm>();
-        GSwarm->Begin(Config);
-    }
-
-    void FNetLoadBotSwarm::Stop()
-    {
-        GSwarm.reset();
-    }
-
-    void FNetLoadBotSwarm::Tick()
-    {
-        if (GSwarm != nullptr)
-        {
-            GSwarm->TickAll();
-        }
+        TUniquePtr<FNetLoadBotSwarm> Swarm = MakeUnique<FNetLoadBotSwarm>();
+        Swarm->Begin(Config);
+        return Swarm;
     }
 
     void FNetLoadBotSwarm::Begin(const FConfig& InConfig)
@@ -117,7 +103,7 @@ namespace Lumina
             Config.Count, *Config.Host, Config.Port, Config.JoinsPerSecond, Config.WanderRadius, Config.ChatSeconds, Config.AttackSeconds);
     }
 
-    void FNetLoadBotSwarm::TickAll()
+    void FNetLoadBotSwarm::Tick()
     {
         // The type table behind the hash is built once, so asking before every module registered would freeze it short.
         if (ProtocolHash == 0)

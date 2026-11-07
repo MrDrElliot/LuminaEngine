@@ -516,19 +516,16 @@ namespace Lumina
             ImGui::SetNextItemWidth(ItemMax.x - ItemMin.x - ArrowWidth);
             ImGui::SetKeyboardFocusHere();
 
-            static char EditBuffer[256];
-
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
-            if (ImGui::InputText("##EditLabel", EditBuffer, sizeof(EditBuffer),
-                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+            if (ImGuiX::InputText("##EditLabel", EditLabel, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
             {
                 State.bEditingText = false;
                 if (Context.RenameFunction)
                 {
-                    Context.RenameFunction(*this, FTreeNodeID{NodeIdx}, EditBuffer);
+                    Context.RenameFunction(*this, FTreeNodeID{NodeIdx}, EditLabel);
                 }
 
-				EditBuffer[0] = '\0';
+                EditLabel.Reset();
             }
             ImGui::PopStyleColor();
 

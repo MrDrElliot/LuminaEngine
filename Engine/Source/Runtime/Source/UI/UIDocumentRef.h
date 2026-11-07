@@ -47,5 +47,11 @@ namespace Lumina
 
         bool operator==(const SUIDocumentRef& Other) const { return Path == Other.Path && Guid == Other.Guid; }
         bool operator!=(const SUIDocumentRef& Other) const { return !(*this == Other); }
+
+    private:
+
+        // Keyed on the text it came from, since loads and replication write Guid directly.
+        mutable FString ParsedGuidText;
+        mutable FGuid   ParsedGuid;
     };
 }

@@ -2118,38 +2118,10 @@ namespace Lumina
     FName FSceneEditorTool::MakeUniqueFolderName(uint32 ParentID) const
     {
         const SSceneFolderComponent* Folders = GetSceneFolders();
-        if (Folders == nullptr)
+        return MakeUniqueName("New Folder", [Folders, ParentID](const FName& Name)
         {
-            return FName("New Folder");
-        }
-
-        for (int32 Suffix = 1; Suffix < 1000; ++Suffix)
-        {
-            FString Candidate = "New Folder";
-            if (Suffix > 1)
-            {
-                Candidate += " ";
-                Candidate += *Format("{}", Suffix);
-            }
-
-            const FName CandidateName(*Candidate);
-            bool bTaken = false;
-            for (const SSceneFolder& Folder : Folders->Folders)
-            {
-                if (Folder.ParentID == ParentID && Folder.Name == CandidateName)
-                {
-                    bTaken = true;
-                    break;
-                }
-            }
-
-            if (!bTaken)
-            {
-                return CandidateName;
-            }
-        }
-
-        return FName("New Folder");
+            return Folders != nullptr && Algo::AnyOf(Folders->Folders, [&](const SSceneFolder& Folder) { return Folder.ParentID == ParentID && Folder.Name == Name; });
+        }, " ", 2);
     }
 
     void FSceneEditorTool::BuildFolderNodes(FTreeListView& Tree)

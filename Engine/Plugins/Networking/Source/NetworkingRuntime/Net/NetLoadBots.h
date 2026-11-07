@@ -28,10 +28,10 @@ namespace Lumina
             FString RpcClass       = "NetStress.StressPlayer";
         };
 
-        // Starts only when the process was given -netbots=N.
-        static void StartFromCommandLine();
-        static void Stop();
-        static void Tick();
+        // Null unless the process was given -netbots=N.
+        static TUniquePtr<FNetLoadBotSwarm> CreateFromCommandLine();
+
+        void Tick();
 
     private:
 
@@ -73,7 +73,6 @@ namespace Lumina
         };
 
         void Begin(const FConfig& InConfig);
-        void TickAll();
         void TickBot(FBot& Bot, double Now, double DeltaTime);
         void Receive(FBot& Bot, double Now, const uint8* Data, SIZE_T Size);
         void SendCommands(FBot& Bot, double DeltaTime);

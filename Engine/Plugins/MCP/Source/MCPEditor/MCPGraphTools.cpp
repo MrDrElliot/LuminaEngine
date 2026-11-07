@@ -22,13 +22,11 @@ namespace Lumina::MCP
                 Info.Name      = Pin->GetPinName();
                 Info.Direction = Direction;
 
-                if (Pin->HasConnection())
+                for (CEdNodeGraphPin* Other : Pin->GetConnections())
                 {
-                    CEdNodeGraphPin* Other = Pin->GetConnection(0);
                     if (Other != nullptr && Other->GetOwningNode() != nullptr)
                     {
-                        Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
-                        Info.ConnectedPin  = Other->GetPinName();
+                        Info.Connections.Add({ Other->GetOwningNode()->GetNodeID(), Other->GetPinName() });
                     }
                 }
 

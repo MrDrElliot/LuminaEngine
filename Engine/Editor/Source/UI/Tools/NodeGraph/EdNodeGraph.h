@@ -450,7 +450,7 @@ namespace Lumina
         // F2 rename box, opened a frame after the key since the popup lives in the suspended region.
         bool           bOpenRenamePopup = false;
         int64          RenameNodeID     = 0;
-        char           RenameBuffer[128] = {};
+        FString        RenameText;
 
         // A node's dropdown, held here because the node only requests it while the canvas is drawing.
         bool                     bOpenChoicePopup = false;

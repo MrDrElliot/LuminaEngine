@@ -696,6 +696,12 @@ namespace Lumina
 
     namespace
     {
+        // TrackCameraCut has already counted the cut frame down by one when post runs.
+        constexpr bool IsCameraCutFrame(uint32 CameraCutFramesLeft)
+        {
+            return CameraCutFramesLeft == RHI::kFramesInFlight + 1u;
+        }
+
         struct FSMAAPushConstants
         {
             FVector4 RTMetrics;  // x = 1/w, y = 1/h, z = w, w = h
@@ -1155,7 +1161,7 @@ namespace Lumina
         Inputs.FarPlane           = Global.FarPlane;
         Inputs.VerticalFovRadians = Projection[1][1] != 0.0f ? 2.0f * Math::Atan(1.0f / Math::Abs(Projection[1][1])) : 0.0f;
         Inputs.DeltaSeconds       = Global.DeltaTime;
-        Inputs.bReset             = !CurrentView->bTemporalHistoryValid;
+        Inputs.bReset             = !CurrentView->bTemporalHistoryValid || IsCameraCutFrame(CameraCutFramesLeft);
 
         // The SDK records its own barriers and bindings, so everything before and after it is fenced completely.
         RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);
@@ -1377,9 +1383,10 @@ namespace Lumina
         PC.HistoryIndex  = (uint32)History.GetResourceID();
         PC.VelocityIndex = (uint32)Velocity.GetResourceID();
 
-        // The first frame after a resize or a toggle has nothing behind it, so it resolves to itself.
+        // The first frame after a resize, a toggle or a camera cut has nothing behind it, so it resolves to itself.
         const float Weight = Settings != nullptr ? Math::Clamp(Settings->TemporalHistoryWeight, 0.0f, 0.5f) : 0.5f;
-        PC.HistoryWeight  = CurrentView->bTemporalHistoryValid ? Weight : 0.0f;
+        const bool bHasHistory = CurrentView->bTemporalHistoryValid && !IsCameraCutFrame(CameraCutFramesLeft);
+        PC.HistoryWeight  = bHasHistory ? Weight : 0.0f;
 
         PC.ClampGamma         = Settings != nullptr ? Math::Max(Settings->TemporalClampGamma, 0.25f) : 1.0f;
         PC.MaxReprojection    = Settings != nullptr ? Math::Max(Settings->TemporalMaxReprojection, 0.01f) : 0.25f;

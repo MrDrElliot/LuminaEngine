@@ -20,6 +20,6 @@ public class MCPEditor : LuminaModuleRules
             "RPMalloc",
         });
 
-        TestDependencyModuleNames.Add("AgentCore");
+        TestDependencyModuleNames.AddRange(new[] { "AgentCore", "Editor" });
     }
 }

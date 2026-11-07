@@ -1678,24 +1678,26 @@ namespace Lumina
         {
             SSequenceEventKey& Selected = Events->Keys[SelectedTrackKey];
 
-            char NameBuffer[128];
-            snprintf(NameBuffer, sizeof(NameBuffer), "%s", *Selected.Name);
+            FString NameText(*Selected.Name);
             ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::InputText("Name", NameBuffer, sizeof(NameBuffer)))
+            const bool bNameSubmitted = ImGuiX::InputText("Name", NameText, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (bNameSubmitted || ImGui::IsItemDeactivatedAfterEdit())
             {
-                BeginDragEdit("Edit Sequence Event");
-                Selected.Name = FName(NameBuffer);
-                bChanged = true;
+                if (const FName NewName(NameText); NewName != Selected.Name)
+                {
+                    BeginDragEdit("Edit Sequence Event");
+                    Selected.Name = NewName;
+                    bChanged = true;
+                }
             }
 
             ImGui::SameLine();
-            char PayloadBuffer[256];
-            snprintf(PayloadBuffer, sizeof(PayloadBuffer), "%s", *Selected.Payload);
+            FString PayloadText = Selected.Payload;
             ImGui::SetNextItemWidth(220.0f);
-            if (ImGui::InputText("Payload", PayloadBuffer, sizeof(PayloadBuffer)))
+            if (ImGuiX::InputText("Payload", PayloadText))
             {
                 BeginDragEdit("Edit Sequence Event");
-                Selected.Payload = PayloadBuffer;
+                Selected.Payload = Lumina::Move(PayloadText);
                 bChanged = true;
             }
         }

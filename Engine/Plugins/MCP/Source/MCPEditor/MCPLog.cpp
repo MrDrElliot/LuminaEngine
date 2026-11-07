@@ -120,6 +120,7 @@ namespace Lumina::MCP
             Connection.Errors += Transaction->IsError() ? 1 : 0;
 
             Transactions.Add(Move(Transaction));
+            ++RecordedCount;
         }
 
         return Opened;
@@ -144,6 +145,7 @@ namespace Lumina::MCP
             }
 
             Transactions.Add(Move(Transaction));
+            ++RecordedCount;
         }
     }
 
@@ -157,7 +159,7 @@ namespace Lumina::MCP
         Revision.fetch_add(1, std::memory_order_release);
     }
 
-    void FLog::Snapshot(TVector<TSharedPtr<const FTransaction>>& OutTransactions, TVector<FConnection>& OutConnections) const
+    uint64 FLog::Snapshot(TVector<TSharedPtr<const FTransaction>>& OutTransactions, TVector<FConnection>& OutConnections) const
     {
         TScopeLock Lock(Mutex);
 
@@ -169,6 +171,7 @@ namespace Lumina::MCP
         }
 
         OutConnections = Connections;
+        return RecordedCount;
     }
 
     FConnection* FLog::FindConnection(FStringView Session)

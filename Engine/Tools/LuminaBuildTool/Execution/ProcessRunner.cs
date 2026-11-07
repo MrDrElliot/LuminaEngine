@@ -121,6 +121,44 @@ public static class ProcessRunner
         return new ProcessResult { ExitCode = Runner.ExitCode, Output = Output };
     }
 
+    // Output holds standard output only; null means the tool could not start or outlived TimeoutMs and was killed.
+    public static ProcessResult? RunCaptured(ProcessStartInfo StartInfo, int TimeoutMs)
+    {
+        StartInfo.RedirectStandardOutput = true;
+        StartInfo.RedirectStandardError = true;
+        StartInfo.UseShellExecute = false;
+        StartInfo.CreateNoWindow = true;
+
+        try
+        {
+            using Process? Runner = Process.Start(StartInfo);
+
+            if (Runner is null)
+            {
+                return null;
+            }
+
+            // Both pipes drain together so a child that fills stderr cannot stall while stdout is read.
+            Task<string> Output = Runner.StandardOutput.ReadToEndAsync();
+            Task<string> Errors = Runner.StandardError.ReadToEndAsync();
+
+            if (!Runner.WaitForExit(TimeoutMs))
+            {
+                Log.Verbose("'{0}' did not finish within {1} ms and was killed.", StartInfo.FileName, TimeoutMs);
+                TryKill(Runner);
+                return null;
+            }
+
+            Task.WaitAll(Output, Errors);
+            return new ProcessResult { ExitCode = Runner.ExitCode, Output = Output.Result };
+        }
+        catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            Log.Verbose("Could not run '{0}': {1}", StartInfo.FileName, Ex.Message);
+            return null;
+        }
+    }
+
     private static void TryKill(Process Runner)
     {
         try

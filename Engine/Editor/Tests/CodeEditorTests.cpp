@@ -1,8 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <imgui.h>
-#include <imgui_internal.h>
-#include "Tools/UI/ImGui/ImGuiAllocator.h"
+#include "ImGuiTestHarness.h"
 #include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 #include "Paths/Paths.h"
@@ -22,8 +20,6 @@
 
 using namespace Lumina;
 
-extern "C" DLL_IMPORT void LuminaModuleSetupImGui(void* InImGui, void* InImPlot);
-
 namespace
 {
     // Runs whole ImGui frames around one editor with no renderer behind them.
@@ -31,52 +27,11 @@ namespace
     {
     public:
 
-        FCodeEditorHarness()
-        {
-            ImGuiX::InstallImGuiAllocator();
-            Context = ImGui::CreateContext();
-            ImGui::SetCurrentContext(Context);
-            LuminaModuleSetupImGui(Context, nullptr);
-            ImGuiIO& IO = ImGui::GetIO();
-            IO.DisplaySize = ImVec2(1280.0f, 720.0f);
-            IO.DeltaTime = 1.0f / 60.0f;
-            IO.IniFilename = nullptr;
-            IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-        }
-
-        ~FCodeEditorHarness()
-        {
-            ImGui::DestroyContext(Context);
-            LuminaModuleSetupImGui(nullptr, nullptr);
-        }
-
-        FCodeEditorHarness(const FCodeEditorHarness&) = delete;
-        FCodeEditorHarness& operator=(const FCodeEditorHarness&) = delete;
-        FCodeEditorHarness(FCodeEditorHarness&&) = delete;
-        FCodeEditorHarness& operator=(FCodeEditorHarness&&) = delete;
-
         void Frame()
         {
-            ImGui::NewFrame();
-            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
-            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-            ImGui::Begin("Host", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+            FImGuiTestHarness::BeginFrame();
             Editor.Render("Code", ImVec2(0.0f, 0.0f));
-            ImGui::End();
-            ImGui::Render();
-            for (ImTextureData* Texture : ImGui::GetPlatformIO().Textures)
-            {
-                if (Texture->Status == ImTextureStatus_WantCreate || Texture->Status == ImTextureStatus_WantUpdates)
-                {
-                    Texture->SetTexID((ImTextureID)1);
-                    Texture->SetStatus(ImTextureStatus_OK);
-                }
-                else if (Texture->Status == ImTextureStatus_WantDestroy)
-                {
-                    Texture->SetTexID(ImTextureID_Invalid);
-                    Texture->SetStatus(ImTextureStatus_Destroyed);
-                }
-            }
+            FImGuiTestHarness::EndFrame();
         }
 
         void Key(ImGuiKey Key, bool bDown)
@@ -85,11 +40,8 @@ namespace
             Frame();
         }
 
-        FCodeEditor   Editor;
-
-    private:
-
-        ImGuiContext* Context = nullptr;
+        FImGuiTestHarness ImGuiHarness;
+        FCodeEditor       Editor;
     };
 
     // A bar in the text marks the caret and is taken out.

@@ -46,45 +46,12 @@ namespace Lumina::Platform
 
 #else // A portable hand-rolled fallback, since wchar_t width is platform dependent.
 
+#include "Containers/StringView.h"
+
 namespace Lumina::Platform
 {
     namespace
     {
-        constexpr uint32 kReplacement = 0xFFFD;
-
-        // Decode one codepoint from UTF-8, advancing Index. Returns the replacement char on malformed input.
-        uint32 DecodeUTF8(const ANSICHAR* Src, int32 SrcLen, int32& Index)
-        {
-            const uint8 C0 = static_cast<uint8>(Src[Index++]);
-            if (C0 < 0x80)
-            {
-                return C0;
-            }
-
-            int32 Extra;
-            uint32 CP;
-            if ((C0 & 0xE0) == 0xC0) { Extra = 1; CP = C0 & 0x1F; }
-            else if ((C0 & 0xF0) == 0xE0) { Extra = 2; CP = C0 & 0x0F; }
-            else if ((C0 & 0xF8) == 0xF0) { Extra = 3; CP = C0 & 0x07; }
-            else { return kReplacement; }
-
-            for (int32 i = 0; i < Extra; ++i)
-            {
-                if (Index >= SrcLen)
-                {
-                    return kReplacement;
-                }
-                const uint8 Cont = static_cast<uint8>(Src[Index]);
-                if ((Cont & 0xC0) != 0x80)
-                {
-                    return kReplacement;
-                }
-                CP = (CP << 6) | (Cont & 0x3F);
-                ++Index;
-            }
-            return CP;
-        }
-
         // Number of UTF-8 bytes needed to encode a codepoint.
         int32 EncodedUTF8Size(uint32 CP)
         {
@@ -138,21 +105,22 @@ namespace Lumina::Platform
 
     int32 GetConvertedLength_UTF8ToWide(const ANSICHAR* Src, int32 SrcLen)
     {
+        const FStringView Text(Src, SrcLen);
         int32 Count = 0;
         for (int32 i = 0; i < SrcLen; )
         {
-            const uint32 CP = DecodeUTF8(Src, SrcLen, i);
-            Count += WideUnitsForCodepoint(CP);
+            Count += WideUnitsForCodepoint(DecodeUTF8Codepoint(Text, i));
         }
         return Count;
     }
 
     int32 Convert_UTF8ToWide(WIDECHAR* Dest, int32 DestLen, const ANSICHAR* Src, int32 SrcLen)
     {
+        const FStringView Text(Src, SrcLen);
         int32 Out = 0;
         for (int32 i = 0; i < SrcLen && Out < DestLen; )
         {
-            const uint32 CP = DecodeUTF8(Src, SrcLen, i);
+            const uint32 CP = DecodeUTF8Codepoint(Text, i);
             if (sizeof(WIDECHAR) >= 4 || CP < 0x10000)
             {
                 Dest[Out++] = static_cast<WIDECHAR>(CP);

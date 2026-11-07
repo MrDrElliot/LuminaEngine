@@ -419,10 +419,7 @@ namespace Lumina
             Light.VolumetricIntensity = PointLight.VolumetricIntensity;
             Light.VolumetricScatteringRadius = PointLight.VolumetricScatteringRadius;
         }
-        if (PointLight.bContactShadows)
-        {
-            Light.Flags |= ELightFlags::ContactShadow;
-        }
+        Light.Flags = PackLightContactShadow(Light.Flags, PointLight.bContactShadows, PointLight.ContactShadowLength);
         Light.Flags = PackLightMinRoughness(Light.Flags, PointLight.MinRoughness);
 
         if (PointLight.LightFunctionMaterial.Get() != nullptr)
@@ -515,10 +512,7 @@ namespace Lumina
             Light.VolumetricIntensity = SpotLight.VolumetricIntensity;
             Light.VolumetricScatteringRadius = SpotLight.VolumetricScatteringRadius;
         }
-        if (SpotLight.bContactShadows)
-        {
-            Light.Flags |= ELightFlags::ContactShadow;
-        }
+        Light.Flags = PackLightContactShadow(Light.Flags, SpotLight.bContactShadows, SpotLight.ContactShadowLength);
         Light.Flags = PackLightMinRoughness(Light.Flags, SpotLight.MinRoughness);
 
         if (SpotLight.LightFunctionMaterial.Get() != nullptr)
@@ -711,15 +705,24 @@ namespace Lumina
         const float            FilterRadius = Filter.RadiusTexels * Math::Max(DirectionalLight.ShadowBlur, 0.0f);
         const uint32           FilterTaps   = FilterRadius > 0.0f ? Filter.Taps : 1u;
 
+        SunFarShadow.ContactSteps  = DirectionalLight.bCastShadows && DirectionalLight.bContactShadows ? Filter.ContactSteps : 0u;
+        SunFarShadow.ContactLength = Math::Clamp(DirectionalLight.ContactShadowLength, 0.01f, 2.0f);
+
         // Shadow tuning forwarded to the lit pixel shaders via the light buffer.
-        LightData.ShadowParams  = FVector4(DirectionalLight.ShadowNormalBias,
-                                            DirectionalLight.ShadowDepthBias,
-                                            FilterRadius,
-                                            DirectionalLight.CascadeBlend);
-        LightData.ShadowParams2 = FVector4(DirectionalLight.ShadowDistanceFade,
-                                            float(FilterTaps),
-                                            float(ActiveCascadeCount),
-                                            bFarCascade ? 1.0f : 0.0f);
+        LightData.SunShadow = FSunShadowParams
+        {
+            .NormalBias         = DirectionalLight.ShadowNormalBias,
+            .DepthBias          = DirectionalLight.ShadowDepthBias,
+            .FilterRadiusTexels = FilterRadius,
+            .CascadeBlend       = DirectionalLight.CascadeBlend,
+            .DistanceFade       = DirectionalLight.ShadowDistanceFade,
+            .FilterTaps         = FilterTaps,
+            .ActiveCascadeCount = uint32(ActiveCascadeCount),
+            .bFarCascade        = bFarCascade ? 1u : 0u,
+            .TanSunRadius       = SunFarShadow.TanHalfAngle,
+            .BlockerTaps        = FilterTaps > 1u ? Filter.BlockerTaps : 0u,
+            .MinFilterRadiusTexels = Math::Min(GSunShadowMinFilterRadiusTexels, FilterRadius),
+        };
 
         const float DistributionExponent = Math::Clamp(DirectionalLight.CascadeDistributionExponent, 1.0f, 10.0f);
 

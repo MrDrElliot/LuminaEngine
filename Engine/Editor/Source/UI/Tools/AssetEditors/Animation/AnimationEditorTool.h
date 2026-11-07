@@ -103,7 +103,8 @@ namespace Lumina
         // Clip time captured when the "add notify" lane popup opens.
         float       LaneAddTime = 0.0f;
 
-        Timeline::FRenameBuffer RenameBuffer = {};
+        FString RenameBuffer;
+        FString NotifyNameBuffer;
 
         // Pulses briefly when the playhead crosses a notify during in-editor playback,
         // so authored events visibly fire while previewing. Maps notify index -> flash age.

@@ -9,10 +9,6 @@ namespace Lumina
 
 namespace Lumina::DataTableUI
 {
-    /** Searchable combo over every reflected struct deriving from SDataTableRowBase. Returns the newly
-     *  picked struct and sets bOutChanged, or returns Current when untouched.
-     *
-     *  SDataTableRowBase itself is excluded: it has no fields, so a table of it would be a list of
-     *  names and nothing else. */
+    // Struct combo over structs deriving from the fieldless SDataTableRowBase, or a how-to hint while none exist.
     CStruct* DrawRowStructPicker(const char* StrId, CStruct* Current, bool& bOutChanged);
 }

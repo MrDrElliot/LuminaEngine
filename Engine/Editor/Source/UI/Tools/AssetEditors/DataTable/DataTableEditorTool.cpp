@@ -286,14 +286,11 @@ namespace Lumina
         }
 
         SDataTableRow& Row = Table->Rows[EditingRow];
-        const FStringView Text(EditBuffer);
-
         if (EditingColumn == Constants::kIndexNone)
         {
-            const FString Trimmed(EditBuffer);
-            const FName NewName(Trimmed);
+            const FName NewName(EditText);
 
-            if (!Trimmed.IsEmpty() && NewName != Row.Name)
+            if (!EditText.IsEmpty() && NewName != Row.Name)
             {
                 // Names key the table, so uniquify rather than reject and the edit is never silently lost.
                 const int32 Collision = Table->FindRowIndex(NewName);
@@ -311,7 +308,7 @@ namespace Lumina
                 FProperty* Property = Columns[EditingColumn];
                 const FString Previous = Reflection::ToText(Property, RowMemory);
 
-                if (Reflection::FromText(Property, RowMemory, Text))
+                if (Reflection::FromText(Property, RowMemory, EditText))
                 {
                     if (Reflection::ToText(Property, RowMemory) != Previous)
                     {
@@ -322,7 +319,7 @@ namespace Lumina
                 else
                 {
                     ImGuiX::Notifications::NotifyWarning("'{}' is not a valid value for {}.",
-                        *FString(EditBuffer), *Property->GetPropertyName());
+                        *EditText, *Property->GetPropertyName());
                 }
             }
         }
@@ -570,8 +567,7 @@ namespace Lumina
                 bEditorJustOpened = false;
             }
 
-            if (ImGui::InputText("##nameedit", EditBuffer, sizeof(EditBuffer),
-                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+            if (ImGuiX::InputText("##nameedit", EditText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
             {
                 CommitCellEdit();
             }
@@ -608,9 +604,7 @@ namespace Lumina
                 EditingColumn = Constants::kIndexNone;
                 bEditorJustOpened = true;
 
-                Memory::Memzero(EditBuffer, sizeof(EditBuffer));
-                const FString Current = Row.Name.ToString();
-                Memory::Memcpy(EditBuffer, *Current, Math::Min(Current.Len(), static_cast<int32>(sizeof(EditBuffer) - 1)));
+                EditText = Row.Name.ToString();
             }
         }
 
@@ -685,8 +679,7 @@ namespace Lumina
                 bEditorJustOpened = false;
             }
 
-            if (ImGui::InputText("##celledit", EditBuffer, sizeof(EditBuffer),
-                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+            if (ImGuiX::InputText("##celledit", EditText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
             {
                 CommitCellEdit();
             }
@@ -718,8 +711,7 @@ namespace Lumina
                 EditingColumn = ColumnIndex;
                 bEditorJustOpened = true;
 
-                Memory::Memzero(EditBuffer, sizeof(EditBuffer));
-                Memory::Memcpy(EditBuffer, *Text, Math::Min(Text.Len(), static_cast<int32>(sizeof(EditBuffer) - 1)));
+                EditText = Text;
             }
         }
 

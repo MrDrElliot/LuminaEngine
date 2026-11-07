@@ -139,6 +139,20 @@ public static class BuildMode
         return FromMemory;
     }
 
+    // Held while anything writes or deletes a target's output, keyed on platform, type and configuration, and rooted where shared binaries live.
+    public static BuildLock AcquireOutputLock(BuildTarget Target, CancellationToken Cancellation = default)
+    {
+        string OutputKey =
+            $"output|{Target.Directories.EngineRoot}|{Target.Info.PlatformName}|{Target.Info.Type}|{Target.Info.Configuration}";
+
+        return BuildLock.Acquire(
+            Target.Directories.EngineRoot,
+            OutputKey,
+            $"another build of {Target.Info.PlatformName} {Target.Info.Type} {Target.Info.Configuration} to finish",
+            TimeSpan.FromHours(1),
+            Cancellation);
+    }
+
     /// <summary>Refreshes the IDE workspace after a successful build when a rules file has changed.</summary>
     private static void RefreshProjectFilesIfStale(
         CommandLine Arguments,
@@ -309,22 +323,14 @@ public static class BuildMode
         {
             Stopwatch Timer = Stopwatch.StartNew();
 
-            // Held for the whole build, keyed on platform, type and configuration, and rooted where shared binaries live.
-            string OutputKey =
-                $"output|{Target.Directories.EngineRoot}|{Target.Info.PlatformName}|{Target.Info.Type}|{Target.Info.Configuration}";
-
-            using BuildLock OutputLock = BuildLock.Acquire(
-                Target.Directories.EngineRoot,
-                OutputKey,
-                $"another build of {Target.Info.PlatformName} {Target.Info.Type} {Target.Info.Configuration} to finish",
-                TimeSpan.FromHours(1),
-                Cancellation);
+            using BuildLock OutputLock = AcquireOutputLock(Target, Cancellation);
 
             Log.Info("Building {0} - {1} - {2}", Target.Name, Target.Info.PlatformName, Target.Info.Configuration);
 
-            if (Arguments.HasFlag("Clean"))
+            // Building over a half-cleaned tree links against stale objects.
+            if (Arguments.HasFlag("Clean") && !CleanMode.CleanTarget(Target, Arguments.HasFlag("DryRun")))
             {
-                CleanMode.CleanTarget(Target);
+                return CleanMode.ReportHalfCleaned();
             }
 
             Stopwatch PhaseTimer = Stopwatch.StartNew();

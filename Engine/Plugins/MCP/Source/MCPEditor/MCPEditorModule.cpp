@@ -53,6 +53,16 @@ namespace Lumina
         return GModule != nullptr ? &GModule->ProfilerTools : nullptr;
     }
 
+    MCP::FEditorInputState* FMCPEditorModule::GetEditorInput()
+    {
+        return GModule != nullptr ? &GModule->EditorInput : nullptr;
+    }
+
+    MCP::FLookDevFixtureState* FMCPEditorModule::GetLookDevFixture()
+    {
+        return GModule != nullptr ? &GModule->LookDevFixture : nullptr;
+    }
+
     void FMCPEditorModule::StartupModule()
     {
         GModule = this;

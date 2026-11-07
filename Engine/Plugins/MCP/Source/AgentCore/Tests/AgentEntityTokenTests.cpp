@@ -117,55 +117,12 @@ TEST(AgentEntityToken, TheRecycledEntityGetsAWorkingTokenOfItsOwn)
     EXPECT_EQ(Resolved, Recycled);
 }
 
-// A world swap has to retire every outstanding token, or one could land in the wrong world.
-TEST(AgentEntityToken, InvalidatingRetiresOutstandingTokens)
-{
-    ECS::FRegistry Registry;
-    const ECS::FEntity Entity = Registry.Create();
-
-    const FString Token = FEntityTokens::Mint(Registry, Entity);
-
-    FEntityTokens::InvalidateAll();
-
-    ECS::FEntity Resolved = ECS::NullEntity;
-    FString Error;
-
-    EXPECT_FALSE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error));
-    EXPECT_FALSE(Error.IsEmpty());
-}
-
-TEST(AgentEntityToken, TokensMintedAfterInvalidationStillWork)
-{
-    ECS::FRegistry Registry;
-    const ECS::FEntity Entity = Registry.Create();
-
-    FEntityTokens::InvalidateAll();
-
-    const FString Token = FEntityTokens::Mint(Registry, Entity);
-
-    ECS::FEntity Resolved = ECS::NullEntity;
-    FString Error;
-
-    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << *Error;
-    EXPECT_EQ(Resolved, Entity);
-}
-
-TEST(AgentEntityToken, InvalidatingMovesTheEpochForward)
-{
-    const uint64 Before = FEntityTokens::GetEpoch();
-    FEntityTokens::InvalidateAll();
-
-    EXPECT_GT(FEntityTokens::GetEpoch(), Before);
-}
-
-// A token from one world must not resolve against another, even at the same slot.
-TEST(AgentEntityToken, ATokenFromAnotherRegistryDoesNotResolveAfterAWorldSwap)
+// A token from one world must not resolve against another, even at the same slot and version.
+TEST(AgentEntityToken, ATokenFromAnotherRegistryDoesNotResolveThere)
 {
     ECS::FRegistry First;
     const ECS::FEntity Entity = First.Create();
     const FString Token = FEntityTokens::Mint(First, Entity);
-
-    FEntityTokens::InvalidateAll();
 
     ECS::FRegistry Second;
     const ECS::FEntity Occupant = Second.Create();
@@ -175,4 +132,50 @@ TEST(AgentEntityToken, ATokenFromAnotherRegistryDoesNotResolveAfterAWorldSwap)
     FString Error;
 
     EXPECT_FALSE(FEntityTokens::Resolve(Second, FStringView(Token), Resolved, Error));
+    EXPECT_NE(Error.Find("no longer open"), Constants::kIndexNone);
+    EXPECT_EQ(Resolved, ECS::NullEntity);
+}
+
+// Both registries have minted, so each holds a scope, and neither answers to the other's tokens.
+TEST(AgentEntityToken, TwoMintingRegistriesRefuseEachOthersTokens)
+{
+    ECS::FRegistry First;
+    ECS::FRegistry Second;
+    const ECS::FEntity InFirst  = First.Create();
+    const ECS::FEntity InSecond = Second.Create();
+    ASSERT_EQ(static_cast<uint32>(InFirst), static_cast<uint32>(InSecond));
+
+    const FString FirstToken  = FEntityTokens::Mint(First, InFirst);
+    const FString SecondToken = FEntityTokens::Mint(Second, InSecond);
+    EXPECT_NE(FirstToken, SecondToken);
+
+    ECS::FEntity Resolved = ECS::NullEntity;
+    FString Error;
+
+    EXPECT_FALSE(FEntityTokens::Resolve(Second, FStringView(FirstToken), Resolved, Error));
+    EXPECT_FALSE(FEntityTokens::Resolve(First, FStringView(SecondToken), Resolved, Error));
+    ASSERT_TRUE(FEntityTokens::Resolve(First, FStringView(FirstToken), Resolved, Error)) << *Error;
+    EXPECT_EQ(Resolved, InFirst);
+}
+
+// Edits elsewhere in the same world, including destroying and recreating other entities, keep a token valid.
+TEST(AgentEntityToken, ATokenSurvivesUnrelatedEditsInItsOwnRegistry)
+{
+    ECS::FRegistry Registry;
+    const ECS::FEntity Entity = Registry.Create();
+    const FString Token = FEntityTokens::Mint(Registry, Entity);
+
+    const ECS::FEntity Other = Registry.Create();
+    const FString OtherToken = FEntityTokens::Mint(Registry, Other);
+    Registry.Destroy(Other);
+    const ECS::FEntity Recycled = Registry.Create();
+    ASSERT_TRUE(Registry.IsValid(Recycled));
+    EXPECT_NE(Recycled, Other);
+
+    ECS::FEntity Resolved = ECS::NullEntity;
+    FString Error;
+
+    ASSERT_TRUE(FEntityTokens::Resolve(Registry, FStringView(Token), Resolved, Error)) << *Error;
+    EXPECT_EQ(Resolved, Entity);
+    EXPECT_FALSE(FEntityTokens::Resolve(Registry, FStringView(OtherToken), Resolved, Error));
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 
 namespace LuminaBuildTool.Toolchain.Windows;
 
@@ -88,49 +89,25 @@ public static class VisualStudioLocator
             return null;
         }
 
-        try
+        ProcessStartInfo StartInfo = new(VsWherePath);
+
+        foreach (string Argument in new[]
         {
-            ProcessStartInfo StartInfo = new(VsWherePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            foreach (string Argument in new[]
-            {
-                "-latest",
-                "-products", "*",
-                "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                "-property", "installationPath",
-                "-prerelease",
-            })
-            {
-                StartInfo.ArgumentList.Add(Argument);
-            }
-
-            using Process? Runner = Process.Start(StartInfo);
-
-            if (Runner is null)
-            {
-                return null;
-            }
-
-            string Output = Runner.StandardOutput.ReadToEnd();
-            Runner.WaitForExit(30_000);
-
-            string? First = Output
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
-
-            return string.IsNullOrEmpty(First) ? null : First;
-        }
-        catch (Exception Ex) when (Ex is IOException or System.ComponentModel.Win32Exception)
+            "-latest",
+            "-products", "*",
+            "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property", "installationPath",
+            "-prerelease",
+        })
         {
-            Log.Verbose("vswhere failed: {0}", Ex.Message);
-            return null;
+            StartInfo.ArgumentList.Add(Argument);
         }
+
+        string? First = ProcessRunner.RunCaptured(StartInfo, 30_000)?.Output
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+
+        return string.IsNullOrEmpty(First) ? null : First;
     }
 
     private static IEnumerable<string> EnumerateWellKnownInstallRoots()

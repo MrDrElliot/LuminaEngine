@@ -79,11 +79,27 @@ public static class PathUtils
             return false;
         }
 
-        EnsureDirectoryForFile(Normalized);
-        File.WriteAllText(Normalized, Content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: bByteOrderMark));
+        WriteFileAtomic(Normalized, Content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: bByteOrderMark));
         FileItem.Get(Normalized).Invalidate();
 
         return true;
+    }
+
+    // Writes beside the file and renames over it, so a reader or a killed build never sees it half written.
+    public static void WriteFileAtomic(string FilePath, string Content, Encoding TextEncoding)
+    {
+        EnsureDirectoryForFile(FilePath);
+
+        string TempPath = $"{FilePath}.{Environment.ProcessId}.tmp";
+        try
+        {
+            File.WriteAllText(TempPath, Content, TextEncoding);
+            File.Move(TempPath, FilePath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(TempPath);
+        }
     }
 
     /// <summary>Whether the file already holds exactly this text in the requested encoding.</summary>

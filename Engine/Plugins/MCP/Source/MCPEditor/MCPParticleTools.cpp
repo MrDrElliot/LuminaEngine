@@ -2,7 +2,7 @@
 
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentEntityToken.h"
-#include "Agent/AgentPropertyPath.h"
+#include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
@@ -15,13 +15,11 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
-#include "FileSystem/FileSystem.h"
 #include "MCPGraphTools.h"
 #include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "Particles/ParticleGraphModules.h"
 #include "Particles/ParticleOps.h"
-#include "Paths/Paths.h"
 #include "Session/SessionOps.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "World/ECS/Registry.h"
@@ -247,15 +245,9 @@ namespace Lumina::MCP
             return System->Emitters[Emitter]->EmitterName;
         }
 
-        // bPostLoad rebinds render state such as a swapped material or texture before the new value is read back.
+        // bPostLoad rebinds render state such as a swapped material or texture.
         bool ApplyPropertyJson(CObject* Object, const FString& Path, const FString& ValueText, bool bPostLoad, SParticlePropertyResult& Out, FString& OutError)
         {
-            Agent::FResolvedProperty Property;
-            if (!Agent::ResolvePropertyPath(Object->GetClass(), Object, FStringView(Path), Property, OutError))
-            {
-                return false;
-            }
-
             FJsonValue Value;
             if (!FJsonValue::Parse(ValueText, Value))
             {
@@ -263,30 +255,20 @@ namespace Lumina::MCP
                 return false;
             }
 
-            if (const Agent::FMarshalResult Check = Agent::ValidatePropertyValue(Value, Property.Property, FStringView(Path)); !Check.IsValid())
+            const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                Object->GetClass(), Object, Object, FStringView(Path), Value, "Set Particle Property (agent)");
+            if (!Edit.IsValid())
             {
-                OutError = Check.Error;
+                OutError = Edit.Error;
                 return false;
             }
 
-            FJsonValue Before;
-            Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-            Out.Previous = Before.ToString();
-
-            if (const Agent::FMarshalResult Applied = Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(Path)); !Applied.IsValid())
-            {
-                OutError = Applied.Error;
-                return false;
-            }
-
+            Out.Previous = Edit.Previous;
+            Out.Current  = Edit.Current;
             if (bPostLoad)
             {
                 Object->PostLoad();
             }
-
-            FJsonValue After;
-            Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-            Out.Current = After.ToString();
             return true;
         }
 
@@ -439,6 +421,17 @@ namespace Lumina::MCP
 
         Agent::FToolResult SaveEmitterAsAsset(CParticleSystem* System, const SParticleEmitterParams& In, SParticleEmitterResult& Out)
         {
+            FString Error;
+            if (!IsWellFormedAssetPath(In.Path, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            if (!AssetOps::IsAssetLocation(FStringView(In.Path)))
+            {
+                return Agent::FToolResult::Error("Assets belong under /Game/Content, since nothing scans for assets elsewhere.");
+            }
+
             CParticleEmitter* Asset = ParticleOps::SaveEmitterAsAsset(System, In.Emitter, FStringView(*In.Path, In.Path.Len()));
             if (Asset == nullptr)
             {
@@ -747,32 +740,21 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateParticleSystemParams& In, SCreateParticleSystemResult& Out)
                 {
-                    if (In.Name.IsEmpty())
+                    FFixedString Path;
+                    FString Error;
+                    if (!MakeNewAssetPath(In.Folder, In.Name, Path, Error))
                     {
-                        return Agent::FToolResult::Error("A particle system needs a name.");
-                    }
-
-                    if (!AssetOps::IsAssetLocation(FStringView(In.Folder)))
-                    {
-                        return Agent::FToolResult::Error("Particle systems belong under /Game/Content, since nothing scans for assets elsewhere.");
-                    }
-
-                    if (!VFS::IsDirectory(In.Folder))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} is not a folder. Use assets.create_folder first.", In.Folder));
-                    }
-
-                    FFixedString Path = Paths::Combine(FStringView(In.Folder), FStringView(In.Name));
-                    CPackage::AddPackageExt(Path);
-                    if (VFS::Exists(Path))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
+                        return Agent::FToolResult::Error(Error);
                     }
 
                     // Held strongly, since the export table only watches it and a compile job releasing its ref would free it.
                     const TStrongObjectPtr<CParticleSystem> System(CFactoryRegistry::Get().FindFactory(CParticleSystem::StaticClass())->TryCreateNew<CParticleSystem>(FStringView(*Path, Path.Len())));
                     if (!System || System->Emitters.IsEmpty())
                     {
+                        if (System)
+                        {
+                            CFactory::DiscardNew(System.Get());
+                        }
                         return Agent::FToolResult::Error(Lumina::Format("Could not create a particle system at {}.", Path));
                     }
 
@@ -790,6 +772,7 @@ namespace Lumina::MCP
 
                     if (!CPackage::SavePackage(System->GetPackage(), Path))
                     {
+                        CFactory::DiscardNew(System.Get());
                         return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
                     }
 

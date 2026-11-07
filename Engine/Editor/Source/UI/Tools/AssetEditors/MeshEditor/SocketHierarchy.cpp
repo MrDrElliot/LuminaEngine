@@ -338,18 +338,10 @@ namespace Lumina
 
     FName FSocketHierarchy::MakeUniqueSocketName(FName BoneName) const
     {
-        auto IsTaken = [&](FName Name)
+        return MakeUniqueName(FString(*BoneName) + "_Socket", [this](const FName& Name)
         {
             return Skeleton->FindSocket(Name) != nullptr || (Mesh != nullptr && FindSocketByName(Mesh->Sockets, Name) != nullptr);
-        };
-
-        const FString Base = FString(*BoneName) + "_Socket";
-        FName Name(*Base);
-        for (int32 Suffix = 1; IsTaken(Name); ++Suffix)
-        {
-            Name = FName(*(Base + "_" + *Format("{}", Suffix)));
-        }
-        return Name;
+        });
     }
 
     void FSocketHierarchy::BeginEdit(FName Label, CObject* First, CObject* Second)

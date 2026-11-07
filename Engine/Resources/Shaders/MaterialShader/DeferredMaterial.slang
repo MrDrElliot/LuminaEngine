@@ -70,7 +70,19 @@ float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
     {
         return Fallback;
     }
-    return PrevRetainedTransforms().Get(Slot).ToMatrix();
+
+    // The cull widened a thinned instance across the ground, so the previous pose takes the same widening or a still blade reports motion.
+    FTransform3x4 Prev = PrevRetainedTransforms().Get(Slot);
+    if (RetainedTransforms().Contains(Slot))
+    {
+        const float3 Retained   = RetainedTransforms().Get(Slot).Row0.xyz;
+        const float  RetainedSq = dot(Retained, Retained);
+        const float3 Drawn      = Inst.Transform.Row0.xyz;
+        const float  Widen      = RetainedSq > 0.0 ? sqrt(dot(Drawn, Drawn) / RetainedSq) : 1.0;
+        Prev.Row0.xyz *= Widen;
+        Prev.Row2.xyz *= Widen;
+    }
+    return Prev.ToMatrix();
 }
 
 [shader("compute")]
@@ -317,6 +329,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         $MATERIAL_INPUTS
 
         G = BuildGBufferData(Input, Material);
+        ApplyGrassShading(T.Ref, ModelMatrix, S.WorldPositionNoOffset, G.WorldNormal, G.AmbientOcclusion);
 
         // No quad in this lane, so the widening comes from surface curvature rather than the normal map.
         G.Roughness = ApplyGeometricSpecularAA(G.Roughness, GeoNormalDDX, GeoNormalDDY);

@@ -33,7 +33,6 @@ namespace Lumina
         virtual void Broadcast(const void* Data, SIZE_T Size, uint8 Channel, ESendMode Mode) = 0;
 
         // Pump the backend and append any events produced this call to OutEvents. Non-blocking.
-        // Called once per frame by Network::Update.
         virtual void Service(TVector<FNetworkEvent>& OutEvents) = 0;
 
         // Puts everything queued by Send and Broadcast on the wire now instead of at the next Service.

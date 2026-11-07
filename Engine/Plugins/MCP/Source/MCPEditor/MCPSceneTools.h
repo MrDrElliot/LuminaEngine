@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Agent/AgentTool.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
@@ -576,6 +577,9 @@ namespace Lumina
 
         // The playing or simulating world, or null when no game runs.
         CWorld* FindGameWorld();
+
+        // scene.camera's Set, which moves the editor viewport camera; call on the game thread.
+        Agent::FToolResult SceneCameraSet(const SSceneCameraParams& In, SSceneCameraResult& Out);
 
         // The first surface under a point, in the game world when one runs, else the editor's; GNoGroundHeight over nothing.
         float GroundHeightAt(float X, float Z);

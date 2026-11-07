@@ -55,6 +55,7 @@ namespace Lumina
     void FCurveAssetEditorTool::OnPostUndoRedo()
     {
         FAssetEditorTool::OnPostUndoRedo();
+        CurveWidget.SelectNone();
         if (CCurveAsset* CurveAsset = GetAsset<CCurveAsset>())
         {
             CurveAsset->Curve.SortKeys();

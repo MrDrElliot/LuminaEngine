@@ -334,11 +334,14 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     }
     const float MaxScale = TransformMaxScale(Transform);
 
+    // The widened sphere, so the slot range bounds the same groups the meshlet cut tests.
+    const float4 SphereBounds = float4(Center, Radius);
+
     // The primary camera's pick, which the instance carries for anything that reads it outside a view.
     uint SurfaceDrawBound = SurfaceMeshletCount;
     if (bSelectPerView && bHasGeometry)
     {
-        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), Cull.SphereBounds, MaxScale, SurfaceDrawBound);
+        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), SphereBounds, MaxScale, SurfaceDrawBound);
         SurfaceMeshletOffset = CameraRange.x;
         SurfaceMeshletCount  = CameraRange.y;
     }
@@ -361,7 +364,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             // View 0 reuses the camera's pick above.
             if (bSelectPerView && v > 0u)
             {
-                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, Cull.SphereBounds, MaxScale, DrawBound) : uint2(0u, 0u);
+                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, SphereBounds, MaxScale, DrawBound) : uint2(0u, 0u);
             }
             else
             {
@@ -412,7 +415,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Safe to assemble in a local because FGPUInstance holds a header slot, not an address.
     FGPUInstance Inst            = (FGPUInstance)0;
     Inst.Transform               = Transform;
-    Inst.SphereBounds            = float4(Center, Radius);
+    Inst.SphereBounds            = SphereBounds;
     Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
     Inst.MeshletVisibilityBase   = Static.MeshletVisibilityBase;
     Inst.DrawID                  = DrawID;

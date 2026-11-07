@@ -30,11 +30,7 @@ public static class CleanMode
             // Every delete is attempted before this, so one locked file still reports the rest.
             if (!bCleaned)
             {
-                Log.Error(
-                    "Some outputs could not be deleted, so the tree is half cleaned. Close Visual Studio, "
-                    + "Rider and the editor, then run this again.");
-
-                return 1;
+                return ReportHalfCleaned();
             }
 
             return Arguments.HasFlag("Regenerate") ? Regenerate(Arguments, Directories, bDryRun) : 0;
@@ -51,9 +47,18 @@ public static class CleanMode
         TargetInfo Info = new(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
         BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
-        CleanTarget(Target);
+        using BuildLock OutputLock = BuildMode.AcquireOutputLock(Target);
 
-        return 0;
+        return CleanTarget(Target, bDryRun) ? 0 : ReportHalfCleaned();
+    }
+
+    public static int ReportHalfCleaned()
+    {
+        Log.Error(
+            "Some outputs could not be deleted, so the tree is half cleaned. Close Visual Studio, "
+            + "Rider and the editor, then run this again.");
+
+        return 1;
     }
 
     /// <summary>Deletes one tree's intermediates, plus its binaries and solution files when full.</summary>
@@ -218,26 +223,32 @@ public static class CleanMode
         return Split >= 0 ? Body.Substring(0, Split) : Body;
     }
 
-    public static void CleanTarget(BuildTarget Target)
+    // Attempts every delete even after one fails, and returns whether all of them succeeded.
+    public static bool CleanTarget(BuildTarget Target, bool bDryRun)
     {
-        DeleteDirectory(Target.IntermediateDirectory, bDryRun: false);
+        bool bDeleted = DeleteDirectory(Target.IntermediateDirectory, bDryRun);
 
         foreach (BuildModule Module in Target.Modules)
         {
             // Asked per module, since engine modules share one intermediate set across targets.
-            DeleteDirectory(Module.IntermediateDirectory, bDryRun: false);
-            DeleteDirectory(Module.GeneratedCodeDirectory, bDryRun: false);
+            bDeleted &= DeleteDirectory(Module.IntermediateDirectory, bDryRun);
+            bDeleted &= DeleteDirectory(Module.GeneratedCodeDirectory, bDryRun);
 
-            DeleteFile(Module.OutputFile, bDryRun: false);
-            DeleteFile(Module.ImportLibraryFile, bDryRun: false);
+            bDeleted &= DeleteFile(Module.OutputFile, bDryRun);
+            bDeleted &= DeleteFile(Module.ImportLibraryFile, bDryRun);
 
             if (Module.OutputFile.Length > 0)
             {
-                DeleteFile(Path.ChangeExtension(Module.OutputFile, ".pdb"), bDryRun: false);
+                bDeleted &= DeleteFile(Path.ChangeExtension(Module.OutputFile, ".pdb"), bDryRun);
             }
         }
 
-        Log.Info("Cleaned {0}.", Target);
+        if (bDeleted && !bDryRun)
+        {
+            Log.Info("Cleaned {0}.", Target);
+        }
+
+        return bDeleted;
     }
 
     private static bool DeleteDirectory(string DirectoryPath, bool bDryRun)

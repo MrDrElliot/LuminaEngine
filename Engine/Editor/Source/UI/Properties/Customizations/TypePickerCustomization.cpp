@@ -2,62 +2,12 @@
 
 
 #include "imgui.h"
-#include "Containers/Vector.h"
-#include "Containers/String.h"
-#include "Core/Object/Class.h"
-#include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/SubStructProperty.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
-    namespace
-    {
-        // Index 0 is always None, and the class analog is ImGuiX::ClassCombo, shared with the dialogue.
-        template<typename TType>
-        TType* DrawTypePicker(const char* StrId, TType* Base, TType* Current, bool& bOutChanged)
-        {
-            bOutChanged = false;
-
-            TVector<TType*> Candidates;
-            for (TObjectIterator<TType> It; It; ++It)
-            {
-                TType* Candidate = *It;
-                if (Base == nullptr || Candidate->IsChildOf(Base))
-                {
-                    Candidates.Add(Candidate);
-                }
-            }
-
-            Algo::Sort(Candidates, [](TType* A, TType* B)
-            {
-                return strcmp(*A->GetName(), *B->GetName()) < 0;
-            });
-
-            const int32 Found = Algo::IndexOf(Candidates, Current);
-            const int32 CurrentIndex = Found != Constants::kIndexNone ? Found + 1 : 0;
-
-            const char* Preview = Current ? *Current->GetName() : "None";
-
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-            const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.Num()) + 1, CurrentIndex,
-                [&Candidates](int32 Index) -> FFixedString
-                {
-                    return (Index == 0) ? FFixedString("None") : FFixedString(*Candidates[Index - 1]->GetName());
-                });
-            ImGui::PopItemWidth();
-
-            if (Picked != Constants::kIndexNone)
-            {
-                bOutChanged = true;
-                return (Picked == 0) ? nullptr : Candidates[Picked - 1];
-            }
-
-            return Current;
-        }
-    }
-
     EPropertyChangeOp FClassPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FClassProperty* ClassProperty = static_cast<FClassProperty*>(Property->Property);
@@ -89,8 +39,9 @@ namespace Lumina
     {
         FSubStructProperty* SubStructProperty = static_cast<FSubStructProperty*>(Property->Property);
 
-        bool bChanged = false;
-        Value = DrawTypePicker<CStruct>("##substructpicker", SubStructProperty->GetMetaStruct(), Value, bChanged);
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        const bool bChanged = ImGuiX::StructCombo("##substructpicker", SubStructProperty->GetMetaStruct(), Value, true, nullptr, true);
+        ImGui::PopItemWidth();
 
         return bChanged ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
     }

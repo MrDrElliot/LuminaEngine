@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 using LuminaBuildTool.Graph;
 using LuminaBuildTool.Platform;
 using LuminaBuildTool.Rules;
@@ -381,31 +382,11 @@ public static class PackageMode
 
     private static string ReadCommit(string EngineRoot)
     {
-        try
-        {
-            ProcessStartInfo Start = new("git", "rev-parse --short HEAD")
-            {
-                WorkingDirectory = EngineRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+        ProcessResult? Git = ProcessRunner.RunCaptured(
+            new ProcessStartInfo("git", "rev-parse --short HEAD") { WorkingDirectory = EngineRoot },
+            30_000);
 
-            using Process? Git = Process.Start(Start);
-            if (Git is null)
-            {
-                return string.Empty;
-            }
-
-            string Output = Git.StandardOutput.ReadToEnd().Trim();
-            Git.WaitForExit();
-            return Git.ExitCode == 0 ? Output : string.Empty;
-        }
-        catch (Exception)
-        {
-            return string.Empty;
-        }
+        return Git is { bSucceeded: true } ? Git.Output.Trim() : string.Empty;
     }
 
     private sealed class PackageStager

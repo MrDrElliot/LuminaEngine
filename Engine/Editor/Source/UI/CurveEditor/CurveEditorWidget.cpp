@@ -317,6 +317,28 @@ namespace Lumina
         Selection.Reset();
     }
 
+    // Undo or the Details panel can shrink the key array behind the widget's back.
+    void FCurveEditorWidget::PruneStaleIndices()
+    {
+        const int32 Num = Curve->NumKeys();
+        const auto IsStale = [Num](int32 Index) { return Index < 0 || Index >= Num; };
+
+        // A key drag pairs Selection slots with DragStartTimes, so pruning mid-drag ends it.
+        if (Selection.RemoveAll(IsStale) > 0 && DragMode == EDragMode::Keys)
+        {
+            DragMode = EDragMode::None;
+        }
+
+        if (TangentDragKey != Constants::kIndexNone && IsStale(TangentDragKey))
+        {
+            TangentDragKey = Constants::kIndexNone;
+            if (DragMode == EDragMode::Tangent)
+            {
+                DragMode = EDragMode::None;
+            }
+        }
+    }
+
     void FCurveEditorWidget::BeginKeyDrag()
     {
         DragStartTimes.Reset();
@@ -496,6 +518,7 @@ namespace Lumina
         }
 
         bDirtyThisFrame = false;
+        PruneStaleIndices();
 
         ImGui::PushID(ID);
 

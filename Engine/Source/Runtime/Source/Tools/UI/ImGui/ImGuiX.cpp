@@ -203,13 +203,11 @@ namespace Lumina::ImGuiX
         ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
-        	if (!ImGui::BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None))
-        	{
-        		return;
-        	}
-        	
-        	ImGui::TextUnformatted(String.GetData());
-        	ImGui::EndTooltip();
+            if (ImGui::BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None))
+            {
+                ImGui::TextUnformatted(String.GetData());
+                ImGui::EndTooltip();
+            }
         }
         ImGui::PopStyleVar();
     }
@@ -1045,7 +1043,7 @@ namespace Lumina::ImGuiX
         return false;
     }
 
-    bool StructCombo(const char* StrId, CStruct* BaseStruct, CStruct*& InOutStruct, bool bAllowNone, const char* ItemIcon)
+    bool StructCombo(const char* StrId, CStruct* BaseStruct, CStruct*& InOutStruct, bool bAllowNone, const char* ItemIcon, bool bIncludeBase)
     {
         // A closed combo only shows the current struct, so the object walk waits until the list is open.
         if (!IsComboListOpen(StrId))
@@ -1061,7 +1059,7 @@ namespace Lumina::ImGuiX
         for (TObjectIterator<CStruct> It; It; ++It)
         {
             CStruct* Candidate = *It;
-            if (Candidate == BaseStruct || !IsInstancableStructType(Candidate))
+            if ((Candidate == BaseStruct && !bIncludeBase) || !IsInstancableStructType(Candidate))
             {
                 continue;
             }

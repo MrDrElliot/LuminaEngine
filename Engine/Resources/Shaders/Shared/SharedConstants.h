@@ -136,6 +136,9 @@
 // A light's atlas tile rides bits 8-15 of its flags, next to the LightFunction flag.
 #define LIGHT_FUNCTION_SLOT_SHIFT       8u
 #define LIGHT_FUNCTION_SLOT_MASK        255u
+// A contact-shadowed local light's reach in centimeters rides bits 16-23 of its flags.
+#define LIGHT_CONTACT_LENGTH_SHIFT      16u
+#define LIGHT_CONTACT_LENGTH_MASK       255u
 #define NUM_CASCADES                    4
 
 // Hard cap on cull views, covering the camera, NUM_CASCADES, six per point light and one per spot.

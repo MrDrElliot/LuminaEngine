@@ -30,29 +30,6 @@ namespace Lumina::MCP
     {
         constexpr const char* GAssetSaveHint = " Save with assets.save to persist.";
 
-        // Rejects the traversal and separator tricks that would take a write outside the mounted roots.
-        bool IsWellFormedAssetPath(const FString& Path, FString& OutError)
-        {
-            if (Path.IsEmpty() || Path[0] != '/')
-            {
-                OutError = "A path has to start at a mount root, such as /Game/Content.";
-                return false;
-            }
-
-            if (Path.Find("..") != Constants::kIndexNone || Path.Find("//") != Constants::kIndexNone)
-            {
-                OutError = "A path cannot contain .. or an empty step.";
-                return false;
-            }
-
-            return true;
-        }
-
-        bool IsWellFormedAssetName(const FString& Name, FString& OutError)
-        {
-            return AssetOps::IsValidLeafName(FStringView(*Name, Name.Len()), &OutError);
-        }
-
         SAssetInfo DescribeAssetData(const FAssetData& Data)
         {
             SAssetInfo Info;
@@ -482,7 +459,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    if (!In.NewName.IsEmpty() && !IsWellFormedAssetName(In.NewName, Error))
+                    if (!In.NewName.IsEmpty() && !AssetOps::IsValidLeafName(FStringView(In.NewName), &Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -679,11 +656,6 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateAssetParams& In, SAssetInfo& Out)
                 {
-                    if (In.Name.IsEmpty())
-                    {
-                        return Agent::FToolResult::Error("An asset needs a name.");
-                    }
-
                     FString Error;
                     CClass* Class = Agent::FindClassByName(FStringView(In.ClassName), nullptr, Error);
                     if (Class == nullptr)
@@ -698,24 +670,10 @@ namespace Lumina::MCP
                             "{} is not a creatable asset class. Call assets.list_classes.", In.ClassName));
                     }
 
-                    if (!AssetOps::IsAssetLocation(FStringView(In.Folder)))
+                    FFixedString Path;
+                    if (!MakeNewAssetPath(In.Folder, In.Name, Path, Error))
                     {
-                        return Agent::FToolResult::Error(
-                            "Assets belong under /Game/Content, since nothing scans for assets elsewhere.");
-                    }
-
-                    if (!VFS::IsDirectory(In.Folder))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "{} is not a folder. Use assets.create_folder first.", In.Folder));
-                    }
-
-                    FFixedString Path = Paths::Combine(FStringView(In.Folder), FStringView(In.Name));
-                    CPackage::AddPackageExt(Path);
-
-                    if (VFS::Exists(Path))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
+                        return Agent::FToolResult::Error(Error);
                     }
 
                     FString CreateError;

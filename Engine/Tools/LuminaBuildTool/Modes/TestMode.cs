@@ -76,7 +76,8 @@ public static class TestMode
             return 0;
         }
 
-        return RunSuites(Suites, Arguments, Directories, Assembly, TypeValue, PlatformValue, ConfigurationValue, Timer);
+        return await RunSuitesAsync(Suites, Arguments, Directories, Assembly, TypeValue, PlatformValue, ConfigurationValue, Timer, Cancellation)
+            .ConfigureAwait(false);
     }
 
     private static void ListSuites(RulesAssembly Assembly)
@@ -118,7 +119,7 @@ public static class TestMode
             + string.Join(", ", Assembly.DiscoveredTestSuites.Keys.OrderBy(K => K, StringComparer.OrdinalIgnoreCase)));
     }
 
-    private static int RunSuites(
+    private static async Task<int> RunSuitesAsync(
         IReadOnlyList<TestSuite> Suites,
         CommandLine Arguments,
         BuildDirectories Directories,
@@ -126,7 +127,8 @@ public static class TestMode
         TargetType TypeValue,
         BuildPlatform PlatformValue,
         BuildConfiguration ConfigurationValue,
-        Stopwatch Timer)
+        Stopwatch Timer,
+        CancellationToken Cancellation)
     {
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
@@ -169,7 +171,7 @@ public static class TestMode
                 .Select(M => M.OutputDirectory));
             string LibraryPath = string.Join(Path.PathSeparator, SearchDirectories.Distinct(StringComparer.OrdinalIgnoreCase));
 
-            if (Launch(Executable, SuiteArguments, LibraryPath) != 0)
+            if (await LaunchAsync(Executable, SuiteArguments, LibraryPath, Cancellation).ConfigureAwait(false) != 0)
             {
                 Failed.Add(Suite.SuiteName);
             }
@@ -185,8 +187,11 @@ public static class TestMode
         return 0;
     }
 
-    private static int Launch(string Executable, IReadOnlyList<string> LaunchArguments, string LibrarySearchPath)
+    private static async Task<int> LaunchAsync(
+        string Executable, IReadOnlyList<string> LaunchArguments, string LibrarySearchPath, CancellationToken Cancellation)
     {
+        Cancellation.ThrowIfCancellationRequested();
+
         ProcessStartInfo StartInfo = new(Executable)
         {
             UseShellExecute = false,
@@ -216,7 +221,18 @@ public static class TestMode
                 return 1;
             }
 
-            Runner.WaitForExit();
+            try
+            {
+                await Runner.WaitForExitAsync(Cancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                Runner.Kill(entireProcessTree: true);
+                throw;
+            }
+
+            // Ctrl+C on the shared console can end the suite before the cancel handler runs.
+            Cancellation.ThrowIfCancellationRequested();
             return Runner.ExitCode;
         }
         catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or IOException)

@@ -198,6 +198,8 @@ namespace Lumina
                 bool    bReceiveShadow = true;
                 bool    bContactShadows = false;
                 float   FullDensityDistance = 0.0f;
+                float   TerrainNormalDistance = 0.0f;
+                float   RootDarkening  = 0.0f;
             };
 
             struct FTerrainExtract
@@ -441,6 +443,10 @@ namespace Lumina
                     FVector3                     SunUp = FVector3(0.0f, 0.0f, 1.0f);
                     FVector2                     GridOrigin = FVector2(0.0f);
                     float                        GridCellSize = 1.0f;
+
+                    // Zero steps leaves the contact march off.
+                    uint32                       ContactSteps = 0u;
+                    float                        ContactLength = 0.0f;
                 } SunFarShadow;
             } Lighting;
 
@@ -618,6 +624,7 @@ namespace Lumina
             GTAODenoise,
             GTAOBlur,
             ScreenSpaceGITrace,
+            ScreenSpaceGIBlur,
             ScreenSpaceGI,
             ScreenSpaceGIHistory,
             SunFarShadowMask,
@@ -910,8 +917,12 @@ namespace Lumina
         // Custom depth instances drawn again from the camera with nothing occluding them, then their stencil values resolved.
         void CustomDepthStencilPass(RHI::FCmdListH CL);
         void DrawVisBufferBatches(RHI::FCmdListH CL, uint32 ViewIndex, EMeshletSlice Slice, const FUIntVector2& Extent, EFormat VisFormat);
+        static bool IsTwoPhaseView(const FFrameData& Frame, uint32 ViewIndex);
+        bool HasFarProxies() const;
+        // Early sizes the dispatch from the listed proxies; Late compacts the ones its pyramid leaves visible into the second half of the list and draw args.
+        void OcclusionCullFarProxies(RHI::FCmdListH CL, ECullPhase::Type Phase);
         // Splats the far proxies the cull listed this frame into the open VisBuffer pass, once per frame after the meshlets.
-        void DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat);
+        void DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat, bool bOcclusionCulled);
         static FShaderH GetVisBufferPixelShader();
         const char* FindMissingMeshletDrawBuffer() const;
         void VisBufferClassifyPass(RHI::FCmdListH CL);
@@ -1038,14 +1049,19 @@ namespace Lumina
         bool GTAOPrefilterDepth(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH PrefilterCS);
         bool GTAOMain(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH MainCS);
         bool GTAODenoise(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH DenoiseCS);
-        bool GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS);
+        // Upsamples a half size Source into Output against GTAO's working depth, which is DepthScale times Source's size.
+        bool GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS,
+            const FSceneImage& Source, const FSceneImage& Output, uint32 DepthScale);
         // Marches GTAO's working depth, so it needs GTAO on, and only the primary view keeps the color history it gathers.
         bool WantsScreenSpaceGI(const FSceneView& View) const;
         bool IsScreenSpaceGITraced() const;
         void ScreenSpaceGIPass(RHI::FCmdListH CL);
         void CaptureScreenSpaceGIHistory(RHI::FCmdListH CL);
+        // The mask exists for either writer, the far trace or the contact march.
         bool WantsSunFarShadowMask() const;
+        bool WantsSunFarShadowTrace() const;
         bool SunFarShadowPass(RHI::FCmdListH CL);
+        void SunContactShadowPass(RHI::FCmdListH CL);
         bool SunDFShadowCullPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
@@ -1788,6 +1804,8 @@ namespace Lumina
         FSceneBuffer SunDFCounterBuffer   { "SunDF.Counters",   1.0f, EBufferInit::Zeroed,    false };
         FSceneBuffer SunDFBlockListBuffer { "SunDF.Blocks",     1.5f, EBufferInit::Undefined };
         FSceneBuffer SunDFLargeObjectBuffer { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false };
+        // The cell items each frame's binning asked for, read back to warn when the grid's item budget ran out.
+        TArray<FSceneBuffer, RHI::kFramesInFlight> SunDFItemTotalReadback = MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFItemTotal", 1.0f);
         static constexpr uint32 kSunDFGridDimension = 128u;
         static constexpr uint32 kSunDFCellCapacity  = 32u;
         static constexpr uint32 kSunDFMaxObjects    = 16384u;
@@ -1815,7 +1833,7 @@ namespace Lumina
         // Parallel to the static buffer, the splat each slot draws as once it is too small for meshlets.
         FSceneBuffer RetainedProxyBuffer { "Retained.Proxies", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer SurfaceDescBuffer { "Retained.SurfaceDescs", 1.5f, EBufferInit::Zeroed };
-        // Slots CullInstances turned into proxies this frame, and the indirect draw that splats them.
+        // Slots CullInstances turned into proxies this frame and the indirect draw that splats them, each followed by the late occlusion cull's copy.
         TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyList", 1.5f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyDrawArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyDrawArgs", 1.0f);
         uint32 ProxyListCapacity = 0;

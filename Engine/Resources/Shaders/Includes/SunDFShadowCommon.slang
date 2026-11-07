@@ -10,6 +10,9 @@ static const uint kSunDFMaxStepsPerObject = 32u;
 // Past this many cells a caster is binned by a whole group, since one lane walking them in turn stalls the pass.
 static const uint kSunDFLargeCasterCells = 64u;
 
+// Set on a caster the large list took, so the per-lane binning skips it.
+static const uint kSunDFLargeCaster = 2u;
+
 // Mirror of Lumina::FSunDFObject (112 B). One caster, already inverted so the trace never touches its transform.
 struct FSunDFObject
 {
@@ -21,14 +24,15 @@ struct FSunDFObject
     float         MinScale;
     FTexture3D    Texture;
     uint          Flags;
+    float         VoxelSize;
     uint          _Pad0;
-    uint          _Pad1;
 };
 
 // Mirror of Lumina::FSunDFShadowGrid. A square grid in the plane facing the sun, covering every receiver this frame.
 struct FSunDFShadowGrid
 {
     GPUSpan<FSunDFObject> Objects;
+    // One past the cells, and after binning each holds the cell's first item while the extra slot holds the total.
     GPUSpan<uint>         CellCounts;
     GPUSpan<uint>         CellItems;
     GPUSpan<uint>         Counters;
@@ -38,7 +42,7 @@ struct FSunDFShadowGrid
     float                 MinRadius;
     float2                Origin;
     uint                  Dimension;
-    uint                  CellCapacity;
+    uint                  _Pad0;
 };
 
 // First cell in xy and last in zw that a caster's sphere covers, clamped after the conversion so no float it mishandles can widen a loop past the grid.
@@ -83,7 +87,7 @@ float TraceSunDFObject(FSunDFObject Object, float3 P, float3 ToSun, float TanHal
 
     // A voxel's worth of world travel along this ray, which keeps the receiver from shadowing itself.
     const float LocalPerWorld = max(length(LocalDir), 1e-8);
-    const float VoxelLocal    = max(Object.VolumeSize.x, max(Object.VolumeSize.y, Object.VolumeSize.z)) / 32.0;
+    const float VoxelLocal    = Object.VoxelSize;
     const float VoxelWorld    = VoxelLocal / LocalPerWorld;
 
     float       t    = max(max(Near.x, max(Near.y, Near.z)), 2.0 * VoxelWorld);
@@ -121,13 +125,14 @@ float TraceSunDFShadows(FSunDFShadowGrid* Grid, float3 P, float3 ToSun, float Ta
     }
 
     const uint CellIndex = uint(Cell.y) * Grid.Dimension + uint(Cell.x);
-    const uint Count     = min(Grid.CellCounts.Get(CellIndex), Grid.CellCapacity);
+    const uint First     = Grid.CellCounts.Get(CellIndex);
+    const uint End       = min(Grid.CellCounts.Get(CellIndex + 1u), Grid.CellItems.Count);
 
     float Visibility = 1.0;
     [loop]
-    for (uint i = 0; i < Count && Visibility > 0.0; ++i)
+    for (uint i = First; i < End && Visibility > 0.0; ++i)
     {
-        const uint         ObjectIndex = Grid.CellItems.Get(CellIndex * Grid.CellCapacity + i);
+        const uint         ObjectIndex = Grid.CellItems.Get(i);
         const FSunDFObject Object      = Grid.Objects.Get(ObjectIndex);
 
         // Rejects casters the ray passes beside or that sit behind the receiver.

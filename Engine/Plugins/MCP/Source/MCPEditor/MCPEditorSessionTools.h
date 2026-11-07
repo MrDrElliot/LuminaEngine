@@ -1,8 +1,12 @@
 #pragma once
 
+#include "Agent/AgentTool.h"
+#include "Containers/ConcurrentQueue.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
+#include "Core/Delegates/Delegate.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Windows/WindowInput.h"
 #include "Events/KeyCodes.h"
 
 #include "MCPEditorSessionTools.generated.h"
@@ -618,7 +622,22 @@ namespace Lumina
 
     namespace MCP
     {
+        // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
+        struct FEditorInputState
+        {
+            TConcurrentQueue<FKeyInput> Keys;
+            TConcurrentQueue<uint32> Characters;
+            TConcurrentQueue<FMouseButtonInput> Buttons;
+            TConcurrentQueue<FMouseMoveInput> Moves;
+            FDelegateHandle PumpedHandle;
+
+            void Forward();
+        };
+
         MCPEDITOR_API void RegisterEditorSessionTools(FStringView Owner);
         MCPEDITOR_API void UnregisterEditorSessionTools();
+
+        // editor.screenshot's viewport capture; call on the game thread.
+        Agent::FToolResult CaptureEditorScene(const SScreenshotParams& In, SScreenshotResult& Out);
     }
 }

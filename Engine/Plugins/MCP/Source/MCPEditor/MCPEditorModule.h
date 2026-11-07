@@ -2,6 +2,8 @@
 
 #include "Core/Delegates/Delegate.h"
 #include "Core/Module/ModuleInterface.h"
+#include "MCPEditorSessionTools.h"
+#include "MCPLookDevTools.h"
 #include "MCPPackageTools.h"
 #include "MCPProfilerTools.h"
 #include "MCPServer.h"
@@ -20,12 +22,16 @@ namespace Lumina
         NODISCARD static MCP::FServer* GetServer();
         NODISCARD static MCP::FPackageToolsState* GetPackageTools();
         NODISCARD static MCP::FProfilerToolsState* GetProfilerTools();
+        NODISCARD static MCP::FEditorInputState* GetEditorInput();
+        NODISCARD static MCP::FLookDevFixtureState* GetLookDevFixture();
 
     private:
 
         MCP::FServer Server;
         MCP::FPackageToolsState PackageTools;
         MCP::FProfilerToolsState ProfilerTools;
+        MCP::FEditorInputState EditorInput;
+        MCP::FLookDevFixtureState LookDevFixture;
         FDelegateHandle ShutdownStartedHandle;
     };
 }

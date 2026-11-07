@@ -1,11 +1,14 @@
-using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.Security;
+using Microsoft.Win32;
 
 namespace LuminaBuildTool.Core;
 
 /// <summary>Facts about the machine running the build that rules may branch on.</summary>
 public static class HostCapabilities
 {
+    // The display adapter device class; each numbered subkey is one installed adapter driver.
+    private const string DisplayAdapterClassKey = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+
     private static string? CachedAdapterNames;
 
     /// <summary>True when an NVIDIA display adapter is present.</summary>
@@ -16,57 +19,46 @@ public static class HostCapabilities
         AdapterNames.Contains("amd", StringComparison.OrdinalIgnoreCase)
         || AdapterNames.Contains("radeon", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Comma-joined display adapter names, or empty when the probe could not run.</summary>
+    /// <summary>Comma-joined display adapter names, or empty off Windows.</summary>
     private static string AdapterNames
     {
         get
         {
-            CachedAdapterNames ??= ProbeAdapterNames();
+            CachedAdapterNames ??= ReadAdapterNames();
             return CachedAdapterNames;
         }
     }
 
-    private static string ProbeAdapterNames()
+    // Read in process rather than through a timed-out WMI query, so a loaded machine cannot flip the rules' defines.
+    private static string ReadAdapterNames()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return string.Empty;
         }
 
-        try
+        using RegistryKey? ClassKey = Registry.LocalMachine.OpenSubKey(DisplayAdapterClassKey);
+        if (ClassKey == null)
         {
-            ProcessStartInfo StartInfo = new("powershell")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            StartInfo.ArgumentList.Add("-NoProfile");
-            StartInfo.ArgumentList.Add("-Command");
-            StartInfo.ArgumentList.Add("(Get-CimInstance Win32_VideoController).Name -join ','");
-
-            using Process? Runner = Process.Start(StartInfo);
-
-            if (Runner is null)
-            {
-                return string.Empty;
-            }
-
-            string Output = Runner.StandardOutput.ReadToEnd();
-
-            if (!Runner.WaitForExit(20_000))
-            {
-                return string.Empty;
-            }
-
-            return Output;
-        }
-        catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            Log.Verbose("GPU probe failed: {0}", Ex.Message);
             return string.Empty;
         }
+
+        List<string> Names = new();
+        foreach (string SubKeyName in ClassKey.GetSubKeyNames())
+        {
+            try
+            {
+                using RegistryKey? AdapterKey = ClassKey.OpenSubKey(SubKeyName);
+                if (AdapterKey?.GetValue("DriverDesc") is string Name)
+                {
+                    Names.Add(Name);
+                }
+            }
+            catch (SecurityException)
+            {
+            }
+        }
+
+        return string.Join(',', Names);
     }
 }

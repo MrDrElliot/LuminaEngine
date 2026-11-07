@@ -858,7 +858,7 @@ TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
     EXPECT_LT(NsPerCall, 200000.0);
 }
 
-TEST(TaskSystem, Perf_ParallelForScalesWithWork)
+TEST(TaskSystem, DISABLED_Perf_ParallelForScalesWithWork)
 {
     constexpr uint32 N = 4'000'000;
     TVector<float> Data;

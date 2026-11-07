@@ -23,9 +23,6 @@ namespace Lumina::NetPrediction
         // Older unconfirmed moves than this are dropped, which only happens when the host stops answering.
         constexpr uint32 MaxPendingMoves = 240;
 
-        // How many unconfirmed moves ride in each upload, so a lost packet is covered by the next ones.
-        constexpr uint32 MaxMovesPerUpload = 32;
-
         // Below these the client agrees with the host, since the wire carries millimeters and centimeters per second.
         constexpr float PositionTolerance = 0.02f;
         constexpr float VelocityTolerance = 0.1f;
@@ -307,6 +304,50 @@ namespace Lumina::NetPrediction
         }
     }
 
+    bool ReadMoveCommands(const uint8* Data, SIZE_T Size, uint32& OutGuid, TVector<FNetMoveCommand>& OutCommands)
+    {
+        FNetArchive Reader(Data, Size);
+        uint8 Type = 0;
+        Reader << Type;
+        OutGuid = Net::ReadNetGuid(Reader);
+        const uint32 FirstSeq = ReadVarUInt(Reader);
+        const uint32 Count    = ReadVarUInt(Reader);
+        if (Reader.HasError() || Count > MaxMovesPerUpload)
+        {
+            return false;
+        }
+
+        OutCommands.Reset();
+        FNetMoveCommand Command;
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            uint8 Bits = 0;
+            Reader << Bits;
+            if (!(Bits & Cmd_SameMove))
+            {
+                Reader << Command.MoveX;
+                Reader << Command.MoveZ;
+            }
+            if (!(Bits & Cmd_SameLook))
+            {
+                Reader << Command.Yaw;
+                Reader << Command.Pitch;
+            }
+            if (!(Bits & Cmd_SameButtons))
+            {
+                Command.Buttons = ReadVarUInt(Reader);
+            }
+            Command.bJump = (Bits & Cmd_Jump) != 0;
+            Command.Seq   = FirstSeq + Index;
+            if (Reader.HasError())
+            {
+                return false;
+            }
+            OutCommands.Add(Command);
+        }
+        return true;
+    }
+
     void SendCommands(ECS::FRegistry& Registry, FNetWorldState& State)
     {
         auto View = Registry.View<ECS::Read<FNetPredictionClient>, ECS::Read<SNetworkComponent>>();
@@ -344,13 +385,9 @@ namespace Lumina::NetPrediction
             return;
         }
 
-        FNetArchive Reader(Data, Size);
-        uint8 Type = 0;
-        Reader << Type;
-        const uint32 Guid     = Net::ReadNetGuid(Reader);
-        const uint32 FirstSeq = ReadVarUInt(Reader);
-        const uint32 Count    = ReadVarUInt(Reader);
-        if (Reader.HasError() || Count > MaxMovesPerUpload)
+        uint32 Guid = 0;
+        TVector<FNetMoveCommand> Commands;
+        if (!ReadMoveCommands(Data, Size, Guid, Commands))
         {
             return;
         }
@@ -369,32 +406,8 @@ namespace Lumina::NetPrediction
         }
 
         const float FixedDt = FixedStepOf(World);
-        FNetMoveCommand Command;
-        for (uint32 Index = 0; Index < Count; ++Index)
+        for (const FNetMoveCommand& Command : Commands)
         {
-            uint8 Bits = 0;
-            Reader << Bits;
-            if (!(Bits & Cmd_SameMove))
-            {
-                Reader << Command.MoveX;
-                Reader << Command.MoveZ;
-            }
-            if (!(Bits & Cmd_SameLook))
-            {
-                Reader << Command.Yaw;
-                Reader << Command.Pitch;
-            }
-            if (!(Bits & Cmd_SameButtons))
-            {
-                Command.Buttons = ReadVarUInt(Reader);
-            }
-            Command.bJump = (Bits & Cmd_Jump) != 0;
-            Command.Seq   = FirstSeq + Index;
-            if (Reader.HasError())
-            {
-                return;
-            }
-
             if (Command.Seq <= Prediction->LastProcessed)
             {
                 continue;

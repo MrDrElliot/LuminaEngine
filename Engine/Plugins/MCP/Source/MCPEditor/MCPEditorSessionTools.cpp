@@ -4,7 +4,6 @@
 #include "Agent/AgentGameThread.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Containers/Algorithm.h"
-#include "Containers/ConcurrentQueue.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
@@ -19,6 +18,7 @@
 #include "Input/InputContext.h"
 #include "Input/InputViewport.h"
 #include "Log/Log.h"
+#include "MCPEditorModule.h"
 #include "MCPTextMatch.h"
 #include "Platform/Time/PlatformTime.h"
 #include "Renderer/RenderManager.h"
@@ -93,42 +93,6 @@ namespace Lumina::MCP
             return false;
         }
 
-        // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
-        TConcurrentQueue<FKeyInput> EditorInjectedKeys;
-        TConcurrentQueue<uint32> EditorInjectedCharacters;
-        TConcurrentQueue<FMouseButtonInput> EditorInjectedButtons;
-        TConcurrentQueue<FMouseMoveInput> EditorInjectedMoves;
-        FDelegateHandle EditorInputPumpedHandle;
-
-        void ForwardEditorInjectedInput()
-        {
-            FWindow* Window = Windowing::GetPrimaryWindowHandle();
-            FKeyInput Input;
-            while (EditorInjectedKeys.TryDequeue(Input))
-            {
-                Window->OnKey.Broadcast(Window, Input);
-            }
-
-            uint32 Codepoint;
-            while (EditorInjectedCharacters.TryDequeue(Codepoint))
-            {
-                Window->OnChar.Broadcast(Window, Codepoint);
-            }
-
-            // Moves before buttons, so a click is evaluated at the position it was aimed at.
-            FMouseMoveInput Move;
-            while (EditorInjectedMoves.TryDequeue(Move))
-            {
-                Window->OnMouseMove.Broadcast(Window, Move);
-            }
-
-            FMouseButtonInput Button;
-            while (EditorInjectedButtons.TryDequeue(Button))
-            {
-                Window->OnMouseButton.Broadcast(Window, Button);
-            }
-        }
-
         // Injected input only reaches the viewport that owns input, which the editor moves only while its window is foreground.
         bool FocusEditorGameViewport(bool& bOutFocused)
         {
@@ -140,24 +104,6 @@ namespace Lumina::MCP
                 Viewports.TakeGameFocus(World != nullptr ? Viewports.FindViewportForWorld(World) : nullptr);
                 bOutFocused = Viewports.GetActiveViewport() != nullptr;
             }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds()) == Agent::EGameThreadResult::Ran;
-        }
-
-        TVector<uint32> DecodeEditorInputUtf8(FStringView Text)
-        {
-            TVector<uint32> Codepoints;
-            for (int32 i = 0; i < Text.Len();)
-            {
-                const uint8 Lead = uint8(Text[i]);
-                const int Length = Lead < 0x80 ? 1 : (Lead >> 5) == 0x6 ? 2 : (Lead >> 4) == 0xE ? 3 : 4;
-                uint32 Codepoint = Length == 1 ? Lead : Lead & (0x3F >> (Length - 1));
-                for (int j = 1; j < Length && i + j < Text.Len(); ++j)
-                {
-                    Codepoint = (Codepoint << 6) | (uint8(Text[i + j]) & 0x3F);
-                }
-                Codepoints.Add(Codepoint);
-                i += Length;
-            }
-            return Codepoints;
         }
 
         void FillEditorWindowState(FWindow& Window, SWindowState& Out)
@@ -392,7 +338,7 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Opening {}.", Url.Map));
         }
 
-        Agent::FToolResult SendEditorText(const SEditorInputParams& In, SEditorInputResult& Out)
+        Agent::FToolResult SendEditorText(FEditorInputState& State, const SEditorInputParams& In, SEditorInputResult& Out)
         {
             if (!FocusEditorGameViewport(Out.bGameInputFocused))
             {
@@ -402,15 +348,16 @@ namespace Lumina::MCP
             // ImGui releases the keyboard at the next frame start, so text sent this frame would be swallowed.
             Threading::Sleep(100);
 
-            const TVector<uint32> Codepoints = DecodeEditorInputUtf8(In.Text);
-            for (uint32 Codepoint : Codepoints)
+            const FStringView Text(In.Text);
+            int32 Typed = 0;
+            for (int32 i = 0; i < Text.Len(); ++Typed)
             {
-                EditorInjectedCharacters.Enqueue(Codepoint);
+                State.Characters.Enqueue(DecodeUTF8Codepoint(Text, i));
             }
-            return Agent::FToolResult::Ok(Lumina::Format("Typed {} characters.", Codepoints.Num()));
+            return Agent::FToolResult::Ok(Lumina::Format("Typed {} characters.", Typed));
         }
 
-        Agent::FToolResult SendEditorMouse(const SEditorInputParams& In, SEditorInputResult& Out)
+        Agent::FToolResult SendEditorMouse(FEditorInputState& State, const SEditorInputParams& In, SEditorInputResult& Out)
         {
             const bool bPress   = In.Action == "Tap" || In.Action == "Press";
             const bool bRelease = In.Action == "Tap" || In.Action == "Release";
@@ -446,7 +393,7 @@ namespace Lumina::MCP
             FMouseMoveInput Move;
             Move.X = (float)WindowX;
             Move.Y = (float)WindowY;
-            EditorInjectedMoves.Enqueue(Move);
+            State.Moves.Enqueue(Move);
 
             // The move has to land before the button, or the click resolves against the old position.
             Threading::Sleep(HoldMilliseconds);
@@ -458,7 +405,7 @@ namespace Lumina::MCP
                 Button.bPressed = bPressed;
                 Button.X        = (float)WindowX;
                 Button.Y        = (float)WindowY;
-                EditorInjectedButtons.Enqueue(Button);
+                State.Buttons.Enqueue(Button);
             };
 
             if (bPress)
@@ -480,7 +427,7 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Sent {} at ({}, {}).", In.Action, In.X, In.Y));
         }
 
-        Agent::FToolResult SendEditorKey(const SEditorInputParams& In, SEditorInputResult& Out)
+        Agent::FToolResult SendEditorKey(FEditorInputState& State, const SEditorInputParams& In, SEditorInputResult& Out)
         {
             const bool bPress   = In.Action == "Tap" || In.Action == "Press";
             const bool bRelease = In.Action == "Tap" || In.Action == "Release";
@@ -507,7 +454,7 @@ namespace Lumina::MCP
                 Input.bCtrl    = In.bCtrl;
                 Input.bShift   = In.bShift;
                 Input.bAlt     = In.bAlt;
-                EditorInjectedKeys.Enqueue(Input);
+                State.Keys.Enqueue(Input);
             };
 
             if (bPress)
@@ -676,49 +623,6 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format(
                 "Reloaded to generation {}: {} script type(s), {} script context(s) resident.",
                 Out.Generation, Out.LoadedTypes, Out.AliveContexts));
-        }
-
-        Agent::FToolResult CaptureEditorScene(const SScreenshotParams& In, SScreenshotResult& Out)
-        {
-            Screenshot::ECaptureSource Source = Screenshot::ECaptureSource::FinalLDR;
-            if (In.Source == "SceneHDR")
-            {
-                Source = Screenshot::ECaptureSource::SceneHDR;
-            }
-            else if (!In.Source.IsEmpty() && In.Source != "FinalLDR")
-            {
-                return Agent::FToolResult::Error("Source has to be FinalLDR, SceneHDR or EditorUI.");
-            }
-
-            Screenshot::FCaptureResult Captured;
-            if (In.Tab.IsEmpty())
-            {
-                Captured = Screenshot::CaptureActiveWorld(Source, In.OutputPath);
-            }
-            else
-            {
-                FString Error;
-                CWorld* World = SessionOps::GetTabWorld(FStringView(In.Tab), Error);
-                IRenderScene* Scene = World != nullptr ? World->GetRenderer() : nullptr;
-                if (Scene == nullptr)
-                {
-                    return Agent::FToolResult::Error(Error.IsEmpty() ? FString("That tab's world has no renderer right now.") : Error);
-                }
-                Captured = Screenshot::Capture(Scene, Source, In.OutputPath);
-            }
-            if (!Captured.bSuccess)
-            {
-                // A world with no viewport showing it has had its renderer reclaimed, so there is nothing to read back.
-                return Agent::FToolResult::Error(Captured.ErrorMessage.IsEmpty()
-                    ? FString("The capture failed.")
-                    : Captured.ErrorMessage + " Bring a world viewport tab to the front in the editor and try again.");
-            }
-
-            Out.Path   = Captured.OutputPath;
-            Out.Width  = static_cast<int32>(Captured.ResolutionX);
-            Out.Height = static_cast<int32>(Captured.ResolutionY);
-
-            return Agent::FToolResult::Ok(Lumina::Format("Wrote {}x{} to {}.", Out.Width, Out.Height, Out.Path));
         }
 
         // Waits off the game thread, since the copy rides along with a frame the editor has yet to present.
@@ -1026,7 +930,10 @@ namespace Lumina::MCP
         // Any thread on purpose: a tap needs the release to land a frame after the press.
         void RegisterEditorInput(FStringView Owner)
         {
-            EditorInputPumpedHandle = FCoreDelegates::Get().OnInputPumped.AddStatic(&ForwardEditorInjectedInput);
+            if (FEditorInputState* State = FMCPEditorModule::GetEditorInput())
+            {
+                State->PumpedHandle = FCoreDelegates::Get().OnInputPumped.AddMember(State, &FEditorInputState::Forward);
+            }
 
             Agent::FToolRegistry::Get().Register<SEditorInputParams, SEditorInputResult>(
                 Owner, "editor.input",
@@ -1035,11 +942,17 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
                 [](const SEditorInputParams& In, SEditorInputResult& Out)
                 {
+                    FEditorInputState* State = FMCPEditorModule::GetEditorInput();
+                    if (State == nullptr)
+                    {
+                        return Agent::FToolResult::Error("The MCP editor module is not loaded.");
+                    }
+
                     switch (In.Kind)
                     {
-                    case EEditorInputKind::Mouse: return SendEditorMouse(In, Out);
-                    case EEditorInputKind::Key:   return SendEditorKey(In, Out);
-                    default:                      return SendEditorText(In, Out);
+                    case EEditorInputKind::Mouse: return SendEditorMouse(*State, In, Out);
+                    case EEditorInputKind::Key:   return SendEditorKey(*State, In, Out);
+                    default:                      return SendEditorText(*State, In, Out);
                     }
                 });
         }
@@ -1181,7 +1094,87 @@ namespace Lumina::MCP
     void UnregisterEditorSessionTools()
     {
         // The pump delegate outlives this DLL, so a stale entry would be destroyed after unload.
-        FCoreDelegates::Get().OnInputPumped.Remove(EditorInputPumpedHandle);
-        EditorInputPumpedHandle = {};
+        if (FEditorInputState* State = FMCPEditorModule::GetEditorInput())
+        {
+            FCoreDelegates::Get().OnInputPumped.Remove(State->PumpedHandle);
+            State->PumpedHandle = {};
+        }
+    }
+
+    Agent::FToolResult CaptureEditorScene(const SScreenshotParams& In, SScreenshotResult& Out)
+    {
+        Screenshot::ECaptureSource Source = Screenshot::ECaptureSource::FinalLDR;
+        if (In.Source == "SceneHDR")
+        {
+            Source = Screenshot::ECaptureSource::SceneHDR;
+        }
+        else if (!In.Source.IsEmpty() && In.Source != "FinalLDR")
+        {
+            return Agent::FToolResult::Error("Source has to be FinalLDR, SceneHDR or EditorUI.");
+        }
+
+        Screenshot::FCaptureResult Captured;
+        if (In.Tab.IsEmpty())
+        {
+            Captured = Screenshot::CaptureActiveWorld(Source, In.OutputPath);
+        }
+        else
+        {
+            FString Error;
+            CWorld* World = SessionOps::GetTabWorld(FStringView(In.Tab), Error);
+            IRenderScene* Scene = World != nullptr ? World->GetRenderer() : nullptr;
+            if (Scene == nullptr)
+            {
+                return Agent::FToolResult::Error(Error.IsEmpty() ? FString("That tab's world has no renderer right now.") : Error);
+            }
+            Captured = Screenshot::Capture(Scene, Source, In.OutputPath);
+        }
+        if (!Captured.bSuccess)
+        {
+            // A world with no viewport showing it has had its renderer reclaimed, so there is nothing to read back.
+            return Agent::FToolResult::Error(Captured.ErrorMessage.IsEmpty()
+                ? FString("The capture failed.")
+                : Captured.ErrorMessage + " Bring a world viewport tab to the front in the editor and try again.");
+        }
+
+        Out.Path   = Captured.OutputPath;
+        Out.Width  = static_cast<int32>(Captured.ResolutionX);
+        Out.Height = static_cast<int32>(Captured.ResolutionY);
+
+        return Agent::FToolResult::Ok(Lumina::Format("Wrote {}x{} to {}.", Out.Width, Out.Height, Out.Path));
+    }
+
+    void FEditorInputState::Forward()
+    {
+        FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+        if (Window == nullptr)
+        {
+            return;
+        }
+
+        FKeyInput Input;
+        while (Keys.TryDequeue(Input))
+        {
+            Window->OnKey.Broadcast(Window, Input);
+        }
+
+        uint32 Codepoint;
+        while (Characters.TryDequeue(Codepoint))
+        {
+            Window->OnChar.Broadcast(Window, Codepoint);
+        }
+
+        // Moves before buttons, so a click is evaluated at the position it was aimed at.
+        FMouseMoveInput Move;
+        while (Moves.TryDequeue(Move))
+        {
+            Window->OnMouseMove.Broadcast(Window, Move);
+        }
+
+        FMouseButtonInput Button;
+        while (Buttons.TryDequeue(Button))
+        {
+            Window->OnMouseButton.Broadcast(Window, Button);
+        }
     }
 }

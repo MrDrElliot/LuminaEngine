@@ -204,8 +204,8 @@ namespace Lumina
             const FFixedString NewPath = MakeSiblingAssetPath(
                 FStringView(*Context.Asset->Path, Context.Asset->Path.Len()), "_Inst");
 
-            CMaterialInstance* Instance = CFactory::CreateNewOf<CMaterialInstance>(NewPath);
-            if (Instance == nullptr)
+            const TStrongObjectPtr<CMaterialInstance> Instance(CFactory::CreateNewOf<CMaterialInstance>(NewPath));
+            if (!Instance)
             {
                 ImGuiX::Notifications::NotifyError("Failed to create a material instance at '{0}'.", NewPath);
                 return;
@@ -215,7 +215,7 @@ namespace Lumina
             if (!Instance->SetParentMaterial(Parent))
             {
                 ImGuiX::Notifications::NotifyError("'{0}' cannot be instanced any deeper.", Context.Asset->AssetName);
-                Instance->ConditionalBeginDestroy();
+                CFactory::DiscardNew(Instance.Get());
                 return;
             }
 
@@ -225,11 +225,12 @@ namespace Lumina
             if (!CPackage::SavePackage(Instance->GetPackage(), NewPath))
             {
                 ImGuiX::Notifications::NotifyError("Failed to save '{0}'.", NewPath);
+                CFactory::DiscardNew(Instance.Get());
                 return;
             }
 
             // Without this the asset exists on disk but not in the registry, so nothing can find it.
-            FAssetRegistry::Get().AssetCreated(Instance);
+            FAssetRegistry::Get().AssetCreated(Instance.Get());
 
             ImGuiX::Notifications::NotifySuccess("Created '{0}'.", NewPath);
 
@@ -255,8 +256,8 @@ namespace Lumina
             const FFixedString NewPath = MakeSiblingAssetPath(
                 FStringView(*Context.Asset->Path, Context.Asset->Path.Len()), "_Montage");
 
-            CAnimationMontage* Montage = CFactory::CreateNewOf<CAnimationMontage>(NewPath);
-            if (Montage == nullptr)
+            const TStrongObjectPtr<CAnimationMontage> Montage(CFactory::CreateNewOf<CAnimationMontage>(NewPath));
+            if (!Montage)
             {
                 ImGuiX::Notifications::NotifyError("Failed to create a montage at '{0}'.", NewPath);
                 return;
@@ -267,10 +268,11 @@ namespace Lumina
             if (!CPackage::SavePackage(Montage->GetPackage(), NewPath))
             {
                 ImGuiX::Notifications::NotifyError("Failed to save '{0}'.", NewPath);
+                CFactory::DiscardNew(Montage.Get());
                 return;
             }
 
-            FAssetRegistry::Get().AssetCreated(Montage);
+            FAssetRegistry::Get().AssetCreated(Montage.Get());
 
             ImGuiX::Notifications::NotifySuccess("Created '{0}'.", NewPath);
 

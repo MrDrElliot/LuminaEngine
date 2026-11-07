@@ -9,12 +9,8 @@
 
 namespace Lumina
 {
-    INetworkTransport* GNetwork = nullptr;
-
     namespace
     {
-        TVector<FNetworkEvent> GFrameEvents;
-
         void* ENetMalloc(size_t Size)
         {
             LUMINA_MEMORY_SCOPE("Network");
@@ -47,34 +43,12 @@ namespace Lumina
                 return;
             }
 
-            GNetwork = new FENetTransport();
             LOG_DISPLAY("Network: initialized (ENet backend)");
         }
 
         void Shutdown()
         {
-            delete GNetwork;
-            GNetwork = nullptr;
-
-            GFrameEvents.Reset();
-            GFrameEvents.Shrink();
-
             enet_deinitialize();
-        }
-
-        void Update()
-        {
-            GFrameEvents.Reset();
-
-            if (GNetwork != nullptr)
-            {
-                GNetwork->Service(GFrameEvents);
-            }
-        }
-
-        const TVector<FNetworkEvent>& GetFrameEvents()
-        {
-            return GFrameEvents;
         }
 
         INetworkTransport* CreateTransport()

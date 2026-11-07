@@ -38,6 +38,9 @@ namespace Lumina
         FString                   ErrorMessage;
     };
 
+    // Sidecars, IDE state, build output, project files and source-control markers, none of which a game reads.
+    bool IsDevelopmentOnlyGameFile(FStringView VirtualPath, bool bKeepScriptSources);
+
     // Reachability-driven cooker, seeded from FEngine::GetCookRoots(); only .lasset reachable via FAssetData::Dependencies enters a PAK.
     // Chunked output: "Main" uses OutputPakPath verbatim + holds shared content; other chunks land at <stem>-<chunk>.pak.
     class EDITOR_API FAssetCooker

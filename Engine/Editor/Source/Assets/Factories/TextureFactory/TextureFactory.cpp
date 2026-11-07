@@ -2091,12 +2091,12 @@ namespace Lumina
         return CookTexturePixels(Scratch, Pixels, Result.Dimensions, ColorSpace, 1u, /*bCreateGPUResource*/ false);
     }
 
-    CTexture* CTextureFactory::CreateSolidColorTexture(FStringView Path, uint8 R, uint8 G, uint8 B, uint8 A, ETextureColorSpace ColorSpace)
+    TStrongObjectPtr<CTexture> CTextureFactory::CreateSolidColorTexture(FStringView Path, uint8 R, uint8 G, uint8 B, uint8 A, ETextureColorSpace ColorSpace)
     {
-        CTexture* Texture = CFactory::CreateNewOf<CTexture>(Path);
-        if (Texture == nullptr)
+        TStrongObjectPtr<CTexture> Texture(CFactory::CreateNewOf<CTexture>(Path));
+        if (!Texture)
         {
-            return nullptr;
+            return {};
         }
 
         Texture->SetFlag(OF_NeedsPostLoad);
@@ -2118,10 +2118,10 @@ namespace Lumina
         }
 
         const FUIntVector2 Extent(Dim, Dim);
-        if (!CookTexturePixels(Texture, Pixels, Extent, ColorSpace))
+        if (!CookTexturePixels(Texture.Get(), Pixels, Extent, ColorSpace))
         {
-            Texture->ConditionalBeginDestroy();
-            return nullptr;
+            CFactory::DiscardNew(Texture.Get());
+            return {};
         }
 
         return Texture;

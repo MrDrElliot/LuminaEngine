@@ -12,6 +12,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/CodeEditor/CodeEditorPreferences.h"
 #include "UI/CodeEditor/Languages/PlainTextLanguage.h"
 #include "UI/CodeEditor/Languages/RmlLanguage.h"
@@ -1033,14 +1034,13 @@ namespace Lumina
         {
             RenameFrom = First.Preview;
         }
-        Memory::Memzero(RenameBuffer, sizeof(RenameBuffer));
-        std::snprintf(RenameBuffer, sizeof(RenameBuffer), "%s", *RenameFrom);
+        RenameTo = RenameFrom;
         bRenameAppearing = true;
     }
 
     void FCodeWorkspaceTool::ApplyRename()
     {
-        const FStringView NewName(RenameBuffer);
+        const FStringView NewName = RenameTo.View();
         if (!IsIdentifier(NewName) || NewName == RenameFrom.View())
         {
             return;
@@ -2258,8 +2258,8 @@ namespace Lumina
             ImGui::SetKeyboardFocusHere();
         }
         ImGui::SetNextItemWidth(360.0f);
-        const bool bSubmit = ImGui::InputText("##name", RenameBuffer, sizeof(RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-        const bool bValid = IsIdentifier(RenameBuffer);
+        const bool bSubmit = ImGuiX::InputText("##name", RenameTo, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        const bool bValid = IsIdentifier(RenameTo.View());
         if (!bValid)
         {
             ImGui::TextColored(EditorColors::Danger(), "Not a valid name.");

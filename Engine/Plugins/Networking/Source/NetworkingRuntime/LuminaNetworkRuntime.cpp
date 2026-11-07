@@ -23,19 +23,21 @@ namespace Lumina
     void FLuminaNetworkRuntime::Initialize()
     {
         Network::Initialize();
-        FNetLoadBotSwarm::StartFromCommandLine();
+        BotSwarm = FNetLoadBotSwarm::CreateFromCommandLine();
     }
 
     void FLuminaNetworkRuntime::Shutdown()
     {
-        FNetLoadBotSwarm::Stop();
+        BotSwarm.reset();
         Network::Shutdown();
     }
 
     void FLuminaNetworkRuntime::Update()
     {
-        Network::Update();
-        FNetLoadBotSwarm::Tick();
+        if (BotSwarm != nullptr)
+        {
+            BotSwarm->Tick();
+        }
     }
 
     void FLuminaNetworkRuntime::OnWorldEntitiesLoaded(CWorld* World)

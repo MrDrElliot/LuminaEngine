@@ -9,7 +9,7 @@ namespace Lumina
 {
     /** Reusable ImGui curve editor drawn straight into a draw list. Holds view and interaction state
      *  only; the SKeyedCurve it edits is owned by the caller, so tools can embed it anywhere. */
-    class FCurveEditorWidget
+    class EDITOR_API FCurveEditorWidget
     {
     public:
 
@@ -33,6 +33,7 @@ namespace Lumina
 
         void FrameAll();
         void FrameSelection();
+        void SelectNone();
 
     private:
 
@@ -72,7 +73,7 @@ namespace Lumina
         bool IsSelected(int32 Index) const;
         void ToggleSelection(int32 Index);
         void SetSelection(int32 Index);
-        void SelectNone();
+        void PruneStaleIndices();
         void BeginKeyDrag();
 
         void DeleteSelected();

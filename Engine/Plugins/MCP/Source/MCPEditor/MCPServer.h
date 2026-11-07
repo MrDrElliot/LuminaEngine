@@ -75,6 +75,12 @@ namespace Lumina::MCP
 
     MCPEDITOR_API void MarkAssetDirty(const CObject* Asset);
 
+    // Rejects the traversal and separator tricks that would take a write outside the mounted roots.
+    NODISCARD MCPEDITOR_API bool IsWellFormedAssetPath(const FString& Path, FString& OutError);
+
+    // Checks where a new asset would go and gives the .lasset path, failing when the folder is outside the content roots or the file exists.
+    NODISCARD MCPEDITOR_API bool MakeNewAssetPath(const FString& Folder, const FString& Name, FFixedString& OutPath, FString& OutError);
+
     // Loads an asset a tool may edit and keeps it for the session, so the edit is not freed before a save.
     template<typename T>
     NODISCARD bool ResolveEditableAsset(FStringView Reference, T*& OutAsset, FString& OutError)

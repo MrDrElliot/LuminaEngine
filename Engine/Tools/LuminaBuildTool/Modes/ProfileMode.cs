@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 using LuminaBuildTool.Graph;
 using LuminaBuildTool.Platform;
 using LuminaBuildTool.Rules;
@@ -26,6 +27,8 @@ public static class ProfileMode
     private const string CaptureToolName = "tracy-capture";
 
     private const string ExportToolName = "tracy-csvexport";
+
+    private const int ExportTimeoutMs = 10 * 60 * 1000;
 
     // Not a comma, since a zone name is a C++ signature and template arguments carry their own.
     private const string FieldSeparator = ";";
@@ -397,11 +400,7 @@ public static class ProfileMode
 
     private static string Export(string ExportTool, string TracePath, string Filter, bool bGpu)
     {
-        ProcessStartInfo Info = new(ExportTool)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-        };
+        ProcessStartInfo Info = new(ExportTool);
 
         // Self time attributes cost to a zone rather than what it calls, and the GPU export resolves nesting here.
         Info.ArgumentList.Add(bGpu ? "-g" : "-e");
@@ -416,18 +415,15 @@ public static class ProfileMode
 
         Info.ArgumentList.Add(TracePath);
 
-        using Process? Export_ = Process.Start(Info)
-            ?? throw new BuildException($"Could not start '{ExportTool}'.");
+        ProcessResult Export_ = ProcessRunner.RunCaptured(Info, ExportTimeoutMs)
+            ?? throw new BuildException($"'{ExportTool}' could not start or did not finish within {ExportTimeoutMs / 1000} s.");
 
-        string Output = Export_.StandardOutput.ReadToEnd();
-        Export_.WaitForExit();
-
-        if (Export_.ExitCode != 0)
+        if (!Export_.bSucceeded)
         {
             throw new BuildException($"'{ExportTool}' failed with exit code {Export_.ExitCode}.");
         }
 
-        return Output;
+        return Export_.Output;
     }
 
     private static List<ProfileEntry> Parse(string Csv)

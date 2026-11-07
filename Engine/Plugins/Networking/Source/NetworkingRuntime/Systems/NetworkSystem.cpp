@@ -181,6 +181,28 @@ namespace Lumina
         }
 
 
+        // Seeds DiffState and appends a full PropertyUpdate to OutMsg, each only when given.
+        void CollectBaseline(ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity, uint32 Guid,
+            FComponentRepState* DiffState, TVector<uint8>* OutMsg)
+        {
+            static thread_local TVector<Net::FComponentRepOut> Comps;
+            static thread_local TVector<Net::FScriptRepOut>    Scripts;
+            Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/true, DiffState, Comps);
+            Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/true, DiffState, Scripts);
+            if (OutMsg == nullptr)
+            {
+                return;
+            }
+
+            FNetArchive Writer(*OutMsg);
+            Net::BindWriters(Writer, State);
+            uint8 Type = static_cast<uint8>(ENetMessage::PropertyUpdate);
+            Writer << Type;
+            Net::WriteNetGuid(Writer, Guid);
+            Net::WriteEntityComponents(Writer, Registry, Entity, &Comps);
+            Net::WriteEntityScripts(Writer, Scripts);
+        }
+
         // Carries the baseline so later updates send only changes, and is recipient-independent.
         void WriteSpawnMessage(ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity, uint32 Guid, uint32 Owner,
             const FVector3& Pos, const FQuat& Rot, const FVector3& Scale, TVector<uint8>& OutMsg)
@@ -193,10 +215,7 @@ namespace Lumina
             WriteVarUInt(Writer, Owner);
 
             // The diff baselines are seeded here, so later updates carry only what changes after the spawn.
-            FComponentRepState& CompDiff = Registry.GetOrEmplace<FComponentRepState>(Entity);
-            Net::CollectComponentFields(Registry, Entity, State, /*bBaseline*/true, &CompDiff);
-            TVector<Net::FScriptRepOut> Scripts;
-            Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/true, &CompDiff, Scripts);
+            CollectBaseline(Registry, State, Entity, Guid, &Registry.GetOrEmplace<FComponentRepState>(Entity), nullptr);
 
             Net::WriteSpawnComponents(Writer, Registry, Entity);
             Net::WriteScriptManifest(Writer, Registry, Entity);
@@ -539,26 +558,29 @@ namespace Lumina
             }
         }
 
-        // The wire encoding is chosen by tier at write time and mirrored by tier at read time.
-        struct FTransformSendRecord
-        {
-            uint32      Guid = 0;
-            ENetLODTier Tier = ENetLODTier::Near;
-            FVector3    Pos;
-            FQuat       Rot;
-            bool        bScale = false;
-            FVector3    Scale  = FVector3(1.0f);
-            bool        bPitch = false;
-            int8        Pitch  = 0;
-        };
-
-        constexpr uint32 YawBits = 12;
-        constexpr float  TwoPi   = 6.2831853f;
+        constexpr uint32 YawBits    = 12;
+        constexpr uint32 FarYawBits = 8;
 
         // An upright pose turns about Y alone, which covers characters and most props on the ground.
         bool IsYawOnly(const FQuat& Rot)
         {
             return Math::Abs(Rot.x) < 1.0e-3f && Math::Abs(Rot.z) < 1.0e-3f;
+        }
+
+        void WriteYaw(FNetArchive& Writer, const FQuat& Rot, uint32 Bits)
+        {
+            float Norm = Math::YawFirstEulerAngles(Rot).y / Math::TwoPi<float>() + 0.5f;
+            Norm -= std::floor(Norm);
+            uint32 Packed = static_cast<uint32>(Norm * static_cast<float>(1u << Bits) + 0.5f) & ((1u << Bits) - 1u);
+            Writer.SerializeBits(&Packed, Bits);
+        }
+
+        FQuat ReadYaw(FNetArchive& Reader, uint32 Bits)
+        {
+            uint32 Packed = 0;
+            Reader.SerializeBits(&Packed, Bits);
+            const float Yaw = (static_cast<float>(Packed) / static_cast<float>(1u << Bits) - 0.5f) * Math::TwoPi<float>();
+            return FQuat(FVector3(0.0f, Yaw, 0.0f));
         }
 
         void WriteTransformRecord(FNetArchive& Writer, const FTransformSendRecord& R, const FVector3& Anchor)
@@ -578,12 +600,8 @@ namespace Lumina
 
             if (R.Tier == ENetLODTier::Far)
             {
-                // Yaw-only rotation in one byte, since far entities need no full orientation fidelity.
-                const float Yaw = Math::EulerAngles(R.Rot).y; // radians, around up (Y)
-                float Norm = Yaw / 6.2831853f + 0.5f;
-                Norm = Norm < 0.0f ? 0.0f : (Norm > 1.0f ? 1.0f : Norm);
-                uint8 YawByte = static_cast<uint8>(Norm * 255.0f + 0.5f);
-                Writer << YawByte;
+                // Far entities need no full orientation fidelity, so only the heading rides.
+                WriteYaw(Writer, R.Rot, FarYawBits);
             }
             else
             {
@@ -591,11 +609,7 @@ namespace Lumina
                 Writer.SerializeBit(bYawOnly);
                 if (bYawOnly)
                 {
-                    const float Yaw = 2.0f * std::atan2(R.Rot.y, R.Rot.w);
-                    float Norm = Yaw / TwoPi + 0.5f;
-                    Norm -= std::floor(Norm);
-                    uint32 Packed = static_cast<uint32>(Norm * static_cast<float>(1u << YawBits) + 0.5f) & ((1u << YawBits) - 1u);
-                    Writer.SerializeBits(&Packed, YawBits);
+                    WriteYaw(Writer, R.Rot, YawBits);
                 }
                 else
                 {
@@ -617,6 +631,29 @@ namespace Lumina
                 uint8 Packed = static_cast<uint8>(R.Pitch);
                 Writer.SerializeBits(&Packed, 8);
             }
+        }
+
+        constexpr SIZE_T TransformHeaderBytes = 7 + 30;
+        constexpr SIZE_T MaxRecordBytes       = 5 + 30 + 6 + 1 + 30;
+        constexpr int32  MaxRecordsPerFrame   = (Net::MaxFramedMessageSize - TransformHeaderBytes) / MaxRecordBytes;
+        static_assert(MaxRecordsPerFrame >= 1 && MaxRecordsPerFrame <= 0xFFFF, "frame chunk size invalid");
+
+        // Frames Records as messages of at most MaxRecordsPerFrame, each led by WriteHeader, and returns the largest message size.
+        uint32 AppendTransformFrames(TVector<uint8>& Batch, TVector<uint8>& Scratch, const TVector<FTransformSendRecord>& Records, const FVector3& Anchor,
+                                     TFunctionRef<void(FNetArchive&, uint16)> WriteHeader)
+        {
+            uint32 LargestFrame = 0;
+            for (int32 Begin = 0; Begin < Records.Num(); Begin += MaxRecordsPerFrame)
+            {
+                const int32 End = Math::Min(Records.Num(), Begin + MaxRecordsPerFrame);
+                Scratch.Reset();
+                FNetArchive Writer(Scratch);
+                WriteHeader(Writer, static_cast<uint16>(End - Begin));
+                for (int32 i = Begin; i < End; ++i) { WriteTransformRecord(Writer, Records[i], Anchor); }
+                LargestFrame = Math::Max(LargestFrame, static_cast<uint32>(Scratch.Num()));
+                Net::AppendFramedMessage(Batch, Scratch.GetData(), static_cast<SIZE_T>(Scratch.Num()));
+            }
+            return LargestFrame;
         }
 
         // Returns true to send, and bOutScale says whether scale must ride along on the wire.
@@ -714,11 +751,6 @@ namespace Lumina
             const float Grace      = Settings.RelevancyGraceSeconds;
             const float EnterR2    = Settings.AOIEnterRadius * Settings.AOIEnterRadius;
             const int32 CellRadius = static_cast<int32>(Settings.AOILeaveRadius / Grid.CellSize) + 1;
-
-            constexpr SIZE_T HeaderBytes        = 7 + 30;
-            constexpr SIZE_T MaxRecordBytes     = 5 + 30 + 6 + 1 + 30;
-            constexpr int32 MaxRecordsPerFrame = (Net::MaxFramedMessageSize - HeaderBytes) / MaxRecordBytes;
-            static_assert(MaxRecordsPerFrame >= 1 && MaxRecordsPerFrame <= 0xFFFF, "frame chunk size invalid");
 
             const uint32 NumClients = static_cast<uint32>(State.ConnectedClientIds.Num());
             TVector<TVector<uint8>>                ClientReliable; ClientReliable.SetNum(NumClients);
@@ -1080,17 +1112,7 @@ namespace Lumina
                     TVector<uint8>& Cached = bNew ? BaselineCache.Add(Op.Guid) : *CachedPtr;
                     if (bNew)
                     {
-                        FComponentRepState& CDiff = Registry.GetOrEmplace<FComponentRepState>(Ent);
-                        TVector<Net::FComponentRepOut> Comps = Net::CollectComponentFields(Registry, Ent, State, /*bBaseline*/true, &CDiff);
-                        TVector<Net::FScriptRepOut> Scripts;
-                        Net::CollectScriptFieldsInto(Registry, Ent, State, /*bBaseline*/true, &CDiff, Scripts);
-                        FNetArchive W(Cached);
-                        Net::BindWriters(W, State);
-                        uint8 PType = static_cast<uint8>(ENetMessage::PropertyUpdate);
-                        W << PType;
-                        Net::WriteNetGuid(W, Op.Guid);
-                        Net::WriteEntityComponents(W, Registry, Ent, &Comps);
-                        Net::WriteEntityScripts(W, Scripts);
+                        CollectBaseline(Registry, State, Ent, Op.Guid, &Registry.GetOrEmplace<FComponentRepState>(Ent), &Cached);
                     }
                     Net::AppendFramedMessage(Reliable, Cached.GetData(), static_cast<SIZE_T>(Cached.Num()));
                 }
@@ -1181,26 +1203,18 @@ namespace Lumina
 
                 const TVector<FTransformSendRecord>& Records = ClientRecords[ci];
                 TVector<uint8>& Unreliable = ClientUnreliable[ci];
-                for (int32 Begin = 0; Begin < Records.Num(); Begin += MaxRecordsPerFrame)
+                const NetQuantize::FQuantizedVector QAnchor = NetQuantize::FQuantizedVector::FromVector(ClientAnchor[ci], SnapshotAnchorQuantum);
+                TVector<uint8> Scratch;
+                ClientLargest[ci] = AppendTransformFrames(Unreliable, Scratch, Records, QAnchor.ToVector(SnapshotAnchorQuantum), [&](FNetArchive& Writer, uint16 Count)
                 {
-                    const int32 End = Math::Min(Records.Num(), Begin + MaxRecordsPerFrame);
-                    TVector<uint8> Buffer;
-                    FNetArchive Writer(Buffer);
-                    uint8  Type  = static_cast<uint8>(ENetMessage::TransformSnapshot);
-                    uint16 Count = static_cast<uint16>(End - Begin);
+                    uint8 Type = static_cast<uint8>(ENetMessage::TransformSnapshot);
                     Writer << Type;
                     Writer << ServerTime;
                     Writer << Count;
-                    const NetQuantize::FQuantizedVector QAnchor = NetQuantize::FQuantizedVector::FromVector(ClientAnchor[ci], SnapshotAnchorQuantum);
                     QAnchor.Write(Writer);
-                    const FVector3 Anchor = QAnchor.ToVector(SnapshotAnchorQuantum);
-                    for (int32 i = Begin; i < End; ++i) { WriteTransformRecord(Writer, Records[i], Anchor); }
-                    const uint32 FrameBytes = static_cast<uint32>(Buffer.Num());
-                    ClientLargest[ci] = Math::Max(ClientLargest[ci], FrameBytes);
-                    ClientBytes[ci]  += FrameBytes;
-                    ++ClientChunks[ci];
-                    Net::AppendFramedMessage(Unreliable, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()));
-                }
+                });
+                ClientChunks[ci] = static_cast<uint32>((Records.Num() + MaxRecordsPerFrame - 1) / MaxRecordsPerFrame);
+                ClientBytes[ci]  = static_cast<uint32>(Unreliable.Num()) - ClientChunks[ci] * sizeof(uint16);
             });
 
             PhaseMark(ENetPhase::Payloads);
@@ -1238,8 +1252,8 @@ namespace Lumina
             State.Stats.RelevantMax            = RelevantMax;
         }
 
-        // Client -> server. Push the pose of entities this client owns (AutonomousProxy) upstream.
-        void SendOwnedTransforms(ECS::FRegistry& Registry, FNetWorldState& State, float DeltaTime)
+        // Client -> server. Frames the pose of entities this client owns (AutonomousProxy) for the upstream send.
+        void WriteOwnedTransforms(ECS::FRegistry& Registry, float DeltaTime, TVector<uint8>& OutBatch)
         {
             auto TransformStorage = Registry.GetStorage<STransformComponent>();
 
@@ -1270,22 +1284,23 @@ namespace Lumina
                 Records.Add(R);
             });
 
-            if (Records.IsEmpty())
+            TVector<uint8> Scratch;
+            AppendTransformFrames(OutBatch, Scratch, Records, FVector3(0.0f), [](FNetArchive& Writer, uint16 Count)
             {
-                return;
-            }
+                uint8 Type = static_cast<uint8>(ENetMessage::ClientTransform);
+                Writer << Type;
+                Writer << Count;
+            });
+        }
 
-            TVector<uint8> Buffer;
-            FNetArchive Writer(Buffer);
-            uint8  Type  = static_cast<uint8>(ENetMessage::ClientTransform);
-            uint16 Count = static_cast<uint16>(Records.Num());
-            Writer << Type;
-            Writer << Count;
-            for (const FTransformSendRecord& R : Records)
+        void SendOwnedTransforms(ECS::FRegistry& Registry, FNetWorldState& State, float DeltaTime)
+        {
+            TVector<uint8> Batch;
+            WriteOwnedTransforms(Registry, DeltaTime, Batch);
+            if (!Batch.IsEmpty())
             {
-                WriteTransformRecord(Writer, R, FVector3(0.0f));
+                State.Transport->Send(State.ServerConnection, Batch.GetData(), static_cast<SIZE_T>(Batch.Num()), 0, ESendMode::UnreliableSequenced);
             }
-            Net::SendFramed(*State.Transport, State.ServerConnection, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 0, ESendMode::UnreliableSequenced);
         }
 
         // Returns false on a decode error so the caller breaks the batch.
@@ -1307,10 +1322,7 @@ namespace Lumina
             FQuat Rot;
             if (Tier == ENetLODTier::Far)
             {
-                uint8 YawByte = 0;
-                Reader << YawByte;
-                const float Yaw = (static_cast<float>(YawByte) / 255.0f - 0.5f) * 6.2831853f;
-                Rot = FQuat(FVector3(0.0f, Yaw, 0.0f));
+                Rot = ReadYaw(Reader, FarYawBits);
             }
             else
             {
@@ -1318,10 +1330,7 @@ namespace Lumina
                 Reader.SerializeBit(bYawOnly);
                 if (bYawOnly)
                 {
-                    uint32 Packed = 0;
-                    Reader.SerializeBits(&Packed, YawBits);
-                    const float Yaw = (static_cast<float>(Packed) / static_cast<float>(1u << YawBits) - 0.5f) * TwoPi;
-                    Rot = FQuat(FVector3(0.0f, Yaw, 0.0f));
+                    Rot = ReadYaw(Reader, YawBits);
                 }
                 else
                 {
@@ -1416,7 +1425,7 @@ namespace Lumina
         }
 
         // Server, buffer each client-owned pose into its ring (gated on ownership). Relayed raw next snapshot.
-        void ApplyClientTransform(ECS::FRegistry& Registry, FNetWorldState& State, FConnectionHandle Sender, double ServerNow, const uint8* Data, SIZE_T Size)
+        void ApplyClientTransform(ECS::FRegistry& Registry, FNetWorldState& State, uint32 SenderConn, double ServerNow, const uint8* Data, SIZE_T Size)
         {
             FNetArchive Reader(Data, Size);
             uint8  Type  = 0;
@@ -1428,7 +1437,7 @@ namespace Lumina
 
             for (uint16 i = 0; i < Count; ++i)
             {
-                if (!ReadTransformIntoRing(Registry, State, Reader, ServerNow, /*bSkipAutonomous*/ false, /*OwnerGate*/ Sender.Value, FVector3(0.0f)))
+                if (!ReadTransformIntoRing(Registry, State, Reader, ServerNow, /*bSkipAutonomous*/ false, /*OwnerGate*/ SenderConn, FVector3(0.0f)))
                 {
                     break;
                 }
@@ -2143,7 +2152,7 @@ namespace Lumina
                     case ENetMessage::ClientTransform:
                         if (bServer)
                         {
-                            ApplyClientTransform(Registry, *State, Event.Connection, Context.GetTime(), Msg, MsgSize);
+                            ApplyClientTransform(Registry, *State, Event.Connection.Value, Context.GetTime(), Msg, MsgSize);
                         }
                         break;
                     case ENetMessage::Welcome:
@@ -2219,6 +2228,7 @@ namespace Lumina
 
                             // Every changed stable entity's state, built before the index tables so any reference it mints goes out with them.
                             TVector<uint8> StableBaselines;
+                            TVector<uint8> Message;
                             for (ECS::FEntity Ent : Registry.View<ECS::Read<SNetworkComponent>, ECS::Read<FComponentRepState>>())
                             {
                                 const SNetworkComponent& StableNet = Registry.Get<ECS::Read<SNetworkComponent>>(Ent);
@@ -2226,17 +2236,8 @@ namespace Lumina
                                 {
                                     continue;
                                 }
-                                TVector<Net::FComponentRepOut> Comps = Net::CollectComponentFields(Registry, Ent, *State, /*bBaseline*/true, nullptr);
-                                TVector<Net::FScriptRepOut> Scripts;
-                                Net::CollectScriptFieldsInto(Registry, Ent, *State, /*bBaseline*/true, nullptr, Scripts);
-                                TVector<uint8> Message;
-                                FNetArchive W(Message);
-                                Net::BindWriters(W, *State);
-                                uint8 PType = static_cast<uint8>(ENetMessage::PropertyUpdate);
-                                W << PType;
-                                Net::WriteNetGuid(W, StableNet.NetGUID.Value);
-                                Net::WriteEntityComponents(W, Registry, Ent, &Comps);
-                                Net::WriteEntityScripts(W, Scripts);
+                                Message.Reset();
+                                CollectBaseline(Registry, *State, Ent, StableNet.NetGUID.Value, nullptr, &Message);
                                 Net::AppendFramedMessage(StableBaselines, Message.GetData(), static_cast<SIZE_T>(Message.Num()));
                             }
 

@@ -20,6 +20,6 @@ namespace Lumina
     private:
 
         SParticleParameter Value;
-        char NameBuffer[128] = {};
+        FString NameText;
     };
 }

@@ -18,6 +18,23 @@ namespace Lumina
         constexpr ImU32 kInClipColor   = IM_COL32(80, 170, 255, 90);
         constexpr ImU32 kCurrentColor  = IM_COL32(255, 200, 60, 255);
         constexpr ImU32 kOrderTextCol  = IM_COL32(255, 255, 255, 220);
+
+        bool IsClipNameTaken(const CSpriteSheet& Sheet, const FString& Name, int32 IgnoredIndex)
+        {
+            for (int32 Index = 0; Index < Sheet.Animations.Num(); ++Index)
+            {
+                if (Index != IgnoredIndex && Name.EqualsIgnoreCase(*Sheet.Animations[Index].Name))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        FName MakeUniqueClipName(const CSpriteSheet& Sheet)
+        {
+            return MakeUniqueName("NewAnimation", [&Sheet](const FName& Name) { return IsClipNameTaken(Sheet, Name.ToString(), Constants::kIndexNone); });
+        }
     }
 
     FSpriteSheetEditorTool::FSpriteSheetEditorTool(IEditorToolContext* Context, CObject* InAsset)
@@ -191,8 +208,8 @@ namespace Lumina
 
         if (ImGui::Button(LE_ICON_PLUS " Add"))
         {
-            SSpriteAnimation& Added = Sheet->Animations.EmplaceGetRef();
-            Added.Name = FName("NewAnimation");
+            const FName AddedName = MakeUniqueClipName(*Sheet);
+            Sheet->Animations.EmplaceGetRef().Name = AddedName;
             SelectedAnimation = Sheet->Animations.Num() - 1;
             SelectedFrameSlot = -1;
             MarkEdited();
@@ -243,14 +260,23 @@ namespace Lumina
         ImGui::Separator();
 
         // Committed on enter or focus loss, since FName interns every string it is handed.
-        char NameBuffer[128];
-        std::snprintf(NameBuffer, sizeof(NameBuffer), "%s", Clip->Name.IsNone() ? "" : *Clip->Name);
-        const bool bNameSubmitted = ImGui::InputText("Name", NameBuffer, sizeof(NameBuffer),
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+        FString TypedName = Clip->Name.IsNone() ? "" : *Clip->Name;
+        const bool bNameSubmitted = ImGuiX::InputText("Name", TypedName, ImGuiInputTextFlags_EnterReturnsTrue);
         if (bNameSubmitted || ImGui::IsItemDeactivatedAfterEdit())
         {
-            Clip->Name = FName(NameBuffer);
-            MarkEdited();
+            if (TypedName.IsEmpty())
+            {
+                ImGuiX::Notifications::NotifyWarning("An animation needs a name, kept '{0}'.", *Clip->Name);
+            }
+            else if (IsClipNameTaken(*Sheet, TypedName, SelectedAnimation))
+            {
+                ImGuiX::Notifications::NotifyWarning("Another animation is already named '{0}', kept '{1}'.", *TypedName, *Clip->Name);
+            }
+            else
+            {
+                Clip->Name = FName(*TypedName);
+                MarkEdited();
+            }
         }
 
         if (ImGui::DragFloat("FPS", &Clip->FPS, 0.25f, 0.0f, 240.0f, "%.2f"))

@@ -79,9 +79,8 @@ namespace Lumina
         const MCP::FLog& Log = Server->GetLog();
         if (const uint64 Revision = Log.GetRevision(); Revision != SeenRevision)
         {
-            const int32 Before = Transactions.Num();
             SeenRevision = Revision;
-            Log.Snapshot(Transactions, Connections);
+            const uint64 Recorded = Log.Snapshot(Transactions, Connections);
 
             Methods.Reset();
             for (const TSharedPtr<const MCP::FTransaction>& Transaction : Transactions)
@@ -92,7 +91,8 @@ namespace Lumina
                 }
             }
 
-            bScrollToNewest = Transactions.Num() != Before;
+            bScrollToNewest = Recorded != SeenRecorded;
+            SeenRecorded = Recorded;
         }
 
         DrawConnections();

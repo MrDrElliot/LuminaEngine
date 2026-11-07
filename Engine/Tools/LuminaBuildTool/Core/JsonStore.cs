@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -32,23 +33,13 @@ public static class JsonStore
 
     public static void Save<T>(string FilePath, T Value)
     {
-        string TempPath = $"{FilePath}.{Environment.ProcessId}.tmp";
         try
         {
-            PathUtils.EnsureDirectoryForFile(FilePath);
-            File.WriteAllText(TempPath, JsonSerializer.Serialize(Value, Options));
-            File.Move(TempPath, FilePath, overwrite: true);
+            PathUtils.WriteFileAtomic(FilePath, JsonSerializer.Serialize(Value, Options), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
         catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException)
         {
             Log.Warning("Failed to write cache '{0}': {1}", FilePath, Ex.Message);
-            try
-            {
-                File.Delete(TempPath);
-            }
-            catch (Exception DeleteEx) when (DeleteEx is IOException or UnauthorizedAccessException)
-            {
-            }
         }
     }
 }

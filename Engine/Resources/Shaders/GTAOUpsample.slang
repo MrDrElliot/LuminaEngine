@@ -3,7 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
-// Bilateral upsample of the half-resolution AO, weighting the four nearest texels by how well their depth matches this pixel's.
+// Bilateral upsample of a half-resolution term (GTAO or screen space GI), weighting the four nearest texels by how well their depth matches this pixel's.
 
 struct FPushConstants
 {
@@ -13,6 +13,7 @@ struct FPushConstants
     FTexture2D   HalfDepth;
     FTexture2D   FullDepth;
     FRWTexture2D Output;
+    uint         DepthScale;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -40,18 +41,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     const float InvSigmaZ = 1.0 / (XE_GTAO_DEPTH_SIGMA * Z);
 
-    float Sum       = 0.0;
-    float SumWeight = 0.0;
-    float Nearest   = 1.0;
-    float NearestDz = 1e30;
+    float4 Sum       = float4(0.0, 0.0, 0.0, 0.0);
+    float  SumWeight = 0.0;
+    float4 Nearest   = float4(1.0, 0.0, 0.0, 0.0);
+    float  NearestDz = 1e30;
 
     [unroll]
     for (int i = 0; i < 4; ++i)
     {
         const int2   Offset = int2(i & 1, i >> 1);
         const int3   Tap    = int3(clamp(Base + Offset, int2(0, 0), MaxTap), 0);
-        const float  Value  = AO.Load(Tap).r;
-        const float  Dz     = abs(HalfDepth.Load(Tap).r - Z);
+        const float4 Value  = AO.Load(Tap);
+        const float  Dz     = abs(HalfDepth.Load(int3(Tap.xy * int(Pass().DepthScale), 0)).r - Z);
         const float2 Bilin  = lerp(1.0 - F, F, float2(Offset));
         const float  Weight = Bilin.x * Bilin.y * XeGTAO_DepthWeight(Dz, InvSigmaZ);
 
@@ -65,6 +66,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     // A pixel no neighbor resembles, a thin sliver the reduced depth skipped, takes its closest match outright.
-    const float Result = (NearestDz * InvSigmaZ > 4.0) ? Nearest : Sum / max(SumWeight, 1e-6);
-    Pass().Output[Pixel] = float4(Result, 0.0, 0.0, 0.0);
+    Pass().Output[Pixel] = (NearestDz * InvSigmaZ > 4.0) ? Nearest : Sum / max(SumWeight, 1e-6);
 }

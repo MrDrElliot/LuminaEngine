@@ -202,13 +202,10 @@ namespace Lumina
         }
 
         // A single-phase view is drawn in full by Early, so skipping Late collapses the frame.
-        if (Phase == ECullPhase::Late)
+        const bool bTwoPhaseView = IsTwoPhaseView(Frame, ViewIndex);
+        if (Phase == ECullPhase::Late && !bTwoPhaseView)
         {
-            if (ViewIndex >= static_cast<uint32>(Frame.Views.CullViews.Num()) ||
-                (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) == 0u)
-            {
-                return;
-            }
+            return;
         }
 
         if (const char* MissingBuffer = FindMissingMeshletDrawBuffer(); bHasDraws && MissingBuffer != nullptr)
@@ -229,6 +226,14 @@ namespace Lumina
         if (!bHasDraws && !bClear)
         {
             return;
+        }
+
+        // Once per frame, in the camera's last geometry phase, so a two-phase camera splats only what its late pyramid leaves visible.
+        const bool bProxyView   = ViewIndex == 0u && HasFarProxies();
+        const bool bDrawProxies = bProxyView && (Phase == ECullPhase::Late || !bTwoPhaseView);
+        if (bProxyView && bTwoPhaseView)
+        {
+            OcclusionCullFarProxies(CL, Phase);
         }
 
         RHI::CmdBarrier(CL,
@@ -270,35 +275,82 @@ namespace Lumina
                                  Extent, VisRT.Desc.Format);
         }
 
-        // Once per frame, in the camera's last geometry phase, since the proxies are not occlusion culled and need no replay.
-        const bool bTwoPhaseView = ViewIndex < static_cast<uint32>(Frame.Views.CullViews.Num())
-                                && (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) != 0u;
-        if (ViewIndex == 0u && (Phase == ECullPhase::Late || !bTwoPhaseView))
+        if (bDrawProxies)
         {
-            DrawFarProxies(CL, Extent, VisRT.Desc.Format);
+            DrawFarProxies(CL, Extent, VisRT.Desc.Format, bTwoPhaseView);
         }
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
 
-    void FDefaultSceneRenderer::DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat)
+    bool FDefaultSceneRenderer::IsTwoPhaseView(const FFrameData& Frame, uint32 ViewIndex)
     {
-        static const FShaderH ProxyVertex = FShaderLibrary::Get("ProxyVisBufferVert.slang");
-        static const FShaderH ProxyPixel  = FShaderLibrary::Get("ProxyVisBufferPixel.slang");
-        if (ProxyVertex == nullptr || ProxyPixel == nullptr || !bCullBucketsValid)
-        {
-            return;
-        }
+        return ViewIndex < static_cast<uint32>(Frame.Views.CullViews.Num())
+            && (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) != 0u;
+    }
 
-        const uint8 Slot = CurrentFrameSlot;
-        if (!ProxyListRing[Slot] || !ProxyDrawArgsRing[Slot] || ProxyListCapacity == 0u || !RetainedProxyBuffer)
+    bool FDefaultSceneRenderer::HasFarProxies() const
+    {
+        // Empty unless this frame's cull wrote the list, so a stale ring slot is never drawn.
+        if (!bCullBucketsValid || SceneRootShared.ProxyList.IsEmpty())
         {
-            return;
+            return false;
         }
 
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        if (Settings != nullptr && (!Settings->bFarProxies || Settings->ProxyTransitionPixels <= 0.0f))
+        return Settings == nullptr || (Settings->bFarProxies && Settings->ProxyTransitionPixels > 0.0f);
+    }
+
+    void FDefaultSceneRenderer::OcclusionCullFarProxies(RHI::FCmdListH CL, ECullPhase::Type Phase)
+    {
+        static const FString  ArgsDefine = "PROXY_CULL_ARGS";
+        static const FShaderH CullShader = FShaderLibrary::Get("ProxyOcclusionCull.slang");
+        static const FShaderH ArgsShader = FShaderLibrary::Get("ProxyOcclusionCull.slang", TSpan<const FString>(&ArgsDefine, 1));
+        if (CullShader == nullptr || ArgsShader == nullptr)
+        {
+            return;
+        }
+
+        struct FProxyOcclusionCullPC
+        {
+            RHI::TGPUSpan<uint32> ProxyList;
+            RHI::TGPUSpan<uint32> ProxyDrawArgs;
+            RHI::TGPUSpan<uint32> OutProxyList;
+            RHI::TGPUSpan<uint32> OutProxyDrawArgs;
+            RHI::TGPUSpan<uint32> OutDispatchArgs;
+        };
+        static_assert(sizeof(FProxyOcclusionCullPC) == 80, "FProxyOcclusionCullPC must match ProxyOcclusionCull.slang.");
+
+        constexpr uint32 DrawArgsWords     = sizeof(RHI::FDrawIndirectArguments) / sizeof(uint32);
+        constexpr uint32 DispatchArgsWords = sizeof(RHI::FDispatchIndirectArguments) / sizeof(uint32);
+        const uint8 Slot = CurrentFrameSlot;
+        FProxyOcclusionCullPC PC;
+        PC.ProxyList        = RHI::TGPUSpan<uint32>::Slice(ProxyListRing[Slot], 0u, ProxyListCapacity);
+        PC.ProxyDrawArgs    = RHI::TGPUSpan<uint32>::Slice(ProxyDrawArgsRing[Slot], 0u, DrawArgsWords);
+        PC.OutProxyList     = RHI::TGPUSpan<uint32>::Slice(ProxyListRing[Slot], ProxyListCapacity, ProxyListCapacity);
+        PC.OutProxyDrawArgs = RHI::TGPUSpan<uint32>::Slice(ProxyDrawArgsRing[Slot], DrawArgsWords, DrawArgsWords);
+        PC.OutDispatchArgs  = RHI::TGPUSpan<uint32>::Slice(ProxyDrawArgsRing[Slot], DrawArgsWords * 2u, DispatchArgsWords);
+
+        // Early sizes the late cull from the listed count, and the geometry pass's own barrier hands those args to indirect fetch.
+        if (Phase == ECullPhase::Early)
+        {
+            SCENE_GPU_SCOPE(CL, "Proxy Occlusion Cull Args");
+            DispatchCompute(CL, ArgsShader, PC, 1u);
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Proxy Occlusion Cull", tracy::Color::Magenta2);
+        SCENE_GPU_SCOPE(CL, "Proxy Occlusion Cull");
+        DispatchComputeIndirect(CL, CullShader, PC,
+                                ProxyDrawArgsRing[Slot].Sub(sizeof(RHI::FDrawIndirectArguments) * 2u, sizeof(RHI::FDispatchIndirectArguments)));
+    }
+
+    void FDefaultSceneRenderer::DrawFarProxies(RHI::FCmdListH CL, const FUIntVector2& Extent, EFormat VisFormat, bool bOcclusionCulled)
+    {
+        static const FShaderH ProxyVertex = FShaderLibrary::Get("ProxyVisBufferVert.slang");
+        static const FShaderH ProxyPixel  = FShaderLibrary::Get("ProxyVisBufferPixel.slang");
+        if (ProxyVertex == nullptr || ProxyPixel == nullptr)
         {
             return;
         }
@@ -314,7 +366,10 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
-        RHI::CmdDrawIndirect(CL, MakeArgs(), ProxyDrawArgsRing[Slot], 1u, sizeof(RHI::FDrawIndirectArguments));
+        // The occlusion cull's args follow the full list's, matching the list half SceneRootShared.ProxyList points at.
+        const uint64 ArgsOffset = bOcclusionCulled ? sizeof(RHI::FDrawIndirectArguments) : 0u;
+        RHI::CmdDrawIndirect(CL, MakeArgs(), ProxyDrawArgsRing[CurrentFrameSlot].Sub(ArgsOffset, sizeof(RHI::FDrawIndirectArguments)),
+                             1u, sizeof(RHI::FDrawIndirectArguments));
     }
 
     void FDefaultSceneRenderer::CustomDepthStencilPass(RHI::FCmdListH CL)
@@ -1439,7 +1494,7 @@ namespace Lumina
         uint32  Seed          = 0;
 
         uint32  GridSide     = 0;
-        uint32  _PadMaxInstances = 0;
+        float   TerrainNormalDistance = 0.0f;
 
         uint32  _PadInstanceSlotBase = 0;
         uint32  DrawIDAndFlags    = 0;
@@ -1457,7 +1512,7 @@ namespace Lumina
         float   TerrainBaseY    = 0.0f;
         uint32  Resolution      = 0;
         float   FullDensityDistance = 0.0f;
-        uint32  _Pad2 = 0;
+        float   RootDarkening = 0.0f;
     };
     static_assert(sizeof(FGrassScatterPushConstants) == 200,
         "FGrassScatterPushConstants must match GrassScatter.slang.");
@@ -1661,6 +1716,8 @@ namespace Lumina
                 Push.TerrainBaseY       = Origin.y;
                 Push.Resolution         = (uint32)TerrainItem.Resolution;
                 Push.FullDensityDistance = Species.FullDensityDistance;
+                Push.TerrainNormalDistance = Species.TerrainNormalDistance;
+                Push.RootDarkening      = Species.RootDarkening;
 
                 const uint32 Groups = RenderUtils::GetGroupCount(GridSide, 8u);
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);

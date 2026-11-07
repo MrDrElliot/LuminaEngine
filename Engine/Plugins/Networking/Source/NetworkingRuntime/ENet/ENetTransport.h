@@ -2,9 +2,39 @@
 
 #include "Networking/INetworkTransport.h"
 #include "Memory/SmartPtr.h"
+#include "Containers/FunctionRef.h"
 
 namespace Lumina
 {
+    // The network simulator's loss and latency queue; times are in ms and a peer of 0 means broadcast.
+    class NETWORKINGRUNTIME_API FNetSimQueue
+    {
+    public:
+
+        struct FPacket
+        {
+            uint32         Peer = 0;
+            uint8          Channel = 0;
+            ESendMode      Mode = ESendMode::Reliable;
+            uint32         ReleaseTime = 0;
+            TVector<uint8> Data;
+        };
+
+        // Returns true when the packet was dropped or queued here, and false to send it immediately.
+        bool Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs, float LossPct);
+
+        void Flush(uint32 NowMs, TFunctionRef<void(const FPacket&)> Send);
+
+        bool IsEmpty() const { return Delayed.IsEmpty(); }
+
+    private:
+
+        float Rand01();
+
+        TVector<FPacket> Delayed;
+        uint32           RandState = 0x9E3779B9u;
+    };
+
     // ENet-backed transport. All ENet state lives behind FImpl in the .cpp so no vendored
     // networking header leaks past this translation unit.
     class FENetTransport final : public INetworkTransport

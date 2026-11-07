@@ -23,9 +23,18 @@ public sealed class BuildLock : IDisposable
         CancellationToken Cancellation = default)
     {
         string LockDirectory = Path.Combine(OutputRoot, "Intermediates", "BuildTool", "Locks");
-        PathUtils.EnsureDirectory(LockDirectory);
+        return AcquireFile(
+            Path.Combine(LockDirectory, ContentHash.OfString(Key.ToLowerInvariant()) + ".lock"), Description, Timeout, Cancellation);
+    }
 
-        string LockFile = Path.Combine(LockDirectory, ContentHash.OfString(Key.ToLowerInvariant()) + ".lock");
+    // Locks on the given file itself, for state shared by every engine on the machine.
+    public static BuildLock AcquireFile(
+        string LockFile,
+        string Description,
+        TimeSpan Timeout,
+        CancellationToken Cancellation = default)
+    {
+        PathUtils.EnsureDirectoryForFile(LockFile);
 
         DateTime Deadline = DateTime.UtcNow + Timeout;
         bool bReportedWait = false;

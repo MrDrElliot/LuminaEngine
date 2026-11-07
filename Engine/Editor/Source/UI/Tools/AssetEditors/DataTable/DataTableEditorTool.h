@@ -107,7 +107,7 @@ namespace Lumina
         int32 EditingRow = Constants::kIndexNone;
         int32 EditingColumn = Constants::kIndexNone;
         bool bEditorJustOpened = false;
-        char EditBuffer[256] = {};
+        FString EditText;
 
         ImGuiTextFilter Filter;
 

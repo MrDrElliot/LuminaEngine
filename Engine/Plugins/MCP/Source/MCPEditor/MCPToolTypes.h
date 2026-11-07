@@ -30,6 +30,18 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SGraphPinConnection
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int64 Node = 0;
+
+        PROPERTY()
+        FString Pin;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SGraphPinInfo
     {
         GENERATED_BODY()
@@ -41,12 +53,9 @@ namespace Lumina
         PROPERTY()
         FString Direction;
 
-        // Node id this pin is wired to, or 0 when nothing is connected.
+        // Every pin this one is wired to; an output can feed several inputs.
         PROPERTY()
-        int64 ConnectedNode = 0;
-
-        PROPERTY()
-        FString ConnectedPin;
+        TVector<SGraphPinConnection> Connections;
     };
 
     REFLECT()

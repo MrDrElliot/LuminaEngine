@@ -9,12 +9,8 @@ namespace Lumina
 {
     namespace Import::Textures
     {
-        /**
-         * Creates a CTexture at PackagePath (extension already appended) and cooks Request into it. The
-         * asset is NOT saved or registered: the caller owns it, so a batch import can save everything in
-         * one pass instead of writing and re-reading each texture. Null on failure.
-         */
-        EDITOR_API CTexture* ImportTextureAsset(const FFixedString& PackagePath, const FTextureCookRequest& Request);
+        // Creates and cooks a texture but leaves saving and registering to the caller, so a batch import saves in one pass.
+        EDITOR_API CTexture* ImportTextureAsset(const FFixedString& PackagePath, const FTextureCookRequest& Request, ETextureGroup Group = ETextureGroup::World);
     }
 
     REFLECT()
@@ -23,11 +19,11 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        /** Storage interpretation. Auto resolves from the filename suffix at import time. */
+        // Storage interpretation, where Auto resolves from the filename suffix at import time.
         PROPERTY(Editable, Category = "Texture")
         ETextureColorSpace ColorSpace = ETextureColorSpace::Auto;
 
-        /** Mip policy, filtering and streaming behavior for this texture. */
+        // Mip policy, filtering and streaming behavior for this texture.
         PROPERTY(Editable, Category = "Texture")
         ETextureGroup Group = ETextureGroup::World;
 

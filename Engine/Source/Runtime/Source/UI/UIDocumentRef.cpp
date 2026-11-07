@@ -46,11 +46,13 @@ namespace Lumina
         {
             return FGuid();
         }
-        if (TOptional<FGuid> Parsed = FGuid::TryParse(FStringView(*Guid, Guid.Len())); Parsed.IsSet())
+        if (Guid != ParsedGuidText)
         {
-            return *Parsed;
+            const TOptional<FGuid> Parsed = FGuid::TryParse(FStringView(*Guid, Guid.Len()));
+            ParsedGuid = Parsed.IsSet() ? *Parsed : FGuid();
+            ParsedGuidText = Guid;
         }
-        return FGuid();
+        return ParsedGuid;
     }
 
     FStringView SUIDocumentRef::ResolvePath() const

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using LuminaBuildTool.Core;
@@ -16,11 +17,16 @@ public static class EngineAssociation
     private static string StorePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lumina", "Engines.json");
 
-    // Engine ids on this machine mapped to their roots, leaving out checkouts that have since been deleted.
+    private static Dictionary<string, string> LoadStored() =>
+        JsonStore.Load<Dictionary<string, string>>(StorePath) ?? new();
+
+    private static string? FindId(Dictionary<string, string> Engines, string EngineRoot) =>
+        Engines.FirstOrDefault(Pair => PathUtils.AreSame(Pair.Value, EngineRoot)).Key;
+
+    // Engine ids on this machine mapped to their roots, leaving out checkouts that are missing right now.
     public static Dictionary<string, string> LoadEngines()
     {
-        Dictionary<string, string> Stored = JsonStore.Load<Dictionary<string, string>>(StorePath) ?? new();
-        return Stored
+        return LoadStored()
             .Where(Pair => Directory.Exists(Pair.Value))
             .ToDictionary(Pair => Pair.Key, Pair => Pair.Value, StringComparer.OrdinalIgnoreCase);
     }
@@ -28,13 +34,18 @@ public static class EngineAssociation
     // Gives this checkout an id the first time it runs and returns it, so a project can name it from then on.
     public static string Register(string EngineRoot)
     {
-        Dictionary<string, string> Engines = LoadEngines();
-        foreach ((string Id, string Root) in Engines)
+        if (FindId(LoadStored(), EngineRoot) is string KnownId)
         {
-            if (PathUtils.AreSame(Root, EngineRoot))
-            {
-                return Id;
-            }
+            return KnownId;
+        }
+
+        // Missing roots stay stored, since a briefly unmounted drive must not lose its id.
+        using BuildLock StoreLock = BuildLock.AcquireFile(
+            StorePath + ".lock", "another build to finish registering its engine", TimeSpan.FromMinutes(1));
+        Dictionary<string, string> Engines = LoadStored();
+        if (FindId(Engines, EngineRoot) is string RacedId)
+        {
+            return RacedId;
         }
 
         string NewId = Guid.NewGuid().ToString("B").ToUpperInvariant();
@@ -85,7 +96,10 @@ public static class EngineAssociation
             Root[ProjectKey] = Association;
         }
 
-        File.WriteAllText(ProjectFile, Root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, IndentSize = 4 }));
+        PathUtils.WriteFileAtomic(
+            ProjectFile,
+            Root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, IndentSize = 4 }),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     // An engine id known on this machine, or an engine root given absolute or relative to the project.

@@ -5,11 +5,11 @@
 
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentEntityToken.h"
+#include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
-#include "Asset/AssetOps.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
@@ -22,7 +22,6 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
-#include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Session/SessionOps.h"
 #include "Tools/Screenshot/MovieCapture.h"
@@ -358,28 +357,15 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateSequenceParams& In, SCreateSequenceResult& Out)
                 {
-                    if (In.Name.IsEmpty())
+                    FFixedString Path;
+                    FString Error;
+                    if (!MakeNewAssetPath(In.Folder, In.Name, Path, Error))
                     {
-                        return Agent::FToolResult::Error("A sequence needs a name.");
-                    }
-                    if (!AssetOps::IsAssetLocation(FStringView(In.Folder)))
-                    {
-                        return Agent::FToolResult::Error("Sequences belong under /Game/Content, since nothing scans for assets elsewhere.");
-                    }
-                    if (!VFS::IsDirectory(In.Folder))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} is not a folder. Use assets.create_folder first.", In.Folder));
+                        return Agent::FToolResult::Error(Error);
                     }
 
-                    FFixedString Path = Paths::Combine(FStringView(In.Folder), FStringView(In.Name));
-                    CPackage::AddPackageExt(Path);
-                    if (VFS::Exists(Path))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
-                    }
-
-                    CSequence* Sequence = CFactory::CreateNewOf<CSequence>(FStringView(*Path, Path.Len()));
-                    if (Sequence == nullptr)
+                    const TStrongObjectPtr<CSequence> Sequence(CFactory::CreateNewOf<CSequence>(FStringView(*Path, Path.Len())));
+                    if (!Sequence)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create a sequence at {}.", Path));
                     }
@@ -390,10 +376,11 @@ namespace Lumina::MCP
 
                     if (!CPackage::SavePackage(Sequence->GetPackage(), Path))
                     {
+                        CFactory::DiscardNew(Sequence.Get());
                         return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
                     }
 
-                    FAssetRegistry::Get().AssetCreated(Sequence);
+                    FAssetRegistry::Get().AssetCreated(Sequence.Get());
                     Out.Path = FString(*Path);
                     Out.Guid = FString(*Sequence->GetGUID().ToString());
                     return Agent::FToolResult::Ok(Lumina::Format("Created {}.", Out.Path));
@@ -701,17 +688,12 @@ namespace Lumina::MCP
                 }
                 for (const FJsonMember& Entry : Settings.Members())
                 {
-                    Agent::FResolvedProperty Resolved;
-                    if (!Agent::ResolvePropertyPath(Track->GetClass(), Track, Entry.Key.View(), Resolved, Error))
+                    const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                        Track->GetClass(), Track, Track, Entry.Key.View(), Entry.Value, "Set Track Property (agent)");
+                    if (!Edit.IsValid())
                     {
                         Sequence->Tracks.Pop();
-                        return Agent::FToolResult::Error(Error);
-                    }
-                    const Agent::FMarshalResult Read = Agent::ReadProperty(Entry.Value, Resolved.Property, Resolved.ValuePtr, Entry.Key.View());
-                    if (!Read.IsValid())
-                    {
-                        Sequence->Tracks.Pop();
-                        return Agent::FToolResult::Error(Read.Error);
+                        return Agent::FToolResult::Error(Edit.Error);
                     }
                 }
             }
@@ -774,31 +756,22 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CSequenceTrack* Track = Sequence->Tracks[In.Track].Get();
-                    Agent::FResolvedProperty Resolved;
-                    if (!Agent::ResolvePropertyPath(Track->GetClass(), Track, FStringView(In.Path), Resolved, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
                     FJsonValue Value;
                     if (!ParseSequenceJson(In.Value, Value, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    FJsonValue Previous;
-                    Agent::WriteProperty(Resolved.Property, Resolved.ValuePtr, Previous);
-                    const Agent::FMarshalResult Read = Agent::ReadProperty(Value, Resolved.Property, Resolved.ValuePtr, FStringView(In.Path));
-                    if (!Read.IsValid())
+                    CSequenceTrack* Track = Sequence->Tracks[In.Track].Get();
+                    const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                        Track->GetClass(), Track, Track, FStringView(In.Path), Value, "Set Track Property (agent)");
+                    if (!Edit.IsValid())
                     {
-                        return Agent::FToolResult::Error(Read.Error);
+                        return Agent::FToolResult::Error(Edit.Error);
                     }
 
-                    FJsonValue Current;
-                    Agent::WriteProperty(Resolved.Property, Resolved.ValuePtr, Current);
-                    Out.Previous = Previous.ToString();
-                    Out.Current = Current.ToString();
+                    Out.Previous = Edit.Previous;
+                    Out.Current = Edit.Current;
                     MarkAssetDirty(Sequence);
                     return Agent::FToolResult::Ok(Lumina::Format("{} is now {}.", In.Path, Out.Current));
                 });

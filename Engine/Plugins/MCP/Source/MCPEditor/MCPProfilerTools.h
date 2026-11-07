@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
@@ -243,6 +244,20 @@ namespace Lumina
 
             void Shutdown();
         };
+
+        struct FProfilerZoneTotals
+        {
+            double TotalNs = 0.0;
+            double MaxNs = 0.0;
+            int64 Count = 0;
+        };
+
+        MCPEDITOR_API TVector<FStringView> SplitProfilerFields(FStringView Line);
+
+        // Adds one tracy-csvexport line to the totals, skipping the line while bHeaderPending is set and clearing it.
+        MCPEDITOR_API void AddTracyZoneLine(FStringView Line, bool bGpuRows, bool& bHeaderPending, THashMap<FString, FProfilerZoneTotals>& Out);
+
+        MCPEDITOR_API TVector<SProfilerZone> RankProfilerZones(const THashMap<FString, FProfilerZoneTotals>& Zones, int32 Frames, int32 Top, const FString& Filter);
 
         void RegisterProfilerTools(FStringView Owner);
     }

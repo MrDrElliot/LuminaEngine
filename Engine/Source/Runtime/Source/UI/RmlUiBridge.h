@@ -197,7 +197,7 @@ namespace Lumina::RmlUi
     RUNTIME_API void  PullDocumentToFront(void* Document);
     RUNTIME_API void* GetDocumentRoot(void* Document);   // the document's body element
 
-    // Element queries.
+    // Element queries. Element calls accept only handles these, GetDocumentRoot or FUIEventData gave out, until RmlUi destroys the element.
     RUNTIME_API void* DocumentGetElementById(void* Document, FStringView Id);
     RUNTIME_API void* ElementQuerySelector(void* Element, FStringView Selector);
 

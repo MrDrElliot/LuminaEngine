@@ -12,16 +12,11 @@ namespace Lumina::Agent
     {
     public:
 
-        // Names one entity in one world. Empty for an entity that does not exist.
-        NODISCARD static FString Mint(const ECS::FRegistry& Registry, ECS::FEntity Entity);
+        // Names one entity in one registry. Empty for an entity that does not exist.
+        NODISCARD static FString Mint(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-        // False with a reason when the token is malformed, from an older world, or names a dead entity.
+        // False with a reason when the token is malformed, minted in another registry, or names a dead entity.
         NODISCARD static bool Resolve(const ECS::FRegistry& Registry, FStringView Token,
             ECS::FEntity& OutEntity, FString& OutError);
-
-        // Retires every token minted so far, which is what a world swap has to do to them.
-        static void InvalidateAll();
-
-        NODISCARD static uint64 GetEpoch();
     };
 }

@@ -296,13 +296,6 @@ namespace Lumina::Net
         Out.SetNum(Emitted);
     }
 
-    TVector<FComponentRepOut> CollectComponentFields(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
-    {
-        TVector<FComponentRepOut> Out;
-        CollectComponentFieldsInto(Registry, Entity, State, bBaseline, DiffState, Out);
-        return Out;
-    }
-
     void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, const TVector<FComponentRepOut>* Components)
     {
         LUMINA_PROFILE_SCOPE();
@@ -1077,11 +1070,8 @@ namespace Lumina::Net
             auto It = Map.IndexToName.Find(Index);
             return It != nullptr ? (*It) : FName();
         }
-    }
 
-    void BindWriters(FNetArchive& Ar, FNetWorldState& State)
-    {
-        Ar.EntityToNetGUID    = [&State](uint32 Raw) -> uint32
+        uint32 EntityToNetGuid(const FNetWorldState& State, uint32 Raw)
         {
             const ECS::FEntity Entity = static_cast<ECS::FEntity>(Raw);
             if (State.Registry == nullptr || Entity == ECS::NullEntity || !State.Registry->IsValid(Entity))
@@ -1090,29 +1080,27 @@ namespace Lumina::Net
             }
             const SNetworkComponent* Net = State.Registry->TryGet<ECS::Read<SNetworkComponent>>(Entity);
             return Net != nullptr ? Net->NetGUID.Value : 0u;
-        };
-        Ar.ObjectToNetIndex   = [&State](CObject* O)         { return NetObj_GetOrAssign(State.OutObjects, O); };
+        }
+
+        uint32 NetGuidToEntity(const FNetWorldState& State, uint32 Guid)
+        {
+            const ECS::FEntity Entity = Guid != 0 ? State.GuidTable.Find(SNetGUID{ Guid }) : ECS::NullEntity;
+            return static_cast<uint32>(Entity.Value);
+        }
+    }
+
+    void BindWriters(FNetArchive& Ar, FNetWorldState& State)
+    {
+        Ar.EntityToNetGUID    = [&State](uint32 Raw)         { return EntityToNetGuid(State, Raw); };
+        Ar.ObjectToNetIndex   = [&State](CObject* O)        { return NetObj_GetOrAssign(State.OutObjects, O); };
         Ar.DocumentRefToNetIndex = [&State](const SUIDocumentRef& R) { return NetAsset_GetOrAssign(State.OutAssets, R); };
         Ar.NameToNetIndex     = [&State](const FName& N)     { return NetName_GetOrAssign(State.OutNames, N); };
     }
 
     void BindEntityIds(FNetArchive& Ar, FNetWorldState& State)
     {
-        Ar.EntityToNetGUID = [&State](uint32 Raw) -> uint32
-        {
-            const ECS::FEntity Entity = static_cast<ECS::FEntity>(Raw);
-            if (State.Registry == nullptr || Entity == ECS::NullEntity || !State.Registry->IsValid(Entity))
-            {
-                return 0u;
-            }
-            const SNetworkComponent* Net = State.Registry->TryGet<ECS::Read<SNetworkComponent>>(Entity);
-            return Net != nullptr ? Net->NetGUID.Value : 0u;
-        };
-        Ar.NetGUIDToEntity = [&State](uint32 Guid) -> uint32
-        {
-            const ECS::FEntity Entity = Guid != 0 ? State.GuidTable.Find(SNetGUID{ Guid }) : ECS::NullEntity;
-            return static_cast<uint32>(Entity.Value);
-        };
+        Ar.EntityToNetGUID = [&State](uint32 Raw)  { return EntityToNetGuid(State, Raw); };
+        Ar.NetGUIDToEntity = [&State](uint32 Guid) { return NetGuidToEntity(State, Guid); };
     }
 
     void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn)
@@ -1121,11 +1109,7 @@ namespace Lumina::Net
         FNetAssetMap&  InAst = State.InAssets[SenderConn];
         FNetNameMap&   InNme = State.InNames[SenderConn];
 
-        Ar.NetGUIDToEntity    = [&State](uint32 Guid) -> uint32
-        {
-            const ECS::FEntity Entity = Guid != 0 ? State.GuidTable.Find(SNetGUID{ Guid }) : ECS::NullEntity;
-            return static_cast<uint32>(Entity.Value);
-        };
+        Ar.NetGUIDToEntity    = [&State](uint32 Guid) { return NetGuidToEntity(State, Guid); };
 
         Ar.NetIndexToObject   = [&InObj](uint32 I)
         {

@@ -16,7 +16,7 @@
 #include "Memory/Memcpy.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include "Tools/UI/ImGui/ImGuiAllocator.h"
+#include "Tools/UI/ImGui/ImGuiModule.h"
 #include "Config/Config.h"
 #include "Config/EngineSettings.h"
 #include "Core/Object/ObjectCore.h"
@@ -246,6 +246,11 @@ namespace Lumina
                 ApplyUIScale();                  // re-derive the live (scaled) style, preserving the new colors
             }
         }
+    }
+
+    void ImGuiX::AdoptRuntimeImGuiContext(ImGuiContext* InImGui, ImPlotContext* InImPlot)
+    {
+        AdoptImGuiContext(InImGui, InImPlot);
     }
 
     void IImGuiRenderer::Initialize()

@@ -13,7 +13,9 @@
 #include "RmlUiBridge.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/DotNet/DotNetUI.h"
+#include "WorldUIContext.h"
 #include "World/World.h"
+#include "World/WorldManager.h"
 
 namespace Lumina
 {
@@ -377,37 +379,40 @@ namespace Lumina::UIScripts
 {
     namespace
     {
-        struct FOpenUI
+        TVector<FOpenUI>* OpenUIsOf(const CWorld* World)
         {
-            CEntityScript* Script = nullptr;
-            CWorld*        World = nullptr;
-            void*          Model = nullptr;
-            void*          Document = nullptr;
-            FString        Path;
-            FString        ModelName;
-            // What the script asked for, kept across a reload that fails, so fixing the file brings the UI back.
-            bool           bWantShown = false;
-            // The input mode lease this UI holds, so it is released even if Interactive changed since.
-            uint64         CursorLease = 0;
-            int32          Generation = -1;
-        };
+            FWorldUIContext* UI = World != nullptr ? World->GetUIContext() : nullptr;
+            return UI != nullptr ? &UI->OpenScriptUIs : nullptr;
+        }
 
-        TVector<FOpenUI>& OpenUIs()
+        FOpenUI* FindIn(TVector<FOpenUI>& UIs, const CEntityScript* Script)
         {
-            static TVector<FOpenUI> UIs;
-            return UIs;
+            return UIs.FindByPredicate([Script](const FOpenUI& Open) { return Open.Script == Script; });
         }
 
         FOpenUI* Find(const CEntityScript* Script)
         {
-            for (FOpenUI& Open : OpenUIs())
+            TVector<FOpenUI>* UIs = Script != nullptr ? OpenUIsOf(Script->GetWorld()) : nullptr;
+            return UIs != nullptr ? FindIn(*UIs, Script) : nullptr;
+        }
+
+        // The callbacks may open or close other UIs, so each script is looked up again instead of walked by index.
+        template<typename TFunc>
+        void ForEachOpenUI(TVector<FOpenUI>& UIs, TFunc&& Func)
+        {
+            TVector<CEntityScript*> Scripts;
+            Scripts.Reserve(UIs.Num());
+            for (const FOpenUI& Open : UIs)
             {
-                if (Open.Script == Script)
+                Scripts.Add(Open.Script);
+            }
+            for (CEntityScript* Script : Scripts)
+            {
+                if (FOpenUI* Open = FindIn(UIs, Script))
                 {
-                    return &Open;
+                    Func(*Open);
                 }
             }
-            return nullptr;
         }
 
         int32 CurrentGeneration()
@@ -415,7 +420,7 @@ namespace Lumina::UIScripts
             return DotNet::IsInitialized() ? DotNet::GetScriptGeneration() : -1;
         }
 
-        FString DocumentPathOf(const CEntityScript* Script)
+        FStringView DocumentPathOf(const CEntityScript* Script)
         {
             const CClass* Class = Script->GetClass();
             if (const CUIScript* UIScript = Cast<CUIScript>(Script))
@@ -423,7 +428,7 @@ namespace Lumina::UIScripts
                 const FStringView Path = UIScript->Document.ResolvePath();
                 if (!Path.IsEmpty())
                 {
-                    return FString(Path.GetData(), Path.Len());
+                    return Path;
                 }
             }
 
@@ -431,10 +436,11 @@ namespace Lumina::UIScripts
             {
                 if (Current->HasMeta("UIDocument"))
                 {
-                    return Current->GetMeta("UIDocument");
+                    const FString& Meta = Current->GetMeta("UIDocument");
+                    return FStringView(*Meta, Meta.Len());
                 }
             }
-            return FString();
+            return FStringView();
         }
 
         template<typename TFunc>
@@ -584,7 +590,8 @@ namespace Lumina::UIScripts
             return;
         }
         CWorld* World = Script->GetWorld();
-        if (World == nullptr || !World->HasPresentation())
+        TVector<FOpenUI>* UIs = World != nullptr && World->HasPresentation() ? OpenUIsOf(World) : nullptr;
+        if (UIs == nullptr)
         {
             return;
         }
@@ -600,35 +607,42 @@ namespace Lumina::UIScripts
         // The model exists before the load, since RmlUi resolves bindings while it parses.
         CreateModel(Open);
         const bool bLoaded = LoadDocument(Open);
-        OpenUIs().Add(Open);
+        FOpenUI& Added = UIs->AddGetRef(Move(Open));
         if (bLoaded)
         {
-            Present(*Find(Script));
-            NotifyLoaded(*Find(Script));
+            Present(Added);
+            NotifyLoaded(Added);
         }
     }
 
     void Close(CEntityScript* Script)
     {
-        TVector<FOpenUI>& UIs = OpenUIs();
-        for (int32 Index = 0; Index < UIs.Num(); ++Index)
+        TVector<FOpenUI>* UIs = Script != nullptr ? OpenUIsOf(Script->GetWorld()) : nullptr;
+        FOpenUI* Open = UIs != nullptr ? FindIn(*UIs, Script) : nullptr;
+        if (Open == nullptr)
         {
-            FOpenUI& Open = UIs[Index];
-            if (Open.Script != Script)
-            {
-                continue;
-            }
-            ReleaseHeldCursor(Open);
-            UnloadDocument(Open);
-            RmlUi::DestroyObjectModel(Open.Model);
-            UIs.RemoveAt((int64)Index);
             return;
         }
+        ReleaseHeldCursor(*Open);
+        UnloadDocument(*Open);
+        RmlUi::DestroyObjectModel(Open->Model);
+        UIs->RemoveAt((int32)(Open - UIs->GetData()));
     }
 
+    // The script can outlive its world, so its world pointer is only followed while that world is still live.
     void Forget(CEntityScript* Script)
     {
-        Close(Script);
+        if (Script == nullptr || GWorldManager == nullptr)
+        {
+            return;
+        }
+        GWorldManager->ForEachWorld([Script](CWorld& World)
+        {
+            if (&World == Script->GetWorld())
+            {
+                Close(Script);
+            }
+        });
     }
 
     void Replace(CEntityScript* Old, CEntityScript* New)
@@ -685,45 +699,56 @@ namespace Lumina::UIScripts
 
     void Tick(CWorld* World)
     {
+        TVector<FOpenUI>* UIs = OpenUIsOf(World);
+        if (UIs == nullptr)
+        {
+            return;
+        }
         const int32 Generation = CurrentGeneration();
-        for (int32 Index = 0; Index < OpenUIs().Num(); ++Index)
+        ForEachOpenUI(*UIs, [Generation](FOpenUI& Open)
         {
             // A script reload remints the class and its properties, so the model would point at freed ones.
-            FOpenUI& Open = OpenUIs()[Index];
-            if (Open.World != World)
-            {
-                continue;
-            }
             if (Open.Generation != Generation && ToScriptClass(Open.Script->GetClass()) != nullptr)
             {
                 Reopen(Open, true);
-                continue;
+                return;
             }
             // The Document property can be edited while playing, from the inspector or by the script itself.
-            FString Path = DocumentPathOf(Open.Script);
-            if (Path != Open.Path)
+            const FStringView Path = DocumentPathOf(Open.Script);
+            if (Path != FStringView(*Open.Path, Open.Path.Len()))
             {
-                Open.Path = Move(Path);
+                Open.Path = Path;
                 Reopen(Open, false);
             }
-        }
+        });
     }
 
     void DocumentChanged(FStringView Path)
     {
-        for (int32 Index = 0; Index < OpenUIs().Num(); ++Index)
+        if (GWorldManager == nullptr)
         {
-            FOpenUI& Open = OpenUIs()[Index];
-            if (Open.Path.EqualsIgnoreCase(Path))
-            {
-                Reopen(Open, false);
-            }
+            return;
         }
+        GWorldManager->ForEachWorld([Path](CWorld& World)
+        {
+            if (TVector<FOpenUI>* UIs = OpenUIsOf(&World))
+            {
+                ForEachOpenUI(*UIs, [Path](FOpenUI& Open)
+                {
+                    if (Open.Path.EqualsIgnoreCase(Path))
+                    {
+                        Reopen(Open, false);
+                    }
+                });
+            }
+        });
     }
 
     void ForgetWorld(CWorld* World)
     {
-        TVector<FOpenUI>& UIs = OpenUIs();
-        UIs.RemoveAll([World](const FOpenUI& Open) { return Open.World == World; });
+        if (TVector<FOpenUI>* UIs = OpenUIsOf(World))
+        {
+            UIs->Reset();
+        }
     }
 }

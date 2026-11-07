@@ -316,7 +316,7 @@ public sealed class ActionGraph
         // The tool always rewrites the primary output; an untouched import library would else read as stale.
         FileItem PrimaryOutput = Action.ProducedItems[0];
 
-        if (History.HasCommandChanged(PrimaryOutput.Location, Action.GetCommandKey()))
+        if (History.HasCommandChanged(Action.HistoryKey, Action.GetCommandKey()))
         {
             Reason = "command line changed";
             return true;
@@ -329,7 +329,7 @@ public sealed class ActionGraph
             return true;
         }
 
-        if (History.HasInputsChanged(PrimaryOutput.Location, ComputeInputFingerprint(Action, Dependencies)))
+        if (History.HasInputsChanged(Action.HistoryKey, ComputeInputFingerprint(Action, Dependencies)))
         {
             Reason = DescribeInputChange(Action, Dependencies);
             return true;

@@ -14,6 +14,28 @@ namespace Rml
 
 namespace Lumina
 {
+    class CEntityScript;
+    class CWorld;
+
+    namespace UIScripts
+    {
+        // A CUIScript's document and data model, held by the world the script lives in.
+        struct FOpenUI
+        {
+            CEntityScript* Script = nullptr;
+            CWorld*        World = nullptr;
+            void*          Model = nullptr;
+            void*          Document = nullptr;
+            FString        Path;
+            FString        ModelName;
+            // What the script asked for, kept across a reload that fails, so fixing the file brings the UI back.
+            bool           bWantShown = false;
+            // The input mode lease this UI holds, so it is released even if Interactive changed since.
+            uint64         CursorLease = 0;
+            int32          Generation = -1;
+        };
+    }
+
     // One world-space widget to rasterize this frame; built in Tick, consumed in Render.
     // Non-owning: the Rml context + RT live on the SWidgetComponent that outlives the frame.
     struct FWidgetRenderJob
@@ -36,6 +58,8 @@ namespace Lumina
 
         // Per-frame world-space widget render jobs (cleared + refilled each TickWorldWidgets).
         TVector<FWidgetRenderJob>                WidgetJobs;
+
+        TVector<UIScripts::FOpenUI>              OpenScriptUIs;
 
         // A frame with no input, no edit and nothing animating skips RmlUi's update and render walks and replays the last batch.
         uint64                                   SeenChangeGeneration = 0;

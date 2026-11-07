@@ -202,6 +202,9 @@ public static class ReflectionStep
             }
         }
 
+        // Every target of one type shares the history file and the engine shards, so each needs its own record.
+        Action.HistoryKey = $"Reflection/{Target.Name}";
+
         return new ReflectionActions { Generate = Action, Inputs = InputActions };
     }
 

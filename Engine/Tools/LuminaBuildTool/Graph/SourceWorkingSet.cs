@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 
 namespace LuminaBuildTool.Graph;
 
@@ -90,41 +91,17 @@ public static class SourceWorkingSet
             return false;
         }
 
-        try
+        ProcessResult? Git = ProcessRunner.RunCaptured(
+            new ProcessStartInfo("git", Arguments) { WorkingDirectory = WorkingDirectory, StandardOutputEncoding = Encoding.UTF8 },
+            QueryTimeoutMs);
+
+        // Without git, adaptive unity falls back to file timestamps.
+        if (Git is null)
         {
-            ProcessStartInfo Info = new("git", Arguments)
-            {
-                WorkingDirectory = WorkingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-            };
-
-            using Process? Git = Process.Start(Info);
-
-            if (Git is null)
-            {
-                return false;
-            }
-
-            Output = Git.StandardOutput.ReadToEnd();
-            Git.StandardError.ReadToEnd();
-
-            if (!Git.WaitForExit(QueryTimeoutMs))
-            {
-                Git.Kill(true);
-                return false;
-            }
-
-            return Git.ExitCode == 0;
-        }
-        catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            // No git on PATH, or no working tree. Adaptive unity falls back to file timestamps.
-            Log.Verbose("Working set: git is unavailable in '{0}': {1}", WorkingDirectory, Ex.Message);
             return false;
         }
+
+        Output = Git.Output;
+        return Git.bSucceeded;
     }
 }

@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 
 #include "Containers/Algorithm.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina::Timeline
 {
@@ -188,16 +189,16 @@ namespace Lumina::Timeline
         DrawList->PopClipRect();
     }
 
-    FName DrawRenameField(const char* Label, float Width, FRenameBuffer& Buffer, FName Current, TSpan<const FName> Taken)
+    FName DrawRenameField(const char* Label, float Width, FString& Buffer, FName Current, TSpan<const FName> Taken)
     {
         if (ImGui::IsWindowAppearing())
         {
-            snprintf(Buffer, sizeof(Buffer), "%s", *Current);
+            Buffer = Current.ToString();
         }
         ImGui::SetNextItemWidth(Width);
-        const bool bEntered = ImGui::InputText(Label, Buffer, sizeof(Buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool bEntered = ImGuiX::InputText(Label, Buffer, ImGuiInputTextFlags_EnterReturnsTrue);
 
-        const FStringView Typed(Buffer);
+        const FStringView Typed = Buffer.View();
         if (Typed.IsEmpty())
         {
             ImGui::TextDisabled("A name is required");

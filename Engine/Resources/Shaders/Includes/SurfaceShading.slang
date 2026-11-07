@@ -151,7 +151,7 @@ float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal, float2
 
     // Constant, slope and tile-quantization terms, since a fixed bias tuned for 4096 texels self-shadows at 512.
     const float SlopeFactor = sqrt(max(1.0 - NdotL * NdotL, 0.0));
-    const float Bias        = 0.00005 + 0.0003 * SlopeFactor + 1.5 / AtlasTileTexels;
+    const float Bias        = kLocalShadowConstantBias + kShadowSlopeBias * SlopeFactor + 1.5 / AtlasTileTexels;
 
     float3 ProjCoords;
     if (bSpot)
@@ -216,16 +216,18 @@ float SunFarShadowMask(float2 ScreenPos)
     return 1.0;
 }
 
-static const float kLocalContactReachMeters = 0.15;
-static const uint  kLocalContactSteps       = 8u;
+// Bounds the per-light cost, since every contact-shadowed light pays this march again at each pixel.
+static const uint kLocalContactMaxSteps = 8u;
 
 // Kept out of ComputeShadowFactor, which inlines at two sites; only local lights ever reach this one.
 float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal, float2 ScreenPos)
 {
-    const float Reach = kLocalContactReachMeters;
-    const uint  Steps = kLocalContactSteps;
-
+    const float Reach = float((Light.Flags >> LIGHT_CONTACT_LENGTH_SHIFT) & LIGHT_CONTACT_LENGTH_MASK) * 0.01;
     const float3 ViewP = mul(GetCameraView(), float4(FragmentPos, 1.0)).xyz;
+
+    // One step per two pixels of reach, so a distant or short trace costs less and one under two pixels costs nothing.
+    const uint Steps = min(uint(ContactReachPixels(Reach, ViewP.z, float(GetScreenSize().y)) * 0.5), kLocalContactMaxSteps);
+
     const float3 ViewN = NormalWorldToView(Normal);
     const float3 ViewL = normalize(NormalWorldToView(normalize(Light.Position - FragmentPos)));
 
@@ -275,12 +277,9 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
         return float3(0.18, 0.18, 0.18);
     }
 
-    float4x4 CascadeVP  = GetShadowViewProjection(SunShadowIdx, CascadeIndex);
-    float4   ShadowCoord = mul(CascadeVP, float4(FragmentPos, 1.0));
-    float3   ProjCoords  = ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
-    float2   ProjUV      = ProjCoords.xy * 0.5 + 0.5;
-    bool     Inside      = !(any(ProjUV < 0.0) || any(ProjUV > 1.0) ||
-                              ProjCoords.z < 0.0 || ProjCoords.z > 1.0);
+    float3 ProjCoords;
+    float2 AtlasUV;
+    const bool Inside = ProjectToSunCascade(SunShadowIdx, CascadeIndex, FragmentPos, ProjCoords, AtlasUV);
 
     const float3 CascadeTints[NUM_CASCADES] = {
         float3(1.00, 0.25, 0.25),
@@ -682,34 +681,25 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     if (LightData().bHasSun != 0)
     {
         FLight Light = GetLightAt(0);
-        const float FarShadow = bReceiveShadow ? SunFarShadowMask(ScreenPos) : 1.0;
+        // The parallax self-occlusion only ever traced against the sun, so it applies here and not to the whole loop.
+        const float SunOcclusion = G.SelfShadow * (bReceiveShadow ? SunFarShadowMask(ScreenPos) : 1.0);
 
         // Pixels facing away from the sun are self-shadowed, so they skip the cascade lookup; SunL feeds the BRDF too.
         float3 SunL    = normalize(Light.Direction.xyz);
         float  SunNdotL = dot(N, SunL);
         const float3 SunMask = LightFunctionMask(Light, SunL, WorldPosition);
 
-        // Backlit foliage, which the lit path below early-outs on.
-        if (bFoliage && SunNdotL <= 0.0)
+        // A backlit leaf glows, and one lit from the front still passes some light forward at grazing view angles.
+        if (bFoliage)
         {
-            const float BackShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
+            const float TransmissionShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * SunOcclusion;
             Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                       G.Transmission, G.Thickness) * (BackShadow * SunMask);
+                                       G.Transmission, G.Thickness) * (TransmissionShadow * SunMask);
         }
 
         if (SunNdotL > 0.0)
         {
-            // The parallax self-occlusion only ever traced against the sun, so it applies here and not to the whole loop.
-            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
-            Shadow *= G.SelfShadow * FarShadow;
-
-            // A leaf lit from the front still passes some light forward at grazing view angles.
-            if (bFoliage)
-            {
-                const float FrontShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
-                Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                           G.Transmission, G.Thickness) * (FrontShadow * SunMask);
-            }
+            const float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow) * SunOcclusion;
 
             if (Shadow > 0.0)
             {

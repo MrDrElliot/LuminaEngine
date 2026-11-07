@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 
 namespace LuminaBuildTool.Toolchain.Linux;
 
@@ -296,37 +297,8 @@ public static class LinuxToolchainLocator
 
     private static string? RunAndCaptureFirstLine(string Executable, string Arguments)
     {
-        try
-        {
-            ProcessStartInfo StartInfo = new(Executable, Arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+        ProcessResult? Result = ProcessRunner.RunCaptured(new ProcessStartInfo(Executable, Arguments), 10_000);
 
-            using Process? Running = Process.Start(StartInfo);
-
-            if (Running is null)
-            {
-                return null;
-            }
-
-            string Output = Running.StandardOutput.ReadToEnd();
-            Running.WaitForExit(10_000);
-
-            if (Running.ExitCode != 0)
-            {
-                return null;
-            }
-
-            return Output.Split('\n').FirstOrDefault()?.Trim();
-        }
-        catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            Log.Verbose("Could not run '{0} {1}': {2}", Executable, Arguments, Ex.Message);
-            return null;
-        }
+        return Result is { bSucceeded: true } ? Result.Output.Split('\n').FirstOrDefault()?.Trim() : null;
     }
 }

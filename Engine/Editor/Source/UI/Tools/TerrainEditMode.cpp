@@ -475,15 +475,8 @@ namespace Lumina
         {
             STerrainLayer& L = Terrain.Layers[ActiveLayer];
 
-            char NameBuf[128];
-            const FString& Cur = L.Name;
-            std::strncpy(NameBuf, *Cur, sizeof(NameBuf) - 1);
-            NameBuf[sizeof(NameBuf) - 1] = '\0';
             ImGui::SetNextItemWidth(140.0f);
-            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf), ImGuiInputTextFlags_AutoSelectAll))
-            {
-                L.Name = NameBuf;
-            }
+            ImGuiX::InputText("Name", L.Name, ImGuiInputTextFlags_AutoSelectAll);
             TrackLayerEditTransaction("Rename Terrain Layer");
 
             ImGui::SetNextItemWidth(140.0f);

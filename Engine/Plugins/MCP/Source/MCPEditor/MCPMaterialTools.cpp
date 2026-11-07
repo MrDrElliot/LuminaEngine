@@ -1,10 +1,9 @@
 #include "MCPMaterialTools.h"
 
-#include "Agent/AgentPropertyPath.h"
+#include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
-#include "Asset/AssetOps.h"
 #include "MCPGraphTools.h"
 #include "MCPServer.h"
 #include "MCPTextMatch.h"
@@ -15,10 +14,8 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
-#include "FileSystem/FileSystem.h"
 #include "Material/MaterialOps.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
-#include "Paths/Paths.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
@@ -162,49 +159,33 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateMaterialParams& In, SCreateMaterialResult& Out)
                 {
-                    if (In.Name.IsEmpty())
+                    FFixedString Path;
+                    FString Error;
+                    if (!MakeNewAssetPath(In.Folder, In.Name, Path, Error))
                     {
-                        return Agent::FToolResult::Error("A material needs a name.");
+                        return Agent::FToolResult::Error(Error);
                     }
 
-                    if (!AssetOps::IsAssetLocation(FStringView(In.Folder)))
-                    {
-                        return Agent::FToolResult::Error(
-                            "Materials belong under /Game/Content, since nothing scans for assets elsewhere.");
-                    }
-
-                    if (!VFS::IsDirectory(In.Folder))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format(
-                            "{} is not a folder. Use assets.create_folder first.", In.Folder));
-                    }
-
-                    FFixedString Path = Paths::Combine(FStringView(In.Folder), FStringView(In.Name));
-                    CPackage::AddPackageExt(Path);
-
-                    if (VFS::Exists(Path))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
-                    }
-
-                    CMaterial* Material = CFactory::CreateNewOf<CMaterial>(FStringView(*Path, Path.Len()));
-                    if (Material == nullptr)
+                    const TStrongObjectPtr<CMaterial> Material(CFactory::CreateNewOf<CMaterial>(FStringView(*Path, Path.Len())));
+                    if (!Material)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create a material at {}.", Path));
                     }
 
-                    CMaterialNodeGraph* Graph = MaterialOps::FindOrCreateGraph(Material);
+                    CMaterialNodeGraph* Graph = MaterialOps::FindOrCreateGraph(Material.Get());
                     if (Graph == nullptr)
                     {
+                        CFactory::DiscardNew(Material.Get());
                         return Agent::FToolResult::Error("The material was created without a graph.");
                     }
 
                     if (!CPackage::SavePackage(Material->GetPackage(), Path))
                     {
+                        CFactory::DiscardNew(Material.Get());
                         return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
                     }
 
-                    FAssetRegistry::Get().AssetCreated(Material);
+                    FAssetRegistry::Get().AssetCreated(Material.Get());
 
                     Out.Path = FString(*Path);
                     Out.Guid = FString(*Material->GetGUID().ToString());
@@ -334,12 +315,6 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
                     }
 
-                    Agent::FResolvedProperty Property;
-                    if (!Agent::ResolvePropertyPath(Node->GetClass(), Node, FStringView(In.Path), Property, Error))
-                    {
-                        return Agent::FToolResult::Error(Error);
-                    }
-
                     FJsonValue Value;
                     if (!FJsonValue::Parse(In.Value, Value))
                     {
@@ -347,32 +322,16 @@ namespace Lumina::MCP
                             "Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.");
                     }
 
-                    if (const Agent::FMarshalResult Check =
-                            Agent::ValidatePropertyValue(Value, Property.Property, FStringView(In.Path));
-                        !Check.IsValid())
+                    const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                        Node->GetClass(), Node, Node, FStringView(In.Path), Value, "Set Material Node Property (agent)");
+                    if (!Edit.IsValid())
                     {
-                        return Agent::FToolResult::Error(Check.Error);
+                        return Agent::FToolResult::Error(Edit.Error);
                     }
 
-                    FJsonValue Before;
-                    Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-                    Out.Previous = Before.ToString();
-
-                    const Agent::FMarshalResult Applied =
-                        Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(In.Path));
-
-                    if (!Applied.IsValid())
-                    {
-                        return Agent::FToolResult::Error(Applied.Error);
-                    }
-
-                    // The details panel runs this too, and a node whose pins follow its properties rebuilds them here.
-                    Node->PostPropertyChange(Property.Property);
                     NodeGraphOps::NotifyNodeValuesChanged(Target.Graph);
-
-                    FJsonValue After;
-                    Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-                    Out.Current = After.ToString();
+                    Out.Previous = Edit.Previous;
+                    Out.Current  = Edit.Current;
 
                     MarkAssetDirty(Target.Asset);
 

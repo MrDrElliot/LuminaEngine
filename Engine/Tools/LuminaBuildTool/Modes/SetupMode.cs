@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Execution;
 using LuminaBuildTool.Platform;
 
 namespace LuminaBuildTool.Modes;
@@ -344,43 +345,24 @@ public static class SetupMode
             return;
         }
 
-        try
+        ProcessStartInfo StartInfo = new("git") { WorkingDirectory = EngineRoot };
+        StartInfo.ArgumentList.Add("config");
+        StartInfo.ArgumentList.Add("core.hooksPath");
+        StartInfo.ArgumentList.Add(HooksPath);
+
+        ProcessResult? Result = ProcessRunner.RunCaptured(StartInfo, 30_000);
+
+        if (Result is null)
         {
-            ProcessStartInfo StartInfo = new("git")
-            {
-                WorkingDirectory = EngineRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-
-            StartInfo.ArgumentList.Add("config");
-            StartInfo.ArgumentList.Add("core.hooksPath");
-            StartInfo.ArgumentList.Add(HooksPath);
-
-            using Process? Runner = Process.Start(StartInfo);
-
-            if (Runner is null)
-            {
-                Log.Warning("Could not run git to configure hooks.");
-                return;
-            }
-
-            Runner.WaitForExit(30_000);
-
-            if (Runner.ExitCode == 0)
-            {
-                Log.Info("Git hooks path set to {0}", HooksPath);
-            }
-            else
-            {
-                Log.Warning("git config returned {0}; hooks were not configured.", Runner.ExitCode);
-            }
+            Log.Warning("Could not run git to configure hooks.");
         }
-        catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or IOException)
+        else if (Result.bSucceeded)
         {
-            Log.Warning("Could not configure git hooks: {0}", Ex.Message);
+            Log.Info("Git hooks path set to {0}", HooksPath);
+        }
+        else
+        {
+            Log.Warning("git config returned {0}; hooks were not configured.", Result.ExitCode);
         }
     }
 }

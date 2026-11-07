@@ -977,7 +977,6 @@ namespace Lumina
         FAnimationResource* Resource = Animation->GetAnimationResource();
         const float Duration = Math::Max(Animation->GetDuration(), 0.0001f);
 
-        char NameBuf[128];
         const float FieldWidth = Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f);
 
         auto TrackCombo = [&](FName& Track)
@@ -997,15 +996,25 @@ namespace Lumina
             }
         };
 
-        auto NameField = [&](FName& Name, const char* StrId)
+        auto NameField = [&](FName& Name)
         {
-            snprintf(NameBuf, sizeof(NameBuf), "%s", *Name);
-            ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::InputText(StrId, NameBuf, sizeof(NameBuf)))
+            // Scoped to the notify so text typed for one is never committed onto the next selection.
+            ImGui::PushID(&Name);
+            if (ImGui::GetActiveID() != ImGui::GetID("Name"))
             {
-                Name = FName(NameBuf);
-                MarkAnimationDirty();
+                NotifyNameBuffer = Name.ToString();
             }
+            ImGui::SetNextItemWidth(FieldWidth);
+            const bool bEntered = ImGuiX::InputText("Name", NotifyNameBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (bEntered || ImGui::IsItemDeactivatedAfterEdit())
+            {
+                if (const FName NewName(NotifyNameBuffer); NewName != Name)
+                {
+                    Name = NewName;
+                    MarkAnimationDirty();
+                }
+            }
+            ImGui::PopID();
         };
 
         auto ColorField = [&](FVector4& Color)
@@ -1025,7 +1034,7 @@ namespace Lumina
             ImGui::TextDisabled(LE_ICON_BELL " Notify");
             ImGui::Spacing();
 
-            NameField(N.NotifyName, "Name");
+            NameField(N.NotifyName);
             TrackCombo(N.NotifyTrack);
 
             ImGui::SetNextItemWidth(FieldWidth);
@@ -1050,7 +1059,7 @@ namespace Lumina
             ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " Notify State");
             ImGui::Spacing();
 
-            NameField(S.NotifyName, "Name");
+            NameField(S.NotifyName);
             TrackCombo(S.NotifyTrack);
 
             ImGui::SetNextItemWidth(FieldWidth);
@@ -1077,10 +1086,15 @@ namespace Lumina
         }
     }
 
+    static FName MakeUniqueCurveName(const FAnimationResource& Resource, FStringView Base)
+    {
+        return MakeUniqueName(Base, [&Resource](const FName& Name) { return Algo::Contains(Resource.Curves, Name, &FAnimationCurve::Name); }, " ");
+    }
+
     void FAnimationEditorTool::AddCurve(FAnimationResource* Resource)
     {
         FAnimationCurve Curve;
-        Curve.Name  = FName(*Format("Curve {}", Resource->Curves.Num()));
+        Curve.Name  = MakeUniqueCurveName(*Resource, "Curve");
         Curve.Color = Timeline::PaletteColor(Resource->Curves.Num());
         Resource->Curves.Add(Curve);
 
@@ -1158,7 +1172,9 @@ namespace Lumina
             {
                 SelectedCurve = i;
 
-                if (const FName NewName = Timeline::DrawRenameField("Name", 180, RenameBuffer, Curve.Name); !NewName.IsNone())
+                TVector<FName> CurveNames(Resource->Curves.Num());
+                Algo::Transform(Resource->Curves, CurveNames.begin(), &FAnimationCurve::Name);
+                if (const FName NewName = Timeline::DrawRenameField("Name", 180, RenameBuffer, Curve.Name, CurveNames); !NewName.IsNone())
                 {
                     Curve.Name = NewName;
                     MarkAnimationDirty();
@@ -1175,7 +1191,7 @@ namespace Lumina
                 if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Duplicate"))
                 {
                     FAnimationCurve Copy = Curve;
-                    Copy.Name = FName(*(FString(*Curve.Name) + " Copy"));
+                    Copy.Name = MakeUniqueCurveName(*Resource, FString(*Curve.Name) + " Copy");
                     Resource->Curves.Add(Copy);
                     SelectedCurve = Resource->Curves.Num() - 1;
                     MarkAnimationDirty();

@@ -160,6 +160,8 @@ namespace Lumina
                 Species.bReceiveShadow = Type->bReceiveShadow;
                 Species.bContactShadows = Type->bContactShadows;
                 Species.FullDensityDistance = Type->FullDensityDistance;
+                Species.TerrainNormalDistance = Type->TerrainNormalDistance;
+                Species.RootDarkening = Type->RootDarkening;
                 Species.bRandomYaw    = Type->bRandomYaw;
             }
         }

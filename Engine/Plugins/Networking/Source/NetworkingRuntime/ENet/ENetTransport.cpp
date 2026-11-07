@@ -53,13 +53,66 @@ namespace Lumina
         }
     }
 
+    // Cheap xorshift for drop decisions; deterministic seed is fine for a debug tool.
+    float FNetSimQueue::Rand01()
+    {
+        RandState ^= RandState << 13;
+        RandState ^= RandState >> 17;
+        RandState ^= RandState << 5;
+        return static_cast<float>(RandState & 0xFFFFFFu) / static_cast<float>(0x1000000);
+    }
+
+    bool FNetSimQueue::Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs, float LossPct)
+    {
+        // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
+        if (LossPct > 0.0f && Mode != ESendMode::Reliable && Rand01() * 100.0f < LossPct)
+        {
+            return true;
+        }
+
+        if (LatencyMs <= 0 && Delayed.IsEmpty())
+        {
+            return false;
+        }
+
+        // Never release before a packet queued earlier, even after the latency was lowered.
+        uint32 ReleaseTime = NowMs + static_cast<uint32>(Math::Max(LatencyMs, 0));
+        if (!Delayed.IsEmpty())
+        {
+            ReleaseTime = Math::Max(ReleaseTime, Delayed.Last().ReleaseTime);
+        }
+
+        FPacket& P = Delayed.EmplaceGetRef();
+        P.Peer        = Peer;
+        P.Channel     = Channel;
+        P.Mode        = Mode;
+        P.ReleaseTime = ReleaseTime;
+        P.Data.Append(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
+        return true;
+    }
+
+    // Submit keeps ReleaseTime non-decreasing, so a due prefix is safe to flush and erase.
+    void FNetSimQueue::Flush(uint32 NowMs, TFunctionRef<void(const FPacket&)> Send)
+    {
+        int32 Count = 0;
+        while (Count < Delayed.Num() && Delayed[Count].ReleaseTime <= NowMs)
+        {
+            Send(Delayed[Count]);
+            ++Count;
+        }
+        if (Count > 0)
+        {
+            Delayed.RemoveAt(0, Count);
+        }
+    }
+
     struct FENetTransport::FImpl
     {
         ENetHost*                      Host       = nullptr;
         bool                           bIsServer  = false;
         uint32                         NextHandle = 1;
         THashMap<uint32, ENetPeer*>    Peers;
-        uint32                         SimRandState = 0x9E3779B9u;
+        FNetSimQueue                   Sim;
 
         uint32 AllocHandle()
         {
@@ -76,17 +129,6 @@ namespace Lumina
             auto It = Peers.Find(Handle.Value);
             return It != nullptr ? (*It) : nullptr;
         }
-
-        // A peer of 0 means broadcast, resolved at flush time since the peer may have gone away.
-        struct FDelayedPacket
-        {
-            uint32         Peer = 0;
-            uint8          Channel = 0;
-            ESendMode      Mode = ESendMode::Reliable;
-            uint32         ReleaseTime = 0; // enet_time_get() ms
-            TVector<uint8> Data;
-        };
-        TVector<FDelayedPacket> Delayed;
 
         void SendImmediate(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
         {
@@ -107,67 +149,18 @@ namespace Lumina
             }
         }
 
-        // Cheap xorshift for drop decisions; deterministic seed is fine for a debug tool.
-        float SimRand01()
-        {
-            SimRandState ^= SimRandState << 13;
-            SimRandState ^= SimRandState >> 17;
-            SimRandState ^= SimRandState << 5;
-            return static_cast<float>(SimRandState & 0xFFFFFFu) / static_cast<float>(0x1000000);
-        }
-
-        // Returns true when the packet was consumed here, and false to send it immediately.
-        bool ApplySim(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
-        {
-            const int32 LatencyMs = CVarSimLatencyMs.GetValue();
-            const float LossPct   = CVarSimPacketLossPct.GetValue();
-
-            // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
-            if (LossPct > 0.0f && Mode != ESendMode::Reliable && SimRand01() * 100.0f < LossPct)
-            {
-                return true; // dropped
-            }
-
-            if (LatencyMs <= 0 && Delayed.IsEmpty())
-            {
-                return false;
-            }
-
-            // Never release before a packet queued earlier, even after the latency was lowered.
-            uint32 ReleaseTime = enet_time_get() + static_cast<uint32>(Math::Max(LatencyMs, 0));
-            if (!Delayed.IsEmpty())
-            {
-                ReleaseTime = Math::Max(ReleaseTime, Delayed.Last().ReleaseTime);
-            }
-
-            FDelayedPacket& P = Delayed.EmplaceGetRef();
-            P.Peer        = PeerHandle;
-            P.Channel     = Channel;
-            P.Mode        = Mode;
-            P.ReleaseTime = ReleaseTime;
-            P.Data.Append(static_cast<const uint8*>(Data), static_cast<const uint8*>(Data) + Size);
-            return true;
-        }
-
-        // ApplySim keeps ReleaseTime non-decreasing, so a due prefix is safe to flush and erase.
+        // A broadcast peer is resolved at flush time, and a peer that went away meanwhile is skipped.
         void FlushDelayed()
         {
-            if (Delayed.IsEmpty())
+            Sim.Flush(enet_time_get(), [this](const FNetSimQueue::FPacket& P)
             {
-                return;
-            }
-            const uint32 Now = enet_time_get();
-            int32 Count = 0;
-            while (Count < Delayed.Num() && Delayed[Count].ReleaseTime <= Now)
-            {
-                FDelayedPacket& P = Delayed[Count];
                 SendImmediate(P.Peer, P.Channel, P.Mode, P.Data.GetData(), static_cast<SIZE_T>(P.Data.Num()));
-                ++Count;
-            }
-            if (Count > 0)
-            {
-                Delayed.RemoveAt(0, Count);
-            }
+            });
+        }
+
+        bool ApplySim(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
+        {
+            return Sim.Submit(PeerHandle, Channel, Mode, Data, Size, enet_time_get(), CVarSimLatencyMs.GetValue(), CVarSimPacketLossPct.GetValue());
         }
     };
 

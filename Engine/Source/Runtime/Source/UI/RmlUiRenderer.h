@@ -403,6 +403,8 @@ namespace Lumina
         TVector<FLayer>             OwnedLayers;
         TVector<uint32>             LayerStack;
         TVector<uint32>             FreeLayers;      // pooled across frames, matched to a target by extent
+        TVector<uint32>             ReplayLayerStack;
+        TVector<Rml::TextureHandle> RenderedBrushes;
 
 
         TVector<FLayerCommand>      LayerCommands;

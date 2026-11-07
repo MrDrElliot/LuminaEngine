@@ -3,6 +3,7 @@
 #include "TileViewWidget.h"
 
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "imgui_internal.h"
 
 namespace Lumina
@@ -282,7 +283,7 @@ namespace Lumina
             | ImGuiInputTextFlags_AutoSelectAll
             | ImGuiInputTextFlags_CharsNoBlank;
 
-        const bool bSubmitted = ImGui::InputText("##InlineRename", RenameBuffer, sizeof(RenameBuffer), Flags);
+        const bool bSubmitted = ImGuiX::InputText("##InlineRename", RenameText, Flags);
 
         const bool bActive        = ImGui::IsItemActive();
         const bool bDeactivated   = ImGui::IsItemDeactivated();
@@ -333,14 +334,11 @@ namespace Lumina
         RenamingItem = Item;
         bRenameFocusPending = true;
         bRenameWasActive = false;
-        RenameBuffer[0] = 0;
+        RenameText.Empty();
 
         if (Item != nullptr)
         {
-            const FStringView Name = Item->GetCachedDisplayName();
-            const size_t Length = Math::Min((size_t)Name.Len(), sizeof(RenameBuffer) - 1);
-            memcpy(RenameBuffer, Name.GetData(), Length);
-            RenameBuffer[Length] = 0;
+            RenameText = Item->GetCachedDisplayName();
         }
     }
 
@@ -349,7 +347,7 @@ namespace Lumina
         RenamingItem = nullptr;
         bRenameFocusPending = false;
         bRenameWasActive = false;
-        RenameBuffer[0] = 0;
+        RenameText.Empty();
     }
 
     void FTileViewWidget::CommitInlineRename(const FTileViewContext& Context)
@@ -363,10 +361,10 @@ namespace Lumina
 
         if (Item != nullptr && Context.ItemRenamedFunction)
         {
-            Context.ItemRenamedFunction(Item, RenameBuffer);
+            Context.ItemRenamedFunction(Item, *RenameText);
         }
 
-        RenameBuffer[0] = 0;
+        RenameText.Empty();
     }
 
     void FTileViewWidget::SelectAndScrollTo(FTileViewItem* Item)

@@ -1,6 +1,7 @@
 ﻿#include "ParticleParameterCustomization.h"
 #include "imgui.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiXNumeric.h"
 
 namespace Lumina
@@ -31,14 +32,10 @@ namespace Lumina
         const float ValueWidth = Math::Max(80.0f, TotalWidth - NameWidth - TypeWidth - Spacing * 2.0f);
 
         ImGui::PushItemWidth(NameWidth);
-        if (ImGui::InputText("##Name", NameBuffer, sizeof(NameBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
+        const bool bNameEntered = ImGuiX::InputText("##Name", NameText, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (bNameEntered || ImGui::IsItemDeactivatedAfterEdit())
         {
-            Value.Name = FName(NameBuffer);
-            bChanged = true;
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit())
-        {
-            Value.Name = FName(NameBuffer);
+            Value.Name = FName(NameText);
             bChanged = true;
         }
         ImGui::PopItemWidth();
@@ -129,8 +126,6 @@ namespace Lumina
     {
         Property->GetValue(&Value);
 
-        const char* NameStr = Value.Name.IsNone() ? "" : *Value.Name;
-        strncpy(NameBuffer, NameStr, sizeof(NameBuffer));
-        NameBuffer[sizeof(NameBuffer) - 1] = '\0';
+        NameText = Value.Name.IsNone() ? FString() : Value.Name.ToString();
     }
 }

@@ -8,6 +8,7 @@
 #include "Events/Event.h"
 #include "Paths/Paths.h"
 #include "Platform/Platform.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Log/Log.h"
 
 namespace
@@ -269,6 +270,8 @@ namespace Lumina
 
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 			glfwWindowHint(GLFW_TITLEBAR, Impl->Specs.bShowTitlebar ? GLFW_TRUE : GLFW_FALSE);
+			// Shown only after the icon is set, or the taskbar button can keep the default class icon.
+			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
 			GLFWmonitor* Monitor = glfwGetPrimaryMonitor();
 			const GLFWvidmode* Mode = glfwGetVideoMode(Monitor);
@@ -291,15 +294,25 @@ namespace Lumina
 
 			LOG_TRACE("Initializing Window: {} (Width: {}p Height: {}p)", Impl->Specs.Title, Impl->Specs.Extent.x, Impl->Specs.Extent.y);
 
-			GLFWimage Icon;
+			const FString IconPath = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
+			TVector<uint8> IconBytes;
+			GLFWimage Icon = {};
 			int Channels;
-			FString IconPathStr = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
-			Icon.pixels = stbi_load(*IconPathStr, &Icon.width, &Icon.height, &Channels, 4);
+			if (Filesystem::ReadFile(IconBytes, IconPath))
+			{
+				Icon.pixels = stbi_load_from_memory(IconBytes.GetData(), (int)IconBytes.Num(), &Icon.width, &Icon.height, &Channels, 4);
+			}
 			if (Icon.pixels)
 			{
 				glfwSetWindowIcon(Impl->Window, 1, &Icon);
 				stbi_image_free(Icon.pixels);
 			}
+			else
+			{
+				LOG_WARN("Failed to load window icon {}: {}", IconPath, IconBytes.IsEmpty() ? "file could not be read" : stbi_failure_reason());
+			}
+
+			glfwShowWindow(Impl->Window);
 
 			glfwSetWindowUserPointer(Impl->Window, Impl.get());
 			glfwSetMouseButtonCallback(Impl->Window, MouseButtonCallback);

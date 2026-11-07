@@ -7,6 +7,8 @@
 
 namespace Lumina
 {
+    class FNetLoadBotSwarm;
+
     // Lumina's own netcode behind the engine's networking interface. Nothing outside this plugin
     // names it; the engine only ever sees INetworkRuntime.
     class FLuminaNetworkRuntime final : public INetworkRuntime
@@ -40,5 +42,9 @@ namespace Lumina
         bool IsJoined(const CWorld* World) const override;
         ECS::FEntity FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const override;
         void BindEntityIds(const CWorld* World, FNetArchive& Ar) const override;
+
+    private:
+
+        TUniquePtr<FNetLoadBotSwarm> BotSwarm;
     };
 }

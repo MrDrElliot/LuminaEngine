@@ -2,7 +2,6 @@
 
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
-#include "Memory/Memcpy.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
@@ -10,13 +9,6 @@
 
 namespace Lumina
 {
-    namespace
-    {
-        // F2 is gated on a single selected node, so the edit buffer can be shared across expressions.
-        char GParameterRenameBuffer[64] = {};
-        bool GParameterRenameNeedsFocus = false;
-    }
-
     void CMaterialExpression::BuildNode()
     {
         Output = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), "", ENodePinDirection::Output));
@@ -65,27 +57,21 @@ namespace Lumina
             && GetOwningGraph()->GetEditor().IsNodeSelected(GetNodeID()))
         {
             bRenamingParameter = true;
-            GParameterRenameNeedsFocus = true;
-
-            const FString Current = ParameterName->IsNone() ? FString() : ParameterName->ToString();
-            constexpr size_t MaxLength = sizeof(GParameterRenameBuffer) - 1;
-            const size_t Length = static_cast<size_t>(Current.Len()) < MaxLength ? Current.Len() : MaxLength;
-            Memory::Memcpy(GParameterRenameBuffer, *Current, Length);
-            GParameterRenameBuffer[Length] = '\0';
+            bParameterRenameNeedsFocus = true;
+            ParameterRenameText = ParameterName->IsNone() ? FString() : ParameterName->ToString();
         }
     }
 
     void CMaterialExpression::DrawParameterRename(FName& Out)
     {
-        if (GParameterRenameNeedsFocus)
+        if (bParameterRenameNeedsFocus)
         {
             ImGui::SetKeyboardFocusHere();
-            GParameterRenameNeedsFocus = false;
+            bParameterRenameNeedsFocus = false;
         }
 
         ImGui::SetNextItemWidth(140.0f);
-        const bool bCommitted = ImGui::InputText("##ParameterRename", GParameterRenameBuffer, sizeof(GParameterRenameBuffer),
-                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        const bool bCommitted = ImGuiX::InputText("##ParameterRename", ParameterRenameText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
 
         // Escape first, since it also deactivates the item and abandoning beats a half-typed commit.
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
@@ -100,7 +86,7 @@ namespace Lumina
             return;
         }
 
-        const FName NewName(GParameterRenameBuffer);
+        const FName NewName(ParameterRenameText);
         if (NewName != Out)
         {
             Out = NewName;

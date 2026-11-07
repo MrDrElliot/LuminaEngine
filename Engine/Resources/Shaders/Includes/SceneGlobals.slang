@@ -681,6 +681,41 @@ float3 ReconstructWorldPos(float2 UV, float Depth)
     return mul(GetInverseCameraView(), float4(ReconstructViewPos(UV, Depth, GetInverseCameraProjection()), 1.0)).xyz;
 }
 
+// The surface's true orientation from its depth neighbors, which a normal map cannot tilt into the surface.
+float3 GeometricViewNormal(FTexture2D Depth, int2 Texel, float DepthC, float3 ViewC, float2 Size)
+{
+    const int2 MaxTexel = int2(Size) - 1;
+    const float4 H = float4(
+        Depth.Load(int3(clamp(Texel + int2(-1, 0), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2(-2, 0), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2( 1, 0), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2( 2, 0), int2(0, 0), MaxTexel), 0)).r);
+    const float4 V = float4(
+        Depth.Load(int3(clamp(Texel + int2(0, -1), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2(0, -2), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2(0,  1), int2(0, 0), MaxTexel), 0)).r,
+        Depth.Load(int3(clamp(Texel + int2(0,  2), int2(0, 0), MaxTexel), 0)).r);
+
+    // Each side extrapolates its far neighbor through the near one, and the side that predicts the center better is not across an edge.
+    const float2 HErr = abs((2.0 * H.xz - H.yw) - DepthC);
+    const float2 VErr = abs((2.0 * V.xz - V.yw) - DepthC);
+    const int    HSign = HErr.x < HErr.y ? -1 : 1;
+    const int    VSign = VErr.x < VErr.y ? -1 : 1;
+
+    const float4x4 InvProj = GetInverseCameraProjection();
+    const float3 ViewH = ReconstructViewPos((float2(Texel + int2(HSign, 0)) + 0.5) / Size, HSign < 0 ? H.x : H.z, InvProj);
+    const float3 ViewV = ReconstructViewPos((float2(Texel + int2(0, VSign)) + 0.5) / Size, VSign < 0 ? V.x : V.z, InvProj);
+
+    float3 N = normalize(cross(float(VSign) * (ViewV - ViewC), float(HSign) * (ViewH - ViewC)));
+
+    // The cross product's handedness depends on the projection, and a visible surface always faces the eye.
+    if (dot(N, -ViewC) < 0.0)
+    {
+        N = -N;
+    }
+    return N;
+}
+
 // Unprojects at depth 1, so the result is a ray scaled to an arbitrary length, not a surface position.
 float3 GetCameraViewRay(float2 UV)
 {

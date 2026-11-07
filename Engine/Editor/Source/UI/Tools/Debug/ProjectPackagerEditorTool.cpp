@@ -389,13 +389,9 @@ namespace Lumina
         ImGui::Spacing();
 
         // Editable fields.
-        char OutBuf[512]; std::snprintf(OutBuf, sizeof(OutBuf), "%s", *OutputDir);
         ImGui::Text("Output Directory");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##out", OutBuf, sizeof(OutBuf)))
-        {
-            OutputDir = OutBuf;
-        }
+        ImGuiX::InputText("##out", OutputDir);
 
         ImGui::Text("Build Configuration");
         const char* Configs[] = { "Shipping", "Development", "Debug" };

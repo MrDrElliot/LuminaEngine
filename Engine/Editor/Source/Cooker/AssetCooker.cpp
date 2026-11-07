@@ -48,6 +48,41 @@ namespace Lumina
     static TConsoleVar CVarCookVerifyStrip("Cook.VerifyStripPerClass", 0,
         "Cooks this many file-cooked packages of each class through a load and save too, and logs whether the bytes match");
 
+    bool IsDevelopmentOnlyGameFile(FStringView VirtualPath, bool bKeepScriptSources)
+    {
+        // The cooked AssetRegistry.bin already carries the sidecars' GUID table.
+        if (TextAssetSidecar::IsSidecarPath(VirtualPath))
+        {
+            return true;
+        }
+
+        constexpr FStringView Folders[] = { "/obj/", "/bin/", "/.idea/", "/.vs/", "/.git/" };
+        for (const FStringView Folder : Folders)
+        {
+            if (VirtualPath.Find(Folder) != Constants::kIndexNone)
+            {
+                return true;
+            }
+        }
+
+        // A pak game loads the script assemblies the packager prebuilt, while loose mode compiles the sources.
+        if (!bKeepScriptSources && VirtualPath.EndsWith(".cs"))
+        {
+            return true;
+        }
+
+        constexpr FStringView Suffixes[] = { ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
+                                             "/Config/EditorSession.json", "/Config/EditorProjectSettings.json" };
+        for (const FStringView Suffix : Suffixes)
+        {
+            if (VirtualPath.EndsWith(Suffix))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     namespace
     {
         void LogCooker(const TFunction<void(FStringView)>& LogFunc, FStringView Msg)
@@ -65,35 +100,9 @@ namespace Lumina
             return Slash == Constants::kIndexNone ? Path : Path.Mid(Slash + 1);
         }
 
-        // IDE state, build output, project files and source-control markers, none of which a game reads.
-        bool IsDevelopmentOnlyFile(FStringView VirtualPath)
-        {
-            constexpr FStringView Folders[] = { "/obj/", "/bin/", "/.idea/", "/.vs/", "/.git/" };
-            for (const FStringView Folder : Folders)
-            {
-                if (VirtualPath.Find(Folder) != Constants::kIndexNone)
-                {
-                    return true;
-                }
-            }
-
-            // C# sources too, since the game loads the script assemblies the packager prebuilt.
-            constexpr FStringView Suffixes[] = { ".cs", ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
-                                                 "/Config/EditorSession.json", "/Config/EditorProjectSettings.json" };
-            for (const FStringView Suffix : Suffixes)
-            {
-                if (VirtualPath.EndsWith(Suffix))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         bool BundleVfsFile(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
-            // Sidecars are editor-only, since the cooked AssetRegistry.bin already carries the GUID table.
-            if (TextAssetSidecar::IsSidecarPath(VirtualPath) || IsDevelopmentOnlyFile(VirtualPath))
+            if (IsDevelopmentOnlyGameFile(VirtualPath, false))
             {
                 return false;
             }

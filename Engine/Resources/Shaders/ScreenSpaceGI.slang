@@ -2,9 +2,9 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
-// Half resolution indirect diffuse, rgb the bounced light and a the cosine-weighted fraction of the hemisphere it came from.
+// Indirect diffuse traced at half resolution, rgb the bounced light and a the cosine-weighted fraction of the hemisphere it came from.
 
-#ifndef SSGI_DENOISE
+#ifndef SSGI_BLUR
 
 struct FPushConstants
 {
@@ -12,7 +12,6 @@ struct FPushConstants
     uint2        OutputSize;
     uint2        WorkingDepthSize;
     FTexture2D   WorkingDepth;
-    FTexture2D   SceneDepth;
     FTexture2D   SceneColorHistory;
     FRWTexture2D Output;
     uint         DepthScale;
@@ -23,19 +22,14 @@ struct FPushConstants
     float        SampleDistributionPower;
     float        ThinOccluderCompensation;
     float        DepthMIPSamplingOffset;
+    uint         NoiseIndex;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Last frame's color at the surface under UV, or black where that surface was off screen or behind the eye.
-float3 HitRadiance(float2 UV)
+// Last frame's color at the view space position ViewPos, or black where that surface was off screen or behind the eye.
+float3 HitRadiance(float4x4 ViewToHistoryClip, float3 ViewPos)
 {
-    const float Raw = Pass().SceneDepth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
-    if (Raw <= 0.0)
-    {
-        return float3(0.0, 0.0, 0.0);
-    }
-
-    const float4 PrevClip = mul(Pass().HistoryViewProjection, float4(ReconstructWorldPos(UV, Raw), 1.0));
+    const float4 PrevClip = mul(ViewToHistoryClip, float4(ViewPos, 1.0));
     if (PrevClip.w <= 0.0)
     {
         return float3(0.0, 0.0, 0.0);
@@ -77,14 +71,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     const FGTAOFalloff Falloff = XeGTAO_MakeFalloff(Pass().EffectRadius, Pass().EffectFalloffRange, Pass().ThinOccluderCompensation);
-    const float2       Noise   = XeGTAO_SpatioTemporalNoise(PixCoord, 0u);
+    const float2       Noise   = XeGTAO_SpatioTemporalNoise(PixCoord, Pass().NoiseIndex);
     const float        MinS    = XE_GTAO_PIXEL_TOO_CLOSE / ScreenspaceRadius;
+
+    // XeGTAO's view space is the engine's, so a hit reprojects without going back through scene depth.
+    const float4x4 ViewToHistoryClip = mul(Pass().HistoryViewProjection, GetInverseCameraView());
 
     const uint SliceCount    = max(Pass().SliceCount, 1u);
     const uint StepsPerSlice = max(Pass().StepsPerSlice, 1u);
 
-    float3 Bounce   = float3(0.0, 0.0, 0.0);
-    float  Coverage = 0.0;
+    float3 Bounce       = float3(0.0, 0.0, 0.0);
+    float  BounceWeight = 0.0;
+    float  Coverage     = 0.0;
 
     [loop]
     for (uint Slice = 0; Slice < SliceCount; ++Slice)
@@ -98,8 +96,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float Arc[2]        = { XeGTAO_SliceArc(S, XeGTAO_FastACos(S.LowHorizonCos0)),
                                 XeGTAO_SliceArc(S, -XeGTAO_FastACos(S.LowHorizonCos1)) };
 
-        float3 SliceBounce   = float3(0.0, 0.0, 0.0);
-        float  SliceCoverage = 0.0;
+        float3 SliceBounce       = float3(0.0, 0.0, 0.0);
+        float  SliceBounceWeight = 0.0;
+        float  SliceCoverage     = 0.0;
 
         [loop]
         for (uint Step = 0; Step < StepsPerSlice; ++Step)
@@ -114,8 +113,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             {
                 const float2 SampleUV = (Side == 0u) ? ScreenUV + SampleOffset : ScreenUV - SampleOffset;
                 const float  SampleZ  = Pass().WorkingDepth.SampleLevel(Samplers::PointClamp, SampleUV, MipLevel).x;
-                const float3 Delta    = XeGTAO_ComputeViewspacePosition(V, SampleUV, SampleZ) - CenterPos;
-                const float  SampleCos = XeGTAO_SampleHorizonCos(Falloff, Delta, ViewVec, LowCos[Side]);
+                const float3 SamplePos = XeGTAO_ComputeViewspacePosition(V, SampleUV, SampleZ);
+                const float  SampleCos = XeGTAO_SampleHorizonCos(Falloff, SamplePos - CenterPos, ViewVec, LowCos[Side]);
                 if (SampleCos <= HorizonCos[Side])
                 {
                     continue;
@@ -126,26 +125,35 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
                 const float NewArc  = XeGTAO_SliceArc(S, (Side == 0u) ? Angle : -Angle);
                 const float Covered = max(Arc[Side] - NewArc, 0.0);
 
-                SliceBounce   += Covered * HitRadiance(SampleUV);
-                SliceCoverage += Covered;
+                // Weighting by 1 / (1 + luma) keeps one hit on a specular highlight from becoming a firefly.
+                const float3 Hit       = HitRadiance(ViewToHistoryClip, SamplePos);
+                const float  HitWeight = Covered / (1.0 + Luminance(Hit));
+
+                SliceBounce       += HitWeight * Hit;
+                SliceBounceWeight += HitWeight;
+                SliceCoverage     += Covered;
                 HorizonCos[Side] = SampleCos;
                 Arc[Side]        = NewArc;
             }
         }
 
-        Bounce   += S.ProjNLen * SliceBounce;
-        Coverage += S.ProjNLen * SliceCoverage;
+        Bounce       += S.ProjNLen * SliceBounce;
+        BounceWeight += S.ProjNLen * SliceBounceWeight;
+        Coverage     += S.ProjNLen * SliceCoverage;
     }
 
-    Pass().Output[PixCoord] = float4(Bounce / float(SliceCount), saturate(Coverage / float(SliceCount)));
+    // The weighted mean radiance of the hits, scaled by how much of the hemisphere they cover.
+    const float CoveredFraction = saturate(Coverage / float(SliceCount));
+    Pass().Output[PixCoord] = float4(Bounce / max(BounceWeight, 1e-6) * CoveredFraction, CoveredFraction);
 }
 
 #else
 
 struct FPushConstants
 {
-    uint2        OutputSize;
+    uint2        Size;
     uint2        WorkingDepthSize;
+    int2         Direction;
     FTexture2D   WorkingDepth;
     FTexture2D   Source;
     FRWTexture2D Output;
@@ -153,7 +161,7 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-static const int kBlurRadius = 2;
+static const int kBlurRadius = 4;
 
 float TexelDepth(int2 Texel)
 {
@@ -161,35 +169,34 @@ float TexelDepth(int2 Texel)
     return Pass().WorkingDepth.Load(int3(DepthCoord, 0)).r;
 }
 
+// One axis of a depth-weighted blur over the half size trace, run once across and once down.
 [shader("compute")]
 [numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    const int2 Pixel = int2(DTid.xy);
-    if (any(DTid.xy >= Pass().OutputSize))
+    if (any(DTid.xy >= Pass().Size))
     {
         return;
     }
 
-    const float Z         = TexelDepth(Pixel);
+    const int2  Center    = int2(DTid.xy);
+    const float Z         = TexelDepth(Center);
     const float InvSigmaZ = 1.0 / (XE_GTAO_DEPTH_SIGMA * Z);
-    const int2  MaxTap    = int2(Pass().OutputSize) - 1;
+    const int2  MaxTap    = int2(Pass().Size) - 1;
 
     float4 Sum       = float4(0.0, 0.0, 0.0, 0.0);
     float  SumWeight = 0.0;
 
     [unroll]
-    for (int Y = -kBlurRadius; Y <= kBlurRadius; ++Y)
+    for (int i = -kBlurRadius; i <= kBlurRadius; ++i)
     {
-        [unroll]
-        for (int X = -kBlurRadius; X <= kBlurRadius; ++X)
-        {
-            const int2  Tap    = clamp(Pixel + int2(X, Y), int2(0, 0), MaxTap);
-            const float Weight = XeGTAO_DepthWeight(abs(TexelDepth(Tap) - Z), InvSigmaZ);
+        const int2   Tap    = clamp(Center + Pass().Direction * i, int2(0, 0), MaxTap);
+        const float4 Value  = Pass().Source.Load(int3(Tap, 0));
+        // Weighting by 1 / (1 + luma) keeps one bright history hit from surviving the blur as a block.
+        const float  Weight = XeGTAO_DepthWeight(abs(TexelDepth(Tap) - Z), InvSigmaZ) / (1.0 + Luminance(Value.rgb));
 
-            Sum       += Pass().Source.Load(int3(Tap, 0)) * Weight;
-            SumWeight += Weight;
-        }
+        Sum       += Value * Weight;
+        SumWeight += Weight;
     }
 
     Pass().Output[DTid.xy] = Sum / max(SumWeight, 1e-6);

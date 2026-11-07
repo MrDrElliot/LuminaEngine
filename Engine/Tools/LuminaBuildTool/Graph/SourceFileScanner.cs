@@ -12,7 +12,7 @@ public sealed class ModuleSourceSet
 
     public List<FileItem> HeaderFiles { get; } = new();
 
-    /// <summary>Files shown in generated projects but never compiled.</summary>
+    // Files shown in generated projects, of which only the Windows toolchain compiles the .rc scripts.
     public List<FileItem> ResourceFiles { get; } = new();
 
     public IEnumerable<FileItem> CompilableFiles => CppFiles.Concat(CFiles);

@@ -584,8 +584,9 @@ namespace Lumina
 
         auto AddSectionAt = [&](float Time)
         {
+            const FName SectionName = MakeUniqueName("Section", [Montage](const FName& Name) { return Montage->FindSectionIndex(Name) != Constants::kIndexNone; }, " ");
             SAnimMontageSection& Section = Montage->Sections.EmplaceGetRef();
-            Section.Name = FName(*Format("Section{}", Montage->Sections.Num()));
+            Section.Name = SectionName;
             Section.StartTime = Time;
             SelectedKind  = ESelectionKind::Section;
             SelectedIndex = Montage->Sections.Num() - 1;
@@ -606,8 +607,8 @@ namespace Lumina
             const float AtTime = SnapTime(Playhead, Duration);
             if (ImGui::MenuItem(LE_ICON_ANIMATION " Slot Track"))
             {
-                SAnimMontageSlotTrack& Track = Montage->SlotTracks.EmplaceGetRef();
-                Track.SlotName = FName(*Format("Slot {}", Montage->SlotTracks.Num()));
+                const FName SlotName = MakeUniqueName("Slot", [Montage](const FName& Name) { return Montage->FindSlotIndex(Name) != Constants::kIndexNone; }, " ");
+                Montage->SlotTracks.EmplaceGetRef().SlotName = SlotName;
                 MarkMontageDirty();
             }
             if (ImGui::MenuItem(LE_ICON_BOOKMARK " Section at Playhead"))
@@ -679,7 +680,9 @@ namespace Lumina
 
             if (ImGui::BeginPopupContextItem("slot_ctx"))
             {
-                if (const FName NewName = Timeline::DrawRenameField("Slot Name", 160, RenameBuffer, Track.SlotName); !NewName.IsNone())
+                TVector<FName> SlotNames(Montage->SlotTracks.Num());
+                Algo::Transform(Montage->SlotTracks, SlotNames.begin(), &SAnimMontageSlotTrack::SlotName);
+                if (const FName NewName = Timeline::DrawRenameField("Slot Name", 160, RenameBuffer, Track.SlotName, SlotNames); !NewName.IsNone())
                 {
                     Track.SlotName = NewName;
                     MarkMontageDirty();
@@ -1318,8 +1321,28 @@ namespace Lumina
 
     void FAnimationMontageEditorTool::DrawInspector(CAnimationMontage* Montage, float Duration)
     {
-        char NameBuf[128];
         const float FieldWidth = Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f);
+
+        // The buffer follows the selected item's name except while its field is being typed in.
+        auto SyncNameBuffer = [this](const char* Label, FName Current)
+        {
+            if (ImGui::GetActiveID() != ImGui::GetID(Label))
+            {
+                InspectorNameBuffer = Current.ToString();
+            }
+        };
+
+        auto DrawNameField = [&](const char* Label, FName& Name)
+        {
+            SyncNameBuffer(Label, Name);
+            ImGui::SetNextItemWidth(FieldWidth);
+            ImGuiX::InputText(Label, InspectorNameBuffer);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                Name = FName(InspectorNameBuffer);
+                MarkMontageDirty();
+            }
+        };
 
         switch (SelectedKind)
         {
@@ -1364,12 +1387,12 @@ namespace Lumina
             SAnimMontageSection& Section = Montage->Sections[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BOOKMARK " Section");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", *Section.Name);
-            ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf)))
+            SyncNameBuffer("Name", Section.Name);
+            TVector<FName> SectionNames(Montage->Sections.Num());
+            Algo::Transform(Montage->Sections, SectionNames.begin(), &SAnimMontageSection::Name);
+            if (const FName NewName = Timeline::DrawRenameField("Name", FieldWidth, InspectorNameBuffer, Section.Name, SectionNames); !NewName.IsNone())
             {
                 const FName OldName = Section.Name;
-                const FName NewName(NameBuf);
                 for (SAnimMontageSection& Other : Montage->Sections)
                 {
                     if (Other.NextSection == OldName)
@@ -1414,9 +1437,7 @@ namespace Lumina
             SAnimMontageNotify& Notify = Montage->Notifies[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL " Notify");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", *Notify.Name);
-            ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::InputText("Name##N", NameBuf, sizeof(NameBuf))) { Notify.Name = FName(NameBuf); MarkMontageDirty(); }
+            DrawNameField("Name##N", Notify.Name);
 
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Time##N", &Notify.Time, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
@@ -1455,9 +1476,7 @@ namespace Lumina
             SAnimMontageNotifyState& State = Montage->NotifyStates[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " Notify State");
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", *State.Name);
-            ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::InputText("Name##NS", NameBuf, sizeof(NameBuf))) { State.Name = FName(NameBuf); MarkMontageDirty(); }
+            DrawNameField("Name##NS", State.Name);
 
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Start##NS", &State.StartTime, 0.01f, 0.0f, State.EndTime - 0.001f, "%.3fs")) { MarkMontageDirty(); }

@@ -2524,14 +2524,14 @@ namespace Lumina
         }
 
         ImGui::SetNextItemWidth(200.0f);
-        const bool bCommitted = ImGui::InputText("##RenameNode", RenameBuffer, sizeof(RenameBuffer),
+        const bool bCommitted = ImGuiX::InputText("##RenameNode", RenameText,
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
 
         if (bCommitted)
         {
             if (CEdGraphNode* Node = FindNode(RenameNodeID))
             {
-                Node->SetRenameText(FString(RenameBuffer));
+                Node->SetRenameText(RenameText);
                 Node->NotifyValueEdited();
                 GetPackage()->MarkDirty();
             }
@@ -2601,16 +2601,12 @@ namespace Lumina
 
     void CEdNodeGraph::BeginRenameNode(CEdGraphNode* Node)
     {
-        FString Current;
-        if (Node == nullptr || !Node->GetRenameText(Current))
+        if (Node == nullptr || !Node->GetRenameText(RenameText))
         {
             return;
         }
 
         RenameNodeID = Node->GetNodeID();
-        const int32 Count = Math::Min(Current.Len(), static_cast<int32>(sizeof(RenameBuffer) - 1));
-        Memory::Memcpy(RenameBuffer, Current.GetData(), Count);
-        RenameBuffer[Count] = '\0';
         bOpenRenamePopup = true;
     }
 

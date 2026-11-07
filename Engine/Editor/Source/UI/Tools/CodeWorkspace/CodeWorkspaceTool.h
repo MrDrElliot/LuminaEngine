@@ -215,7 +215,7 @@ namespace Lumina
         FCSharpScriptLanguage          WorkspaceLanguage;
 
         bool                           bRenameAppearing = false;
-        char                           RenameBuffer[128] = {};
+        FString                        RenameTo;
         FString                        RenameFrom;
         TVector<FSearchHit>            RenameTargets;
 

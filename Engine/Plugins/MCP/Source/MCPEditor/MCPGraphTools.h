@@ -11,7 +11,7 @@ namespace Lumina
 
     namespace MCP
     {
-        void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out);
+        MCPEDITOR_API void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out);
         bool RemoveGraphNode(CEdNodeGraph* Graph, int64 NodeId, FString& OutError);
         bool ConnectGraphPins(CEdNodeGraph* Graph, int64 FromNode, const FString& FromPin, int64 ToNode, const FString& ToPin, FString& OutError);
         bool DisconnectGraphPin(CEdNodeGraph* Graph, int64 NodeId, const FString& PinName, FString& OutError);

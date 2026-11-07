@@ -335,6 +335,7 @@ namespace Lumina
             MaterialClassifyRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
+            SunDFItemTotalReadback[Slot].Release();
             ProxyListRing[Slot].Release();
             ProxyDrawArgsRing[Slot].Release();
 
@@ -851,6 +852,7 @@ namespace Lumina
 
                 VisBufferClassifyPass(CL);
                 MaterialGBufferPass(CL);
+                SunContactShadowPass(CL);
 
                 {
                     SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
@@ -1743,6 +1745,7 @@ namespace Lumina
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
         case ENamedImage::ScreenSpaceGITrace: return "Scene.ScreenSpaceGITrace";
+        case ENamedImage::ScreenSpaceGIBlur:  return "Scene.ScreenSpaceGIBlur";
         case ENamedImage::ScreenSpaceGI:      return "Scene.ScreenSpaceGI";
         case ENamedImage::ScreenSpaceGIHistory: return "Scene.ScreenSpaceGIHistory";
         case ENamedImage::SunFarShadowMask:   return "Scene.SunFarShadowMask";
@@ -1851,6 +1854,7 @@ namespace Lumina
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
         case ENamedImage::ScreenSpaceGITrace:
+        case ENamedImage::ScreenSpaceGIBlur:
         case ENamedImage::ScreenSpaceGI:
         case ENamedImage::ScreenSpaceGIHistory:
         case ENamedImage::SunFarShadowMask:
@@ -1945,11 +1949,15 @@ namespace Lumina
             return true;
         }
 
-        // Half resolution like the fog shafts, the history a blit of HDR the next frame's trace gathers from.
+        // The trace, its blur and the history it gathers from run at half resolution, then upsample into a full size ScreenSpaceGI.
         case ENamedImage::ScreenSpaceGITrace:
+        case ENamedImage::ScreenSpaceGIBlur:
         case ENamedImage::ScreenSpaceGI:
         case ENamedImage::ScreenSpaceGIHistory:
-            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            if (Image != ENamedImage::ScreenSpaceGI)
+            {
+                OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            }
             OutDesc.Format    = EFormat::RGBA16_FLOAT;
             OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | ((Image == ENamedImage::ScreenSpaceGIHistory)
                                     ? RHI::EImageUsageFlags::TransferDst : RHI::EImageUsageFlags::Storage);
@@ -2103,6 +2111,7 @@ namespace Lumina
         const bool           bScreenSpaceGI = WantsScreenSpaceGI(View);
         const RHI::FTextureH OldGIHistory   = View.Images[(int)ENamedImage::ScreenSpaceGIHistory].Texture;
         Want(ENamedImage::ScreenSpaceGITrace,   bScreenSpaceGI, /*bMipUAVs*/ true);
+        Want(ENamedImage::ScreenSpaceGIBlur,    bScreenSpaceGI, /*bMipUAVs*/ true);
         Want(ENamedImage::ScreenSpaceGI,        bScreenSpaceGI, /*bMipUAVs*/ true);
         Want(ENamedImage::ScreenSpaceGIHistory, bScreenSpaceGI);
         if (!bScreenSpaceGI || View.Images[(int)ENamedImage::ScreenSpaceGIHistory].Texture != OldGIHistory)

@@ -4,7 +4,6 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
-#include "Containers/StringFormat.h"
 
 #include <atomic>
 
@@ -172,21 +171,6 @@ namespace Lumina
 
     FName CDataTable::MakeUniqueRowName(const FName& Base) const
     {
-        if (FindRowIndex(Base) == Constants::kIndexNone)
-        {
-            return Base;
-        }
-
-        const FString BaseText = Base.ToString();
-        for (int32 Suffix = 1; Suffix < 100000; ++Suffix)
-        {
-            const FName Candidate(BaseText + "_" + *Format("{}", Suffix));
-            if (FindRowIndex(Candidate) == Constants::kIndexNone)
-            {
-                return Candidate;
-            }
-        }
-
-        return Base;
+        return MakeUniqueName(*Base, [this](const FName& Name) { return FindRowIndex(Name) != Constants::kIndexNone; });
     }
 }

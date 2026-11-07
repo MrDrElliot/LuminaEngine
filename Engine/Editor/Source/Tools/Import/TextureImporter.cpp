@@ -13,7 +13,7 @@ namespace Lumina
 {
     namespace Import::Textures
     {
-        CTexture* ImportTextureAsset(const FFixedString& PackagePath, const FTextureCookRequest& Request)
+        CTexture* ImportTextureAsset(const FFixedString& PackagePath, const FTextureCookRequest& Request, ETextureGroup Group)
         {
             CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
             if (Texture == nullptr)
@@ -23,6 +23,8 @@ namespace Lumina
             }
 
             Texture->SetFlag(OF_NeedsPostLoad);
+            // Set before the cook, since the mip policy applies while the CPU chain is built.
+            Texture->Group = Group;
 
             if (!CTextureFactory::CookIntoTexture(Texture, Request))
             {
@@ -50,20 +52,15 @@ namespace Lumina
         // The asset gets its GPU image from CTexture::PostLoad the first time something loads it.
         CookRequest.bCreateGPUResource = false;
 
-        CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
-        if (Texture == nullptr)
+        if (CPackage::FindPackageByPath(PackagePath) != nullptr)
         {
             OutResult.Error = FString("A package already exists at ") + FString(*PackagePath);
             return;
         }
 
-        Texture->SetFlag(OF_NeedsPostLoad);
-        // Set before the cook, since the mip policy applies while the CPU chain is built.
-        Texture->Group = Group;
-
-        if (!CTextureFactory::CookIntoTexture(Texture, CookRequest))
+        CTexture* Texture = Import::Textures::ImportTextureAsset(PackagePath, CookRequest, Group);
+        if (Texture == nullptr)
         {
-            CFactory::DiscardNew(Texture);
             OutResult.Error = FString("Failed to cook ") + FString(*Request.SourcePath);
             return;
         }

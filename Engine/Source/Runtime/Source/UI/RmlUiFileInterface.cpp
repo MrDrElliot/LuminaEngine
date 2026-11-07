@@ -24,40 +24,10 @@ namespace Lumina
             int32          Cursor = 0;
         };
 
-        struct FReadStyleSheet
-        {
-            FString Path;
-            int64   WriteTime = 0;
-        };
-
-        // RmlUi keeps every parsed stylesheet by path for the whole session, so the files behind them are tracked here.
-        FMutex                  StyleSheetMutex;
-        TVector<FReadStyleSheet> ReadStyleSheets;
-
         int64 WriteTimeOf(FStringView VirtualPath)
         {
             const FPathString Physical = VFS::ResolvePath(VirtualPath);
             return Physical.IsEmpty() ? 0 : Filesystem::LastWriteTime(Physical);
-        }
-
-        void NoteStyleSheetRead(FStringView VirtualPath)
-        {
-            constexpr FStringView Extension(".rcss");
-            if (!VirtualPath.EndsWith(Extension))
-            {
-                return;
-            }
-            const int64 WriteTime = WriteTimeOf(VirtualPath);
-            FScopeLock Lock(StyleSheetMutex);
-            for (FReadStyleSheet& Sheet : ReadStyleSheets)
-            {
-                if (FStringView(*Sheet.Path, Sheet.Path.Len()) == VirtualPath)
-                {
-                    Sheet.WriteTime = WriteTime;
-                    return;
-                }
-            }
-            ReadStyleSheets.Emplace(FString(VirtualPath.GetData(), VirtualPath.Len()), WriteTime);
         }
 
         // A path naming a CFont asset is resolved through the asset system, not read raw off the VFS.
@@ -119,6 +89,26 @@ namespace Lumina
         File->Bytes  = Move(Bytes);
         File->Cursor = 0;
         return Rml::FileHandle(File);
+    }
+
+    void FRmlUiFileInterface::NoteStyleSheetRead(FStringView VirtualPath)
+    {
+        constexpr FStringView Extension(".rcss");
+        if (!VirtualPath.EndsWith(Extension))
+        {
+            return;
+        }
+        const int64 WriteTime = WriteTimeOf(VirtualPath);
+        FScopeLock Lock(StyleSheetMutex);
+        for (FReadStyleSheet& Sheet : ReadStyleSheets)
+        {
+            if (FStringView(*Sheet.Path, Sheet.Path.Len()) == VirtualPath)
+            {
+                Sheet.WriteTime = WriteTime;
+                return;
+            }
+        }
+        ReadStyleSheets.Emplace(FString(VirtualPath.GetData(), VirtualPath.Len()), WriteTime);
     }
 
     bool FRmlUiFileInterface::ConsumeChangedStyleSheets()

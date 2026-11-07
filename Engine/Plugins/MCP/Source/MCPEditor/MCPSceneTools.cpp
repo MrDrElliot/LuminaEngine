@@ -1,6 +1,7 @@
 #include "MCPSceneTools.h"
 #include "World/ECS/Registry.h"
 
+#include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentEntityToken.h"
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
@@ -172,12 +173,6 @@ namespace Lumina::MCP
                 }
             }
             return nullptr;
-        }
-
-        CClass* FindEntityScriptClass(const FString& Name)
-        {
-            CClass* ScriptClass = FindObject<CClass>(FName(Name));
-            return ScriptClass != nullptr && ScriptClass->IsChildOf(CEntityScript::StaticClass()) ? ScriptClass : nullptr;
         }
 
         SEntityInfo MakeSceneEntityInfo(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -594,42 +589,6 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Out.ShotKey);
         }
 
-        Agent::FToolResult SceneCameraSet(const SSceneCameraParams& In, SSceneCameraResult& Out)
-        {
-            if (In.Location.Num() != 3 || (In.Target.Num() != 3 && In.Rotation.Num() != 3))
-            {
-                return Agent::FToolResult::Error("Location is [x,y,z], plus a Target [x,y,z] or a Rotation [pitch,yaw,roll].");
-            }
-
-            FString Error;
-            CWorld* World = SessionOps::GetSceneWorld(Error);
-            if (World == nullptr)
-            {
-                return Agent::FToolResult::Error(Error.IsEmpty() ? FString("No world is open.") : Error);
-            }
-
-            const ECS::FEntity Camera = World->GetCamera()->GetActiveCameraEntity();
-            STransformComponent* Transform = Camera != ECS::NullEntity && World->IsValidEntity(Camera)
-                ? World->TryGetComponent<STransformComponent>(Camera) : nullptr;
-            if (Transform == nullptr)
-            {
-                return Agent::FToolResult::Error("The editor world has no viewport camera.");
-            }
-
-            const FVector3 Location(In.Location[0], In.Location[1], In.Location[2]);
-            const FQuat Rotation = In.Target.Num() == 3
-                ? Math::FindLookAtRotation(FVector3(In.Target[0], In.Target[1], In.Target[2]), Location)
-                : FQuat(Math::Radians(FVector3(In.Rotation[0], In.Rotation[1], In.Rotation[2])));
-            Transform->SetLocation(Location);
-            Transform->SetRotation(Rotation);
-
-            const FVector3 Euler = Math::Degrees(Math::YawFirstEulerAngles(Rotation));
-            Out.World = "Editor";
-            Out.Location = { Location.x, Location.y, Location.z };
-            Out.Rotation = { Euler.x, Euler.y, Euler.z };
-            return Agent::FToolResult::Ok(Lumina::Format("Camera at [{:.2f},{:.2f},{:.2f}].", Location.x, Location.y, Location.z));
-        }
-
         void RegisterSceneCamera(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSceneCameraParams, SSceneCameraResult>(
@@ -841,10 +800,10 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error(Error);
             }
 
-            CClass* ScriptClass = FindEntityScriptClass(In.ScriptClass);
+            CClass* ScriptClass = Agent::FindClassByName(FStringView(In.ScriptClass), CEntityScript::StaticClass(), Error);
             if (ScriptClass == nullptr)
             {
-                return Agent::FToolResult::Error(Lumina::Format("'{}' is not a loaded CEntityScript class.", In.ScriptClass));
+                return Agent::FToolResult::Error(Error);
             }
 
             return In.Action == EEntityScriptAction::Remove
@@ -1218,6 +1177,42 @@ namespace Lumina::MCP
             }
         }
         return nullptr;
+    }
+
+    Agent::FToolResult SceneCameraSet(const SSceneCameraParams& In, SSceneCameraResult& Out)
+    {
+        if (In.Location.Num() != 3 || (In.Target.Num() != 3 && In.Rotation.Num() != 3))
+        {
+            return Agent::FToolResult::Error("Location is [x,y,z], plus a Target [x,y,z] or a Rotation [pitch,yaw,roll].");
+        }
+
+        FString Error;
+        CWorld* World = SessionOps::GetSceneWorld(Error);
+        if (World == nullptr)
+        {
+            return Agent::FToolResult::Error(Error.IsEmpty() ? FString("No world is open.") : Error);
+        }
+
+        const ECS::FEntity Camera = World->GetCamera()->GetActiveCameraEntity();
+        STransformComponent* Transform = Camera != ECS::NullEntity && World->IsValidEntity(Camera)
+            ? World->TryGetComponent<STransformComponent>(Camera) : nullptr;
+        if (Transform == nullptr)
+        {
+            return Agent::FToolResult::Error("The editor world has no viewport camera.");
+        }
+
+        const FVector3 Location(In.Location[0], In.Location[1], In.Location[2]);
+        const FQuat Rotation = In.Target.Num() == 3
+            ? Math::FindLookAtRotation(FVector3(In.Target[0], In.Target[1], In.Target[2]), Location)
+            : FQuat(Math::Radians(FVector3(In.Rotation[0], In.Rotation[1], In.Rotation[2])));
+        Transform->SetLocation(Location);
+        Transform->SetRotation(Rotation);
+
+        const FVector3 Euler = Math::Degrees(Math::YawFirstEulerAngles(Rotation));
+        Out.World = "Editor";
+        Out.Location = { Location.x, Location.y, Location.z };
+        Out.Rotation = { Euler.x, Euler.y, Euler.z };
+        return Agent::FToolResult::Ok(Lumina::Format("Camera at [{:.2f},{:.2f},{:.2f}].", Location.x, Location.y, Location.z));
     }
 
     float GroundHeightAt(float X, float Z)

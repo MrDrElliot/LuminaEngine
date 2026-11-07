@@ -1,6 +1,6 @@
 #include "MCPAnimGraphTools.h"
 
-#include "Agent/AgentPropertyPath.h"
+#include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Animation/AnimGraphOps.h"
@@ -84,12 +84,6 @@ namespace Lumina::MCP
         bool SetAnimGraphPropertyFromJson(CObject* Object, const FString& Path, const FString& ValueJson,
             SAnimGraphPropertyResult& Out, FString& OutError)
         {
-            Agent::FResolvedProperty Property;
-            if (!Agent::ResolvePropertyPath(Object->GetClass(), Object, FStringView(Path), Property, OutError))
-            {
-                return false;
-            }
-
             FJsonValue Value;
             if (!FJsonValue::Parse(ValueJson, Value))
             {
@@ -97,31 +91,16 @@ namespace Lumina::MCP
                 return false;
             }
 
-            if (const Agent::FMarshalResult Check =
-                    Agent::ValidatePropertyValue(Value, Property.Property, FStringView(Path));
-                !Check.IsValid())
+            const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                Object->GetClass(), Object, Object, FStringView(Path), Value, "Set Anim Graph Property (agent)");
+            if (!Edit.IsValid())
             {
-                OutError = Check.Error;
+                OutError = Edit.Error;
                 return false;
             }
 
-            FJsonValue Before;
-            Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-            Out.Previous = Before.ToString();
-
-            const Agent::FMarshalResult Applied =
-                Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(Path));
-
-            if (!Applied.IsValid())
-            {
-                OutError = Applied.Error;
-                return false;
-            }
-
-            FJsonValue After;
-            Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-            Out.Current = After.ToString();
-
+            Out.Previous = Edit.Previous;
+            Out.Current  = Edit.Current;
             return true;
         }
 

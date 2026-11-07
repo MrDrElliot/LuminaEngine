@@ -6,6 +6,7 @@
 #include "Containers/StringFormat.h"
 #include "Containers/HashTable.h"
 #include "Containers/String.h"
+#include "Containers/Vector.h"
 
 // Namespaced because the unity build merges this file with others that do "using namespace Lumina".
 namespace LuminaStringViewTests
@@ -131,6 +132,23 @@ namespace LuminaStringViewTests
         EXPECT_FALSE(Lumina::EqualsIgnoreCase(FView("Content"), FView("Contents")));
         EXPECT_LT(Lumina::CompareIgnoreCase(FView("Apple"), FView("banana")), 0);
         EXPECT_EQ(Lumina::CompareIgnoreCase(FView("Apple"), FView("APPLE")), 0);
+    }
+
+    TEST(StringViewUTF8, DecodesCodepointsAndReplacesBadInput)
+    {
+        // A, e-acute, euro sign, U+1F600, stray continuation, truncated 2-byte lead before Z, invalid 0xFF lead.
+        const FView Text("A\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\x80\xC3Z\xFF");
+        const Lumina::TVector<uint32> Expected = { 'A', 0xE9, 0x20AC, 0x1F600, 0xFFFD, 0xFFFD, 'Z', 0xFFFD };
+        Lumina::TVector<uint32> Decoded;
+        for (int32 i = 0; i < Text.Len(); )
+        {
+            Decoded.Add(Lumina::DecodeUTF8Codepoint(Text, i));
+        }
+        EXPECT_EQ(Decoded, Expected);
+
+        int32 Index = 0;
+        EXPECT_EQ(Lumina::DecodeUTF8Codepoint(FView("\xE2\x82"), Index), 0xFFFDu);
+        EXPECT_EQ(Index, 2);
     }
 
     TEST(StringViewInterop, FormatterAndHash)

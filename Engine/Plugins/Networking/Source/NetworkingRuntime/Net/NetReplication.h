@@ -47,24 +47,14 @@ namespace Lumina
         void   WriteNetGuid(FNetArchive& Ar, uint32 Guid);
         uint32 ReadNetGuid (FNetArchive& Ar);
 
-        // One replicated component's diff result, ready for the wire. Block = [changed-field bitmask
-        // (ceil(NumRepFields/8) bytes)] ++ [each changed field's whole-byte serialization, in field order].
-        // Recipient-independent (native components carry no per-client conditions), so one Block is reused
-        // for every recipient. Built by CollectComponentFields; written verbatim by WriteEntityComponents.
+        // Block is the changed-field bitmask then each changed field's bytes in order, shared by every recipient.
         struct FComponentRepOut
         {
             uint32         WireIndex = 0;
             TVector<uint8> Block;
         };
 
-        // Server, diff this entity's replicated native components against DiffState (per-field byte compare).
-        // bBaseline emits ALL components + ALL fields (mask all-ones) and seeds DiffState; otherwise emits only
-        // components with >=1 changed field, each carrying a changed-field bitmask, and updates DiffState.
-        // Object/asset/name refs mint into State's outgoing maps.
-        TVector<FComponentRepOut> CollectComponentFields(ECS::FRegistry& Registry, ECS::FEntity Entity,
-            FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState);
-
-        // Same, into a caller-owned buffer whose elements and block storage are reused across calls.
+        // A baseline emits every component and field, otherwise only changed fields; a given DiffState is updated and Out's storage reused.
         void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out);
 
@@ -75,9 +65,7 @@ namespace Lumina
         // gate on this so they stay consistent.
         bool ParentReplicates(ECS::FRegistry& Registry, ECS::FEntity Parent);
 
-        // Server, write one entity's replicated component blocks (from Components, precomputed by
-        // CollectComponentFields). Used for both Spawn (baseline) and PropertyUpdate (diff). Null Components
-        // writes an empty component block. Recipient-independent.
+        // Null Components writes an empty component block.
         void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity,
             const TVector<FComponentRepOut>* Components = nullptr);
 

@@ -64,15 +64,7 @@ namespace Lumina
                     }
 
                     FStringView Vp(*Info.VirtualPath, Info.VirtualPath.Len());
-                    if (EndsWithIgnoreCase(Vp, ".lasset"))
-                    {
-                        return;
-                    }
-
-                    // The C# host compiles sources directly, so generated projects and build output never ship.
-                    if (EndsWithIgnoreCase(Vp, ".csproj")
-                        || Vp.Find("/obj/") != Constants::kIndexNone
-                        || Vp.Find("/bin/") != Constants::kIndexNone)
+                    if (EndsWithIgnoreCase(Vp, ".lasset") || IsDevelopmentOnlyGameFile(Vp, true))
                     {
                         return;
                     }

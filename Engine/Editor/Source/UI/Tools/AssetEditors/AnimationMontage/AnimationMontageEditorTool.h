@@ -101,7 +101,8 @@ namespace Lumina
         int32 LaneAddTrack = 0;
         int32 SelectedNotifyTrack = 0;
         float TrackScroll = 0.0f;
-        Timeline::FRenameBuffer RenameBuffer = {};
+        FString RenameBuffer;
+        FString InspectorNameBuffer;
 
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;

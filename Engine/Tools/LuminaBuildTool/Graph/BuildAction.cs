@@ -9,6 +9,9 @@ public enum ActionType
 
     Compile,
 
+    // Compiles a Windows .rc script into a .res the image links.
+    ResourceCompile,
+
     /// <summary>Produces a static library.</summary>
     Archive,
 
@@ -64,6 +67,15 @@ public sealed class BuildAction
     public List<FileItem> OptionalProducedItems { get; } = new();
 
     public IEnumerable<FileItem> AllProducedItems => ProducedItems.Concat(OptionalProducedItems);
+
+    private string? HistoryKeyOverride;
+
+    // Set when several targets produce the same primary output, so each keeps its own command and input record.
+    public string HistoryKey
+    {
+        get => HistoryKeyOverride ?? ProducedItems[0].Location;
+        set => HistoryKeyOverride = value;
+    }
 
     /// <summary>Explicit ordering edges for actions that do not communicate through files.</summary>
     public List<BuildAction> OrderDependencies { get; } = new();

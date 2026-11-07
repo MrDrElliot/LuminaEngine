@@ -63,6 +63,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
         float FullDensityDistance = 0.0f;
 
+        // Blades shade with the terrain normal by this distance, so subpixel blades stop sparkling and the far field matches the ground. Zero keeps blade normals.
+        PROPERTY(Editable, Category = "Shading", ClampMin = 0.0f, Units = "m")
+        float TerrainNormalDistance = 30.0f;
+
+        // Ambient occlusion at the root, fading linearly to none at the tip of the mesh bounds.
+        PROPERTY(Editable, Category = "Shading", ClampMin = 0.0f, ClampMax = 1.0f)
+        float RootDarkening = 0.5f;
+
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = false;
 

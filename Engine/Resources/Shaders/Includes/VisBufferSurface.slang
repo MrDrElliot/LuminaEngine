@@ -370,6 +370,30 @@ float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
     return (dot(NormalWS, ViewDir) < 0.0) ? -NormalWS : NormalWS;
 }
 
+// Decodes the terrain normal, distance blend and root darkening GrassScatter.slang packs; painted foliage carries zero and keeps its surface.
+void ApplyGrassShading(FMeshletRef Ref, float4x4 Model, float3 WorldPositionNoOffset, inout float3 Normal, inout float AmbientOcclusion)
+{
+    if (!Ref.InstHasFlag(EInstanceFlags::Foliage))
+    {
+        return;
+    }
+
+    const float4 Shading       = Ref.Inst.CustomData.AsColor;
+    const float2 TerrainXZ     = Shading.xy * 2.0 - 1.0;
+    const float3 TerrainNormal = float3(TerrainXZ.x, sqrt(saturate(1.0 - dot(TerrainXZ, TerrainXZ))), TerrainXZ.y);
+    const float3 Blended       = lerp(Normal, TerrainNormal, Shading.z);
+    Normal = dot(Blended, Blended) > 1e-8 ? normalize(Blended) : TerrainNormal;
+
+    // Blades scatter with uniform scale, so projecting onto the up column recovers the mesh-local height.
+    const float3 Up     = float3(Model[0].y, Model[1].y, Model[2].y);
+    const float3 Root   = float3(Model[0].w, Model[1].w, Model[2].w);
+    const float  LocalY = dot(WorldPositionNoOffset - Root, Up) / max(dot(Up, Up), 1e-12);
+    FMeshletHeader* Header = Ref.Header;
+    const float  Span   = Header.LocalMaxY - Header.LocalMinY;
+    const float  Height = Span > 0.0 ? saturate((LocalY - Header.LocalMinY) / Span) : 1.0;
+    AmbientOcclusion *= 1.0 - Shading.w * (1.0 - Height);
+}
+
 // 16 bits per axis, so a target wider than 65535 would alias two pixels onto one entry.
 uint PackVisPixel(uint2 Texel)   { return (Texel.y << 16) | (Texel.x & 0xFFFFu); }
 uint2 UnpackVisPixel(uint Packed) { return uint2(Packed & 0xFFFFu, Packed >> 16); }

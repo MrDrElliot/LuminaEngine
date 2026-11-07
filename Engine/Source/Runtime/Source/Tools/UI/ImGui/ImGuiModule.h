@@ -16,14 +16,25 @@
 // that, at load time. The hook runs IN the module's binary, so it points that binary's ImGui/ImPlot
 // globals + allocator at the engine's single shared copy (ImGuiMemAlloc/Free route through the
 // RUNTIME_API Memory::Malloc, so all ImGui memory lands in the one engine heap).
-//
-// Mirrors the manual setup the directly-linked Editor module does in FEditorUI::Initialize.
 #define LUMINA_MODULE_IMGUI()                                                                    \
     extern "C" DLL_EXPORT void LuminaModuleSetupImGui(void* InImGui, void* InImPlot)             \
     {                                                                                            \
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(InImGui));                           \
-        ImPlot::SetCurrentContext(static_cast<ImPlotContext*>(InImPlot));                        \
-        ::Lumina::ImGuiX::InstallImGuiAllocator();                                               \
-        ImTextInitClassifiers();                                                                 \
+        ::Lumina::ImGuiX::AdoptImGuiContext(static_cast<ImGuiContext*>(InImGui), static_cast<ImPlotContext*>(InImPlot)); \
     }                                                                                            \
     static_assert(true, "LUMINA_MODULE_IMGUI consumes the semicolon at the call site")
+
+namespace Lumina::ImGuiX
+{
+    // Inline, so it sets the globals of whichever binary calls it.
+    inline void AdoptImGuiContext(ImGuiContext* InImGui, ImPlotContext* InImPlot)
+    {
+        ImGui::SetCurrentContext(InImGui);
+        ImPlot::SetCurrentContext(InImPlot);
+        InstallImGuiAllocator();
+        // Only the ImGui copy that builds the font atlas fills its word-wrap tables, so this one breaks text mid-word until told to.
+        ImTextInitClassifiers();
+    }
+
+    // The Runtime DLL owns the context it creates, so only a host that made its own (a headless test) needs this.
+    RUNTIME_API void AdoptRuntimeImGuiContext(ImGuiContext* InImGui, ImPlotContext* InImPlot);
+}

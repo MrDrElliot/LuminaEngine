@@ -228,7 +228,7 @@ namespace Lumina
         // Origin a shift-click ranges from. An index, so a rebuild has to clear it.
         int32                                   SelectionAnchorIndex = -1;
 
-        char                                    RenameBuffer[128] = {};
+        FString                                 RenameText;
 
 		float                                   TileSize = 84.0f;
 

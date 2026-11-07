@@ -4,8 +4,10 @@
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Agent/AgentToolSchema.h"
+#include "Asset/AssetOps.h"
 #include "Containers/Algorithm.h"
 #include "Core/Object/Package/Package.h"
+#include "FileSystem/FileSystem.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Log/Log.h"
 #include "MCPAnimGraphTools.h"
@@ -14,6 +16,7 @@
 #include "MCPDataTableTools.h"
 #include "MCPEditorModule.h"
 #include "MCPEditorSessionTools.h"
+#include "MCPLookDevTools.h"
 #include "MCPMaterialTools.h"
 #include "MCPPackageTools.h"
 #include "MCPParticleTools.h"
@@ -24,6 +27,7 @@
 #include "MCPSequenceTools.h"
 #include "MCPStressTools.h"
 #include "MCPTerrainTools.h"
+#include "Paths/Paths.h"
 #include "Platform/Time/PlatformTime.h"
 
 namespace Lumina::MCP
@@ -121,6 +125,7 @@ namespace Lumina::MCP
         RegisterDataTableTools(GOwner);
         RegisterPrefabTools(GOwner);
         RegisterTerrainTools(GOwner);
+        RegisterLookDevTools(GOwner);
         RegisterEditorSessionTools(GOwner);
         RegisterProfilerTools(GOwner);
         RegisterRuntimeTools(GOwner);
@@ -185,6 +190,61 @@ namespace Lumina::MCP
         {
             Package->MarkDirty();
         }
+    }
+
+    bool IsWellFormedAssetPath(const FString& Path, FString& OutError)
+    {
+        if (Path.IsEmpty() || Path[0] != '/')
+        {
+            OutError = "A path has to start at a mount root, such as /Game/Content.";
+            return false;
+        }
+
+        if (Path.Find("..") != Constants::kIndexNone || Path.Find("//") != Constants::kIndexNone)
+        {
+            OutError = "A path cannot contain .. or an empty step.";
+            return false;
+        }
+
+        return true;
+    }
+
+    bool MakeNewAssetPath(const FString& Folder, const FString& Name, FFixedString& OutPath, FString& OutError)
+    {
+        if (!IsWellFormedAssetPath(Folder, OutError))
+        {
+            return false;
+        }
+
+        if (!AssetOps::IsAssetLocation(FStringView(Folder)))
+        {
+            OutError = "Assets belong under /Game/Content, since nothing scans for assets elsewhere.";
+            return false;
+        }
+
+        if (!VFS::IsDirectory(Folder))
+        {
+            OutError = Lumina::Format("{} is not a folder. Use assets.create_folder first.", Folder);
+            return false;
+        }
+
+        FString LeafReason;
+        if (!AssetOps::IsValidLeafName(FStringView(Name), &LeafReason))
+        {
+            OutError = Lumina::Format("'{}' is not a valid asset name. {}", Name, LeafReason);
+            return false;
+        }
+
+        OutPath = Paths::Combine(FStringView(Folder), FStringView(Name));
+        CPackage::AddPackageExt(OutPath);
+
+        if (VFS::Exists(OutPath))
+        {
+            OutError = Lumina::Format("{} already exists.", OutPath);
+            return false;
+        }
+
+        return true;
     }
 
     void FServer::RegisterProtocolMethods()

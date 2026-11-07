@@ -457,4 +457,16 @@ namespace Lumina
         const int32 Digit = Pos - BaseLength - 1;
         return Digit < Count ? Digits[Digit] : '\0';
     }
+
+    FName MakeUniqueName(FStringView Base, TFunctionRef<bool(const FName&)> IsTaken, FStringView Separator, uint32 FirstSuffix)
+    {
+        // Copied first, since a view of a numbered name points into a buffer the predicate's own name renders can overwrite.
+        const FString BaseText(Base);
+        FName Candidate(BaseText);
+        for (uint32 Suffix = FirstSuffix; IsTaken(Candidate); ++Suffix)
+        {
+            Candidate = FName(Format("{}{}{}", BaseText, Separator, Suffix));
+        }
+        return Candidate;
+    }
 }

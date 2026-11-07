@@ -417,7 +417,7 @@ public sealed class ActionExecutor
         {
             string PrimaryOutput = Action.ProducedItems[0].Location;
 
-            History.RecordCommand(PrimaryOutput, Action.GetCommandKey());
+            History.RecordCommand(Action.HistoryKey, Action.GetCommandKey());
 
             // Headers first, since the fingerprint must see the list the compiler just reported, not the previous build's.
             if (Action.DependencyListFile is not null)
@@ -425,7 +425,7 @@ public sealed class ActionExecutor
                 Dependencies.RecordFromCompilerOutput(PrimaryOutput, Action.DependencyListFile, Action.DependencyListFormat);
             }
 
-            History.RecordInputFingerprint(PrimaryOutput, ActionGraph.ComputeInputFingerprint(Action, Dependencies));
+            History.RecordInputFingerprint(Action.HistoryKey, ActionGraph.ComputeInputFingerprint(Action, Dependencies));
         }
     }
 
@@ -437,6 +437,11 @@ public sealed class ActionExecutor
             Produced.Invalidate();
             History.Forget(Produced.Location);
             Dependencies.Forget(Produced.Location);
+        }
+
+        if (Action.ProducedItems.Count > 0)
+        {
+            History.Forget(Action.HistoryKey);
         }
     }
 
@@ -503,7 +508,7 @@ public sealed class ActionExecutor
     {
         return Action.Type switch
         {
-            ActionType.Compile => $"Compile {Action.ModuleName}: {Action.StatusText}",
+            ActionType.Compile or ActionType.ResourceCompile => $"Compile {Action.ModuleName}: {Action.StatusText}",
             ActionType.Link => $"Link {Action.StatusText}",
             ActionType.Archive => $"Archive {Action.StatusText}",
             ActionType.Generate => $"Generate {Action.ModuleName}: {Action.StatusText}",

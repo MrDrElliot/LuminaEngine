@@ -910,11 +910,11 @@ namespace Lumina
         FrameVisibleInstanceCapacity = Math::Min(FrameVisibleInstanceCapacity,
                                                  InstanceViewRangeRing[Slot].CapacityOf<FUIntVector2>() / RangeViews);
 
-        // Every retained slot can become a proxy, so the list never has to report demand.
-        ReserveBuffer(CL, ProxyListRing[Slot], Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)SlotCount * sizeof(uint32)));
-        ReserveBuffer(CL, ProxyDrawArgsRing[Slot], sizeof(RHI::FDrawIndirectArguments));
-        ProxyListCapacity = ProxyListRing[Slot] ? ProxyListRing[Slot].CapacityOf<uint32>() : 0u;
-        SceneRootShared.ProxyList = ProxyListRing[Slot] ? RHI::TGPUSpan<uint32>{ ProxyListRing[Slot], ProxyListCapacity } : RHI::TGPUSpan<uint32>{};
+        // Every retained slot can become a proxy, so the list never has to report demand. The second half takes the late phase's survivors.
+        ReserveBuffer(CL, ProxyListRing[Slot], Math::Max<SIZE_T>(1u, SlotCount) * sizeof(uint32) * 2u);
+        // Two draws, then the occlusion cull's dispatch.
+        ReserveBuffer(CL, ProxyDrawArgsRing[Slot], sizeof(RHI::FDrawIndirectArguments) * 2u + sizeof(RHI::FDispatchIndirectArguments));
+        ProxyListCapacity = ProxyListRing[Slot] ? ProxyListRing[Slot].CapacityOf<uint32>() / 2u : 0u;
     }
 
     void FDefaultSceneRenderer::ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor)
@@ -1505,6 +1505,9 @@ namespace Lumina
             DispatchCullInstances(CL, Frame, CullInstancesShader);
         }
 
+        // Rebuilt because the retained arrays and the proxy list are only known now, after PublishSceneRoot took its copy.
+        SetSceneRoot(CL, *CurrentView, SceneBindings.SceneData);
+
         DispatchDrawPrefix(CL, Frame, DrawPrefixShader);
 
         if (NumCullViews > 0u)
@@ -1780,11 +1783,14 @@ namespace Lumina
         const bool bProxies = ProxyListRing[Slot] && ProxyDrawArgsRing[Slot] && ProxyListCapacity > 0u && RetainedProxyBuffer;
         PC.OutProxyList           = bProxies ? RHI::TGPUSpan<uint32>{ ProxyListRing[Slot], ProxyListCapacity } : RHI::TGPUSpan<uint32>{};
         PC.OutProxyDrawArgs       = bProxies ? RHI::TGPUSpan<uint32>{ ProxyDrawArgsRing[Slot], 4u } : RHI::TGPUSpan<uint32>{};
+        // A two-phase camera draws the second half, which its late occlusion cull fills, so every reader indexes the list that was drawn.
+        SceneRootShared.ProxyList = bProxies ? RHI::TGPUSpan<uint32>::Slice(ProxyListRing[Slot], IsTwoPhaseView(Frame, 0u) ? ProxyListCapacity : 0u, ProxyListCapacity)
+                                             : RHI::TGPUSpan<uint32>{};
         if (bProxies)
         {
-            // Six corners per proxy, and the cull counts the instances into the second word.
-            const RHI::FDrawIndirectArguments ProxyArgs{ 6u, 0u, 0u, 0u };
-            WriteBuffer(CL, ProxyDrawArgsRing[Slot].Gpu, &ProxyArgs, sizeof(ProxyArgs));
+            // Six corners per proxy, and each cull counts its list into the second word.
+            const RHI::FDrawIndirectArguments ProxyArgs[2] = { { 6u, 0u, 0u, 0u }, { 6u, 0u, 0u, 0u } };
+            WriteBuffer(CL, ProxyDrawArgsRing[Slot].Gpu, ProxyArgs, sizeof(ProxyArgs));
             Barriers::TransferToCompute(CL);
         }
 

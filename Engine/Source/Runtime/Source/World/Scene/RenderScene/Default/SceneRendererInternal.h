@@ -207,7 +207,12 @@ namespace Lumina
     {
         uint32 Taps;
         float  RadiusTexels;  // in texels of the nearest cascade
+        uint32 ContactSteps;  // the sun's screen-space contact march, 0 when it is off
+        uint32 BlockerTaps;   // contact-hardening blocker search on the near cascades, 0 when it is off
     };
+
+    // The narrowest kernel any quality uses, which contact hardening never goes below or the edge shows texel stairs.
+    inline constexpr float GSunShadowMinFilterRadiusTexels = 2.0f;
 
     // Godot's Soft Low, Medium, High and Ultra directional filters.
     inline FSunShadowFilter GetSunShadowFilter()
@@ -215,12 +220,12 @@ namespace Lumina
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
         switch (Settings != nullptr ? Settings->ShadowQuality : EShadowQuality::High)
         {
-        case EShadowQuality::Low:    return { 4u,  2.0f };
-        case EShadowQuality::Medium: return { 8u,  2.0f };
-        case EShadowQuality::High:   return { 16u, 3.0f };
-        case EShadowQuality::Ultra:  return { 32u, 4.0f };
+        case EShadowQuality::Low:    return { 4u,  GSunShadowMinFilterRadiusTexels, 0u,  0u };
+        case EShadowQuality::Medium: return { 8u,  GSunShadowMinFilterRadiusTexels, 8u,  0u };
+        case EShadowQuality::High:   return { 16u, 3.0f, 12u, 8u };
+        case EShadowQuality::Ultra:  return { 32u, 4.0f, 16u, 12u };
         }
-        return { 16u, 3.0f };
+        return { 16u, 3.0f, 12u, 8u };
     }
 
     inline ESSRQuality GetSSRQuality()

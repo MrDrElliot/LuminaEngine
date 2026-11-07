@@ -9,7 +9,6 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiXNumeric.h"
-#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -82,16 +81,7 @@ namespace Lumina
         // Named after the property and uniquified, so binding to code is one click rather than six steps.
         FName MakeUniqueParameterName(const CParticleSystem& System, const FName& Base)
         {
-            const FString BaseStr = Base.IsNone() ? FString("Param") : FString(*Base);
-
-            FName Candidate(*BaseStr);
-            int32 Suffix = 1;
-            while (System.FindUserParameter(Candidate) != nullptr)
-            {
-                Candidate = FName(*(BaseStr + "_" + *Format("{}", Suffix)));
-                ++Suffix;
-            }
-            return Candidate;
+            return MakeUniqueName(Base.IsNone() ? "Param" : *Base, [&System](const FName& Name) { return System.FindUserParameter(Name) != nullptr; });
         }
     }
 

@@ -82,28 +82,6 @@ namespace Lumina
         return (int32)AtlasTexture.ResourceID();
     }
 
-    // Advances Index past one code point and returns it, or the replacement char on bad input.
-    static uint32 DecodeUTF8(const char* Str, int32 Length, int32& Index)
-    {
-        const uint8 C0 = (uint8)Str[Index++];
-        if (C0 < 0x80) return C0;
-
-        auto Cont = [&](uint32 Acc, int N) -> uint32
-        {
-            for (int i = 0; i < N; ++i)
-            {
-                if (Index >= Length || ((uint8)Str[Index] & 0xC0) != 0x80) return 0xFFFD;
-                Acc = (Acc << 6) | ((uint8)Str[Index++] & 0x3F);
-            }
-            return Acc;
-        };
-
-        if ((C0 & 0xE0) == 0xC0) return Cont(C0 & 0x1F, 1);
-        if ((C0 & 0xF0) == 0xE0) return Cont(C0 & 0x0F, 2);
-        if ((C0 & 0xF8) == 0xF0) return Cont(C0 & 0x07, 3);
-        return 0xFFFD;
-    }
-
     bool CFont::ShapeText(const FString& Text, float HAlign, float VAlign, float LineSpacing, TVector<FShapedGlyph>& Out) const
     {
         Out.Reset();
@@ -113,8 +91,6 @@ namespace Lumina
             return false;
         }
 
-        const char*  Str    = *Text;
-        const int32 Length = Text.Len();
         const float  LineAdvance = LineHeight * (LineSpacing <= 0.0f ? 1.0f : LineSpacing);
 
         // Two passes, so per-line runs and widths come first and each line aligns independently.
@@ -123,9 +99,10 @@ namespace Lumina
         Lines.Emplace();
         LineWidths.Add(0.0f);
 
-        for (int32 i = 0; i < Length; )
+        const FStringView View = Text.View();
+        for (int32 i = 0; i < View.Len(); )
         {
-            const uint32 CP = DecodeUTF8(Str, Length, i);
+            const uint32 CP = DecodeUTF8Codepoint(View, i);
             if (CP == '\n')
             {
                 Lines.Emplace();

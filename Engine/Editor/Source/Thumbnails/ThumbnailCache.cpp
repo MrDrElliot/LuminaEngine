@@ -81,7 +81,12 @@ namespace Lumina::ThumbnailCache
         }
 
         OutThumbnail.Serialize(Ar);
-        return !Ar.HasError() && !OutThumbnail.ImageData.IsEmpty();
+        if (Ar.HasError() || OutThumbnail.ImageData.IsEmpty())
+        {
+            Filesystem::RemoveFile(Path);
+            return false;
+        }
+        return true;
     }
 
     bool Save(const FGuid& GUID, uint64 ContentHash, FPackageThumbnail& Thumbnail)
@@ -107,8 +112,7 @@ namespace Lumina::ThumbnailCache
         Ar.Serialize(&ContentHash, sizeof(ContentHash));
         Thumbnail.Serialize(Ar);
 
-        Paths::CreateDirectories(CacheDirectory());
-        return FileHelper::SaveArrayToFile(Bytes, Path);
+        return Filesystem::AtomicWriteFile(Path, Bytes);
     }
 
     void Delete(const FGuid& GUID)

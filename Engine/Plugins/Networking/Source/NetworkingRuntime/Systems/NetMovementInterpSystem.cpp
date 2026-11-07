@@ -71,15 +71,14 @@ namespace Lumina
                 return;
             }
 
-            // Eased per tick, so a tier change ramps the delay rather than rewinding the render clock.
+            // Eased over time, so a tier change ramps the delay rather than rewinding the render clock.
             const double Interval = Rep.Ring.AverageInterval();
             double TargetDelay = InterpDelay;
             if (Interval > 0.0 && BufferIntervals * Interval > TargetDelay)
             {
                 TargetDelay = BufferIntervals * Interval;
             }
-            RepMut.SetIfChanged(&FRepTransform::SmoothedInterpDelay, Rep.SmoothedInterpDelay < 0.0
-                ? TargetDelay : Rep.SmoothedInterpDelay + (TargetDelay - Rep.SmoothedInterpDelay) * 0.1);
+            RepMut.SetIfChanged(&FRepTransform::SmoothedInterpDelay, Rep.EasedInterpDelay(TargetDelay, Dt));
             const double RenderTime = ServerRenderNow - Rep.SmoothedInterpDelay;
 
             FVector3 Pos;

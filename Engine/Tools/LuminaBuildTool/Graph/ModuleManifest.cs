@@ -81,9 +81,9 @@ public static class ModuleManifest
                 }
             }
         }
-        catch (JsonException)
+        catch (Exception Ex) when (Ex is IOException or JsonException or UnauthorizedAccessException)
         {
-            Log.Warning("Replacing the unreadable module manifest {0}", ManifestPath);
+            Log.Warning("Replacing the unreadable module manifest {0}: {1}", ManifestPath, Ex.Message);
         }
 
         return Modules;

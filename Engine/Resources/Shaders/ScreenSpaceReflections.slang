@@ -60,40 +60,6 @@ float3 SSR_ViewNormal(int2 Texel)
     return normalize(mul((float3x3)GetCameraView(), WorldNormal));
 }
 
-// The surface's true orientation from its depth neighbors, which a normal map cannot tilt into the surface.
-float3 SSR_GeometricNormal(int2 Texel, float DepthC, float3 ViewC, float2 Size)
-{
-    const int2 MaxTexel = int2(Size) - 1;
-    const float4 H = float4(
-        SSR_PyramidDepth(clamp(Texel + int2(-1, 0), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2(-2, 0), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2( 1, 0), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2( 2, 0), int2(0, 0), MaxTexel), 0));
-    const float4 V = float4(
-        SSR_PyramidDepth(clamp(Texel + int2(0, -1), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2(0, -2), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2(0,  1), int2(0, 0), MaxTexel), 0),
-        SSR_PyramidDepth(clamp(Texel + int2(0,  2), int2(0, 0), MaxTexel), 0));
-
-    // Each side extrapolates its far neighbor through the near one, and the side that predicts the center better is not across an edge.
-    const float2 HErr = abs((2.0 * H.xz - H.yw) - DepthC);
-    const float2 VErr = abs((2.0 * V.xz - V.yw) - DepthC);
-    const int    HSign = HErr.x < HErr.y ? -1 : 1;
-    const int    VSign = VErr.x < VErr.y ? -1 : 1;
-
-    const float3 ViewH = SSR_ViewPos(float3((float2(Texel + int2(HSign, 0)) + 0.5) / Size, HSign < 0 ? H.x : H.z));
-    const float3 ViewV = SSR_ViewPos(float3((float2(Texel + int2(0, VSign)) + 0.5) / Size, VSign < 0 ? V.x : V.z));
-
-    float3 N = normalize(cross(float(VSign) * (ViewV - ViewC), float(HSign) * (ViewH - ViewC)));
-
-    // The cross product's handedness depends on the projection, and a visible surface always faces the eye.
-    if (dot(N, -ViewC) < 0.0)
-    {
-        N = -N;
-    }
-    return N;
-}
-
 // The full-resolution pixel the downsample kept for this texel, the closest of its block.
 int2 SSR_KeptPixel(int2 Texel)
 {
@@ -145,7 +111,7 @@ FSSRResult TraceTexel(int2 Texel)
 
     float3 Pos = SSR_ViewPos(ScreenPos);
     const float3 Normal     = SSR_ViewNormal(Texel);
-    const float3 GeomNormal = SSR_GeometricNormal(Texel, ScreenPos.z, Pos, Size);
+    const float3 GeomNormal = GeometricViewNormal(Pass().Pyramid, Texel, ScreenPos.z, Pos, Size);
 
     // A normal-mapped pixel can point a ray back into its own surface, so the start is lifted off it in proportion.
     Pos       += GeomNormal * (1.0 - pow(saturate(dot(Normal, GeomNormal)), 8.0));

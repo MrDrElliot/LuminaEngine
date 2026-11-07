@@ -133,6 +133,20 @@ namespace Lumina
         // extrapolation/snap) and a tier/rate change ramps the delay instead of rewinding. -1 = uninitialized.
         double SmoothedInterpDelay = -1.0;
 
+        // Per second, so a 60 fps tick eases the delay by the same 10% the old per-tick factor did.
+        static constexpr float InterpDelayEaseRate = 6.32f;
+
+        // The first sample snaps to TargetDelay so a new proxy does not ramp up from zero.
+        double EasedInterpDelay(double TargetDelay, double DeltaTime) const
+        {
+            if (SmoothedInterpDelay < 0.0)
+            {
+                return TargetDelay;
+            }
+            return Math::Damp(static_cast<float>(SmoothedInterpDelay), static_cast<float>(TargetDelay), InterpDelayEaseRate,
+                static_cast<float>(DeltaTime));
+        }
+
         // Latest received scale (not interpolated; applied directly). Valid once bHasScale is set.
         NetQuantize::FQuantizedVector CurrentScaleQ;
         bool bHasScale = false;

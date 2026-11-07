@@ -3,10 +3,10 @@
 #include "CloudCommon.slang"
 
 // The sun's cascade count; the atlas always holds NUM_CASCADES tiles but a light may use fewer.
-int ActiveCascadeCount() { return clamp(int(LightData().ShadowParams2.z), 1, NUM_CASCADES); }
+int ActiveCascadeCount() { return clamp(int(LightData().SunShadow.ActiveCascadeCount), 1, NUM_CASCADES); }
 
 // The far cascade, when present, is the last active one and holds only far casters.
-bool HasFarCascade() { return LightData().ShadowParams2.w > 0.5; }
+bool HasFarCascade() { return LightData().SunShadow.bFarCascade != 0u; }
 int NearCascadeCount() { return max(ActiveCascadeCount() - (HasFarCascade() ? 1 : 0), 1); }
 
 // A shadow map read through the comparison sampler, or point sampled for its raw depth.
@@ -70,6 +70,25 @@ float SampleDirectionalCloudShadow(float3 FragmentPos)
     return CloudShadow_Sample(Scene().FogCloudShadow, FragmentPos, Scene().FogCloudShadowCenter, Scene().FogCloudShadowExtent);
 }
 
+// Projects WorldPos into one sun cascade, false when it lands outside that cascade's volume.
+bool ProjectToSunCascade(int ShadowDataIndex, int Cascade, float3 WorldPos, out float3 Proj, out float2 AtlasUV)
+{
+    const float4 Coord = mul(GetShadowViewProjection(ShadowDataIndex, Cascade), float4(WorldPos, 1.0));
+    Proj    = Coord.xyz / max(Coord.w, 1e-6);
+    AtlasUV = float2(0.0, 0.0);
+
+    const float2 UV = Proj.xy * 0.5 + 0.5;
+
+    if (!(all(UV >= 0.0) && all(UV <= 1.0) && Proj.z >= 0.0 && Proj.z <= 1.0))
+    {
+        return false;
+    }
+
+    const FLightShadow Tile = GetShadowTile(ShadowDataIndex, Cascade);
+    AtlasUV = UV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
+    return true;
+}
+
 // Cascades nest by distance, so FirstCascade carries a receding march's last hit and skips impossible ones.
 float SampleSunCascadeFrom(FLight Light, float3 WorldPos, inout int FirstCascade)
 {
@@ -82,17 +101,12 @@ float SampleSunCascadeFrom(FLight Light, float3 WorldPos, inout int FirstCascade
     [loop]
     for (int c = FirstCascade; c < ActiveCascadeCount(); ++c)
     {
-        float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
-        float4   SC = mul(VP, float4(WorldPos, 1.0));
-        float3   P  = SC.xyz / max(SC.w, 1e-6);
-        float2   UV = P.xy * 0.5 + 0.5;
-
-        if (all(UV >= 0.0) && all(UV <= 1.0) && P.z >= 0.0 && P.z <= 1.0)
+        float3 P;
+        float2 AtlasUV;
+        if (ProjectToSunCascade(Light.ShadowDataIndex, c, WorldPos, P, AtlasUV))
         {
-            FLightShadow Tile = GetShadowTile(Light.ShadowDataIndex, c);
-            float2 AUV = UV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
             FirstCascade = c;
-            return ShadowCascade().SampleCmpLevelZero(AUV, P.z - 0.0005);
+            return ShadowCascade().SampleCmpLevelZero(AtlasUV, P.z - 0.0005);
         }
     }
     return 1.0;
@@ -105,6 +119,15 @@ float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
     return SampleSunCascadeFrom(Light, WorldPos, FirstCascade);
 }
 
+// Screen pixels a view-space length spans at this depth.
+float ContactReachPixels(float Reach, float ViewZ, float ScreenHeight)
+{
+    return Reach * abs(GetCameraProjection()[1][1]) * 0.5 * ScreenHeight / max(abs(ViewZ), 1e-4);
+}
+
+// Depth an occluder in contact may extend behind its front face, as a fraction of view depth so precision loss far away is covered.
+static const float kContactThicknessPerMeter = 0.02;
+
 // Traces in view space off the opaque depth buffer, so no derivatives and either lane can call it.
 float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, float Reach, uint Steps)
 {
@@ -116,15 +139,16 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
 
     const float4x4 InvProj    = GetInverseCameraProjection();
     const float2   ScreenSize = float2(GetScreenSize());
-    const float3   Step       = ViewL * (Reach / float(Steps));
-    const float    Lift    = Reach / float(Steps);
+    const float    StepLength = Reach / float(Steps);
+    const float3   Step       = ViewL * StepLength;
 
     // Half-step jittered start plus a normal offset, or a grazing surface reports its own ray as occluding.
-    float3 RayPos = ViewPos + ViewN * Lift + Step * (0.5 + Jitter);
+    float3 RayPos = ViewPos + ViewN * StepLength + Step * (0.5 + Jitter);
 
-    // A hit farther behind the ray than this is a separate surface, not an occluder in contact.
-    const float Thickness = Reach;
+    // A hit farther behind the ray than this is a separate surface, so a background pixel beside a silhouette stays lit.
+    const float Thickness = clamp(abs(ViewPos.z) * kContactThicknessPerMeter, StepLength, Reach);
 
+    float Occlusion = 0.0;
     [loop]
     for (uint i = 0u; i < Steps; ++i)
     {
@@ -152,17 +176,22 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
             const float RayHeight   = dot(RayPos - ViewPos, ViewN);
             const float SceneHeight = dot(SceneP - ViewPos, ViewN);
 
-            if (Delta > 0.0 && Delta < Thickness && SceneHeight > 0.5 * RayHeight)
+            if (Delta > 0.0 && SceneHeight > 0.5 * RayHeight)
             {
-                // Fade out along the ray so the far end of the reach does not cut a hard line.
-                return saturate(float(i) / float(Steps));
+                // Hits fade toward the thickness edge and along the ray, so neither limit cuts a hard line.
+                const float Hit = saturate(2.0 * (1.0 - Delta / Thickness)) * (1.0 - float(i) / float(Steps));
+                Occlusion = max(Occlusion, Hit);
+                if (Delta * 2.0 <= Thickness)
+                {
+                    break;   // a full-strength hit, and later steps only fade weaker
+                }
             }
         }
 
         RayPos += Step;
     }
 
-    return 1.0;
+    return 1.0 - Occlusion;
 }
 
 // World-space gap between this point and the nearest occluder the cascade recorded toward the sun.
@@ -177,16 +206,11 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
     [loop]
     for (int c = 0; c < ActiveCascadeCount(); ++c)
     {
-        float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
-        float4   SC = mul(VP, float4(WorldPos, 1.0));
-        float3   P  = SC.xyz / max(SC.w, 1e-6);
-        float2   UV = P.xy * 0.5 + 0.5;
-
-        if (all(UV >= 0.0) && all(UV <= 1.0) && P.z >= 0.0 && P.z <= 1.0)
+        float3 P;
+        float2 AtlasUV;
+        if (ProjectToSunCascade(Light.ShadowDataIndex, c, WorldPos, P, AtlasUV))
         {
-            FLightShadow Tile     = GetShadowTile(Light.ShadowDataIndex, c);
-            float2       AtlasUV  = UV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
-            float        Occluder = ShadowCascade().SampleLevel(AtlasUV, 0.0).r;
+            float Occluder = ShadowCascade().SampleLevel(AtlasUV, 0.0).r;
 
             // A surface that is its own nearest occluder reads 0, which is the backlit-leaf case.
             return max(P.z - Occluder, 0.0) * LightData().CascadeDepthRanges[c];
@@ -197,20 +221,19 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
     return 0.0;
 }
 
+static const float kSunShadowConstantBias = 0.00015;
+// Point and spot RefDepth is NDC z from the face VP, which clusters near 1.0 and needs a tiny bias.
+static const float kLocalShadowConstantBias = 0.00005;
+static const float kShadowSlopeBias = 0.0003;
+
 // ToLight points toward the light like FLight::Direction, and the travel direction would zero NdotL.
-float ComputeShadowBias(uint LightFlags, float3 Normal, float3 ToLight, int CascadeIndex)
+float ComputeSunShadowBias(float3 Normal, float3 ToLight)
 {
     float NdotL       = saturate(dot(Normal, ToLight));
     float SlopeFactor = sqrt(max(1.0 - NdotL * NdotL, 0.0));
 
-    if (HasFlag(LightFlags, ELightFlags::Directional))
-    {
-        // NormalOffsetWS handles slope acne, and ShadowParams.y is the per-light constant bias.
-        return 0.00015 + 0.0003 * SlopeFactor + LightData().ShadowParams.y;
-    }
-
-    // Point and spot RefDepth is NDC z from the face VP, which clusters near 1.0 and needs a tiny bias.
-    return 0.00005 + 0.0003 * SlopeFactor;
+    // NormalOffsetWS handles slope acne, and DepthBias is the per-light constant bias.
+    return kSunShadowConstantBias + kShadowSlopeBias * SlopeFactor + LightData().SunShadow.DepthBias;
 }
 
 // Normal-offset bias (Holbert, GDC 2011), about one texel along the normal and only at grazing angles.
@@ -225,7 +248,7 @@ float3 NormalOffsetWS(float3 Normal, float3 ToLight, int CascadeIndex)
     float TexelSize  = (2.0 * Radius) / Resolution;
 
     // About sqrt(2), one diagonal texel, the minimum that clears quantization acne without peter-panning.
-    return Normal * (TexelSize * 1.4 * OffsetScale * LightData().ShadowParams.x);
+    return Normal * (TexelSize * 1.4 * OffsetScale * LightData().SunShadow.NormalBias);
 }
 
 // tan(80 degrees). Past it the plane estimate is untrustworthy, and a normal-mapped shading normal can swing it.
@@ -256,58 +279,87 @@ float2 ReceiverPlaneDepthSlope(float4x4 CascadeVP, float3 Normal, float3 ToLight
     return Slope;
 }
 
-// Godot's default soft sun shadow, a few hardware-compare taps on a rotated Vogel disk with no blocker search.
+// Godot's default soft sun shadow, a few hardware-compare taps on a rotated Vogel disk.
 float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float3 Normal, float3 ToLight, float2 ScreenPos, out bool Inside)
 {
     // Godot's normal bias, minus its along-light part so it slides the receiver sideways rather than toward the sun.
     float3 NormalOffset = NormalOffsetWS(Normal, ToLight, CascadeIndex);
     NormalOffset -= ToLight * dot(ToLight, NormalOffset);
 
-    const float4x4 CascadeVP = GetShadowViewProjection(Light.ShadowDataIndex, CascadeIndex);
-    const float4   Coord     = mul(CascadeVP, float4(WorldPos + NormalOffset, 1.0));
-    const float3   Proj      = Coord.xyz / max(Coord.w, 1e-6);
-    const float2   CascadeUV = Proj.xy * 0.5 + 0.5;
-
-    Inside = all(CascadeUV >= 0.0) && all(CascadeUV <= 1.0) && Proj.z >= 0.0 && Proj.z <= 1.0;
+    float3 Proj;
+    float2 BaseUV;
+    Inside = ProjectToSunCascade(Light.ShadowDataIndex, CascadeIndex, WorldPos + NormalOffset, Proj, BaseUV);
     if (!Inside)
     {
         return 1.0;
     }
 
     const FLightShadow Tile     = GetShadowTile(Light.ShadowDataIndex, CascadeIndex);
-    const float2       BaseUV   = CascadeUV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
     const float2       TileMin  = Tile.AtlasUVOffset;
     const float2       TileMax  = Tile.AtlasUVOffset + Tile.AtlasUVScale;
-    const float        RefDepth = Proj.z - ComputeShadowBias(Light.Flags, Normal, ToLight, CascadeIndex);
+    const float        RefDepth = Proj.z - ComputeSunShadowBias(Normal, ToLight);
 
     // A far texel is meters wide, so one bilinear compare already filters more than the near kernel would.
-    const int Taps = CascadeIndex >= NearCascadeCount() ? 1 : clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
+    const int Taps = CascadeIndex >= NearCascadeCount() ? 1 : clamp(int(LightData().SunShadow.FilterTaps), 1, SHADOW_MAX_SAMPLE_COUNT);
     if (Taps == 1)
     {
         return ShadowCascade().SampleCmpLevelZero(BaseUV, RefDepth);
     }
 
     // Set in cascade-0 texels and held at that world size, so far splits do not blur wider. A cascade spans 2 * radius.
-    const float  FilterTexels = LightData().ShadowParams.z;
-    const float  RadiusUV0    = FilterTexels / max(LightData().CascadeResolutions[0], 1.0);
-    const float2 RadiusUV     = RadiusUV0 * (LightData().CascadeRadii[0] / max(LightData().CascadeRadii[CascadeIndex], 1e-4)) * Tile.AtlasUVScale;
+    const float  RadiusUV0 = LightData().SunShadow.FilterRadiusTexels / max(LightData().CascadeResolutions[0], 1.0);
+    const float2 RadiusUV  = RadiusUV0 * (LightData().CascadeRadii[0] / max(LightData().CascadeRadii[CascadeIndex], 1e-4)) * Tile.AtlasUVScale;
 
     // Outer taps of a wide kernel need the plane's slope or they stripe flat ground.
-    const float2 DepthSlope = ReceiverPlaneDepthSlope(CascadeVP, Normal, ToLight, Tile.AtlasUVScale);
+    const float4x4 CascadeVP  = GetShadowViewProjection(Light.ShadowDataIndex, CascadeIndex);
+    const float2   DepthSlope = ReceiverPlaneDepthSlope(CascadeVP, Normal, ToLight, Tile.AtlasUVScale);
 
     // Each tap's bilinear compare reads texel centers up to a texel away, so the plane's rise over one texel is owed too.
     const float2 TexelUV  = Tile.AtlasUVScale / max(LightData().CascadeResolutions[CascadeIndex], 1.0);
     const float  TapDepth = RefDepth - dot(abs(DepthSlope), TexelUV);
 
-    float2 Dir;
-    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, Dir.y, Dir.x);
+    float2 StartDir;
+    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, StartDir.y, StartDir.x);
     const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
 
-    float Shadow = 0.0;
+    // Contact hardening (PCSS, Fernando 2005), the sun's disk seen past the average blocker sets the kernel within the widest one.
+    float2 KernelUV = RadiusUV;
+    const int BlockerTaps = int(LightData().SunShadow.BlockerTaps);
+    if (BlockerTaps > 0)
+    {
+        float  GapSum   = 0.0;
+        float  Blockers = 0.0;
+        float2 Dir      = StartDir;
+        [loop]
+        for (int i = 0; i < BlockerTaps; ++i)
+        {
+            const float2 TapUV  = Dir * sqrt((float(i) + 0.5) / float(BlockerTaps)) * RadiusUV;
+            Dir = RotateVogel(Dir, GoldenStep);
+            const float  TapRef = TapDepth + dot(DepthSlope, TapUV);
+            const float  Depth  = ShadowCascade().SampleLevel(clamp(BaseUV + TapUV, TileMin, TileMax), 0.0).r;
+            if (Depth < TapRef)
+            {
+                GapSum   += TapRef - Depth;
+                Blockers += 1.0;
+            }
+        }
+
+        // No blocker found keeps the widest kernel, so a misjudged receiver plane can only soften, never leak.
+        if (Blockers > 0.0)
+        {
+            const float  PenumbraWS = GapSum / Blockers * LightData().CascadeDepthRanges[CascadeIndex] * LightData().SunShadow.TanSunRadius;
+            const float2 UVPerMeter = Tile.AtlasUVScale / (2.0 * max(LightData().CascadeRadii[CascadeIndex], 1e-4));
+            const float2 MinUV      = RadiusUV * (LightData().SunShadow.MinFilterRadiusTexels / LightData().SunShadow.FilterRadiusTexels);
+            KernelUV = clamp(PenumbraWS * UVPerMeter, MinUV, RadiusUV);
+        }
+    }
+
+    float  Shadow = 0.0;
+    float2 Dir    = StartDir;
     [loop]
     for (int i = 0; i < Taps; ++i)
     {
-        const float2 TapUV = Dir * sqrt((float(i) + 0.5) / float(Taps)) * RadiusUV;
+        const float2 TapUV = Dir * sqrt((float(i) + 0.5) / float(Taps)) * KernelUV;
         Dir = RotateVogel(Dir, GoldenStep);
         Shadow += ShadowCascade().SampleCmpLevelZero(clamp(BaseUV + TapUV, TileMin, TileMax), TapDepth + dot(DepthSlope, TapUV));
     }
@@ -350,7 +402,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
 
     // Pixels in the blend band near a split pay for a second cascade. Near shadows fade out into the far cascade over the distance fade.
     const bool  bIntoFar      = HasFarCascade() && CascadeIndex + 1 == NearCascadeCount();
-    const float BlendFraction = bIntoFar ? max(LightData().ShadowParams.w, LightData().ShadowParams2.x) : LightData().ShadowParams.w;
+    const float BlendFraction = bIntoFar ? max(LightData().SunShadow.CascadeBlend, LightData().SunShadow.DistanceFade) : LightData().SunShadow.CascadeBlend;
     if (BlendFraction > 0.0 && CascadeIndex + 1 < NumActive && LocalT > 1.0 - BlendFraction)
     {
         bool InsideB;
@@ -364,7 +416,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     // Shadows dissolve over the outer slice of the last cascade instead of popping off at max distance.
     if (CascadeIndex + 1 == NumActive)
     {
-        const float FadeStart = saturate(1.0 - LightData().ShadowParams2.x);
+        const float FadeStart = saturate(1.0 - LightData().SunShadow.DistanceFade);
         if (LocalT > FadeStart)
         {
             return lerp(ShadowA, 1.0, saturate((LocalT - FadeStart) / max(1.0 - FadeStart, 1e-4)));

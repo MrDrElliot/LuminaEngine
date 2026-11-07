@@ -36,7 +36,7 @@ struct FGrassScatterPushConstants
     uint   Seed;
 
     uint   GridSide;            // candidates per axis
-    uint   _PadMaxInstances;
+    float  TerrainNormalDistance;
 
     // Constant for the whole species, one mesh and one material, so the CPU interns these once.
     uint   _PadInstanceSlotBase;
@@ -54,7 +54,7 @@ struct FGrassScatterPushConstants
     float  TerrainBaseY;
     uint   Resolution;          // heightmap samples per side
     float  FullDensityDistance; // blades thin past this with the square of distance; 0 keeps full density
-    uint   _Pad2;
+    float  RootDarkening;
 };
 
 FGrassScatterPushConstants* Pass() { return GetPassArgs<FGrassScatterPushConstants>(); }
@@ -221,7 +221,11 @@ void main(uint3 Tid : SV_DispatchThreadID)
 
     FInstanceStatic Static;
     Static.MeshletHeaderSlot       = P->MeshletHeaderSlot;
-    Static.CustomData              = (FCustomPrimitiveData)0;
+    // Per blade rather than per pixel, so one blade never shades with two normals; decoded by ApplyGrassShading.
+    const float NormalBlend = P->TerrainNormalDistance > 0.0 ? smoothstep(0.0, P->TerrainNormalDistance, CameraDistance) : 0.0;
+    const float4 Shading = float4(Normal.xz * 0.5 + 0.5, NormalBlend, saturate(P->RootDarkening));
+    const uint4  ShadingBytes = uint4(round(saturate(Shading) * 255.0));
+    Static.CustomData.Packed       = ShadingBytes.x | (ShadingBytes.y << 8) | (ShadingBytes.z << 16) | (ShadingBytes.w << 24);
     Static.MaterialIndex           = P->MaterialIndex;
     Static.EntityID                = P->EntityID;
     Static.SkinnedIndex            = kNoSkinnedIndex;

@@ -24,6 +24,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Material/MaterialOps.h"
 #include "Paths/Paths.h"
+#include "Tools/Import/ImportPaths.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
 
@@ -680,19 +681,27 @@ namespace Lumina
         }
 
         const FString Folder = Paths::Parent(FStringView(*HostData->Path));
-        FFixedString AssetPath;
-        for (int32 Attempt = 1; AssetPath.IsEmpty() || VFS::Exists(AssetPath); ++Attempt)
+        const FString Name = Lumina::Format("MF_{}", *Material->GetName());
+        FFixedString AssetPath = Import::PathReservations::FindFree(Paths::Combine(FStringView(Folder), FStringView(Name)));
+        if (AssetPath.IsEmpty())
         {
-            const FString Name = Attempt == 1 ? Lumina::Format("MF_{}", *Material->GetName()) : Lumina::Format("MF_{}_{}", *Material->GetName(), Attempt);
-            AssetPath = Paths::Combine(FStringView(Folder), FStringView(Name));
-            CPackage::AddPackageExt(AssetPath);
+            OutError = Lumina::Format("No free name for {} in {}.", Name, Folder);
+            return false;
+        }
+        CPackage::AddPackageExt(AssetPath);
+
+        const TStrongObjectPtr<CMaterialFunction> Function(CFactory::CreateNewOf<CMaterialFunction>(FStringView(*AssetPath, AssetPath.Len())));
+        if (!Function)
+        {
+            OutError = Lumina::Format("Could not create {}.", *AssetPath);
+            return false;
         }
 
-        CMaterialFunction* Function = CFactory::CreateNewOf<CMaterialFunction>(FStringView(*AssetPath, AssetPath.Len()));
-        CMaterialNodeGraph* FunctionGraph = Function != nullptr ? MaterialOps::FindOrCreateFunctionGraph(Function) : nullptr;
+        CMaterialNodeGraph* FunctionGraph = MaterialOps::FindOrCreateFunctionGraph(Function.Get());
         if (FunctionGraph == nullptr)
         {
             OutError = Lumina::Format("Could not create {}.", *AssetPath);
+            CFactory::DiscardNew(Function.Get());
             return false;
         }
 
@@ -778,17 +787,18 @@ namespace Lumina
             }
         }
 
-        MaterialOps::SyncFunctionSignature(Function, FunctionGraph);
+        MaterialOps::SyncFunctionSignature(Function.Get(), FunctionGraph);
         if (!CPackage::SavePackage(Function->GetPackage(), FStringView(*AssetPath, AssetPath.Len())))
         {
             OutError = Lumina::Format("Could not save {}.", *AssetPath);
+            CFactory::DiscardNew(Function.Get());
             return false;
         }
-        FAssetRegistry::Get().AssetCreated(Function);
+        FAssetRegistry::Get().AssetCreated(Function.Get());
 
         SetPendingEditLabel("Collapse to Function");
         CMaterialExpression_MaterialFunctionCall* Call = Cast<CMaterialExpression_MaterialFunctionCall>(CreateNode(CMaterialExpression_MaterialFunctionCall::StaticClass()));
-        Call->Function = TStrongObjectPtr<CMaterialFunction>(Function);
+        Call->Function = Function;
         Call->RebuildPins();
         Call->SetGridPos(Pivot.x, Pivot.y);
         RemoveNodes(Selected);

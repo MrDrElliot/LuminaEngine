@@ -154,17 +154,8 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Editor Grid", tracy::Color::Gray);
 
-        // The output is past the temporal resolve, so the grid is placed with the camera's unjittered projection.
-        const FSceneGlobalData& Globals = Frame.SceneGlobalData;
-        FMatrix4 Projection = Globals.CameraData.Projection;
-        Projection[2][0] -= Globals.TemporalJitterU * 2.0f;
-        Projection[2][1] -= Globals.TemporalJitterV * 2.0f;
-        const FMatrix4 ViewProjection = Projection * Globals.CameraData.View;
-
         struct FEditorGridPC
         {
-            FMatrix4 ViewProjection;
-            FMatrix4 InverseViewProjection;
             FVector4 MinorColor;
             FVector4 MajorColor;
             FVector4 AxisXColor;
@@ -178,10 +169,8 @@ namespace Lumina
             uint32   _Pad1;
             uint32   _Pad2;
         } PC = {};
-        static_assert(sizeof(FEditorGridPC) == 224, "FEditorGridPC must match EditorGrid.slang.");
+        static_assert(sizeof(FEditorGridPC) == 96, "FEditorGridPC must match EditorGrid.slang.");
 
-        PC.ViewProjection        = ViewProjection;
-        PC.InverseViewProjection = Math::Inverse(ViewProjection);
         PC.MinorColor            = Grid.MinorColor;
         PC.MajorColor            = Grid.MajorColor;
         PC.AxisXColor            = FVector4(0.86f, 0.30f, 0.33f, 0.95f);

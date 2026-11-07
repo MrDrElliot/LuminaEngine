@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "String.h"
+#include "FunctionRef.h"
 #include "Core/DisableAllWarnings.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Assertions/Assert.h"
@@ -124,7 +125,10 @@ namespace Lumina
     {
         return Containers::HashScalar(Name.Hash());
     }
-    
+
+    // Returns Base when it is free, else the first free Base_1, Base_2 and so on, spelled with Separator and counted from FirstSuffix.
+    NODISCARD RUNTIME_API FName MakeUniqueName(FStringView Base, TFunctionRef<bool(const FName&)> IsTaken, FStringView Separator = "_", uint32 FirstSuffix = 1);
+
 }
 
 namespace Lumina

@@ -7,11 +7,11 @@
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Assets/Factories/Factory.h"
-#include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Session/SessionOps.h"
+#include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "World/ECS/Registry.h"
 #include "World/Entity/Components/Component.h"
@@ -116,15 +116,14 @@ namespace Lumina::MCP
             const FString Folder = Paths::Parent(FStringView(*ParentPath, ParentPath.Len()));
             const FString Name = In.Name.IsEmpty() ? FString(*Parent->GetName().ToString()) + "_Variant" : In.Name;
 
-            FFixedString Path = Paths::Combine(FStringView(Folder), FStringView(Name));
-            CPackage::AddPackageExt(Path);
-            if (VFS::Exists(Path))
+            FFixedString Path;
+            if (!MakeNewAssetPath(Folder, Name, Path, Error))
             {
-                return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
+                return Agent::FToolResult::Error(Error);
             }
 
-            CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(*Path, Path.Len()));
-            if (Variant == nullptr)
+            const TStrongObjectPtr<CPrefab> Variant(CFactory::CreateNewOf<CPrefab>(FStringView(*Path, Path.Len())));
+            if (!Variant)
             {
                 return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", Path));
             }
@@ -134,9 +133,10 @@ namespace Lumina::MCP
 
             if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(*Path, Path.Len())))
             {
+                CFactory::DiscardNew(Variant.Get());
                 return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
             }
-            FAssetRegistry::Get().AssetCreated(Variant);
+            FAssetRegistry::Get().AssetCreated(Variant.Get());
 
             Out.Path = FString(*Path);
             Out.Guid = FString(*Variant->GetGUID().ToString());
