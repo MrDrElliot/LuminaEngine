@@ -1060,7 +1060,7 @@ namespace Lumina::PropertyTableInternal
             const int32 NotEquals = Text.Find("!=");
             if (Equals != Constants::kIndexNone || NotEquals != Constants::kIndexNone)
             {
-                const int32 Sep = Equals < NotEquals ? Equals : NotEquals;
+                const int32 Sep = Equals != Constants::kIndexNone ? Equals : NotEquals;
                 Term.Operator = Sep == Equals ? EOperator::Equals : EOperator::NotEquals;
                 NameView = Text.Mid(0, Sep);
 
