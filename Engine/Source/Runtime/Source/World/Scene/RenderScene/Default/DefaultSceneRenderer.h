@@ -1202,7 +1202,6 @@ namespace Lumina
         void PublishSceneRoot(RHI::FCmdListH CL, FFrameData& Frame);
         void PublishViewImageIndices(FFrameData& Frame);
         uint32 CullOverflowLogCounter = 0;
-        uint32 CullStatsLogCounter    = 0;
 
         // Serial pre-pass so the parallel gather is pure reads; O(queued components).
         void ResolveDirtyMeshComponents();

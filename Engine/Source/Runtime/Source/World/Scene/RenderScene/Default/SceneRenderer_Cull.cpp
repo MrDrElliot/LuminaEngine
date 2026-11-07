@@ -12,7 +12,6 @@ namespace Lumina
         TConsoleVar<float> CVarCullDebugCapacityScale("r.Cull.DebugCapacityScale", 1.0f,
             "Scales the meshlet draw and block lists below demand, to exercise the coarse-LOD overflow fallback.");
         #endif
-        TConsoleVar<int32> CVarCullLogStats("r.Cull.LogStats", 0, "Logs the GPU cull readback every 300 frames while nonzero.");
 
         TConsoleVar<int32> CVarCullMeshletVisibility("r.Cull.MeshletVisibility", 1,
             "0 decides the occlusion phase per instance instead of per meshlet, for an A/B against the meshlet bits.");
@@ -1455,11 +1454,6 @@ namespace Lumina
             LastPreSkinOverflowed    = Mapped[7];
         }
 
-        if (SceneRendererCullInternal::CVarCullLogStats.GetValue() != 0 && (CullStatsLogCounter++ % 300u) == 0u)
-        {
-            LOG_INFO("RenderScene cull: {} visible instances, {} draw list entries, {} blocks, {} pre-skin vertices.",
-                     LastVisibleInstances, LastDrawListRequired, LastBlocksRequested, LastPreSkinRequested);
-        }
         LUMINA_PROFILE_VALUE("Cull/VisibleInstances",  LastVisibleInstances);
         LUMINA_PROFILE_VALUE("Cull/DrawListEntries",   LastDrawListRequired);
         LUMINA_PROFILE_VALUE("Cull/MeshletBlocks",     LastBlocksRequested);
