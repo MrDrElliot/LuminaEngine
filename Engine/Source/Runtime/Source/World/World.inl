@@ -58,7 +58,7 @@ namespace Lumina
     template<typename... T>
     void CWorld::RemoveComponent(ECS::FEntity Entity)
     {
-        EntityRegistry.Remove<T...>(Entity);
+        (EntityRegistry.Remove<T>(Entity), ...);
     }
 
     template<typename T>
