@@ -8,6 +8,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
+#include "World/World.h"
 
 using namespace Lumina;
 
@@ -123,6 +124,36 @@ TEST(CommandBus, PatchAndRemoveSkipEntitiesThatLostTheComponent)
     EXPECT_FALSE(Registry.HasAny<FBusValue>(Entity));
     EXPECT_FALSE(Registry.HasAny<FBusTag>(Entity));
     EXPECT_TRUE(Registry.IsValid(Entity));
+}
+
+TEST(CommandBus, RemoveTakesSeveralComponentsAtOnce)
+{
+    ECS::FRegistry Registry;
+    const ECS::FEntity Both = Registry.Create();
+    Registry.Emplace<FBusValue>(Both, FBusValue{ 1 });
+    Registry.Emplace<FBusTag>(Both);
+    const ECS::FEntity OnlyTag = Registry.Create();
+    Registry.Emplace<FBusTag>(OnlyTag);
+    const ECS::FEntity Neither = Registry.Create();
+
+    EXPECT_TRUE((Registry.Remove<FBusValue, FBusTag>(Both)));
+    EXPECT_FALSE((Registry.HasAny<FBusValue, FBusTag>(Both)));
+    EXPECT_TRUE((Registry.Remove<FBusValue, FBusTag>(OnlyTag)));
+    EXPECT_FALSE((Registry.HasAny<FBusTag>(OnlyTag)));
+    EXPECT_FALSE((Registry.Remove<FBusValue, FBusTag>(Neither)));
+
+    ECS::FCommandBus Bus(Registry);
+    Registry.Emplace<FBusValue>(Both, FBusValue{ 2 });
+    Registry.Emplace<FBusTag>(Both);
+    Bus.Remove<FBusValue, FBusTag>(Both);
+    EXPECT_TRUE((Registry.HasAll<FBusValue, FBusTag>(Both)));
+    EXPECT_TRUE(Bus.HasPending());
+    Bus.Flush();
+    EXPECT_FALSE((Registry.HasAny<FBusValue, FBusTag>(Both)));
+    EXPECT_TRUE(Registry.IsValid(Both));
+
+    void (CWorld::*RemoveBoth)(ECS::FEntity) = &CWorld::RemoveComponent<FBusValue, FBusTag>;
+    EXPECT_NE(RemoveBoth, nullptr);
 }
 
 TEST(CommandBus, CommandsRecordedWhileFlushingRunInTheSameFlush)

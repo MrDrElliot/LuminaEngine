@@ -257,16 +257,14 @@ namespace Lumina::ECS
             return TTuple<decltype(TryGet<T0>(Entity)), decltype(TryGet<T1>(Entity)), decltype(TryGet<TRest>(Entity))...>(TryGet<T0>(Entity), TryGet<T1>(Entity), TryGet<TRest>(Entity)...);
         }
 
-        template<CComponent T>
+        // Removes each listed component the entity holds, in the order listed, and returns whether any was removed.
+        template<CComponent... Ts> requires (sizeof...(Ts) > 0)
         bool Remove(FEntity Entity)
         {
-            const TComponentStorage<T> Storage = FindStorage<T>();
-            if (!Storage || !Storage.Contains(Entity))
-            {
-                return false;
-            }
-            Storage.GetSet()->Signals.OnDestroy.Broadcast(*this, Entity);
-            return Storage.RemoveEntity(Entity);
+            static_assert(AreAllDistinct<Ts...>(), "Remove lists each component once.");
+            bool bRemoved = false;
+            ((bRemoved |= RemoveOne<Ts>(Entity)), ...);
+            return bRemoved;
         }
 
         template<CComponent... Ts>
@@ -570,6 +568,18 @@ namespace Lumina::ECS
         {
             const TComponentStorage<T> Storage = FindStorage<T>();
             return Storage && Storage.Contains(Entity);
+        }
+
+        template<CComponent T>
+        bool RemoveOne(FEntity Entity)
+        {
+            const TComponentStorage<T> Storage = FindStorage<T>();
+            if (!Storage || !Storage.Contains(Entity))
+            {
+                return false;
+            }
+            Storage.GetSet()->Signals.OnDestroy.Broadcast(*this, Entity);
+            return Storage.RemoveEntity(Entity);
         }
 
         RUNTIME_API void CreateStorage(FComponentTypeID TypeID);

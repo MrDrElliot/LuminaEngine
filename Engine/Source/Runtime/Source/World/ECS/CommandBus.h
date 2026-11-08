@@ -49,14 +49,14 @@ namespace Lumina::ECS
             }
         }
 
-        template<CComponent T>
+        template<CComponent... Ts> requires (sizeof...(Ts) > 0)
         void Remove(FEntity Entity)
         {
             Enqueue([Entity](FRegistry& InRegistry)
             {
                 if (InRegistry.IsValid(Entity))
                 {
-                    InRegistry.Remove<T>(Entity);
+                    InRegistry.Remove<Ts...>(Entity);
                 }
             });
         }
