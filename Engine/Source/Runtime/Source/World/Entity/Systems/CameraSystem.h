@@ -56,7 +56,7 @@ namespace Lumina
         /** Restamps the active camera's ViewVolume from its live transform, advancing no blend or shake clock. */
         RUNTIME_API static void ResolveActiveCameraView(ECS::FRegistry& Registry);
 
-        //~ Active-camera management on the FCameraGlobalState singleton.
+        //~ Active-camera management on the SCameraGlobalState singleton.
 
         /** Switch the active camera. BlendTime > 0 eases from the current view; 0 snaps. */
         static void SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime = 0.0f, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut);
@@ -66,7 +66,7 @@ namespace Lumina
         RUNTIME_API static void SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect);
         static SCameraComponent* GetActiveCamera(ECS::FRegistry& Registry);
 
-        //~ Camera shake on the FCameraGlobalState singleton. Additive on the rendered view; multiple shakes sum.
+        //~ Camera shake on the SCameraGlobalState singleton. Additive on the rendered view; multiple shakes sum.
 
         /** Start a shake; returns a non-zero handle to stop it (0 on failure). */
         static uint32 PlayCameraShake(ECS::FRegistry& Registry, const SCameraShakeParams& Params);
@@ -80,6 +80,6 @@ namespace Lumina
         ECS::TQuery<ECS::Read<SPostProcessComponent>, ECS::Read<STransformComponent>, ECS::Without<SDisabledTag>> Volumes;
         ECS::TQuery<ECS::Write<SCameraComponent>, ECS::Read<STransformComponent>> Cameras;
         TResMut<FResolvedSceneView> ResolvedView;
-        TResMut<FCameraGlobalState> GlobalState;
+        TResMut<SCameraGlobalState> GlobalState;
     };
 }

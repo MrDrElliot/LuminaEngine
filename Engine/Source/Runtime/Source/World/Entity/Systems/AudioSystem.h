@@ -36,6 +36,6 @@ namespace Lumina
         ECS::TQuery<ECS::Read<STransformComponent>> Transforms;
         TRes<FKinematicsState> KinematicsState;
         TRes<FSignificanceState> SignificanceState;
-        TRes<FCameraGlobalState> CameraState;
+        TRes<SCameraGlobalState> CameraState;
     };
 }

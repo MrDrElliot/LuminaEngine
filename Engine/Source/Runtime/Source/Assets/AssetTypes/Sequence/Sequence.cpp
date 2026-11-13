@@ -408,7 +408,7 @@ namespace Lumina
         }
 
         const float Scale = Intensity.Curve.Keys.IsEmpty() && !Intensity.bUseAsset ? 1.0f : Math::Max(Intensity.Evaluate(Context.Time), 0.0f);
-        FCameraGlobalState* State = Registry.Ctx().Find<FCameraGlobalState>();
+        SCameraGlobalState* State = Registry.Ctx().Find<SCameraGlobalState>();
         if (State == nullptr)
         {
             return;

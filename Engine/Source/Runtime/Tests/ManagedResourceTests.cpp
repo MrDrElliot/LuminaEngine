@@ -140,12 +140,12 @@ public:
 TEST_F(FManagedResourceTest, ReflectedResourcesRegisterThemselves)
 {
     const ECS::FResourceTypeRegistry& Resources = ECS::FResourceTypeRegistry::Get();
-    const ECS::FResourceType* Settings = Resources.Find(FName("FWorldSettingsState"));
+    const ECS::FResourceType* Settings = Resources.Find(FName("SWorldSettingsState"));
     ASSERT_NE(Settings, nullptr);
-    EXPECT_EQ(Settings->TypeId, IdOf<FWorldSettingsState>());
-    EXPECT_EQ(Resources.Find(FWorldSettingsState::StaticStruct()), Settings);
-    EXPECT_NE(Resources.Find(FName("FCameraGlobalState")), nullptr);
-    EXPECT_NE(Resources.Find(FName("FWeatherState")), nullptr);
+    EXPECT_EQ(Settings->TypeId, IdOf<SWorldSettingsState>());
+    EXPECT_EQ(Resources.Find(SWorldSettingsState::StaticStruct()), Settings);
+    EXPECT_NE(Resources.Find(FName("SCameraGlobalState")), nullptr);
+    EXPECT_NE(Resources.Find(FName("SWeatherState")), nullptr);
     EXPECT_EQ(Resources.Find(FName("STransformComponent")), nullptr) << "a component is no resource";
 }
 
@@ -178,15 +178,15 @@ TEST_F(FManagedResourceTest, CSharpResourceFieldsDeclareAndShareLiveValues)
     const uint32 Score = ECS::FResourceTypeRegistry::Get().FindNamedAccessToken(FName("res:LuminaSharp.TestScore"));
     ASSERT_NE(Score, 0u) << "binding a managed resource field acquires its token";
 
-    EXPECT_TRUE(Algo::Contains(Read.Reads, IdOf<FWorldSettingsState>())) << "a TRes of a native resource declares a read of its type";
+    EXPECT_TRUE(Algo::Contains(Read.Reads, IdOf<SWorldSettingsState>())) << "a TRes of a native resource declares a read of its type";
     EXPECT_TRUE(Algo::Contains(Read.Reads, Score)) << "a TRes of a managed resource declares a read of its token";
-    EXPECT_FALSE(Algo::Contains(Read.Writes, IdOf<FWorldSettingsState>()));
+    EXPECT_FALSE(Algo::Contains(Read.Writes, IdOf<SWorldSettingsState>()));
     EXPECT_FALSE(Algo::Contains(Read.Writes, Score));
     EXPECT_TRUE(Read.Pools.IsEmpty()) << "a resource owns no pool";
     EXPECT_TRUE(Read.SentEvents.IsEmpty()) << "a resource is not mistaken for an event";
 
     EXPECT_TRUE(Algo::Contains(WriterA.Writes, Score)) << "a TResMut of a managed resource declares a write";
-    EXPECT_TRUE(Algo::Contains(Weather.Writes, IdOf<FWeatherState>())) << "a TResMut of a native resource declares a write";
+    EXPECT_TRUE(Algo::Contains(Weather.Writes, IdOf<SWeatherState>())) << "a TResMut of a native resource declares a write";
     EXPECT_TRUE(Weather.SentEvents.IsEmpty());
 
     EXPECT_FALSE(FSystemAccess::Conflicts(Read, ReaderB)) << "two readers run together";
@@ -195,8 +195,8 @@ TEST_F(FManagedResourceTest, CSharpResourceFieldsDeclareAndShareLiveValues)
     EXPECT_FALSE(FSystemAccess::Conflicts(Read, Weather)) << "different resources do not conflict";
 
     ECS::FRegistry& Registry = World->GetEntityRegistry();
-    ASSERT_NE(Registry.Ctx().Find<FWeatherState>(), nullptr) << "binding emplaces the native resource on the main thread";
-    Registry.Ctx().Get<FWorldSettingsState>().Gravity = FVector3(0.0f, -3.5f, 0.0f);
+    ASSERT_NE(Registry.Ctx().Find<SWeatherState>(), nullptr) << "binding emplaces the native resource on the main thread";
+    Registry.Ctx().Get<SWorldSettingsState>().Gravity = FVector3(0.0f, -3.5f, 0.0f);
 
     float Out[2] = {};
     RunAt(0, Out);
@@ -213,5 +213,5 @@ TEST_F(FManagedResourceTest, CSharpResourceFieldsDeclareAndShareLiveValues)
     EXPECT_FLOAT_EQ(Out[1], 0.0f) << "another world holds its own managed resource";
 
     RunAt(4, Out);
-    EXPECT_FLOAT_EQ(Registry.Ctx().Get<FWeatherState>().Wetness, 0.75f) << "a C# write lands in the native resource";
+    EXPECT_FLOAT_EQ(Registry.Ctx().Get<SWeatherState>().Wetness, 0.75f) << "a C# write lands in the native resource";
 }

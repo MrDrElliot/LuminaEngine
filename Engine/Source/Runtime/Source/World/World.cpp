@@ -463,10 +463,10 @@ namespace Lumina
         // A world entity owns its subtree, so destroying one takes its descendants along.
         EntityRegistry.SetDestroyDescendantsWithParent(true);
 
-        // CCameraSystem owns FCameraGlobalState and writes FResolvedSceneView for Extract.
-        EntityRegistry.Ctx().Emplace<FCameraGlobalState>();
+        // CCameraSystem owns SCameraGlobalState and writes FResolvedSceneView for Extract.
+        EntityRegistry.Ctx().Emplace<SCameraGlobalState>();
         EntityRegistry.Ctx().Emplace<FResolvedSceneView>();
-        EntityRegistry.Ctx().Emplace<FWorldSettingsState>();
+        EntityRegistry.Ctx().Emplace<SWorldSettingsState>();
         EntityRegistry.Ctx().GetOrEmplace<FTimerManager>();
         EntityRegistry.Ctx().GetOrEmplace<FCoroutineManager>();
         EntityRegistry.Ctx().GetOrEmplace<FTweenManager>().SetWorldRegistry(&EntityRegistry);
@@ -1351,7 +1351,7 @@ namespace Lumina
 
     void CWorld::SyncWorldSettingsState()
     {
-        FWorldSettingsState* State = EntityRegistry.Ctx().Find<FWorldSettingsState>();
+        SWorldSettingsState* State = EntityRegistry.Ctx().Find<SWorldSettingsState>();
         if (State == nullptr)
         {
             return;
@@ -1680,6 +1680,17 @@ namespace Lumina
                 }
             }
             return false;
+        }
+
+        // A name orders nothing unless a system class or set answers to it, which is how a renamed system drops out silently.
+        bool NamesAnySystem(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems, FName Name)
+        {
+            const CClass* Class = FindObject<CClass>(Name);
+            if (Class != nullptr && Class->IsChildOf(CEntitySystem::StaticClass()))
+            {
+                return true;
+            }
+            return Algo::AnyOf(Systems, [Name](const TStrongObjectPtr<CEntitySystem>& System) { return System != nullptr && Algo::Contains(System->GetSets(), Name); });
         }
     }
 
@@ -2077,6 +2088,29 @@ namespace Lumina
             SystemSegments[i].Reset();
             SystemsWithWork[i].Reset();
         }
+
+        #if !defined(LE_SHIPPING)
+        for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
+        {
+            if (System == nullptr)
+            {
+                continue;
+            }
+            for (const TVector<FName>* Names : { &System->GetRunsAfter(), &System->GetRunsBefore() })
+            {
+                for (FName Name : *Names)
+                {
+                    size_t Key = GetTypeHash(System->GetClass()->GetName());
+                    Hash::HashCombine(Key, GetTypeHash(Name));
+                    if (!NamesAnySystem(Systems, Name) && ReportedUnknownOrder.TryAdd(Key))
+                    {
+                        LOG_WARN("World: system {} orders itself against {}, but no system class or set has that name, so that order is ignored",
+                            System->GetClass()->GetName(), Name);
+                    }
+                }
+            }
+        }
+        #endif
     }
 
     void CWorld::StartupPendingSystems()
@@ -2088,36 +2122,53 @@ namespace Lumina
     }
 
     // Read-only snapshot of the per-stage batch layout for the Gameplay Insights tool.
-    void CWorld::GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const
+    void CWorld::GetSystemSchedule(TVector<FSystemScheduleEntry>& Out, bool bIncludeIdle) const
     {
         Out.Reset();
         for (uint8 s = 0; s < (uint8)EUpdateStage::Max; ++s)
         {
             const FStageSchedule& Stage = StageSchedules[s];
+            auto AddEntry = [&](uint16 Index) -> FSystemScheduleEntry&
+            {
+                const CEntitySystem* System = Stage.Systems[Index];
+                const FSystemAccess& Access = System->GetAccess();
+
+                FSystemScheduleEntry& Entry = Out.EmplaceGetRef();
+                Entry.Name       = System->GetClass()->GetName();
+                Entry.Stage      = (uint8)s;
+                Entry.Order      = Index;
+                for (const CEntitySystem* Other : Stage.Systems)
+                {
+                    if (Other != System && SystemSchedule::DeclaresOrder(Other, System))
+                    {
+                        Entry.RunsAfter.Add(Other->GetClass()->GetName());
+                    }
+                }
+                Entry.bExclusive = Access.bExclusive;
+                Entry.bManaged   = Cast<CScriptClass>(System->GetClass()) != nullptr;
+                Entry.Writes     = Access.Writes;
+                Entry.Reads      = Access.Reads;
+                return Entry;
+            };
+
+            TVector<uint8> Listed(Stage.Systems.Num(), 0);
             const TVector<FSystemBatch> Batches = SystemSchedule::BuildLevels(SystemSegments[s]);
             for (uint8 b = 0; b < (uint8)Batches.Num(); ++b)
             {
                 for (uint16 Index : Batches[b].Members)
                 {
-                    const CEntitySystem* System = Stage.Systems[Index];
-                    const FSystemAccess& Access = System->GetAccess();
+                    FSystemScheduleEntry& Entry = AddEntry(Index);
+                    Entry.Batch     = b;
+                    Entry.BatchSize = (uint8)Batches[b].Members.Num();
+                    Listed[Index]   = 1;
+                }
+            }
 
-                    FSystemScheduleEntry& Entry = Out.EmplaceGetRef();
-                    Entry.Name       = System->GetClass()->GetName();
-                    Entry.Stage      = (uint8)s;
-                    for (const CEntitySystem* Other : Stage.Systems)
-                    {
-                        if (Other != System && SystemSchedule::DeclaresOrder(Other, System))
-                        {
-                            Entry.RunsAfter.Add(Other->GetClass()->GetName());
-                        }
-                    }
-                    Entry.Batch      = b;
-                    Entry.BatchSize  = (uint8)Batches[b].Members.Num();
-                    Entry.bExclusive = Access.bExclusive;
-                    Entry.bManaged   = Cast<CScriptClass>(System->GetClass()) != nullptr;
-                    Entry.Writes     = Access.Writes;
-                    Entry.Reads      = Access.Reads;
+            for (uint16 Index = 0; bIncludeIdle && Index < (uint16)Stage.Systems.Num(); ++Index)
+            {
+                if (!Listed[Index])
+                {
+                    AddEntry(Index).bHasWork = false;
                 }
             }
         }
@@ -2196,6 +2247,16 @@ namespace Lumina
             }
             Info.RunsAfter  = Described->GetRunsAfter();
             Info.RunsBefore = Described->GetRunsBefore();
+            for (const TVector<FName>* Names : { &Info.RunsAfter, &Info.RunsBefore })
+            {
+                for (FName Name : *Names)
+                {
+                    if (!NamesAnySystem(Systems, Name))
+                    {
+                        Info.UnknownOrder.Add(Name);
+                    }
+                }
+            }
         });
     }
 

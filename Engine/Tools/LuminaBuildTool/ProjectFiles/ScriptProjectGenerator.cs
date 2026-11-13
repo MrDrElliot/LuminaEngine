@@ -162,6 +162,8 @@ public static class ScriptProjectGenerator
         Xml.AppendLine("  <ItemGroup>");
         Xml.AppendLine("""    <Reference Include="LuminaSharp">""");
         Xml.AppendLine($"      <HintPath>{Escape(LuminaSharp)}</HintPath>");
+        // The runtime pins scripts to the engine's own LuminaSharp, so an IDE build copying it and Roslyn into the output only leaves a stale copy behind.
+        Xml.AppendLine("      <Private>false</Private>");
         Xml.AppendLine("    </Reference>");
 
         // The generator the runtime compile loads; without it partial NativeCall bodies are missing.

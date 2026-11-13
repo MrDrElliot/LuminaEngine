@@ -111,6 +111,18 @@ public sealed class ScriptProjectGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void CsprojNeverCopiesLuminaSharpIntoTheOutput()
+    {
+        ScriptProject Game = MakeProject("Game");
+
+        string Xml = ScriptProjectGenerator.BuildCsprojXml(Directories, Game, new[] { Game }, BuildPlatform.Windows64);
+
+        string Reference = Xml.Substring(Xml.IndexOf("""<Reference Include="LuminaSharp">""", StringComparison.Ordinal));
+        Reference = Reference.Substring(0, Reference.IndexOf("</Reference>", StringComparison.Ordinal));
+        Assert.Contains("<Private>false</Private>", Reference);
+    }
+
+    [Fact]
     public void CsprojReferencesOnlyResolvableDependencies()
     {
         ScriptProject Plugin = MakeProject("Plugin");

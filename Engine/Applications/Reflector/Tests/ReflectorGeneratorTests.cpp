@@ -52,7 +52,12 @@ struct SFixtureThing
             Workspace = fs::temp_directory_path() / (std::string("LuminaReflectorTests_") + ::testing::UnitTest::GetInstance()->current_test_info()->name());
             fs::remove_all(Workspace);
             fs::create_directories(Workspace / "Fixture");
-            std::ofstream(Workspace / "Fixture" / "FixtureTypes.h", std::ios::binary) << kFixtureHeader;
+            WriteFixture(kFixtureHeader);
+        }
+
+        void WriteFixture(const char* Header) const
+        {
+            std::ofstream(Workspace / "Fixture" / "FixtureTypes.h", std::ios::binary) << Header;
         }
 
         void TearDown() override
@@ -107,6 +112,57 @@ struct SFixtureThing
 
         EXPECT_NE(Result.ExitCode, 0);
         EXPECT_TRUE(Result.Says("error LRT1009: PROPERTY specifier 'FixtureTag' is not recognized")) << Result.Output;
+    }
+
+    TEST_F(ReflectorGenerator, AStructWithoutTheSPrefixFailsTheRun)
+    {
+        WriteFixture(R"cpp(#pragma once
+#include "ReflectionMacros.h"
+#include "fixturetypes.generated.h"
+
+REFLECT()
+struct FFixtureState
+{
+    GENERATED_BODY()
+
+    PROPERTY()
+    int Count = 0;
+};
+)cpp");
+
+        const FRun Result = Run({}, {});
+
+        EXPECT_NE(Result.ExitCode, 0);
+        EXPECT_TRUE(Result.Says("error LRT2004: Reflected struct 'FFixtureState' must be prefixed with 'S'. Rename it to 'SFixtureState'.")) << Result.Output;
+    }
+
+    TEST_F(ReflectorGenerator, AClassWithoutTheCPrefixFailsTheRunButAReflectedNameOverrideDoesNot)
+    {
+        WriteFixture(R"cpp(#pragma once
+#include "ReflectionMacros.h"
+#include "fixturetypes.generated.h"
+
+REFLECT()
+class SFixtureSystem
+{
+    GENERATED_BODY()
+};
+
+REFLECT(ReflectedName = "FFixtureTransform")
+struct VFixtureTransform
+{
+    GENERATED_BODY()
+
+    PROPERTY()
+    int Count = 0;
+};
+)cpp");
+
+        const FRun Result = Run({}, {});
+
+        EXPECT_NE(Result.ExitCode, 0);
+        EXPECT_TRUE(Result.Says("error LRT2004: Reflected class 'SFixtureSystem' must be prefixed with 'C'. Rename it to 'CFixtureSystem'.")) << Result.Output;
+        EXPECT_FALSE(Result.Says("VFixtureTransform' must be prefixed")) << Result.Output;
     }
 
     TEST_F(ReflectorGenerator, ALoadedGeneratorClaimsItsSpecifierAndRunsOverTheModel)

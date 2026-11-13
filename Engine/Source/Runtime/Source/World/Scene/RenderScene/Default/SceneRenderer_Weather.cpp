@@ -183,7 +183,7 @@ namespace Lumina
                 RHI::SetDebugName(RainOcclusionImage.Texture, "Weather.RainOcclusion");
             }
 
-            const FWeatherState& State = Weather.State;
+            const SWeatherState& State = Weather.State;
             const FRainParams&   Rain  = State.Params.Rain;
             const double Tile = Math::Max((double)Rain.Radius * 2.0, 1.0);
             const double Wrap = Tile * kFieldWrapTiles;

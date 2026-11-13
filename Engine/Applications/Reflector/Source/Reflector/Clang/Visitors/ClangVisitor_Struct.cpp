@@ -1,6 +1,7 @@
 #include <clang/AST/Type.h>
 #include <clang-c/CXString.h>
 #include <clang-c/Index.h>
+#include <cctype>
 #include <optional>
 #include <string>
 #include <vector>
@@ -58,6 +59,22 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		return MacroContents.substr(Open + 1, Close - Open - 1);
+	}
+
+	// S for a value struct and C for a class, so a misnamed type fails the build instead of spreading through code and bindings.
+	static void RequireTypePrefix(const CXCursor& Cursor, const std::string& Name, char Prefix, const char* Kind)
+	{
+		const bool bUpperSecond = Name.size() > 1 && std::isupper(static_cast<unsigned char>(Name[1]));
+		if (!Name.empty() && Name[0] == Prefix && bUpperSecond)
+		{
+			return;
+		}
+
+		const bool bHasOtherPrefix = bUpperSecond && std::isupper(static_cast<unsigned char>(Name[0]));
+		const std::string Suggested = Prefix + (bHasOtherPrefix ? Name.substr(1) : Name);
+		LRT_ERROR(Cursor, EDiagId::BadTypePrefix,
+			"Reflected %s '%s' must be prefixed with '%c'. Rename it to '%s'.",
+			Kind, Name.c_str(), Prefix, Suggested.c_str());
 	}
 
 	// Lets a SIMD or unreflectable representation present its logical shape without hand-tracking layout.
@@ -1425,6 +1442,12 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
+		// A ReflectedName deliberately registers the type under another name, such as a core math type's F name.
+		if (FindReflectedNameOverride(Macro.MacroContents).empty())
+		{
+			RequireTypePrefix(Cursor, CursorName, 'S', "struct");
+		}
+
 		// Keyed under the alias so a property naming FTransform resolves to the VTransform backing it.
 		const std::string CppName = CursorName;
 		const std::string CppQualifiedName = FullyQualifiedCursorName;
@@ -1577,6 +1600,8 @@ namespace Lumina::Reflection::Visitor
 				CursorName.c_str());
 			return CXChildVisit_Continue;
 		}
+
+		RequireTypePrefix(Cursor, CursorName, 'C', "class");
 
 		FReflectedClass* ReflectedClass = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedClass>(FStringHash(FullyQualifiedCursorName));
 		ReflectedClass->DisplayName = CursorName;

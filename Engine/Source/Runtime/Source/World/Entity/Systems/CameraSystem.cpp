@@ -79,7 +79,7 @@ namespace Lumina
         }
 
         // Split from the sample below so a same-frame re-resolve can read the shakes without advancing them.
-        static void AdvanceCameraShakes(FCameraGlobalState& State, float Dt)
+        static void AdvanceCameraShakes(SCameraGlobalState& State, float Dt)
         {
             for (int32 i = 0; i < State.Shakes.Num(); )
             {
@@ -98,7 +98,7 @@ namespace Lumina
         }
 
         // OutLocation is a local-space offset in world units; OutRotationDeg is pitch, yaw and roll.
-        static void SampleCameraShakes(const FCameraGlobalState& State, FVector3& OutLocation, FVector3& OutRotationDeg)
+        static void SampleCameraShakes(const SCameraGlobalState& State, FVector3& OutLocation, FVector3& OutRotationDeg)
         {
             OutLocation    = FVector3(0.0f);
             OutRotationDeg = FVector3(0.0f);
@@ -136,14 +136,14 @@ namespace Lumina
         }
 
         // Advances no clock, so calling it a second time inside one frame is free of side effects.
-        static void StampResolvedView(const FCameraGlobalState& CameraState, SCameraComponent& Camera, const STransformComponent& CameraTransform,
+        static void StampResolvedView(const SCameraGlobalState& CameraState, SCameraComponent& Camera, const STransformComponent& CameraTransform,
                                       FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
         {
             OutPosition = CameraTransform.GetWorldLocation();
             OutRotation = CameraTransform.GetWorldRotation();
             OutFOV      = Camera.FOV;
 
-            const FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
+            const SCameraGlobalState::FBlendState& Blend = CameraState.Blend;
             if (Blend.bActive)
             {
                 const float Alpha = EvaluateCameraBlend(Blend.Function, Blend.Duration > 0.0f ? Blend.Elapsed / Blend.Duration : 1.0f);
@@ -192,7 +192,7 @@ namespace Lumina
         Resolved.bHasPostProcess = false;
         Resolved.PostProcessMaterials.Reset();
 
-        FCameraGlobalState& CameraState = *GlobalState;
+        SCameraGlobalState& CameraState = *GlobalState;
         const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
         SCameraComponent* CameraPtr = Cameras.TryGet<SCameraComponent>(CameraEntity);
         const STransformComponent* CameraTransformPtr = Cameras.TryGet<STransformComponent>(CameraEntity);
@@ -326,7 +326,7 @@ namespace Lumina
         }
 
         // Drive the camera-to-camera blend, easing from the snapshot toward the live target.
-        FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
+        SCameraGlobalState::FBlendState& Blend = CameraState.Blend;
         if (Blend.bActive)
         {
             Blend.Elapsed += Context.GetDeltaTime();
@@ -381,7 +381,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        const FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
+        const SCameraGlobalState& CameraState = Registry.Ctx().Get<SCameraGlobalState>();
         const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
         if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
         {
@@ -404,7 +404,7 @@ namespace Lumina
 
     void CCameraSystem::SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime, ECameraBlendFunction Function)
     {
-        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
+        SCameraGlobalState& State = Registry.Ctx().Get<SCameraGlobalState>();
 
         // No-op switches keep any running blend intact.
         if (Entity == State.ActiveCameraEntity)
@@ -434,7 +434,7 @@ namespace Lumina
 
     void CCameraSystem::SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect)
     {
-        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
+        SCameraGlobalState& State = Registry.Ctx().Get<SCameraGlobalState>();
         State.OverlayFade      = Math::Clamp(Fade, 0.0f, 1.0f);
         State.OverlayFadeColor = FadeColor;
         State.OverlayLetterbox = Math::Max(LetterboxAspect, 0.0f);
@@ -442,7 +442,7 @@ namespace Lumina
 
     ECS::FEntity CCameraSystem::GetActiveCameraEntity(ECS::FRegistry& Registry)
     {
-        return Registry.Ctx().Get<FCameraGlobalState>().ActiveCameraEntity;
+        return Registry.Ctx().Get<SCameraGlobalState>().ActiveCameraEntity;
     }
 
     SCameraComponent* CCameraSystem::GetActiveCamera(ECS::FRegistry& Registry)
@@ -452,7 +452,7 @@ namespace Lumina
 
     uint32 CCameraSystem::PlayCameraShake(ECS::FRegistry& Registry, const SCameraShakeParams& Params)
     {
-        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
+        SCameraGlobalState& State = Registry.Ctx().Get<SCameraGlobalState>();
 
         FCameraShakeInstance S;
         S.LocationAmplitude = Params.LocationAmplitude;
@@ -484,7 +484,7 @@ namespace Lumina
         {
             return;
         }
-        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
+        SCameraGlobalState& State = Registry.Ctx().Get<SCameraGlobalState>();
         for (FCameraShakeInstance& S : State.Shakes)
         {
             if (S.Handle == Handle)
@@ -498,6 +498,6 @@ namespace Lumina
 
     void CCameraSystem::StopAllCameraShakes(ECS::FRegistry& Registry)
     {
-        Registry.Ctx().Get<FCameraGlobalState>().Shakes.Reset();
+        Registry.Ctx().Get<SCameraGlobalState>().Shakes.Reset();
     }
 }

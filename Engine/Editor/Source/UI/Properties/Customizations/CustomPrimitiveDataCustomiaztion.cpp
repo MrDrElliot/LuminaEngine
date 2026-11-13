@@ -21,7 +21,7 @@ namespace Lumina
         if (ImGui::Combo("##Type", &CurrentType, TypeNames, IM_ARRAYSIZE(TypeNames)))
         {
             Value.Type = (ECustomPrimitiveDataType)CurrentType;
-            Value.Data = ECustomPrimitiveDataUnion::FromUInt(0);
+            Value.Data = SCustomPrimitiveDataUnion::FromUInt(0);
             bWasChanged = true;
         }
         ImGui::PopItemWidth();
@@ -36,7 +36,7 @@ namespace Lumina
                 float V = Value.Data.AsFloat();
                 if (ImGuiX::DragFloat("##Value", &V, 0.01f))
                 {
-                    Value.Data = ECustomPrimitiveDataUnion::FromFloat(V);
+                    Value.Data = SCustomPrimitiveDataUnion::FromFloat(V);
                     bWasChanged = true;
                 }
                 break;
@@ -47,7 +47,7 @@ namespace Lumina
                 int32 V = Value.Data.AsInt();
                 if (ImGuiX::DragInt("##Value", &V))
                 {
-                    Value.Data = ECustomPrimitiveDataUnion::FromInt(V);
+                    Value.Data = SCustomPrimitiveDataUnion::FromInt(V);
                     bWasChanged = true;
                 }
                 break;
@@ -58,7 +58,7 @@ namespace Lumina
                 int32 V = (int32)Value.Data.AsUInt();
                 if (ImGuiX::DragInt("##Value", &V, 1.0f, 0, INT_MAX))
                 {
-                    Value.Data = ECustomPrimitiveDataUnion::FromUInt((uint32)Math::Max(0, V));
+                    Value.Data = SCustomPrimitiveDataUnion::FromUInt((uint32)Math::Max(0, V));
                     bWasChanged = true;
                 }
                 break;
@@ -71,7 +71,7 @@ namespace Lumina
                 float Col[4] = { Bytes.r / 255.0f, Bytes.g / 255.0f, Bytes.b / 255.0f, Bytes.a / 255.0f };
                 if (ImGui::ColorEdit4("##Color", Col, ImGuiColorEditFlags_Uint8 | ImGuiColorEditFlags_AlphaBar))
                 {
-                    Value.Data = ECustomPrimitiveDataUnion::FromColor(
+                    Value.Data = SCustomPrimitiveDataUnion::FromColor(
                         FU8Vector4((uint8)(Col[0] * 255), (uint8)(Col[1] * 255),
                                    (uint8)(Col[2] * 255), (uint8)(Col[3] * 255)));
                     bWasChanged = true;
@@ -84,7 +84,7 @@ namespace Lumina
                 bool V = Value.Data.AsBool();
                 if (ImGui::Checkbox("##Value", &V))
                 {
-                    Value.Data = ECustomPrimitiveDataUnion::FromBool(V);
+                    Value.Data = SCustomPrimitiveDataUnion::FromBool(V);
                     bWasChanged = true;
                 }
                 break;

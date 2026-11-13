@@ -13,7 +13,7 @@ internal struct TestScore : IResource
 #pragma warning disable LUM0112
 internal sealed class ResourceReaderTestSystem : CEntitySystem
 {
-    public TRes<FWorldSettingsState> Settings = new();
+    public TRes<SWorldSettingsState> Settings = new();
 
     public TRes<TestScore> Score = new();
 }
@@ -25,7 +25,7 @@ internal sealed class ResourceWriterTestSystem : CEntitySystem
 
 internal sealed class WeatherWriterTestSystem : CEntitySystem
 {
-    public TResMut<FWeatherState> Weather = new();
+    public TResMut<SWeatherState> Weather = new();
 }
 #pragma warning restore LUM0112
 

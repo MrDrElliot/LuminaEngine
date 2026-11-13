@@ -53,7 +53,7 @@ namespace Lumina
     // blend snapshots the displayed view and eases to the new camera over Duration; the resolved view is
     // stored back here each frame as the source for the next blend.
     REFLECT()
-    struct RUNTIME_API FCameraGlobalState : ECS::FResource
+    struct RUNTIME_API SCameraGlobalState : ECS::FResource
     {
         GENERATED_BODY()
 

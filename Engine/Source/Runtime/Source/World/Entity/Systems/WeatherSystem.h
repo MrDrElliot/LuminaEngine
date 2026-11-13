@@ -28,7 +28,7 @@ namespace Lumina
     private:
 
         ECS::TQuery<ECS::Read<SWeatherComponent>, ECS::Without<SDisabledTag>> Weathers;
-        TResMut<FWeatherState> WeatherState;
+        TResMut<SWeatherState> WeatherState;
         const CWeatherPreset* ActivePreset = nullptr;
         bool                  bHasActivePreset = false;
         FWeatherParams        TransitionFrom;

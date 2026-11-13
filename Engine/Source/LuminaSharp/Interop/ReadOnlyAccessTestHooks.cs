@@ -31,9 +31,9 @@ internal static unsafe class ReadOnlyAccessTestHooks
         {
             public TQuery<Read<STransformComponent>> Movers = new();
             public TQuery<Read<ProbeHealth>> Healths = new();
-            public TRes<FWeatherState> Weather = new();
+            public TRes<SWeatherState> Weather = new();
             public TRes<ProbeScore> Score = new();
-            public TResMut<FWeatherState> WeatherMut = new();
+            public TResMut<SWeatherState> WeatherMut = new();
             public TResMut<ProbeScore> ScoreMut = new();
 
             public void Run(Write<STransformComponent> Moved)

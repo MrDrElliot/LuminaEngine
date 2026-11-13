@@ -34,7 +34,7 @@ namespace Lumina
         ECS::TQuery<ECS::Read<SFollowerPoseComponent>> PoseLinks;
         ECS::TQuery<ECS::Write<SSkeletalMeshComponent>> LeaderMeshes;
         TRes<FKinematicsState> KinematicsState;
-        TRes<FWorldSettingsState> WorldSettings;
+        TRes<SWorldSettingsState> WorldSettings;
         ECS::TEventWriter<SAnimMontageStartedEvent> MontageStarted;
         ECS::TEventWriter<SAnimMontageBlendingOutEvent> MontageBlendingOut;
         ECS::TEventWriter<SAnimMontageEndedEvent> MontageEnded;

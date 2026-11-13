@@ -12,7 +12,7 @@ namespace Lumina
 
     // A sphere that touches water, puddles and snow, riding a bone or socket or the entity itself.
     REFLECT()
-    struct RUNTIME_API FWeatherContactPoint
+    struct RUNTIME_API SWeatherContactPoint
     {
         GENERATED_BODY()
 
@@ -48,7 +48,7 @@ namespace Lumina
         bool bEnabled = true;
 
         PROPERTY(Editable, Category = "Interaction", ToolTip = "Spheres that touch water, puddles and snow. Empty finds the feet, legs and hips of a skeleton, or wraps a static mesh's bounds.")
-        TVector<FWeatherContactPoint> Contacts;
+        TVector<SWeatherContactPoint> Contacts;
 
         PROPERTY(Editable, Category = "Interaction", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Scales the ripples and wakes this raises in water and puddles.")
         float RippleStrength = 1.0f;

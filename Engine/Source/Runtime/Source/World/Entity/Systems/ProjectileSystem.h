@@ -24,6 +24,6 @@ namespace Lumina
 
         ECS::TQuery<ECS::Write<SProjectileComponent>, ECS::Write<STransformComponent>> Flyers;
         ECS::TEventWriter<SProjectileHitEvent> HitEvents;
-        TRes<FWorldSettingsState> WorldSettings;
+        TRes<SWorldSettingsState> WorldSettings;
     };
 }

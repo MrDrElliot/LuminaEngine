@@ -4526,7 +4526,7 @@ namespace Lumina
         }
 
         TVector<FSystemScheduleEntry> Schedule;
-        World->GetSystemSchedule(Schedule);
+        World->GetSystemSchedule(Schedule, true);
 
         auto FindInfo = [this](FName Name) -> const CWorld::FSystemInfo*
         {
@@ -4587,7 +4587,8 @@ namespace Lumina
                         Rows.Emplace(Info, &Entry);
                     }
                 }
-                const bool bStageRunning = Algo::AnyOf(Schedule, [Stage](const FSystemScheduleEntry& Entry) { return Entry.Stage == Stage; });
+                Algo::Sort(Rows, [](const FStageRow& A, const FStageRow& B) { return A.Entry->Order < B.Entry->Order; });
+                const bool bStageRunning = Algo::AnyOf(Schedule, [Stage](const FSystemScheduleEntry& Entry) { return Entry.Stage == Stage && Entry.bHasWork; });
 
                 // An editor world only schedules the paused stage, so the gameplay stages list what will run once play starts.
                 const int32 FirstUnscheduled = Rows.Num();
@@ -4666,6 +4667,11 @@ namespace Lumina
                             Badge = "Off";
                             BadgeHelp = "Turned off in this world, so it does not tick.";
                         }
+                        else if (Row.Entry != nullptr && !Row.Entry->bHasWork)
+                        {
+                            Badge = "Idle";
+                            BadgeHelp = "Has no work this frame, so it is skipped. It keeps this place in the order once it has work.";
+                        }
                         else if (Row.Entry != nullptr && Row.Entry->BatchSize > 1)
                         {
                             Badge = Format("{} Parallel", LE_ICON_SOURCE_BRANCH);
@@ -4680,7 +4686,8 @@ namespace Lumina
 
                         const float BadgeWidth = Badge.IsEmpty() ? 0.0f : ImGui::CalcTextSize(*Badge).x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
                         const float NameWidth = Math::Max(ImGui::GetContentRegionAvail().x - BadgeWidth, 1.0f);
-                        ImGui::PushStyleColor(ImGuiCol_Text, Info.bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted());
+                        const bool bIdle = Row.Entry != nullptr && !Row.Entry->bHasWork;
+                        ImGui::PushStyleColor(ImGuiCol_Text, !Info.bEnabled ? EditorColors::TextMuted() : bIdle ? EditorColors::TextDim() : EditorColors::TextPrimary());
                         if (ImGui::Selectable(*Friendly, SelectedSystem == Info.Name, ImGuiSelectableFlags_AllowOverlap,
                             ImVec2(NameWidth, ImGui::GetFrameHeight())))
                         {
@@ -4776,7 +4783,11 @@ namespace Lumina
             }
 
             FString Line = WorldEditorToolInternal::kSystemStages[(uint8)Stage].Label;
-            if (Entry != nullptr)
+            if (Entry != nullptr && !Entry->bHasWork)
+            {
+                Line += Format(", position {} in order, idle this frame", Entry->Order + 1);
+            }
+            else if (Entry != nullptr)
             {
                 Line += Entry->BatchSize > 1
                     ? Format(", batch {} alongside {} other{}", Entry->Batch + 1, Entry->BatchSize - 1, Entry->BatchSize == 2 ? "" : "s")
@@ -4787,7 +4798,7 @@ namespace Lumina
         }
         ImGui::PopTextWrapPos();
 
-        auto DrawOrder = [](const char* Label, const TVector<FName>& Systems)
+        auto DrawOrder = [&Info](const char* Label, const TVector<FName>& Systems)
         {
             if (Systems.IsEmpty())
             {
@@ -4797,6 +4808,12 @@ namespace Lumina
             ImGui::TextColored(EditorColors::TextMuted(), "%s", Label);
             for (FName System : Systems)
             {
+                if (Algo::Contains(Info.UnknownOrder, System))
+                {
+                    WorldEditorToolInternal::DrawSystemChip(Format("{} {}", LE_ICON_ALERT, System), EditorColors::Warning(), EditorColors::WithAlpha(EditorColors::Warning(), 0.2f));
+                    ImGuiX::TextTooltip("No system class or set is named {}, so this order is ignored. A renamed system keeps its old name here until the declaration is updated.", System);
+                    continue;
+                }
                 WorldEditorToolInternal::DrawSystemChip(WorldEditorToolInternal::FriendlySystemName(System.ToString()), EditorColors::TextPrimary(), EditorColors::WithAlpha(EditorColors::TextMuted(), 0.25f));
             }
             ImGui::NewLine();

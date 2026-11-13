@@ -54,7 +54,7 @@ namespace Lumina
         ECS::TQuery<ECS::Read<SCameraComponent>> Cameras;
         TResMut<FDebugDrawState> DrawState;
         TRes<FResolvedSceneView> ResolvedView;
-        TRes<FCameraGlobalState> CameraState;
+        TRes<SCameraGlobalState> CameraState;
     };
 
     namespace DebugDraw

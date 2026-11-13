@@ -490,7 +490,7 @@ namespace Lumina
             {
                 bool                             bActive                  = false;
                 bool                             bDrops                   = false;
-                FWeatherState                    State                    = {};
+                SWeatherState                    State                    = {};
                 int32                            OcclusionShadowDataIndex = Constants::kIndexNone;
                 uint32                           OcclusionCullView        = Constants::kIndexNoneU32;
                 uint32                           OcclusionResolution      = 0;

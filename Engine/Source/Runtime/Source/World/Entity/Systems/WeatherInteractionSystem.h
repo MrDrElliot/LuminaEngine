@@ -38,7 +38,7 @@ namespace Lumina
         ECS::TQuery<ECS::Read<SSkeletalMeshComponent>> SkeletalMeshes;
         ECS::TQuery<ECS::Read<SStaticMeshComponent>> StaticMeshes;
         TResMut<FWeatherInteractionState> InteractionState;
-        TRes<FWeatherState> WeatherState;
+        TRes<SWeatherState> WeatherState;
         TRes<FResolvedSceneView> ResolvedView;
     };
 }

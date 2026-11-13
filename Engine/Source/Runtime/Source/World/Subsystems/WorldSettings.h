@@ -164,7 +164,7 @@ namespace Lumina
 
     // What systems read of the world's settings, refreshed by CWorld before each stage ticks its systems.
     REFLECT()
-    struct RUNTIME_API FWorldSettingsState : ECS::FResource
+    struct RUNTIME_API SWorldSettingsState : ECS::FResource
     {
         GENERATED_BODY()
 

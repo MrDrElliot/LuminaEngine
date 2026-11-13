@@ -83,8 +83,11 @@ namespace Lumina
         uint8           Stage      = 0;     // EUpdateStage
         uint8           Batch      = 0;     // Parallel batch index within the stage
         uint8           BatchSize  = 1;     // Systems running together in that batch
+        // Position in the stage's declared order, which holds whether or not the system has work this frame.
+        uint16          Order      = 0;
         bool            bExclusive = false;
         bool            bManaged   = false;
+        bool            bHasWork   = true;
     };
 
     REFLECT()
@@ -146,6 +149,8 @@ namespace Lumina
             // As declared, which a disabled system still reports.
             TVector<FName>        RunsAfter;
             TVector<FName>        RunsBefore;
+            // The declared names no system class or set answers to, so they order nothing.
+            TVector<FName>        UnknownOrder;
         };
 
         //~ Construction and the CObject contract.
@@ -571,8 +576,8 @@ namespace Lumina
         FUNCTION()
         void SetSystemEnabled(TSubclassOf<CEntitySystem> System, bool bEnabled);
 
-        // The last frame's per-stage batches with each system's declared access, for Gameplay Insights. Main thread.
-        void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const;
+        // The last frame's per-stage batches with declared access, then with bIncludeIdle every system that had no work. Main thread.
+        void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out, bool bIncludeIdle = false) const;
 
         // Every stage as SystemSchedule::DescribeParallelism reports it, from the last frame's work or as if every system had work.
         FString DescribeSystemParallelism(bool bAssumeAllWork) const;
@@ -770,7 +775,7 @@ namespace Lumina
         // Applies a SetSystemEnabled request at the top of Update, so it never runs inside a batch.
         void ApplyPendingSystemChanges();
 
-        // Copies the settings systems read into the registry's FWorldSettingsState.
+        // Copies the settings systems read into the registry's SWorldSettingsState.
         void SyncWorldSettingsState();
 
         // Latches whether this frame runs, from FWorldManager::BeginFrame.
@@ -816,6 +821,9 @@ namespace Lumina
 
         // Hashes of the stage, system pair and component of every ambiguity already warned about, so rebuilds only report new ones.
         THashSet<uint64>        ReportedAmbiguities;
+
+        // Hashes of each system and declared order name already warned about for matching no system.
+        THashSet<uint64>        ReportedUnknownOrder;
 
         // What TickSystems runs, rebuilt only when the set of systems with work changes between frames.
         TVector<FSystemSegment> SystemSegments[(int32)EUpdateStage::Max];

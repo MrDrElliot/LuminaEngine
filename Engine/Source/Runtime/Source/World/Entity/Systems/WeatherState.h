@@ -9,7 +9,7 @@ namespace Lumina
 {
     // Resolved weather for this frame, kept in the world's registry context for the renderer to read.
     REFLECT()
-    struct RUNTIME_API FWeatherState : ECS::FResource
+    struct RUNTIME_API SWeatherState : ECS::FResource
     {
         GENERATED_BODY()
 

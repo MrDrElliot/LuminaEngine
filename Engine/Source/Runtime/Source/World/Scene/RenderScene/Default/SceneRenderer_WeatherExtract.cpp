@@ -101,7 +101,7 @@ namespace Lumina
             return;
         }
 
-        const FWeatherState* State = Registry.Ctx().Find<FWeatherState>();
+        const SWeatherState* State = Registry.Ctx().Find<SWeatherState>();
         if (State == nullptr || !State->bActive)
         {
             return;
@@ -361,7 +361,7 @@ namespace Lumina
             return;
         }
 
-        const FWeatherState& State = Frame.Weather.State;
+        const SWeatherState& State = Frame.Weather.State;
         Frame.Volumetrics.CloudWindOffset = State.CloudWindOffset;
 
         const FCloudWeatherParams& Override = State.Params.Clouds;

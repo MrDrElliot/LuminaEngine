@@ -107,7 +107,7 @@ namespace Lumina
 
             if (!Interactor.Contacts.IsEmpty())
             {
-                for (const FWeatherContactPoint& Point : Interactor.Contacts)
+                for (const SWeatherContactPoint& Point : Interactor.Contacts)
                 {
                     int32    BoneIndex    = Constants::kIndexNone;
                     FMatrix4 SocketOffset = FMatrix4(1.0f);
@@ -206,7 +206,7 @@ namespace Lumina
         const float DeltaTime = Math::Min(StepTime, kMaxStepSeconds);
         const float Time      = (float)Context.GetTime();
 
-        const FWeatherState& Weather = *WeatherState;
+        const SWeatherState& Weather = *WeatherState;
         const bool  bWeather      = Weather.bActive;
         const float RainIntensity = bWeather ? Weather.Params.Rain.Intensity : 0.0f;
         const float MaxWetness    = bWeather ? Weather.Params.Rain.MaxWetness : 1.0f;

@@ -147,6 +147,60 @@ TEST(EntitySystem, RunsAfterASetOrdersAfterEveryMember)
     EXPECT_TRUE(Stage.MustPrecede(Stage.Systems.Find(TransformReader), ReaderIndex));
 }
 
+TEST(EntitySystem, AnOrderNameNoSystemHasIsWarnedAboutOnce)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* System = AddSystem<CEntitySystemTest>(World);
+    System->RunsAfterSystem("SEntitySystemRenamedAway");
+    System->RunsAfter<CEntitySystemReaderTest>();
+
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "SEntitySystemRenamedAway"), 1) << "a name no system has orders nothing, so it must not pass silently";
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "CEntitySystemReaderTest"), 0) << "a real system class is a valid target even with no instance in this world";
+
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "SEntitySystemRenamedAway"), 0) << "a rebuild must not restate a warning already given";
+}
+
+TEST(EntitySystem, TheFullScheduleListsIdleSystemsInDeclaredOrder)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* Writer = AddSystem<CEntitySystemTest>(World);
+    AddSystem<CEntitySystemReaderTest>(World);
+    Writer->RunsAfter<CEntitySystemReaderTest>();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+
+    TVector<FSystemScheduleEntry> Live;
+    World->GetSystemSchedule(Live);
+    EXPECT_TRUE(Live.IsEmpty()) << "nothing has ticked, so no system has work to batch yet";
+
+    TVector<FSystemScheduleEntry> All;
+    World->GetSystemSchedule(All, true);
+    auto FindPrePhysics = [&All](const CClass* Class) -> const FSystemScheduleEntry*
+    {
+        for (const FSystemScheduleEntry& Entry : All)
+        {
+            if (Entry.Name == Class->GetName() && Entry.Stage == (uint8)EUpdateStage::PrePhysics)
+            {
+                return &Entry;
+            }
+        }
+        return nullptr;
+    };
+    const FSystemScheduleEntry* WriterEntry = FindPrePhysics(CEntitySystemTest::StaticClass());
+    const FSystemScheduleEntry* ReaderEntry = FindPrePhysics(CEntitySystemReaderTest::StaticClass());
+    ASSERT_NE(WriterEntry, nullptr);
+    ASSERT_NE(ReaderEntry, nullptr);
+    EXPECT_FALSE(WriterEntry->bHasWork || ReaderEntry->bHasWork);
+    EXPECT_LT(ReaderEntry->Order, WriterEntry->Order) << "an idle system keeps its declared place, ahead of the system that runs after it";
+}
+
 TEST(EntitySystem, TeardownOnlyRunsForASystemThatStarted)
 {
     FCreationGate Gate;

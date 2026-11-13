@@ -30,7 +30,7 @@ namespace Lumina
     {
         using namespace WeatherSystemInternal;
 
-        FWeatherState* State = &WeatherState.Get();
+        SWeatherState* State = &WeatherState.Get();
 
         const SWeatherComponent* Weather = nullptr;
         Weathers.ForEach([&Weather](const SWeatherComponent& Component)

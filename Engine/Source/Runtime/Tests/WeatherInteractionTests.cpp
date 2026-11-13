@@ -51,7 +51,7 @@ namespace
             Wader = R.Create();
             R.Emplace<STransformComponent>(Wader);
             SWeatherInteractorComponent& Interactor = R.Emplace<SWeatherInteractorComponent>(Wader);
-            FWeatherContactPoint& Contact = Interactor.Contacts.EmplaceGetRef();
+            SWeatherContactPoint& Contact = Interactor.Contacts.EmplaceGetRef();
             Contact.Radius = 0.2f;
 
             System = NewObject<CWeatherInteractionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
